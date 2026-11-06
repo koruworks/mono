@@ -324,12 +324,28 @@ async fn an_edit_after_the_acknowledged_export_is_not_claimed_as_synced() {
 
 #[tokio::test]
 async fn a_creation_the_worker_refuses_ends_the_pass_with_its_own_code() {
-    use koru_replication::protocol::PeerFrame;
     // The worker refuses an app connection's creation of a unit Cloud already
     // holds with `sync_unit_exists` (Cloud MCP C23), after the whole upload
     // and before it writes anything. The decoder maps the code to itself, so
     // the host can report the effect as not saved; before the amendment it
     // decoded as the unknown-refusal fallback, `handshake_malformed`.
+    an_upload_the_worker_refuses_ends_the_pass_with(Error::UnitExists).await;
+}
+
+#[tokio::test]
+async fn a_claimed_upload_the_worker_refuses_ends_the_pass_with_its_own_code() {
+    // The worker refuses an app connection's upload of a document someone
+    // else holds a claim on, or under a reference that is not the claim's,
+    // with `sync_document_claimed` (Cloud MCP §5.7, DS-D45): before
+    // `reserve`, or by rolling its publish back, so the head did not move.
+    // The decoder maps it to itself, beside `sync_unit_exists`.
+    an_upload_the_worker_refuses_ends_the_pass_with(Error::DocumentClaimed).await;
+}
+
+/// One upload at its pass's upload step, refused by the worker with
+/// `refusal`'s code after the whole upload arrived.
+async fn an_upload_the_worker_refuses_ends_the_pass_with(refusal: Error) {
+    use koru_replication::protocol::PeerFrame;
     let (client, mut reader, mut writer, mut stream, scope, budget) =
         super::super::tests::pair_with_workspace(true).await;
     let mut sync = Reconciler::new(
@@ -388,7 +404,7 @@ async fn a_creation_the_worker_refuses_ends_the_pass_with_its_own_code() {
         records::write(
             &mut writer,
             &Record::Peer(PeerFrame::Error {
-                code: "sync_unit_exists".into(),
+                code: refusal.code().into(),
             }),
             deadline,
             &budget,
@@ -408,12 +424,11 @@ async fn a_creation_the_worker_refuses_ends_the_pass_with_its_own_code() {
     })
     .await
     .unwrap();
-    assert_eq!(refused, Error::UnitExists);
-    assert_eq!(refused.code(), "sync_unit_exists");
+    assert_eq!(refused, refusal);
     // The pass is gone and the session ended with that code: nothing of
     // this upload is retained, and no later unit starts on it.
     assert_eq!(sync.status().phase, Phase::Idle);
-    assert_eq!(sync.start(unit).err(), Some(Error::UnitExists));
+    assert_eq!(sync.start(unit).err(), Some(refusal));
     drop(sync);
     assert_eq!(budget.used(), 0);
 }

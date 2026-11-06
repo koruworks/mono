@@ -153,6 +153,8 @@ fn exact_transcripts_frames_and_four_messages_for_both_datasets() {
             prepared.principal.update_origin(),
             provider.facts.dataset.update_origin()
         );
+        // A device's session carries no claim reference either way.
+        assert_eq!(prepared.claim_references, transfer::ClaimReferences::None);
         assert_eq!(prepared.admit_transfer(), Err(Refusal::SyncUnavailable));
         assert_eq!(provider.calls.load(Ordering::SeqCst), 3);
     }
@@ -446,13 +448,9 @@ fn client_signs_the_two_nonce_transcript_and_pins_the_credential_expiry() {
                 .as_bytes(),
         )
         .unwrap();
-        assert_eq!(
-            receipt
-                .accepted(accepted, 1_800_000_000_000, 0)
-                .unwrap()
-                .principal,
-            facts.dataset
-        );
+        let prepared = receipt.accepted(accepted, 1_800_000_000_000, 0).unwrap();
+        assert_eq!(prepared.principal, facts.dataset);
+        assert_eq!(prepared.claim_references, transfer::ClaimReferences::None);
         // A challenge whose nonce was tampered with signs different bytes; the
         // worker's own transcript check is what rejects it. The client no longer
         // has a proof to reject, so it must not invent one.

@@ -455,6 +455,9 @@ impl PendingHandshake {
             principal: self.dataset,
             expires_at_seconds,
             generation,
+            claim_references: transfer::ClaimReferences::worker(
+                &self.credential.claims().principal,
+            ),
         })
     }
 }
@@ -466,6 +469,11 @@ pub struct PreparedSession {
     pub principal: CloudReplicaPrincipalV1,
     pub expires_at_seconds: i64,
     pub generation: u64,
+    /// Which way a claim reference may cross this session, from the
+    /// principal its credential was admitted under and the end this copy
+    /// belongs to. [`transfer::ClaimReferences::None`] for every device
+    /// session.
+    pub claim_references: transfer::ClaimReferences,
 }
 
 impl PreparedSession {

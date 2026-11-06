@@ -307,8 +307,11 @@ where
                     let Step::Send(export) = std::mem::replace(&mut pass.step, Step::Upload) else {
                         unreachable!()
                     };
+                    // The Store port's word on this upload, a claim reference
+                    // above all, rides to the start (TECHNICAL §5.4 item 4).
+                    let context = export.upload_context();
                     let (bytes, guard) = export.into_payload();
-                    self.client.upload(pass.unit, bytes, guard)?;
+                    self.client.upload_with(pass.unit, bytes, guard, context)?;
                 }
                 _ => {}
             }

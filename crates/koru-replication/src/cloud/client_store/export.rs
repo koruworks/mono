@@ -3,7 +3,7 @@
 //! Local reconciliation reads run under the same serialized Store ownership as
 //! receive. No progress database, transport authority or inventory is invented.
 use super::*;
-use crate::cloud::transfer::{MemoryBudget, Reservation};
+use crate::cloud::transfer::{MemoryBudget, Reservation, UploadContext};
 use loro::VersionVector;
 
 /// A captured durable local version and its missing bytes. This is NOT evidence
@@ -12,6 +12,7 @@ pub struct Export {
     unit: Unit,
     version: VersionVector,
     bytes: Vec<u8>,
+    upload: UploadContext,
     _reservation: Reservation,
     _excess_capacity: Option<Reservation>,
     _context: Option<Box<dyn Send + Sync>>,
@@ -25,6 +26,20 @@ impl Export {
     }
     pub fn bytes(&self) -> &[u8] {
         &self.bytes
+    }
+    /// What the Store says about this upload besides its bytes (TECHNICAL
+    /// §5.4 item 4). A device's Store never sets it; a hosted replica's
+    /// Store port sets the claim reference of the call whose effect this
+    /// export carries, with [`Export::with_upload`].
+    pub fn upload_context(&self) -> UploadContext {
+        self.upload
+    }
+    /// Attach the upload's context. The Reconciler hands it to the carrier,
+    /// which writes `claim` into the upload's `TransferStart`; a session that
+    /// may not carry one refuses the upload as `sync_transfer_invalid`.
+    pub fn with_upload(mut self, context: UploadContext) -> Self {
+        self.upload = context;
+        self
     }
     /// Move the payload into Client::upload and pass the second value as its
     /// retained guard. Moving bytes must not release their export reservation.
@@ -130,6 +145,7 @@ impl ExportRequest {
             unit: self.unit,
             version,
             bytes,
+            upload: UploadContext::default(),
             _reservation: self.reservation,
             _excess_capacity: excess_capacity,
             _context: self.context,

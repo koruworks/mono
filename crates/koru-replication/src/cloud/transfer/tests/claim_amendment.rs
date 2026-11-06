@@ -1,20 +1,18 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! The app-connection claim amendment's vectors, against the decoder as it
-//! stands.
+//! The app-connection claim amendment's vectors, against the decoder that
+//! implements it (Cloud MCP Plan 3.2).
 //!
 //! `claim.json` freezes the amended contract's results (`code`) beside the
-//! results of the decoder as it stood before the amendment (`today`). The
-//! amendment lands in parts, so each case asserts `code` once its part is
-//! built and `today` until then:
+//! results of the decoder as it stood before the amendment (`today`). Every
+//! case now asserts `code`, and each case whose two results differ proves
+//! the amendment moved it.
 //!
-//! - `sync_unit_exists` (C20) is built (Cloud MCP Plan 2.2): the decoder maps
-//!   it to itself;
-//! - the strict `Start` still refuses every `claim`, a device's start
-//!   re-encodes to its exact frozen bytes, and `sync_document_claimed` (C21)
-//!   still decodes as an unknown authority refusal. Plan 3.2's decoder, which
-//!   accepts `claim` on an app connection's session, moves those cases to
-//!   `code` too.
+//! The decoder is the two steps a session runs: [`decode_control`] reads the
+//! strict shape, and the receiving [`Stream`] checks the session, not the
+//! unit (DS-D46). A case's `receiver` names that stream's end:
+//! `worker_device_session` and `client` must refuse a `claim`, and only
+//! `worker_app_connection_session` accepts one.
 
 use super::*;
 use crate::cloud::transfer::metadata;
@@ -26,6 +24,11 @@ fn vectors() -> serde_json::Value {
     .unwrap()
 }
 
+fn cloud_id(text: &str) -> CloudId {
+    serde_json::from_value(serde_json::Value::String(text.into())).unwrap()
+}
+
+/// The scope a refusal frame decodes under, as before.
 fn scope() -> Scope {
     Scope {
         principal: CloudReplicaPrincipalV1::Workspace {
@@ -39,13 +42,68 @@ fn scope() -> Scope {
     }
 }
 
-/// The cases whose part of the amendment is built, so the decoder answers
-/// the amended `code` rather than `today`.
-const BUILT: &[&str] = &["C20"];
+/// The dataset a vector's unit belongs to, so that the room mapping admits
+/// it and only the session decides. Every vector names the same ids.
+fn scope_for(unit: Unit) -> Scope {
+    let other = cloud_id("33333333-3333-4333-8333-333333333333");
+    let as_workspace = |id: CloudId| -> WorkspaceId {
+        serde_json::from_value(serde_json::to_value(id).unwrap()).unwrap()
+    };
+    let as_document = |id: CloudId| -> DocumentId {
+        serde_json::from_value(serde_json::to_value(id).unwrap()).unwrap()
+    };
+    match unit {
+        Unit::Document { workspace_id, .. } => Scope {
+            principal: CloudReplicaPrincipalV1::Workspace {
+                workspace_id,
+                incarnation_id: id(3),
+                logical_replica_id: id(4),
+            },
+            eligibility_workspace: as_workspace(workspace_id),
+            profile: id(5),
+            manifest: as_document(other),
+        },
+        Unit::Identity { profile_id } => Scope {
+            principal: CloudReplicaPrincipalV1::Profile {
+                profile_id,
+                lineage_id: id(3),
+                logical_replica_id: id(4),
+            },
+            eligibility_workspace: as_workspace(other),
+            profile: profile_id,
+            manifest: DocumentId::from_uuid(uuid::Uuid::nil()),
+        },
+        other => panic!("no vector names {other:?}"),
+    }
+}
 
-fn expected<'a>(case: &'a serde_json::Value, id: &str) -> &'a str {
-    let field = if BUILT.contains(&id) { "code" } else { "today" };
-    case[field].as_str().unwrap()
+/// The ends a `receiver` stands for. `client` is both client ends: a
+/// device's, and an app connection's, which sends references and still
+/// receives none.
+fn ends(receiver: &str) -> &'static [ClaimReferences] {
+    match receiver {
+        "worker_device_session" => &[ClaimReferences::None],
+        "worker_app_connection_session" => &[ClaimReferences::Received],
+        "client" => &[ClaimReferences::None, ClaimReferences::Sent],
+        other => panic!("unknown receiver {other}"),
+    }
+}
+
+/// Deliver one decoded control to a stream at `end` that has exchanged
+/// policies, and answer what it admitted.
+fn receive(control: Control, end: ClaimReferences) -> Result<(), Error> {
+    let unit = match &control {
+        Control::TransferStart(start) => start.unit,
+        _ => unit(),
+    };
+    let (mut stream, _) = setup_claims(MAX_PAYLOAD, scope_for(unit), end);
+    let (mut peer, _) = setup_claims(MAX_PAYLOAD, scope_for(unit), ClaimReferences::None);
+    let policy = peer.initial_policy(0).unwrap();
+    stream.initial_policy(0).unwrap();
+    stream.receive_control(policy, 0, 0, |_| Ok(())).unwrap();
+    stream
+        .receive_control(control, 1, 1, |_| Ok(()))
+        .map(|_| ())
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -53,26 +111,38 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 #[test]
-fn claim_vectors_match_the_decoder_part_by_part() {
+fn claim_vectors_match_the_amended_decoder() {
     let vectors = vectors();
     let cases = vectors["cases"].as_array().unwrap();
     assert_eq!(cases.len(), 21);
+    let mut moved = 0;
     for case in cases {
         let id = case["id"].as_str().unwrap();
         let json = case["json"].as_str().unwrap().as_bytes();
-        let expected = expected(case, id);
+        let expected = case["code"].as_str().unwrap();
+        if case["code"] != case["today"] {
+            moved += 1;
+        }
         match case["kind"].as_str().unwrap() {
             "control" => {
                 let decoded = decode_control(json);
-                assert_eq!(code(decoded.clone()), expected, "{id}");
-                if let Ok(control) = decoded {
-                    // Byte-identical: today's encoder writes exactly the
-                    // frozen bytes back, length prefix and tag included.
-                    let encoded = encode_record(&Record::Control(control)).unwrap();
+                for &end in ends(case["receiver"].as_str().unwrap()) {
+                    let admitted = decoded.clone().and_then(|control| receive(control, end));
+                    assert_eq!(code(admitted), expected, "{id} at {end:?}");
+                }
+                let Ok(control) = decoded else { continue };
+                let encoded = encode_record(&Record::Control(control.clone())).unwrap();
+                if case.get("record_hex").is_some() || case.get("byte_identical_to").is_some() {
+                    // Byte-identical: the encoder writes exactly the frozen
+                    // bytes back, length prefix and tag included.
                     assert_eq!(&encoded[5..], json, "{id}");
                     if let Some(record) = case["record_hex"].as_str() {
                         assert_eq!(hex(&encoded), record, "{id}");
                     }
+                } else {
+                    // Property order is not significant (C15): the value
+                    // survives, and is re-encoded in the encoder's order.
+                    assert!(decode_control(&encoded[5..]).unwrap() == control, "{id}");
                 }
             }
             "peer" => {
@@ -87,20 +157,35 @@ fn claim_vectors_match_the_decoder_part_by_part() {
                     panic!("{id}: a refusal frame decoded as metadata")
                 };
                 assert_eq!(refusal.code(), expected, "{id}");
-                if BUILT.contains(&id) {
-                    // The producer's side: the frame a worker writes for this
-                    // refusal is the frozen record, byte for byte.
-                    let written = encode_record(&Record::Peer(refusal.frame())).unwrap();
-                    assert_eq!(hex(&written), case["record_hex"].as_str().unwrap(), "{id}");
-                }
+                // The producer's side: the frame a worker writes for this
+                // refusal is the frozen record, byte for byte.
+                let written = encode_record(&Record::Peer(refusal.frame())).unwrap();
+                assert_eq!(hex(&written), case["record_hex"].as_str().unwrap(), "{id}");
             }
             other => panic!("{id}: unknown kind {other}"),
         }
     }
-    // Every built case is one the vectors still hold, and none is a case
-    // whose amended result equals today's (that would prove nothing).
-    for built in BUILT {
-        let case = cases.iter().find(|c| c["id"] == *built).unwrap();
-        assert_ne!(case["code"], case["today"], "{built}");
-    }
+    // C03, C15, C16, C20 and C21: the cases whose amended result is not
+    // today's. Each now answers `code`, so each proves the amendment moved it.
+    assert_eq!(moved, 5);
+}
+
+/// The claim the vectors carry decodes to the SHA-256 of the fixture handle,
+/// the claim row's `claim_hash`.
+#[test]
+fn the_vectors_claim_is_the_hash_of_the_fixture_handle() {
+    let vectors = vectors();
+    let hash: [u8; 32] = Sha256::digest(vectors["claim_handle_fixture"].as_str().unwrap()).into();
+    let case = &vectors["cases"][2];
+    assert_eq!(case["id"], "C03");
+    let Control::TransferStart(start) =
+        decode_control(case["json"].as_str().unwrap().as_bytes()).unwrap()
+    else {
+        panic!("C03 is a start")
+    };
+    assert!(start.claim == Some(Bytes(hash)));
+    assert_eq!(
+        serde_json::to_value(start.claim.unwrap()).unwrap(),
+        vectors["claim_sha256_base64url"]
+    );
 }

@@ -536,6 +536,7 @@ fn accepted(scope: Scope) -> PreparedSession {
             generation: 1,
             expires_at_seconds: 600,
         },
+        claim_references: koru_replication::cloud::transfer::ClaimReferences::None,
     }
 }
 

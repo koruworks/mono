@@ -159,6 +159,9 @@ impl ClientReceipt {
             principal: self.dataset,
             generation: *generation,
             expires_at_seconds: *expires_at_seconds,
+            claim_references: transfer::ClaimReferences::client(
+                &self.credential.claims().principal,
+            ),
             accepted,
         })
     }

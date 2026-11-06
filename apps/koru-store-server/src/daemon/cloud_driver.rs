@@ -340,6 +340,8 @@ async fn run_session(
         principal: permit.dataset,
         expires_at_seconds: principal.expires_at_seconds,
         generation,
+        // A device's session: no claim reference crosses it either way.
+        claim_references: koru_replication::cloud::transfer::ClaimReferences::None,
     };
     let Some(capacity) = NonZeroUsize::new(SESSION_QUEUE) else {
         return;

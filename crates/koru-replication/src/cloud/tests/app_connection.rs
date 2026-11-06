@@ -140,6 +140,12 @@ fn the_endpoint_key_is_the_one_that_signs_a_connections_transcript() {
             .unwrap();
         assert_eq!(prepared.principal, assignment(&v, index).dataset);
         assert_eq!(prepared.expires_at_seconds, claims.exp);
+        // The worker admitted a connection: its starts may carry a claim
+        // reference (TECHNICAL §5.4 item 6).
+        assert_eq!(
+            prepared.claim_references,
+            transfer::ClaimReferences::Received
+        );
 
         // The device's key is not a connection's: its signature is a replay.
         let (pending, _) = begin_connection(&v, index, &provider).unwrap();
@@ -272,11 +278,12 @@ fn a_connection_replica_completes_the_client_side_with_its_endpoint_key() {
             .finish(&provider, finish, NOW, 20, [32; 32], 1)
             .unwrap();
         assert_eq!(
-            receipt
-                .accepted(prepared.accepted, NOW, 0)
-                .unwrap()
-                .principal,
-            facts.dataset
+            prepared.claim_references,
+            transfer::ClaimReferences::Received
         );
+        let client = receipt.accepted(prepared.accepted, NOW, 0).unwrap();
+        assert_eq!(client.principal, facts.dataset);
+        // The connection's own end sends references and receives none.
+        assert_eq!(client.claim_references, transfer::ClaimReferences::Sent);
     }
 }
