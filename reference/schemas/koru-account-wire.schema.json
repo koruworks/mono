@@ -589,7 +589,8 @@
           "account",
           "releases",
           "download_windows",
-          "download_macos"
+          "download_macos",
+          "connection_authorize"
         ],
         "type": "string"
       },
@@ -4000,7 +4001,8 @@
           "account",
           "releases",
           "download_windows",
-          "download_macos"
+          "download_macos",
+          "connection_authorize"
         ],
         "type": "string"
       },
@@ -4847,7 +4849,8 @@
           "account",
           "releases",
           "download_windows",
-          "download_macos"
+          "download_macos",
+          "connection_authorize"
         ],
         "type": "string"
       }
@@ -7164,7 +7167,8 @@
       "account",
       "releases",
       "download_windows",
-      "download_macos"
+      "download_macos",
+      "connection_authorize"
     ],
     "title": "SymbolicReturnTarget",
     "type": "string"
