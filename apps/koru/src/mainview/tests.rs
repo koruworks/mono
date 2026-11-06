@@ -14449,6 +14449,12 @@ fn repointing_the_tasks_tab_never_lands_the_old_note_as_a_tab() {
         &state(PageKey::List(b), doc_b)
     ));
     assert!(activates(&drain(&mut v), doc_b));
+    // The next sweep answers the same page again before the shell has
+    // activated the note: no second ask. The shell answers a request for a
+    // document it already has active with a second announcement, and that
+    // is where the untitled tabs came from.
+    View::set_page_state(&mut v, &state(PageKey::List(b), doc_b));
+    assert!(!activates(&drain(&mut v), doc_b), "asked once");
 
     // The shell answers A first — the earlier ask — then B.
     let ws_a = WorkspaceDoc::page_genesis(workspace, doc_a).unwrap();
@@ -14462,8 +14468,18 @@ fn repointing_the_tasks_tab_never_lands_the_old_note_as_a_tab() {
         "and the new one is the Tasks tab's own"
     );
     assert!(matches!(v.tabs().active_tab().view, TabView::Tasks(_)));
+    // And announced again, with the Tasks tab still showing it: still
+    // nobody's tab.
+    View::show_active_document(&mut v, &ws_b, Some(doc_b));
+    assert_eq!(
+        v.tabs().len(),
+        tabs,
+        "a repeated announcement lands nowhere"
+    );
+    assert!(matches!(v.tabs().active_tab().view, TabView::Tasks(_)));
 
-    // Any other way of activating a note still opens it in a tab of its own.
+    // Any other way of activating a note — one the Tasks tab in front is
+    // not showing — still opens it in a tab of its own.
     View::show_active_document(&mut v, &ws_a, Some(doc_a));
     assert_eq!(v.tabs().len(), tabs + 1, "Explore, a pill, Back: a tab");
 }

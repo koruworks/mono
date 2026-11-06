@@ -3853,6 +3853,11 @@ impl MainView {
         // would switch the active workspace whenever locate_document differed.
         if let Some(doc) = self.tabs().active_tab().edits()
             && self.active_document != Some(doc)
+            // A Tasks tab's ask already out is not made again: the shell
+            // answers an ask for the document it has just activated with a
+            // second announcement, which the first answer's consumed guard
+            // would land as a document tab (acceptance round 2).
+            && !self.tasks_activation.contains(&doc)
         {
             if matches!(self.tabs().active_tab().view, TabView::Tasks(_)) {
                 self.note_tasks_activation(doc);
@@ -12668,6 +12673,7 @@ impl View for MainView {
         // the first click on a document matched the tab of the *previous* one,
         // selected that, and opened nothing. The second click worked, because
         // by then the push had landed.
+        let was = self.active_document;
         self.active_document = active;
         // **Recents are recorded here**, the one place the shell tells the
         // container which document is active — store ids that survive a
@@ -12786,6 +12792,22 @@ impl View for MainView {
             && let Some(i) = self.tasks_activation.iter().position(|d| *d == active)
         {
             self.tasks_activation.remove(i);
+            self.finish_explore_gesture(ws);
+            return true;
+        }
+        // **The document already in front, announced again** — the shell
+        // says so after any request for a document it already has active —
+        // while the Tasks tab in front is showing it: nothing to land. A
+        // person opening the note from the library while on its page takes
+        // `open_search_target`'s route (the shell navigates nowhere for an
+        // active document), never this one; so this announcement is nobody's
+        // ask for a document tab, and landing it made the untitled tabs of
+        // acceptance round 2.
+        if let Some(active) = active
+            && was == Some(active)
+            && let TabView::Tasks(t) = &self.tabs().active_tab().view
+            && t.page_document() == Some(active)
+        {
             self.finish_explore_gesture(ws);
             return true;
         }
@@ -13832,6 +13854,11 @@ impl View for MainView {
         if matches!(front.view, TabView::Tasks(_))
             && let Some(doc) = front.edits()
             && self.active_document != Some(doc)
+            // Asked once, not once per sweep: this runs every turn until the
+            // shell's announcement lands, and a second ask for a document
+            // the shell has by then activated is answered with a second
+            // announcement — which landed as an untitled tab (round 2).
+            && !self.tasks_activation.contains(&doc)
         {
             let home = front.home_workspace();
             self.note_tasks_activation(doc);
