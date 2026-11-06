@@ -494,15 +494,93 @@ impl SystemSession {
     /// The resolved title of a page document's generation, or `None` while
     /// the open is in flight.
     pub(crate) fn page_title(&self, page: PageKey, generation: u64) -> Option<PageTitle> {
-        let doc = self.active.as_ref().map(|live| &live.doc).or(self.local.as_ref())?;
+        let doc = self
+            .active
+            .as_ref()
+            .map(|live| &live.doc)
+            .or(self.local.as_ref())?;
         Some(doc.page_title(page, generation))
     }
 
     /// Every list record, tombstones included, or none while the open is in
     /// flight.
     pub(crate) fn all_lists(&self) -> Option<Vec<ListEntry>> {
-        let doc = self.active.as_ref().map(|live| &live.doc).or(self.local.as_ref())?;
+        let doc = self
+            .active
+            .as_ref()
+            .map(|live| &live.doc)
+            .or(self.local.as_ref())?;
         Some(doc.all_lists())
+    }
+
+    /// The deletion protocol of a page generation, or `None` while the open
+    /// is in flight.
+    pub(crate) fn deletion_record(
+        &self,
+        page: PageKey,
+        generation: u64,
+    ) -> Option<koru_core::pages::deletion::DeletionRecord> {
+        let doc = self
+            .active
+            .as_ref()
+            .map(|live| &live.doc)
+            .or(self.local.as_ref())?;
+        Some(doc.deletion_record(page, generation))
+    }
+
+    pub(crate) fn write_deletion(
+        &mut self,
+        page: PageKey,
+        generation: u64,
+        event: koru_core::pages::deletion::EventId,
+        covers: &loro::VersionVector,
+        deleted_ms: i64,
+    ) -> bool {
+        self.edit_list(|doc| {
+            doc.write_deletion(page, generation, event, covers, deleted_ms)
+                .unwrap_or(false)
+        })
+    }
+
+    pub(crate) fn write_recover(
+        &mut self,
+        page: PageKey,
+        generation: u64,
+        replica: u64,
+        observed: Vec<koru_core::pages::deletion::EventId>,
+    ) -> bool {
+        self.edit_list(|doc| {
+            doc.write_recover(page, generation, replica, observed)
+                .unwrap_or(false)
+        })
+    }
+
+    pub(crate) fn write_keep(
+        &mut self,
+        page: PageKey,
+        generation: u64,
+        event: koru_core::pages::deletion::EventId,
+        decision: koru_core::pages::deletion::DecisionId,
+        keep: &koru_core::pages::deletion::Keep,
+    ) -> bool {
+        self.edit_list(|doc| {
+            doc.write_keep(page, generation, event, decision, keep)
+                .unwrap_or(false)
+        })
+    }
+
+    pub(crate) fn report_uncovered(
+        &mut self,
+        page: PageKey,
+        generation: u64,
+        replica: u64,
+        event: koru_core::pages::deletion::EventId,
+        version: &loro::VersionVector,
+    ) -> bool {
+        self.edit_list(|doc| {
+            doc.report_uncovered(page, generation, replica, event, version)
+                .unwrap_or(false)
+        })
     }
 
     /// A direct rename of a page document's generation.

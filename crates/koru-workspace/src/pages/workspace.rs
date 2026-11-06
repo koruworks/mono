@@ -73,6 +73,20 @@ impl Workspace {
             generation += 1;
             document = page_document_id(workspace, page, generation);
         }
+        // A generation that was permanently deleted (a tombstone, §6.2) is
+        // replaced too: the page shows empty and the first input creates
+        // id(n+1). A recovered one is live again and is not stepped past.
+        // Only the current generation can carry a live tombstone, so this is
+        // one step, not a loop.
+        if self
+            .system
+            .as_ref()
+            .and_then(|s| s.deletion_record(page, generation))
+            .is_some_and(|record| record.is_deleted())
+        {
+            generation += 1;
+            document = page_document_id(workspace, page, generation);
+        }
         Some((document, generation))
     }
 
@@ -94,11 +108,19 @@ impl Workspace {
             .into_iter()
             .map(|list| PageKey::List(list.id))
             .collect();
-        pages.extend(koru_core::tasks::Bucket::ALL.into_iter().map(PageKey::Bucket));
+        pages.extend(
+            koru_core::tasks::Bucket::ALL
+                .into_iter()
+                .map(PageKey::Bucket),
+        );
         let mut out = Vec::new();
         for page in pages {
             for generation in system.page_generations(page).unwrap_or_default() {
-                out.push((page_document_id(workspace, page, generation), page, generation));
+                out.push((
+                    page_document_id(workspace, page, generation),
+                    page,
+                    generation,
+                ));
             }
         }
         out
@@ -137,7 +159,8 @@ impl Workspace {
         let Some(system) = &mut self.system else {
             return false;
         };
-        let changed = system.set_page_override(page, generation, (!title.is_empty()).then_some(title));
+        let changed =
+            system.set_page_override(page, generation, (!title.is_empty()).then_some(title));
         if changed {
             self.lists_changed = true;
         }
@@ -809,6 +832,209 @@ impl Workspace {
             if let (Some(session), Some(doc)) = (&mut entry.session, &mut entry.held) {
                 let _ = session.publish(doc);
                 let _ = session.drain(doc);
+            }
+        }
+    }
+
+    // ----------------------------------------------------- deletion lifecycle
+
+    /// This device's replica id and version of `document`, when it holds a
+    /// copy — open, parked or held by the registry.
+    fn page_local_version(&self, document: DocumentId) -> Option<(u64, loro::VersionVector)> {
+        self.page_doc(document)
+            .map(|doc| (doc.peer_id(), doc.version()))
+    }
+
+    /// Mint a deletion event for a page document being permanently deleted
+    /// (plan §6.2, §6.4). The body stays retained — the manifest only
+    /// unregisters — so this records *that* it was deleted, with the coverage
+    /// this device can vouch for: its own version of the document when it
+    /// holds a copy, else the empty vector (conservative: a peer's concurrent
+    /// writing then shows as a conflict until the version route lets a
+    /// not-open deleter read coverage, §6.7).
+    fn mint_page_deletion(&mut self, document: DocumentId, deleted_ms: i64) {
+        let Some((page, generation)) = self
+            .page_documents()
+            .into_iter()
+            .find(|(id, _, _)| *id == document)
+            .map(|(_, page, generation)| (page, generation))
+        else {
+            return;
+        };
+        let covers = self
+            .page_local_version(document)
+            .map(|(_, vv)| vv)
+            .unwrap_or_default();
+        if let Some(system) = &mut self.system {
+            system.write_deletion(
+                page,
+                generation,
+                koru_core::pages::deletion::EventId::new(),
+                &covers,
+                deleted_ms,
+            );
+            self.lists_changed = true;
+        }
+    }
+
+    /// Report, for every in-force event of `page`'s current generation, this
+    /// device's version of the document when it falls outside the event's
+    /// coverage (plan §6.2, *evidence only grows*; the reconnect/start-up
+    /// compare that stands in for the commit watch until §6.2's push lands).
+    fn report_page_uncovered(&mut self, page: PageKey, generation: u64) {
+        let Some(workspace) = self.current else {
+            return;
+        };
+        let document = page_document_id(workspace, page, generation);
+        let Some((replica, version)) = self.page_local_version(document) else {
+            return;
+        };
+        let Some(record) = self
+            .system
+            .as_ref()
+            .and_then(|s| s.deletion_record(page, generation))
+        else {
+            return;
+        };
+        let owed: Vec<koru_core::pages::deletion::EventId> = record
+            .events_in_force()
+            .into_iter()
+            .filter(|event| {
+                record
+                    .coverage(*event)
+                    .is_none_or(|coverage| !koru_core::pages::covers(&coverage, &version))
+            })
+            .collect();
+        if owed.is_empty() {
+            return;
+        }
+        if let Some(system) = &mut self.system {
+            for event in owed {
+                system.report_uncovered(page, generation, replica, event, &version);
+            }
+            self.lists_changed = true;
+        }
+    }
+
+    /// The resolved state of `page`'s current generation — what the Tasks
+    /// page shows: Live, Deleted (a plain deletion, no prompt) or Conflict
+    /// (shown on both devices with *Keep deleted* / *Recover*). Reports this
+    /// device's own uncovered writing first.
+    pub fn page_resolution(&mut self, page: PageKey) -> koru_core::pages::deletion::Resolution {
+        use koru_core::pages::deletion::Resolution;
+        self.ensure_system(false);
+        let Some(generation) = self.page_generation(page) else {
+            return Resolution::Live;
+        };
+        self.report_page_uncovered(page, generation);
+        self.system
+            .as_ref()
+            .and_then(|s| s.deletion_record(page, generation))
+            .map(|record| record.resolve())
+            .unwrap_or(Resolution::Live)
+    }
+
+    /// The replica id this device writes decisions under for `page`'s current
+    /// generation — its own copy's peer when it holds one.
+    fn page_replica(&self, page: PageKey, generation: u64) -> u64 {
+        self.current
+            .map(|ws| page_document_id(ws, page, generation))
+            .and_then(|document| self.page_local_version(document))
+            .map(|(replica, _)| replica)
+            .unwrap_or(0)
+    }
+
+    /// *Keep deleted* every in-force conflict on `page`'s current generation:
+    /// one decision per event, covering the writing the conflict showed
+    /// (plan §6.3). The conflict closes; the body stays retained.
+    pub fn keep_page_deleted(&mut self, page: PageKey) -> bool {
+        use koru_core::pages::deletion::{DecisionId, Keep};
+        self.ensure_system(false);
+        let Some(generation) = self.page_generation(page) else {
+            return false;
+        };
+        let replica = self.page_replica(page, generation);
+        let Some(record) = self
+            .system
+            .as_ref()
+            .and_then(|s| s.deletion_record(page, generation))
+        else {
+            return false;
+        };
+        let decisions: Vec<_> = record
+            .conflicts()
+            .into_iter()
+            .filter_map(|event| {
+                record
+                    .closing_coverage(event)
+                    .map(|covers| (event, Keep { replica, covers }))
+            })
+            .collect();
+        if decisions.is_empty() {
+            return false;
+        }
+        if let Some(system) = &mut self.system {
+            for (event, keep) in decisions {
+                system.write_keep(page, generation, event, DecisionId::new(), &keep);
+            }
+            self.lists_changed = true;
+        }
+        true
+    }
+
+    /// *Recover* `page`'s current generation: name every event this device
+    /// has observed (plan §6.3). Recover beats every Keep. The document's
+    /// body is re-listed through the registry's ordinary create-or-join on
+    /// the next `ensure_page`, which re-seeds the retained candidate.
+    pub fn recover_page(&mut self, page: PageKey) -> bool {
+        self.ensure_system(false);
+        let Some(generation) = self.page_generation(page) else {
+            return false;
+        };
+        let replica = self.page_replica(page, generation);
+        let Some(record) = self
+            .system
+            .as_ref()
+            .and_then(|s| s.deletion_record(page, generation))
+        else {
+            return false;
+        };
+        let observed: Vec<_> = record.events().collect();
+        if observed.is_empty() {
+            return false;
+        }
+        if let Some(system) = &mut self.system {
+            system.write_recover(page, generation, replica, observed);
+            self.lists_changed = true;
+        }
+        true
+    }
+
+    /// Restoring a page document from the trash is a *Recover* of every event
+    /// this device observed (plan §6.4, owner Q2): with no replacement, the
+    /// page reconnects to it.
+    pub(crate) fn recover_on_restore(&mut self, document: DocumentId) {
+        if let Some((_, page, _)) = self
+            .page_documents()
+            .into_iter()
+            .find(|(id, _, _)| *id == document)
+        {
+            self.recover_page(page);
+        }
+    }
+
+    /// Mint a deletion event for every page document a permanent deletion is
+    /// about to unregister — called from the trash sweep and the named purge
+    /// before the manifest row goes.
+    pub(crate) fn mint_page_deletions(&mut self, ids: &[DocumentId], now_ms: i64) {
+        let pages: std::collections::HashSet<DocumentId> = self
+            .page_documents()
+            .into_iter()
+            .map(|(id, _, _)| id)
+            .collect();
+        for id in ids {
+            if pages.contains(id) {
+                self.mint_page_deletion(*id, now_ms);
             }
         }
     }

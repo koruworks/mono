@@ -291,3 +291,67 @@ fn a_notes_title_is_resolved_from_the_list_and_a_direct_rename_overrides_it() {
     );
     let _ = settle(&mut ws, document);
 }
+
+/// Rung 14 (P5): permanently deleting a page document mints a tombstone
+/// (its body stays retained), a device that wrote concurrently resolves to
+/// a conflict, *Keep deleted* closes it, and *Recover* ends it — all at the
+/// workspace layer, over a fake system store.
+#[test]
+fn a_permanent_delete_is_a_recoverable_tombstone_and_a_concurrent_write_is_a_conflict() {
+    use crate::system::SystemStore;
+    use crate::system::tests::FakeStore;
+    use koru_core::pages::deletion::Resolution;
+    use std::sync::Arc;
+
+    let root = tempfile::tempdir().unwrap();
+    let id = WorkspaceId::new();
+    let mut ws = workspace_at(root.path(), id);
+    ws.system_store_for_tests = Some(Arc::new(FakeStore::new([])) as Arc<dyn SystemStore>);
+    let list = ws.create_list("Bike", None).expect("a list");
+    let page = PageKey::List(list);
+
+    // Write something, so the page has a document generation 0.
+    let state = ws.ensure_page(page).unwrap();
+    let document = state.document;
+    ws.others
+        .get_mut(&document)
+        .unwrap()
+        .set_text(genesis_seed_id(document), "notes")
+        .unwrap();
+    ws.tick_pages();
+    assert_eq!(ws.page_resolution(page), Resolution::Live);
+
+    // The device holds a copy, so the deletion's coverage includes its
+    // version: deleting is a plain tombstone, no conflict.
+    ws.mint_page_deletions(&[document], 1_000);
+    assert_eq!(ws.page_resolution(page), Resolution::Deleted);
+
+    // A peer wrote past that coverage: now a conflict, shown on this device.
+    let generation = 0;
+    let mut peer_vv = ws.document(document).unwrap().version();
+    peer_vv.insert(0xBEEF, 7); // a peer counter this device has never seen
+    let event = ws
+        .system
+        .as_ref()
+        .unwrap()
+        .deletion_record(page, generation)
+        .unwrap()
+        .events()
+        .next()
+        .unwrap();
+    ws.system
+        .as_mut()
+        .unwrap()
+        .report_uncovered(page, generation, 0xBEEF, event, &peer_vv);
+    assert!(matches!(ws.page_resolution(page), Resolution::Conflict(_)));
+
+    // Keep deleted closes it.
+    assert!(ws.keep_page_deleted(page));
+    assert_eq!(ws.page_resolution(page), Resolution::Deleted);
+
+    // Recover ends it, and the body was never destroyed, so the page can be
+    // shown again.
+    assert!(ws.recover_page(page));
+    assert_eq!(ws.page_resolution(page), Resolution::Live);
+    let _ = settle(&mut ws, document);
+}

@@ -205,6 +205,19 @@ impl DeletionRecord {
         )
     }
 
+    /// The version a *Keep* must cover to close every current conflict on
+    /// `event`: the join of the event's coverage and every uncovered report
+    /// about it (plan §6.3). `None` for an unknown event.
+    pub fn closing_coverage(&self, event: EventId) -> Option<VersionVector> {
+        let mut covers = self.coverage(event)?;
+        for ((_, reported), version) in &self.uncovered {
+            if *reported == event {
+                covers = join(&covers, version);
+            }
+        }
+        Some(covers)
+    }
+
     /// Whether some replica has recovered this event. Recover beats every
     /// Keep of the same event, so this is the only question that ends one.
     pub fn is_recovered(&self, event: EventId) -> bool {

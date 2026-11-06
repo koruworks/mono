@@ -1057,10 +1057,7 @@ impl Workspace {
         // a failed open is not *nothing was changed*, and the message says
         // so rather than letting the window claim the opposite.
         self.open_document(id).map_err(|e| {
-            koru_store_core::errors::Error::new(
-                e.code(),
-                format!("{CREATED_BUT_NOT_OPENED}: {e}"),
-            )
+            koru_store_core::errors::Error::new(e.code(), format!("{CREATED_BUT_NOT_OPENED}: {e}"))
         })?;
         // **The schema marker, on the document the store made.**
         //
@@ -1948,7 +1945,13 @@ impl Workspace {
         &mut self,
         id: koru_core::DocumentId,
     ) -> Result<(), koru_store_core::errors::Error> {
-        self.edit_manifest(|manifest| manifest.restore_document(explore::store_document(id)))
+        self.edit_manifest(|manifest| manifest.restore_document(explore::store_document(id)))?;
+        // Restoring a page document is a *Recover* of every deletion event
+        // this device has observed (page-document plan §6.4, owner Q2): a
+        // trashed note that a permanent delete elsewhere turned into a
+        // tombstone comes back rather than staying deleted.
+        self.recover_on_restore(id);
+        Ok(())
     }
 
     /// **Destroy every trashed document.** The one irreversible operation in the
@@ -1966,6 +1969,12 @@ impl Workspace {
     /// them is destroying the wrong thing.
     pub fn empty_trashed_documents(&mut self) -> Result<usize, koru_store_core::errors::Error> {
         let doomed: Vec<_> = self.trashed_entries().into_iter().map(|e| e.id).collect();
+        // A permanently-deleted page document keeps its body (the manifest
+        // only unregisters); minting a deletion event here records *that* it
+        // went, so a device that wrote concurrently sees the conflict and can
+        // Recover (page-document plan §6.2). Before the unregister, while the
+        // document is still listed.
+        self.mint_page_deletions(&doomed, crate::open::now_ms());
         // **Roots first, and children only if they were not swept with one.**
         // `remove_document` takes a subtree, so a child named after its parent
         // has already gone and asking again is an error about a document nobody
@@ -2001,12 +2010,16 @@ impl Workspace {
         id: koru_core::DocumentId,
     ) -> Result<bool, koru_store_core::errors::Error> {
         let store_id = explore::store_document(id);
-        let Some(manifest) = &mut self.manifest else {
-            return Ok(false);
-        };
-        if !manifest.contains(store_id) {
+        if self
+            .manifest
+            .as_ref()
+            .is_none_or(|manifest| !manifest.contains(store_id))
+        {
             return Ok(false);
         }
+        // A page document keeps its body; record that it was deleted (§6.2).
+        self.mint_page_deletions(&[id], crate::open::now_ms());
+        let manifest = self.manifest.as_mut().expect("checked contains above");
         manifest.remove_document(store_id)?;
         self.publish_manifest();
         Ok(true)
