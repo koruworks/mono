@@ -77,7 +77,7 @@ mod view;
 
 pub use menu::{row_menu, rows_menu};
 pub use query::TaskEntry;
-pub use view::{ListFace, Request, TasksView, due_sentence};
+pub use view::{LaneItem, ListFace, Request, TasksView, due_sentence};
 
 // The pure rules the suite drives directly: how a typed line splits into a
 // title and a date word, and which rule-label a dated row falls under. Public

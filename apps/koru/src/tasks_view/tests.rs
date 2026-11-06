@@ -4748,17 +4748,22 @@ mod note {
         let (_, _, _, mut doc, mut view) = note_view();
         let band_top = view.header_h;
         let (a, b) = (DocumentId::new(), DocumentId::new());
-        assert!(view.set_attachment_faces(vec![
-            (a, "brief.pdf".to_owned()),
-            (b, "mock.png".to_owned()),
-        ]));
-        assert!(
-            !view.set_attachment_faces(vec![
-                (a, "brief.pdf".to_owned()),
-                (b, "mock.png".to_owned()),
-            ]),
-            "compare-first"
-        );
+        let faces = || {
+            vec![
+                crate::tasks_view::LaneItem {
+                    id: a,
+                    name: "brief.pdf".to_owned(),
+                    is_file: true,
+                },
+                crate::tasks_view::LaneItem {
+                    id: b,
+                    name: "Plan".to_owned(),
+                    is_file: false,
+                },
+            ]
+        };
+        assert!(view.set_attachment_faces(faces()));
+        assert!(!view.set_attachment_faces(faces()), "compare-first");
         view.layout_band();
         let lane: Vec<Rect> = view.lane_for_test().to_vec();
         assert_eq!(lane.len(), 2);
@@ -4769,7 +4774,10 @@ mod note {
             band.y >= lane[0].y + lane[0].h,
             "the note sits under the lane"
         );
-        assert!(view.rows_top() >= band.y + band.h, "and the rows under both");
+        assert!(
+            view.rows_top() >= band.y + band.h,
+            "and the rows under both"
+        );
 
         let (x, y) = (lane[0].x + lane[0].w * 0.5, lane[0].y + lane[0].h * 0.5);
         assert!(view.mouse_move(x, y));
@@ -4798,6 +4806,168 @@ mod note {
             band_top,
             "no lane, no gap"
         );
+    }
+
+    fn found(title: &str, is_file: bool) -> koru_editor::components::entity_picker::DocumentChoice {
+        koru_editor::components::entity_picker::DocumentChoice {
+            target: koru_editor::trigger::DocumentTarget {
+                document: DocumentId::new(),
+                node: None,
+            },
+            title: title.to_owned(),
+            breadcrumb: String::new(),
+            is_file,
+        }
+    }
+
+    fn type_keys(view: &mut TasksView, doc: &mut WorkspaceDoc, words: &str) {
+        for ch in words.chars() {
+            let t = ch.to_string();
+            view.key(
+                doc,
+                &Key::Character(t.as_str().into()),
+                Some(&t),
+                ModifiersState::empty(),
+            );
+        }
+    }
+
+    /// *Add existing document or file…*: the `@` list opens under the `+`
+    /// with a field of its own, typing there owes a search for what was
+    /// typed in the page's workspace, and Enter on a result is the page's
+    /// request — the picker going with it.
+    #[test]
+    fn the_link_picker_types_in_its_own_field_and_commits_a_pick() {
+        let (_, _, _, mut doc, mut view) = note_view();
+        let mut scene = vello::Scene::new();
+        view.paint_heading(&mut scene, Affine::IDENTITY);
+        assert!(!view.link_open());
+        view.open_link_picker();
+        assert!(view.link_open());
+        let workspace = WorkspaceId::new();
+        view.set_link_context(workspace, Vec::new());
+
+        // It sits under the `+`, inside the page.
+        let plus = view.plus_rect();
+        let panel = view.link_rect_for_test();
+        assert!(panel.y >= plus.y + plus.h, "under the +");
+        assert!(panel.x + panel.w <= 900.0 && panel.y + panel.h <= 600.0);
+
+        // Typing goes to the picker, not the note or the capture row.
+        type_keys(&mut view, &mut doc, "bri");
+        assert!(view.body.as_ref().is_none_or(|b| !b.focused));
+        let request = view.take_link_request().expect("a search is owed");
+        assert_eq!(request.query, "bri");
+        assert_eq!(request.workspaces, vec![workspace]);
+
+        let (brief, plan) = (found("brief.pdf", true), found("Plan", false));
+        let picked = plan.target.document;
+        assert!(view.set_link_results(vec![brief, plan], false));
+        view.key(
+            &mut doc,
+            &Key::Named(NamedKey::ArrowDown),
+            None,
+            ModifiersState::empty(),
+        );
+        view.key(
+            &mut doc,
+            &Key::Named(NamedKey::Enter),
+            None,
+            ModifiersState::empty(),
+        );
+        assert!(!view.link_open(), "a pick closes it");
+        assert_eq!(
+            view.take_request(),
+            Some(Request::LinkExisting { document: picked })
+        );
+    }
+
+    /// Escape and a press outside close the picker and ask for nothing; a
+    /// click on a result picks it.
+    #[test]
+    fn the_link_picker_closes_on_escape_and_outside_and_picks_on_a_click() {
+        let (_, _, _, mut doc, mut view) = note_view();
+        let mods = ModifiersState::empty();
+        view.open_link_picker();
+        view.key(&mut doc, &Key::Named(NamedKey::Escape), None, mods);
+        assert!(!view.link_open());
+        assert_eq!(view.take_request(), None);
+
+        view.open_link_picker();
+        assert!(view.mouse_down(&mut doc, 2.0, 590.0, false), "swallowed");
+        assert!(!view.link_open(), "a press outside closes it");
+        assert_eq!(view.take_request(), None, "and acts on nothing");
+
+        view.open_link_picker();
+        let hit = found("Plan", false);
+        let picked = hit.target.document;
+        view.set_link_results(vec![hit], false);
+        let panel = view.link_rect_for_test();
+        // The first result row: past the field, the scope chip and padding.
+        let y = panel.y
+            + koru_editor::components::entity_picker::FIELD_H
+            + koru_draw::theme::PANEL_PAD
+            + koru_editor::components::entity_picker::HEADER_H
+            + koru_draw::theme::ROW_H * 0.5;
+        assert!(view.mouse_move(panel.x + 20.0, y), "the row lights");
+        assert!(view.mouse_down(&mut doc, panel.x + 20.0, y, false));
+        assert_eq!(
+            view.take_request(),
+            Some(Request::LinkExisting { document: picked })
+        );
+        assert!(!view.link_open());
+    }
+
+    /// What the picker offers leaves out what the page already holds and the
+    /// page's own note: linking either is no use to anyone.
+    #[test]
+    fn the_link_picker_leaves_out_what_the_page_holds_and_its_own_note() {
+        let (_, _, document, _, mut view) = note_view();
+        let held = DocumentId::new();
+        view.set_attachment_faces(vec![crate::tasks_view::LaneItem {
+            id: held,
+            name: "held.pdf".to_owned(),
+            is_file: true,
+        }]);
+        view.open_link_picker();
+        let mut own = found("The note", false);
+        own.target.document = document;
+        let mut already = found("held.pdf", true);
+        already.target.document = held;
+        view.set_link_results(vec![own, already, found("Fresh", false)], false);
+        let titles: Vec<String> = view
+            .link
+            .as_ref()
+            .unwrap()
+            .hits
+            .iter()
+            .map(|hit| hit.title.clone())
+            .collect();
+        assert_eq!(titles, vec!["Fresh".to_owned()]);
+    }
+
+    /// A reference to a document wears the page glyph and one to a file the
+    /// file glyph — the lane says which it holds.
+    #[test]
+    fn the_lane_tells_a_document_from_a_file() {
+        let (_, _, _, _, mut view) = note_view();
+        let (file, page) = (DocumentId::new(), DocumentId::new());
+        view.set_attachment_faces(vec![
+            crate::tasks_view::LaneItem {
+                id: file,
+                name: "brief.pdf".to_owned(),
+                is_file: true,
+            },
+            crate::tasks_view::LaneItem {
+                id: page,
+                name: "Plan".to_owned(),
+                is_file: false,
+            },
+        ]);
+        view.layout_band();
+        assert_eq!(view.lane_for_test().len(), 2);
+        let mut scene = vello::Scene::new();
+        view.paint_lane_for_test(&mut scene);
     }
 
     /// Review note: a note taller than its band shows the thumb a document

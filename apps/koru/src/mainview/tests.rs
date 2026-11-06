@@ -14647,3 +14647,118 @@ fn drain_pane_requests(v: &mut MainView) -> Vec<koru_workspace_host::PaneRequest
     }
     out
 }
+
+/// The page's `+` offers *Add existing document or file…* third, and
+/// choosing it opens the `@` picker on the Tasks page in front — it is not a
+/// page edit, so nothing goes up to the shell until something is picked.
+#[test]
+fn add_existing_opens_the_link_picker_on_the_page_in_front() {
+    use koru_core::ids::PageKey;
+    let (mut v, _w) = on_tasks();
+    let items = context_menu::page_plus_items(false);
+    assert_eq!(items.len(), 3);
+    assert_eq!(items[2], MenuAction::PageAddExisting);
+    assert_eq!(items[2].label(), "Add existing document or file\u{2026}");
+
+    let list = koru_core::ids::ListId::new();
+    let page = PageKey::List(list);
+    assert!(
+        !v.run_menu_action_for_test(MenuSubject::Page(page), MenuAction::PageAddExisting),
+        "no Tasks page in front, nothing to open the picker on"
+    );
+    v.open_tasks_tab(crate::panes::explore::rail::RailTarget::List(list), false);
+    assert!(v.run_menu_action_for_test(MenuSubject::Page(page), MenuAction::PageAddExisting));
+    let TabView::Tasks(t) = &v.tabs().active_tab().view else {
+        panic!("a Tasks tab")
+    };
+    assert!(t.link_open(), "the picker is up on the page in front");
+    assert!(View::take_wants_list_edits(&mut v).is_empty());
+    assert!(View::take_wants_page_attachments(&mut v).is_empty());
+}
+
+/// A lane reference opens as what it is, and its menu is that kind's: a
+/// file's own verbs (the Files row's) or a document's, then *Remove
+/// attachment* either way. The kind is the listing's.
+#[test]
+fn a_lane_reference_opens_and_menus_as_its_kind() {
+    use koru_core::explore::ExploreEntry;
+    let (mut v, _w) = on_tasks();
+    let (file, page) = (koru_core::DocumentId::new(), koru_core::DocumentId::new());
+    let entry = |id, title: &str, kind: &str| ExploreEntry {
+        id,
+        parent: None,
+        ordinal: 0,
+        title: title.to_owned(),
+        kind: kind.to_owned(),
+        mime: None,
+        note: None,
+        trashed_at: None,
+        trashed_by: None,
+    };
+    View::set_entries(
+        &mut v,
+        vec![
+            entry(file, "brief.pdf", koru_core::explore::KIND_FILE),
+            entry(page, "Plan", koru_core::explore::KIND_DOCUMENT),
+        ],
+        None,
+    );
+    assert!(v.linked_is_file(file));
+    assert!(!v.linked_is_file(page));
+    let faces = v.attachment_faces(&[file, page]);
+    assert_eq!(
+        faces
+            .iter()
+            .map(|f| (f.name.as_str(), f.is_file))
+            .collect::<Vec<_>>(),
+        vec![("brief.pdf", true), ("Plan", false)]
+    );
+
+    // Opening: a file through the file route, a document through Navigate.
+    let _ = drain_pane_requests(&mut v);
+    v.handle_tasks_request_for_test(crate::tasks_view::Request::OpenAttachment { file });
+    assert!(matches!(
+        View::take_pane_request(&mut v),
+        Some(koru_workspace_host::PaneRequest::OpenFile(f)) if f == file
+    ));
+    v.handle_tasks_request_for_test(crate::tasks_view::Request::OpenAttachment { file: page });
+    assert!(matches!(
+        View::take_pane_request(&mut v),
+        Some(koru_workspace_host::PaneRequest::Navigate {
+            target: koru_workspace_host::NavigationTarget::Document { document, .. },
+            ..
+        }) if document == page
+    ));
+
+    // Their menus.
+    let items = context_menu::page_link_items();
+    assert_eq!(items.last(), Some(&MenuAction::DetachFromPage));
+    assert!(items.contains(&MenuAction::OpenInNewTab));
+    assert!(
+        !items.contains(&MenuAction::OpenFileInApp),
+        "a page is not a file"
+    );
+    let items = context_menu::page_attachment_items(Some(false));
+    assert!(items.contains(&MenuAction::OpenFileInApp));
+    assert_eq!(items.last(), Some(&MenuAction::DetachFromPage));
+}
+
+/// A pick from the page's picker leaves as the same edit an attached file
+/// does, so the page holds it and the lane shows it.
+#[test]
+fn a_linked_pick_leaves_as_an_attach_edit() {
+    use koru_core::ids::PageKey;
+    use koru_workspace_host::tasks::ListEdit;
+    let (mut v, w) = on_tasks();
+    let list = koru_core::ids::ListId::new();
+    v.open_tasks_tab(crate::panes::explore::rail::RailTarget::List(list), false);
+    let picked = koru_core::DocumentId::new();
+    v.handle_tasks_request_for_test(crate::tasks_view::Request::LinkExisting { document: picked });
+    let edits = View::take_wants_list_edits(&mut v);
+    assert!(
+        matches!(&edits[0], ListEdit::Attach { page, files }
+            if *page == PageKey::List(list) && files == &vec![picked]),
+        "{edits:?}"
+    );
+    let _ = w;
+}

@@ -3140,13 +3140,23 @@ impl MainView {
         }
     }
 
-    /// A page's attachments as the lane shows them: each file's name from
-    /// the listing, or a neutral word for one the listing has not caught up
-    /// with yet.
+    /// Whether a reference on a page's lane is a file, from the listing — a
+    /// document otherwise. One the listing has not caught up with is taken
+    /// for a file, the common case, until it does.
+    pub(super) fn linked_is_file(&self, id: koru_core::DocumentId) -> bool {
+        self.entries
+            .as_ref()
+            .and_then(|entries| entries.iter().find(|entry| entry.id == id))
+            .is_none_or(|entry| entry.kind == koru_core::explore::KIND_FILE)
+    }
+
+    /// A page's attachments as the lane shows them: each one's name and kind
+    /// from the listing, or a neutral word for one the listing has not
+    /// caught up with yet.
     fn attachment_faces(
         &self,
         files: &[koru_core::DocumentId],
-    ) -> Vec<(koru_core::DocumentId, String)> {
+    ) -> Vec<crate::tasks_view::LaneItem> {
         files
             .iter()
             .map(|file| {
@@ -3157,7 +3167,11 @@ impl MainView {
                     .map(|entry| entry.title.clone())
                     .filter(|title| !title.is_empty())
                     .unwrap_or_else(|| "File".to_owned());
-                (*file, name)
+                crate::tasks_view::LaneItem {
+                    id: *file,
+                    name,
+                    is_file: self.linked_is_file(*file),
+                }
             })
             .collect()
     }
@@ -4585,7 +4599,9 @@ impl MainView {
             }
             MenuSubject::Page(_) => matches!(
                 action,
-                MenuAction::PageDescription { .. } | MenuAction::PageAttach
+                MenuAction::PageDescription { .. }
+                    | MenuAction::PageAttach
+                    | MenuAction::PageAddExisting
             ),
             // A file's own rows, as its Files row offers them for one file,
             // and taking it off the page.
@@ -4598,6 +4614,8 @@ impl MainView {
                     | MenuAction::AddNote
                     | MenuAction::OpenNote
                     | MenuAction::MoveToTrash
+                    | MenuAction::OpenInNewTab
+                    | MenuAction::OpenDocumentInNewWindow
             ),
             // Emptying nothing is not an action, it is a no-op wearing a label.
             MenuSubject::Trash => {
@@ -5136,6 +5154,21 @@ impl MainView {
                     self.wants_page_attachment.push(page);
                     true
                 }
+                // The `@` list under the `+`, with a field of its own; its
+                // pick is the page's request. Fed by `sync_link_picker`.
+                MenuAction::PageAddExisting => {
+                    let opened = match &mut self.tabs_mut().active_mut().view {
+                        TabView::Tasks(t) => {
+                            t.open_link_picker();
+                            true
+                        }
+                        _ => false,
+                    };
+                    if opened {
+                        self.sync_link_picker();
+                    }
+                    opened
+                }
                 _ => false,
             },
             // A file on a page: its own verbs are the Files row's, through
@@ -5146,10 +5179,17 @@ impl MainView {
                         .push(koru_workspace_host::tasks::ListEdit::Detach { page, file });
                     true
                 }
-                other => self.run_menu_action(
-                    MenuSubject::Files(vec![NodeId::from_uuid(file.as_uuid())]),
-                    other,
-                ),
+                // A file's verbs are the Files row's, a document's the
+                // library's: the kind is the listing's.
+                other => {
+                    let node = NodeId::from_uuid(file.as_uuid());
+                    let subject = if self.linked_is_file(file) {
+                        MenuSubject::Files(vec![node])
+                    } else {
+                        MenuSubject::Nodes(vec![node])
+                    };
+                    self.run_menu_action(subject, other)
+                }
             },
             MenuSubject::List(id) => match action {
                 MenuAction::RailOpenInNewTab => {
@@ -9708,14 +9748,23 @@ impl MainView {
     fn refresh_labels(&mut self, ws: &WorkspaceDoc) {
         let active_document = self.active_document;
         let naming = self.naming;
-        let titles: std::collections::HashMap<koru_core::DocumentId, String> = self
+        // Each listed entry's name and whether it is a file, for the lanes.
+        let titles: std::collections::HashMap<koru_core::DocumentId, (String, bool)> = self
             .entries
             .as_ref()
             .map(|entries| {
                 entries
                     .iter()
                     .filter(|entry| !entry.title.is_empty())
-                    .map(|entry| (entry.id, entry.title.clone()))
+                    .map(|entry| {
+                        (
+                            entry.id,
+                            (
+                                entry.title.clone(),
+                                entry.kind == koru_core::explore::KIND_FILE,
+                            ),
+                        )
+                    })
                     .collect()
             })
             .unwrap_or_default();
@@ -9745,15 +9794,19 @@ impl MainView {
                 t.refresh_tasks_label();
                 // The lane's names follow the listing, as the tab's does.
                 if let TabView::Tasks(page) = &mut t.view {
-                    let faces: Vec<(koru_core::DocumentId, String)> = page
+                    let faces: Vec<crate::tasks_view::LaneItem> = page
                         .attachment_ids()
                         .into_iter()
                         .map(|file| {
-                            let name = titles
+                            let (name, is_file) = titles
                                 .get(&file)
                                 .cloned()
-                                .unwrap_or_else(|| "File".to_owned());
-                            (file, name)
+                                .unwrap_or_else(|| ("File".to_owned(), true));
+                            crate::tasks_view::LaneItem {
+                                id: file,
+                                name,
+                                is_file,
+                            }
                         })
                         .collect();
                     page.set_attachment_faces(faces);
@@ -16646,9 +16699,44 @@ impl MainView {
     /// Push context into an open `@` picker and send its newest query to the
     /// shared search worker. Called after every editor gesture; it is a no-op
     /// when no entity picker is open.
-    fn sync_entity_picker(&mut self) -> bool {
-        let Some((_, _, _, current)) = self.pane_context.as_ref() else {
+    /// Feed the Tasks page's *Add existing* picker: the scope, the window's
+    /// recents while nothing is typed, and the search it owes — the same
+    /// service the `@` list in a document asks. Nothing when it is not up.
+    fn sync_link_picker(&mut self) -> bool {
+        let Some((_, _, _, Some(current))) = self.pane_context.clone() else {
             return false;
+        };
+        if !matches!(&self.tabs().active_tab().view, TabView::Tasks(t) if t.link_open()) {
+            return false;
+        }
+        let workspaces = self.entity_workspaces.clone();
+        let recents = self.recent_document_choices();
+        let TabView::Tasks(t) = self.active_view() else {
+            return false;
+        };
+        let mut changed = t.set_link_context(current, workspaces);
+        // Recents first, so an empty query's owed search is answered by them
+        // and the picker is not left on *Searching…*.
+        changed |= t.feed_link_recents(recents);
+        let Some(request) = t.take_link_request() else {
+            return changed;
+        };
+        if request.query.trim().is_empty() {
+            return changed;
+        }
+        let scope = request
+            .workspaces
+            .into_iter()
+            .map(|id| koru_store_core::ids::WorkspaceId::from_uuid(id.as_uuid()))
+            .collect();
+        self.entity_search.request(request.query, scope);
+        true
+    }
+
+    fn sync_entity_picker(&mut self) -> bool {
+        let link = self.sync_link_picker();
+        let Some((_, _, _, current)) = self.pane_context.as_ref() else {
+            return link;
         };
         let Some(current) = *current else {
             return false;
@@ -16907,6 +16995,31 @@ impl MainView {
             self.entity_titles
                 .insert(key.clone(), document.title.clone());
             self.entity_trashed.remove(&key);
+        }
+        // The Tasks page's *Add existing* picker asked: it takes the answer,
+        // documents and files together.
+        if matches!(&self.tabs().active_tab().view, TabView::Tasks(t) if t.link_open()) {
+            let hits: Vec<_> = update
+                .documents
+                .iter()
+                .map(
+                    |document| koru_editor::components::entity_picker::DocumentChoice {
+                        target: koru_editor::trigger::DocumentTarget {
+                            document: koru_core::DocumentId::from_uuid(document.document.as_uuid()),
+                            node: None,
+                        },
+                        title: document.title.clone(),
+                        breadcrumb: document.breadcrumb.clone(),
+                        is_file: document.kind == "file"
+                            || document.kind == koru_core::explore::KIND_FILE,
+                    },
+                )
+                .collect();
+            if let TabView::Tasks(t) = self.active_view() {
+                t.set_link_results(hits, update.unavailable);
+            }
+            self.sync_link_picker();
+            return true;
         }
         let hits = update
             .documents

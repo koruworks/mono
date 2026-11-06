@@ -586,6 +586,9 @@ pub enum MenuAction {
     },
     /// The page's `+`: attach files from the computer as context.
     PageAttach,
+    /// The page's `+`: link a document or file the workspace already has,
+    /// picked with the `@` list.
+    PageAddExisting,
     /// Take the file off the page. The file stays in the workspace's Files.
     DetachFromPage,
 
@@ -1106,6 +1109,7 @@ impl MenuAction {
             | Self::ListDelete
             | Self::PageDescription { .. }
             | Self::PageAttach
+            | Self::PageAddExisting
             | Self::DetachFromPage
             | Self::AttributePriority => f::tasks(),
             // Canvases: the `+` flyout and its rows. A recent canvas is an
@@ -1429,6 +1433,7 @@ impl MenuAction {
             MenuAction::PageDescription { shown: false } => "Inline description",
             MenuAction::PageDescription { shown: true } => "Hide inline description",
             MenuAction::PageAttach => "Attachment\u{2026}",
+            MenuAction::PageAddExisting => "Add existing document or file\u{2026}",
             MenuAction::DetachFromPage => "Remove attachment",
             MenuAction::TaskRemove => "Remove from Tasks",
             MenuAction::WindowAlwaysOnTop => "Always on Top",
@@ -1638,6 +1643,7 @@ impl MenuAction {
             MenuAction::ListColor => Some(koru_draw::icons::PALETTE),
             MenuAction::PageDescription { .. } => Some(koru_draw::icons::NOTE),
             MenuAction::PageAttach => Some(koru_draw::icons::PAPERCLIP),
+            MenuAction::PageAddExisting => Some(koru_draw::icons::LINK),
             MenuAction::ListDelete | MenuAction::DeleteAiChat => Some(koru_draw::icons::TRASH),
             MenuAction::Attributes => Some(koru_draw::icons::FADERS),
             MenuAction::AttributeTags => Some(koru_draw::icons::TAG),
@@ -2492,6 +2498,20 @@ pub fn page_plus_items(shown: bool) -> Vec<MenuAction> {
     vec![
         MenuAction::PageDescription { shown },
         MenuAction::PageAttach,
+        MenuAction::PageAddExisting,
+    ]
+}
+
+/// A document linked to a Tasks page: what a document's own row offers to
+/// open it, then taking it off the page — which leaves the document where
+/// it is.
+pub fn page_link_items() -> Vec<MenuAction> {
+    vec![
+        MenuAction::OpenInNewTab,
+        MenuAction::OpenDocumentInNewWindow,
+        MenuAction::Rename,
+        MenuAction::Divider,
+        MenuAction::DetachFromPage,
     ]
 }
 

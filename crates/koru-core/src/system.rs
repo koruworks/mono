@@ -164,8 +164,10 @@ const FROZEN_BUCKET: &str = "bucket";
 /// the page has a document"**: a note somebody wrote is never hidden by
 /// default, and a page nobody wrote on shows no band until asked.
 const K_PAGE_NOTE: &str = "page_note";
-/// On a page record: the files attached to the page as context —
-/// `page_files.<DocumentId>` → the millisecond it was attached. A set:
+/// On a page record: the files **and documents** the page holds as context —
+/// `page_files.<DocumentId>` → the millisecond it was attached (a file the
+/// page's `+` imported, or a document or file it linked from the workspace;
+/// the library's listing says which each is). A set:
 /// attaching is one key insert, removing deletes the key, so two devices
 /// attaching different files both keep theirs. Read in attached order.
 const K_PAGE_FILES: &str = "page_files";

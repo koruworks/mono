@@ -164,18 +164,24 @@ impl TasksView {
 
     /// The attachments lane under the heading: one chip per file, the file
     /// glyph and its name, lit under the pointer as a control.
+    /// The lane painted alone, for the suite.
+    #[cfg(test)]
+    pub(super) fn paint_lane_for_test(&mut self, scene: &mut Scene) {
+        self.paint_lane(scene, Affine::IDENTITY);
+    }
+
     fn paint_lane(&mut self, scene: &mut Scene, root: Affine) {
         if self.lane.is_empty() {
             return;
         }
-        let chips: Vec<(Rect, String)> = self
+        let chips: Vec<(Rect, super::view::LaneItem)> = self
             .lane
             .iter()
             .zip(self.attachments.iter())
-            .map(|(r, (_, name))| (*r, name.clone()))
+            .map(|(r, item)| (*r, item.clone()))
             .collect();
-        for (i, (r, name)) in chips.iter().enumerate() {
-            let chip = TasksView::lane_chip(name);
+        for (i, (r, item)) in chips.iter().enumerate() {
+            let chip = TasksView::lane_chip(item);
             chip.draw(
                 scene,
                 root,

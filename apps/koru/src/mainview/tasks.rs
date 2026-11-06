@@ -316,6 +316,12 @@ impl MainView {
         true
     }
 
+    /// One request, as if the Tasks tab in front had made it — for the suite.
+    #[cfg(test)]
+    pub(super) fn handle_tasks_request_for_test(&mut self, request: crate::tasks_view::Request) {
+        self.handle_tasks_request(request);
+    }
+
     /// One request from the Tasks tab, through the door its verb has.
     fn handle_tasks_request(&mut self, request: crate::tasks_view::Request) {
         // **A tab reports in its own coordinates.** The container passes the
@@ -515,11 +521,16 @@ impl MainView {
                         .find(|entry| entry.id == file)
                         .map(|entry| entry.note.is_some())
                 });
+                let items = if self.linked_is_file(file) {
+                    super::context_menu::page_attachment_items(note)
+                } else {
+                    super::context_menu::page_link_items()
+                };
                 let mut menu = super::context_menu::ContextMenu::new(
                     &mut self.engine,
                     super::context_menu::MenuSubject::PageAttachment { page, file },
                     to_window(at),
-                    super::context_menu::page_attachment_items(note),
+                    items,
                 );
                 let enabled = self.enabled_items(&menu);
                 menu.step(&enabled, 1);
@@ -527,9 +538,36 @@ impl MainView {
                 self.submenu = None;
                 self.nested = None;
             }
-            // A press on a file in the lane opens it, as a file pill does.
+            // A press on a reference in the lane opens it as what it is: a
+            // file as a file pill does, a document as a document pill.
             crate::tasks_view::Request::OpenAttachment { file } => {
-                self.ask_pane(koru_workspace_host::PaneRequest::OpenFile(file));
+                if self.linked_is_file(file) {
+                    self.ask_pane(koru_workspace_host::PaneRequest::OpenFile(file));
+                } else {
+                    self.open_document_target(
+                        koru_editor::trigger::DocumentTarget {
+                            document: file,
+                            node: None,
+                        },
+                        koru_editor::OpenWhere::Reuse,
+                    );
+                }
+            }
+            // The *Add existing* picker chose a document or file: the page
+            // takes the reference, through the same edit an attached file
+            // does.
+            crate::tasks_view::Request::LinkExisting { document } => {
+                let Some(page) = (match &self.tabs().active_tab().view {
+                    TabView::Tasks(t) => t.page_key(),
+                    _ => None,
+                }) else {
+                    return;
+                };
+                self.list_edits
+                    .push(koru_workspace_host::tasks::ListEdit::Attach {
+                        page,
+                        files: vec![document],
+                    });
             }
             // The note's corner control: its document in a tab of its own,
             // the way a Ctrl+Enter on a pill opens one — even when a tab is

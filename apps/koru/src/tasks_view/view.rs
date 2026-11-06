@@ -139,6 +139,17 @@ pub(super) enum Hit {
     Attachment(usize),
 }
 
+/// One reference on a page's lane: a workspace file or a document the page
+/// holds as context, named from the library's listing.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct LaneItem {
+    pub id: DocumentId,
+    pub name: String,
+    /// A file wears the file glyph and opens as a file; a document wears the
+    /// page glyph and opens as a page.
+    pub is_file: bool,
+}
+
 /// A drag of rows, from the press on a row of a list ordered by hand to the
 /// release. A press that never moves past the threshold is a click.
 #[derive(Clone, Debug, PartialEq)]
@@ -314,6 +325,9 @@ pub enum Request {
     AttachmentMenu { file: DocumentId, at: (f32, f32) },
     /// A press on a file in the lane: open it, as a file pill does.
     OpenAttachment { file: DocumentId },
+    /// The page's *Add existing document or file* picker chose one: attach
+    /// the reference to this page.
+    LinkExisting { document: DocumentId },
 }
 
 /// One list, as the header and the membership chip need it. Pushed by the
@@ -447,7 +461,14 @@ pub struct TasksView {
     task_touch: Option<(std::time::Instant, super::query::WriteRequirement)>,
     /// The files attached to the page as context, with their names from the
     /// listing — what the lane under the heading shows, in attached order.
-    pub(super) attachments: Vec<(DocumentId, String)>,
+    pub(super) attachments: Vec<LaneItem>,
+    /// **The page's *Add existing* picker**, while it is up: the `@` list in
+    /// a popover under the `+`, with a field of its own to type into — the
+    /// page has no body to type `@…` in. The container feeds it the search
+    /// service's answers.
+    pub(super) link: Option<koru_editor::components::entity_picker::EntityPicker>,
+    /// The row of the link picker under the pointer.
+    link_hover: Option<usize>,
     /// Where each lane chip was laid out this frame, in lane order.
     pub(super) lane: Vec<Rect>,
     /// The lane's height this frame — what the band and the rows move down
@@ -507,6 +528,8 @@ impl TasksView {
             pointer: (-1.0, -1.0),
             task_touch: None,
             attachments: Vec::new(),
+            link: None,
+            link_hover: None,
             lane: Vec::new(),
             lane_h: 0.0,
             heading_text_right: 0.0,
@@ -522,6 +545,8 @@ impl TasksView {
         if self.target == target {
             return false;
         }
+        // A picker opened for the page left behind is not this page's.
+        self.link = None;
         self.target = target;
         self.scroll = 0.0;
         self.hover = None;
@@ -760,7 +785,8 @@ impl TasksView {
             | Request::RenameList { .. }
             | Request::PageMenu { .. }
             | Request::AttachmentMenu { .. }
-            | Request::OpenAttachment { .. } => return,
+            | Request::OpenAttachment { .. }
+            | Request::LinkExisting { .. } => return,
             Request::Many(_) => unreachable!("taken apart above"),
         };
         crate::tasks::debug_line(format_args!(
@@ -3085,8 +3111,8 @@ impl TasksView {
                 true
             }
             Some(Hit::Attachment(i)) => match self.attachments.get(i) {
-                Some((file, _)) => {
-                    self.pending = Some(Request::OpenAttachment { file: *file });
+                Some(item) => {
+                    self.pending = Some(Request::OpenAttachment { file: item.id });
                     true
                 }
                 None => false,
@@ -3403,6 +3429,12 @@ impl View for TasksView {
         text: Option<&str>,
         mods: ModifiersState,
     ) -> bool {
+        // The *Add existing* picker has the keyboard while it is up: it
+        // types in its own field, arrows and Enter are the list's, Escape
+        // closes it.
+        if self.link.is_some() {
+            return self.link_key(key, text, mods);
+        }
         // The heading's rename field has the keyboard while it stands:
         // Enter keeps the words, Escape puts the old ones back.
         if self.heading_rename.is_some() {
@@ -3542,6 +3574,11 @@ impl View for TasksView {
 
     fn mouse_down(&mut self, ws: &mut WorkspaceDoc, x: f32, y: f32, ctrl: bool) -> bool {
         self.pointer = (x, y);
+        // The picker is above everything on the page: a press in it is its
+        // own, a press anywhere else closes it and is not acted on.
+        if self.link.is_some() {
+            return self.link_mouse_down(x, y);
+        }
         // The heading's rename field: a press in it moves the caret;
         // anywhere else keeps the words and lets the press land where it
         // was aimed — the rule every field in this app follows.
@@ -3635,6 +3672,9 @@ impl View for TasksView {
 
     fn mouse_move(&mut self, x: f32, y: f32) -> bool {
         self.pointer = (x, y);
+        if self.link.is_some() {
+            return self.link_mouse_move(x, y);
+        }
         if self.drag.is_some() {
             return self.drag_to(y);
         }
@@ -3720,6 +3760,9 @@ impl View for TasksView {
     }
 
     fn mouse_up(&mut self, ws: &mut WorkspaceDoc) -> bool {
+        if let Some(picker) = self.link.as_mut() {
+            return picker.stop_scrollbar_drag();
+        }
         if self.band_resize.take().is_some() {
             return true;
         }
@@ -3808,10 +3851,10 @@ impl View for TasksView {
         }
         // A file in the lane: its own menu, the page's one addition on it.
         if let Some(Hit::Attachment(i)) = self.hit_at(x, y)
-            && let Some((file, _)) = self.attachments.get(i)
+            && let Some(item) = self.attachments.get(i)
         {
             self.pending = Some(Request::AttachmentMenu {
-                file: *file,
+                file: item.id,
                 at: (x, y),
             });
             return true;
@@ -3842,6 +3885,15 @@ impl View for TasksView {
     }
 
     fn scroll_by(&mut self, delta: MouseScrollDelta) {
+        // The wheel over the picker scrolls its list, and nothing under it.
+        if let Some(picker) = self.link.as_mut() {
+            let rows = match delta {
+                MouseScrollDelta::LineDelta(_, y) => -(y.signum() as isize) * 2,
+                MouseScrollDelta::PixelDelta(p) => -(p.y.signum() as isize),
+            };
+            picker.scroll_rows(rows);
+            return;
+        }
         if let Some(body) = &mut self.body
             && body.contains(self.pointer.0, self.pointer.1)
         {
@@ -3960,6 +4012,8 @@ impl View for TasksView {
         if let Some(body) = &mut self.body {
             body.draw_panels(scene, root, &workspace.ws);
         }
+        // And the *Add existing* picker over all of it.
+        self.paint_link(scene, root);
     }
 
     fn restore(&mut self, _ws: &koru_workspace::Workspace, _settings: &Settings) {}
@@ -4028,7 +4082,7 @@ impl TasksView {
 
     /// The lane's files with their names, from the container, which reads
     /// the listing. Compare-first: pushed on every turn the listing moves.
-    pub fn set_attachment_faces(&mut self, faces: Vec<(DocumentId, String)>) -> bool {
+    pub fn set_attachment_faces(&mut self, faces: Vec<LaneItem>) -> bool {
         if self.attachments == faces {
             return false;
         }
@@ -4240,10 +4294,14 @@ impl TasksView {
     }
 
     /// The lane's chip for one attachment: the file glyph and its name.
-    pub(super) fn lane_chip(name: &str) -> LabelChip<'_> {
-        LabelChip::new(name)
+    pub(super) fn lane_chip(item: &LaneItem) -> LabelChip<'_> {
+        LabelChip::new(&item.name)
             .size(koru_ui::label_chip::Size::Regular)
-            .lead(koru_ui::label_chip::Lead::Glyph(koru_draw::icons::FILE))
+            .lead(koru_ui::label_chip::Lead::Glyph(if item.is_file {
+                koru_draw::icons::FILE
+            } else {
+                koru_draw::icons::DOCUMENT
+            }))
     }
 
     /// Lay the attachments lane out under the heading: chips left to right
@@ -4258,8 +4316,8 @@ impl TasksView {
         let right = (self.viewport.0 - PAD).max(PAD + 1.0);
         let (mut x, mut y) = (PAD, self.header_h);
         let mut row_h = 0.0_f32;
-        for (_, name) in &self.attachments {
-            let chip = Self::lane_chip(name);
+        for item in &self.attachments {
+            let chip = Self::lane_chip(item);
             let (w, h) = (chip.width(&mut self.engine), chip.height());
             if x > PAD && x + w > right {
                 x = PAD;
@@ -4277,6 +4335,212 @@ impl TasksView {
     #[cfg(test)]
     pub(super) fn lane_for_test(&self) -> &[Rect] {
         &self.lane
+    }
+
+    // ------------------------------------------------ the Add existing picker
+
+    /// Open the *Add existing document or file* picker under the `+`: the
+    /// `@` list with a field of its own. Any other panel or field on the
+    /// page goes, and the keyboard is the picker's.
+    pub fn open_link_picker(&mut self) {
+        self.picker = None;
+        self.overflow = None;
+        self.end_capture();
+        self.commit_rename();
+        self.commit_heading_rename();
+        if let Some(body) = &mut self.body
+            && body.focused
+        {
+            body.blur();
+        }
+        self.link =
+            Some(koru_editor::components::entity_picker::EntityPicker::for_link(&mut self.engine));
+        self.link_hover = None;
+    }
+
+    /// Whether the picker is up.
+    pub fn link_open(&self) -> bool {
+        self.link.is_some()
+    }
+
+    fn close_link(&mut self) {
+        self.link = None;
+        self.link_hover = None;
+    }
+
+    /// The picker's panel: under the `+`, kept inside the page.
+    fn link_origin(&self) -> (f32, f32) {
+        let plus = self.plus_rect();
+        let height = self.link.as_ref().map_or(0.0, |p| p.height());
+        let x = plus
+            .x
+            .min(self.viewport.0 - theme::PANEL_W - CONTROL_GAP)
+            .max(CONTROL_GAP);
+        let y = (plus.y + plus.h + 4.0)
+            .min(self.viewport.1 - height - CONTROL_GAP)
+            .max(CONTROL_GAP);
+        (x, y)
+    }
+
+    fn link_rect(&self) -> Rect {
+        let (x, y) = self.link_origin();
+        let height = self.link.as_ref().map_or(0.0, |p| p.height());
+        Rect::new(x, y, theme::PANEL_W, height)
+    }
+
+    /// The workspace the page is in and the catalog, from the container —
+    /// the scope the picker searches. `true` when it changed what is owed.
+    pub fn set_link_context(
+        &mut self,
+        current: WorkspaceId,
+        workspaces: Vec<koru_editor::components::entity_picker::WorkspaceChoice>,
+    ) -> bool {
+        self.link
+            .as_mut()
+            .is_some_and(|picker| picker.set_context(current, workspaces))
+    }
+
+    /// The window's recents, while nothing is typed. Compare-first.
+    pub fn feed_link_recents(
+        &mut self,
+        hits: Vec<koru_editor::components::entity_picker::DocumentChoice>,
+    ) -> bool {
+        let hits = self.link_hits(hits);
+        self.link
+            .as_mut()
+            .is_some_and(|picker| picker.set_recent_results(hits))
+    }
+
+    /// The search the picker owes, if any: what is typed and where.
+    pub fn take_link_request(
+        &mut self,
+    ) -> Option<koru_editor::components::entity_picker::EntitySearchRequest> {
+        self.link.as_mut().and_then(|picker| picker.take_request())
+    }
+
+    /// The search service's answer for what was typed.
+    pub fn set_link_results(
+        &mut self,
+        hits: Vec<koru_editor::components::entity_picker::DocumentChoice>,
+        unavailable: bool,
+    ) -> bool {
+        let hits = self.link_hits(hits);
+        match self.link.as_mut() {
+            Some(picker) => {
+                picker.set_results(hits, unavailable);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// What the picker offers: not what the page already holds, and not the
+    /// page's own note — linking a page to itself is no use to anyone.
+    fn link_hits(
+        &self,
+        hits: Vec<koru_editor::components::entity_picker::DocumentChoice>,
+    ) -> Vec<koru_editor::components::entity_picker::DocumentChoice> {
+        let own = self.page_document();
+        hits.into_iter()
+            .filter(|hit| {
+                let id = hit.target.document;
+                Some(id) != own && !self.attachments.iter().any(|item| item.id == id)
+            })
+            .collect()
+    }
+
+    fn link_key(&mut self, key: &Key, text: Option<&str>, mods: ModifiersState) -> bool {
+        if matches!(key, Key::Named(NamedKey::Escape)) {
+            self.close_link();
+            return true;
+        }
+        let Some(picker) = self.link.as_mut() else {
+            return false;
+        };
+        let outcome = picker.key_full(&mut self.engine, key, text, mods);
+        self.finish_link(outcome);
+        true
+    }
+
+    fn link_mouse_down(&mut self, x: f32, y: f32) -> bool {
+        let panel = self.link_rect();
+        if !panel.contains(x, y) {
+            self.close_link();
+            return true;
+        }
+        let (lx, ly) = (x - panel.x, y - panel.y);
+        let Some(picker) = self.link.as_mut() else {
+            return false;
+        };
+        // The query field: a press puts the caret there.
+        if ly < picker.field_band() {
+            picker.click_field(&mut self.engine, lx, panel.w);
+            return true;
+        }
+        if picker.scrolls() && picker.scrollbar_track(panel.w).contains(lx, ly) {
+            picker.press_scrollbar(panel.w, ly);
+            return true;
+        }
+        let outcome = picker.click(lx, ly, panel.w);
+        self.finish_link(outcome);
+        true
+    }
+
+    fn link_mouse_move(&mut self, x: f32, y: f32) -> bool {
+        let panel = self.link_rect();
+        let Some(picker) = self.link.as_mut() else {
+            return false;
+        };
+        if picker.is_dragging_scrollbar() {
+            picker.drag_scrollbar(panel.w, y - panel.y);
+            return true;
+        }
+        let hover = panel
+            .contains(x, y)
+            .then(|| picker.item_at(y - panel.y))
+            .flatten();
+        let changed = hover != self.link_hover;
+        self.link_hover = hover;
+        changed
+    }
+
+    /// What the picker said: a pick is the page's request, and the picker
+    /// goes; anything else leaves it up.
+    fn finish_link(&mut self, outcome: koru_editor::components::Outcome) {
+        use koru_editor::components::Outcome;
+        if let Outcome::Commit(spec) = outcome
+            && let Some(target) = spec.document
+        {
+            self.pending = Some(Request::LinkExisting {
+                document: target.document,
+            });
+            self.close_link();
+        }
+    }
+
+    /// The picker panel's rect while it is up, for the suite.
+    #[cfg(test)]
+    pub(super) fn link_rect_for_test(&self) -> Rect {
+        self.link_rect()
+    }
+
+    /// Paint the picker, over everything else on the page.
+    pub(super) fn paint_link(&mut self, scene: &mut Scene, root: Affine) {
+        if self.link.is_none() {
+            return;
+        }
+        let at = self.link_origin();
+        let hover = self.link_hover;
+        if let Some(picker) = self.link.as_mut() {
+            koru_editor::components::draw::draw_standalone_entity_picker(
+                scene,
+                root,
+                &mut self.engine,
+                picker,
+                at,
+                hover,
+            );
+        }
     }
 
     /// Lay the band out for this frame: the note's content up to its share
