@@ -47,6 +47,9 @@ pub(super) struct PageBody {
     origin: (f32, f32),
     /// The leaf has to be laid out again before it is drawn.
     dirty: bool,
+    /// Built and not yet fed the container's caches — entity titles, the
+    /// schedule pills — which every document leaf gets on open.
+    fresh: bool,
 }
 
 impl PageBody {
@@ -67,6 +70,7 @@ impl PageBody {
             band: Rect::new(0.0, 0.0, 0.0, 0.0),
             origin: (0.0, 0.0),
             dirty: true,
+            fresh: true,
         })
     }
 
@@ -108,9 +112,36 @@ impl PageBody {
             }
             self.band = Rect::new(0.0, top, w, h);
             self.origin = (x, top);
+            // Embedded in the page's chrome: the rows paint inside the band
+            // and a picker may float anywhere on the page, which is what lets
+            // a `/` menu opened on the last line open downwards over the rows
+            // rather than being cut at the band.
+            Editing::view_mut(&mut self.leaf).embedded = Some(koru_editor::Embedded {
+                clip: Rect::new(0.0, 0.0, leaf_w, h),
+                panels: Rect::new(-x, -top, w, page_h),
+            });
             self.dirty = false;
         }
         self.band.h
+    }
+
+    /// Whether a picker or menu of the note's is open — a press anywhere on
+    /// the page is then the note's to answer, wherever it lands.
+    pub fn overlay_open(&self) -> bool {
+        Editing::view(&self.leaf).overlay.is_open()
+    }
+
+    /// Draw the note's open picker, after everything else the page draws,
+    /// so it floats over the rows rather than being cut at the band.
+    pub fn draw_panels(&mut self, scene: &mut Scene, root: Affine) {
+        if self.band.h <= 0.0 {
+            return;
+        }
+        koru_editor::draw::floating_panels(
+            scene,
+            root * Affine::translate((self.origin.0 as f64, self.origin.1 as f64)),
+            &mut self.leaf,
+        );
     }
 
     pub fn contains(&self, x: f32, y: f32) -> bool {
@@ -196,6 +227,20 @@ impl PageBody {
     pub fn mouse_move(&mut self, x: f32, y: f32) -> bool {
         let (lx, ly) = self.local(x, y);
         View::mouse_move(&mut self.leaf, lx, ly)
+    }
+
+    /// A press while the note's picker is open: the leaf decides whether it
+    /// chose something or dismissed the panel. No clamping — the press may
+    /// be anywhere on the page.
+    pub fn mouse_down_on_overlay(&mut self, ws: &mut WorkspaceDoc, x: f32, y: f32, ctrl: bool) -> bool {
+        let (lx, ly) = self.local(x, y);
+        self.dirty = true;
+        Leaf::mouse_down(&mut self.leaf, ws, lx, ly, ctrl)
+    }
+
+    /// The caches every document leaf is fed when the library moves.
+    pub fn take_fresh(&mut self) -> bool {
+        std::mem::take(&mut self.fresh)
     }
 
     pub fn mouse_up(&mut self, ws: &mut WorkspaceDoc) -> bool {

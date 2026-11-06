@@ -3437,6 +3437,14 @@ impl View for TasksView {
             self.wants_retry = true;
             return true;
         }
+        // The note's open picker is above everything on the page: the press
+        // is its to answer wherever it lands.
+        if let Some(body) = &mut self.body
+            && body.overlay_open()
+            && body.is_in(ws)
+        {
+            return body.mouse_down_on_overlay(ws, x, y, ctrl);
+        }
         if self
             .body
             .as_ref()
@@ -3481,7 +3489,7 @@ impl View for TasksView {
             return self.drag_to(y);
         }
         if let Some(body) = &mut self.body
-            && (body.is_dragging() || body.contains(x, y))
+            && (body.is_dragging() || body.overlay_open() || body.contains(x, y))
         {
             let moved = body.mouse_move(x, y);
             let was = self.hover.take();
@@ -3712,6 +3720,10 @@ impl View for TasksView {
         }
         self.paint_notice(scene, root);
         self.paint_over(scene, root, caret_on);
+        // The note's picker floats over the rows and the page's own panels.
+        if let Some(body) = &mut self.body {
+            body.draw_panels(scene, root);
+        }
     }
 
     fn restore(&mut self, _ws: &koru_workspace::Workspace, _settings: &Settings) {}
@@ -3793,6 +3805,13 @@ impl TasksView {
     /// note itself asked for.
     pub fn body_leaf_mut(&mut self) -> Option<&mut Leaf> {
         self.body.as_mut().map(PageBody::leaf_mut)
+    }
+
+    /// The note's leaf when it was just built and has not been fed the
+    /// container's caches yet — once per body.
+    pub fn fresh_body_leaf(&mut self) -> Option<&mut Leaf> {
+        let body = self.body.as_mut()?;
+        body.take_fresh().then(|| body.leaf_mut())
     }
 
     /// The note's leaf while the note has the keyboard — what dictation and

@@ -1018,6 +1018,11 @@ pub struct MainView {
     /// asking `document_root()` which row is current answers `None` every time.
     /// That is what left no row in Explore drawing as the one you are on.
     active_document: Option<koru_core::DocumentId>,
+    /// A page document a Tasks tab asked the shell to activate — its own
+    /// note, which it shows itself. When that activation lands, no document
+    /// tab is opened for it; any other way of activating the same document
+    /// (Explore, a pill, Back) opens the note in a tab of its own.
+    tasks_activation: Option<koru_core::DocumentId>,
     /// A Store document whose rename prompt should open once the shell has
     /// loaded it, and when to stop waiting for it. Explore rows carry manifest
     /// `DocumentId`s, while the prompt needs the root node inside that
@@ -1916,6 +1921,7 @@ impl MainView {
             save_status: accessibility::persistence::Persistence::default(),
             reminder_news: accessibility::reminders::ReminderNews::default(),
             active_document: None,
+            tasks_activation: None,
             pending_document_rename: None,
             pending_document_attrs: None,
             pending_task_reveal: None,
@@ -3784,6 +3790,9 @@ impl MainView {
         if let Some(doc) = self.tabs().active_tab().edits()
             && self.active_document != Some(doc)
         {
+            if matches!(self.tabs().active_tab().view, TabView::Tasks(_)) {
+                self.tasks_activation = Some(doc);
+            }
             // Snapshot the tab being shown *before* catch_up can see the
             // stranger document. History's pending slot is a different waiter.
             if let Some(spot) = self.here_for_tab(i) {
@@ -11532,6 +11541,10 @@ impl View for MainView {
         // in the next, an edit from the MCP bridge or a peer drained nothing
         // for the document: its tracker filled up unread and the page showed
         // the old rows until the document was switched away from and back.
+        let live = self.entity_live();
+        let entity_titles = self.entity_titles.clone();
+        let entity_trashed = self.entity_trashed.clone();
+        let schedule_pills = self.schedule_pill_presentations();
         for (_, group) in self.panes.iter_groups_mut() {
             let active = group.tabs().active();
             for (i, t) in group.tabs_mut().iter_mut().enumerate() {
@@ -11540,6 +11553,15 @@ impl View for MainView {
                 // over the window's document at all.
                 if t.draft.is_none() {
                     t.view.adopt_cheap(ws);
+                }
+                // A note built since the last turn is fed what `document_leaf`
+                // gives every new leaf: the captions and pills that otherwise
+                // arrive only when the library next moves.
+                if let TabView::Tasks(tasks) = &mut t.view
+                    && let Some(leaf) = tasks.fresh_body_leaf()
+                {
+                    leaf.set_entity_titles(&entity_titles, &entity_trashed, &live);
+                    leaf.set_schedule_pills(&schedule_pills);
                 }
                 if i != active {
                     t.invalidate_size();
@@ -12609,6 +12631,18 @@ impl View for MainView {
                 return true;
             }
         }
+        // A Tasks tab activated its own note: it is showing it already, and
+        // a document tab over it would be a second view of the page. Any
+        // other activation of the same document lands as every document does.
+        if active.is_some() && self.tasks_activation == active {
+            self.tasks_activation = None;
+            if let TabView::Tasks(t) = &self.tabs().active_tab().view
+                && t.page_document() == active
+            {
+                self.finish_explore_gesture(ws);
+                return true;
+            }
+        }
         // Shell announcement, not a user gesture — history was recorded when
         // the person asked to leave where they were (explore click, pill, Back).
         let opened = self.land_on(ws, root, false, None);
@@ -12650,7 +12684,12 @@ impl View for MainView {
         // own: `Draft` holds the private *workspace* its leaf edits, and the
         // leaf itself is the tab's ordinary view.
         for tab in self.tabs_mut().iter_mut() {
-            if let TabView::Leaf(l) = &mut tab.view {
+            let leaf = match &mut tab.view {
+                TabView::Leaf(l) => Some(l),
+                TabView::Tasks(t) => t.body_leaf_mut(),
+                _ => None,
+            };
+            if let Some(l) = leaf {
                 l.set_images_offline(offline);
             }
         }
@@ -12691,7 +12730,13 @@ impl View for MainView {
             if let TabView::Trash(t) = &mut tab.view {
                 acted |= t.set_documents(trashed.clone());
             }
-            if let TabView::Leaf(leaf) = &mut tab.view {
+            let leaf = match &mut tab.view {
+                TabView::Leaf(leaf) => Some(leaf),
+                // The note above a Tasks page is a document leaf too.
+                TabView::Tasks(t) => t.body_leaf_mut(),
+                _ => None,
+            };
+            if let Some(leaf) = leaf {
                 acted |= leaf.set_entity_titles(&entity_titles, &entity_trashed, &live);
             }
         }
@@ -12767,7 +12812,13 @@ impl View for MainView {
         let entity_titles = self.entity_titles.clone();
         let entity_trashed = self.entity_trashed.clone();
         for tab in self.tabs_mut().iter_mut() {
-            if let TabView::Leaf(leaf) = &mut tab.view {
+            let leaf = match &mut tab.view {
+                TabView::Leaf(leaf) => Some(leaf),
+                // The note above a Tasks page is a document leaf too.
+                TabView::Tasks(t) => t.body_leaf_mut(),
+                _ => None,
+            };
+            if let Some(leaf) = leaf {
                 leaf.set_entity_titles(&entity_titles, &entity_trashed, &live);
             }
         }
@@ -13648,6 +13699,7 @@ impl View for MainView {
             && self.active_document != Some(doc)
         {
             let home = front.home_workspace();
+            self.tasks_activation = Some(doc);
             self.ask_pane(koru_workspace_host::PaneRequest::ActivateDocument {
                 document: doc,
                 workspace: home,
@@ -15985,6 +16037,9 @@ impl MainView {
         }
         match self.active_view() {
             TabView::Leaf(leaf) => leaf.set_reminder_chips(reminders),
+            TabView::Tasks(t) => t
+                .body_leaf_mut()
+                .is_some_and(|leaf| leaf.set_reminder_chips(reminders)),
             _ => false,
         }
     }
@@ -16319,7 +16374,12 @@ impl MainView {
         let mut fed = false;
         if recents_mode {
             let hits = self.recent_document_choices();
-            if let TabView::Leaf(leaf) = self.active_view() {
+            let leaf = match self.active_view() {
+                TabView::Leaf(leaf) => Some(leaf),
+                TabView::Tasks(t) => t.body_leaf_mut(),
+                _ => None,
+            };
+            if let Some(leaf) = leaf {
                 // Compare-first, or this per-gesture sync would report a
                 // change every time and pin the redraw loop.
                 fed = leaf.set_entity_recents(hits);
@@ -16462,12 +16522,23 @@ impl MainView {
                 let entity_titles = self.entity_titles.clone();
                 let entity_trashed = self.entity_trashed.clone();
                 for tab in self.tabs_mut().iter_mut() {
-                    if let TabView::Leaf(leaf) = &mut tab.view {
+                    let leaf = match &mut tab.view {
+                        TabView::Leaf(leaf) => Some(leaf),
+                        // The note above a Tasks page is a document leaf too.
+                        TabView::Tasks(t) => t.body_leaf_mut(),
+                        _ => None,
+                    };
+                    if let Some(leaf) = leaf {
                         changed |= leaf.set_entity_titles(&entity_titles, &entity_trashed, &live);
                     }
                 }
             }
-            if let TabView::Leaf(leaf) = self.active_view() {
+            let leaf = match self.active_view() {
+                TabView::Leaf(leaf) => Some(leaf),
+                TabView::Tasks(t) => t.body_leaf_mut(),
+                _ => None,
+            };
+            if let Some(leaf) = leaf {
                 changed |= leaf.set_headings(document, headings, outline.projected);
             }
         }
@@ -16536,7 +16607,13 @@ impl MainView {
         let trashed = self.entity_trashed.clone();
         let live = self.entity_live();
         for tab in self.tabs_mut().iter_mut() {
-            if let TabView::Leaf(leaf) = &mut tab.view {
+            let leaf = match &mut tab.view {
+                TabView::Leaf(leaf) => Some(leaf),
+                // The note above a Tasks page is a document leaf too.
+                TabView::Tasks(t) => t.body_leaf_mut(),
+                _ => None,
+            };
+            if let Some(leaf) = leaf {
                 leaf.set_entity_titles(&titles, &trashed, &live);
             }
         }

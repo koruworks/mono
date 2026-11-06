@@ -150,9 +150,11 @@ impl KoruTabs for TabStrip<Tab> {
     }
 
     fn showing_document(&self, document: DocumentId) -> Option<usize> {
-        // `edits`, not `document`: the Tasks tab whose page document was just
-        // activated is showing it, and a second tab over it would be two.
-        self.position(|t| t.edits() == Some(document) && t.draft.is_none())
+        // `document`, not `edits`: a Tasks tab *edits* its page's document but
+        // is not a tab over it — the note is an ordinary document that opens
+        // in a tab of its own (plan rung 8). The Tasks tab's own activation
+        // never lands here; see `MainView::tasks_activation`.
+        self.position(|t| t.document == Some(document) && t.draft.is_none())
     }
 
     fn retain_live(&mut self, ws: &WorkspaceDoc, active: Option<DocumentId>) -> bool {

@@ -4376,6 +4376,40 @@ mod note {
         );
     }
 
+    /// Full document parity (P3): a picker opened in the note floats over
+    /// the rows, and a press on the page while it is open is the note's —
+    /// here, dismissing it — rather than the table's.
+    #[test]
+    fn a_picker_opened_in_the_note_takes_the_next_press_wherever_it_lands() {
+        let (target, page, document, mut doc) = page();
+        let mut view = TasksView::new(target);
+        view.set_viewport(900.0, 600.0);
+        view.set_page_state(&state(page, document, PagePhase::Empty));
+        view.catch_up(&doc);
+        view.layout_band();
+        let band = view.body.as_ref().unwrap().band;
+        let mods = ModifiersState::empty();
+        view.mouse_down(
+            &mut doc,
+            band.x + band.w * 0.5,
+            band.y + band.h * 0.5,
+            false,
+        );
+        view.key(&mut doc, &Key::Character("/".into()), Some("/"), mods);
+        assert!(
+            view.body.as_ref().unwrap().overlay_open(),
+            "the slash menu opened in the note"
+        );
+        // Far below the band, where a row would be.
+        let took = view.mouse_down(&mut doc, 300.0, 560.0, false);
+        assert!(took);
+        assert!(
+            !view.body.as_ref().unwrap().overlay_open(),
+            "the press was the note's: the menu closed"
+        );
+        assert!(view.selected_row().is_none(), "and no row was selected");
+    }
+
     /// A note that failed to register shows its notice with *Try again*,
     /// and a press on it asks for the retry (plan Q8).
     #[test]
