@@ -1726,6 +1726,16 @@ impl koru_ui::MenuItem for MenuAction {
         (*self).brand_icon()
     }
 
+    /// A colour row shows its colour: the rail's swatch at the row's scale,
+    /// from the same accent token the list stores (acceptance round 2 —
+    /// the rows were names alone).
+    fn swatch(&self) -> Option<Option<&str>> {
+        match self {
+            MenuAction::ListSwatch(token) => Some(Some(token)),
+            _ => None,
+        }
+    }
+
     fn shortcut(&self) -> Option<String> {
         (*self).shortcut()
     }
@@ -2440,14 +2450,8 @@ pub fn rail_bucket_items() -> Vec<MenuAction> {
     vec![MenuAction::RailOpenInNewTab]
 }
 
-/// The swatches behind *Color*, one row per token in the shared accent set.
-///
-/// **Named rather than painted**, which is the one place this menu falls short
-/// of the design's swatch strip: `koru_ui::Menu` draws a row's glyph in the
-/// row's own ink, so a circle here would come out grey nine times. The colour
-/// itself is a few pixels away on the row the menu opened over, and inventing a
-/// tenth `Palette` field to tint a menu glyph is the trade the standing rule
-/// refuses.
+/// The swatches behind *Color*, one row per token in the shared accent set,
+/// each wearing its colour (`MenuItem::swatch`) ahead of its name.
 pub fn list_color_items() -> Vec<MenuAction> {
     koru_draw::theme::ACCENT_TOKENS
         .into_iter()
