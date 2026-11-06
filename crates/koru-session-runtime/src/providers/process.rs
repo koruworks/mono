@@ -458,6 +458,7 @@ fn spawn_failure(error: &std::io::Error) -> ProviderFailure {
             ProviderDiagnostic::Spawn
         },
         os_code: error.raw_os_error(),
+        version: None,
     }
 }
 

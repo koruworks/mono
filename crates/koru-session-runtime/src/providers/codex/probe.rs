@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use koru_session_protocol::{ErrorCode, ProviderKind, SessionId};
+use koru_session_protocol::{ErrorCode, ProviderKind, SessionId, VersionNeed};
 
 use super::config::{DEFAULT_EVENT_CAPACITY, DEFAULT_INPUT_BYTES};
 use super::{CodexConfig, CodexControl, SUPPORTED_CODEX_VERSIONS, failure, provider_kind};
@@ -41,29 +41,50 @@ impl CodexCompatibilityProbe {
             ProbeCommand::new(self.executable.clone()).arg("--version"),
             limits,
         )?;
-        if !output.success() {
-            return Err(failure(
-                ErrorCode::ProviderIncompatible,
-                ProviderStage::Version,
-                ProviderDiagnostic::InvalidVersion,
-            ));
-        }
-        let output = std::str::from_utf8(output.stdout()).map_err(|_| {
-            failure(
-                ErrorCode::ProviderIncompatible,
-                ProviderStage::Version,
-                ProviderDiagnostic::InvalidVersion,
-            )
-        })?;
-        let version = output.split_ascii_whitespace().last().ok_or_else(|| {
-            failure(
-                ErrorCode::ProviderIncompatible,
-                ProviderStage::Version,
-                ProviderDiagnostic::InvalidVersion,
-            )
-        })?;
-        ProviderVersion::from_str(version)
+        read_print(output.success(), output.stdout())
     }
+}
+
+/// **A `codex --version` run's answer**: the last word it printed
+/// (`codex-cli 0.166.0`), as a version. A run that failed or printed nothing
+/// is the program not starting (`version_print`), never a refused version;
+/// a print with no readable version is refused with none found. Whether
+/// Koru accepts it is [`admit`]'s question.
+pub(super) fn read_print(success: bool, stdout: &[u8]) -> Result<ProviderVersion, ProviderFailure> {
+    let unreadable = || refused(None);
+    let printed =
+        crate::providers::discovery::version_print(success, stdout)?.ok_or_else(unreadable)?;
+    let version = printed
+        .split_ascii_whitespace()
+        .last()
+        .ok_or_else(unreadable)?;
+    ProviderVersion::from_str(version).map_err(|_| unreadable())
+}
+
+/// `version`, if it is on the reviewed allowlist; refused, naming it and
+/// the newest reviewed release, if not.
+pub(super) fn admit(version: ProviderVersion) -> Result<ProviderVersion, ProviderFailure> {
+    if SUPPORTED_CODEX_VERSIONS.contains(&version.as_str()) {
+        Ok(version)
+    } else {
+        Err(refused(Some(version)))
+    }
+}
+
+fn refused(found: Option<ProviderVersion>) -> ProviderFailure {
+    // The allowlist is exact, so what a refusal names is its newest entry.
+    let newest = VersionNeed::reviewed(SUPPORTED_CODEX_VERSIONS.iter().copied());
+    let diagnostic = if found.is_some() {
+        ProviderDiagnostic::VersionRejected
+    } else {
+        ProviderDiagnostic::InvalidVersion
+    };
+    failure(
+        ErrorCode::ProviderIncompatible,
+        ProviderStage::Version,
+        diagnostic,
+    )
+    .refusing(found, newest)
 }
 
 /// Root-owned production factory. It resolves no paths and performs the exact
@@ -101,14 +122,7 @@ impl ManagedProviderFactory for CodexFactory {
             working_directory.clone(),
             Arc::clone(&self.attachment_paths),
         );
-        let version = probe.version(self.limits)?;
-        if !SUPPORTED_CODEX_VERSIONS.contains(&version.as_str()) {
-            return Err(failure(
-                ErrorCode::ProviderIncompatible,
-                ProviderStage::Version,
-                ProviderDiagnostic::VersionRejected,
-            ));
-        }
+        let version = admit(probe.version(self.limits)?)?;
         let config = CodexConfig::new(
             executable,
             working_directory,
@@ -132,14 +146,7 @@ impl ManagedProviderFactory for CodexFactory {
             working_directory.clone(),
             Arc::clone(&self.attachment_paths),
         );
-        let version = probe.version(self.limits)?;
-        if !SUPPORTED_CODEX_VERSIONS.contains(&version.as_str()) {
-            return Err(failure(
-                ErrorCode::ProviderIncompatible,
-                ProviderStage::Version,
-                ProviderDiagnostic::VersionRejected,
-            ));
-        }
+        let version = admit(probe.version(self.limits)?)?;
         let config = CodexConfig::new(
             executable,
             working_directory,
@@ -194,14 +201,7 @@ impl ManagedProviderFactory for CodexFactory {
             request.working_directory.clone(),
             Arc::clone(&self.attachment_paths),
         );
-        let version = probe.version(self.limits)?;
-        if !SUPPORTED_CODEX_VERSIONS.contains(&version.as_str()) {
-            return Err(failure(
-                ErrorCode::ProviderIncompatible,
-                ProviderStage::Version,
-                ProviderDiagnostic::VersionRejected,
-            ));
-        }
+        let version = admit(probe.version(self.limits)?)?;
         let config = CodexConfig::new(
             request.executable,
             request.working_directory,
@@ -234,14 +234,7 @@ impl CompatibilityProbe for CodexCompatibilityProbe {
     }
 
     fn probe(&self, limits: ProbeLimits) -> Result<AgentCapabilities, ProviderFailure> {
-        let version = self.version(limits)?;
-        if !SUPPORTED_CODEX_VERSIONS.contains(&version.as_str()) {
-            return Err(failure(
-                ErrorCode::ProviderIncompatible,
-                ProviderStage::Version,
-                ProviderDiagnostic::VersionRejected,
-            ));
-        }
+        let version = admit(self.version(limits)?)?;
         let config = CodexConfig::new(
             self.executable.clone(),
             self.working_directory.clone(),

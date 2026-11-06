@@ -50,6 +50,7 @@ define_catalogue!(
     ExecutableSpec,
     WorkingDirectoryPolicy,
     ExecutableAvailability,
+    VersionNeed,
     ProviderReadiness,
     ProviderReadinessFailure,
     ProviderStage,

@@ -58,28 +58,14 @@ impl AcpCompatibilityProbe {
     }
 
     fn read_version(&self, limits: ProbeLimits) -> Result<ProviderVersion, ProviderFailure> {
-        let rejected = || {
-            failure(
-                ErrorCode::ProviderIncompatible,
-                ProviderStage::Version,
-                ProviderDiagnostic::VersionRejected,
-            )
-        };
-        let version = if self.route.dialect.identified_by_digest() {
-            self.route
-                .parse_version(&antigravity::executable_digest(&self.executable)?)?
-        } else {
-            let output = run_probe_command(self.version_command()?, limits)?;
-            if !output.success() {
-                return Err(rejected());
-            }
-            let text = std::str::from_utf8(output.stdout()).map_err(|_| rejected())?;
-            self.route.parse_version(text)?
-        };
-        if !self.route.supports(&version) {
-            return Err(rejected());
+        if self.route.dialect.identified_by_digest() {
+            let version = self
+                .route
+                .parse_version(&antigravity::executable_digest(&self.executable)?)?;
+            return self.route.admit(version);
         }
-        Ok(version)
+        let output = run_probe_command(self.version_command()?, limits)?;
+        self.route.read_print(output.success(), output.stdout())
     }
 }
 

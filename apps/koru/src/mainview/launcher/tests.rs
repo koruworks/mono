@@ -106,6 +106,45 @@ fn shift_on_shell_lists_the_profiles() {
     assert_eq!(v.tabs().len(), tabs, "nothing started yet");
 }
 
+/// **The agent list ends in *Manage…***, and is *Manage…* alone on a
+/// machine with no agent (product decision, 2026-11-05: only installed
+/// agents are listed, so the way to install one is always there). The
+/// probe's answer is injected and the list opened directly, never through
+/// the launcher's refresh, which would race a real probe.
+#[test]
+fn the_agent_list_ends_in_manage_and_is_manage_alone_with_none_installed() {
+    use crate::mainview::context_menu::{self, MenuAction};
+    let (mut v, _w) = container();
+    let profiles = koru_session_profiles::built_in_profiles();
+    let is_agent = |index: usize| profiles[index].kind == koru_session_protocol::ProfileKind::Agent;
+
+    // No agent on this "machine": the list is the way to install one.
+    v.profile_probe
+        .set_for_test((0..profiles.len()).map(|index| !is_agent(index)).collect());
+    context_menu::set_profile_presence(v.profile_probe.snapshot());
+    assert!(v.open_agent_profiles());
+    assert_eq!(
+        v.menu.as_ref().expect("the agent list").items(),
+        &[MenuAction::ManageAgents]
+    );
+    v.menu = None;
+
+    // Every agent present: the agents, a rule, then Manage….
+    v.profile_probe.set_for_test(vec![true; profiles.len()]);
+    context_menu::set_profile_presence(v.profile_probe.snapshot());
+    assert!(v.open_agent_profiles());
+    let items = v.menu.as_ref().expect("the agent list").items().to_vec();
+    assert!(
+        matches!(items.first(), Some(MenuAction::TerminalProfile(_))),
+        "{items:?}"
+    );
+    assert_eq!(
+        items[items.len() - 2..],
+        [MenuAction::Divider, MenuAction::ManageAgents]
+    );
+    context_menu::set_profile_presence(None);
+}
+
 /// **Shift+T asks which page**: the queues, then the lists; choosing a
 /// list opens its page with the caret in Add a task.
 #[test]

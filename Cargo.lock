@@ -4799,6 +4799,7 @@ dependencies = [
  "koru-canvas-ui",
  "koru-channel",
  "koru-chats-ui",
+ "koru-cli-updates",
  "koru-clipboard",
  "koru-core",
  "koru-delegate-api",
@@ -6845,6 +6846,7 @@ name = "koru-session-profiles"
 version = "0.0.3"
 dependencies = [
  "koru-session-protocol",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

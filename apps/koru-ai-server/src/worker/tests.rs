@@ -3741,3 +3741,42 @@ fn answers_as_a_message_are_refused_for_anything_but_an_open_set() {
     worker.shutdown();
     assert_eq!(worker.join(), WorkerExit::Clean);
 }
+
+/// **A chat says a missing adapter is a missing adapter**, as Settings does:
+/// the host's `Missing` with the agent's own program present is
+/// `agent_adapter_missing`; without it, or with no row, the agent is not
+/// installed — and only `Missing` searches for the program.
+#[test]
+fn a_missing_route_with_the_agent_present_is_a_missing_adapter() {
+    use super::agents::readiness_status as status;
+    use koru_session_protocol::ExecutableAvailability as A;
+    assert_eq!(
+        status(Some(A::Missing), || true),
+        (
+            ProviderValidationStatus::Unavailable,
+            Some("agent_adapter_missing")
+        )
+    );
+    assert_eq!(
+        status(Some(A::Missing), || false),
+        (
+            ProviderValidationStatus::Unavailable,
+            Some("agent_not_installed")
+        )
+    );
+    assert_eq!(
+        status(None, || panic!("no row is not a search")),
+        (
+            ProviderValidationStatus::Unavailable,
+            Some("agent_not_installed")
+        )
+    );
+    assert_eq!(
+        status(Some(A::Available { version: None }), || panic!("not asked")),
+        (ProviderValidationStatus::Ready, None)
+    );
+    assert_eq!(
+        status(Some(A::Checking), || panic!("not asked")).1,
+        Some("agent_checking")
+    );
+}

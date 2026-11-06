@@ -73,11 +73,113 @@ pub enum WorkingDirectoryPolicy {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ExecutableAvailability {
     Checking,
-    Available { version: Option<String> },
+    Available {
+        version: Option<String>,
+    },
     Missing,
-    SignedOut { code: ErrorCode },
-    Incompatible { code: ErrorCode },
-    Failed { code: ErrorCode },
+    SignedOut {
+        code: ErrorCode,
+    },
+    /// The managed route refused the agent. When the refusal was its
+    /// version, `found` is the version the agent printed (absent when none
+    /// could be read) and `needed` what the route accepts, so a person is
+    /// told both rather than "not supported". Both are optional and skipped
+    /// when absent, so a peer that predates them reads and writes the same
+    /// `{"kind":"incompatible","code":…}` it always did.
+    Incompatible {
+        code: ErrorCode,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        found: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        needed: Option<VersionNeed>,
+    },
+    Failed {
+        code: ErrorCode,
+    },
+}
+
+impl ExecutableAvailability {
+    /// A refusal that says nothing about versions: the shape every
+    /// `Incompatible` had before `found` and `needed`.
+    pub fn incompatible(code: ErrorCode) -> Self {
+        Self::Incompatible {
+            code,
+            found: None,
+            needed: None,
+        }
+    }
+}
+
+/// **What a managed route accepts of an agent's version**, said when it
+/// refused one. The two policies read differently to a person: under a
+/// floor, updating fixes it; under a reviewed list, a release newer than
+/// the newest reviewed is refused until it has been reviewed too.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", content = "version", rename_all = "snake_case")]
+pub enum VersionNeed {
+    /// This release or any newer one.
+    AtLeast(String),
+    /// Only the releases on a reviewed list, of which this is the newest.
+    Reviewed(String),
+}
+
+impl VersionNeed {
+    /// A reviewed list's need: its newest entry, whatever order the list is
+    /// in. `None` for an empty list.
+    pub fn reviewed<'a>(versions: impl IntoIterator<Item = &'a str>) -> Option<Self> {
+        versions
+            .into_iter()
+            .reduce(|newest, version| {
+                if version_at_least(version, newest) {
+                    version
+                } else {
+                    newest
+                }
+            })
+            .map(|newest| Self::Reviewed(newest.to_owned()))
+    }
+
+    /// Whether `found` is newer than everything a reviewed list holds —
+    /// the case where updating cannot help and only a review can. Never
+    /// for a floor.
+    pub fn outgrown_by(&self, found: &str) -> bool {
+        match self {
+            Self::AtLeast(_) => false,
+            Self::Reviewed(newest) => {
+                version_at_least(found, newest) && !version_at_least(newest, found)
+            }
+        }
+    }
+}
+
+/// `candidate >= floor` as dotted numbers: each component's leading digits,
+/// missing components as zero, so `1.0.34 >= 1.0.25`, `2.0 >= 2.0.0` and
+/// `0.76.1-beta >= 0.76.0`. A candidate with no number in front is not at
+/// least anything. Here rather than in the session runtime because both the
+/// runtime's gates and a window wording their refusal compare versions, and
+/// they must compare them the same way.
+pub fn version_at_least(candidate: &str, floor: &str) -> bool {
+    fn component(part: &str) -> Option<u64> {
+        let digits: String = part.chars().take_while(char::is_ascii_digit).collect();
+        digits.parse().ok()
+    }
+    let Some(Some(_)) = candidate.split('.').map(component).next() else {
+        return false;
+    };
+    let mut a = candidate.split('.').map(component);
+    let mut b = floor.split('.').map(component);
+    loop {
+        match (a.next(), b.next()) {
+            (None, None) => return true,
+            (x, y) => {
+                let x = x.flatten().unwrap_or(0);
+                let y = y.flatten().unwrap_or(0);
+                if x != y {
+                    return x > y;
+                }
+            }
+        }
+    }
 }
 
 /// Declared input shapes. Native structured delivery still requires a live

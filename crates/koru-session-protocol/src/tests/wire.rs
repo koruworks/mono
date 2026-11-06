@@ -235,3 +235,65 @@ fn built_in_profile_and_capability_tokens_are_unique_and_valid() {
         CapabilityName::from_str(name).unwrap();
     }
 }
+
+/// **A refused version says what was found and what is needed**, and a
+/// refusal without them is byte-for-byte the shape older peers write, so
+/// either side may be the older one.
+#[test]
+fn an_incompatible_row_carries_the_versions_and_stays_readable_by_older_peers() {
+    let bare = ExecutableAvailability::incompatible(ErrorCode::ProviderIncompatible);
+    assert_eq!(
+        serde_json::to_value(&bare).unwrap(),
+        serde_json::json!({"kind": "incompatible", "code": "provider_incompatible"})
+    );
+    let old: ExecutableAvailability =
+        serde_json::from_str(r#"{"kind":"incompatible","code":"provider_incompatible"}"#).unwrap();
+    assert_eq!(old, bare);
+
+    let refused = ExecutableAvailability::Incompatible {
+        code: ErrorCode::ProviderIncompatible,
+        found: Some("1.18.25".into()),
+        needed: Some(VersionNeed::AtLeast("1.18.27".into())),
+    };
+    assert_eq!(
+        serde_json::to_value(&refused).unwrap(),
+        serde_json::json!({
+            "kind": "incompatible",
+            "code": "provider_incompatible",
+            "found": "1.18.25",
+            "needed": {"kind": "at_least", "version": "1.18.27"}
+        })
+    );
+    round_trip(&refused);
+    round_trip(&ExecutableAvailability::Incompatible {
+        code: ErrorCode::ProviderIncompatible,
+        found: None,
+        needed: Some(VersionNeed::Reviewed("0.166.0".into())),
+    });
+}
+
+/// Only a reviewed list can be outgrown, and only by a release newer than
+/// its newest entry.
+#[test]
+fn a_reviewed_list_is_outgrown_only_by_a_newer_release() {
+    let reviewed = VersionNeed::Reviewed("0.166.0".into());
+    assert!(reviewed.outgrown_by("0.167.0"));
+    assert!(reviewed.outgrown_by("1.0"));
+    assert!(!reviewed.outgrown_by("0.166.0"));
+    assert!(!reviewed.outgrown_by("0.155.0"));
+    assert!(!reviewed.outgrown_by("garbage"));
+    assert!(!VersionNeed::AtLeast("1.18.27".into()).outgrown_by("9.0.0"));
+    assert!(version_at_least("1.0.34", "1.0.25"));
+    assert!(version_at_least("2.0", "2.0.0"));
+    assert!(version_at_least("0.76.1-beta", "0.76.0"));
+    assert!(!version_at_least("1.18.25", "1.18.27"));
+}
+
+#[test]
+fn a_reviewed_need_names_the_newest_entry_in_any_order() {
+    assert_eq!(
+        VersionNeed::reviewed(["0.150.1", "0.166.0", "0.158.0"]),
+        Some(VersionNeed::Reviewed("0.166.0".into()))
+    );
+    assert_eq!(VersionNeed::reviewed([]), None);
+}

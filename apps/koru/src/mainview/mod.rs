@@ -61,6 +61,7 @@ mod harness;
 /// that call into it.
 pub(crate) mod accessibility;
 mod agent_cli_updates;
+mod agent_install;
 mod agent_mcp;
 mod agent_providers;
 mod canvas;
@@ -1381,6 +1382,10 @@ pub struct MainView {
     /// presence probe's cached answer, refreshed each time the menu opens.
     /// See `mainview/profile_probe.rs`.
     profile_probe: profile_probe::ProfileProbe,
+    /// The *Install* tabs *Agent providers* opened that have not ended yet;
+    /// when one ends the agents are checked again. See
+    /// `mainview/agent_install.rs`.
+    agent_installs: Vec<agent_install::AgentInstall>,
     provider_readiness: Option<Vec<koru_session_protocol::ProviderReadiness>>,
     /// **The one delegation surface** (ROADMAP P1.14). Four gestures reach it
     /// and `MainView::begin_delegation` is the only thing that opens it.
@@ -2025,6 +2030,7 @@ impl MainView {
             terminate_after_attach: None,
             wants_session_popout: None,
             profile_probe: profile_probe::ProfileProbe::new(),
+            agent_installs: Vec::new(),
             provider_readiness: None,
             delegation: None,
             recording_modal: None,
@@ -3048,17 +3054,19 @@ impl MainView {
 
     /// Ask for a title before creating a document. Used both for a cold taskbar
     /// launch and for an activation handed over by a second short-lived exe.
+    ///
+    /// **A document prompt even with no workspace open.** This used to ask
+    /// for a workspace's name instead, and committing it made only the
+    /// workspace — the document asked for never appeared. The shell now makes
+    /// a default workspace for a document that has nowhere to go
+    /// (`ensure_live_workspace` in the host), so the prompt asks for what was
+    /// asked for.
     pub fn prompt_new_document(&mut self) {
         self.menu = None;
         if self.new_document.is_none() {
-            // A cancelled *New workspace in…* prompt leaves its owner behind;
-            // this prompt's workspace, if it asks for one, is the open Profile's.
+            // A cancelled *New workspace in…* prompt leaves its owner behind.
             self.new_workspace_owner = None;
-            self.new_document = Some(if self.current_workspace().is_some() {
-                NewDocument::new(&mut self.engine)
-            } else {
-                NewDocument::workspace(&mut self.engine)
-            });
+            self.new_document = Some(NewDocument::new(&mut self.engine));
         }
     }
 
@@ -3144,9 +3152,10 @@ impl MainView {
     }
 
     /// The `+` menu's *Agents* flyout on its own, at the pointer — what
-    /// Welcome's *Run an agent in a terminal* opens. The same rows, dimmed off
-    /// the same probe, and a pick opens the same session tab as it does from
-    /// `+`. Nothing opens when this build shows no agents.
+    /// Welcome's *Run an agent in a terminal* opens. The same rows, off the
+    /// same probe — the installed agents, then *Manage…* — and a pick opens
+    /// the same session tab as it does from `+`. Nothing opens when this
+    /// build shows no agents.
     fn open_agents_menu(&mut self) -> bool {
         self.profile_probe.refresh(self.agent.wake_proxy());
         self.snapshot_plus_menu();
@@ -4153,10 +4162,11 @@ impl MainView {
         match &menu.subject {
             MenuSubject::NewTab => match action {
                 // A profile row reflects the off-thread presence probe: a
-                // program — shell or agent, one uniform rule — whose
-                // executable is not on this machine is dimmed with its
-                // *Not installed* note rather than hidden
-                // (`profile_probe::enabled_rows`).
+                // shell whose executable is not on this machine is dimmed
+                // with its *Not installed* note. A missing agent is left out
+                // of the *Agents* flyout altogether
+                // (`context_menu::agent_missing`); the dim is what a row
+                // fixed before the answer landed falls back to.
                 MenuAction::TerminalProfile(index) => self.profile_probe.row_enabled(index),
                 MenuAction::NewTaskIn(_) => true,
                 // Dimmed, with its reason beside it, when this build carries
@@ -4263,9 +4273,9 @@ impl MainView {
                 | MenuAction::ActiveShells
                 | MenuAction::ActiveAgents
                 | MenuAction::OpenRunningSession(_) => true,
-                // The same presence probe the `+` menu's rows read: a program
-                // whose executable is not on this machine is dimmed with its
-                // *Not installed* note, never hidden.
+                // The same presence probe and the same rule as the `+`
+                // menu's rows: a missing shell dims, a missing agent is not
+                // listed.
                 MenuAction::TerminalProfile(index) => self.profile_probe.row_enabled(index),
                 MenuAction::Rename => project.is_some(),
                 // Koru Terminal's refusal, in this window's local answer: a
@@ -7425,6 +7435,25 @@ impl MainView {
         let chats = self.plus_recent_chats();
         context_menu::set_plus_snapshots(recents, shells, agents, chats);
         context_menu::set_plus_canvases(canvases);
+        context_menu::set_profile_presence(self.profile_probe.snapshot());
+    }
+
+    /// **The probe answered while an agent menu stands.** Hand the menus the
+    /// new answer and rebuild an open *Agents* flyout — under `+` or the
+    /// Agents tree — so the agents it leaves out leave now, rather than at
+    /// the next open. The flyout's rows are fixed per opening, so this is a
+    /// new opening, the way [`refresh_open_plus_chats`] rebuilds *Chats*.
+    /// A menu that *is* the agent list (Welcome's *Run an agent*) keeps its
+    /// rows; a row there whose program turned out missing dims with its note.
+    fn refresh_open_agent_flyout(&mut self) -> bool {
+        context_menu::set_profile_presence(self.profile_probe.snapshot());
+        if !matches!(
+            self.menu.as_ref().map(|m| &m.subject),
+            Some(MenuSubject::NewTab | MenuSubject::AgentTree { .. })
+        ) {
+            return false;
+        }
+        self.rebuild_open_flyout(MenuAction::NewAgent)
     }
 
     /// Chats the `+` flyout can name. The right-hand pane is the usual source;
@@ -7465,19 +7494,27 @@ impl MainView {
     }
 
     fn rebuild_plus_chats_flyout(&mut self) {
+        self.rebuild_open_flyout(MenuAction::Chats);
+    }
+
+    /// Reopen the flyout hanging off the open menu's `parent` row, if that
+    /// flyout is the one showing, so it lists what is true now. Answers
+    /// whether it did.
+    fn rebuild_open_flyout(&mut self, parent: MenuAction) -> bool {
         let Some(i) = self
             .menu
             .as_ref()
-            .and_then(|m| m.items().iter().position(|a| *a == MenuAction::Chats))
+            .and_then(|m| m.items().iter().position(|a| *a == parent))
         else {
-            return;
+            return false;
         };
         if !self.submenu.as_ref().is_some_and(|(at, _)| *at == i) {
-            return;
+            return false;
         }
         self.nested = None;
         self.submenu = None;
         let _ = self.open_submenu(i);
+        true
     }
 
     /// Open the one Import list (files, then content) at the pointer — what
@@ -9329,6 +9366,9 @@ impl MainView {
             }
             Request::OpenAgentGuide(url) => {
                 self.ask_pane(PaneRequest::OpenUri(url));
+            }
+            Request::InstallAgent(key) => {
+                self.install_agent(&key);
             }
             Request::SetAgentPermission { other, permission } => {
                 self.set_agent_permission(other, permission);
@@ -13806,6 +13846,122 @@ impl View for MainView {
         }
     }
 
+    /// The placeholder belongs to the document tab that asked. A canvas draws
+    /// none: its image still arrives, through `finish_image_import`'s default
+    /// route below.
+    fn begin_image_import(
+        &mut self,
+        ws: &WorkspaceDoc,
+        ticket: koru_workspace_host::ImageTicket,
+        place: &koru_workspace_host::ImagePlace,
+    ) {
+        // `/image` names the tab that asked; the blocking picker may have let
+        // the focus wander.
+        let i = match place {
+            koru_workspace_host::ImagePlace::Convert(_) => {
+                self.image_request.unwrap_or(self.tabs().active())
+            }
+            _ => self.tabs().active(),
+        };
+        if let Some(TabView::Leaf(l)) = self.tabs_mut().get_mut(i).map(|t| &mut t.view) {
+            View::begin_image_import(l, ws, ticket, place);
+        }
+    }
+
+    fn size_image_import(
+        &mut self,
+        ticket: koru_workspace_host::ImageTicket,
+        sizes: &[(u32, u32)],
+    ) {
+        for (_, group) in self.panes.iter_groups_mut() {
+            for tab in group.iter_tabs_mut() {
+                if let TabView::Leaf(l) = &mut tab.view
+                    && l.holds_image_import(ticket)
+                {
+                    View::size_image_import(l, ticket, sizes);
+                }
+            }
+        }
+    }
+
+    /// To the tab drawing the placeholder, whichever pane it is in. The shell
+    /// only finishes an import while its document is the one in front, so
+    /// that tab's document is `ws`. With no tab holding it — a canvas asked,
+    /// or the tab was closed — the routes these images always took.
+    fn finish_image_import(
+        &mut self,
+        ws: &mut WorkspaceDoc,
+        ticket: koru_workspace_host::ImageTicket,
+        place: koru_workspace_host::ImagePlace,
+        images: &[koru_workspace_host::PastedImage],
+    ) {
+        let mut place = Some(place);
+        for (_, group) in self.panes.iter_groups_mut() {
+            for tab in group.iter_tabs_mut() {
+                if let TabView::Leaf(l) = &mut tab.view
+                    && l.holds_image_import(ticket)
+                    && let Some(place) = place.take()
+                {
+                    View::finish_image_import(l, ws, ticket, place, images);
+                }
+            }
+        }
+        match place {
+            None => {
+                // The `/image` ask, if this was one, is answered.
+                self.image_request = None;
+                self.explore_stale = true;
+            }
+            Some(koru_workspace_host::ImagePlace::Paste(target)) => {
+                View::paste_images(self, ws, target, images)
+            }
+            Some(koru_workspace_host::ImagePlace::Append) => {
+                for image in images {
+                    View::append_image(
+                        self,
+                        ws,
+                        &image.hash,
+                        &image.mime,
+                        image.width,
+                        image.height,
+                    );
+                }
+            }
+            Some(koru_workspace_host::ImagePlace::Convert(node)) => {
+                if let Some(image) = images.first() {
+                    View::insert_image(
+                        self,
+                        ws,
+                        node,
+                        &image.hash,
+                        &image.mime,
+                        image.width,
+                        image.height,
+                    );
+                }
+            }
+        }
+    }
+
+    fn end_image_import(&mut self, ticket: koru_workspace_host::ImageTicket) -> bool {
+        let mut drawn = false;
+        for (_, group) in self.panes.iter_groups_mut() {
+            for tab in group.iter_tabs_mut() {
+                if let TabView::Leaf(l) = &mut tab.view {
+                    drawn |= View::end_image_import(l, ticket);
+                }
+            }
+        }
+        drawn
+    }
+
+    fn image_mip_side(&self) -> Option<koru_workspace_host::ImageMipSide> {
+        match &self.tabs().active_tab().view {
+            TabView::Leaf(l) => View::image_mip_side(l),
+            _ => None,
+        }
+    }
+
     fn paste_rich(
         &mut self,
         ws: &mut WorkspaceDoc,
@@ -14287,6 +14443,11 @@ impl View for MainView {
         // profile rows may dim (or undim) without the pointer moving.
         let probe_changed = self.profile_probe.take_dirty();
         let agent_rows_changed = probe_changed && self.sync_agent_providers();
+        // An open *Agents* flyout drops the agents the answer says are not
+        // here (`refresh_open_agent_flyout`); the repaint is `probe_changed`'s.
+        if probe_changed {
+            self.refresh_open_agent_flyout();
+        }
         // **Only while Add… is standing.** This snapshot exists to notice the
         // chat list arriving under an open flyout, and `recent_chats` clones
         // its titles — a tick with no menu up must not pay for an answer
@@ -16278,11 +16439,17 @@ impl MainView {
     /// Which lane controls this window offers, and where they are right now:
     /// in the lane while the pane is open, folded into the caption's left end
     /// while it is shut (`docs/features/workspace-foundation/TECHNICAL.final.md`
-    /// §5.1). The mark leads on every platform until the Mac catch-up swaps
-    /// it for the lights' reserve; New opens the Add… menu (QUESTIONS.md E21).
+    /// §5.1). The mark leads on Windows and Linux; on a Mac the slot is the
+    /// room the traffic lights take, which AppKit draws and
+    /// `koru_window::traffic_lights` seats there. New opens the Add… menu
+    /// (QUESTIONS.md E21).
     pub(crate) fn leading(&self) -> koru_shell_chrome::lane::Leading {
         koru_shell_chrome::lane::Leading {
-            mark: koru_shell_chrome::lane::Mark::Mark,
+            mark: if cfg!(target_os = "macos") {
+                koru_shell_chrome::lane::Mark::Lights(koru_window::traffic_lights::LANE_W)
+            } else {
+                koru_shell_chrome::lane::Mark::Mark
+            },
             search: true,
             // No New in the lane (the review's note, E44): the tab strip's `+`
             // is the Add… menu's one door. E21's lane `+` is superseded.

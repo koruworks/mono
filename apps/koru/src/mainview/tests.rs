@@ -1424,8 +1424,8 @@ fn a_cancelled_new_workspace_in_prompt_forgets_its_owner() {
     ));
     assert!(v.new_document.is_none());
 
-    // No workspace is open, so a new document asks for one first.
-    v.prompt_new_document();
+    // The next workspace prompt is the open Profile's.
+    assert!(v.prompt_new_workspace());
     assert!(v.key(&mut workspace.ws, &ch("Research"), Some("Research"), NONE,));
     assert!(v.key(
         &mut workspace.ws,
@@ -1439,8 +1439,12 @@ fn a_cancelled_new_workspace_in_prompt_forgets_its_owner() {
     ));
 }
 
+/// With no workspace open, a new document still asks for the document: the
+/// shell makes a default workspace for it (`ensure_live_workspace`). Asking
+/// for a workspace's name instead made only the workspace, and the document
+/// that was asked for never appeared.
 #[test]
-fn document_creation_asks_for_a_workspace_when_none_is_open() {
+fn document_creation_with_no_workspace_open_still_asks_for_the_document() {
     let (mut v, mut workspace) = container();
     let (_, profile, _, _) = v.pane_context.clone().expect("pane context");
     View::set_pane_context(&mut v, Vec::new(), profile, Vec::new(), None);
@@ -1456,7 +1460,7 @@ fn document_creation_asks_for_a_workspace_when_none_is_open() {
 
     assert!(matches!(
         koru_workspace_host::View::take_pane_request(&mut v),
-        Some(koru_workspace_host::PaneRequest::NewWorkspace(name)) if name == "Research"
+        Some(koru_workspace_host::PaneRequest::CreateDocument(title)) if title == "Research"
     ));
 }
 
@@ -1689,17 +1693,26 @@ fn the_plus_menu_focuses_a_tab_already_showing_the_recent() {
     );
 }
 
-/// **A machine missing a program's executable dims that program's row** with
-/// the *Not installed* note — one uniform rule for shells and agents, the
-/// same as Koru Terminal's launch menus (W4.4a). The probe's answer is
+/// **A machine missing a shell dims its row; a missing agent is not
+/// listed** (product decision, 2026-11-05). A shell row keeps Koru
+/// Terminal's rule — dimmed with the *Not installed* note — while the
+/// *Agents* flyout lists only the agents this machine can launch, and ends in
+/// *Manage…*, where the rest are installed. The probe's answer is
 /// **injected**: what is under test is the menu's reflection of an answer,
 /// never what happens to be on the test machine's real `PATH` — the menus
 /// are built directly rather than through the launcher, whose refresh
 /// would race a real probe against the injection.
 #[test]
-fn a_missing_program_dims_its_profile_row_shell_or_agent() {
+fn a_missing_shell_dims_and_a_missing_agent_is_not_listed() {
     let (v, _workspace) = container();
+    let profiles = koru_session_profiles::built_in_profiles();
+    let is_agent = |index: usize| profiles[index].kind == koru_session_protocol::ProfileKind::Agent;
+    // Before any probe has answered the menu lists every agent rather than
+    // none: the last known answer is "everything", and a person opening the
+    // menu at launch is not shown an empty list.
+    context_menu::set_profile_presence(v.profile_probe.snapshot());
     let agents = context_menu::agent_profile_items();
+    assert!(!agents.is_empty(), "no answer yet leaves nothing out");
     let agent_menu = ContextMenu::at_width(
         MenuSubject::NewTab,
         (100.0, 100.0),
@@ -1707,6 +1720,54 @@ fn a_missing_program_dims_its_profile_row_shell_or_agent() {
         MenuAnchor::Cursor,
         200.0,
     );
+    assert!(
+        v.enabled_items(&agent_menu).iter().all(|&row| row),
+        "no answer yet dims nothing"
+    );
+
+    // This "machine": every shell present, and of the agents only the first
+    // the menu lists.
+    let MenuAction::TerminalProfile(kept) = agents[0] else {
+        panic!("an agent row is a TerminalProfile action")
+    };
+    v.profile_probe.set_for_test(
+        (0..profiles.len())
+            .map(|index| !is_agent(index) || index == kept)
+            .collect(),
+    );
+    context_menu::set_profile_presence(v.profile_probe.snapshot());
+    assert_eq!(
+        context_menu::agent_profile_items(),
+        vec![MenuAction::TerminalProfile(kept)],
+        "only the installed agent is listed"
+    );
+    assert_eq!(
+        context_menu::agent_plus_items(),
+        vec![
+            MenuAction::TerminalProfile(kept),
+            MenuAction::Divider,
+            MenuAction::ManageAgents,
+        ]
+    );
+    // A menu whose rows were fixed before the answer still cannot launch a
+    // missing agent: its row dims with the note instead.
+    let enabled = v.enabled_items(&agent_menu);
+    for (action, enabled) in agents.iter().zip(enabled) {
+        assert_eq!(enabled, *action == MenuAction::TerminalProfile(kept));
+    }
+
+    // No agent installed: the flyout is *Manage…* alone.
+    v.profile_probe
+        .set_for_test((0..profiles.len()).map(|index| !is_agent(index)).collect());
+    context_menu::set_profile_presence(v.profile_probe.snapshot());
+    assert!(context_menu::agent_profile_items().is_empty());
+    assert_eq!(
+        context_menu::agent_plus_items(),
+        vec![MenuAction::ManageAgents]
+    );
+
+    // A shell is never left out: present, it is live; probed missing, it is
+    // dimmed with the note, the same as Koru Terminal's menu.
     let shells = context_menu::shell_profile_items();
     let shell_menu = ContextMenu::at_width(
         MenuSubject::NewTab,
@@ -1715,53 +1776,17 @@ fn a_missing_program_dims_its_profile_row_shell_or_agent() {
         MenuAnchor::Cursor,
         200.0,
     );
-    // Before any probe has answered, the last known answer is "everything":
-    // the menu opens without waiting on the world and dims when told.
-    assert!(
-        v.enabled_items(&agent_menu).iter().all(|&row| row),
-        "no answer yet dims nothing"
-    );
-
-    // This "machine": every shell present, every agent missing.
-    v.profile_probe.set_for_test(
-        koru_session_profiles::built_in_profiles()
-            .iter()
-            .map(|profile| profile.kind != koru_session_protocol::ProfileKind::Agent)
-            .collect(),
-    );
-    let enabled = v.enabled_items(&agent_menu);
-    assert!(!agents.is_empty());
-    assert!(
-        enabled.iter().all(|&row| !row),
-        "every missing agent is dimmed: {enabled:?}"
-    );
-    // Dimmed, not hidden — the rows are still in the menu, and each explains
-    // itself with the note the widget shows beside a disabled row.
-    for action in agents {
-        assert_eq!(
-            koru_ui::MenuItem::disabled_reason(&action).as_deref(),
-            Some("Not installed")
-        );
-    }
-    // The shells this answer found installed stay live — presence, not kind,
-    // is what enables a row.
     assert!(
         v.enabled_items(&shell_menu).iter().all(|&row| row),
         "an installed shell stays live"
     );
-
-    // And a probed-missing shell dims exactly like a missing agent, with the
-    // same note: the two surfaces match, with no shell special case.
-    v.profile_probe.set_for_test(
-        koru_session_profiles::built_in_profiles()
-            .iter()
-            .map(|_| false)
-            .collect(),
-    );
+    v.profile_probe.set_for_test(vec![false; profiles.len()]);
+    context_menu::set_profile_presence(v.profile_probe.snapshot());
+    assert_eq!(context_menu::shell_profile_items(), shells, "still listed");
     assert!(!shells.is_empty());
     assert!(
         v.enabled_items(&shell_menu).iter().all(|&row| !row),
-        "a missing shell is dimmed too"
+        "a missing shell is dimmed"
     );
     for action in shells {
         assert_eq!(
@@ -1769,6 +1794,7 @@ fn a_missing_program_dims_its_profile_row_shell_or_agent() {
             Some("Not installed")
         );
     }
+    context_menu::set_profile_presence(None);
 }
 
 /// **Only the active session tab is live** — the active-tab-exclusive rule.
@@ -6788,9 +6814,11 @@ fn a_welcome_tick_reaches_the_container_and_runs_the_existing_command() {
 #[test]
 fn welcome_opens_the_plus_menus_list_of_agents() {
     let (mut v, _w) = container();
-    let agents = context_menu::shown(context_menu::agent_plus_items());
-    assert!(!agents.is_empty(), "agents are on unless set off");
     assert!(v.open_agents_menu());
+    // Read after the open: the list follows the probe answer the open
+    // handed the menus, which a real probe on this machine may have given.
+    let agents = context_menu::shown(context_menu::agent_plus_items());
+    assert!(!agents.is_empty(), "at least Manage…");
     let menu = v.menu.as_ref().expect("the list is open");
     assert_eq!(menu.subject, MenuSubject::NewTab);
     assert_eq!(menu.items(), agents.as_slice());

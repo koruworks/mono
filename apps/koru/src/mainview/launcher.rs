@@ -254,9 +254,21 @@ impl MainView {
 
     /// The profiles of `kind`, under the tile that asked — the `+` menu's
     /// old flyout, on its own. A row opens its session in a new tab.
+    ///
+    /// **Agents end in *Manage…*** (product decision, 2026-11-05, kept when
+    /// the launcher replaced the `+` menu): only installed agents are listed,
+    /// so the way to install another is the list's last row, and a machine
+    /// with none still gets a row that does something.
     fn open_profile_list(&mut self, kind: NewKind, at: AskAt) -> bool {
         let items = match kind {
-            NewKind::Agent => context_menu::agent_profile_items(),
+            NewKind::Agent => {
+                let mut items = context_menu::agent_profile_items();
+                if !items.is_empty() {
+                    items.push(context_menu::MenuAction::Divider);
+                }
+                items.push(context_menu::MenuAction::ManageAgents);
+                items
+            }
             _ => context_menu::shell_profile_items(),
         };
         let mut menu = ContextMenu::aligned(
@@ -287,8 +299,9 @@ impl MainView {
             NewKind::Import => self.open_import_list(self.next_ask_at(false)),
             NewKind::Agent | NewKind::Shell => match self.default_profile(kind) {
                 Some(index) => self.open_session_tab_where(index, None, split),
-                // Nothing of that kind is installed: the list says so, row
-                // by dimmed row, which is better than nothing happening.
+                // Nothing of that kind is installed: the list says so — a
+                // shell row by row, dimmed; for agents, *Manage…* alone,
+                // where one is installed — rather than nothing happening.
                 None => self.open_profile_list(kind, self.next_ask_at(false)),
             },
         }

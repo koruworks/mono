@@ -4195,6 +4195,45 @@
         "description": "Stable error token; unknown values remain errors.",
         "minLength": 1,
         "type": "string"
+      },
+      "VersionNeed": {
+        "description": "**What a managed route accepts of an agent's version**, said when it\nrefused one. The two policies read differently to a person: under a\nfloor, updating fixes it; under a reviewed list, a release newer than\nthe newest reviewed is refused until it has been reviewed too.",
+        "oneOf": [
+          {
+            "description": "This release or any newer one.",
+            "properties": {
+              "kind": {
+                "const": "at_least",
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "version"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Only the releases on a reviewed list, of which this is the newest.",
+            "properties": {
+              "kind": {
+                "const": "reviewed",
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "version"
+            ],
+            "type": "object"
+          }
+        ]
       }
     },
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -4258,13 +4297,30 @@
         "type": "object"
       },
       {
+        "description": "The managed route refused the agent. When the refusal was its\nversion, `found` is the version the agent printed (absent when none\ncould be read) and `needed` what the route accepts, so a person is\ntold both rather than \"not supported\". Both are optional and skipped\nwhen absent, so a peer that predates them reads and writes the same\n`{\"kind\":\"incompatible\",\"code\":…}` it always did.",
         "properties": {
           "code": {
             "$ref": "#/$defs/ErrorCode"
           },
+          "found": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "kind": {
             "const": "incompatible",
             "type": "string"
+          },
+          "needed": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/VersionNeed"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -6519,13 +6575,30 @@
             "type": "object"
           },
           {
+            "description": "The managed route refused the agent. When the refusal was its\nversion, `found` is the version the agent printed (absent when none\ncould be read) and `needed` what the route accepts, so a person is\ntold both rather than \"not supported\". Both are optional and skipped\nwhen absent, so a peer that predates them reads and writes the same\n`{\"kind\":\"incompatible\",\"code\":…}` it always did.",
             "properties": {
               "code": {
                 "$ref": "#/$defs/ErrorCode"
               },
+              "found": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "kind": {
                 "const": "incompatible",
                 "type": "string"
+              },
+              "needed": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/VersionNeed"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             },
             "required": [
@@ -6615,6 +6688,45 @@
           "shutdown"
         ],
         "type": "string"
+      },
+      "VersionNeed": {
+        "description": "**What a managed route accepts of an agent's version**, said when it\nrefused one. The two policies read differently to a person: under a\nfloor, updating fixes it; under a reviewed list, a release newer than\nthe newest reviewed is refused until it has been reviewed too.",
+        "oneOf": [
+          {
+            "description": "This release or any newer one.",
+            "properties": {
+              "kind": {
+                "const": "at_least",
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "version"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Only the releases on a reviewed list, of which this is the newest.",
+            "properties": {
+              "kind": {
+                "const": "reviewed",
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "version"
+            ],
+            "type": "object"
+          }
+        ]
       }
     },
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -12375,13 +12487,30 @@
             "type": "object"
           },
           {
+            "description": "The managed route refused the agent. When the refusal was its\nversion, `found` is the version the agent printed (absent when none\ncould be read) and `needed` what the route accepts, so a person is\ntold both rather than \"not supported\". Both are optional and skipped\nwhen absent, so a peer that predates them reads and writes the same\n`{\"kind\":\"incompatible\",\"code\":…}` it always did.",
             "properties": {
               "code": {
                 "$ref": "#/$defs/ErrorCode"
               },
+              "found": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "kind": {
                 "const": "incompatible",
                 "type": "string"
+              },
+              "needed": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/VersionNeed"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             },
             "required": [
@@ -12539,6 +12668,45 @@
           "powershell"
         ],
         "type": "string"
+      },
+      "VersionNeed": {
+        "description": "**What a managed route accepts of an agent's version**, said when it\nrefused one. The two policies read differently to a person: under a\nfloor, updating fixes it; under a reviewed list, a release newer than\nthe newest reviewed is refused until it has been reviewed too.",
+        "oneOf": [
+          {
+            "description": "This release or any newer one.",
+            "properties": {
+              "kind": {
+                "const": "at_least",
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "version"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Only the releases on a reviewed list, of which this is the newest.",
+            "properties": {
+              "kind": {
+                "const": "reviewed",
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "version"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "WorkingDirectoryPolicy": {
         "oneOf": [
@@ -12816,13 +12984,30 @@
             "type": "object"
           },
           {
+            "description": "The managed route refused the agent. When the refusal was its\nversion, `found` is the version the agent printed (absent when none\ncould be read) and `needed` what the route accepts, so a person is\ntold both rather than \"not supported\". Both are optional and skipped\nwhen absent, so a peer that predates them reads and writes the same\n`{\"kind\":\"incompatible\",\"code\":…}` it always did.",
             "properties": {
               "code": {
                 "$ref": "#/$defs/ErrorCode"
               },
+              "found": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "kind": {
                 "const": "incompatible",
                 "type": "string"
+              },
+              "needed": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/VersionNeed"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             },
             "required": [
@@ -12961,6 +13146,45 @@
           "powershell"
         ],
         "type": "string"
+      },
+      "VersionNeed": {
+        "description": "**What a managed route accepts of an agent's version**, said when it\nrefused one. The two policies read differently to a person: under a\nfloor, updating fixes it; under a reviewed list, a release newer than\nthe newest reviewed is refused until it has been reviewed too.",
+        "oneOf": [
+          {
+            "description": "This release or any newer one.",
+            "properties": {
+              "kind": {
+                "const": "at_least",
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "version"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Only the releases on a reviewed list, of which this is the newest.",
+            "properties": {
+              "kind": {
+                "const": "reviewed",
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "version"
+            ],
+            "type": "object"
+          }
+        ]
       }
     },
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -14454,6 +14678,47 @@
       }
     ],
     "title": "ToolKind"
+  },
+  "VersionNeed": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "**What a managed route accepts of an agent's version**, said when it\nrefused one. The two policies read differently to a person: under a\nfloor, updating fixes it; under a reviewed list, a release newer than\nthe newest reviewed is refused until it has been reviewed too.",
+    "oneOf": [
+      {
+        "description": "This release or any newer one.",
+        "properties": {
+          "kind": {
+            "const": "at_least",
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "version"
+        ],
+        "type": "object"
+      },
+      {
+        "description": "Only the releases on a reviewed list, of which this is the newest.",
+        "properties": {
+          "kind": {
+            "const": "reviewed",
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "version"
+        ],
+        "type": "object"
+      }
+    ],
+    "title": "VersionNeed"
   },
   "ViewportGeneration": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",

@@ -807,6 +807,38 @@ pub fn set_agent_order(keys: Vec<String>) {
     AGENT_ORDER.with(|cell| *cell.borrow_mut() = keys);
 }
 
+thread_local! {
+    /// The presence probe's latest answer, by `built_in_profiles()` index —
+    /// `None` until the first probe has answered. The window hands it over
+    /// when an agent menu opens and again whenever a fresh answer lands, so a
+    /// flyout opened a moment after its parent already reads the new answer.
+    static PROFILE_PRESENCE: RefCell<Option<Vec<bool>>> = const { RefCell::new(None) };
+}
+
+/// Record the presence probe's answer, for the next agent menu to leave out
+/// the agents this machine does not have.
+pub fn set_profile_presence(presence: Option<Vec<bool>>) {
+    PROFILE_PRESENCE.with(|cell| *cell.borrow_mut() = presence);
+}
+
+/// **Whether the probe has said this agent's program is not here.** An
+/// *Agents* flyout lists only what it can launch (product decision,
+/// 2026-11-05): a row that can only say *Not installed* is clutter there,
+/// and installing is *Manage…*'s job (Settings → Agent providers).
+///
+/// `false` before any answer, so the menu a person opens at launch is the
+/// full list rather than empty; the probe is a `PATH` walk that lands within
+/// milliseconds, and the window rebuilds an open flyout when it does
+/// (`MainView::refresh_open_agent_flyout`). A shell is never left out — a
+/// missing one still dims with its note, which is Koru Terminal's rule.
+fn agent_missing(index: usize) -> bool {
+    PROFILE_PRESENCE.with(|cell| {
+        cell.borrow()
+            .as_ref()
+            .is_some_and(|rows| !rows.get(index).copied().unwrap_or(false))
+    })
+}
+
 /// Whether a built-in profile is an agent turned off on this machine.
 fn agent_hidden(profile: &koru_session_profiles::LaunchProfile) -> bool {
     profile
@@ -2059,9 +2091,11 @@ pub fn shell_plus_items() -> Vec<MenuAction> {
     })
 }
 
-/// Agents flyout: *Active ▸* when any agent is running, then the profile
-/// list, then — after a rule — *Manage…*, which opens Settings on Coding →
-/// Agent providers, where an agent left out of this list is turned back on.
+/// Agents flyout: *Active ▸* when any agent is running, then the agents that
+/// are on **and installed**, then — after a rule — *Manage…*, which opens
+/// Settings on Coding → Agent providers, where an agent left out of this
+/// list is turned back on or installed. With nothing to list it is *Manage…*
+/// alone.
 pub fn agent_plus_items() -> Vec<MenuAction> {
     let mut items = PLUS_RUNNING_AGENTS.with(|cell| {
         active_then_profiles(
@@ -2221,10 +2255,11 @@ fn profile_items_of_kind(kind: ProfileKind) -> Vec<MenuAction> {
     let mut profiles: Vec<_> = built_in_profiles()
         .into_iter()
         .enumerate()
-        .filter(|(_, profile)| {
+        .filter(|(index, profile)| {
             profile.kind == kind
                 && profile.label != koru_session_profiles::ProfileLabel::CodexEmbedded
                 && !agent_hidden(profile)
+                && !(profile.kind == ProfileKind::Agent && agent_missing(*index))
         })
         .collect();
     // Agents in the person's order (Agent providers); a row with no agent

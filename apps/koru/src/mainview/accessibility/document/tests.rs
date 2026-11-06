@@ -1847,3 +1847,47 @@ fn a_host_answer_renames_the_block_moves_the_revision_and_says_nothing() {
         "a remote change of a diagram was spoken"
     );
 }
+
+/// **An image still loading is in the reading order where it is drawn**, as
+/// a busy image named *Loading image* — and it leaves the tree, with nothing
+/// dangling, when its picture lands or fails.
+#[test]
+fn a_loading_image_is_a_busy_image_between_its_paragraphs() {
+    use koru_workspace_host::{ImagePlace, ImageTicket, PasteTarget};
+    let mut screen = reading(&["One.", "Two."]);
+    let rows = body_rows(&screen.v);
+    let place = ImagePlace::Paste(Some(PasteTarget {
+        anchor: rows[0],
+        replacing: Vec::new(),
+    }));
+    View::begin_image_import(&mut screen.v, &screen.w.ws, ImageTicket(1), &place);
+    super::leaf_mut(&mut screen.v).expect("a document").reflow();
+    screen.service();
+
+    let body = screen
+        .client
+        .by_locator("koru:w1/v1/s:body#root")
+        .expect("the body");
+    let children = screen.client.node(body).children().to_vec();
+    let one = children
+        .iter()
+        .position(|id| *id == screen.paragraph(rows[0]))
+        .expect("the first paragraph");
+    let loading = children[one + 1];
+    let node = screen.client.node(loading);
+    assert_eq!(node.role(), Role::Image);
+    assert_eq!(node.label(), Some("Loading image"));
+    assert!(node.is_busy());
+    assert_eq!(children[one + 2], screen.paragraph(rows[1]));
+    let _ = screen.client.reachable();
+
+    assert!(View::end_image_import(&mut screen.v, ImageTicket(1)));
+    super::leaf_mut(&mut screen.v).expect("a document").reflow();
+    screen.service();
+    let children = screen.client.node(body).children().to_vec();
+    assert!(
+        !children.contains(&loading),
+        "the placeholder left the tree"
+    );
+    let _ = screen.client.reachable();
+}

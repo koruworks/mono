@@ -25,6 +25,26 @@ fn a_refused_model_re_probes_its_agent_at_most_once_per_window() {
     );
 }
 
+/// A failed check and a missing program are looked at again — an agent
+/// installed while Koru runs appears without a restart — and a settled
+/// answer is not.
+#[test]
+fn failed_and_missing_rows_are_looked_at_again() {
+    assert!(looks_again(&ExecutableAvailability::Missing));
+    assert!(looks_again(&ExecutableAvailability::Failed {
+        code: ErrorCode::ProviderFailed,
+    }));
+    for settled in [
+        ExecutableAvailability::Available { version: None },
+        ExecutableAvailability::Checking,
+        ExecutableAvailability::SignedOut {
+            code: ErrorCode::ProviderFailed,
+        },
+    ] {
+        assert!(!looks_again(&settled), "{settled:?}");
+    }
+}
+
 /// D19: a start refused for its level reads as the level, not the model,
 /// and its refresh says so.
 #[test]

@@ -38,6 +38,9 @@ pub(crate) enum AgentStatus {
     Checking,
     Ready,
     NotInstalled,
+    /// The agent is installed but the program its chats run through is
+    /// not — Claude's `claude-agent-acp`. Settings names the program.
+    AdapterMissing,
     SignedOut,
     UnsupportedVersion,
     CheckFailed,
@@ -59,6 +62,7 @@ impl AgentStatus {
                 {
                     Some("agent_checking") => Self::Checking,
                     Some("agent_not_installed") => Self::NotInstalled,
+                    Some("agent_adapter_missing") => Self::AdapterMissing,
                     Some("agent_signed_out") => Self::SignedOut,
                     Some("agent_unsupported_version") => Self::UnsupportedVersion,
                     Some("agent_check_failed") => Self::CheckFailed,
@@ -74,6 +78,9 @@ impl AgentStatus {
             Self::Ready => return None,
             Self::Checking => Key::TerminalChecking,
             Self::NotInstalled => Key::TerminalNotInstalled,
+            // Settings' own headline for the same row, where the detail
+            // names the missing program; the picker has room for the word.
+            Self::AdapterMissing => Key::SettingsAgentNeedsAttention,
             Self::SignedOut => Key::TerminalManagedSignedOut,
             Self::UnsupportedVersion => Key::AiAgentUnsupportedVersion,
             Self::CheckFailed => Key::TerminalManagedCheckFailed,
@@ -442,6 +449,18 @@ mod tests {
             )),
             AgentStatus::SignedOut
         );
+        // A missing adapter is not a missing agent: the picker says what
+        // Settings says, and the agent still counts as installed.
+        let adapter = AgentStatus::from_validation(&validation(
+            ProviderValidationStatus::Unavailable,
+            Some("agent_adapter_missing"),
+        ));
+        assert_eq!(adapter, AgentStatus::AdapterMissing);
+        assert_ne!(
+            adapter.word(Lang::En),
+            AgentStatus::NotInstalled.word(Lang::En)
+        );
+        assert!(!adapter.selectable());
         assert_eq!(
             AgentStatus::from_validation(&validation(ProviderValidationStatus::Failed, None)),
             AgentStatus::CheckFailed
