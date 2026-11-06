@@ -4632,6 +4632,46 @@ mod note {
         );
     }
 
+    /// Acceptance round 2: a drag can give the note more room, never less
+    /// than the band has on its own — squeezed to a sliver it showed a
+    /// line's top edge and nothing to read.
+    #[test]
+    fn the_band_is_never_dragged_shorter_than_its_content() {
+        let (_, _, _, mut doc, mut view) = note_view();
+        let natural = view.rows_top() - view.header_h;
+        let grip = view.body.as_ref().unwrap().grip_rect();
+        let (x, y) = (grip.x + grip.w * 0.5, grip.y + grip.h * 0.5);
+        assert!(view.mouse_down(&mut doc, x, y, false));
+        assert!(view.mouse_move(x, y - natural * 2.0));
+        assert!(view.mouse_up(&mut doc));
+        view.layout_band();
+        assert!(view.band_fixed_h_for_test().is_some(), "a height was given");
+        assert!(
+            ((view.rows_top() - view.header_h) - natural).abs() < 0.5,
+            "and it is floored at the band's own: {natural}"
+        );
+        // Typing a line while the band is held at its floor: the floor
+        // follows the content, as it does with no height given.
+        let band = view.body.as_ref().unwrap().band;
+        view.mouse_down(
+            &mut doc,
+            band.x + band.w * 0.5,
+            band.y + band.h * 0.5,
+            false,
+        );
+        view.key(
+            &mut doc,
+            &Key::Named(NamedKey::Enter),
+            None,
+            ModifiersState::empty(),
+        );
+        view.layout_band();
+        assert!(
+            view.rows_top() - view.header_h > natural + 1.0,
+            "a second line makes the band taller"
+        );
+    }
+
     /// Review note: a note taller than its band shows the thumb a document
     /// tab shows, and the band is what it scrolls in.
     #[test]

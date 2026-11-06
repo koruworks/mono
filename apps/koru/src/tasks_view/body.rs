@@ -30,10 +30,6 @@ use crate::leaf::Leaf;
 /// nobody has sized it by hand.
 const BAND_SHARE: f32 = 0.4;
 
-/// The least a band sized by hand can be: a line and a half, so the grip
-/// can always be found again.
-const MIN_FIXED_H: f32 = 36.0;
-
 /// What a band sized by hand leaves the rows below: the heading's height
 /// again, so the table never vanishes under a tall note.
 const MIN_ROWS_H: f32 = 120.0;
@@ -136,24 +132,28 @@ impl PageBody {
     /// when it is shorter, the way an HTML text area does. Answers the
     /// band's height. Lays the leaf out only when something moved it.
     pub fn layout(&mut self, pad: f32, top: f32, w: f32, page_h: f32, fixed: Option<f32>) -> f32 {
-        let fixed =
-            fixed.map(|h| h.clamp(MIN_FIXED_H, (page_h - top - MIN_ROWS_H).max(MIN_FIXED_H)));
-        let cap = fixed.unwrap_or((page_h * BAND_SHARE).max(1.0));
+        let share = (page_h * BAND_SHARE).max(1.0);
+        let most = (page_h - top - MIN_ROWS_H).max(1.0);
         let inset = koru_draw::geometry::text_x(0u32, false);
         let x = pad - inset - MODE.content_x(w);
         let leaf_w = (w - x).max(1.0);
         if self.dirty || self.band.w != w || self.band.y != top || self.fixed != fixed {
             self.fixed = fixed;
             self.pad = pad;
-            // Measured at the cap so the content height is known, then the
-            // band is cut to the content when it is shorter.
-            Leaf::set_viewport(&mut self.leaf, leaf_w, cap);
+            // Measured at the page's share so the content height is known,
+            // then the band is cut to the content when it is shorter.
+            Leaf::set_viewport(&mut self.leaf, leaf_w, share);
             let content = koru_editor::rowlayout::content_height(self.leaf.body());
+            let natural = content.min(share).max(1.0);
             let h = match fixed {
-                Some(h) => h,
-                None => content.min(cap).max(1.0),
+                // **Never shorter than the band is on its own.** A drag may
+                // give the note more room; it cannot take its words away —
+                // a band squeezed to a sliver showed a line's top edge and
+                // nothing to read (acceptance round 2).
+                Some(h) => h.clamp(natural, most.max(natural)),
+                None => natural,
             };
-            if (h - cap).abs() > 0.5 {
+            if (h - share).abs() > 0.5 {
                 Leaf::set_viewport(&mut self.leaf, leaf_w, h);
             }
             self.band = Rect::new(0.0, top, w, h);
