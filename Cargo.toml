@@ -102,7 +102,11 @@ accesskit_winit = { version = "0.32", default-features = false, features = ["rwh
 # Pinned exactly: a lockfile regeneration floated 1.13.9 in on 2026-08-30 and
 # silently changed CRDT undo semantics (ADR-1's amendment). A bump is a commit.
 loro = "=1.13.9"
-uuid = { version = "1", features = ["v4", "serde"] }
+# `v5` is for page documents alone: their id is derived from the workspace,
+# the page and a generation (ADR-000-pagedocumentidentity), so two devices
+# that each start the same note offline mint one document. Every other id in
+# the tree stays a client-minted v4.
+uuid = { version = "1", features = ["v4", "v5", "serde"] }
 # Base pin only. `koru-clipboard` is the sole owner that enables `image-data`;
 # every text/image/file-list caller goes through that crate.
 arboard = { version = "3", default-features = false }

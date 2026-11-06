@@ -5697,6 +5697,7 @@ dependencies = [
  "koru-env",
  "koru-tagname",
  "loro",
+ "serde_json",
  "unicode-normalization",
  "uuid",
 ]
@@ -13262,6 +13263,7 @@ dependencies = [
  "getrandom 0.4.3",
  "js-sys",
  "serde_core",
+ "sha1_smol",
  "wasm-bindgen",
 ]
 
