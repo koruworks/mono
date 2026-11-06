@@ -14,7 +14,8 @@
 //! ├── meta          LoroMap   system_schema_version
 //! ├── definitions   LoroMap   definition id -> { key, label, type, … }
 //! ├── tags          LoroMap   TagId -> { name, color, created, alias }
-//! └── lists         LoroMap   ListId -> { name, color, order, created, deleted }
+//! ├── lists         LoroMap   ListId -> { name, color, order, created, deleted, page_gens }
+//! └── pages         LoroMap   bucket token -> { page_gens }
 //! ```
 //!
 //! **The seam** ([ADR-176]): this module owns the document's *content* and
@@ -73,7 +74,7 @@ use loro::{LoroDoc, LoroMap, LoroValue, ValueOrContainer};
 use crate::attributes::{
     AttributeDefinition, AttributeScope, Cardinality, ValueType, system_definition,
 };
-use crate::ids::{DocumentId, ListId, TagId};
+use crate::ids::{DocumentId, ListId, PageKey, TagId};
 use crate::schema::{Result, StoreError};
 use crate::tags;
 use crate::time::TimeZoneName;
@@ -90,6 +91,12 @@ const C_LISTS: &str = "lists";
 /// D3). Unlike spelling *issues*, these words are workspace configuration and
 /// deliberately sync.
 const C_DICTIONARY: &str = "dictionary";
+/// The agenda buckets' page records: bucket token → the same page keys a
+/// list record carries (page-document plan §6.2, §6.8). A root container
+/// beside the others, additive like the dictionary; a list's page keys live
+/// on the list's own record instead, so a page record is found from its
+/// [`PageKey`] either way ([`SystemDoc::page_generations`]).
+const C_PAGES: &str = "pages";
 
 // Meta keys.
 const K_SYSTEM_SCHEMA: &str = "system_schema_version";
@@ -132,6 +139,11 @@ const K_LIST_ORDER: &str = "order";
 /// what tells a reader holding a stale `koru.list` value that the list is gone
 /// rather than merely unknown — and [`SystemDoc::lists`] omits it.
 const K_LIST_DELETED: &str = "deleted";
+/// On a page record: the generations of the page's document, a grow-only
+/// set spelled as a map of decimal keys → `true`. The current generation is
+/// the numeric maximum; a replacement after a deletion adds the next key.
+/// Absent on a page that has never had a document.
+const K_PAGE_GENS: &str = "page_gens";
 
 /// One tag, as the table knows it.
 #[derive(Clone, PartialEq, Debug)]
@@ -908,6 +920,91 @@ impl SystemDoc {
             .filter(|entry| tags::fold_key(&entry.name) == key)
             .map(|entry| entry.id)
             .min()
+    }
+
+    // ------------------------------------------------------------ pages
+
+    /// The record a page's keys live on.
+    ///
+    /// For a list, the list's own record — **tombstones included**, because a
+    /// deleted list keeps its document (page-document plan D4) and the map
+    /// from a document id back to its page has to find it. For a bucket, the
+    /// entry under the `pages` root map, keyed by the bucket's token.
+    fn page_record(&self, page: PageKey) -> Option<LoroMap> {
+        match page {
+            PageKey::List(list) => self.list_record(list),
+            PageKey::Bucket(bucket) => match self.doc.get_map(C_PAGES).get(bucket.as_str())? {
+                ValueOrContainer::Container(c) => c.into_map().ok(),
+                _ => None,
+            },
+        }
+    }
+
+    /// The record to write a page's keys into: a bucket's is created on first
+    /// use; a list's must exist, in any state. `None` for a list the table
+    /// has never held.
+    fn page_record_for_write(&self, page: PageKey) -> Result<Option<LoroMap>> {
+        Ok(match page {
+            PageKey::List(list) => self.list_record(list),
+            PageKey::Bucket(bucket) => Some(
+                self.doc
+                    .get_map(C_PAGES)
+                    .ensure_mergeable_map(bucket.as_str())?,
+            ),
+        })
+    }
+
+    /// Every generation a page has had, as written — unsorted, tombstones
+    /// none because the set only grows. Empty for a page that never had a
+    /// document.
+    pub fn page_generations(&self, page: PageKey) -> Vec<u64> {
+        let Some(record) = self.page_record(page) else {
+            return Vec::new();
+        };
+        let Some(ValueOrContainer::Container(c)) = record.get(K_PAGE_GENS) else {
+            return Vec::new();
+        };
+        let Ok(gens) = c.into_map() else {
+            return Vec::new();
+        };
+        let keys: Vec<String> = gens.keys().map(|k| k.to_string()).collect();
+        crate::pages::generations(keys.iter().map(String::as_str))
+    }
+
+    /// The page's current generation — the numeric maximum of its keys
+    /// ([`crate::pages::current_generation`]) — or `None` for a page that has
+    /// never had a document.
+    pub fn current_page_generation(&self, page: PageKey) -> Option<u64> {
+        crate::pages::current_generation(
+            self.page_generations(page)
+                .iter()
+                .map(|g| g.to_string())
+                .collect::<Vec<_>>()
+                .iter()
+                .map(String::as_str),
+        )
+    }
+
+    /// Record that `page` has a document of generation `generation`.
+    ///
+    /// **Grow-only.** The key is added and never removed; two devices adding
+    /// generations offline converge on the union, and the current one is the
+    /// numeric maximum whichever order the keys arrive in. Adding a
+    /// generation the page already has is a no-op. Answers `false` only for a
+    /// list the table has never held; a deleted list still takes the write,
+    /// because its document outlives it.
+    pub fn add_page_generation(&mut self, page: PageKey, generation: u64) -> Result<bool> {
+        let Some(record) = self.page_record_for_write(page)? else {
+            return Ok(false);
+        };
+        if self.page_generations(page).contains(&generation) {
+            return Ok(true);
+        }
+        record
+            .ensure_mergeable_map(K_PAGE_GENS)?
+            .insert(&generation.to_string(), true)?;
+        self.doc.commit();
+        Ok(true)
     }
 
     fn list_record(&self, list: ListId) -> Option<LoroMap> {

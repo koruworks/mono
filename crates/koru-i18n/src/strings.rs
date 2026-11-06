@@ -2901,13 +2901,23 @@ pub enum Key {
     PlaceSplitLeft,
     /// Its middle: a new tab in the current pane, no split.
     PlaceNewTab,
+
+    // --------------------------------------------- page documents (Tasks)
+    /// The empty note above a Tasks page's rows: *Write about {page}…*.
+    PagePlaceholder,
+    /// The note's region, for a screen reader.
+    PageNote,
+    /// The band's notice when the first registration failed (plan Q8).
+    PageSaveFailed,
+    /// The band's notice when an existing note would not open.
+    PageOpenFailed,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2029] = [
+    pub const ALL: [Key; 2033] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4937,6 +4947,10 @@ impl Key {
         Key::PlaceSplitDown,
         Key::PlaceSplitLeft,
         Key::PlaceNewTab,
+        Key::PagePlaceholder,
+        Key::PageNote,
+        Key::PageSaveFailed,
+        Key::PageOpenFailed,
     ];
 }
 
@@ -15818,5 +15832,50 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
         ar: "علامة تبويب جديدة",
         zh_hans: "新建标签页",
         ja: "新しいタブ",
+    },
+    // ----------------------------------------------- page documents (Tasks)
+    Row {
+        key: Key::PagePlaceholder,
+        en: "Write about {}…",
+        es: "Escribe sobre {}…",
+        pt_br: "Escreva sobre {}…",
+        de: "Schreibe über {}…",
+        fr: "Écrivez à propos de {}…",
+        ar: "اكتب عن {}…",
+        zh_hans: "写一写{}…",
+        ja: "{}について書く…",
+    },
+    Row {
+        key: Key::PageNote,
+        en: "Note",
+        es: "Nota",
+        pt_br: "Nota",
+        de: "Notiz",
+        fr: "Note",
+        ar: "ملاحظة",
+        zh_hans: "笔记",
+        ja: "メモ",
+    },
+    Row {
+        key: Key::PageSaveFailed,
+        en: "Couldn’t save this note",
+        es: "No se pudo guardar esta nota",
+        pt_br: "Não foi possível salvar esta nota",
+        de: "Diese Notiz konnte nicht gespeichert werden",
+        fr: "Impossible d’enregistrer cette note",
+        ar: "تعذّر حفظ هذه الملاحظة",
+        zh_hans: "无法保存此笔记",
+        ja: "このメモを保存できませんでした",
+    },
+    Row {
+        key: Key::PageOpenFailed,
+        en: "Couldn’t open this note",
+        es: "No se pudo abrir esta nota",
+        pt_br: "Não foi possível abrir esta nota",
+        de: "Diese Notiz konnte nicht geöffnet werden",
+        fr: "Impossible d’ouvrir cette note",
+        ar: "تعذّر فتح هذه الملاحظة",
+        zh_hans: "无法打开此笔记",
+        ja: "このメモを開けませんでした",
     },
 ];

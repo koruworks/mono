@@ -6331,6 +6331,36 @@ Nothing was written. The store starts on demand, so this usually means it could 
         for edit in edits {
             edited |= crate::tasks::serve_list_edit(&mut self.runtime.workspace, &edit);
         }
+        // The notes above Tasks pages: every page a pane shows gets its
+        // document made, opened or registered by the workspace, and is told
+        // where that stands. Idempotent per turn; the registry does the work
+        // off this thread.
+        let retries: Vec<koru_core::ids::PageKey> = self
+            .panes
+            .iter_mut()
+            .flat_map(|(_, pane)| pane.view.take_wants_page_retry())
+            .collect();
+        for page in retries {
+            self.runtime.workspace.retry_page(page);
+        }
+        let wanted_pages: Vec<(WindowId, koru_core::ids::PageKey)> = self
+            .panes
+            .iter_mut()
+            .flat_map(|(id, pane)| {
+                pane.view
+                    .take_wants_page_documents()
+                    .into_iter()
+                    .map(move |page| (*id, page))
+            })
+            .collect();
+        for (id, page) in wanted_pages {
+            if let Some(state) = self.runtime.workspace.ensure_page(page)
+                && let Some(pane) = self.panes.get_mut(&id)
+                && pane.view.set_page_state(&state)
+            {
+                pane.window.request_redraw();
+            }
+        }
         // The Tasks surface's ticks, removals and captures. Collected first for
         // the borrow, then served one at a time — `crate::tasks::serve` owns the
         // ordering and the activity attempt, so this stays a sweep rather than a
@@ -11685,10 +11715,21 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 if !canvas && let Some(pane) = self.panes.get_mut(&source) {
                     pane.view.create_document_failed();
                 }
-                self.report(
+                // *Nothing was changed* is only true when the store never
+                // made the document. When it did and only the open failed,
+                // the document is listed and the message has to say so.
+                let report = if e
+                    .to_string()
+                    .contains(koru_workspace::CREATED_BUT_NOT_OPENED)
+                {
+                    ErrorReport::new(
+                        "Made the document, but couldn't open it",
+                        "It is in the sidebar.",
+                    )
+                } else {
                     ErrorReport::new("Couldn't create that document", "Nothing was changed.")
-                        .with_details(e),
-                );
+                };
+                self.report(report.with_details(e));
             }
         }
     }

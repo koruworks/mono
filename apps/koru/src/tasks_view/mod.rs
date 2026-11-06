@@ -62,6 +62,7 @@
 //! [ADR-285]: ../../../docs/decisions/ADR-276-300.md#adr-285-taskmodel--a-task-is-a-marked-node-and-the-marker-or-a-due-date-is-the-whole-derivation
 
 pub mod accessibility;
+mod body;
 mod capture;
 mod draw;
 pub mod echo;

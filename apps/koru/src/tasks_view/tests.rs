@@ -4220,3 +4220,144 @@ fn a_task_typed_into_a_ranked_list_goes_on_top() {
     assert_eq!(rank, Some(4 * GAP));
     assert_eq!(titles(&view)[0], "New", "drawn on top at once");
 }
+
+// ------------------------------------------------------------- the note
+
+mod note {
+    use super::*;
+    use koru_core::ids::{ListId, PageKey, page_document_id};
+    use koru_core::schema::{WorkspaceDoc, genesis_seed_id};
+    use koru_workspace::pages::{PagePhase, PageState};
+    use vello::kurbo::Affine;
+
+    fn page() -> (RailTarget, PageKey, DocumentId, WorkspaceDoc) {
+        let list = ListId::new();
+        let workspace = WorkspaceId::new();
+        let page = PageKey::List(list);
+        let document = page_document_id(workspace, page, 0);
+        let mut doc = WorkspaceDoc::page_genesis(workspace, document).unwrap();
+        doc.stamp_document_id(document).unwrap();
+        doc.enable_undo();
+        (RailTarget::List(list), page, document, doc)
+    }
+
+    fn state(page: PageKey, document: DocumentId, phase: PagePhase) -> PageState {
+        PageState {
+            page,
+            document,
+            generation: 0,
+            phase,
+        }
+    }
+
+    /// A page's state names the document the tab edits (D7), and an open
+    /// still in flight names none to activate.
+    #[test]
+    fn the_page_state_names_what_the_tab_edits() {
+        let (target, page, document, _) = page();
+        let mut view = TasksView::new(target);
+        assert_eq!(view.page_document(), None);
+        assert!(view.set_page_state(&state(page, document, PagePhase::Loading)));
+        assert_eq!(view.page_document(), Some(document));
+        assert!(!view.page_is_local(), "still opening: nothing to activate");
+        assert!(view.set_page_state(&state(page, document, PagePhase::Empty)));
+        assert!(view.page_is_local());
+        assert!(
+            !view.set_page_state(&state(page, document, PagePhase::Empty)),
+            "no change"
+        );
+        let other = PageKey::List(ListId::new());
+        assert!(
+            !view.set_page_state(&state(other, document, PagePhase::Empty)),
+            "not this page"
+        );
+    }
+
+    /// The note is built only over its own document, and the rows move
+    /// down by its band (D8).
+    #[test]
+    fn the_note_is_built_over_its_own_document_and_moves_the_rows_down() {
+        let (target, page, document, doc) = page();
+        let mut view = TasksView::new(target);
+        view.set_viewport(900.0, 600.0);
+        view.set_page_state(&state(page, document, PagePhase::Empty));
+
+        let stranger = WorkspaceDoc::create(WorkspaceId::new(), "other").unwrap();
+        view.catch_up(&stranger);
+        assert!(view.body.is_none(), "a stranger document builds nothing");
+
+        assert!(view.catch_up(&doc), "built over its own document");
+        assert!(view.body.is_some());
+        let top_before = view.rows_top();
+        view.layout_band();
+        assert!(view.rows_top() > view.header_h, "the rows moved down");
+        assert!(view.rows_top() >= top_before);
+        assert!(
+            view.rows_top() - view.header_h <= 600.0 * 0.4 + 1.0,
+            "never past its share"
+        );
+    }
+
+    /// A press in the note takes the keyboard, typing lands in the document,
+    /// and Escape hands the keyboard back to the table.
+    #[test]
+    fn a_press_in_the_note_takes_the_keyboard_and_escape_hands_it_back() {
+        let (target, page, document, mut doc) = page();
+        let mut view = TasksView::new(target);
+        view.set_viewport(900.0, 600.0);
+        view.set_page_state(&state(page, document, PagePhase::Empty));
+        view.catch_up(&doc);
+        view.layout_band();
+        let band = view.body.as_ref().unwrap().band;
+        let mods = ModifiersState::empty();
+
+        assert!(view.mouse_down(
+            &mut doc,
+            band.x + band.w * 0.5,
+            band.y + band.h * 0.5,
+            false
+        ));
+        assert!(view.body_is_focused_in(&doc));
+        view.key(&mut doc, &Key::Character("a".into()), Some("a"), mods);
+        let seed = genesis_seed_id(document);
+        assert_eq!(doc.read(seed).unwrap().content.as_text(), Some("a"));
+
+        assert!(view.key(&mut doc, &Key::Named(NamedKey::Escape), None, mods));
+        assert!(
+            !view.body_is_focused_in(&doc),
+            "Escape hands the keyboard back"
+        );
+        view.key(&mut doc, &Key::Character("b".into()), Some("b"), mods);
+        assert_eq!(
+            doc.read(seed).unwrap().content.as_text(),
+            Some("a"),
+            "the table has the keyboard now"
+        );
+    }
+
+    /// A note that failed to register shows its notice with *Try again*,
+    /// and a press on it asks for the retry (plan Q8).
+    #[test]
+    fn a_failed_note_offers_try_again() {
+        let (target, page, document, mut doc) = page();
+        let mut view = TasksView::new(target);
+        view.set_viewport(900.0, 600.0);
+        view.set_page_state(&state(
+            page,
+            document,
+            PagePhase::Failed {
+                why: "no store".into(),
+                opening: false,
+            },
+        ));
+        view.catch_up(&doc);
+        assert!(view.rows_top() > view.header_h, "the notice takes a row");
+        let mut scene = vello::Scene::new();
+        view.paint_notice(&mut scene, Affine::IDENTITY);
+        let (_, retry) = view.notice.expect("drawn");
+        assert!(!view.take_wants_retry());
+        assert!(view.mouse_down(&mut doc, retry.x + 1.0, retry.y + 1.0, false));
+        assert!(view.take_wants_retry());
+        assert!(!view.take_wants_retry(), "drained");
+    }
+}

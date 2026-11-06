@@ -43,7 +43,15 @@ const DOT_GAP: f32 = 6.0;
 const FRESHNESS_GAP: f32 = 10.0;
 
 impl TasksView {
+    /// The whole page, with no note — what the benchmarks draw.
+    #[cfg(test)]
     pub(super) fn paint(&mut self, scene: &mut Scene, root: Affine, caret_on: bool) {
+        self.paint_under(scene, root);
+        self.paint_over(scene, root, caret_on);
+    }
+
+    /// The sheet and the heading: everything under the note's band.
+    pub(super) fn paint_under(&mut self, scene: &mut Scene, root: Affine) {
         let p = theme::p();
         // `bg`, not `canvas`: this is a **sheet** you read a list on, the same
         // surface the Trash tab and the workspace manager use.
@@ -54,6 +62,11 @@ impl TasksView {
             &scene::rect(0.0, 0.0, self.viewport.0, self.viewport.1),
         );
         self.paint_header(scene, root);
+    }
+
+    /// The rows and every panel over them — over the note's band, so a menu
+    /// opened from a row is above the note too.
+    pub(super) fn paint_over(&mut self, scene: &mut Scene, root: Affine, caret_on: bool) {
         self.paint_lines(scene, root, caret_on);
         self.paint_overflow(scene, root);
         self.paint_picker(scene, root);
@@ -196,7 +209,7 @@ impl TasksView {
             root,
             scene::rect(
                 0.0,
-                self.header_h,
+                self.rows_top(),
                 self.viewport.0,
                 (self.viewport.1 - self.header_h).max(0.0),
             ),

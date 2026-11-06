@@ -2899,6 +2899,16 @@ count — the same chips, the same rows. What changes is which tasks are on it,
 and that tasks with no date are perfectly normal here, so their due chip is a
 dash rather than a nudge to schedule something.
 
+**Write above the tasks.** Between the heading and the rows there is room to
+write — *Write about Bike Project…* — and anything you put there is a real
+document named after the page: it is in your library like any other, opens in
+its own tab, and is there again on every device. Nothing is made until you
+write something. The note grows as you write, up to about forty percent of
+the page, then scrolls on its own. `Esc`, or a click on a task, puts the
+keyboard back on the list. If the note could not be saved to the Koru Store
+the band says so and offers *Try again*; nothing you wrote is lost, it is
+kept on this computer until it lands.
+
 **The first row is where you add one.** Click *Add a task…*, type, and press
 `Enter` — or, with the keyboard on the list's first task, press `↑` once more
 and the caret lands in that row without you reaching for the mouse. `Esc` leaves

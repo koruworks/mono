@@ -202,6 +202,12 @@ impl Leaf {
         d.editor.body.focus = d.editor.body.first_body_row();
     }
 
+    /// What the first empty paragraph reads, in place of *Start typing…*.
+    pub fn set_body_placeholder(&mut self, placeholder: String) {
+        let Self::Document(d) = self;
+        d.set_body_placeholder(placeholder);
+    }
+
     /// Where the caret is: which row, and how many bytes into it.
     ///
     /// **The offset is the half that gets forgotten.** `focus` alone names a

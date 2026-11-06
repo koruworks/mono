@@ -707,3 +707,42 @@ fn every_interleaving_of_two_revisions_keeps_the_plans_promises() {
     });
     assert!(states > 1_000, "the exploration is not trivial: {states}");
 }
+
+// ------------------------------------------------------------- the disk
+
+/// The same machines over `std::fs`: written, found, released — and a
+/// record-less directory found as incomplete.
+#[test]
+fn the_disk_runs_the_same_machines() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join("doc");
+    let blobs = blobs_for(1, 1);
+    let hashes: Vec<String> = blobs.iter().map(|(h, _)| h.clone()).collect();
+    WriteRevision::new(
+        &dir,
+        name(1),
+        "p1",
+        b"updates".to_vec(),
+        blobs,
+        &record(1, &hashes),
+    )
+    .run(&mut DiskFs)
+    .unwrap();
+    let found = discover(&DiskFs, &dir).unwrap();
+    assert_eq!(found.complete.len(), 1);
+    assert_eq!(found.complete[0].name, name(1));
+    assert_eq!(
+        std::fs::read(found.complete[0].dir.join(UPDATES)).unwrap(),
+        b"updates"
+    );
+
+    let mut release = ReleaseRevision::of_name(&DiskFs, &dir, name(1)).unwrap();
+    release.run(&mut DiskFs).unwrap();
+    assert!(discover(&DiskFs, &dir).unwrap().is_empty());
+    assert!(!dir.join(name(1).dir_name()).exists());
+
+    std::fs::create_dir_all(dir.join(name(2).dir_name())).unwrap();
+    let found = discover(&DiskFs, &dir).unwrap();
+    assert_eq!(found.incomplete.len(), 1);
+    assert!(found.complete.is_empty());
+}

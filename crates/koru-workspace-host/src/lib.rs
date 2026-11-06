@@ -1515,6 +1515,32 @@ pub trait View {
         Vec::new()
     }
 
+    /// **The Tasks pages this view is showing**, so the shell can make sure
+    /// each has its page document and say where it stands
+    /// ([`set_page_state`](Self::set_page_state)).
+    ///
+    /// Asked every turn and answered from what the tabs show, because a
+    /// page's document is the workspace's to create, open and register — a
+    /// view holds one `&mut WorkspaceDoc` at most and cannot reach the
+    /// registry. The shell calls `Workspace::ensure_page` for each, which is
+    /// idempotent and cheap once the document exists.
+    fn take_wants_page_documents(&mut self) -> Vec<koru_core::ids::PageKey> {
+        Vec::new()
+    }
+
+    /// Where a Tasks page's document stands, pushed after
+    /// [`take_wants_page_documents`](Self::take_wants_page_documents).
+    /// Returns whether anything on screen changed.
+    fn set_page_state(&mut self, _state: &koru_workspace::pages::PageState) -> bool {
+        false
+    }
+
+    /// **Pages whose *Retry* was pressed** — a failed registration or open
+    /// the person asked to run again.
+    fn take_wants_page_retry(&mut self) -> Vec<koru_core::ids::PageKey> {
+        Vec::new()
+    }
+
     /// **Task changes a view asked for but cannot make**, in the order it asked.
     ///
     /// [`take_wants_create_list`](Self::take_wants_create_list)'s shape, for the

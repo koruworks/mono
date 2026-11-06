@@ -38,6 +38,18 @@ pub fn current_generation<'a>(keys: impl IntoIterator<Item = &'a str>) -> Option
         .max()
 }
 
+/// Every generation among `keys`, parsed and sorted ascending; a key that is
+/// not a decimal number is skipped, as [`current_generation`] skips it.
+pub fn generations<'a>(keys: impl IntoIterator<Item = &'a str>) -> Vec<u64> {
+    let mut out: Vec<u64> = keys
+        .into_iter()
+        .filter_map(|key| key.parse::<u64>().ok())
+        .collect();
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
 /// The join of two version vectors: the component-wise maximum.
 ///
 /// **Monotone by construction** — the join contains both inputs, is the same

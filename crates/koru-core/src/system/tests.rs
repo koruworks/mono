@@ -626,3 +626,86 @@ fn open_or_create_opens_what_exists_and_creates_otherwise() {
     let fresh = SystemDoc::open_or_create(None).unwrap();
     assert!(fresh.tags().is_empty());
 }
+
+// ------------------------------------------------------------ pages
+
+/// A page's generations are a grow-only set on its record, and the current
+/// one is the numeric maximum (page-document plan §6.2).
+#[test]
+fn a_lists_page_generations_grow_and_the_current_one_is_the_numeric_maximum() {
+    let mut sys = SystemDoc::create().unwrap();
+    let list = sys.create_list("Bike", None, 1).unwrap();
+    let page = PageKey::List(list);
+    assert_eq!(sys.page_generations(page), Vec::<u64>::new());
+    assert_eq!(sys.current_page_generation(page), None);
+
+    assert!(sys.add_page_generation(page, 0).unwrap());
+    assert!(
+        sys.add_page_generation(page, 0).unwrap(),
+        "a repeat is a no-op"
+    );
+    for n in [1, 10, 9] {
+        assert!(sys.add_page_generation(page, n).unwrap());
+    }
+    assert_eq!(sys.page_generations(page), vec![0, 1, 9, 10]);
+    assert_eq!(
+        sys.current_page_generation(page),
+        Some(10),
+        "numeric, not lexical"
+    );
+}
+
+/// A deleted list keeps its document (D4), so its page record still reads
+/// and still takes a generation; a list the table never held is refused.
+#[test]
+fn a_deleted_list_still_has_its_page_and_an_unknown_list_has_none() {
+    let mut sys = SystemDoc::create().unwrap();
+    let list = sys.create_list("Bike", None, 1).unwrap();
+    let page = PageKey::List(list);
+    assert!(sys.add_page_generation(page, 0).unwrap());
+    assert!(sys.delete_list(list, 2).unwrap());
+    assert_eq!(sys.page_generations(page), vec![0]);
+    assert!(sys.add_page_generation(page, 1).unwrap());
+    assert_eq!(sys.current_page_generation(page), Some(1));
+
+    let ghost = PageKey::List(ListId::new());
+    assert!(!sys.add_page_generation(ghost, 0).unwrap());
+    assert_eq!(sys.page_generations(ghost), Vec::<u64>::new());
+}
+
+/// Buckets keep their page records under the `pages` root, one per token,
+/// created on first use; nothing else in the document moves.
+#[test]
+fn a_buckets_page_record_is_its_own() {
+    let mut sys = SystemDoc::create().unwrap();
+    let today = PageKey::Bucket(crate::tasks::Bucket::Today);
+    let next = PageKey::Bucket(crate::tasks::Bucket::Next);
+    assert_eq!(sys.current_page_generation(today), None);
+    assert!(sys.add_page_generation(today, 0).unwrap());
+    assert_eq!(sys.page_generations(today), vec![0]);
+    assert_eq!(sys.page_generations(next), Vec::<u64>::new(), "per bucket");
+    assert!(sys.lists().is_empty(), "a bucket's page is not a list");
+}
+
+/// Two devices replacing a page's document offline converge on the union of
+/// their generations, and both then agree on the current one.
+#[test]
+fn two_peers_adding_generations_offline_converge_on_the_union() {
+    let mut a = SystemDoc::create().unwrap();
+    let list = a.create_list("Bike", None, 1).unwrap();
+    let page = PageKey::List(list);
+    a.add_page_generation(page, 0).unwrap();
+    let mut b = SystemDoc::from_snapshot(&a.export_snapshot().unwrap()).unwrap();
+
+    a.add_page_generation(page, 1).unwrap();
+    b.add_page_generation(page, 2).unwrap();
+    let from_a = a.export_all_updates().unwrap();
+    let from_b = b.export_all_updates().unwrap();
+    a.import(&from_b).unwrap();
+    b.import(&from_a).unwrap();
+
+    assert_eq!(a.page_generations(page), vec![0, 1, 2]);
+    assert_eq!(b.page_generations(page), vec![0, 1, 2]);
+    assert_eq!(a.current_page_generation(page), Some(2));
+    assert_eq!(b.current_page_generation(page), Some(2));
+}

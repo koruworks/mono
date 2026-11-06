@@ -3781,7 +3781,7 @@ impl MainView {
         // **The window opens the document the tab is over — without moving
         // Explore.** ActivateDocument parks/opens the room in place; Navigate
         // would switch the active workspace whenever locate_document differed.
-        if let Some(doc) = self.tabs().active_tab().document
+        if let Some(doc) = self.tabs().active_tab().edits()
             && self.active_document != Some(doc)
         {
             // Snapshot the tab being shown *before* catch_up can see the
@@ -3842,7 +3842,13 @@ impl MainView {
     /// Which documents the strip is showing, so a close can tell what it let go
     /// of. Duplicates included: what matters is what is left afterwards.
     fn shown_documents(&self) -> Vec<koru_core::DocumentId> {
-        self.tabs().iter().filter_map(|t| t.document).collect()
+        // Every group, and what each tab *edits*: a document shown in the
+        // other pane, or above a Tasks page, is still open.
+        self.panes
+            .iter_groups()
+            .flat_map(|(_, group)| group.iter_tabs())
+            .filter_map(Tab::edits)
+            .collect()
     }
 
     /// Ask the shell to let go of every document no tab shows any more.
@@ -3855,7 +3861,12 @@ impl MainView {
     /// it.
     fn released(&mut self, before: Vec<koru_core::DocumentId>) {
         for id in before {
-            if !self.tabs().iter().any(|t| t.document == Some(id)) {
+            let still_edited = self
+                .panes
+                .iter_groups()
+                .flat_map(|(_, group)| group.iter_tabs())
+                .any(|t| t.edits() == Some(id));
+            if !still_edited {
                 self.ask_pane(koru_workspace_host::PaneRequest::CloseDocument(id));
             }
         }
@@ -13604,6 +13615,61 @@ impl View for MainView {
         std::mem::take(&mut self.list_edits)
     }
 
+    /// Every Tasks page this window shows, so the shell makes its document
+    /// exist and says where it stands.
+    fn take_wants_page_documents(&mut self) -> Vec<koru_core::ids::PageKey> {
+        let mut pages = Vec::new();
+        self.each_tab_mut(|tab| {
+            if let TabView::Tasks(t) = &tab.view
+                && let Some(page) = t.page_key()
+                && !pages.contains(&page)
+            {
+                pages.push(page);
+            }
+            false
+        });
+        pages
+    }
+
+    /// The shell's answer for one page, to every Tasks tab on it — and the
+    /// activation a Tasks tab in front owes once it knows its document, the
+    /// same request selecting it would make.
+    fn set_page_state(&mut self, state: &koru_workspace::pages::PageState) -> bool {
+        let mut changed = false;
+        self.each_tab_mut(|tab| {
+            if let TabView::Tasks(t) = &mut tab.view {
+                changed |= t.set_page_state(state);
+            }
+            false
+        });
+        let front = self.tabs().active_tab();
+        if matches!(front.view, TabView::Tasks(_))
+            && let Some(doc) = front.edits()
+            && self.active_document != Some(doc)
+        {
+            let home = front.home_workspace();
+            self.ask_pane(koru_workspace_host::PaneRequest::ActivateDocument {
+                document: doc,
+                workspace: home,
+            });
+        }
+        changed
+    }
+
+    fn take_wants_page_retry(&mut self) -> Vec<koru_core::ids::PageKey> {
+        let mut pages = Vec::new();
+        self.each_tab_mut(|tab| {
+            if let TabView::Tasks(t) = &mut tab.view
+                && t.take_wants_retry()
+                && let Some(page) = t.page_key()
+            {
+                pages.push(page);
+            }
+            false
+        });
+        pages
+    }
+
     /// The Tasks tab's ticks, removals and captures, on their way to the
     /// workspace. The list request's contract exactly, one layer along.
     fn take_wants_run_pills(&mut self) -> Vec<koru_workspace_host::runpill::RunPill> {
@@ -13801,8 +13867,14 @@ impl View for MainView {
             return;
         }
         let i = self.image_request.take().unwrap_or(self.tabs().active());
-        if let Some(TabView::Leaf(l)) = self.tabs_mut().get_mut(i).map(|t| &mut t.view) {
-            View::insert_image(l, ws, node, hash, mime, width, height);
+        match self.tabs_mut().get_mut(i).map(|t| &mut t.view) {
+            Some(TabView::Leaf(l)) => View::insert_image(l, ws, node, hash, mime, width, height),
+            Some(TabView::Tasks(t)) => {
+                if let Some(l) = t.body_leaf_mut() {
+                    View::insert_image(l, ws, node, hash, mime, width, height);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -13817,8 +13889,14 @@ impl View for MainView {
         if self.canvas_append_image(ws, (hash, mime), width, height) {
             return;
         }
-        if let TabView::Leaf(l) = self.active_view() {
-            View::append_image(l, ws, hash, mime, width, height);
+        match self.active_view() {
+            TabView::Leaf(l) => View::append_image(l, ws, hash, mime, width, height),
+            TabView::Tasks(t) => {
+                if let Some(l) = t.body_leaf_in(ws) {
+                    View::append_image(l, ws, hash, mime, width, height);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -13831,8 +13909,23 @@ impl View for MainView {
         if self.canvas_insert_images(ws, images) {
             return;
         }
-        if let TabView::Leaf(l) = self.active_view() {
-            View::paste_images(l, ws, target, images);
+        let landed = match self.active_view() {
+            TabView::Leaf(l) => {
+                View::paste_images(l, ws, target, images);
+                true
+            }
+            // The note above a Tasks page, while it has the keyboard and
+            // `ws` is its document — the paired boundary's substitution.
+            TabView::Tasks(t) => match t.body_leaf_in(ws) {
+                Some(l) => {
+                    View::paste_images(l, ws, target, images);
+                    true
+                }
+                None => false,
+            },
+            _ => false,
+        };
+        if landed {
             // New image children just landed under the active document — the
             // explore column's cache of the library is stale. The per-frame
             // `adopt` would catch it next frame; this makes it immediate.
@@ -13841,8 +13934,14 @@ impl View for MainView {
     }
 
     fn paste_text(&mut self, ws: &mut WorkspaceDoc, text: &str) {
-        if let TabView::Leaf(l) = self.active_view() {
-            View::paste_text(l, ws, text);
+        match self.active_view() {
+            TabView::Leaf(l) => View::paste_text(l, ws, text),
+            TabView::Tasks(t) => {
+                if let Some(l) = t.body_leaf_in(ws) {
+                    View::paste_text(l, ws, text);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -13898,7 +13997,12 @@ impl View for MainView {
         let mut place = Some(place);
         for (_, group) in self.panes.iter_groups_mut() {
             for tab in group.iter_tabs_mut() {
-                if let TabView::Leaf(l) = &mut tab.view
+                let leaf = match &mut tab.view {
+                    TabView::Leaf(l) => Some(l),
+                    TabView::Tasks(t) => t.body_leaf_mut(),
+                    _ => None,
+                };
+                if let Some(l) = leaf
                     && l.holds_image_import(ticket)
                     && let Some(place) = place.take()
                 {
@@ -13968,8 +14072,21 @@ impl View for MainView {
         target: Option<koru_workspace_host::PasteTarget>,
         blocks: &[koru_workspace_host::RichBlock],
     ) {
-        if let TabView::Leaf(l) = self.active_view() {
-            View::paste_rich(l, ws, target, blocks);
+        let landed = match self.active_view() {
+            TabView::Leaf(l) => {
+                View::paste_rich(l, ws, target, blocks);
+                true
+            }
+            TabView::Tasks(t) => match t.body_leaf_in(ws) {
+                Some(l) => {
+                    View::paste_rich(l, ws, target, blocks);
+                    true
+                }
+                None => false,
+            },
+            _ => false,
+        };
+        if landed {
             // Like `paste_images`: image blocks landed under the active document,
             // so the explore column's library cache is stale.
             self.explore_stale = true;

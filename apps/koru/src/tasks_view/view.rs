@@ -10,7 +10,7 @@
 use crate::panes::explore::rail::{Bucket, RailTarget};
 use chrono::NaiveDate;
 use koru_core::attributes::Priority;
-use koru_core::ids::ListId;
+use koru_core::ids::{ListId, PageKey};
 use koru_core::schema::WorkspaceDoc;
 use koru_core::{DocumentId, NodeId, WorkspaceId};
 use koru_draw::chip::ChipKind;
@@ -18,11 +18,13 @@ use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
 use koru_draw::theme;
 use koru_editor::utils::when::{self, Parsed, Reference};
+use koru_i18n::{fill, t};
 use koru_store_wire::tasks::TaskSort;
 use koru_ui::date_grid::DateGrid;
 use koru_ui::label_chip::LabelChip;
 use koru_ui::menu::{Anchor, Menu};
 use koru_ui::table::{Band, Metrics, Table};
+use koru_workspace::pages::{PagePhase, PageState};
 use koru_workspace_host::{Settings, View};
 use vello::Scene;
 use vello::kurbo::Affine;
@@ -30,6 +32,7 @@ use winit::event::MouseScrollDelta;
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::CursorIcon;
 
+use super::body::PageBody;
 use super::capture::{Capture, SlashRow, Typed};
 use super::echo::{self, Echo, Patch};
 use super::menu::ColorPick;
@@ -40,6 +43,7 @@ use super::pickers::{
 };
 use super::query::{Due, DueWindow, Filters, TaskEntry, TaskListPanel};
 use super::states::{self, Empty};
+use crate::leaf::Leaf;
 
 /// The page's own margin — the Trash tab's, because this is the same kind of
 /// page: a list read on a wide sheet, which pinned to the window's edges reads
@@ -382,6 +386,18 @@ pub struct TasksView {
     /// What this window has changed that the store's rows do not show yet —
     /// drawn over them until the wait ends. See [`super::echo`].
     echoes: Vec<Echo>,
+    /// The page's document and where it stands, as the shell last said.
+    page: Option<PageState>,
+    /// The note above the rows, once its document is the one handed in.
+    pub(super) body: Option<PageBody>,
+    /// *Try again* was pressed on a note that failed; drained by the container.
+    wants_retry: bool,
+    /// Where the band's notice and its *Try again* were drawn this frame.
+    pub(super) notice: Option<(Rect, Rect)>,
+    /// The band's height this frame — what the rows move down by.
+    band_h: f32,
+    /// Where the pointer last was, so a wheel over the note scrolls the note.
+    pointer: (f32, f32),
 }
 
 impl TasksView {
@@ -420,6 +436,12 @@ impl TasksView {
             stale: true,
             pending: None,
             echoes: Vec::new(),
+            page: None,
+            body: None,
+            wants_retry: false,
+            notice: None,
+            band_h: 0.0,
+            pointer: (-1.0, -1.0),
         }
     }
 
@@ -450,6 +472,12 @@ impl TasksView {
         // An echo is a change to *this* page's rows; another page starts from
         // the store's answer.
         self.echoes.clear();
+        // The note belongs to the page it was written above. Another page has
+        // its own document, which the shell names on the next turn.
+        self.page = None;
+        self.body = None;
+        self.notice = None;
+        self.band_h = 0.0;
         // **A filter the new page cannot show is a filter the new page must not
         // apply.** The due dimension is offered on a list and on nothing else,
         // so carrying a list's *Overdue* across to a queue would go on
@@ -1035,8 +1063,11 @@ impl TasksView {
     /// guess. A false *absence* is quiet; a false *presence* would be a warning
     /// about nothing.
     pub fn catch_up(&mut self, ws: &WorkspaceDoc) -> bool {
+        // The note settles first: it is a leaf over `ws` when `ws` is the
+        // page's document, and nothing else about the page depends on it.
+        let note = self.settle_body(ws);
         if !std::mem::take(&mut self.stale) {
-            return false;
+            return note;
         }
         self.today = self
             .panel
@@ -1823,7 +1854,7 @@ impl TasksView {
             Metrics::manager()
                 .with_pad(PAD)
                 .with_row_h(self.row_h())
-                .with_header(self.header_h)
+                .with_header(self.rows_top())
                 .with_footer(0.0)
                 .roomy(),
             self.scroll,
@@ -3266,11 +3297,26 @@ pub(super) fn due_label(due: Option<Due>, today: NaiveDate) -> String {
 impl View for TasksView {
     fn key(
         &mut self,
-        _ws: &mut WorkspaceDoc,
+        ws: &mut WorkspaceDoc,
         key: &Key,
         text: Option<&str>,
         mods: ModifiersState,
     ) -> bool {
+        // The note has the keyboard while it is focused and the document
+        // handed in is its own; Escape hands the keyboard back to the table.
+        if let Some(body) = &mut self.body
+            && body.focused
+        {
+            if !body.is_in(ws) {
+                body.blur();
+            } else if matches!(key, Key::Named(NamedKey::Escape)) {
+                body.key(ws, key, text, mods);
+                body.blur();
+                return true;
+            } else {
+                return body.key(ws, key, text, mods);
+            }
+        }
         // The rename field has the keyboard while it stands: Enter keeps
         // the words, Escape puts the old ones back.
         if self.rename.is_some() {
@@ -3383,7 +3429,40 @@ impl View for TasksView {
         }
     }
 
-    fn mouse_down(&mut self, _ws: &mut WorkspaceDoc, x: f32, y: f32, ctrl: bool) -> bool {
+    fn mouse_down(&mut self, ws: &mut WorkspaceDoc, x: f32, y: f32, ctrl: bool) -> bool {
+        self.pointer = (x, y);
+        if let Some((_, retry)) = self.notice
+            && retry.contains(x, y)
+        {
+            self.wants_retry = true;
+            return true;
+        }
+        if self
+            .body
+            .as_ref()
+            .is_some_and(|body| body.contains(x, y) && body.is_in(ws))
+        {
+            // A press in the note commits whatever field was open below it,
+            // the rule every field in this app follows, and takes the caret.
+            if self.rename.is_some() {
+                self.commit_rename();
+            }
+            if self.capture.is_some() {
+                self.commit_capture();
+                self.end_capture();
+            }
+            self.clear_selection();
+            let body = self.body.as_mut().expect("checked above");
+            body.focus();
+            body.mouse_down(ws, x, y, ctrl);
+            return true;
+        }
+        // A press on the table hands the keyboard back.
+        if let Some(body) = &mut self.body
+            && body.focused
+        {
+            body.blur();
+        }
         // Alt with nothing else is the place chooser's press (ADR-58); Alt
         // with Ctrl or Shift is that key's press, as in a document.
         let asks_where = self.mods.alt_key()
@@ -3397,8 +3476,16 @@ impl View for TasksView {
     }
 
     fn mouse_move(&mut self, x: f32, y: f32) -> bool {
+        self.pointer = (x, y);
         if self.drag.is_some() {
             return self.drag_to(y);
+        }
+        if let Some(body) = &mut self.body
+            && (body.is_dragging() || body.contains(x, y))
+        {
+            let moved = body.mouse_move(x, y);
+            let was = self.hover.take();
+            return moved || was.is_some();
         }
         let viewport = self.viewport;
         if let Some(picker) = &mut self.picker {
@@ -3456,7 +3543,12 @@ impl View for TasksView {
         was != self.hover
     }
 
-    fn mouse_up(&mut self, _ws: &mut WorkspaceDoc) -> bool {
+    fn mouse_up(&mut self, ws: &mut WorkspaceDoc) -> bool {
+        if let Some(body) = &mut self.body
+            && body.focused
+        {
+            return body.mouse_up(ws);
+        }
         if self.drag.is_some() {
             return self.drop_drag();
         }
@@ -3486,7 +3578,13 @@ impl View for TasksView {
     /// **It renames** (the owner's ask, 2026-11-05): a page-made task lives
     /// in the hidden tasks document, and opening that is a look at storage,
     /// not at the task. Opening is the row menu's *Open document*.
-    fn mouse_double_click(&mut self, _ws: &WorkspaceDoc, x: f32, y: f32) -> bool {
+    fn mouse_double_click(&mut self, ws: &WorkspaceDoc, x: f32, y: f32) -> bool {
+        if let Some(body) = &mut self.body
+            && body.contains(x, y)
+            && body.is_in(ws)
+        {
+            return body.mouse_double_click(ws, x, y);
+        }
         let Some(Hit::Row(i)) = self.hit_at(x, y) else {
             return false;
         };
@@ -3516,6 +3614,12 @@ impl View for TasksView {
     }
 
     fn scroll_by(&mut self, delta: MouseScrollDelta) {
+        if let Some(body) = &mut self.body
+            && body.contains(self.pointer.0, self.pointer.1)
+        {
+            body.scroll_by(delta);
+            return;
+        }
         let dy = match delta {
             MouseScrollDelta::LineDelta(_, y) => y * self.row_h(),
             MouseScrollDelta::PixelDelta(p) => p.y as f32,
@@ -3529,11 +3633,17 @@ impl View for TasksView {
         // Also the moment the font role or the density could have moved under
         // us, which is what the heading's height depends on.
         self.measure_header();
+        if let Some(body) = &mut self.body {
+            body.mark_dirty();
+        }
         self.clamp_scroll();
     }
 
     fn set_mods(&mut self, mods: ModifiersState) {
         self.mods = mods;
+        if let Some(body) = &mut self.body {
+            body.set_mods(mods);
+        }
     }
 
     /// **Every hit is [`PRESS`], which is the plain arrow** ([ADR-215]): a
@@ -3543,6 +3653,11 @@ impl View for TasksView {
     /// [PRESS]: koru_ui::cursor::PRESS
     /// [ADR-215]: ../../../docs/decisions/ADR-201-225.md#adr-215-nohandcursor--koru-does-not-use-the-hand-cursor-a-press-target-is-identified-by-its-own-appearance
     fn cursor_icon(&self) -> CursorIcon {
+        if let Some(body) = &self.body
+            && body.contains(self.pointer.0, self.pointer.1)
+        {
+            return body.cursor_icon();
+        }
         match self.hover {
             Some(
                 Hit::Complete(_)
@@ -3559,8 +3674,9 @@ impl View for TasksView {
 
     /// Only a flag. The page is read in `catch_up`, which runs for the tab
     /// about to be drawn and not for the ones that are not.
-    fn adopt(&mut self, _ws: &WorkspaceDoc) {
+    fn adopt(&mut self, ws: &WorkspaceDoc) {
         self.stale = true;
+        self.adopt_body(ws);
     }
 
     fn reseat(&mut self, _ws: &WorkspaceDoc) {
@@ -3577,18 +3693,25 @@ impl View for TasksView {
     fn animating(&self) -> bool {
         self.flash
             .is_some_and(|(_, until)| std::time::Instant::now() < until)
+            || self.body.as_ref().is_some_and(PageBody::is_animating)
     }
 
     fn draw(
         &mut self,
         scene: &mut Scene,
-        _workspace: &koru_workspace::Workspace,
-        _images: &koru_draw::ImageCache,
+        workspace: &koru_workspace::Workspace,
+        images: &koru_draw::ImageCache,
         root: Affine,
         caret_on: bool,
-        _pointer: (f32, f32),
+        pointer: (f32, f32),
     ) {
-        self.paint(scene, root, caret_on);
+        self.layout_band();
+        self.paint_under(scene, root);
+        if let Some(body) = &mut self.body {
+            body.draw(scene, workspace, images, root, caret_on, pointer);
+        }
+        self.paint_notice(scene, root);
+        self.paint_over(scene, root, caret_on);
     }
 
     fn restore(&mut self, _ws: &koru_workspace::Workspace, _settings: &Settings) {}
@@ -3610,5 +3733,189 @@ fn menu_anchor(dots: Rect, at: Option<(f32, f32)>) -> ((f32, f32), Anchor) {
     match at {
         Some(point) => (point, Anchor::Cursor),
         None => ((dots.x + dots.w, dots.y + dots.h), Anchor::ButtonRight),
+    }
+}
+
+// ------------------------------------------------------------ the note
+
+impl TasksView {
+    /// Which page this view is, as the system document keys it.
+    pub fn page_key(&self) -> Option<PageKey> {
+        match self.target {
+            RailTarget::Bucket(bucket) => Some(PageKey::Bucket(bucket)),
+            RailTarget::List(id) => Some(PageKey::List(id)),
+            RailTarget::Reminders => None,
+        }
+    }
+
+    /// The page's document, once the shell has said which it is — what this
+    /// tab edits (`Tab::edits`, D7).
+    pub fn page_document(&self) -> Option<DocumentId> {
+        self.page.as_ref().map(|page| page.document)
+    }
+
+    /// Whether the page's document exists in this process to be activated:
+    /// every phase but one still being opened.
+    pub fn page_is_local(&self) -> bool {
+        self.page
+            .as_ref()
+            .is_some_and(|page| page.phase != PagePhase::Loading)
+    }
+
+    /// Where the page's document stands, from the shell. Answers whether
+    /// anything on screen changed.
+    pub fn set_page_state(&mut self, state: &PageState) -> bool {
+        if Some(state.page) != self.page_key() || self.page.as_ref() == Some(state) {
+            return false;
+        }
+        let other_document = self.page_document() != Some(state.document);
+        self.page = Some(state.clone());
+        if other_document {
+            self.body = None;
+            self.band_h = 0.0;
+        }
+        self.notice = None;
+        true
+    }
+
+    pub fn take_wants_retry(&mut self) -> bool {
+        std::mem::take(&mut self.wants_retry)
+    }
+
+    /// The note's leaf, while the note has the keyboard and `ws` is its
+    /// document — where a paste or a dictation lands then.
+    pub fn body_leaf_in(&mut self, ws: &WorkspaceDoc) -> Option<&mut Leaf> {
+        let body = self.body.as_mut()?;
+        (body.focused && body.is_in(ws)).then(|| body.leaf_mut())
+    }
+
+    /// The note's leaf, whatever has the keyboard — for an image import the
+    /// note itself asked for.
+    pub fn body_leaf_mut(&mut self) -> Option<&mut Leaf> {
+        self.body.as_mut().map(PageBody::leaf_mut)
+    }
+
+    /// The note's leaf while the note has the keyboard — what dictation and
+    /// the editable-target routing ask about.
+    pub fn focused_body_leaf(&self) -> Option<&Leaf> {
+        self.body
+            .as_ref()
+            .filter(|body| body.focused)
+            .map(PageBody::leaf)
+    }
+
+    /// Whether the note has the keyboard and `ws` is its document.
+    pub fn body_is_focused_in(&self, ws: &WorkspaceDoc) -> bool {
+        self.body
+            .as_ref()
+            .is_some_and(|body| body.focused && body.is_in(ws))
+    }
+
+    /// *Write about {page}…*, in the reader's language.
+    fn placeholder(&self) -> String {
+        fill(
+            t(crate::format::lang(), koru_i18n::Key::PagePlaceholder),
+            &[&self.title()],
+        )
+    }
+
+    /// Build or settle the note over `ws`, when `ws` is the page's document.
+    /// Answers whether it changed.
+    fn settle_body(&mut self, ws: &WorkspaceDoc) -> bool {
+        let Some(document) = self.page_document() else {
+            return false;
+        };
+        if let Some(body) = &mut self.body
+            && body.document == document
+        {
+            return body.catch_up(ws);
+        }
+        if ws.own_document_id() != Some(document) {
+            return false;
+        }
+        let placeholder = self.placeholder();
+        match PageBody::open(ws, document, placeholder) {
+            Some(body) => {
+                self.body = Some(body);
+                true
+            }
+            None => false,
+        }
+    }
+
+    pub(super) fn adopt_body(&mut self, ws: &WorkspaceDoc) {
+        if let Some(body) = &mut self.body {
+            body.adopt(ws);
+        }
+    }
+
+    /// The failure the band shows, if the note failed to register or open.
+    fn failure(&self) -> Option<bool> {
+        match self.page.as_ref().map(|page| &page.phase) {
+            Some(PagePhase::Failed { opening, .. }) => Some(*opening),
+            _ => None,
+        }
+    }
+
+    fn notice_h(&self) -> f32 {
+        if self.failure().is_some() {
+            self.row_h()
+        } else {
+            0.0
+        }
+    }
+
+    /// Where the rows start: under the heading, the note's band and its
+    /// notice when there is one.
+    pub(super) fn rows_top(&self) -> f32 {
+        self.header_h + self.band_h + self.notice_h()
+    }
+
+    /// Lay the band out for this frame: the note's content up to its share
+    /// of the page (D8). The rows move down by it.
+    pub(super) fn layout_band(&mut self) {
+        let before = self.band_h;
+        let (header_h, w, h) = (self.header_h, self.viewport.0, self.viewport.1);
+        self.band_h = match &mut self.body {
+            Some(body) => body.layout(PAD, header_h, w, h),
+            None => 0.0,
+        };
+        if (before - self.band_h).abs() > 0.5 {
+            self.clamp_scroll();
+        }
+    }
+
+    /// The band's notice when the note could not be saved or opened, and
+    /// *Try again* beside it (plan Q8).
+    pub(super) fn paint_notice(&mut self, scene: &mut Scene, root: Affine) {
+        self.notice = None;
+        let Some(opening) = self.failure() else {
+            return;
+        };
+        let lang = crate::format::lang();
+        let text = t(
+            lang,
+            if opening {
+                koru_i18n::Key::PageOpenFailed
+            } else {
+                koru_i18n::Key::PageSaveFailed
+            },
+        );
+        let retry = t(lang, koru_i18n::Key::TryAgain);
+        let p = theme::p();
+        let top = self.header_h + self.band_h;
+        let line = Rect::new(
+            PAD,
+            top,
+            (self.viewport.0 - 2.0 * PAD).max(0.0),
+            self.row_h(),
+        );
+        let layout = self.engine.simple_layout(text, theme::role::row());
+        let y = koru_draw::scene::centre_y_in(&layout, line);
+        koru_draw::scene::draw_layout_first_line(scene, root, &layout, PAD, y, Some(p.text_dim));
+        let x = PAD + layout.width() + CONTROL_GAP * 2.0;
+        let action = self.engine.simple_layout(retry, theme::role::row());
+        koru_draw::scene::draw_layout_first_line(scene, root, &action, x, y, Some(p.accent));
+        self.notice = Some((line, Rect::new(x, top, action.width(), self.row_h())));
     }
 }

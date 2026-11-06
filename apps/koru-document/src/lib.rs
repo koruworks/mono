@@ -96,6 +96,10 @@ pub struct BuiltInDocument {
     /// rather than on the menu because it has to keep turning after the menu is
     /// gone.
     menu_morph: Tween,
+    /// What the first empty paragraph says instead of *Start typing…* — a
+    /// page document's *Write about {page}…* — when a host sets one. `None`
+    /// is every ordinary document.
+    body_placeholder: Option<String>,
     /// The document's name, for the title bar — **cached**, not read per frame.
     ///
     /// A standalone window turns `Body::title_row` off, so the name is no longer
@@ -401,6 +405,7 @@ impl BuiltInDocument {
                 Self {
                     editor,
                     window_chrome: false,
+                    body_placeholder: None,
                     maximized: false,
                     pinned: false,
                     store_trouble: None,
@@ -480,6 +485,7 @@ impl BuiltInDocument {
         Self {
             editor,
             window_chrome: false,
+            body_placeholder: None,
             maximized: false,
             pinned: false,
             store_trouble: None,
@@ -528,6 +534,7 @@ impl BuiltInDocument {
         Self {
             editor,
             window_chrome: false,
+            body_placeholder: None,
             maximized: false,
             pinned: false,
             store_trouble: None,
@@ -559,6 +566,12 @@ impl BuiltInDocument {
             context_spelling: None,
             diagrams: diagrams::Diagrams::new(),
         }
+    }
+
+    /// Say what the first empty paragraph should read, in place of the
+    /// default writing prompt. A page document names its page here.
+    pub fn set_body_placeholder(&mut self, placeholder: String) {
+        self.body_placeholder = Some(placeholder);
     }
 
     /// This document *is* the window: draw a title bar above the toolbar.

@@ -17,7 +17,7 @@
 use std::collections::BTreeSet;
 use std::sync::{Arc, mpsc};
 
-use koru_core::ids::{DocumentId, ListId, TagId};
+use koru_core::ids::{DocumentId, ListId, PageKey, TagId};
 use koru_core::system::{ListEntry, SystemDoc, TagEntry};
 
 use crate::{Workspace, explore, open, store};
@@ -466,6 +466,52 @@ impl SystemSession {
 
     fn delete_list(&mut self, list: ListId) -> bool {
         self.edit_list(|doc| doc.delete_list(list, open::now_ms()).unwrap_or(false))
+    }
+
+    // ------------------------------------------------------------------ pages
+
+    /// A live list's name, as it stands.
+    pub(crate) fn list_name(&self, list: ListId) -> Option<String> {
+        let doc = self
+            .active
+            .as_ref()
+            .map(|live| &live.doc)
+            .or(self.local.as_ref())?;
+        doc.list_entry(list).map(|entry| entry.name)
+    }
+
+    /// The generations a page has had, or `None` while the open is in flight
+    /// and nothing can be asked yet.
+    pub(crate) fn page_generations(&self, page: PageKey) -> Option<Vec<u64>> {
+        let doc = self
+            .active
+            .as_ref()
+            .map(|live| &live.doc)
+            .or(self.local.as_ref())?;
+        Some(doc.page_generations(page))
+    }
+
+    /// Record a page's generation, creating the local document if the
+    /// workspace has none yet — a bucket's page may be the first thing a
+    /// workspace ever puts in its system document.
+    pub(crate) fn add_page_generation(&mut self, page: PageKey, generation: u64) -> bool {
+        let doc = match &mut self.active {
+            Some(live) => &mut live.doc,
+            None => {
+                if self.local.is_none() {
+                    self.local = SystemDoc::create().ok();
+                }
+                match self.local.as_mut() {
+                    Some(local) => local,
+                    None => return false,
+                }
+            }
+        };
+        let added = doc.add_page_generation(page, generation).unwrap_or(false);
+        if added && let Some(active) = &mut self.active {
+            let _ = active.session.publish(&active.doc);
+        }
+        added
     }
 
     /// The workspace spelling dictionary, per language.
@@ -1002,7 +1048,7 @@ impl Workspace {
 
     /// Schedule an open/create if necessary. This performs no HTTP, join,
     /// replay, or wait on the caller's thread.
-    fn ensure_system(&mut self, create: bool) -> bool {
+    pub(crate) fn ensure_system(&mut self, create: bool) -> bool {
         let ids = self.system_ids();
         if self.system.is_none() {
             if ids.is_empty() && !create {

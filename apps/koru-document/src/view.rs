@@ -1175,10 +1175,13 @@ impl View for BuiltInDocument {
         let chrome = self.window_chrome();
         let bubble = self.context_toolbar_panel().or_else(|| self.bubble_panel());
         let tooltip = self.bubble_tooltip_progress();
-        let placeholder = body_placeholder(
-            koru_dictation::available(),
-            koru_keys::show_hint(koru_keys::ShortcutId::Dictate, koru_keys::Section::Guide),
-        );
+        let placeholder = match &self.body_placeholder {
+            Some(own) => own.clone(),
+            None => body_placeholder(
+                koru_dictation::available(),
+                koru_keys::show_hint(koru_keys::ShortcutId::Dictate, koru_keys::Section::Guide),
+            ),
+        };
         frame(
             scene,
             root,

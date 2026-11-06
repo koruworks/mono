@@ -549,6 +549,21 @@ impl ReleaseRevision {
         Self::new(fs, None, incomplete.dir.clone())
     }
 
+    /// A revision named by the registry from its own bookkeeping rather than
+    /// from a discovery — the record and directory of `name` under
+    /// `document_dir`.
+    pub fn of_name(
+        fs: &impl RevisionFs,
+        document_dir: &Path,
+        name: RevisionName,
+    ) -> io::Result<Self> {
+        Self::new(
+            fs,
+            Some(document_dir.join(name.record_name())),
+            document_dir.join(name.dir_name()),
+        )
+    }
+
     fn new(fs: &impl RevisionFs, record: Option<PathBuf>, dir: PathBuf) -> io::Result<Self> {
         let files = fs
             .list(&dir)?
@@ -600,6 +615,54 @@ fn ignore_missing(result: io::Result<()>) -> io::Result<()> {
     match result {
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
         other => other,
+    }
+}
+
+// ------------------------------------------------------------------ disk
+
+/// The disk, one `std::fs` call per operation.
+pub struct DiskFs;
+
+impl RevisionFs for DiskFs {
+    fn create_dir(&mut self, dir: &Path) -> io::Result<()> {
+        std::fs::create_dir_all(dir)
+    }
+
+    fn write_file(&mut self, path: &Path, bytes: &[u8]) -> io::Result<()> {
+        std::fs::write(path, bytes)
+    }
+
+    fn rename(&mut self, from: &Path, to: &Path) -> io::Result<()> {
+        std::fs::rename(from, to)
+    }
+
+    fn remove_file(&mut self, path: &Path) -> io::Result<()> {
+        std::fs::remove_file(path)
+    }
+
+    fn remove_dir(&mut self, dir: &Path) -> io::Result<()> {
+        std::fs::remove_dir(dir)
+    }
+
+    fn read_file(&self, path: &Path) -> io::Result<Vec<u8>> {
+        std::fs::read(path)
+    }
+
+    fn list(&self, dir: &Path) -> io::Result<Vec<Entry>> {
+        let entries = match std::fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(e),
+        };
+        let mut out = Vec::new();
+        for entry in entries {
+            let entry = entry?;
+            out.push(Entry {
+                name: entry.file_name().to_string_lossy().into_owned(),
+                is_dir: entry.file_type()?.is_dir(),
+            });
+        }
+        Ok(out)
     }
 }
 

@@ -1569,6 +1569,18 @@ impl Tab {
             )
     }
 
+    /// The document this tab **edits**: its own for a document tab, the
+    /// page's document for a Tasks tab whose page has one in this process
+    /// (page-document plan D7). What selecting the tab activates, what a
+    /// release counts, and what *showing a document* means — while
+    /// [`document`](Self::document) keeps meaning *this tab is that document*.
+    pub fn edits(&self) -> Option<koru_core::DocumentId> {
+        self.document.or_else(|| match &self.view {
+            TabView::Tasks(t) if t.page_is_local() => t.page_document(),
+            _ => None,
+        })
+    }
+
     /// **The workspace this tab's view must be talked to through.**
     ///
     /// The window's, for every ordinary tab; its own private one for a draft.
