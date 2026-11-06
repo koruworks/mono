@@ -867,6 +867,20 @@ fn document_count(kinds: &std::collections::BTreeMap<String, u64>, canvas: bool)
         .sum()
 }
 
+/// The name of the workspace made for a document that had nowhere to go
+/// (`App::ensure_live_workspace`). Renamable like any other.
+const DEFAULT_WORKSPACE_NAME: &str = "Workspace";
+
+/// The refusal a creation reports when even a default workspace could not be
+/// made — shaped as the store's own error so it settles through the same
+/// door as every other failed creation.
+fn no_workspace_error(details: String) -> koru_store_core::errors::Error {
+    koru_store_core::errors::Error::new(
+        koru_store_core::errors::Code::InvalidRequest,
+        format!("there is no workspace to put it in: {details}"),
+    )
+}
+
 /// How often the periodic geometry capture runs. See its call site in
 /// `about_to_wait`.
 const PERSIST_EVERY: Duration = Duration::from_secs(1);
@@ -11414,6 +11428,10 @@ Nothing was written. The store starts on demand, so this usually means it could 
     /// listing is pushed before the document is announced, so the container
     /// already knows the new document is a canvas when it builds its tab.
     fn create_document(&mut self, source: WindowId, title: &str, canvas: bool) {
+        if let Err(e) = self.ensure_live_workspace() {
+            self.settle_created_document(source, Err(no_workspace_error(e)), canvas);
+            return;
+        }
         let created = if canvas {
             self.runtime.workspace.create_canvas(title)
         } else {
@@ -11487,6 +11505,18 @@ Nothing was written. The store starts on demand, so this usually means it could 
     /// Create from the entity picker, replace its `@query` with the real routed
     /// pill in the source document, then finish on the newly created page.
     fn create_linked_document(&mut self, source: WindowId, title: &str) {
+        // A linked page is made from inside a document, so a workspace is
+        // normally open; the guard is for the one that is not.
+        if let Err(e) = self.ensure_live_workspace() {
+            self.report(
+                ErrorReport::new(
+                    "Couldn't create that document",
+                    "The @ text was left alone.",
+                )
+                .with_details(e),
+            );
+            return;
+        }
         let origin = self.runtime.workspace.active();
         let profile = self.runtime.profile.id();
         let workspace = self.runtime.current;
@@ -12538,11 +12568,6 @@ Nothing was written. The store starts on demand, so this usually means it could 
     }
 
     fn new_workspace(&mut self, name: &str) {
-        // **The store, not the profile folder.** `open::create_workspace`
-        // registers a workspace in a `ProfileDoc`, which since the cutover is a
-        // view rebuilt from the store every launch — so the workspace existed
-        // only in this window. It showed in the switcher and every later call
-        // naming it answered 404, because the store had never heard of it.
         let Some(owner) = self.runtime.profile.id() else {
             self.report(ErrorReport::new(
                 "Couldn't create a workspace",
@@ -12550,34 +12575,82 @@ Nothing was written. The store starts on demand, so this usually means it could 
             ));
             return;
         };
-        match koru_workspace::fromstore::create_workspace(
-            koru_workspace::fromstore::segment(),
-            self.gateway_root.as_deref(),
-            owner,
-            name,
-        )
-        .map_err(|e| e.to_string())
-        .and_then(|id| {
-            // Keep the view in step so the switcher lists it before the next
-            // launch rebuilds the view from the store.
-            self.runtime
-                .profile
-                .ensure_workspace(id, &name, koru_workspace::open::now_ms())
-                .map(|_| id)
-                .map_err(|e| e.to_string())
-        }) {
-            Ok(id) => {
-                crate::events_host::workspace_created(
-                    id.as_uuid(),
-                    crate::events_host::WorkspaceSource::Manual,
-                );
-                self.switch_workspace(id)
-            }
+        match self.create_workspace_in_open_profile(owner, name) {
+            Ok(id) => self.switch_workspace(id),
             Err(e) => startup::fatal(&format!(
                 "Koru could not create a workspace:
 
 {e}"
             )),
+        }
+    }
+
+    /// Register a workspace in the store under the open Profile, without
+    /// switching to it.
+    ///
+    /// **The store, not the profile folder.** `open::create_workspace`
+    /// registers a workspace in a `ProfileDoc`, which since the cutover is a
+    /// view rebuilt from the store every launch — so the workspace existed
+    /// only in this window. It showed in the switcher and every later call
+    /// naming it answered 404, because the store had never heard of it.
+    fn create_workspace_in_open_profile(
+        &mut self,
+        owner: koru_core::ProfileId,
+        name: &str,
+    ) -> Result<koru_core::WorkspaceId, String> {
+        let id = koru_workspace::fromstore::create_workspace(
+            koru_workspace::fromstore::segment(),
+            self.gateway_root.as_deref(),
+            owner,
+            name,
+        )
+        .map_err(|e| e.to_string())?;
+        // Keep the view in step so the switcher lists it before the next
+        // launch rebuilds the view from the store.
+        self.runtime
+            .profile
+            .ensure_workspace(id, name, koru_workspace::open::now_ms())
+            .map_err(|e| e.to_string())?;
+        crate::events_host::workspace_created(
+            id.as_uuid(),
+            crate::events_host::WorkspaceSource::Manual,
+        );
+        Ok(id)
+    }
+
+    /// Make sure a document has somewhere to go: when the open Profile has no
+    /// workspace on the store, create one named [`DEFAULT_WORKSPACE_NAME`] and
+    /// switch to it. True when a live workspace is open afterwards.
+    ///
+    /// **Why a document asks for a workspace and not the person.** A Profile
+    /// can open with no workspace at all — provisioned by an account before
+    /// any content existed, restored from one, or left by an onboarding that
+    /// stopped between the Profile and its first workspace — and onboarding
+    /// only runs when there is no Profile. The window then sits on an
+    /// in-memory placeholder that no document can be registered in, and
+    /// every way of making a page (a draft's first keystroke, the command
+    /// bar, the `@` picker, a canvas) failed with "this workspace is not open
+    /// on a store", once per keystroke for a draft. Someone who asked for a
+    /// document asked for a place to put it; naming that place can wait.
+    ///
+    /// The store calls are blocking and `switch_workspace` keeps draft tabs,
+    /// so the creation that follows in the same request lands in the new
+    /// workspace with nothing to wait for.
+    fn ensure_live_workspace(&mut self) -> Result<(), String> {
+        if self.runtime.live_workspace {
+            return Ok(());
+        }
+        let owner = self
+            .runtime
+            .profile
+            .id()
+            .ok_or_else(|| "This profile has no identity.".to_owned())?;
+        let id = self.create_workspace_in_open_profile(owner, DEFAULT_WORKSPACE_NAME)?;
+        self.switch_workspace(id);
+        if self.runtime.live_workspace {
+            Ok(())
+        } else {
+            Err("The new workspace could not be opened.".to_owned())
         }
     }
 

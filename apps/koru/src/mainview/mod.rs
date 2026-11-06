@@ -3042,17 +3042,19 @@ impl MainView {
 
     /// Ask for a title before creating a document. Used both for a cold taskbar
     /// launch and for an activation handed over by a second short-lived exe.
+    ///
+    /// **A document prompt even with no workspace open.** This used to ask
+    /// for a workspace's name instead, and committing it made only the
+    /// workspace — the document asked for never appeared. The shell now makes
+    /// a default workspace for a document that has nowhere to go
+    /// (`ensure_live_workspace` in the host), so the prompt asks for what was
+    /// asked for.
     pub fn prompt_new_document(&mut self) {
         self.menu = None;
         if self.new_document.is_none() {
-            // A cancelled *New workspace in…* prompt leaves its owner behind;
-            // this prompt's workspace, if it asks for one, is the open Profile's.
+            // A cancelled *New workspace in…* prompt leaves its owner behind.
             self.new_workspace_owner = None;
-            self.new_document = Some(if self.current_workspace().is_some() {
-                NewDocument::new(&mut self.engine)
-            } else {
-                NewDocument::workspace(&mut self.engine)
-            });
+            self.new_document = Some(NewDocument::new(&mut self.engine));
         }
     }
 

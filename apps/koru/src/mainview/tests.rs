@@ -1424,8 +1424,8 @@ fn a_cancelled_new_workspace_in_prompt_forgets_its_owner() {
     ));
     assert!(v.new_document.is_none());
 
-    // No workspace is open, so a new document asks for one first.
-    v.prompt_new_document();
+    // The next workspace prompt is the open Profile's.
+    assert!(v.prompt_new_workspace());
     assert!(v.key(&mut workspace.ws, &ch("Research"), Some("Research"), NONE,));
     assert!(v.key(
         &mut workspace.ws,
@@ -1439,8 +1439,12 @@ fn a_cancelled_new_workspace_in_prompt_forgets_its_owner() {
     ));
 }
 
+/// With no workspace open, a new document still asks for the document: the
+/// shell makes a default workspace for it (`ensure_live_workspace`). Asking
+/// for a workspace's name instead made only the workspace, and the document
+/// that was asked for never appeared.
 #[test]
-fn document_creation_asks_for_a_workspace_when_none_is_open() {
+fn document_creation_with_no_workspace_open_still_asks_for_the_document() {
     let (mut v, mut workspace) = container();
     let (_, profile, _, _) = v.pane_context.clone().expect("pane context");
     View::set_pane_context(&mut v, Vec::new(), profile, Vec::new(), None);
@@ -1456,7 +1460,7 @@ fn document_creation_asks_for_a_workspace_when_none_is_open() {
 
     assert!(matches!(
         koru_workspace_host::View::take_pane_request(&mut v),
-        Some(koru_workspace_host::PaneRequest::NewWorkspace(name)) if name == "Research"
+        Some(koru_workspace_host::PaneRequest::CreateDocument(title)) if title == "Research"
     ));
 }
 
