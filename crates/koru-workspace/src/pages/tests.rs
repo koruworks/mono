@@ -180,3 +180,60 @@ fn discovery_keeps_and_counts_what_it_cannot_consume() {
     assert!(ws.pages.get_held(document).is_none(), "nothing consumable");
     assert!(dir.join("00000000000000aa.1").exists(), "kept");
 }
+
+/// Rung 3 (P2): a bucket's page is per workspace — Today in workspace A and
+/// Today in workspace B are two documents — Completed has its own, and the
+/// first input records generation 0 in the system document, creating it
+/// when the workspace has none.
+#[test]
+fn a_buckets_page_is_per_workspace_and_the_first_input_records_its_generation() {
+    use crate::system::SystemStore;
+    use crate::system::tests::FakeStore;
+    use koru_core::tasks::Bucket;
+    use std::sync::Arc;
+
+    let root = tempfile::tempdir().unwrap();
+    let (a_id, b_id) = (WorkspaceId::new(), WorkspaceId::new());
+    let mut a = workspace_at(root.path(), a_id);
+    let mut b = workspace_at(root.path(), b_id);
+    a.system_store_for_tests = Some(Arc::new(FakeStore::new([])) as Arc<dyn SystemStore>);
+    b.system_store_for_tests = Some(Arc::new(FakeStore::new([])) as Arc<dyn SystemStore>);
+    let today = PageKey::Bucket(Bucket::Today);
+    let completed = PageKey::Bucket(Bucket::Completed);
+
+    let a_today = a.ensure_page(today).unwrap();
+    let b_today = b.ensure_page(today).unwrap();
+    let a_completed = a.ensure_page(completed).unwrap();
+    assert_ne!(a_today.document, b_today.document, "per workspace");
+    assert_ne!(
+        a_today.document, a_completed.document,
+        "Completed has its own"
+    );
+    assert_eq!(a_today.document, page_document_id(a_id, today, 0));
+    assert_eq!(b_today.document, page_document_id(b_id, today, 0));
+    assert!(a.document(a_today.document).is_some() && b.document(b_today.document).is_some());
+    assert!(
+        a.document(b_today.document).is_none(),
+        "B's note is not in A"
+    );
+    assert!(
+        a.system.is_none(),
+        "nothing written: no system document made"
+    );
+
+    a.others
+        .get_mut(&a_today.document)
+        .unwrap()
+        .set_text(genesis_seed_id(a_today.document), "today's note")
+        .unwrap();
+    a.tick_pages();
+    let gens = a
+        .system
+        .as_ref()
+        .expect("the first input makes the system document")
+        .page_generations(today);
+    assert_eq!(gens, Some(vec![0]), "generation 0 recorded");
+    assert_eq!(a.ensure_page(today).unwrap().document, a_today.document);
+    assert!(b.system.is_none(), "B wrote nothing and records nothing");
+    let _ = settle(&mut a, a_today.document);
+}

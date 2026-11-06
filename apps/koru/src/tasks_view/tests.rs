@@ -4335,6 +4335,47 @@ mod note {
         );
     }
 
+    /// Rung 3 (P2): a bucket page — Completed, which has no capture row —
+    /// takes the same note, over its own document.
+    #[test]
+    fn the_note_is_built_on_a_bucket_page_too() {
+        let workspace = WorkspaceId::new();
+        let page = PageKey::Bucket(Bucket::Completed);
+        let document = page_document_id(workspace, page, 0);
+        let mut doc = WorkspaceDoc::page_genesis(workspace, document).unwrap();
+        doc.stamp_document_id(document).unwrap();
+        doc.enable_undo();
+        let mut view = TasksView::new(RailTarget::Bucket(Bucket::Completed));
+        view.set_viewport(900.0, 600.0);
+        assert_eq!(view.page_key(), Some(page));
+        view.set_page_state(&state(page, document, PagePhase::Empty));
+        assert!(view.catch_up(&doc));
+        view.layout_band();
+        assert!(view.rows_top() > view.header_h);
+        let band = view.body.as_ref().unwrap().band;
+        assert!(view.mouse_down(&mut doc, band.x + 5.0, band.y + 5.0, false));
+        assert!(view.body_is_focused_in(&doc), "the press focused the note");
+        let caret = view.body.as_ref().unwrap().leaf().caret_spot();
+        assert!(
+            caret.is_some(),
+            "the caret arrived: {caret:?} band {band:?}"
+        );
+        let took = view.key(
+            &mut doc,
+            &Key::Character("c".into()),
+            Some("c"),
+            ModifiersState::empty(),
+        );
+        assert!(took, "the note took the key");
+        assert_eq!(
+            doc.read(genesis_seed_id(document))
+                .unwrap()
+                .content
+                .as_text(),
+            Some("c")
+        );
+    }
+
     /// A note that failed to register shows its notice with *Try again*,
     /// and a press on it asks for the retry (plan Q8).
     #[test]

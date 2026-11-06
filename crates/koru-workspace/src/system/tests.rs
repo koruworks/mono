@@ -7,7 +7,9 @@ use std::time::{Duration, Instant};
 use super::*;
 use crate::store::link::fake::FakeLink;
 
-struct FakeStore {
+/// A system store in memory. `pub(crate)` so the page registry's tests can
+/// give a workspace a system document to record generations in.
+pub(crate) struct FakeStore {
     workspace: koru_store_core::ids::WorkspaceId,
     snapshots: Mutex<HashMap<DocumentId, Vec<u8>>>,
     links: Mutex<HashMap<DocumentId, Arc<FakeLink>>>,
@@ -16,7 +18,7 @@ struct FakeStore {
 }
 
 impl FakeStore {
-    fn new(docs: impl IntoIterator<Item = (DocumentId, SystemDoc)>) -> Self {
+    pub(crate) fn new(docs: impl IntoIterator<Item = (DocumentId, SystemDoc)>) -> Self {
         Self {
             workspace: koru_store_core::ids::WorkspaceId::new(),
             snapshots: Mutex::new(

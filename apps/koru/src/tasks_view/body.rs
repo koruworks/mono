@@ -170,10 +170,27 @@ impl PageBody {
         Leaf::key(&mut self.leaf, ws, key, text, mods)
     }
 
+    /// A press anywhere in the band is a press in the note: left of the text
+    /// column it lands at the start of the nearest line rather than in the
+    /// leaf's affordance lane, so the caret always arrives.
     pub fn mouse_down(&mut self, ws: &mut WorkspaceDoc, x: f32, y: f32, ctrl: bool) -> bool {
         let (lx, ly) = self.local(x, y);
+        let lx = lx.max(koru_draw::geometry::text_x(0u32, false));
         self.dirty = true;
-        Leaf::mouse_down(&mut self.leaf, ws, lx, ly, ctrl)
+        let took = Leaf::mouse_down(&mut self.leaf, ws, lx, ly.max(0.0), ctrl);
+        if self.leaf.caret_spot().is_none() {
+            // Above the first line or below the last: the press began no
+            // selection, so end it, and the caret still arrives — at the
+            // start of the first line.
+            Leaf::mouse_up(&mut self.leaf, ws);
+            let first = self.leaf.body().first_body_row();
+            self.leaf.place_caret_at(first, 0);
+        }
+        // The band is the note: a press anywhere in it gives the editor the
+        // keyboard, which a press on a line's own glyphs does by itself and
+        // a press beside them does not.
+        Editing::view_mut(&mut self.leaf).active = true;
+        took || self.focused
     }
 
     pub fn mouse_move(&mut self, x: f32, y: f32) -> bool {
