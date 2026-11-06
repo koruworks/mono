@@ -18,40 +18,69 @@ const SCOPES: [WorkspaceScope; 8] = [
 ];
 
 // Rows are the contract, independent of required_scope/principal_allowed.
-// Columns: action, scope bit, USER_SESSION / DEVICE / CLOUD_REPLICA / KORU_SERVICE.
-const MATRIX: [(WorkspaceAction, u8, [bool; 4]); 12] = [
+// Columns: action, scope bit, USER_SESSION / DEVICE / CLOUD_REPLICA /
+// KORU_SERVICE / APP_CONNECTION.
+const MATRIX: [(WorkspaceAction, u8, [bool; 5]); 12] = [
     (
         WorkspaceAction::ReadWorkspace,
         1,
-        [true, true, false, false],
+        [true, true, false, false, true],
     ),
     (
         WorkspaceAction::UpdateWorkspace,
         2,
-        [true, true, false, false],
+        [true, true, false, false, false],
     ),
-    (WorkspaceAction::ReadDocument, 4, [true, true, false, false]),
+    (
+        WorkspaceAction::ReadDocument,
+        4,
+        [true, true, false, false, true],
+    ),
     (
         WorkspaceAction::CreateDocument,
         8,
-        [true, true, false, false],
+        [true, true, false, false, true],
     ),
     (
         WorkspaceAction::MutateDocument,
         8,
-        [true, true, false, false],
+        [true, true, false, false, true],
     ),
-    (WorkspaceAction::ReadTasks, 16, [true, true, false, false]),
-    (WorkspaceAction::CreateTask, 32, [true, true, false, false]),
-    (WorkspaceAction::UpdateTask, 32, [true, true, false, false]),
-    (WorkspaceAction::EnableCloud, 64, [true, true, false, false]),
+    (
+        WorkspaceAction::ReadTasks,
+        16,
+        [true, true, false, false, true],
+    ),
+    (
+        WorkspaceAction::CreateTask,
+        32,
+        [true, true, false, false, true],
+    ),
+    (
+        WorkspaceAction::UpdateTask,
+        32,
+        [true, true, false, false, true],
+    ),
+    (
+        WorkspaceAction::EnableCloud,
+        64,
+        [true, true, false, false, false],
+    ),
     (
         WorkspaceAction::DisableCloud,
         64,
-        [true, true, false, false],
+        [true, true, false, false, false],
     ),
-    (WorkspaceAction::DeleteCloud, 64, [true, true, false, false]),
-    (WorkspaceAction::Replicate, 128, [false, true, true, false]),
+    (
+        WorkspaceAction::DeleteCloud,
+        64,
+        [true, true, false, false, false],
+    ),
+    (
+        WorkspaceAction::Replicate,
+        128,
+        [false, true, true, false, true],
+    ),
 ];
 
 fn regional() -> RegionalAuthorization {
@@ -64,7 +93,7 @@ fn regional() -> RegionalAuthorization {
     .unwrap()
 }
 
-fn principals(owner: KoruIdentityId, workspace_id: WorkspaceId) -> [Principal; 4] {
+fn principals(owner: KoruIdentityId, workspace_id: WorkspaceId) -> [Principal; 5] {
     [
         Principal::UserSession {
             account_id: owner,
@@ -80,6 +109,10 @@ fn principals(owner: KoruIdentityId, workspace_id: WorkspaceId) -> [Principal; 4
         },
         Principal::KoruService {
             service_id: Uuid::new_v4(),
+        },
+        Principal::AppConnection {
+            account_id: owner,
+            connection_id: AppConnectionId::mint(),
         },
     ]
 }
@@ -181,7 +214,7 @@ fn every_principal_action_and_scope_subset_has_an_explicit_outcome_and_code() {
             }
         }
     }
-    assert_eq!(checks, 4 * 12 * 256 * 2);
+    assert_eq!(checks, 5 * 12 * 256 * 2);
 }
 
 #[test]
@@ -497,7 +530,8 @@ fn signed_sync_workspace_epoch_and_replica_bindings_are_never_upgraded_by_a_gran
         workspace_id,
         action,
     };
-    for principal in principals(owner, workspace_id).into_iter().skip(1).take(2) {
+    let all = principals(owner, workspace_id);
+    for principal in [all[1], all[2], all[4]] {
         let authentication = evidence(principal, action, workspace_id);
         let access = grant(principal, workspace_id, owner);
         for (binding, expected) in [
@@ -638,4 +672,105 @@ fn restricted_api_credentials_keep_their_workspace_and_epoch_too() {
             expected
         );
     }
+}
+
+#[test]
+fn app_connection_access_decides_writes_and_tasks_follow_documents() {
+    let owner = KoruIdentityId::mint();
+    let workspace_id = WorkspaceId::new();
+    let principal = principals(owner, workspace_id)[4];
+    for access in [AppConnectionAccess::Read, AppConnectionAccess::ReadWrite] {
+        // The connection's evidence and its live grant both carry the scopes
+        // of its access, plus replication for the sync credential's path.
+        let mut scopes = access.scopes().to_vec();
+        scopes.push(WorkspaceScope::WorkspaceSync);
+        for (action, _, allowed) in MATRIX {
+            let mut authentication = evidence(principal, action, workspace_id);
+            authentication.scopes = scopes.clone();
+            let mut access_grant = grant(principal, workspace_id, owner);
+            access_grant.scopes = scopes.clone();
+            let expected = if !allowed[4] {
+                Err(WorkspaceRefusal::PrincipalNotAllowed)
+            } else if access == AppConnectionAccess::Read
+                && matches!(
+                    action,
+                    WorkspaceAction::CreateDocument
+                        | WorkspaceAction::MutateDocument
+                        | WorkspaceAction::CreateTask
+                        | WorkspaceAction::UpdateTask
+                )
+            {
+                Err(WorkspaceRefusal::InsufficientScope)
+            } else {
+                Ok(())
+            };
+            assert_eq!(
+                decide_workspace_access(
+                    &regional(),
+                    &authentication,
+                    Some(&access_grant),
+                    WorkspaceRequest {
+                        workspace_id,
+                        action
+                    }
+                )
+                .result,
+                expected,
+                "{access:?} {action:?}"
+            );
+        }
+    }
+    assert_eq!(
+        serde_json::to_value([AppConnectionAccess::Read, AppConnectionAccess::ReadWrite]).unwrap(),
+        serde_json::json!(["read", "read_write"])
+    );
+    assert!(serde_json::from_str::<AppConnectionAccess>("\"write\"").is_err());
+}
+
+#[test]
+fn app_connection_never_controls_the_cloud_lifecycle_even_as_the_owner() {
+    let owner = KoruIdentityId::mint();
+    let workspace_id = WorkspaceId::new();
+    let principal = principals(owner, workspace_id)[4];
+    assert_eq!(principal.account_id(), Some(owner));
+    for action in [
+        WorkspaceAction::UpdateWorkspace,
+        WorkspaceAction::EnableCloud,
+        WorkspaceAction::DisableCloud,
+        WorkspaceAction::DeleteCloud,
+    ] {
+        assert_eq!(
+            decide_workspace_access(
+                &regional(),
+                &evidence(principal, action, workspace_id),
+                Some(&grant(principal, workspace_id, owner)),
+                WorkspaceRequest {
+                    workspace_id,
+                    action
+                }
+            )
+            .result,
+            Err(WorkspaceRefusal::PrincipalNotAllowed),
+            "{action:?}"
+        );
+    }
+    // A grant read for another connection of the same account is not this
+    // connection's authority.
+    let other = Principal::AppConnection {
+        account_id: owner,
+        connection_id: AppConnectionId::mint(),
+    };
+    assert_eq!(
+        decide_workspace_access(
+            &regional(),
+            &evidence(principal, WorkspaceAction::ReadDocument, workspace_id),
+            Some(&grant(other, workspace_id, owner)),
+            WorkspaceRequest {
+                workspace_id,
+                action: WorkspaceAction::ReadDocument
+            }
+        )
+        .result,
+        Err(WorkspaceRefusal::WorkspaceNotAuthorized)
+    );
 }

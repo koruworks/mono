@@ -126,3 +126,9 @@ account_id!(
     AuthFlowId,
     "auth-flow"
 );
+account_id!(
+    /// One approved connection of a third-party application, such as an AI
+    /// assistant, to a Koru account. Each approval mints its own.
+    AppConnectionId,
+    "app-connection"
+);

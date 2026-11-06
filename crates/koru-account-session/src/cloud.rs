@@ -3,6 +3,7 @@
 //! Complete Cloud claim shapes over the existing purpose-isolated verifier.
 //! Bounded signing primitives have no authority lookup, cache or network effect.
 
+pub mod app_connection;
 pub mod blob;
 pub mod issuance;
 

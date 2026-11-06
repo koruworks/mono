@@ -8,6 +8,7 @@ use koru_store_core::{DocumentId, WorkspaceId};
 use loro::{ExportMode, LoroDoc};
 use sha2::{Digest, Sha256};
 mod catalog;
+mod claim_amendment;
 mod metadata;
 
 fn id(n: u8) -> CloudId {

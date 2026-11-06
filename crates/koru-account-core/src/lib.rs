@@ -28,7 +28,9 @@ pub mod workspace_lifecycle;
 pub use creation::*;
 pub use device_ownership::*;
 pub use email::*;
-pub use ids::{AccountSessionId, AuthFlowId, AuthIdentityId, IdParseError, KoruIdentityId};
+pub use ids::{
+    AccountSessionId, AppConnectionId, AuthFlowId, AuthIdentityId, IdParseError, KoruIdentityId,
+};
 pub use koru_device::{DeviceDescriptorV1, DeviceId};
 pub use koru_store_core::{ProfileId, WorkspaceId};
 pub use model::*;

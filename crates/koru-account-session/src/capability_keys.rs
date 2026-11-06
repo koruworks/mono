@@ -33,6 +33,27 @@ impl TokenCapabilityKeyRing {
         ))
     }
 
+    /// Sign an app connection's sync credential. The same rule applies: the
+    /// connection, its access, the entitlement and the Workspace's current
+    /// authority must already have been read and checked by the caller.
+    pub fn sign_app_connection_sync_credential(
+        &self,
+        issuer: &str,
+        claims: &crate::cloud::app_connection::AppConnectionSyncCredentialClaimsV1,
+    ) -> Result<crate::cloud::issuance::SignedSyncCredential, CryptoError> {
+        crate::cloud::app_connection::validate_signing_claims(self.region, issuer, claims)?;
+        let token = self.ring.sign_compact(
+            crate::cloud::app_connection::APP_CONNECTION_SYNC_TYPE,
+            claims,
+        )?;
+        if token.compact.expose_secret().len() > crate::cloud::MAX_COMPACT_BYTES {
+            return Err(CryptoError::InvalidInput);
+        }
+        Ok(crate::cloud::issuance::SignedSyncCredential::new(
+            token, claims.exp,
+        ))
+    }
+
     /// Mint one object capability for the blob byte routes. The same rule as
     /// above applies and matters more here: this signs evidence a *separate*
     /// service trusts without any database of its own, so every lifecycle,
