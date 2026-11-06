@@ -217,7 +217,16 @@ impl EntityPicker {
     /// `@` list — documents and files together, `file:` and `doc:` narrowing
     /// it — with its own query field focused from the first keystroke.
     pub fn for_link(engine: &mut TextEngine) -> Self {
-        let mut picker = Self::new(Trigger::at_start());
+        // The picker is not anchored in any document, and nothing here
+        // reads the trigger: a placeholder `@` with a throwaway node.
+        let trigger = Trigger {
+            kind: crate::trigger::TriggerKind::At,
+            start: 0,
+            node: NodeId::new(),
+            anchor: crate::trigger::Anchor::TriggerText,
+            stable: None,
+        };
+        let mut picker = Self::new(trigger);
         picker.link_mode = true;
         picker.own_hint = "Add a document or file\u{2026}";
         picker.own_query = Some(TextField::new(engine, koru_draw::theme::role::ui()));
