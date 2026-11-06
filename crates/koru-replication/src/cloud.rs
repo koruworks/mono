@@ -11,9 +11,9 @@ mod wire;
 pub use client::{ClientHandshake, ClientReceipt};
 pub use wire::{Bytes, HandshakeV1, MAX_HANDSHAKE_BYTES, Version1, decode, encode};
 
+pub use koru_account_session::cloud::session::{SessionClaims, SessionPrincipal};
 use koru_account_session::{
-    TokenCapabilityVerifier, VerifiedTokenCapability,
-    cloud::{SyncCredentialClaimsV1, verify_credential},
+    TokenCapabilityVerifier, VerifiedTokenCapability, cloud::session::verify_session_credential,
 };
 use koru_device::{
     DevicePublicKey, ReplicationEndpointId, SignatureBytes,
@@ -126,6 +126,10 @@ impl From<koru_account_session::TokenCapabilityVerificationError> for Refusal {
 /// owns live authority freshness and lifecycle/refusal policy; no SQL here.
 #[derive(Clone, PartialEq, Eq)]
 pub struct CurrentAuthority {
+    /// The key that signs the handshake transcript. For a device, its
+    /// registered signing key. An app connection has no device key: its
+    /// credential's endpoint key signs (the key the authenticated transport
+    /// proves), and admission refuses a provider that names any other.
     pub device_key: DevicePublicKey,
     pub registered_endpoint: ReplicationEndpointId,
     pub dataset: CloudReplicaPrincipalV1,
@@ -147,7 +151,7 @@ pub trait Authority: Send + Sync {
     /// synchronous port is called.
     fn current(
         &self,
-        credential: &SyncCredentialClaimsV1,
+        credential: &SessionClaims,
         dataset: CloudReplicaPrincipalV1,
     ) -> Result<CurrentAuthority, Refusal>;
 }
@@ -165,10 +169,7 @@ impl ConnectionGenerations {
     }
 }
 
-fn scope(
-    credential: &SyncCredentialClaimsV1,
-    requested: CloudReplicaPrincipalV1,
-) -> Result<(), Refusal> {
+fn scope(credential: &SessionClaims, requested: CloudReplicaPrincipalV1) -> Result<(), Refusal> {
     let expected = match requested {
         CloudReplicaPrincipalV1::Workspace { workspace_id, .. } => {
             if workspace_id != credential.workspace_id {
@@ -208,12 +209,20 @@ fn same_dataset(
 }
 
 fn authority(
-    credential: &SyncCredentialClaimsV1,
+    credential: &SessionClaims,
     dataset: CloudReplicaPrincipalV1,
     current: &CurrentAuthority,
     client: ReplicationEndpointId,
 ) -> Result<(), Refusal> {
     if current.registered_endpoint != client {
+        return Err(Refusal::EndpointMismatch);
+    }
+    // A connection's transcript is signed by its credential's endpoint key,
+    // never by a key a provider chose (cloud-sync-admission, the app
+    // connection amendment's handshake).
+    if matches!(credential.principal, SessionPrincipal::AppConnection { .. })
+        && current.device_key.as_bytes() != credential.client_endpoint_id.as_bytes()
+    {
         return Err(Refusal::EndpointMismatch);
     }
     scope(credential, dataset)?;
@@ -291,7 +300,7 @@ pub fn transcript(
 /// client endpoint. This is preparation input, not current hosted authority.
 /// No public constructor can turn an unverified request into this value.
 pub struct VerifiedClientHello {
-    credential: VerifiedTokenCapability<SyncCredentialClaimsV1>,
+    credential: VerifiedTokenCapability<SessionClaims>,
     dataset: CloudReplicaPrincipalV1,
 }
 
@@ -314,7 +323,7 @@ impl VerifiedClientHello {
         else {
             return Err(Refusal::Malformed);
         };
-        let credential = verify_credential(verifier, credential.as_bytes(), now_millis)?;
+        let credential = verify_session_credential(verifier, credential.as_bytes(), now_millis)?;
         if credential.claims().client_endpoint_id != client {
             return Err(Refusal::EndpointMismatch);
         }
@@ -324,7 +333,7 @@ impl VerifiedClientHello {
         })
     }
 
-    pub fn claims(&self) -> &SyncCredentialClaimsV1 {
+    pub fn claims(&self) -> &SessionClaims {
         self.credential.claims()
     }
 
@@ -335,7 +344,7 @@ impl VerifiedClientHello {
 
 /// One owned stream challenge; cannot be cloned, serialized or resumed.
 pub struct PendingHandshake {
-    credential: VerifiedTokenCapability<SyncCredentialClaimsV1>,
+    credential: VerifiedTokenCapability<SessionClaims>,
     dataset: CloudReplicaPrincipalV1,
     client: ReplicationEndpointId,
     worker: ReplicationEndpointId,

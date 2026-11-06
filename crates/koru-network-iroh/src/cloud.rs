@@ -154,7 +154,7 @@ struct BorrowedAuthority<'a>(&'a dyn Authority);
 impl Authority for BorrowedAuthority<'_> {
     fn current(
         &self,
-        credential: &koru_account_session::cloud::SyncCredentialClaimsV1,
+        credential: &koru_replication::cloud::SessionClaims,
         dataset: koru_device::cloud::CloudReplicaPrincipalV1,
     ) -> Result<koru_replication::cloud::CurrentAuthority, Refusal> {
         self.0.current(credential, dataset)

@@ -14,7 +14,7 @@ struct Retained {
 impl Authority for Retained {
     fn current(
         &self,
-        credential: &SyncCredentialClaimsV1,
+        credential: &koru_replication::cloud::SessionClaims,
         dataset: koru_device::cloud::CloudReplicaPrincipalV1,
     ) -> Result<CurrentAuthority, Refusal> {
         self.provider.current(credential, dataset)
@@ -56,8 +56,10 @@ async fn signed_exchange_returns_the_retained_prepared_context() {
         |verified| async move {
             assert_eq!(verified.dataset(), retained.provider.facts.dataset);
             assert_eq!(
-                verified.claims().device_id,
-                retained.provider.claims.device_id
+                verified.claims().principal,
+                koru_replication::cloud::SessionPrincipal::Device {
+                    device_id: retained.provider.claims.device_id
+                }
             );
             tokio::time::sleep(Duration::from_millis(1)).await;
             Ok((retained, std::future::pending::<Refusal>()))

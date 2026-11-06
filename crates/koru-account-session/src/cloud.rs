@@ -6,6 +6,7 @@
 pub mod app_connection;
 pub mod blob;
 pub mod issuance;
+pub mod session;
 
 use crate::{
     TokenCapabilityClaims, TokenCapabilityFields, TokenCapabilityRequirements,

@@ -2,6 +2,7 @@
 
 use super::*;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use koru_account_session::cloud::SyncCredentialClaimsV1;
 use koru_device::DeviceSigningKey;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -23,7 +24,7 @@ struct Provider {
 impl Authority for Provider {
     fn current(
         &self,
-        _: &SyncCredentialClaimsV1,
+        _: &SessionClaims,
         _: CloudReplicaPrincipalV1,
     ) -> Result<CurrentAuthority, Refusal> {
         if self.calls.fetch_add(1, Ordering::SeqCst) + 1 > self.refuse_after {
@@ -632,3 +633,5 @@ fn recognized_refusals_survive_both_client_receipt_points() {
     }
     assert_eq!(Refusal::from_code("future_denial"), Refusal::Malformed);
 }
+
+mod app_connection;
