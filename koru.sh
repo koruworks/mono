@@ -592,11 +592,9 @@ run_all_verb() {
   echo "[Koru] API Gateway ready, Agent pid $agent_pid"
   echo "[Koru] asking Agent to launch Koru; Ctrl+C stops this worktree's complete stack"
   # **The Agent launches the window, not this script** — run-all.ps1's
-  # `koru-agent open --inherit-stdio`. The Agent vouches only for a window
-  # whose pid is in its own launch table (ADR-267), and archiving or deleting
-  # a workspace needs that vouch. Starting `$bin/koru` here, beside the
-  # Agent, produced a window that greyed both out with "This window was not
-  # started by Koru".
+  # `koru-agent open --inherit-stdio`, so the window gets the Agent's root and
+  # this console. Archiving or deleting a workspace needs the Agent's vouch
+  # (ADR-267), which it gives any process running the `koru` beside it.
   local open_output app_pid
   if ! open_output="$("$bin/koru-agent" open --inherit-stdio ${AGENT_ROOT_ARGS[@]+"${AGENT_ROOT_ARGS[@]}"})"; then
     run_all_stop

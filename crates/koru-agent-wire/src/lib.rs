@@ -445,10 +445,9 @@ pub enum Request {
     /// Put a Koru workspace window in front, launching the sibling executable
     /// when none is connected.
     ///
-    /// Unlike a caller spawning `koru.exe` itself, this path records the child
-    /// as an Agent launch. The window can therefore prove it is first-party
-    /// when it asks the Gateway for the separately scoped workspace lifecycle
-    /// permissions.
+    /// The Agent starts the `koru` beside its own executable, so the window it
+    /// opens is one it vouches for when it asks for a first-party grant — as
+    /// it vouches for any process running that binary, however started.
     OpenWorkspace {
         /// Optional profile selector passed through exactly as Koru's own
         /// `--profile` value. Agent does not interpret a name, id, or path.
@@ -695,14 +694,15 @@ pub enum NotificationFailure {
     Unavailable,
 }
 
-/// A short-lived proof that the Agent launched the process holding it.
+/// A short-lived proof that the Agent saw the process asking for it running
+/// the Koru app of the Agent's own installation.
 ///
 /// **Opaque token and an expiry, and deliberately nothing else.** No caller
 /// name, no product, no roles: a grant that carried permissions would be a
 /// second authorization vocabulary beside the scopes, and two vocabularies is
 /// two places to look when something is allowed that should not be. What this
-/// says is "the supervisor launched whoever asked for this", and the Gateway
-/// decides what that is worth.
+/// says is "whoever asked for this is the `koru` beside the supervisor", and
+/// the Gateway decides what that is worth.
 ///
 /// The token is redacted from `Debug` for the reason [`LinkCode`] is: request
 /// tracing and test failures routinely format whole wire messages.
@@ -859,7 +859,7 @@ pub enum Response {
         events: Vec<DeviceStateEventView>,
         next_before: Option<i64>,
     },
-    /// A freshly minted grant, for a caller the Agent launched.
+    /// A freshly minted grant, for a caller that is the Agent's own Koru app.
     FirstPartyGrant {
         grant: FirstPartyGrant,
     },

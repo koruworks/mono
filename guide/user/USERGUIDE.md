@@ -5800,9 +5800,13 @@ profile you did not start it from. Nothing else changes: the workspace keeps
 its id, its documents and its history, and its projects follow it in Koru
 Terminal. Moving it back is the same action with the other profile chosen.
 
-If a row says *this window was not started by Koru*, the window was launched
-outside the app — a `cargo run`, or a build Koru did not start — and it holds no
-permission to archive, delete or move workspaces. If it says its terminal
+Every Koru window on this computer can archive, delete and move workspaces,
+however you opened it. If a row says *Koru could not confirm that this window
+is part of this Koru installation*, the window is a Koru from a different
+installation than the one running in the background — a second copy of the app,
+or a build from another folder — or your system would not say which program the
+window is; it holds no permission to archive, delete or move workspaces. Open
+Koru from the installation you use and try again there. If it says its terminal
 projects have not caught up, the workspace moved but Koru Terminal was not
 answering at the time; choosing the same profile again repairs them.
 

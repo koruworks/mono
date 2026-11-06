@@ -4423,8 +4423,8 @@ mod tests {
     /// - *requested* — a token that named `workspace.destroy` and was not
     ///   vouched for. Identical to ordinary on every destructive route, which
     ///   is the property that makes asking useless on its own.
-    /// - *vouched* — the Agent confirmed at admission that it launched the
-    ///   caller. The only one that removes a workspace.
+    /// - *vouched* — the Agent confirmed at admission that the caller is the
+    ///   Koru app beside it. The only one that removes a workspace.
     ///
     /// Archiving is here twice, because it hides inside the appearance route: a
     /// colour change is management, and the same PATCH flipping `archived` is

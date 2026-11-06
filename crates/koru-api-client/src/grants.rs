@@ -15,7 +15,7 @@
 //! own `client.rs` says the same thing about the same duplication.
 //!
 //! Nothing here starts an Agent. A grant is meaningful only from a *running*
-//! supervisor that launched the caller, so an Agent that is not there is an
+//! Agent of the caller's own installation, so an Agent that is not there is an
 //! answer — no grant — rather than something to fix by spawning one.
 
 use std::io::Write as _;
@@ -56,7 +56,7 @@ impl std::error::Error for GrantError {}
 
 /// The Agent's endpoint for a channel, rooted when the caller is.
 ///
-/// A rooted product must reach the rooted Agent that launched it, or a
+/// A rooted product must reach its own rooted Agent, or a
 /// rehearsal would be asking somebody's real installation to vouch for it.
 pub fn agent_endpoint(
     segment: &str,

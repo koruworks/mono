@@ -22,8 +22,9 @@ pub struct ClientHello {
     pub requested_scopes: Vec<String>,
     /// **What the supervisor says about this caller**, when there is anything
     /// to say. `product` above is a free-form string a caller chose for itself;
-    /// this is a short-lived token the Agent minted for a process it launched,
-    /// and the gateway spends it against the Agent before believing it.
+    /// this is a short-lived token the Agent minted for a process it saw
+    /// running the `koru` beside it, and the gateway spends it against the
+    /// Agent before believing it.
     ///
     /// Absent from every ordinary caller and from every hello written before
     /// SP-8a. Absent means "not vouched for", which costs nothing except the

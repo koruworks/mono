@@ -284,11 +284,9 @@ try {
     Write-Host "[Koru] rooted Agent global shortcuts are enabled; Windows arbitrates conflicts"
     Write-Host "[Koru] stop services with: koru.bat root-stop `"$Root`""
     Write-Host "[Koru] asking the Agent to launch Koru..."
-    # The Agent must spawn the window. Starting koru.exe directly here creates
-    # a working but unvouched process, so workspace.destroy and
-    # workspace.migrate are correctly withheld and every lifecycle button is
-    # disabled. The Agent records its child before the window asks for those
-    # two scopes.
+    # The Agent spawns the window, with the Agent's own root. workspace.destroy
+    # and workspace.migrate need the Agent's vouch, which it gives any process
+    # running the koru.exe beside it (ADR-267).
     & $agent --root $Root open
     if ($LASTEXITCODE -ne 0) {
         throw "Koru Agent could not open the workspace window (exit $LASTEXITCODE)"
