@@ -52,6 +52,21 @@ pub fn hit(x: f32, y: f32, viewport_w: f32) -> Option<Hit> {
     Some(controls::hit(cap, x, y).map_or(Hit::Caption, Hit::Control))
 }
 
+/// Where the window's name starts.
+///
+/// **After the traffic lights on a Mac.** The window's titlebar is
+/// transparent there and AppKit draws its lights over the caption's left end
+/// (`koru_window::traffic_lights`), so the name starts after the same room
+/// the container's lane leaves for them. Elsewhere it takes the inset the
+/// button at the other end gives its glyph (`theme::CAPTION_PAD_X`).
+fn title_x(cap: Rect) -> f32 {
+    if cfg!(target_os = "macos") {
+        cap.x + koru_window::traffic_lights::LANE_W
+    } else {
+        cap.x + theme::CAPTION_PAD_X
+    }
+}
+
 /// The **Offline** chip's rect, when there is something to say.
 ///
 /// Just inside the window buttons, so it reads as belonging to the same row
@@ -178,9 +193,7 @@ pub fn draw(
             },
             |c| c.x,
         );
-        // The same inset the button at the other end gives its glyph, so the
-        // bar is padded evenly — see `theme::CAPTION_PAD_X`.
-        let x = cap.x + theme::CAPTION_PAD_X;
+        let x = title_x(cap);
         let avail = (buttons_left - x - theme::CAPTION_PAD_X).max(0.0);
         if avail > 0.0 {
             let laid = engine.simple_layout_wrapped(title, theme::role::row(), avail);

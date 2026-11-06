@@ -6955,6 +6955,11 @@ Nothing was written. The store starts on demand, so this usually means it could 
         let flush = hairline::edges(&window);
         frame::apply(&window, theme::p().panel_border, window.is_maximized());
         koru_window::traffic_lights::place(&window, f64::from(theme::CAPTION_H));
+        // The tab strip now sits where AppKit's titlebar was; a tab drag must
+        // not also move the window (`traffic_lights::shell_owns_drag`).
+        if !global_search {
+            koru_window::traffic_lights::shell_owns_drag(&window);
+        }
         let size = window.inner_size();
 
         let span = timing::Span::start("gpu surface");
@@ -17667,6 +17672,17 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
         // event.
         let now = Instant::now();
         if self.settle_window_moves(now) {
+            // **Unless the shell is the one moving the window.** On macOS a
+            // window drag is ours, polled (`WindowDrag`), and each step it
+            // takes arrives back here as a `Moved` — so this early return used
+            // to swallow the very poll that produced it, and the drag advanced
+            // once per `WINDOW_MOVE_SETTLE` (~13 Hz) instead of every tick.
+            // Driving it here keeps the rest of the deferral intact: still no
+            // Store or view maintenance while the window is in motion.
+            if self.drive_window_drags() {
+                event_loop.set_control_flow(ControlFlow::Poll);
+                return;
+            }
             let deadline = self
                 .panes
                 .values()

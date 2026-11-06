@@ -35,30 +35,59 @@ use winit::window::Window;
 /// them does not read as a fourth light.
 pub const LANE_W: f32 = 78.0;
 
+/// The `NSWindow` behind a winit window, when there is one.
+#[cfg(target_os = "macos")]
+fn ns_window(window: &Window) -> Option<objc2::rc::Retained<objc2_app_kit::NSWindow>> {
+    use objc2::rc::Retained;
+    use objc2_app_kit::NSView;
+    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+    let handle = window.window_handle().ok()?;
+    let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+        return None;
+    };
+    // SAFETY: the handle is this live winit window's content view, an
+    // `NSView`, and retaining it keeps it alive for the calls that follow.
+    // Every caller is on the main thread, where winit delivers its events.
+    let view = unsafe { Retained::retain(handle.ns_view.as_ptr().cast::<NSView>()) }?;
+    view.window()
+}
+
+/// Stop AppKit dragging the window from the band its titlebar used to own.
+///
+/// **A transparent titlebar still moves the window.** With a full-size
+/// content view AppKit keeps treating the top 28 pt as a titlebar: a press
+/// there that the content view would let move the window *does* move it —
+/// and that band is now the tab strip and the lane. Dragging a tab to split
+/// the pane dragged the whole window instead, because AppKit took the
+/// gesture alongside the view.
+///
+/// Nothing is lost by turning it off. On macOS the shell already drags the
+/// window itself, by polling the pointer from a press on bare caption
+/// (`WindowDrag` in `koru-workspace-host`), since `performWindowDragWithEvent:`
+/// moves nothing there; that places the window with `setFrameOrigin`, which
+/// `movable` does not govern. A non-movable window still zooms, minimises,
+/// tiles from the Window menu and goes full screen.
+#[cfg(target_os = "macos")]
+pub fn shell_owns_drag(window: &Window) {
+    if let Some(ns_window) = ns_window(window) {
+        ns_window.setMovable(false);
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn shell_owns_drag(_window: &Window) {}
+
 /// Seat the lights in a top band `band_h` logical points tall.
 ///
 /// Does nothing to a window without standard buttons — a borderless one, or
 /// one whose buttons were hidden — and nothing at all off macOS.
 #[cfg(target_os = "macos")]
 pub fn place(window: &Window, band_h: f64) {
-    use objc2::rc::Retained;
-    use objc2_app_kit::{NSView, NSWindowButton};
+    use objc2_app_kit::NSWindowButton;
     use objc2_foundation::NSPoint;
-    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
-    let Ok(handle) = window.window_handle() else {
-        return;
-    };
-    let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
-        return;
-    };
-    // SAFETY: the handle is this live winit window's content view, an
-    // `NSView`, and retaining it keeps it alive for the calls below. Every
-    // call here is on the main thread, where winit delivers its events.
-    let Some(view) = (unsafe { Retained::retain(handle.ns_view.as_ptr().cast::<NSView>()) }) else {
-        return;
-    };
-    let Some(ns_window) = view.window() else {
+    let Some(ns_window) = ns_window(window) else {
         return;
     };
     let buttons = [
