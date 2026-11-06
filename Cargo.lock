@@ -7590,6 +7590,8 @@ dependencies = [
  "koru-store-core",
  "loro",
  "loro-protocol",
+ "serde",
+ "serde_json",
  "tempfile",
  "tracing",
 ]

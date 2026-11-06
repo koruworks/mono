@@ -25,6 +25,10 @@ koru-api-client = { path = "../koru-api-client" }
 koru-channel = { path = "../koru-channel" }
 loro-protocol = { workspace = true }
 loro = { workspace = true }
+# A page document's pending revisions are named by a JSON record written last
+# (`store::revisions`); nothing else in this crate is serialized.
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 [dev-dependencies]
 # The outbox writes files, and its tests must not write them where a person's

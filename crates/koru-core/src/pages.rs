@@ -12,10 +12,14 @@
 //! — which generation of a page is current, and whether one replica's version
 //! of a document is covered by another's — so that the system document, the
 //! desktop and a headless reader cannot come to answer them differently.
+//! The deletion protocol built on those two rules — events, Keep decisions,
+//! Recovers and what they resolve to — is [`deletion`].
 //!
 //! The persisted keys these rules read are described in
 //! `docs/architecture/DATAMODEL.md` and decided in
 //! `docs/decisions/ADR-000-pagedocumentidentity.md`.
+
+pub mod deletion;
 
 use loro::VersionVector;
 

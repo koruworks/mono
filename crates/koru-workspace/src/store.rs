@@ -54,6 +54,7 @@ use loro_protocol::BatchId;
 
 pub mod link;
 pub mod outbox;
+pub mod revisions;
 use link::{Inbound, Link, ThreadLink};
 
 /// Boundary-owned client construction used by explicit embedded/test hosts.

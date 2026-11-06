@@ -145,6 +145,22 @@ impl DocumentId {
     pub const UNIDENTIFIED: Self = Self(Uuid::nil());
 }
 
+id_type!(
+    /// One permanent deletion of a page document
+    /// ([`pages::deletion`](crate::pages::deletion)). Fresh per deletion: a
+    /// document deleted, recovered and deleted again has two events, and a
+    /// Recover that names the first says nothing about the second.
+    EventId,
+    "event"
+);
+id_type!(
+    /// One *Keep deleted* decision about a deletion event. Fresh per press,
+    /// so the decisions about an event form a set that only grows and a
+    /// retry of the same press is the same decision.
+    DecisionId,
+    "decision"
+);
+
 // ------------------------------------------------------- page documents
 
 /// The namespace every `V1` page-document id and genesis peer is derived in
