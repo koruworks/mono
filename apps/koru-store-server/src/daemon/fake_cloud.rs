@@ -19,6 +19,13 @@
 //! frame answering an upload, a commit whose acknowledgement is lost with the
 //! session, a join that is never answered, and a checkpoint that rewrites a
 //! unit's stored history as one history-retaining snapshot.
+//!
+//! **An app connection's session** ([`FakeCloud::app_session`], Cloud MCP
+//! Plan 3.4) may carry a claim reference on each upload, which the log
+//! records; a test can claim a unit, and an upload of it whose reference is
+//! not the claim's is then refused `sync_document_claimed` and not stored —
+//! a port-level stand-in for the worker's claim rule (Plan 3.3), which also
+//! judges the claim's connection and its expiry.
 
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
@@ -29,7 +36,10 @@ use koru_device::cloud::CloudId;
 use koru_network_iroh::cloud::records;
 use koru_replication::cloud::{
     Bytes, HandshakeV1, PreparedSession, Version1,
-    transfer::{self, Admission, Control, MemoryBudget, Record, Scope, Stream, Unit, metadata},
+    transfer::{
+        self, Admission, ClaimReferences, Control, MemoryBudget, Record, Scope, Stream, Unit,
+        metadata,
+    },
 };
 use koru_replication::protocol::PeerFrame;
 use loro::{ExportMode, LoroDoc, VersionVector};
@@ -61,8 +71,14 @@ pub struct FakeCloud {
     lose_acknowledgements: Arc<std::sync::atomic::AtomicBool>,
     /// While set, a join is received and never answered.
     hold_joins: Arc<std::sync::atomic::AtomicBool>,
+    /// While set, a held upload outlives its session, as the worker's
+    /// retained work does: it is judged when released, stored or refused.
+    retain_held: Arc<std::sync::atomic::AtomicBool>,
     /// While set, the upload faults above apply to this unit's uploads only.
     target: Arc<Mutex<Option<Target>>>,
+    /// Units under a claim, and the claim's reference: an upload of one that
+    /// carries another reference, or none, is refused `sync_document_claimed`.
+    claims: Arc<Mutex<HashMap<Unit, [u8; 32]>>>,
     /// Bumped to let every held upload through.
     release: Arc<tokio::sync::watch::Sender<u64>>,
     pub log: Arc<Mutex<Log>>,
@@ -88,6 +104,9 @@ pub struct Log {
     /// Joins received and never answered.
     pub held_joins: Vec<Unit>,
     pub sessions_closed: usize,
+    /// Every complete upload, in order, with the claim reference its start
+    /// carried.
+    pub references: Vec<(Unit, Option<[u8; 32]>)>,
 }
 
 impl FakeCloud {
@@ -166,6 +185,27 @@ impl FakeCloud {
             .store(lose, std::sync::atomic::Ordering::SeqCst);
     }
 
+    /// Keep a held upload past the end of its session, until it is released:
+    /// an old upload from a replica that has since been fenced or a host that
+    /// restarted. Off, a held upload dies with its session.
+    pub fn retain_held(&self, retain: bool) {
+        self.retain_held
+            .store(retain, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Claim `unit` under `reference`, or end its claim with `None`.
+    pub fn claim(&self, unit: Unit, reference: Option<[u8; 32]>) {
+        let mut claims = self.claims.lock().unwrap();
+        match reference {
+            Some(reference) => {
+                claims.insert(unit, reference);
+            }
+            None => {
+                claims.remove(&unit);
+            }
+        }
+    }
+
     pub fn hold_joins(&self, hold: bool) {
         self.hold_joins
             .store(hold, std::sync::atomic::Ordering::SeqCst);
@@ -200,18 +240,43 @@ impl FakeCloud {
         }
     }
 
-    /// One admitted session over `scope`, served until the client closes it.
+    /// One admitted session over `scope`, served until the client closes it:
+    /// a device's, whose uploads carry no claim reference.
     pub fn session(
         &self,
         scope: Scope,
         budget: MemoryBudget,
     ) -> Opened<ReadHalf<DuplexStream>, WriteHalf<DuplexStream>> {
-        let accepted = accepted(scope);
+        self.open(scope, budget, false)
+    }
+
+    /// The same for an app connection's replica: its uploads may carry a
+    /// claim reference, as a worker serving the connection receives one.
+    pub fn app_session(
+        &self,
+        scope: Scope,
+        budget: MemoryBudget,
+    ) -> Opened<ReadHalf<DuplexStream>, WriteHalf<DuplexStream>> {
+        self.open(scope, budget, true)
+    }
+
+    fn open(
+        &self,
+        scope: Scope,
+        budget: MemoryBudget,
+        app_connection: bool,
+    ) -> Opened<ReadHalf<DuplexStream>, WriteHalf<DuplexStream>> {
+        let (client_end, worker_end) = if app_connection {
+            (ClaimReferences::Sent, ClaimReferences::Received)
+        } else {
+            (ClaimReferences::None, ClaimReferences::None)
+        };
+        let accepted = accepted_as(scope, client_end);
         // The worker's accounting is its own, so the client's budget measures
         // the client's carrier alone.
         let worker_budget = MemoryBudget::new(256 * 1024 * 1024);
         let server = Stream::new(
-            &accepted,
+            &accepted_as(scope, worker_end),
             scope,
             0,
             0,
@@ -287,6 +352,13 @@ impl FakeCloud {
                 continue;
             };
             let Ok(received) = received else {
+                if matches!(incoming, Some((_, true)))
+                    && self.retain_held.load(std::sync::atomic::Ordering::SeqCst)
+                {
+                    // Retained past its session: judged once released.
+                    let _ = released.changed().await;
+                    let _ = self.received(&mut peer, &mut stream, scope, &budget).await;
+                }
                 return self.closed();
             };
             match received.into_parts().1 {
@@ -477,6 +549,30 @@ impl FakeCloud {
         budget: &MemoryBudget,
     ) -> Result<(), transfer::Error> {
         let complete = stream.handoff(0, |_| Ok(()), |complete| complete)?;
+        self.log
+            .lock()
+            .unwrap()
+            .references
+            .push((complete.unit, complete.claim));
+        let claimed = self.claims.lock().unwrap().get(&complete.unit).copied();
+        if claimed.is_some_and(|claim| complete.claim != Some(claim)) {
+            // Refused before anything is stored, as the worker refuses before
+            // `reserve` or rolls the publish back: the unit does not move.
+            let code = transfer::Error::DocumentClaimed.code().to_owned();
+            self.log
+                .lock()
+                .unwrap()
+                .refused
+                .push((complete.unit, code.clone()));
+            let _ = records::write(
+                peer,
+                &Record::Peer(PeerFrame::Error { code }),
+                Instant::now() + QUIET,
+                budget,
+            )
+            .await;
+            return Err(transfer::Error::DocumentClaimed);
+        }
         if self
             .first_creation_wins
             .load(std::sync::atomic::Ordering::SeqCst)
@@ -525,7 +621,8 @@ impl FakeCloud {
     }
 }
 
-fn accepted(scope: Scope) -> PreparedSession {
+/// The admitted session, with the claim references its end may carry.
+fn accepted_as(scope: Scope, claim_references: ClaimReferences) -> PreparedSession {
     PreparedSession {
         principal: scope.principal,
         generation: 1,
@@ -536,7 +633,7 @@ fn accepted(scope: Scope) -> PreparedSession {
             generation: 1,
             expires_at_seconds: 600,
         },
-        claim_references: koru_replication::cloud::transfer::ClaimReferences::None,
+        claim_references,
     }
 }
 

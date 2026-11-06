@@ -143,31 +143,46 @@ fn a_served_tool_still_meets_scope_and_workspace_authority() {
 }
 
 /// One set publishes and admits: the hosted catalog is exactly the tools it
-/// admits, every name in the sets is a real tool, and the schemas are the
-/// shared catalog's own.
+/// admits, every name in the sets is a real tool — shared, or one of the
+/// hosted claim tools — and the shared tools' schemas are the shared
+/// catalog's own, `claim_ids` aside (`hosted`'s tests).
 #[test]
 fn the_catalog_and_admission_are_one_set() {
     let shared = workspace_tool_catalog();
     for set in [RUNG1_TOOLS, RUNG1_READ_TOOLS] {
         for tool in set {
             assert!(
-                shared.iter().any(|published| published.name == *tool),
+                shared.iter().any(|published| published.name == *tool)
+                    || HOSTED_ONLY_TOOLS.contains(tool),
                 "{tool} is not a published tool"
             );
         }
     }
-    let hosted = HostCapabilities::rung1().catalog();
-    let mut listed = names(&hosted);
-    listed.sort();
-    let mut expected: Vec<String> = RUNG1_TOOLS.iter().map(|tool| tool.to_string()).collect();
-    expected.sort();
-    assert_eq!(listed, expected);
-    for tool in &hosted {
-        let original = shared.iter().find(|t| t.name == tool.name).unwrap();
-        assert_eq!(tool, original, "{} is published unchanged", tool.name);
+    for set in [HostCapabilities::rung1(), HostCapabilities::rung1_reads()] {
+        let HostCapabilities::Tools(tools) = set else {
+            unreachable!()
+        };
+        let mut listed = names(&set.catalog());
+        listed.sort();
+        let mut expected: Vec<String> = tools.iter().map(|tool| tool.to_string()).collect();
+        expected.sort();
+        assert_eq!(listed, expected);
+    }
+    for tool in HostCapabilities::rung1().catalog() {
+        let Some(original) = shared.iter().find(|t| t.name == tool.name) else {
+            assert!(HOSTED_ONLY_TOOLS.contains(&tool.name.as_str()));
+            continue;
+        };
+        if !hosted::CLAIMING_TOOLS.contains(&tool.name.as_str()) {
+            assert_eq!(&tool, original, "{} is published unchanged", tool.name);
+        }
     }
     for tool in RUNG1_READ_TOOLS {
         assert!(RUNG1_TOOLS.contains(tool), "{tool}: the reads are a subset");
+    }
+    for tool in HOSTED_ONLY_TOOLS {
+        assert!(RUNG1_TOOLS.contains(tool), "{tool} is rung 1");
+        assert!(!RUNG1_READ_TOOLS.contains(tool), "{tool} needs Read & edit");
     }
 }
 
@@ -194,9 +209,88 @@ fn the_local_catalog_is_unchanged() {
 /// sits in some toolset, so a bridge narrowed by `--toolsets` and a host
 /// narrowed by capabilities intersect, and neither has a tool the other
 /// cannot name.
+///
+/// The claim tools are the exception: no bridge serves them, so no toolset
+/// names them.
 #[test]
 fn every_hosted_tool_belongs_to_a_toolset() {
     for tool in RUNG1_TOOLS {
-        assert!(Toolset::of(tool).is_some(), "{tool}");
+        assert_eq!(
+            Toolset::of(tool).is_some(),
+            !HOSTED_ONLY_TOOLS.contains(tool),
+            "{tool}"
+        );
     }
+}
+
+/// A local host serves no claim tool: it is refused by name before anything
+/// else is asked of the call, and the local catalog lists none.
+#[test]
+fn a_local_host_refuses_the_claim_tools() {
+    let backend = Arc::new(Recording::default());
+    let executor = WorkspaceToolExecutor::new(backend.clone());
+    for tool in HOSTED_ONLY_TOOLS {
+        let refused = executor
+            .invoke(
+                &RequestContext::local(),
+                tool,
+                json!({ "workspace_id": WorkspaceId::new(), "document_id": WorkspaceId::new(), "claim_id": "x" }),
+            )
+            .unwrap_err();
+        assert_eq!(refused.code, "tool_not_available", "{tool}");
+        assert!(!HostCapabilities::All.allows(tool));
+    }
+    assert!(backend.0.lock().unwrap().is_empty());
+}
+
+/// The claim tools meet the ordinary checks: Read & edit for both, and the
+/// named Workspace in the allowed set for `claim_document`.
+#[test]
+fn the_claim_tools_need_read_and_edit_and_the_workspace() {
+    let backend = Arc::new(Recording::default());
+    let executor = WorkspaceToolExecutor::new(backend.clone());
+    let (context, workspace) = hosted(HostCapabilities::rung1());
+    executor
+        .invoke(
+            &context,
+            hosted::CLAIM_DOCUMENT,
+            json!({ "workspace_id": workspace, "document_id": WorkspaceId::new() }),
+        )
+        .unwrap();
+    executor
+        .invoke(
+            &context,
+            hosted::RELEASE_DOCUMENT,
+            json!({ "claim_id": "x" }),
+        )
+        .unwrap();
+    let elsewhere = executor
+        .invoke(
+            &context,
+            hosted::CLAIM_DOCUMENT,
+            json!({ "workspace_id": WorkspaceId::new(), "document_id": WorkspaceId::new() }),
+        )
+        .unwrap_err();
+    assert_eq!(elsewhere.code, "permission_denied");
+    let read_only = RequestContext::selected(
+        "us",
+        "app-connection:read",
+        [Scope::ReadDocuments],
+        [workspace],
+    )
+    .with_capabilities(HostCapabilities::rung1());
+    for tool in HOSTED_ONLY_TOOLS {
+        let refused = executor
+            .invoke(
+                &read_only,
+                tool,
+                json!({ "workspace_id": workspace, "document_id": WorkspaceId::new(), "claim_id": "x" }),
+            )
+            .unwrap_err();
+        assert_eq!(refused.code, "permission_denied", "{tool}");
+    }
+    assert_eq!(
+        *backend.0.lock().unwrap(),
+        vec![hosted::CLAIM_DOCUMENT, hosted::RELEASE_DOCUMENT]
+    );
 }

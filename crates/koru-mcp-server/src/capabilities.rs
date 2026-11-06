@@ -24,9 +24,16 @@
 //! before; a hosted catalog is not toolset-shaped — rung 1 is part of `docs`
 //! and part of `tasks` — which is why it is a set of tools and not a set of
 //! toolsets.
+//!
+//! **Claims are hosted only** ([`crate::hosted`]): `claim_document` and
+//! `release_document` are in rung 1 and in no shared router, so
+//! [`HostCapabilities::All`] — every local host — refuses them by name, and a
+//! hosted catalog adds them, with `claim_ids` on `edit_document` and
+//! `extract_to_document`. The local catalog is the shared one, unchanged.
 
 use serde_json::json;
 
+use crate::hosted::{self, HOSTED_ONLY_TOOLS};
 use crate::{ToolError, WorkspaceTool, workspace_tool_catalog};
 
 /// The tools a host serves. Local hosts — the desktop bridge and Koru AI —
@@ -40,9 +47,9 @@ pub enum HostCapabilities {
     Tools(&'static [&'static str]),
 }
 
-/// Rung 1 of Cloud MCP (TECHNICAL §1): read and edit documents and tasks.
-/// Tasks change through `edit_document`, so `update_task` is not here. The two
-/// claim tools join this list when they exist (Cloud MCP Plan 3.4).
+/// Rung 1 of Cloud MCP (TECHNICAL §1): read and edit documents and tasks,
+/// and claim documents. Tasks change through `edit_document`, so
+/// `update_task` is not here.
 pub const RUNG1_TOOLS: &[&str] = &[
     "get_documentation",
     "list_workspaces",
@@ -53,6 +60,8 @@ pub const RUNG1_TOOLS: &[&str] = &[
     "edit_document",
     "extract_to_document",
     "list_tasks",
+    hosted::CLAIM_DOCUMENT,
+    hosted::RELEASE_DOCUMENT,
 ];
 
 /// Rung 1's reads alone: what a hosted host serves until its mutation
@@ -92,19 +101,33 @@ impl HostCapabilities {
         matches!(self, Self::All)
     }
 
+    /// Whether this host serves `tool`. A local host serves every shared
+    /// tool and none of the hosted-only ones.
     pub fn allows(&self, tool: &str) -> bool {
         match self {
-            Self::All => true,
+            Self::All => !HOSTED_ONLY_TOOLS.contains(&tool),
             Self::Tools(tools) => tools.contains(&tool),
         }
     }
 
-    /// The published catalog: the shared catalog's tools this host serves, in
-    /// the shared catalog's order and with its schemas unchanged.
+    /// The published catalog. A local host's is the shared catalog, unchanged.
+    /// A hosted one's is the shared catalog's tools it serves, in that order
+    /// and with those schemas, `claim_ids` added to `edit_document` and
+    /// `extract_to_document`, then the claim tools it serves.
     pub fn catalog(&self) -> Vec<WorkspaceTool> {
-        workspace_tool_catalog()
+        let shared = workspace_tool_catalog()
             .into_iter()
-            .filter(|tool| self.allows(&tool.name))
+            .filter(|tool| self.allows(&tool.name));
+        if self.is_device() {
+            return shared.collect();
+        }
+        shared
+            .map(hosted::hosted_tool)
+            .chain(
+                hosted::claim_tools()
+                    .into_iter()
+                    .filter(|tool| self.allows(&tool.name)),
+            )
             .collect()
     }
 

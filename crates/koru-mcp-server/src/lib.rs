@@ -54,6 +54,7 @@ mod attribution;
 mod capabilities;
 mod chat_tools;
 pub mod effects;
+pub mod hosted;
 pub use attribution::{ACTOR_V1, ActorCreate, ActorMessage, ChangeAttribution};
 pub use capabilities::{HostCapabilities, RUNG1_READ_TOOLS, RUNG1_TOOLS};
 pub use chat_tools::CHAT_TOOL_NAMES;
@@ -864,6 +865,19 @@ fn tool_policy(name: &str) -> Option<ToolPolicy> {
         | "restore_document_version" => ToolPolicy {
             scope: edit,
             workspace: WorkspaceTarget::One,
+            domain: ToolDomain::Workspace,
+        },
+        // Hosted only (`hosted`): a claim changes what other agents may do,
+        // so it needs Read & edit. Taking one names its Workspace; releasing
+        // one names only its handle, which names its document server-side.
+        hosted::CLAIM_DOCUMENT => ToolPolicy {
+            scope: edit,
+            workspace: WorkspaceTarget::One,
+            domain: ToolDomain::Workspace,
+        },
+        hosted::RELEASE_DOCUMENT => ToolPolicy {
+            scope: edit,
+            workspace: WorkspaceTarget::None,
             domain: ToolDomain::Workspace,
         },
         _ => return None,
