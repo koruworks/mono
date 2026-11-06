@@ -8,7 +8,7 @@ use std::sync::Arc;
 use koru_session_protocol::{ErrorCode, ProviderKind, SessionId, VersionNeed};
 
 use super::config::{DEFAULT_EVENT_CAPACITY, DEFAULT_INPUT_BYTES};
-use super::{CodexConfig, CodexControl, SUPPORTED_CODEX_VERSIONS, failure, provider_kind};
+use super::{CodexConfig, CodexControl, failure, provider_kind};
 use crate::AttachmentPathResolver;
 use crate::providers::{
     AgentCapabilities, AgentControl, AgentStart, CompatibilityProbe, ManagedProvider,
@@ -61,10 +61,10 @@ pub(super) fn read_print(success: bool, stdout: &[u8]) -> Result<ProviderVersion
     ProviderVersion::from_str(version).map_err(|_| unreadable())
 }
 
-/// `version`, if it is on the reviewed allowlist; refused, naming it and
-/// the newest reviewed release, if not.
+/// `version`, if Koru runs it (`codex_version_supported`); refused, naming
+/// it and the floor, if not.
 pub(super) fn admit(version: ProviderVersion) -> Result<ProviderVersion, ProviderFailure> {
-    if SUPPORTED_CODEX_VERSIONS.contains(&version.as_str()) {
+    if super::codex_version_supported(version.as_str()) {
         Ok(version)
     } else {
         Err(refused(Some(version)))
@@ -72,8 +72,9 @@ pub(super) fn admit(version: ProviderVersion) -> Result<ProviderVersion, Provide
 }
 
 fn refused(found: Option<ProviderVersion>) -> ProviderFailure {
-    // The allowlist is exact, so what a refusal names is its newest entry.
-    let newest = VersionNeed::reviewed(SUPPORTED_CODEX_VERSIONS.iter().copied());
+    // Anything at or above the newest reviewed release runs, so a refusal
+    // names that release as the one to update to.
+    let newest = Some(VersionNeed::AtLeast(super::CODEX_FLOOR.to_owned()));
     let diagnostic = if found.is_some() {
         ProviderDiagnostic::VersionRejected
     } else {

@@ -3472,11 +3472,10 @@ isn't on PATH.*); or **Needs attention**, with the reason Koru already knows —
 a version Koru does not support yet, signed out, the program a chat runs the
 agent through missing (Claude's `claude-agent-acp`, say), the agent's program
 not starting, or a check that failed. A version row names the version found
-and the one Koru needs: *Found 1.18.25; Koru needs 1.18.27 or newer.* for an
-agent Koru accepts from a release onwards, and *Found 0.167.0; Koru has only
-checked up to 0.166.0 so far.* for Codex, which Koru accepts only at the
-releases it has checked — there, updating does not help until a later Koru
-admits the new one. When the agent's `--version` fails or prints nothing,
+and the one Koru needs: *Found 1.18.25; Koru needs 1.18.27 or newer.* Every
+agent is accepted from a checked release onwards, so a newer release of the
+agent works without waiting for a Koru update; only a release older than the
+one Koru names is refused, and updating the agent fixes it. When the agent's `--version` fails or prints nothing,
 the row says so instead — *`kimi --version` failed, so the agent can't start
 on this computer. Run it in a terminal to see why.* — because the version was
 never the problem (Kimi's CLI under a Node.js too old for it is one way to
