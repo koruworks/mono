@@ -496,6 +496,9 @@ pub fn run_probe_command(
         ));
     }
     let mut process = Command::new(&command.program);
+    // Before the probe's own environment, which may name a `PATH` of its
+    // own; this is also the `PATH` a bare program name is resolved through.
+    koru_session_profiles::with_effective_path(&mut process);
     process
         .args(&command.arguments)
         .envs(command.environment.iter().map(|(key, value)| (key, value)))

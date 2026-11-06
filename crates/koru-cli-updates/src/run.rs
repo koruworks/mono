@@ -55,6 +55,10 @@ pub fn run(
     mut on_line: impl FnMut(&str),
 ) -> io::Result<Finished> {
     let mut command = Command::new(program);
+    // The `PATH` the program was found on, for what it runs in turn: an
+    // npm-installed CLI is a `node` script and its updater runs `npm`, and a
+    // Finder-launched Koru's own `PATH` has neither.
+    koru_session_profiles::with_effective_path(&mut command);
     command
         .args(args)
         .stdin(Stdio::null())

@@ -3512,12 +3512,22 @@ row reads **Ready** without restarting Koru. Closing the tab early leaves the
 installer running, and Koru checks again when it ends. Pressing **Install**
 again while its tab is open brings that tab forward.
 
-Koru looks for an agent's program on your `PATH` — on Windows the `PATH` as it
-is now, so a program installed while Koru is running is found without
-restarting Koru — and where the agent's installer puts it: for Claude Code,
-`~/.local/bin` (`%USERPROFILE%\.local\bin` on Windows), npm's global folder
-(`%APPDATA%\npm` on Windows; Homebrew's or `/usr/local/bin` on a Mac), and
-WinGet's links. `claude-agent-acp` is looked for in npm's global folder. The
+Koru looks for an agent's program on the `PATH` a new terminal would have,
+even when Koru itself was started from Finder, the Dock or a login item, which
+on a Mac get only `/usr/bin:/bin:/usr/sbin:/sbin`. On a Mac or Linux that is
+Koru's own `PATH`, then the `PATH` your login shell sets up (`$SHELL -l`,
+asked once when Koru starts looking), then the folders the agents' installers
+use — `~/.local/bin` (Claude Code, Codex, Muse, Devin), `~/.opencode/bin`,
+`~/.grok/bin`, and on a Mac Homebrew's `/opt/homebrew/bin` and
+`/usr/local/bin`, where npm puts `node` and the npm-installed agents. On
+Windows it is Koru's `PATH` and the `PATH` as Windows holds it now, so a
+program installed while Koru is running is found without restarting Koru.
+Claude Code is also looked for in `~/.claude/local`, npm's global folder
+(`%APPDATA%\npm` on Windows) and WinGet's links. Everything Koru starts — an
+agent's chat, its version check, a terminal tab, an **Install** tab — runs
+with that same `PATH`, so a program that needs `node` finds it. A folder only
+your interactive shell adds (`~/.zshrc`, `~/.bashrc`) beyond those is not
+seen; put it in your login profile (`~/.zprofile`, `~/.profile`) instead. The
 chat model picker uses the same words: an agent whose chat program is missing
 reads **Needs attention** there too, not **Not installed**, and the picker
 checks a missing agent again when you next open it.

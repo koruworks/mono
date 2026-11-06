@@ -85,6 +85,30 @@ is inside update._meta.tools on available_commands_update, not params._meta
 or MCP server status. Koru binds it to the created session and closes on a
 later policy contradiction; native tool names are never logged.
 
+## An agent's child needs the effective PATH, not Koru's
+
+Finding the program is half of launching it. A Mac app started from Finder,
+the Dock or a login item gets `PATH=/usr/bin:/bin:/usr/sbin:/sbin` from
+launchd: no Homebrew, no `~/.local/bin`. `claude-agent-acp` resolved through a
+known location still failed its `--version` probe, because it is a
+`#!/usr/bin/env node` script and its child's `PATH` had no `node`; every other
+agent read "Not installed". A login shell (`zsh -l -c`) restores Homebrew but
+not what installers append to `~/.zshrc` (`~/.local/bin`, `~/.opencode/bin`),
+and an interactive one (`-i`) can hang on prompts and tty reads. Windows has the
+same class of bug in another shape: a long-lived Agent's `PATH` predates every
+later install, so a `.cmd` npm shim cannot find a `node` installed after it.
+
+`koru_session_profiles::effective_path` is the one answer: the inherited `PATH`,
+then the registry's current `Path` on Windows, or on macOS and Linux the login
+shell's `PATH` (captured once per process between markers, three-second
+deadline) and the agent installers' directories. `resolve_executable` searches
+it, and every child gets it: `with_effective_path` on a `std::process::Command`
+(probes, ACP and Codex adapters, `mcp add`, CLI updates), and
+`SpawnRequest::environment` for every PTY (terminal, raw agent and *Install*
+tabs). Apply it before the launch's own environment, so a `PATH` a route or
+fixture sets still wins. A new spawn site that skips it works from a terminal
+and fails only in a Finder-launched build.
+
 ## OpenCode model selection
 
 OpenCode 1.18.27 returns the model selector in session/new.configOptions, with
