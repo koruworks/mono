@@ -127,6 +127,17 @@ pub struct EntityPicker {
     /// picker's query is the `@…` text in the document, but a move opens over
     /// a selection, so there is no place in the document to type into.
     pub own_query: Option<TextField>,
+    /// What the own-query field says while it is empty — the panel's own
+    /// words for what typing here does (*Move to…*, *Add a document or
+    /// file…*).
+    pub own_hint: &'static str,
+    /// This picker **links an existing document or file from outside any
+    /// document** — a Tasks page's *Add existing…*. It has its own query
+    /// field (there is no body to type `@…` into) and no *Add new document*
+    /// row (nothing is being written), `#` is ordinary text (a page links
+    /// to a document, not into one), and the scope is the workspace the
+    /// page is in, whose listing names what it picks.
+    pub link_mode: bool,
     /// The commit that just happened was Ctrl+Enter or Shift+Enter: perform
     /// the move but stay here — no tab for the new page, no navigation. Read
     /// by the move routing; meaningless for the mention picker.
@@ -166,6 +177,8 @@ impl Clone for EntityPicker {
             scrollbar_drag: self.scrollbar_drag,
             move_mode: self.move_mode,
             own_query: None,
+            own_hint: self.own_hint,
+            link_mode: self.link_mode,
             stay_on_commit: self.stay_on_commit,
             child_on_commit: self.child_on_commit,
         }
@@ -193,8 +206,37 @@ impl EntityPicker {
             scrollbar_drag: None,
             move_mode: false,
             own_query: None,
+            own_hint: "",
+            link_mode: false,
             stay_on_commit: false,
             child_on_commit: false,
+        }
+    }
+
+    /// The picker as a Tasks page's *Add existing document or file*: the
+    /// `@` list — documents and files together, `file:` and `doc:` narrowing
+    /// it — with its own query field focused from the first keystroke.
+    pub fn for_link(engine: &mut TextEngine) -> Self {
+        let mut picker = Self::new(Trigger::at_start());
+        picker.link_mode = true;
+        picker.own_hint = "Add a document or file\u{2026}";
+        picker.own_query = Some(TextField::new(engine, koru_draw::theme::role::ui()));
+        picker
+    }
+
+    /// Whether the pinned *Add new document* row is on offer. Every picker
+    /// but the standalone link one pins it.
+    pub fn has_create_row(&self) -> bool {
+        !self.link_mode
+    }
+
+    /// How many result rows the document list shows: all of them, less the
+    /// pinned create row where there is one.
+    pub fn doc_capacity(&self) -> usize {
+        if self.has_create_row() {
+            MAX_ROWS - 1
+        } else {
+            MAX_ROWS
         }
     }
 
@@ -210,6 +252,7 @@ impl EntityPicker {
     pub fn for_move(engine: &mut TextEngine, trigger: Trigger, prefill: &str) -> Self {
         let mut picker = Self::new(trigger.clone());
         picker.move_mode = true;
+        picker.own_hint = "Move to\u{2026}";
         let mut field = TextField::new(engine, koru_draw::theme::role::ui());
         if !prefill.is_empty() {
             field.set_text(engine, prefill);
@@ -297,7 +340,7 @@ impl EntityPicker {
             // is what keeps the empty case out of the key handling entirely.
             Stage::Headings(headings) => headings.shown.len().max(1),
             // A create row remains available even with no matches.
-            Stage::Documents => self.hits.len() + 1,
+            Stage::Documents => self.hits.len() + usize::from(self.has_create_row()),
         }
     }
 
@@ -321,6 +364,11 @@ impl EntityPicker {
         current: WorkspaceId,
         mut workspaces: Vec<WorkspaceChoice>,
     ) -> bool {
+        // A page's link stays in the page's workspace: the lane that shows
+        // it names it from that workspace's listing.
+        if self.link_mode {
+            workspaces.retain(|workspace| workspace.id == current);
+        }
         // A move never crosses a profile — the shell refuses it at commit, so
         // offering another profile's documents is offering a dialog. The
         // mention picker keeps the whole catalog: a *link* may point anywhere.
@@ -380,6 +428,11 @@ impl EntityPicker {
         }
         self.query.clear();
         self.query.push_str(query);
+        // A link goes to a document, not into one: `#` is a character.
+        if self.link_mode {
+            self.leave_headings(query);
+            return;
+        }
         match query.split_once('#') {
             // `split_once`, so a heading whose own text contains a `#` is still
             // reachable: everything after the first one is the filter.
@@ -519,7 +572,7 @@ impl EntityPicker {
     /// redraw, sync, and feed again — a redraw loop pinned at full speed,
     /// which is what "@ blocks the UI" turned out to be.
     pub fn set_recent_results(&mut self, hits: Vec<DocumentChoice>) -> bool {
-        if !(self.move_mode && self.document_query.trim().is_empty()) {
+        if !((self.move_mode || self.link_mode) && self.document_query.trim().is_empty()) {
             return false;
         }
         if self.hits == hits && !self.loading {
@@ -639,7 +692,7 @@ impl EntityPicker {
                 PillSpec::document(hit.title.clone(), hit.target)
             });
         }
-        if i == self.hits.len() {
+        if i == self.hits.len() && self.has_create_row() {
             return Outcome::NewPage(self.query.trim().to_owned());
         }
         Outcome::Consumed
@@ -677,7 +730,7 @@ impl EntityPicker {
             // Neither list pins a row beneath it.
             Stage::Workspaces | Stage::Headings(_) => MAX_ROWS,
             // Add new page is pinned below the scrolling result rows.
-            Stage::Documents => MAX_ROWS.saturating_sub(1),
+            Stage::Documents => self.doc_capacity(),
         };
         self.scroll_len().min(capacity)
     }
@@ -767,14 +820,31 @@ impl EntityPicker {
                 .max(usize::from(headings.shown.is_empty()));
             return (row < visible).then_some(self.first + row);
         }
-        let visible_hits = self.hits.len().saturating_sub(self.first).min(MAX_ROWS - 1);
+        let visible_hits = self
+            .hits
+            .len()
+            .saturating_sub(self.first)
+            .min(self.doc_capacity());
         if row < visible_hits {
             Some(self.first + row)
-        } else if row == visible_hits {
+        } else if row == visible_hits && self.has_create_row() {
             Some(self.hits.len())
         } else {
             None
         }
+    }
+
+    /// The item under a panel-local `y`, for a host that hovers rows itself
+    /// (the standalone link picker): `None` over the field, the scope chip
+    /// and past the last row.
+    pub fn item_at(&self, local_y: f32) -> Option<usize> {
+        let y = local_y - self.field_band();
+        let pad = koru_draw::theme::PANEL_PAD;
+        if y < pad + HEADER_H {
+            return None;
+        }
+        let row = ((y - pad - HEADER_H) / koru_draw::theme::ROW_H).floor();
+        self.visible_item(row as usize)
     }
 
     pub(super) fn contains_item(&self, item: usize) -> bool {
@@ -784,9 +854,12 @@ impl EntityPicker {
     fn ensure_selected_visible(&mut self) {
         let visible = match self.stage {
             Stage::Workspaces | Stage::Headings(_) => MAX_ROWS,
-            Stage::Documents => MAX_ROWS - 1,
+            Stage::Documents => self.doc_capacity(),
         };
-        if matches!(self.stage, Stage::Documents) && self.sel == self.hits.len() {
+        if matches!(self.stage, Stage::Documents)
+            && self.has_create_row()
+            && self.sel == self.hits.len()
+        {
             self.first = self.hits.len().saturating_sub(visible);
             return;
         }
@@ -809,6 +882,164 @@ mod tests {
             document,
             node: None,
         }
+    }
+
+    fn linked(title: &str, is_file: bool) -> DocumentChoice {
+        DocumentChoice {
+            target: target(WorkspaceId::new()),
+            title: title.into(),
+            breadcrumb: String::new(),
+            is_file,
+        }
+    }
+
+    /// The standalone link picker (a Tasks page's *Add existing…*): its own
+    /// query field, documents and files in one list, and nothing pinned —
+    /// no *Add new document* row, since nothing is being written.
+    #[test]
+    fn the_link_picker_lists_documents_and_files_and_pins_no_create_row() {
+        let mut engine = koru_draw::text::TextEngine::new();
+        let mut picker = EntityPicker::for_link(&mut engine);
+        assert!(picker.own_query.is_some(), "it types in its own field");
+        assert!(!picker.has_create_row());
+        assert_eq!(picker.doc_capacity(), MAX_ROWS, "no row is held back");
+        assert_eq!(
+            picker.row_count(),
+            1,
+            "an empty list keeps one row for its status"
+        );
+        assert!(
+            matches!(picker.choose(0), Outcome::Consumed),
+            "nothing to choose, and no create row to fall back to"
+        );
+
+        picker.set_results(
+            vec![linked("Brief", false), linked("brief.pdf", true)],
+            false,
+        );
+        assert_eq!(picker.row_count(), 2, "just the results");
+        let Outcome::Commit(doc) = picker.choose(0) else {
+            panic!("a document commits")
+        };
+        assert_eq!(doc.kind, koru_draw::pill::PillKind::Document);
+        let Outcome::Commit(file) = picker.choose(1) else {
+            panic!("a file commits")
+        };
+        assert_eq!(
+            file.kind,
+            koru_draw::pill::PillKind::File,
+            "files are referenceable, and say so"
+        );
+        assert!(
+            matches!(picker.choose(2), Outcome::Consumed),
+            "past the last result is nothing, not a new page"
+        );
+    }
+
+    /// A link goes to a document, not into one: `#` is a character, never the
+    /// heading stage — and typing re-asks the search with the whole text.
+    #[test]
+    fn the_link_picker_treats_a_hash_as_text_and_searches_what_is_typed() {
+        let mut engine = koru_draw::text::TextEngine::new();
+        let mut picker = EntityPicker::for_link(&mut engine);
+        let current = WorkspaceId::new();
+        picker.set_context(current, Vec::new());
+        picker.refilter(Trigger::at_start(), "plan#2");
+        assert_eq!(picker.stage, Stage::Documents, "no heading stage");
+        assert_eq!(picker.document_query, "plan#2");
+        let request = picker.take_request().expect("a search is owed");
+        assert_eq!(request.query, "plan#2");
+        assert_eq!(request.workspaces, vec![current]);
+    }
+
+    /// The scope is the page's own workspace — the lane names what it holds
+    /// from that listing — however many the catalog has.
+    #[test]
+    fn the_link_picker_stays_in_the_pages_workspace() {
+        let mut engine = koru_draw::text::TextEngine::new();
+        let mut picker = EntityPicker::for_link(&mut engine);
+        let current = WorkspaceId::new();
+        let ours = WorkspaceChoice {
+            profile: ProfileId::new(),
+            profile_name: "Work".into(),
+            id: current,
+            name: "Current".into(),
+        };
+        let other = WorkspaceChoice {
+            profile: ProfileId::new(),
+            profile_name: "Personal".into(),
+            id: WorkspaceId::new(),
+            name: "Elsewhere".into(),
+        };
+        picker.set_context(current, vec![ours.clone(), other]);
+        assert_eq!(picker.workspaces, vec![ours]);
+        assert_eq!(picker.selected_workspaces, vec![current]);
+    }
+
+    /// With nothing typed the list is the window's recents, as the move
+    /// picker's is, so the first thing on screen is something to pick.
+    #[test]
+    fn the_link_picker_takes_recents_while_nothing_is_typed() {
+        let mut engine = koru_draw::text::TextEngine::new();
+        let mut picker = EntityPicker::for_link(&mut engine);
+        assert!(picker.set_recent_results(vec![linked("Recent", false)]));
+        assert_eq!(picker.hits.len(), 1);
+        picker.refilter(Trigger::at_start(), "bri");
+        assert!(
+            !picker.set_recent_results(vec![linked("Recent", false)]),
+            "once typing, the search answers"
+        );
+    }
+
+    /// The standalone entry point draws the whole picker — frame, query
+    /// field, scope chip, a document and a file, the empty and the busy
+    /// states — and answers the panel's rect for the host's hit-testing.
+    #[test]
+    fn the_standalone_picker_draws_and_answers_its_rect() {
+        let mut engine = koru_draw::text::TextEngine::new();
+        let mut picker = EntityPicker::for_link(&mut engine);
+        let mut scene = vello::Scene::new();
+        let rect = crate::components::draw::draw_standalone_entity_picker(
+            &mut scene,
+            vello::kurbo::Affine::IDENTITY,
+            &mut engine,
+            &mut picker,
+            (12.0, 20.0),
+            None,
+        );
+        assert_eq!(
+            (rect.x, rect.y, rect.w),
+            (12.0, 20.0, koru_draw::theme::PANEL_W)
+        );
+        assert_eq!(rect.h, picker.height());
+        // Searching, then answered with one of each, then nothing found.
+        picker.set_results(
+            vec![linked("Brief", false), linked("brief.pdf", true)],
+            false,
+        );
+        let rect = crate::components::draw::draw_standalone_entity_picker(
+            &mut scene,
+            vello::kurbo::Affine::IDENTITY,
+            &mut engine,
+            &mut picker,
+            (12.0, 20.0),
+            Some(1),
+        );
+        assert_eq!(rect.h, picker.height(), "two rows now");
+        picker.set_results(Vec::new(), false);
+        crate::components::draw::draw_standalone_entity_picker(
+            &mut scene,
+            vello::kurbo::Affine::IDENTITY,
+            &mut engine,
+            &mut picker,
+            (12.0, 20.0),
+            None,
+        );
+        assert_eq!(
+            picker.item_at(rect.h + 40.0),
+            None,
+            "past the panel is nothing"
+        );
     }
 
     #[test]
