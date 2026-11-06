@@ -26,8 +26,29 @@ use winit::window::CursorIcon;
 
 use crate::leaf::Leaf;
 
-/// How much of the page the band may take before it scrolls (D8).
+/// How much of the page the band may take before it scrolls (D8), while
+/// nobody has sized it by hand.
 const BAND_SHARE: f32 = 0.4;
+
+/// The least a band sized by hand can be: a line and a half, so the grip
+/// can always be found again.
+const MIN_FIXED_H: f32 = 36.0;
+
+/// What a band sized by hand leaves the rows below: the heading's height
+/// again, so the table never vanishes under a tall note.
+const MIN_ROWS_H: f32 = 120.0;
+
+/// The grip's hit lane straddling the band's bottom edge, in px — the pane
+/// divider's recipe, so the two drag the same way.
+const GRIP_HIT: f32 = 7.0;
+
+/// The corner mark that says the band can be dragged, like an HTML text
+/// area's: its side.
+pub(super) const GRIP_MARK: f32 = 10.0;
+
+/// The *open in a new tab* control's side, at the band's top-right — the
+/// header's `…`, one row down.
+pub(super) const OPEN_ICON: f32 = super::view::HEADER_DOTS;
 
 /// The body is laid out full width; its text starts where the heading's
 /// does, which is what the horizontal offset below arranges.
@@ -50,6 +71,11 @@ pub(super) struct PageBody {
     /// Built and not yet fed the container's caches — entity titles, the
     /// schedule pills — which every document leaf gets on open.
     fresh: bool,
+    /// The height the band was last laid out to by hand, clamped to the
+    /// page, or `None` while it follows its content.
+    fixed: Option<f32>,
+    /// The page's padding, so the corner controls sit on its margin.
+    pad: f32,
 }
 
 impl PageBody {
@@ -79,6 +105,8 @@ impl PageBody {
             origin: (0.0, 0.0),
             dirty: true,
             fresh: true,
+            fixed: None,
+            pad: 0.0,
         })
     }
 
@@ -102,19 +130,29 @@ impl PageBody {
     }
 
     /// Lay the band out under `top`, `w` wide, on a page `page_h` tall: the
-    /// content's height up to the share the page allows. Answers the band's
-    /// height. Lays the leaf out only when something moved it.
-    pub fn layout(&mut self, pad: f32, top: f32, w: f32, page_h: f32) -> f32 {
-        let cap = (page_h * BAND_SHARE).max(1.0);
+    /// content's height up to the share the page allows, or `fixed` when
+    /// the band was sized by hand — then it is that tall whatever the
+    /// content, scrolling inside when the note is taller and leaving room
+    /// when it is shorter, the way an HTML text area does. Answers the
+    /// band's height. Lays the leaf out only when something moved it.
+    pub fn layout(&mut self, pad: f32, top: f32, w: f32, page_h: f32, fixed: Option<f32>) -> f32 {
+        let fixed =
+            fixed.map(|h| h.clamp(MIN_FIXED_H, (page_h - top - MIN_ROWS_H).max(MIN_FIXED_H)));
+        let cap = fixed.unwrap_or((page_h * BAND_SHARE).max(1.0));
         let inset = koru_draw::geometry::text_x(0u32, false);
         let x = pad - inset - MODE.content_x(w);
         let leaf_w = (w - x).max(1.0);
-        if self.dirty || self.band.w != w || self.band.y != top {
+        if self.dirty || self.band.w != w || self.band.y != top || self.fixed != fixed {
+            self.fixed = fixed;
+            self.pad = pad;
             // Measured at the cap so the content height is known, then the
             // band is cut to the content when it is shorter.
             Leaf::set_viewport(&mut self.leaf, leaf_w, cap);
             let content = koru_editor::rowlayout::content_height(self.leaf.body());
-            let h = content.min(cap).max(1.0);
+            let h = match fixed {
+                Some(h) => h,
+                None => content.min(cap).max(1.0),
+            };
             if (h - cap).abs() > 0.5 {
                 Leaf::set_viewport(&mut self.leaf, leaf_w, h);
             }
@@ -131,6 +169,40 @@ impl PageBody {
             self.dirty = false;
         }
         self.band.h
+    }
+
+    /// The grip's hit lane: the band's bottom edge, full width, straddled
+    /// the way a pane divider's is, plus the corner mark.
+    pub fn grip_rect(&self) -> Rect {
+        Rect::new(
+            0.0,
+            self.band.y + self.band.h - GRIP_HIT * 0.5,
+            self.band.w,
+            GRIP_HIT,
+        )
+    }
+
+    /// The corner mark's square, inside the band's bottom-right corner on
+    /// the page's margin — left of the scrollbar's lane, which keeps the
+    /// edge.
+    pub fn grip_mark(&self) -> Rect {
+        Rect::new(
+            self.band.w - self.pad - GRIP_MARK,
+            self.band.y + self.band.h - GRIP_MARK - 2.0,
+            GRIP_MARK,
+            GRIP_MARK,
+        )
+    }
+
+    /// The *open in a new tab* control: the band's top-right corner, in the
+    /// column the header's `…` is in.
+    pub fn open_rect(&self) -> Rect {
+        Rect::new(
+            self.band.w - self.pad - OPEN_ICON,
+            self.band.y,
+            OPEN_ICON,
+            OPEN_ICON,
+        )
     }
 
     /// Whether the caret is on a task's line — what decides whether typing
@@ -194,14 +266,25 @@ impl PageBody {
             ),
         );
         let (lx, ly) = self.local(pointer.0, pointer.1);
+        let origin = root * Affine::translate((self.origin.0 as f64, self.origin.1 as f64));
         View::draw(
             &mut self.leaf,
             scene,
             workspace,
             images,
-            root * Affine::translate((self.origin.0 as f64, self.origin.1 as f64)),
+            origin,
             caret_on && self.focused,
             (lx, ly),
+        );
+        // The thumb a document tab draws at its right edge, only when the
+        // note is taller than the band. An embedded leaf leaves it out — its
+        // viewport's edge is the host's — so the band draws it here, where
+        // the leaf's right edge is the page's.
+        koru_editor::draw::draw_scrollbar(
+            scene,
+            origin,
+            self.leaf.body(),
+            Editing::view(&self.leaf),
         );
         scene.pop_layer();
     }
@@ -248,7 +331,13 @@ impl PageBody {
     /// A press while the note's picker is open: the leaf decides whether it
     /// chose something or dismissed the panel. No clamping — the press may
     /// be anywhere on the page.
-    pub fn mouse_down_on_overlay(&mut self, ws: &mut WorkspaceDoc, x: f32, y: f32, ctrl: bool) -> bool {
+    pub fn mouse_down_on_overlay(
+        &mut self,
+        ws: &mut WorkspaceDoc,
+        x: f32,
+        y: f32,
+        ctrl: bool,
+    ) -> bool {
         let (lx, ly) = self.local(x, y);
         self.dirty = true;
         Leaf::mouse_down(&mut self.leaf, ws, lx, ly, ctrl)

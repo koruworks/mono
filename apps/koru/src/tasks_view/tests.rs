@@ -1542,7 +1542,7 @@ fn list_face(name: &str, color: Option<&str>) -> (koru_core::ids::ListId, super:
     let id = koru_core::ids::ListId::new();
     (
         id,
-        super::ListFace {
+        crate::tasks_view::ListFace {
             id,
             name: name.to_owned(),
             color: color.map(str::to_owned),
@@ -4229,6 +4229,7 @@ mod note {
     use koru_core::schema::{WorkspaceDoc, genesis_seed_id};
     use koru_workspace::pages::{PagePhase, PageState};
     use vello::kurbo::Affine;
+    use winit::window::CursorIcon;
 
     fn page() -> (RailTarget, PageKey, DocumentId, WorkspaceDoc) {
         let list = ListId::new();
@@ -4555,5 +4556,190 @@ mod note {
         assert!(view.mouse_down(&mut doc, retry.x + 1.0, retry.y + 1.0, false));
         assert!(view.take_wants_retry());
         assert!(!view.take_wants_retry(), "drained");
+    }
+
+    fn note_view() -> (
+        RailTarget,
+        koru_core::ids::ListId,
+        DocumentId,
+        WorkspaceDoc,
+        TasksView,
+    ) {
+        let (target, page, document, doc) = page();
+        let RailTarget::List(list) = target else {
+            unreachable!()
+        };
+        let mut view = TasksView::new(target);
+        view.set_viewport(900.0, 600.0);
+        view.set_page_state(&state(page, document, PagePhase::Empty));
+        view.catch_up(&doc);
+        view.layout_band();
+        (target, list, document, doc, view)
+    }
+
+    /// Review note: the band's top-right corner opens the note's document
+    /// in a tab of its own, and lights under the pointer as a control.
+    #[test]
+    fn the_note_opens_in_a_new_tab_from_its_corner() {
+        let (_, _, document, mut doc, mut view) = note_view();
+        let open = view.body.as_ref().unwrap().open_rect();
+        assert!(open.w > 0.0 && open.h > 0.0, "the control has a place");
+        let (x, y) = (open.x + open.w * 0.5, open.y + open.h * 0.5);
+        assert!(view.mouse_move(x, y));
+        assert_eq!(view.cursor_icon(), koru_ui::cursor::PRESS);
+        assert!(view.mouse_down(&mut doc, x, y, false));
+        assert_eq!(view.take_request(), Some(Request::OpenNote { document }));
+        assert!(
+            !view.body.as_ref().unwrap().focused,
+            "the press was the control's, not the note's"
+        );
+    }
+
+    /// Review note: the band's grip sizes it by hand — taller than its
+    /// content, scrolling when shorter — and a double click on the grip
+    /// gives it back to its content.
+    #[test]
+    fn the_band_is_sized_by_its_grip_and_given_back_by_a_double_click() {
+        let (_, _, _, mut doc, mut view) = note_view();
+        let before = view.rows_top() - view.header_h;
+        assert!(
+            before > 0.0 && before < 100.0,
+            "one line's band to begin with"
+        );
+        let grip = view.body.as_ref().unwrap().grip_rect();
+        let (x, y) = (grip.x + grip.w * 0.5, grip.y + grip.h * 0.5);
+        assert!(view.mouse_move(x, y));
+        assert_eq!(view.cursor_icon(), CursorIcon::RowResize);
+        assert!(view.mouse_down(&mut doc, x, y, false));
+        assert!(view.mouse_move(x, y + 150.0));
+        assert_eq!(view.cursor_icon(), CursorIcon::RowResize, "while dragging");
+        assert!(view.mouse_up(&mut doc));
+        view.layout_band();
+        let after = view.rows_top() - view.header_h;
+        assert!(
+            (after - (before + 150.0)).abs() < 2.0,
+            "the band followed the pointer: {before} -> {after}"
+        );
+        assert!(view.band_fixed_h_for_test().is_some());
+
+        let grip = view.body.as_ref().unwrap().grip_rect();
+        assert!(view.mouse_double_click(&doc, grip.x + 10.0, grip.y + grip.h * 0.5));
+        view.layout_band();
+        assert!(view.band_fixed_h_for_test().is_none());
+        assert!(
+            ((view.rows_top() - view.header_h) - before).abs() < 0.5,
+            "back to its content"
+        );
+    }
+
+    /// Review note: a note taller than its band shows the thumb a document
+    /// tab shows, and the band is what it scrolls in.
+    #[test]
+    fn a_tall_note_scrolls_in_its_band_and_wears_a_thumb() {
+        let (_, _, _, mut doc, mut view) = note_view();
+        let band = view.body.as_ref().unwrap().band;
+        let mods = ModifiersState::empty();
+        view.mouse_down(
+            &mut doc,
+            band.x + band.w * 0.5,
+            band.y + band.h * 0.5,
+            false,
+        );
+        for _ in 0..30 {
+            view.key(&mut doc, &Key::Named(NamedKey::Enter), None, mods);
+        }
+        view.layout_band();
+        let cap = 600.0 * 0.4;
+        let h = view.rows_top() - view.header_h;
+        assert!((h - cap).abs() < 1.0, "capped at the page's share: {h}");
+        let leaf = view.body_leaf_mut().expect("the note");
+        let content = koru_editor::rowlayout::content_height(koru_editor::Editing::body(leaf));
+        assert!(content > cap, "taller than the band");
+        assert!(
+            koru_editor::Editing::view(leaf)
+                .scrollbar_geom(content)
+                .is_some(),
+            "so the thumb is drawn"
+        );
+    }
+
+    /// Review note: the heading's colour square opens the list's colour
+    /// menu at the press — the rail row's *Color*, one press nearer.
+    #[test]
+    fn the_colour_square_opens_the_lists_colour_menu() {
+        let (_, list, _, mut doc, mut view) = note_view();
+        assert!(view.swatch_rect().is_some(), "a list page wears the square");
+        view.set_lists(vec![crate::tasks_view::ListFace {
+            id: list,
+            name: "Top".to_owned(),
+            color: Some("teal".to_owned()),
+        }]);
+        let swatch = view.swatch_rect().unwrap();
+        let (x, y) = (swatch.x + swatch.w * 0.5, swatch.y + swatch.h * 0.5);
+        assert!(view.mouse_move(x, y));
+        assert_eq!(view.cursor_icon(), koru_ui::cursor::PRESS);
+        assert!(view.mouse_down(&mut doc, x, y, false));
+        assert_eq!(
+            view.take_request(),
+            Some(Request::ListColor { list, at: (x, y) })
+        );
+    }
+
+    /// Review note: a double click on a list page's title renames the list
+    /// in place — Enter keeps the words, Escape puts the old ones back, and
+    /// a sibling's name is refused.
+    #[test]
+    fn a_double_click_on_the_title_renames_the_list_in_place() {
+        let (_, list, _, mut doc, mut view) = note_view();
+        let other = koru_core::ids::ListId::new();
+        view.set_lists(vec![
+            crate::tasks_view::ListFace {
+                id: list,
+                name: "Top".to_owned(),
+                color: Some("teal".to_owned()),
+            },
+            crate::tasks_view::ListFace {
+                id: other,
+                name: "Later".to_owned(),
+                color: None,
+            },
+        ]);
+        let mods = ModifiersState::empty();
+        let title = view
+            .title_rect()
+            .expect("a list page has a title to rename");
+        assert!(view.mouse_double_click(&doc, title.x + 2.0, title.y + 2.0));
+        assert!(view.heading_rename.is_some(), "the field stands");
+        for ch in ["N", "e", "w"] {
+            view.key(&mut doc, &Key::Character(ch.into()), Some(ch), mods);
+        }
+        view.key(&mut doc, &Key::Named(NamedKey::Enter), None, mods);
+        assert!(view.heading_rename.is_none(), "and goes");
+        assert_eq!(
+            view.take_request(),
+            Some(Request::RenameList {
+                list,
+                name: "New".to_owned()
+            })
+        );
+
+        assert!(view.mouse_double_click(&doc, title.x + 2.0, title.y + 2.0));
+        view.key(&mut doc, &Key::Named(NamedKey::Escape), None, mods);
+        assert!(view.heading_rename.is_none());
+        assert_eq!(view.take_request(), None, "Escape asks nothing");
+
+        assert!(view.mouse_double_click(&doc, title.x + 2.0, title.y + 2.0));
+        for ch in ["L", "a", "t", "e", "r"] {
+            view.key(&mut doc, &Key::Character(ch.into()), Some(ch), mods);
+        }
+        view.key(&mut doc, &Key::Named(NamedKey::Enter), None, mods);
+        assert_eq!(view.take_request(), None, "a sibling's name is refused");
+
+        let mut today = TasksView::new(RailTarget::Bucket(Bucket::Today));
+        today.set_viewport(900.0, 600.0);
+        assert!(
+            today.title_rect().is_none(),
+            "a queue's name is nobody's to change"
+        );
     }
 }

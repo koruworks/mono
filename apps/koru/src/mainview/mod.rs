@@ -9087,11 +9087,23 @@ impl MainView {
             .collect()
     }
 
-    fn drain_editor_toast(&mut self) -> bool {
-        let message = match self.active_view() {
-            TabView::Leaf(leaf) => leaf.take_wants_toast(),
+    /// The active tab's editing leaf — a document tab's, or the note above
+    /// a Tasks page — which is the one place an editor-raised request (a
+    /// picker's search, a `/attach`, a toast) can have come from. Every
+    /// drain that answers the active tab's editor asks here, so the note
+    /// has the parity a document tab has without each drain naming it.
+    fn active_editing_leaf(&mut self) -> Option<&mut Leaf> {
+        match self.active_view() {
+            TabView::Leaf(leaf) => Some(leaf),
+            TabView::Tasks(t) => t.body_leaf_mut(),
             _ => None,
-        };
+        }
+    }
+
+    fn drain_editor_toast(&mut self) -> bool {
+        let message = self
+            .active_editing_leaf()
+            .and_then(|leaf| leaf.take_wants_toast());
         let Some(message) = message else {
             return false;
         };
@@ -12133,10 +12145,8 @@ impl View for MainView {
         }
     }
     fn take_wants_stay_focused(&mut self) -> bool {
-        match self.active_view() {
-            TabView::Leaf(leaf) => leaf.take_wants_stay_focused(),
-            _ => false,
-        }
+        self.active_editing_leaf()
+            .is_some_and(|leaf| leaf.take_wants_stay_focused())
     }
 
     fn open_background_tab(
@@ -12949,7 +12959,7 @@ impl View for MainView {
         document: koru_core::DocumentId,
         title: String,
     ) -> bool {
-        let TabView::Leaf(leaf) = self.active_view() else {
+        let Some(leaf) = self.active_editing_leaf() else {
             return false;
         };
         leaf.complete_new_page_link(
@@ -13635,59 +13645,47 @@ impl View for MainView {
             return Some(root);
         }
         let active = self.tabs().active();
-        match self.active_view() {
-            TabView::Leaf(l) => {
-                let want = View::take_wants_image(l);
-                if want.is_some() {
-                    // Remembered so the file the shell comes back with lands in
-                    // the tab that asked, not wherever the focus went while the
-                    // picker was open — it is a blocking dialog.
-                    self.image_request = Some(active);
-                }
-                want
-            }
-            _ => None,
+        let want = self
+            .active_editing_leaf()
+            .and_then(|leaf| View::take_wants_image(leaf));
+        if want.is_some() {
+            // Remembered so the file the shell comes back with lands in
+            // the tab that asked, not wherever the focus went while the
+            // picker was open — it is a blocking dialog.
+            self.image_request = Some(active);
         }
+        want
     }
 
     fn take_wants_attachment(&mut self) -> Option<NodeId> {
         let active = self.tabs().active();
-        match self.active_view() {
-            TabView::Leaf(l) => {
-                let want = View::take_wants_attachment(l);
-                if want.is_some() {
-                    koru_workspace_host::attach_debug!(
-                        "mainview take_wants_attachment tab={active} node={want:?}"
-                    );
-                    self.attachment_request = Some(active);
-                }
-                want
-            }
-            _ => None,
+        let want = self
+            .active_editing_leaf()
+            .and_then(|leaf| View::take_wants_attachment(leaf));
+        if want.is_some() {
+            koru_workspace_host::attach_debug!(
+                "mainview take_wants_attachment tab={active} node={want:?}"
+            );
+            self.attachment_request = Some(active);
         }
+        want
     }
 
     fn take_wants_create_tag(&mut self) -> Option<(Vec<NodeId>, String)> {
         // Only the active tab can have asked — the chooser is modal to it.
-        match self.active_view() {
-            TabView::Leaf(l) => View::take_wants_create_tag(l),
-            _ => None,
-        }
+        self.active_editing_leaf()
+            .and_then(|leaf| View::take_wants_create_tag(leaf))
     }
 
     fn take_wants_join_new_list(&mut self) -> Option<(Vec<NodeId>, String, Option<String>)> {
-        match self.active_view() {
-            TabView::Leaf(l) => View::take_wants_join_new_list(l),
-            _ => None,
-        }
+        self.active_editing_leaf()
+            .and_then(|leaf| View::take_wants_join_new_list(leaf))
     }
 
     fn take_wants_workspace_word(&mut self) -> Option<(String, String)> {
         // Likewise: the context menu that raised it was the active tab's.
-        match self.active_view() {
-            TabView::Leaf(l) => View::take_wants_workspace_word(l),
-            _ => None,
-        }
+        self.active_editing_leaf()
+            .and_then(|leaf| View::take_wants_workspace_word(leaf))
     }
 
     /// **No tab is remembered**, unlike the image and attachment requests
@@ -13943,7 +13941,13 @@ impl View for MainView {
             "mainview insert_attachment tab={i} node={node:?} n={}",
             files.len()
         );
-        if let Some(TabView::Leaf(l)) = self.tabs_mut().get_mut(i).map(|tab| &mut tab.view) {
+        let leaf = match self.tabs_mut().get_mut(i).map(|tab| &mut tab.view) {
+            Some(TabView::Leaf(l)) => Some(l),
+            // The note above a Tasks page asked, through the same `/attach`.
+            Some(TabView::Tasks(t)) => t.body_leaf_mut(),
+            _ => None,
+        };
+        if let Some(l) = leaf {
             View::insert_attachment(l, ws, node, files);
         }
     }
@@ -13954,7 +13958,12 @@ impl View for MainView {
             .take()
             .unwrap_or(self.tabs().active());
         koru_workspace_host::attach_debug!("mainview attachment_cancelled tab={i} node={node:?}");
-        if let Some(TabView::Leaf(l)) = self.tabs_mut().get_mut(i).map(|tab| &mut tab.view) {
+        let leaf = match self.tabs_mut().get_mut(i).map(|tab| &mut tab.view) {
+            Some(TabView::Leaf(l)) => Some(l),
+            Some(TabView::Tasks(t)) => t.body_leaf_mut(),
+            _ => None,
+        };
+        if let Some(l) = leaf {
             View::attachment_cancelled(l, ws, node);
         }
     }
@@ -13988,10 +13997,9 @@ impl View for MainView {
     fn take_wants_file_action(
         &mut self,
     ) -> Option<(koru_core::DocumentId, koru_workspace_host::FileAction)> {
-        let action = match self.active_view() {
-            TabView::Leaf(l) => View::take_wants_file_action(l),
-            _ => None,
-        };
+        let action = self
+            .active_editing_leaf()
+            .and_then(|leaf| View::take_wants_file_action(leaf));
         // Handle every action here and return None so the shell's service_images
         // path does not also try. Open/Save use the same PaneRequest path as the
         // Explore Files menu (which already works); Reveal stays local.
@@ -14178,7 +14186,13 @@ impl View for MainView {
             }
             _ => self.tabs().active(),
         };
-        if let Some(TabView::Leaf(l)) = self.tabs_mut().get_mut(i).map(|t| &mut t.view) {
+        let leaf = match self.tabs_mut().get_mut(i).map(|t| &mut t.view) {
+            Some(TabView::Leaf(l)) => Some(l),
+            // The note above a Tasks page imports the same way.
+            Some(TabView::Tasks(t)) => t.body_leaf_mut(),
+            _ => None,
+        };
+        if let Some(l) = leaf {
             View::begin_image_import(l, ws, ticket, place);
         }
     }
@@ -14190,7 +14204,12 @@ impl View for MainView {
     ) {
         for (_, group) in self.panes.iter_groups_mut() {
             for tab in group.iter_tabs_mut() {
-                if let TabView::Leaf(l) = &mut tab.view
+                let leaf = match &mut tab.view {
+                    TabView::Leaf(l) => Some(l),
+                    TabView::Tasks(t) => t.body_leaf_mut(),
+                    _ => None,
+                };
+                if let Some(l) = leaf
                     && l.holds_image_import(ticket)
                 {
                     View::size_image_import(l, ticket, sizes);
@@ -16054,10 +16073,9 @@ impl MainView {
     /// background reconciliation later supplies both settings and entity rows.
     fn drain_reminder_request(&mut self) -> bool {
         let root = self.document_root();
-        let request = match self.active_view() {
-            TabView::Leaf(leaf) => leaf.take_reminder_request(),
-            _ => None,
-        };
+        let request = self
+            .active_editing_leaf()
+            .and_then(|leaf| leaf.take_reminder_request());
         let Some(request) = request else {
             return false;
         };
@@ -16499,19 +16517,22 @@ impl MainView {
                 is_file: false,
             }
         });
-        let (request, outline, new_page, open, move_selection, changed) = match self.active_view() {
-            TabView::Leaf(leaf) => {
-                let mut changed = leaf.set_entity_context(current, workspaces);
-                changed |= leaf.set_entity_current_document(here);
-                let request = leaf.take_entity_search_request();
-                let outline = leaf.take_heading_request();
-                let new_page = leaf.take_wants_new_page();
-                let open = leaf.take_wants_entity_open();
-                let move_selection = leaf.take_wants_move_selection();
-                (request, outline, new_page, open, move_selection, changed)
-            }
-            _ => (None, None, None, None, None, false),
-        };
+        // A document tab's leaf or the note above a Tasks page: the `@`
+        // picker's search and its answers are the leaf's either way.
+        let (request, outline, new_page, open, move_selection, changed) =
+            match self.active_editing_leaf() {
+                Some(leaf) => {
+                    let mut changed = leaf.set_entity_context(current, workspaces);
+                    changed |= leaf.set_entity_current_document(here);
+                    let request = leaf.take_entity_search_request();
+                    let outline = leaf.take_heading_request();
+                    let new_page = leaf.take_wants_new_page();
+                    let open = leaf.take_wants_entity_open();
+                    let move_selection = leaf.take_wants_move_selection();
+                    (request, outline, new_page, open, move_selection, changed)
+                }
+                None => (None, None, None, None, None, false),
+            };
         let moved = move_selection.is_some();
         if let Some((destination, payload)) = move_selection {
             self.request_selection_move(destination, payload);
@@ -16531,10 +16552,9 @@ impl MainView {
         // search-driven navigations, so its empty-query answer is not what a
         // person means by "recent". Its request is dropped; the container's
         // own list is the answer.
-        let recents_mode = matches!(self.active_view(), TabView::Leaf(leaf) if {
-            let leaf: &Leaf = leaf;
-            leaf.entity_wants_recents()
-        });
+        let recents_mode = self
+            .active_editing_leaf()
+            .is_some_and(|leaf| leaf.entity_wants_recents());
         let mut fed = false;
         if recents_mode {
             let hits = self.recent_document_choices();

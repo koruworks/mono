@@ -474,6 +474,41 @@ impl MainView {
                     self.handle_tasks_request(request);
                 }
             }
+            // The note's corner control: its document in a tab of its own,
+            // the way a Ctrl+Enter on a pill opens one — even when a tab is
+            // already on it, since the person asked for another.
+            crate::tasks_view::Request::OpenNote { document } => {
+                self.open_document_target(
+                    koru_editor::trigger::DocumentTarget {
+                        document,
+                        node: None,
+                    },
+                    koru_editor::OpenWhere::NewTab,
+                );
+            }
+            // The heading's colour square: the rail row's colour rows, at
+            // the press — the same subject, so the same action applies it.
+            crate::tasks_view::Request::ListColor { list, at } => {
+                let mut menu = super::context_menu::ContextMenu::new(
+                    &mut self.engine,
+                    super::context_menu::MenuSubject::List(list),
+                    to_window(at),
+                    super::context_menu::list_color_items(),
+                );
+                let enabled = self.enabled_items(&menu);
+                menu.step(&enabled, 1);
+                self.menu = Some(menu);
+                self.submenu = None;
+                self.nested = None;
+            }
+            // The heading's words: through the rail's own door, so the list
+            // has one rename whichever surface asked.
+            crate::tasks_view::Request::RenameList { list, name } => {
+                self.apply_tasks_rail(crate::panes::explore::rail::TasksRailRequest::RenameList {
+                    id: list,
+                    name,
+                });
+            }
             crate::tasks_view::Request::RowsMenu {
                 tasks,
                 native,

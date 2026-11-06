@@ -124,6 +124,13 @@ pub(super) enum Hit {
     /// **A value chip on a row** — its due, its priority or its colour —
     /// which opens that value's picker at the pointer. The row and the kind.
     ValueChip(usize, ChipKind),
+    /// The list's colour square ahead of the heading, which opens the
+    /// list's colour menu — the rail row's *Color*, one press nearer.
+    Swatch,
+    /// The note's *open in a new tab* control, at its band's top-right.
+    NoteOpen,
+    /// The note's grip, along its band's bottom edge: a drag sizes the band.
+    NoteGrip,
 }
 
 /// A drag of rows, from the press on a row of a list ordered by hand to the
@@ -288,6 +295,15 @@ pub enum Request {
     /// Delete on the selection: take these tasks off Tasks, which the
     /// container asks about once for the set.
     RemoveTasks { tasks: Vec<(DocumentId, NodeId)> },
+    /// The note's corner control: open the page's document in a tab of
+    /// its own. The container owns the tabs, so it is asked.
+    OpenNote { document: DocumentId },
+    /// The heading's colour square was pressed: the list's colour menu at
+    /// `at` (this page's coordinates) — the container's one menu vocabulary,
+    /// so the square and the rail row offer the same rows.
+    ListColor { list: ListId, at: (f32, f32) },
+    /// The heading's words, renamed in place (a double click on the title).
+    RenameList { list: ListId, name: String },
 }
 
 /// One list, as the header and the membership chip need it. Pushed by the
@@ -403,6 +419,16 @@ pub struct TasksView {
     pub(super) notice: Option<(Rect, Rect)>,
     /// The band's height this frame — what the rows move down by.
     band_h: f32,
+    /// The height a person dragged the band to, kept across the note being
+    /// rebuilt; `None` while it follows its content.
+    band_fixed_h: Option<f32>,
+    /// A drag of the band's grip while the button is down: the distance
+    /// from the pointer to the band's bottom edge at the press, so the edge
+    /// does not jump under the pointer.
+    band_resize: Option<f32>,
+    /// **The heading's words being renamed in place** (a double click on
+    /// the title of a list page): the field standing where the title was.
+    pub(super) heading_rename: Option<koru_editor::components::text_input::TextInput>,
     /// Where the pointer last was, so a wheel over the note scrolls the note.
     pointer: (f32, f32),
     /// Typing landed on a task's line in the note: when, and the write the
@@ -454,6 +480,9 @@ impl TasksView {
             wants_decision: None,
             notice: None,
             band_h: 0.0,
+            band_fixed_h: None,
+            band_resize: None,
+            heading_rename: None,
             pointer: (-1.0, -1.0),
             task_touch: None,
         }
@@ -701,7 +730,10 @@ impl TasksView {
             | Request::RowMenu { .. }
             | Request::RowsMenu { .. }
             | Request::RemoveTasks { .. }
-            | Request::OpenList { .. } => return,
+            | Request::OpenList { .. }
+            | Request::OpenNote { .. }
+            | Request::ListColor { .. }
+            | Request::RenameList { .. } => return,
             Request::Many(_) => unreachable!("taken apart above"),
         };
         crate::tasks::debug_line(format_args!(
@@ -1916,6 +1948,12 @@ impl TasksView {
         if self.header_dots().contains(x, y) {
             return Some(Hit::HeaderDots);
         }
+        if self.swatch_rect().is_some_and(|r| r.contains(x, y)) {
+            return Some(Hit::Swatch);
+        }
+        if let Some(hit) = self.band_hit(x, y) {
+            return Some(hit);
+        }
         let bands = self.bands();
         let i = self.table().row_at(&bands, x, y)?;
         let r = self.table().row_rect(&bands, i);
@@ -3015,6 +3053,17 @@ impl TasksView {
         }
         match self.hit_at(x, y) {
             Some(Hit::HeaderDots) => self.open_overflow(),
+            // The colour square: the list's colour menu, at the press.
+            Some(Hit::Swatch) => match self.target {
+                RailTarget::List(list) => {
+                    self.pending = Some(Request::ListColor { list, at: (x, y) });
+                    true
+                }
+                _ => false,
+            },
+            // Both are the band's, taken in `mouse_down` before the note
+            // could claim the press; named here so the match stays whole.
+            Some(Hit::NoteOpen | Hit::NoteGrip) => false,
             Some(Hit::Capture) => {
                 self.begin_capture();
                 let rect = super::capture::input_rect(self.capture_rect());
@@ -3316,6 +3365,11 @@ impl View for TasksView {
         text: Option<&str>,
         mods: ModifiersState,
     ) -> bool {
+        // The heading's rename field has the keyboard while it stands:
+        // Enter keeps the words, Escape puts the old ones back.
+        if self.heading_rename.is_some() {
+            return self.heading_rename_key(key, text, mods);
+        }
         // The note has the keyboard while it is focused and the document
         // handed in is its own; Escape hands the keyboard back to the table.
         if let Some(body) = &mut self.body
@@ -3450,6 +3504,19 @@ impl View for TasksView {
 
     fn mouse_down(&mut self, ws: &mut WorkspaceDoc, x: f32, y: f32, ctrl: bool) -> bool {
         self.pointer = (x, y);
+        // The heading's rename field: a press in it moves the caret;
+        // anywhere else keeps the words and lets the press land where it
+        // was aimed — the rule every field in this app follows.
+        if self.heading_rename.is_some() {
+            let field = self.heading_field();
+            if field.contains(x, y) {
+                if let Some(input) = self.heading_rename.as_mut() {
+                    input.click(&mut self.engine, field, x, y);
+                }
+                return true;
+            }
+            self.commit_heading_rename();
+        }
         if let Some((_, retry)) = self.notice
             && retry.contains(x, y)
         {
@@ -3473,6 +3540,22 @@ impl View for TasksView {
             && body.is_in(ws)
         {
             return body.mouse_down_on_overlay(ws, x, y, ctrl);
+        }
+        // The band's own controls, ahead of the note they sit on: the grip
+        // along its bottom edge and the corner's *open in a new tab*.
+        if let Some(body) = &self.body
+            && body.is_in(ws)
+        {
+            if body.grip_rect().contains(x, y) {
+                self.band_resize = Some(body.band.y + body.band.h - y);
+                return true;
+            }
+            if body.open_rect().contains(x, y) {
+                self.pending = Some(Request::OpenNote {
+                    document: body.document,
+                });
+                return true;
+            }
         }
         if self
             .body
@@ -3517,12 +3600,30 @@ impl View for TasksView {
         if self.drag.is_some() {
             return self.drag_to(y);
         }
+        // The grip's drag: the band's bottom edge follows the pointer, the
+        // offset taken at the press kept. Laid out on the next frame.
+        if let Some(offset) = self.band_resize {
+            self.band_fixed_h = Some(y + offset - self.header_h);
+            if let Some(body) = &mut self.body {
+                body.mark_dirty();
+            }
+            return true;
+        }
+        let heading_field = self.heading_field();
+        if let Some(input) = self.heading_rename.as_mut()
+            && input.drag(&mut self.engine, heading_field, x)
+        {
+            return true;
+        }
         if let Some(body) = &mut self.body
             && (body.is_dragging() || body.overlay_open() || body.contains(x, y))
         {
             let moved = body.mouse_move(x, y);
             let was = self.hover.take();
-            return moved || was.is_some();
+            // The band's own controls light under the pointer, as the
+            // header's `…` does.
+            self.hover = self.band_hit(x, y);
+            return moved || was != self.hover;
         }
         let viewport = self.viewport;
         if let Some(picker) = &mut self.picker {
@@ -3581,6 +3682,12 @@ impl View for TasksView {
     }
 
     fn mouse_up(&mut self, ws: &mut WorkspaceDoc) -> bool {
+        if self.band_resize.take().is_some() {
+            return true;
+        }
+        if let Some(input) = self.heading_rename.as_mut() {
+            input.release();
+        }
         if let Some(body) = &mut self.body
             && body.focused
         {
@@ -3621,11 +3728,30 @@ impl View for TasksView {
     /// in the hidden tasks document, and opening that is a look at storage,
     /// not at the task. Opening is the row menu's *Open document*.
     fn mouse_double_click(&mut self, ws: &WorkspaceDoc, x: f32, y: f32) -> bool {
+        // A double click on the grip gives the band back to its content —
+        // the way back from a size given by hand.
+        if self
+            .body
+            .as_ref()
+            .is_some_and(|body| body.is_in(ws) && body.grip_rect().contains(x, y))
+        {
+            self.band_fixed_h = None;
+            self.band_resize = None;
+            if let Some(body) = &mut self.body {
+                body.mark_dirty();
+            }
+            return true;
+        }
         if let Some(body) = &mut self.body
             && body.contains(x, y)
             && body.is_in(ws)
         {
             return body.mouse_double_click(ws, x, y);
+        }
+        // A double click on a list's title renames the list in place, as
+        // one on a row's words renames the task.
+        if self.title_rect().is_some_and(|r| r.contains(x, y)) {
+            return self.begin_heading_rename();
         }
         let Some(Hit::Row(i)) = self.hit_at(x, y) else {
             return false;
@@ -3695,6 +3821,14 @@ impl View for TasksView {
     /// [PRESS]: koru_ui::cursor::PRESS
     /// [ADR-215]: ../../../docs/decisions/ADR-201-225.md#adr-215-nohandcursor--koru-does-not-use-the-hand-cursor-a-press-target-is-identified-by-its-own-appearance
     fn cursor_icon(&self) -> CursorIcon {
+        // The grip is the one control with a cursor of its own: a drag
+        // along an edge is what the resize arrows say, as on a pane divider.
+        if self.band_resize.is_some() || self.hover == Some(Hit::NoteGrip) {
+            return CursorIcon::RowResize;
+        }
+        if self.hover == Some(Hit::NoteOpen) {
+            return koru_ui::cursor::PRESS;
+        }
         if let Some(body) = &self.body
             && body.contains(self.pointer.0, self.pointer.1)
         {
@@ -3708,8 +3842,11 @@ impl View for TasksView {
                 | Hit::ListChip(_)
                 | Hit::ValueChip(..)
                 | Hit::Capture
-                | Hit::HeaderDots,
+                | Hit::HeaderDots
+                | Hit::Swatch
+                | Hit::NoteOpen,
             ) => koru_ui::cursor::PRESS,
+            Some(Hit::NoteGrip) => CursorIcon::RowResize,
             None => koru_ui::cursor::IDLE,
         }
     }
@@ -3752,6 +3889,7 @@ impl View for TasksView {
         if let Some(body) = &mut self.body {
             body.draw(scene, workspace, images, root, caret_on, pointer);
         }
+        self.paint_band_chrome(scene, root);
         self.paint_notice(scene, root);
         self.paint_over(scene, root, caret_on);
         // The note's picker floats over the rows and the page's own panels.
@@ -3992,12 +4130,223 @@ impl TasksView {
     pub(super) fn layout_band(&mut self) {
         let before = self.band_h;
         let (header_h, w, h) = (self.header_h, self.viewport.0, self.viewport.1);
+        let fixed = self.band_fixed_h;
         self.band_h = match &mut self.body {
-            Some(body) => body.layout(PAD, header_h, w, h),
+            Some(body) => body.layout(PAD, header_h, w, h, fixed),
             None => 0.0,
         };
         if (before - self.band_h).abs() > 0.5 {
             self.clamp_scroll();
+        }
+    }
+
+    /// The band's own controls under the pointer: the corner's *open in a
+    /// new tab*, or the grip along the bottom edge. The grip is asked last,
+    /// since its lane straddles the edge the corner control sits above.
+    fn band_hit(&self, x: f32, y: f32) -> Option<Hit> {
+        let body = self.body.as_ref()?;
+        if body.band.h <= 0.0 {
+            return None;
+        }
+        if body.open_rect().contains(x, y) {
+            return Some(Hit::NoteOpen);
+        }
+        if body.grip_rect().contains(x, y) {
+            return Some(Hit::NoteGrip);
+        }
+        None
+    }
+
+    /// The band's height as a person left it, for the suite.
+    #[cfg(test)]
+    pub(super) fn band_fixed_h_for_test(&self) -> Option<f32> {
+        self.band_fixed_h
+    }
+
+    /// The *open in a new tab* control and the grip's corner mark, over the
+    /// note and under its notice. Nothing while there is no band.
+    pub(super) fn paint_band_chrome(&mut self, scene: &mut Scene, root: Affine) {
+        let Some(body) = self.body.as_ref() else {
+            return;
+        };
+        if body.band.h <= 0.0 {
+            return;
+        }
+        let (open, mark) = (body.open_rect(), body.grip_mark());
+        let p = theme::p();
+        // **The icon button every corner control in the app is.** The hover
+        // state is the whole affordance (ADR-215).
+        koru_ui::icon_button::draw_with(
+            scene,
+            root,
+            &mut self.engine,
+            open,
+            koru_draw::icons::POP_OUT,
+            koru_ui::icon_button::State {
+                hovered: self.hover == Some(Hit::NoteOpen),
+                active: false,
+                disabled: false,
+            },
+            koru_ui::icon_button::Metrics::INLINE,
+        );
+        // The corner mark an HTML text area wears: two short diagonals in
+        // the bottom-right, in the dim ink, so the band says it can be
+        // dragged without a track or a rule across the page.
+        let lit = self.band_resize.is_some() || self.hover == Some(Hit::NoteGrip);
+        let ink = if lit { p.text } else { p.text_dim };
+        let (x1, y1) = (mark.x + mark.w, mark.y + mark.h);
+        for inset in [0.0_f32, mark.w * 0.5] {
+            let line = vello::kurbo::Line::new(
+                ((mark.x + inset) as f64, y1 as f64),
+                (x1 as f64, (mark.y + inset) as f64),
+            );
+            koru_draw::scene::stroke(scene, root, ink, 1.0, &line);
+        }
+    }
+
+    // ---------------------------------------------------- the heading's own
+
+    /// The list's colour square ahead of the heading, as a press target:
+    /// the heading's whole line height, so a press beside the square is
+    /// still the square's. `None` off a list page.
+    pub(super) fn swatch_rect(&self) -> Option<Rect> {
+        self.title_swatch().map(|_| {
+            Rect::new(
+                PAD,
+                self.title_top(),
+                HEADER_SWATCH + SWATCH_GAP * 0.5,
+                super::draw::TITLE.metrics.line_height,
+            )
+        })
+    }
+
+    /// Where the title's words are, on a list page — what a double click
+    /// renames. `None` on a queue, whose name is nobody's to change.
+    pub(super) fn title_rect(&mut self) -> Option<Rect> {
+        let RailTarget::List(_) = self.target else {
+            return None;
+        };
+        let x = match self.title_swatch() {
+            Some(_) => PAD + HEADER_SWATCH + SWATCH_GAP,
+            None => PAD,
+        };
+        // Measured, not estimated: a list's name may carry an emoji.
+        let title = self.title();
+        let width = self
+            .engine
+            .simple_layout(&title, super::draw::TITLE)
+            .width()
+            .min((self.header_dots().x - CONTROL_GAP - x).max(0.0));
+        Some(Rect::new(
+            x,
+            self.title_top(),
+            width,
+            super::draw::TITLE.metrics.line_height,
+        ))
+    }
+
+    /// Where the rename field stands: over the title, out to the header's
+    /// own controls, so the new words have the line to grow into.
+    pub(super) fn heading_field(&self) -> Rect {
+        let x = match self.title_swatch() {
+            Some(_) => PAD + HEADER_SWATCH + SWATCH_GAP,
+            None => PAD,
+        };
+        Rect::new(
+            x,
+            self.title_top(),
+            (self.header_dots().x - CONTROL_GAP - x).max(0.0),
+            super::draw::TITLE.metrics.line_height,
+        )
+    }
+
+    /// Put the rename field over a list page's title, holding the list's
+    /// name selected whole — a double click means *change this*. Any other
+    /// field or panel goes. Nothing on a queue.
+    pub(super) fn begin_heading_rename(&mut self) -> bool {
+        let RailTarget::List(id) = self.target else {
+            return false;
+        };
+        let Some(name) = self.list_face(id).map(|face| face.name.clone()) else {
+            return false;
+        };
+        self.end_capture();
+        self.commit_rename();
+        self.picker = None;
+        self.overflow = None;
+        self.drag = None;
+        if let Some(body) = &mut self.body
+            && body.focused
+        {
+            body.blur();
+        }
+        let mut input = koru_editor::components::text_input::TextInput::new(
+            &mut self.engine,
+            super::draw::TITLE,
+        );
+        input.set_text(&mut self.engine, &name);
+        input.select_all(&mut self.engine);
+        self.heading_rename = Some(input);
+        true
+    }
+
+    /// Keep the field's words: a request when they changed, are not empty
+    /// and name no other list — an empty name is a slip, a sibling's name a
+    /// collision the rail's field refuses too — and the field goes either
+    /// way.
+    pub(super) fn commit_heading_rename(&mut self) -> bool {
+        let Some(input) = self.heading_rename.take() else {
+            return false;
+        };
+        let RailTarget::List(list) = self.target else {
+            return true;
+        };
+        let name = input.value().trim().to_owned();
+        let before = self.list_face(list).map(|face| face.name.as_str());
+        if name.is_empty() || Some(name.as_str()) == before {
+            return true;
+        }
+        if self
+            .lists
+            .iter()
+            .any(|face| face.id != list && face.name == name)
+        {
+            return true;
+        }
+        self.pending = Some(Request::RenameList { list, name });
+        true
+    }
+
+    fn heading_rename_key(&mut self, key: &Key, text: Option<&str>, mods: ModifiersState) -> bool {
+        match key {
+            Key::Named(NamedKey::Enter) => self.commit_heading_rename(),
+            Key::Named(NamedKey::Escape) => {
+                self.heading_rename = None;
+                true
+            }
+            _ => {
+                if let Some(input) = self.heading_rename.as_mut() {
+                    input.key(&mut self.engine, key, text, mods);
+                }
+                true
+            }
+        }
+    }
+
+    /// The heading's rename field, with the caret — drawn with the rows'
+    /// panels so it blinks with them.
+    pub(super) fn paint_heading_rename(&mut self, scene: &mut Scene, root: Affine, caret_on: bool) {
+        let field = self.heading_field();
+        if let Some(input) = self.heading_rename.as_mut() {
+            input.draw(
+                scene,
+                root,
+                &mut self.engine,
+                super::capture::input_rect(field),
+                koru_editor::components::text_input::InputStyle::bare(super::draw::TITLE),
+                None,
+                caret_on,
+            );
         }
     }
 

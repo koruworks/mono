@@ -68,6 +68,7 @@ impl TasksView {
     /// opened from a row is above the note too.
     pub(super) fn paint_over(&mut self, scene: &mut Scene, root: Affine, caret_on: bool) {
         self.paint_lines(scene, root, caret_on);
+        self.paint_heading_rename(scene, root, caret_on);
         self.paint_overflow(scene, root);
         self.paint_picker(scene, root);
         // The capture row's `/` menu, over everything but a picker it opened.
