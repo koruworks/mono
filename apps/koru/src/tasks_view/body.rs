@@ -232,6 +232,7 @@ impl PageBody {
     }
 
     /// Whether the note's own menu (a right-click's) is open.
+    #[cfg(test)]
     pub fn menu_open(&self) -> bool {
         self.leaf.menu_open()
     }

@@ -224,6 +224,7 @@ impl Leaf {
 
     /// Whether the document's own menu — a right-click's, the page menu — is
     /// open.
+    #[cfg(test)]
     pub fn menu_open(&self) -> bool {
         let Self::Document(d) = self;
         d.menu_open()

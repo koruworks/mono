@@ -11418,17 +11418,6 @@ fn go_to_list_moves_the_page_to_the_list() {
         panic!("the Tasks tab, still")
     };
     assert_eq!(page.target(), RailTarget::List(birthday));
-
-    // The chip's request takes the same door.
-    v.open_tasks_tab(RailTarget::Bucket(Bucket::Today), false);
-    if let TabView::Tasks(page) = &mut v.tabs_mut().active_mut().view {
-        page.request_for_test(crate::tasks_view::Request::OpenList { list: birthday });
-    }
-    assert!(v.drain_tasks_request());
-    let TabView::Tasks(page) = &v.tabs().active_tab().view else {
-        panic!("the Tasks tab, still")
-    };
-    assert_eq!(page.target(), RailTarget::List(birthday));
 }
 
 /// **A capture that lands somewhere else says so.** Typed into Today with a

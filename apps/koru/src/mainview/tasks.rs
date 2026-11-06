@@ -361,9 +361,6 @@ impl MainView {
                 );
                 self.open_subject_menu(subject, items, to_window(at));
             }
-            crate::tasks_view::Request::OpenList { list } => {
-                self.go_to_task_list(list);
-            }
             crate::tasks_view::Request::Complete {
                 document,
                 node,
