@@ -27,6 +27,10 @@ mod tray;
 pub use daemon::blob_sync;
 pub use daemon::cloud_driver;
 pub use daemon::cloud_sync;
+/// An in-memory Cloud worker on the real carrier, for a host's tests across
+/// crates. Off in every product build.
+#[cfg(feature = "test-support")]
+pub use daemon::fake_cloud;
 pub use daemon::memory;
 pub use daemon::{
     INTERNAL_READY_ENV, StandaloneReady, StoreJobs, StoreReply, StoreRootClaim, StoreWorker,

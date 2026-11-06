@@ -33,6 +33,7 @@ fn candidate(profile_n: u8, workspace_n: u8) -> CloudWorkspaceCandidate {
         authorization_version: 1,
         membership_epoch: 1,
         cloud_access_epoch: 1,
+        manifest_document_id: None,
     }
 }
 

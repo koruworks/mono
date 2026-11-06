@@ -11,6 +11,12 @@ description = "The Koru Store daemon: the only component that persists Koru's CR
 name = "koru-store-server"
 path = "src/main.rs"
 
+[features]
+# `fake_cloud`, the in-memory Cloud worker this crate's own driver tests use,
+# for a host's tests in another crate (the hosted MCP server's, Cloud MCP Plan
+# 1.6). Off in every product build: it serves every unit its scope names.
+test-support = []
+
 [dependencies]
 koru-env = { path = "../../crates/koru-env" }
 koru-store-core = { path = "../../crates/koru-store-core" }

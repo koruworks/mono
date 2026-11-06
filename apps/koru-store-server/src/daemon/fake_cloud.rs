@@ -36,7 +36,7 @@ use super::cloud_sync::{Session, driver::Opened};
 const QUIET: Duration = Duration::from_secs(120);
 
 #[derive(Clone, Default)]
-pub(crate) struct FakeCloud {
+pub struct FakeCloud {
     units: Arc<Mutex<HashMap<Unit, LoroDoc>>>,
     /// While set, an upload is received whole and never acknowledged.
     hold_uploads: Arc<std::sync::atomic::AtomicBool>,
@@ -48,7 +48,7 @@ pub(crate) struct FakeCloud {
 
 /// What every session of this worker saw.
 #[derive(Debug, Default)]
-pub(crate) struct Log {
+pub struct Log {
     pub joined: Vec<Unit>,
     pub uploaded: Vec<Unit>,
     pub downloaded: Vec<Unit>,
@@ -332,7 +332,7 @@ fn accepted(scope: Scope) -> PreparedSession {
 }
 
 /// A Workspace session's scope.
-pub(crate) fn workspace_scope(
+pub fn workspace_scope(
     workspace: koru_store_core::WorkspaceId,
     profile: koru_store_core::ProfileId,
     manifest: koru_store_core::DocumentId,
@@ -351,7 +351,7 @@ pub(crate) fn workspace_scope(
 }
 
 /// A document unit of a Workspace.
-pub(crate) fn document_unit(
+pub fn document_unit(
     workspace: koru_store_core::WorkspaceId,
     document: koru_store_core::DocumentId,
 ) -> Unit {
@@ -364,7 +364,7 @@ pub(crate) fn document_unit(
 
 /// A session source over a [`FakeCloud`]: up to `sessions` sessions over one
 /// scope, recording the stage each was asked for.
-pub(crate) struct Sessions {
+pub struct Sessions {
     cloud: FakeCloud,
     scope: Scope,
     budget: MemoryBudget,

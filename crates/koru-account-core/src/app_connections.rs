@@ -129,6 +129,10 @@ pub struct CloudWorkspaceCandidate {
     pub authorization_version: i64,
     pub membership_epoch: i64,
     pub cloud_access_epoch: i64,
+    /// The Workspace manifest's Store document id, as the Cloud catalog keeps
+    /// it once the manifest is published; `None` before then. A replica needs
+    /// it to tell the manifest unit from the documents (Cloud MCP Q1.6-1).
+    pub manifest_document_id: Option<Uuid>,
 }
 
 /// **The resolved Workspace set** (TECHNICAL.final §6.1): Workspaces

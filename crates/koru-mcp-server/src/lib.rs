@@ -20,8 +20,8 @@ use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::{
         Annotations, CallToolResult, ErrorData, ListResourceTemplatesResult, ListResourcesResult,
-        ReadResourceRequestParams, ReadResourceResponse, ReadResourceResult, Resource,
-        ResourceContents, ResourceTemplate, Role, ServerCapabilities, ServerInfo,
+        ReadResourceRequestParams, ReadResourceResponse, Resource, ResourceTemplate, Role,
+        ServerCapabilities, ServerInfo,
     },
     schemars, tool, tool_handler, tool_router,
 };
@@ -58,6 +58,11 @@ use chat_tools::{ListChatsToolRequest, ReadChatToolRequest, SearchChatsToolReque
 
 mod local_ids;
 mod published_schema;
+mod shared_surface;
+pub use shared_surface::{
+    documentation_resource_templates, documentation_resources, read_documentation_resource,
+    server_instructions,
+};
 pub mod tasks;
 mod tool_pages;
 mod toolsets;
@@ -6161,10 +6166,9 @@ impl ServerHandler for KoruMcp {
         _: Option<rmcp::model::PaginatedRequestParams>,
         _: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> impl Future<Output = Result<ListResourcesResult, ErrorData>> + Send + '_ {
-        std::future::ready(Ok(ListResourcesResult::with_all_items(vec![
-            essentials_resource(),
-            model_resource(),
-        ])))
+        std::future::ready(Ok(ListResourcesResult::with_all_items(
+            shared_surface::documentation_resources(),
+        )))
     }
 
     fn list_resource_templates(
@@ -6172,9 +6176,9 @@ impl ServerHandler for KoruMcp {
         _: Option<rmcp::model::PaginatedRequestParams>,
         _: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> impl Future<Output = Result<ListResourceTemplatesResult, ErrorData>> + Send + '_ {
-        std::future::ready(Ok(ListResourceTemplatesResult::with_all_items(vec![
-            model_section_template(),
-        ])))
+        std::future::ready(Ok(ListResourceTemplatesResult::with_all_items(
+            shared_surface::documentation_resource_templates(),
+        )))
     }
 
     fn read_resource(
@@ -6184,37 +6188,9 @@ impl ServerHandler for KoruMcp {
     ) -> impl Future<Output = Result<ReadResourceResponse, ErrorData>> + Send + '_ {
         let started = Instant::now();
         tracing::info!(uri = %request.uri, "resource read started");
-        let known = request.uri == MODEL_RESOURCE_URI
-            || request.uri == ESSENTIALS_RESOURCE_URI
-            || request.uri.starts_with(MODEL_SECTION_URI_PREFIX);
-        let result = if !known {
-            Err(ErrorData::resource_not_found(
-                "Koru documentation resource not found",
-                Some(json!({ "uri": request.uri })),
-            ))
-        } else {
-            documentation(&request.uri, None)
-                .map(|answer| {
-                    let answer = self.with_toolsets_note(answer);
-                    let text = answer["text"].as_str().unwrap_or_default().to_owned();
-                    ReadResourceResult::new(vec![
-                        ResourceContents::text(text, request.uri.clone())
-                            .with_mime_type(MODEL_DOCUMENT_MIME),
-                    ])
-                    .into()
-                })
-                .map_err(|error| match error.code.as_str() {
-                    // A slug nobody wrote is the reader's to fix, and the
-                    // details list the slugs there are.
-                    "documentation_section_not_found" => {
-                        ErrorData::resource_not_found(error.message, error.details)
-                    }
-                    _ => ErrorData::internal_error(
-                        error.message,
-                        Some(json!({ "uri": request.uri })),
-                    ),
-                })
-        };
+        let result =
+            shared_surface::read_with(&request.uri, |answer| self.with_toolsets_note(answer))
+                .map(Into::into);
         match &result {
             Ok(_) => tracing::info!(
                 uri = %request.uri,

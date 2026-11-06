@@ -398,6 +398,11 @@ pub struct AppConnectionWorkspaceV1 {
     pub authorization_version: i64,
     pub membership_epoch: i64,
     pub cloud_access_epoch: i64,
+    /// The manifest's Store document id in the Cloud catalog, once Cloud holds
+    /// the manifest. The replica's carrier scope and its Store both need it;
+    /// absent, the Workspace's names are `unavailable` (Cloud MCP Q1.6-1).
+    #[serde(default)]
+    pub manifest_document_id: Option<Uuid>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

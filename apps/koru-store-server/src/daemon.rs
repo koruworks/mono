@@ -45,8 +45,8 @@ pub mod blob_sync;
 pub mod cloud_driver;
 pub mod cloud_sync;
 mod dispatch;
-#[cfg(test)]
-mod fake_cloud;
+#[cfg(any(test, feature = "test-support"))]
+pub mod fake_cloud;
 pub mod memory;
 mod session_io;
 mod store_jobs;
