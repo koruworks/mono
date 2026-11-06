@@ -112,6 +112,18 @@ pub fn agent_kind_of(provider: &AiProviderId) -> Option<AgentProviderKind> {
         .find(|kind| &kind.id == provider)
 }
 
+/// **Whether the agent's own program is on this computer**: the one its
+/// terminal profile runs, found as the Settings page's presence probe finds
+/// it. A chat may run a different program — Claude's runs `claude-agent-acp`
+/// — so the host can report the chat's route missing while this is true;
+/// the chat then says what Settings says, that the adapter is missing, not
+/// the agent. Searches `PATH` and the known install locations, so it is for
+/// an admin thread, not a frame.
+pub fn agent_program_present(kind: &AgentProviderKind) -> bool {
+    koru_session_profiles::resolve(&kind.profile)
+        .is_ok_and(|profile| koru_session_profiles::resolve_launch_argv(&profile.argv).is_some())
+}
+
 /// Whether a provider id names a local agent.
 pub fn is_agent_provider(provider: &AiProviderId) -> bool {
     provider.as_str().starts_with("agent-") && agent_kind_of(provider).is_some()

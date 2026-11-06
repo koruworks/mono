@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr as _;
 
 mod managed;
+mod search_path;
 pub use managed::*;
 
 use koru_session_protocol::{
@@ -428,9 +429,11 @@ pub fn probe(profiles: Vec<LaunchProfile>) -> Vec<ProfileRow> {
 /// The session host calls this only after selecting an authored profile; it is
 /// not root discovery and never searches for user content.
 ///
-/// `PATH` first; then, for the few CLIs whose installers leave them off it,
-/// the places those installers put them ([`known_locations`]), so a tab and
-/// a chat find the same program the person installed.
+/// `PATH` first — on Windows also the registry's current `Path`, which a
+/// long-lived process's copy lags behind — then, for the few CLIs whose
+/// installers leave them off it, the places those installers put them
+/// ([`known_locations`]), so a tab and a chat find the same program the
+/// person installed.
 pub fn resolve_executable(program: &str) -> Option<PathBuf> {
     resolve_on_path(program).or_else(|| installed_copies(program).next())
 }
@@ -460,17 +463,26 @@ fn installed_copies(program: &str) -> impl Iterator<Item = PathBuf> {
 }
 
 /// **Where a CLI's own installers put it when they leave it off `PATH`**, in
-/// preference order, read from the environment through `var`. Only Devin
-/// has any: its Windows installer (`install.ps1`) and its desktop app both
-/// install `devin.exe` under `%LOCALAPPDATA%` without touching `PATH`. The
-/// standalone CLI comes first because it updates itself; the copy bundled
-/// with the desktop app is the fallback. Elsewhere the installer's
-/// documented `~/.local/bin/devin` is the one location (its troubleshooting
-/// page). Every other program is found on `PATH` or not at all.
+/// preference order, read from the environment through `var`.
+///
+/// - **Devin**: its Windows installer (`install.ps1`) and its desktop app both
+///   install `devin.exe` under `%LOCALAPPDATA%` without touching `PATH`. The
+///   standalone CLI comes first because it updates itself; the copy bundled
+///   with the desktop app is the fallback. Elsewhere the installer's
+///   documented `~/.local/bin/devin` is the one location (its
+///   troubleshooting page).
+/// - **Claude Code**: its native installer's `~/.local/bin` (`claude.exe`
+///   under `%USERPROFILE%` on Windows), then npm's global bin, then — on
+///   Windows — WinGet's links, and elsewhere the older "local install"
+///   `~/.claude/local`. Each of these is on the `PATH` of a new console, but
+///   not on that of a process started before the install, nor on the
+///   four-directory `PATH` launchd gives a Mac app opened from Finder.
+/// - **`claude-agent-acp`**, the adapter a Claude chat runs, is an npm
+///   package, so it is looked for in npm's global bin: `%APPDATA%\npm` (its
+///   `.cmd` shim) on Windows, Homebrew's and the system's `bin` on a Mac.
+///
+/// Every other program is found on `PATH` or not at all.
 pub fn known_locations(program: &str, var: impl Fn(&str) -> Option<OsString>) -> Vec<PathBuf> {
-    if program != "devin" {
-        return Vec::new();
-    }
     let under = |root: Option<OsString>, segments: &[&[&str]]| -> Vec<PathBuf> {
         let Some(root) = root.filter(|root| !root.is_empty()).map(PathBuf::from) else {
             return Vec::new();
@@ -480,8 +492,21 @@ pub fn known_locations(program: &str, var: impl Fn(&str) -> Option<OsString>) ->
             .map(|path| path.iter().fold(root.clone(), |path, part| path.join(part)))
             .collect()
     };
-    if cfg!(windows) {
-        under(
+    // npm's global bin when Node came from Homebrew (Apple silicon, then
+    // Intel) or from nodejs.org's installer, which both use `/usr/local`.
+    // Linux desktops keep `/usr/local/bin` on a GUI app's `PATH` already.
+    let npm_global = |program: &str| -> Vec<PathBuf> {
+        if cfg!(target_os = "macos") {
+            ["/opt/homebrew/bin", "/usr/local/bin"]
+                .into_iter()
+                .map(|bin| Path::new(bin).join(program))
+                .collect()
+        } else {
+            Vec::new()
+        }
+    };
+    match program {
+        "devin" if cfg!(windows) => under(
             var("LOCALAPPDATA"),
             &[
                 &["devin", "cli", "bin", "devin.exe"],
@@ -498,9 +523,33 @@ pub fn known_locations(program: &str, var: impl Fn(&str) -> Option<OsString>) ->
                     "devin.exe",
                 ],
             ],
-        )
-    } else {
-        under(var("HOME"), &[&[".local", "bin", "devin"]])
+        ),
+        "devin" => under(var("HOME"), &[&[".local", "bin", "devin"]]),
+        "claude" if cfg!(windows) => [
+            under(var("USERPROFILE"), &[&[".local", "bin", "claude.exe"]]),
+            under(var("APPDATA"), &[&["npm", "claude.cmd"]]),
+            under(
+                var("LOCALAPPDATA"),
+                &[&["Microsoft", "WinGet", "Links", "claude.exe"]],
+            ),
+        ]
+        .concat(),
+        "claude" => [
+            under(
+                var("HOME"),
+                &[
+                    &[".local", "bin", "claude"],
+                    &[".claude", "local", "claude"],
+                ],
+            ),
+            npm_global("claude"),
+        ]
+        .concat(),
+        "claude-agent-acp" if cfg!(windows) => {
+            under(var("APPDATA"), &[&["npm", "claude-agent-acp.cmd"]])
+        }
+        "claude-agent-acp" => npm_global("claude-agent-acp"),
+        _ => Vec::new(),
     }
 }
 
@@ -509,8 +558,10 @@ fn resolve_on_path(program: &str) -> Option<PathBuf> {
     if path.is_absolute() || path.components().count() > 1 {
         return path.is_file().then(|| absolute(path)).flatten();
     }
-    let path_value = std::env::var_os("PATH")?;
-    let directories = std::env::split_paths(&path_value).collect::<Vec<_>>();
+    // Not `PATH` alone: on Windows the inherited copy is stale for as long as
+    // the process lives, so the registry's current `Path` is searched after
+    // it (`search_path`).
+    let directories = search_path::directories();
     #[cfg(windows)]
     if program.eq_ignore_ascii_case("bash") {
         // `C:\Windows\System32\bash.exe` is the legacy WSL launcher, not a
@@ -867,9 +918,9 @@ mod tests {
 
     /// **Devin is looked for where its installers put it**, standalone CLI
     /// first and the desktop app's copy last, read from the environment
-    /// given — and no other program gets a location off `PATH`.
+    /// given — and a program with no entry gets no location off `PATH`.
     #[test]
-    fn only_devin_has_known_locations_standalone_first() {
+    fn devin_has_known_locations_standalone_first() {
         let var = |name: &str| match name {
             "LOCALAPPDATA" => Some(OsString::from(if cfg!(windows) {
                 r"C:\Users\x\AppData\Local"
@@ -895,7 +946,7 @@ mod tests {
         } else {
             assert_eq!(found, [PathBuf::from("/home/x/.local/bin/devin")]);
         }
-        for program in ["claude", "grok", "Devin", "devin.exe", "bash"] {
+        for program in ["grok", "Devin", "devin.exe", "bash", "Claude", "claude.exe"] {
             assert!(known_locations(program, var).is_empty(), "{program}");
         }
         assert!(
@@ -906,6 +957,68 @@ mod tests {
             known_locations("devin", |_| Some(OsString::new())).is_empty(),
             "an empty root is no root"
         );
+    }
+
+    /// **Claude Code is looked for where its installers put it** — the
+    /// native installer's `~/.local/bin` first, then npm's global bin, then
+    /// WinGet's links (Windows) or the old local install (elsewhere) — and
+    /// its chat adapter, an npm package, in npm's global bin. A machine
+    /// whose Koru started before the install, or a Mac app opened from
+    /// Finder, does not have these on `PATH`.
+    #[test]
+    fn claude_and_its_adapter_are_looked_for_where_their_installers_put_them() {
+        let var = |name: &str| match name {
+            "USERPROFILE" => Some(OsString::from(r"C:\Users\x")),
+            "APPDATA" => Some(OsString::from(r"C:\Users\x\AppData\Roaming")),
+            "LOCALAPPDATA" => Some(OsString::from(r"C:\Users\x\AppData\Local")),
+            "HOME" => Some(OsString::from("/home/x")),
+            _ => None,
+        };
+        let claude = known_locations("claude", var);
+        let adapter = known_locations("claude-agent-acp", var);
+        if cfg!(windows) {
+            assert_eq!(
+                claude,
+                [
+                    PathBuf::from(r"C:\Users\x\.local\bin\claude.exe"),
+                    PathBuf::from(r"C:\Users\x\AppData\Roaming\npm\claude.cmd"),
+                    PathBuf::from(r"C:\Users\x\AppData\Local\Microsoft\WinGet\Links\claude.exe"),
+                ]
+            );
+            assert_eq!(
+                adapter,
+                [PathBuf::from(
+                    r"C:\Users\x\AppData\Roaming\npm\claude-agent-acp.cmd"
+                )]
+            );
+            assert!(known_locations("claude", |_| None).is_empty());
+            assert!(known_locations("claude-agent-acp", |_| None).is_empty());
+        } else {
+            let npm: &[&str] = if cfg!(target_os = "macos") {
+                &["/opt/homebrew/bin", "/usr/local/bin"]
+            } else {
+                &[]
+            };
+            let mut expected = vec![
+                PathBuf::from("/home/x/.local/bin/claude"),
+                PathBuf::from("/home/x/.claude/local/claude"),
+            ];
+            expected.extend(npm.iter().map(|bin| Path::new(bin).join("claude")));
+            assert_eq!(claude, expected);
+            assert_eq!(
+                adapter,
+                npm.iter()
+                    .map(|bin| Path::new(bin).join("claude-agent-acp"))
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(
+                known_locations("claude", |_| None),
+                npm.iter()
+                    .map(|bin| Path::new(bin).join("claude"))
+                    .collect::<Vec<_>>(),
+                "no home, only the fixed npm bins"
+            );
+        }
     }
 
     #[test]
