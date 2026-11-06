@@ -14454,3 +14454,105 @@ fn repointing_the_tasks_tab_never_lands_the_old_note_as_a_tab() {
     View::show_active_document(&mut v, &ws_a, Some(doc_a));
     assert_eq!(v.tabs().len(), tabs + 1, "Explore, a pill, Back: a tab");
 }
+
+/// Acceptance round 2: a note opened in a tab of its own showed an empty
+/// *Title* row and an *Untitled* tab. Its name is resolved, never its root
+/// text, so once the shell says which page it is the note of, the title row
+/// goes and the listing's name stands where the row was — and names the tab.
+#[test]
+fn a_note_in_its_own_tab_shows_its_resolved_name_as_its_title() {
+    use koru_core::explore::ExploreEntry;
+    use koru_core::ids::PageKey;
+    let (mut v, mut workspace) = container();
+    let note = koru_core::DocumentId::new();
+    let root = a_document(&mut workspace.ws, "");
+    v.tabs_mut().push(tab::Tab::document_of(
+        Leaf::document(&workspace.ws, root),
+        "Untitled",
+        Some(note),
+    ));
+    View::set_entries(
+        &mut v,
+        vec![ExploreEntry {
+            id: note,
+            parent: None,
+            ordinal: 0,
+            title: "Next Features".to_owned(),
+            kind: koru_core::explore::KIND_DOCUMENT.to_owned(),
+            mime: None,
+            note: None,
+            trashed_at: None,
+            trashed_by: None,
+        }],
+        Some(note),
+    );
+    let leaf = |v: &MainView| match &v.tabs().active_tab().view {
+        TabView::Leaf(leaf) => leaf.title_display().map(str::to_owned),
+        _ => panic!("a document tab"),
+    };
+    assert_eq!(leaf(&v), None, "an ordinary document shows its row");
+    assert!(
+        View::take_wants_page_of(&mut v).contains(&note),
+        "the window asks which page it is the note of"
+    );
+
+    View::set_page_of(
+        &mut v,
+        note,
+        Some(PageKey::List(koru_core::ids::ListId::new())),
+    );
+    v.catch_up_active(&workspace.ws);
+    v.refresh_labels(&workspace.ws);
+    let TabView::Leaf(l) = &v.tabs().active_tab().view else {
+        panic!("a document tab")
+    };
+    assert!(!l.has_title_row(), "the row holding empty root text goes");
+    assert_eq!(
+        leaf(&v).as_deref(),
+        Some("Next Features"),
+        "the listing's name stands in"
+    );
+    assert_eq!(v.tabs().active_tab().label, "Next Features");
+    assert!(
+        !View::take_wants_page_of(&mut v).contains(&note),
+        "a known note is not asked about again"
+    );
+}
+
+/// ...and a document the shell called nobody's note is asked about again
+/// when the library moves: a note that arrived from a peer may have been
+/// asked before its page's record did.
+#[test]
+fn a_document_called_nobodys_note_is_asked_again_when_the_library_moves() {
+    use koru_core::explore::ExploreEntry;
+    let (mut v, mut workspace) = container();
+    let id = koru_core::DocumentId::new();
+    let root = a_document(&mut workspace.ws, "Plain");
+    v.tabs_mut().push(tab::Tab::document_of(
+        Leaf::document(&workspace.ws, root),
+        "Plain",
+        Some(id),
+    ));
+    assert!(View::take_wants_page_of(&mut v).contains(&id));
+    View::set_page_of(&mut v, id, None);
+    assert!(!View::take_wants_page_of(&mut v).contains(&id), "answered");
+    View::set_entries(
+        &mut v,
+        vec![ExploreEntry {
+            id,
+            parent: None,
+            ordinal: 0,
+            title: "Plain".to_owned(),
+            kind: koru_core::explore::KIND_DOCUMENT.to_owned(),
+            mime: None,
+            note: None,
+            trashed_at: None,
+            trashed_by: None,
+        }],
+        Some(id),
+    );
+    assert!(
+        View::take_wants_page_of(&mut v).contains(&id),
+        "asked again once the library moved"
+    );
+}

@@ -110,6 +110,13 @@ pub struct Body {
     /// [`is_title_row`](Self::is_title_row). Off for a view with no
     /// root, and for a `ListBlock` opened as its own view.
     pub title_row: bool,
+    /// A name drawn where the title row would be, for a document whose
+    /// title is resolved rather than written — a note above a Tasks page in
+    /// a tab of its own, named for its page. Shown only while `title_row` is
+    /// off: the row would hold the empty root text nothing reads, and this
+    /// is the name the listing and the tab already give. Not a row — the
+    /// caret never reaches it and nothing writes it; renaming is the tab's.
+    pub title_display: Option<String>,
     /// What has changed since this body last looked, fed by a Loro subscription.
     ///
     /// `adopt` drains this rather than rebuilding the whole body: typing in one
@@ -1677,12 +1684,25 @@ impl Body {
         self.rebuild(ws);
     }
 
-    /// Vertical space the breadcrumb takes, which the rows start below.
-    /// Space the body itself needs above the rows. None today — the breadcrumb
-    /// that used to live here went with zoom. A view's own chrome is
+    /// Space the body itself needs above the rows: the display title's band
+    /// when one stands in for the title row, else none (the breadcrumb that
+    /// used to live here went with zoom). A view's own chrome is
     /// `Editor::chrome_h`.
     pub fn top_inset(&self) -> f32 {
-        0.0
+        self.title_band()
+    }
+
+    /// The band a display title takes above the first row: a title's line
+    /// box and the air a title keeps below it, at this body's scale — the
+    /// same height the row it stands in for would have. Zero while the title
+    /// row is on or there is no name to show.
+    pub fn title_band(&self) -> f32 {
+        if self.title_row || self.title_display.is_none() {
+            return 0.0;
+        }
+        let metrics = self.metrics();
+        let step = metrics.step(Some(theme::TITLE_LEVEL));
+        step.size * step.line_height + metrics.title_gap
     }
 
     // -------------------------------------------------------------- editing
@@ -1993,6 +2013,27 @@ mod tests {
     use super::*;
     use koru_core::WorkspaceId;
     use koru_core::node::NodeMeta;
+
+    /// A display title takes a title row's band above the first row, and
+    /// only while the row itself is off: with the row on, the name is the
+    /// row's to show and the band would double it.
+    #[test]
+    fn a_display_title_takes_a_band_only_while_the_row_is_off() {
+        let mut body = Body::default();
+        assert_eq!(body.top_inset(), 0.0, "nothing to show");
+        body.title_display = Some("Next Features".to_owned());
+        let band = body.title_band();
+        assert!(band > 0.0, "a name stands where the row would be");
+        assert_eq!(body.top_inset(), band, "and the rows start below it");
+        let metrics = body.metrics();
+        let step = metrics.step(Some(theme::TITLE_LEVEL));
+        assert!(
+            (band - (step.size * step.line_height + metrics.title_gap)).abs() < 0.01,
+            "the row's own height and the air below it"
+        );
+        body.title_row = true;
+        assert_eq!(body.title_band(), 0.0, "the row shows the name itself");
+    }
 
     fn outline_with(rows: &[(&str, u16)]) -> (WorkspaceDoc, Body) {
         let mut ws = WorkspaceDoc::create(WorkspaceId::new(), "test").unwrap();

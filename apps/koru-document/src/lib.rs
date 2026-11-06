@@ -574,6 +574,20 @@ impl BuiltInDocument {
         self.body_placeholder = Some(placeholder);
     }
 
+    /// The name to draw where the title row would be, for a document whose
+    /// title is resolved rather than written (a note above a Tasks page in a
+    /// tab of its own). Takes effect once the title row is off. Answers
+    /// whether it changed, so a host pushing it every tick costs a compare.
+    pub fn set_title_display(&mut self, name: Option<String>) -> bool {
+        if self.editor.body.title_display == name {
+            return false;
+        }
+        self.editor.body.title_display = name;
+        // The band above the rows moved: every row's position is stale.
+        self.editor.body.invalidate();
+        true
+    }
+
     /// This document *is* the window: draw a title bar above the toolbar.
     ///
     /// `koru-workspace-host` opens every window undecorated ([ADR-25]) on the

@@ -9649,6 +9649,16 @@ impl MainView {
                 t.refresh_tasks_label();
                 continue;
             }
+            // **A note's resolved name stands where its title row would be**,
+            // in every tab over it, active or not — the row holds the empty
+            // root text nothing reads, and a person opening the note from
+            // the library expects to see what the library called it.
+            if let Some(document) = t.document
+                && let Some((_, name)) = page_names.iter().find(|(id, _)| *id == document)
+                && let TabView::Leaf(leaf) = &mut t.view
+            {
+                leaf.set_title_display(Some(name.clone()));
+            }
             // A draft's root names a node in its own throwaway document, not in
             // this one, so `name_of` here would be a lookup in the wrong place.
             // Its label is `DRAFT_NAME` until it is promoted.
@@ -12909,6 +12919,11 @@ impl View for MainView {
             return false;
         }
         self.active_document = active;
+        // A document the shell said was nobody's note is asked about again
+        // when the library moves: the answer is read off the page records,
+        // and a note that arrived from a peer may have been asked before its
+        // page's record did. *Is* a note never changes back, so those stay.
+        self.page_of.retain(|_, page| page.is_some());
         for entry in &entries {
             let key = entry.id.to_storage();
             self.entity_titles.insert(key.clone(), entry.title.clone());

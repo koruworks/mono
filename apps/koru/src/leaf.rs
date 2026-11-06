@@ -214,6 +214,21 @@ impl Leaf {
         d.set_body_placeholder(placeholder);
     }
 
+    /// The name drawn where the title row would be, once that row is hidden:
+    /// a note's resolved title in a tab of its own. Answers whether it
+    /// changed.
+    pub fn set_title_display(&mut self, name: Option<String>) -> bool {
+        let Self::Document(d) = self;
+        d.set_title_display(name)
+    }
+
+    /// The name the leaf draws for its title, if one stands in for the row.
+    #[cfg(test)]
+    pub fn title_display(&self) -> Option<&str> {
+        let Self::Document(d) = self;
+        d.editor.body.title_display.as_deref()
+    }
+
     /// Where the caret is: which row, and how many bytes into it.
     ///
     /// **The offset is the half that gets forgotten.** `focus` alone names a
