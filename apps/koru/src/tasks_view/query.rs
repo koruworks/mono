@@ -569,7 +569,12 @@ pub const CHIP_MIN_PRIORITY: koru_core::attributes::Priority =
 /// today and after it — a page nobody meant. So the surface spells them as one
 /// selector that steps between them, on the one page that offers the dimension
 /// at all ([`Filters::due_selects`]).
+///
+/// **Idle while no page draws a filter row** (the owner, 2026-11-05): nothing
+/// in the app sets a window now, and the query still honours one, so the row
+/// can come back without the query being rebuilt. The suite drives it.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+#[allow(dead_code)]
 pub enum DueWindow {
     #[default]
     Any,
@@ -581,34 +586,6 @@ pub enum DueWindow {
 }
 
 impl DueWindow {
-    /// The **selector's** word — its current value, including the value that
-    /// narrows nothing.
-    ///
-    /// *Any date* is a state rather than an absence, and this is the only face
-    /// the dimension now wears: a list spans all time, so *when* is a cut worth
-    /// offering there, and the value that narrows nothing needs a word of its
-    /// own or a reader cannot tell *unfiltered* from *filtered to everything*.
-    /// See [`Filters::due_selects`], which is now the whole of where it is
-    /// offered.
-    pub fn selector_label(self) -> &'static str {
-        match self {
-            Self::Any => "Any date",
-            Self::Overdue => "Overdue",
-            Self::ThisWeek => "This week",
-        }
-    }
-
-    /// The next value the selector offers. Three values, so it cycles rather
-    /// than toggling; *Any date* is the default and therefore the one it comes
-    /// back to — the lifecycle selector's rule, for a selector's reason.
-    pub fn next(self) -> Self {
-        match self {
-            Self::Any => Self::Overdue,
-            Self::Overdue => Self::ThisWeek,
-            Self::ThisWeek => Self::Any,
-        }
-    }
-
     /// The window as the wire states it, per temporal type.
     ///
     /// **Both halves or neither** ([ADR-183] rule 5): a calendar day and a zoned
@@ -672,7 +649,7 @@ fn week_end(day: NaiveDate) -> NaiveDate {
 /// what the store is asked. A chip that narrowed the rows *after* the answer
 /// arrived would disagree with its own page as soon as the page was longer than
 /// the limit.
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct Filters {
     /// `Priority ≥ High` — [`TaskQuery::min_priority`].
     pub min_high: bool,
@@ -681,7 +658,7 @@ pub struct Filters {
     /// **The store applies this only where the query names no bucket.** A bucket
     /// names its own lifecycle ([`TaskQuery::bucket`]), so on a queue page the
     /// field is discarded — which is why the chip and the menu row that move it
-    /// are offered only where they bite. See [`Filters::lifecycle_applies`].
+    /// would be offered only where they bite.
     pub lifecycle: LifecycleFilter,
     pub window: DueWindow,
     /// **Keep what you just finished on the page you finished it on** —
@@ -693,32 +670,51 @@ pub struct Filters {
     /// nothing about the Completed queue, which lists completed work by
     /// definition.
     pub recently_completed: bool,
+    /// How a queue page is ordered. `Due` unless somebody chose otherwise.
     pub sort: TaskSort,
+    /// How a **list** page is ordered: the order somebody dragged it into
+    /// (`Manual`) unless they chose a sort. Its own field so a queue's choice
+    /// and a list's do not overwrite each other when the tab moves between
+    /// them — a queue has no manual order to offer.
+    pub list_sort: TaskSort,
+}
+
+impl Default for Filters {
+    fn default() -> Self {
+        Self {
+            min_high: false,
+            lifecycle: LifecycleFilter::default(),
+            window: DueWindow::default(),
+            recently_completed: false,
+            sort: TaskSort::Due,
+            list_sort: TaskSort::Manual,
+        }
+    }
 }
 
 impl Filters {
-    /// Whether the store will apply [`lifecycle`](Self::lifecycle) to this page.
-    ///
-    /// A page that names a bucket has its lifecycle named for it, and the store
-    /// discards the field rather than ANDing it. So this is what decides whether
-    /// the control is offered at all: a switch the answer cannot hear is worse
-    /// than no switch.
-    pub fn lifecycle_applies(target: RailTarget) -> bool {
+    /// Whether a page may hold a due window at all: a list, which spans all
+    /// time — SPEC §8's *a list is a filter, not a place*. A queue is already
+    /// a due window, so a second one over it is redundant where they agree
+    /// and empty where they do not; leaving a list clears it.
+    pub fn due_selects(target: RailTarget) -> bool {
         matches!(target, RailTarget::List(_))
     }
 
-    /// Whether the due dimension is drawn as **one selector** rather than as
-    /// its two value chips.
-    ///
-    /// The design draws four chips on a queue (`1a`) and two on a list (`1d`,
-    /// *Open ⌄* and *Any date*), and the difference is not a mock's spacing: a
-    /// queue is already a due window, so *Overdue* and *This week* narrow
-    /// something the reader can see, and each is worth a chip of its own. A
-    /// list spans all time — SPEC §8's *a list is a filter, not a place* — so
-    /// the honest reading of the dimension is its current value, and the value
-    /// that narrows nothing has a word: *Any date*.
-    pub fn due_selects(target: RailTarget) -> bool {
-        matches!(target, RailTarget::List(_))
+    /// The order `target`'s page is asked for: a list's own, or a queue's.
+    pub fn sort_for(&self, target: RailTarget) -> TaskSort {
+        match target {
+            RailTarget::List(_) => self.list_sort,
+            _ => self.sort,
+        }
+    }
+
+    /// Choose the order for `target`'s kind of page.
+    pub fn set_sort_for(&mut self, target: RailTarget, sort: TaskSort) {
+        match target {
+            RailTarget::List(_) => self.list_sort = sort,
+            _ => self.sort = sort,
+        }
     }
 }
 
@@ -742,7 +738,7 @@ pub fn page_query(
             .min_high
             .then(|| CHIP_MIN_PRIORITY.as_str().to_owned()),
         due: filters.window.filter(windows, today),
-        sort: filters.sort,
+        sort: filters.sort_for(target),
         lifecycle: filters.lifecycle,
         completed_on_or_after: Some(completed_since(today)),
         recently_completed_since: filters
@@ -833,6 +829,12 @@ pub struct TaskEntry {
     /// The stored priority token (`low | medium | high | urgent`).
     pub priority: Option<String>,
     pub list: Option<ListId>,
+    /// The line's own colour (`koru.color`) — an accent token, drawn as the
+    /// swatch the document draws after the same task's chips.
+    pub color: Option<String>,
+    /// Where the task sits in its list's dragged order (`koru.rank`), or
+    /// `None` when nobody has placed it.
+    pub rank: Option<i64>,
     pub completed: bool,
     /// **Put on Today by hand**, whatever the due says.
     ///
@@ -897,6 +899,13 @@ impl TaskEntry {
             overdue: !completed && due.is_some_and(|due| is_overdue(due, today, now_ms)),
             priority: value_of(row, koru_core::attributes::KEY_PRIORITY).map(str::to_owned),
             list: value_of(row, koru_core::attributes::KEY_LIST).and_then(ListId::parse),
+            color: value_of(row, koru_core::attributes::KEY_COLOR)
+                .filter(|token| !token.is_empty())
+                .map(str::to_owned),
+            rank: value_of(row, koru_core::attributes::KEY_RANK)
+                .and_then(|value| value.parse::<f64>().ok())
+                .filter(|value| value.is_finite())
+                .map(|value| value as i64),
             completed,
             // Presence *and* truth, the same rule the bucket SQL applies:
             // unpinning removes the record, so a stored `false` is not

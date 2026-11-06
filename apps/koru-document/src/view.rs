@@ -239,6 +239,10 @@ impl View for BuiltInDocument {
         self.editor.view.wants_task_view.take()
     }
 
+    fn take_wants_task_list(&mut self) -> Option<koru_core::ids::ListId> {
+        self.editor.view.wants_task_list.take()
+    }
+
     fn take_wants_global_settings(&mut self) -> bool {
         std::mem::take(&mut self.wants_global_settings)
     }

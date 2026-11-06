@@ -32,16 +32,11 @@
 //! Everything here is **pure** — no view, no engine, no clock — which is what
 //! lets the suite drive each gate against the other three.
 
-use crate::panes::explore::rail::{Bucket, RailTarget};
-
-/// The action a state offers, at the row's right end.
-pub(super) const ADD_A_TASK: &str = "Add a task";
-
 /// What the cold state says. **A state, not a verb with a subject** — which
 /// workspace is being swept is not something a reader of this page can act on.
 pub(super) const CHECKING: &str = "Checking your workspaces\u{2026}";
 
-/// Which of the three the page is in. `None` — no variant — is *there are rows*,
+/// Which of the two the page is in. `None` — no variant — is *there are rows*,
 /// or *we have not looked yet*; a zero that means "not asked" is a lie a reader
 /// cannot see through, so nothing is drawn for it at all.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -50,15 +45,6 @@ pub(super) enum Empty {
     Notice(String),
     /// The answer is a page of a workspace still being swept.
     Cold,
-    /// This queue or this list is empty.
-    ///
-    /// `action` is whether **Add a task** is offered: every queue but Completed,
-    /// which is an archive — an empty archive is not a gap to fill, and a button
-    /// there would be offering to add something that would not appear.
-    ///
-    /// It no longer says *and others are not*: that clause was the teaching
-    /// state's, and the second answer it needed to be sure of went with it.
-    Bucket { line: String, action: bool },
 }
 
 impl Empty {
@@ -67,19 +53,6 @@ impl Empty {
         match self {
             Self::Notice(text) => text.clone(),
             Self::Cold => CHECKING.to_owned(),
-            Self::Bucket { line, .. } => line.clone(),
-        }
-    }
-
-    /// The action at the row's right end, or `None` for a state with nothing to
-    /// do about it.
-    ///
-    /// **Only an empty bucket earns one.** A sweep is not something to act on,
-    /// and a store that will not answer is not fixed by typing a task into it.
-    pub(super) fn action(&self) -> Option<&'static str> {
-        match self {
-            Self::Bucket { action: true, .. } => Some(ADD_A_TASK),
-            _ => None,
         }
     }
 
@@ -101,18 +74,15 @@ impl Empty {
 ///    list means *we have not looked*, and half a second of blank is honest
 ///    where any sentence would not be;
 /// 3. **cold** next, so a mid-sweep zero never reads as *you have no tasks*;
-/// 4. otherwise this page is empty, which is the ordinary case and the one that
-///    offers the action.
+/// 4. otherwise **nothing** (the owner's ask, 2026-11-05): an empty page is
+///    its capture row and nothing under it — the *Add a task…* row already
+///    says what to do, and a sentence plus a second *Add a task* under it
+///    said it twice.
 ///
 /// **Every input is about the page being drawn.** The teaching state needed the
 /// rail's counts, and that was the one argument here that was not — which is
 /// what let this function be right about the page and wrong on the screen.
-pub(super) fn empty_state(
-    target: RailTarget,
-    known: bool,
-    updating: bool,
-    notice: Option<&str>,
-) -> Option<Empty> {
+pub(super) fn empty_state(known: bool, updating: bool, notice: Option<&str>) -> Option<Empty> {
     if let Some(notice) = notice {
         return Some(Empty::Notice(notice.to_owned()));
     }
@@ -122,33 +92,5 @@ pub(super) fn empty_state(
     if updating {
         return Some(Empty::Cold);
     }
-    Some(Empty::Bucket {
-        line: bucket_line(target),
-        action: target != RailTarget::Bucket(Bucket::Completed),
-    })
-}
-
-/// What an empty queue or list says about itself.
-///
-/// **The fact, in the queue's own terms.** Only Today's sentence is drawn in the
-/// design; the rest follow its shape — what this queue is *for*, said as an
-/// absence — rather than repeating one neutral line five times, which would make
-/// the four queues indistinguishable at the moment they most need telling apart.
-/// A list says it is a list, because SPEC §8 makes a list a filter over all time
-/// and *due* is not what is missing from it.
-fn bucket_line(target: RailTarget) -> String {
-    match target {
-        RailTarget::Reminders => unreachable!(
-            "the rail's Reminders row swaps the tab's view; a Tasks page never targets it"
-        ),
-        RailTarget::Bucket(Bucket::Today) => "Nothing due today.",
-        RailTarget::Bucket(Bucket::Next) => "Nothing due this week.",
-        RailTarget::Bucket(Bucket::Upcoming) => "Nothing due this month.",
-        RailTarget::Bucket(Bucket::Later) => "Nothing waiting.",
-        // An archive, and the one queue whose emptiness is not a gap to fill —
-        // which is why it is also the one that offers no action.
-        RailTarget::Bucket(Bucket::Completed) => "Nothing completed yet.",
-        RailTarget::List(_) => "Nothing in this list yet.",
-    }
-    .to_owned()
+    None
 }

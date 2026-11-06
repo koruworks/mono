@@ -81,6 +81,10 @@ pub(crate) enum Layer {
     /// opening it takes any menu down, so the two never stand together, and
     /// it is the more recent of the two by construction.
     PlaceChooser,
+    /// The `+` button's New… dialog. Beside the place chooser and above
+    /// `Menu` for the same reason: opening it takes any menu down, and
+    /// Alt on a tile closes it before the chooser opens.
+    Launcher,
     Menu,
     ReminderOverlay,
     ReminderManagement,
@@ -100,7 +104,7 @@ impl Layer {
     /// projection publishes the standing blocker and nothing beneath it, and
     /// the test that every kind of blocker publishes the control it focuses
     /// walks *this* table rather than a second list of kinds to keep in step.
-    pub(crate) const ALL: [Self; 22] = [
+    pub(crate) const ALL: [Self; 23] = [
         Self::FontPicker,
         Self::MoveTo,
         Self::Search,
@@ -118,6 +122,7 @@ impl Layer {
         Self::Delegate,
         Self::Recording,
         Self::PlaceChooser,
+        Self::Launcher,
         Self::Menu,
         Self::ReminderOverlay,
         Self::ReminderManagement,
@@ -150,6 +155,7 @@ impl Layer {
             // and nothing underneath may receive keys while it stands.
             Self::Recording => Blockers::Modal(ModalKind::Recording),
             Self::PlaceChooser => Blockers::Modal(ModalKind::PlaceChooser),
+            Self::Launcher => Blockers::Modal(ModalKind::Launcher),
             Self::Menu => Blockers::Modal(ModalKind::ContextMenu),
             Self::ReminderOverlay => Blockers::Modal(ModalKind::ReminderOverlay),
             Self::ReminderManagement => Blockers::Modal(ModalKind::ReminderManagement),
@@ -218,6 +224,7 @@ impl MainView {
             Layer::Delegate => self.delegation_open(),
             Layer::Recording => self.recording_modal.is_some(),
             Layer::PlaceChooser => self.place_chooser.is_some(),
+            Layer::Launcher => self.launcher.is_some(),
             Layer::Menu => self.menu.is_some(),
             Layer::ReminderOverlay => self.reminder_shell.overlay_live(),
             Layer::ReminderManagement => self.reminder_creation.is_management(),

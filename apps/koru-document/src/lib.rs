@@ -2185,6 +2185,7 @@ impl BuiltInDocument {
                 ChipSpec::Color(_) => context_menu::ChipMenu::Color,
                 ChipSpec::Due(_) => context_menu::ChipMenu::Due,
                 ChipSpec::Priority(_) => context_menu::ChipMenu::Priority,
+                ChipSpec::List(_) => context_menu::ChipMenu::List,
             })
         } else {
             context_menu::PillContext::None

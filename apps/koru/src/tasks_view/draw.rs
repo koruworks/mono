@@ -23,30 +23,20 @@ use vello::kurbo::{Affine, Circle};
 
 use super::pickers::Picker;
 use super::query::TaskEntry;
-use super::row::DOT;
-use super::states;
 use super::view::{CONTROL_W, Hit, Line, PAD, TasksView};
 
 /// The page heading. **Medium, not semibold** — the size already says it is the
 /// title, and weight on top of that is a second answer to a question the type
-/// scale has answered. The Trash tab's, so the two pages read as one app.
+/// scale has answered. The Trash tab's, so the two pages read as one app. It is
+/// `role::subtitle()`, which the heading's elements name as `roles::SUBTITLE`.
 pub(super) const TITLE: theme::TextStyle =
     theme::TextStyle::new(theme::text_metrics::LG, theme::FontWeight::Medium);
-
-/// What the capture row says before anybody types in it.
-
-/// Between the title and the date beside it, and between the date and the
-/// count. One separator, drawn twice.
-
-/// The warm token every overdue reading in this app already wears — the rail's
-/// split count, the Urgent dot, and now the due chip on a late row. One accent,
-/// asked for by name rather than by a new palette field.
 
 /// What the freshness chip says. **A state, not a verb with a subject**: which
 /// workspace is behind is not a thing a reader of this page can act on, and
 /// naming one would turn an ambient note into a report.
 const UPDATING: &str = "Updating\u{2026}";
-/// The dot ahead of it — the same mark the rail's own quiet indicators use.
+/// The empty state's dot — the same mark the rail's own quiet indicators use.
 const DOT_D: f32 = 5.0;
 const DOT_GAP: f32 = 6.0;
 /// Between the freshness chip and the `…` beside it.
@@ -104,6 +94,9 @@ impl TasksView {
             Some(Picker::Priority(picker)) => {
                 picker.menu.draw(scene, root, engine, viewport, &enabled);
             }
+            Some(Picker::Color(picker)) => {
+                picker.menu.draw(scene, root, engine, viewport, &enabled);
+            }
             Some(Picker::Due(pick)) => {
                 let r = pick.panel;
                 scene::floating_panel(scene, root, r.x, r.y, r.w, r.h, &scene::Panel::popover(8.0));
@@ -123,55 +116,14 @@ impl TasksView {
     }
 
     fn paint_header(&mut self, scene: &mut Scene, root: Affine) {
-        let p = theme::p();
-        let top = self.title_top();
-        let title = self.title();
-        let layout = self.engine.simple_layout(&title, TITLE);
-        let title_w = layout.width();
-        let title_x = self.title_x();
         // **A list wears its colour square here too** (`1d`): same band, same
-        // swatch, same accent token as the rail's row — a list is a bucket, and
-        // the two surfaces are showing the one thing.
-        if let Some(token) = self.title_swatch() {
-            draw_swatch(scene, root, self.swatch_rect(), token.as_deref());
-        }
-        scene::draw_layout_first_line(scene, root, &layout, title_x, top, Some(p.text));
-
-        // The date and the count trail the title on its own baseline, in the
-        // meta role — the title says *which queue*, and these say *when* and
-        // *how much*, which are notes on it rather than part of its name.
-        let mut trail = String::new();
-        if let Some(date) = self.title_date() {
-            trail.push_str(DOT);
-            trail.push_str(&date);
-        }
-        if trail.is_empty() {
-            trail.push_str("  ");
-        } else {
-            trail.push_str("   ");
-        }
-        if let Some(count) = self.count_label() {
-            trail.push_str(&count);
-        }
+        // swatch, same accent token as the rail's row — a list is a bucket,
+        // and the two surfaces are showing the one thing. The heading is one
+        // element row (`heading.rs`): the swatch, the title, the date and the
+        // count.
+        self.paint_heading(scene, root);
         self.paint_freshness(scene, root);
         self.paint_header_dots(scene, root);
-        self.paint_chips(scene, root);
-
-        if trail.trim().is_empty() {
-            return;
-        }
-        let meta = self.engine.simple_layout(&trail, theme::role::meta());
-        // Baselines, not boxes: the two layouts have different line heights, so
-        // aligning their tops would leave the smaller one floating.
-        let drop = scene::first_line_height(&layout) - scene::first_line_height(&meta);
-        scene::draw_layout_first_line(
-            scene,
-            root,
-            &meta,
-            title_x + title_w,
-            top + drop.max(0.0),
-            Some(p.text_dim),
-        );
     }
 
     /// The **Updating…** chip.
@@ -211,49 +163,24 @@ impl TasksView {
 
     /// The `…`. Always there, unlike a row's — this is the page's own control.
     fn paint_header_dots(&mut self, scene: &mut Scene, root: Affine) {
-        let p = theme::p();
-        let d = self.header_dots();
-        // **The hover state is the whole affordance** (ADR-215): the cursor does
-        // not change over a control here, so a control that did not light would
-        // have nothing left to say it was one.
-        if self.hover == Some(Hit::HeaderDots) || self.overflow.is_some() {
-            scene::fill(
-                scene,
-                root,
-                p.hover_tint,
-                &scene::rrect(d.x, d.y, d.w, d.h, 5.0),
-            );
-        }
-        scene::dots_three(scene, root, d, p.text_dim);
-    }
-
-    /// The filter chips, under the heading.
-    ///
-    /// **The editor's chip family, at the editor's tokens.** An inactive chip is
-    /// `chip_bg` over `text_dim` — the pair `chip_colors(None)` answers for every
-    /// neutral attribute chip in the app. An **active** one is `bubble_bg` over
-    /// `bubble_fg`: the app's one inverted surface, dark in both themes, which is
-    /// what the offline chip and the selection bubble already use. No new
-    /// `Palette` field, and no new accent token — a filter that is on is not a
-    /// colour, it is the same chip with its ink and its ground exchanged.
-    /// The filter row. **Every chip is `koru_ui::label_chip`** — the pill,
-    /// the label, the caret or the `\u{00d7}`, and the air around all three
-    /// — so what the page owns is which chips there are and what they say.
-    fn paint_chips(&mut self, scene: &mut Scene, root: Affine) {
-        let chips = self.chips();
-        let rects = self.chip_rects();
-        for (i, (chip, r)) in chips.iter().zip(rects).enumerate() {
-            chip.chip().draw(
-                scene,
-                root,
-                &mut self.engine,
-                r,
-                koru_ui::label_chip::State {
-                    hovered: self.hover == Some(Hit::Chip(i)),
-                    reveal: false,
-                },
-            );
-        }
+        // **The icon button every `…` in the app is**, with `DOTS_THREE`. The
+        // hover state is the whole affordance (ADR-215): the cursor does not
+        // change over a control here, so it stays lit while its menu is open.
+        let lit = self.hover == Some(Hit::HeaderDots) || self.overflow.is_some();
+        let dots = self.header_dots();
+        koru_ui::icon_button::draw_with(
+            scene,
+            root,
+            &mut self.engine,
+            dots,
+            koru_draw::icons::DOTS_THREE,
+            koru_ui::icon_button::State {
+                hovered: lit,
+                active: false,
+                disabled: false,
+            },
+            koru_ui::icon_button::Metrics::INLINE,
+        );
     }
 
     fn paint_lines(&mut self, scene: &mut Scene, root: Affine, caret_on: bool) {
@@ -302,10 +229,11 @@ impl TasksView {
                     let Some(row) = self.rows.get(idx).cloned() else {
                         continue;
                     };
-                    self.paint_row(scene, root, r, idx, &row);
+                    self.paint_row(scene, root, r, idx, &row, caret_on);
                 }
             }
         }
+        self.paint_drop_line(scene, root);
         // **Not gated on `known` here.** Which states may appear before the
         // first answer is `empty_state`'s decision — and it was the wrong
         // decision in this line: a query that *failed* leaves a notice with
@@ -314,6 +242,32 @@ impl TasksView {
         if self.rows.is_empty() {
             self.paint_empty(scene, root);
         }
+    }
+
+    /// Where a drag would put the rows: one accent line across the gap.
+    fn paint_drop_line(&mut self, scene: &mut Scene, root: Affine) {
+        let Some(gap) = self.drag.as_ref().filter(|d| d.active).and_then(|d| d.gap) else {
+            return;
+        };
+        let Some(y) = self.drop_line_y(gap) else {
+            return;
+        };
+        let m = self.table().metrics;
+        let (x0, w) = (m.pad, (self.viewport.0 - m.pad * 2.0).max(0.0));
+        let line = koru_draw::geometry::Rect::new(x0, (y - 1.0).round(), w, 2.0);
+        let _record = koru_draw::inspect::scope(
+            "Drop indicator",
+            "part",
+            root,
+            scene::rect(line.x, line.y, line.w, line.h),
+            |_| {},
+        );
+        scene::fill(
+            scene,
+            root,
+            theme::p().accent,
+            &scene::rrect(line.x, line.y, line.w, line.h, 1.0),
+        );
     }
 
     /// The ghost row at the top of the list.
@@ -330,6 +284,7 @@ impl TasksView {
                 scene,
                 root,
                 &mut self.engine,
+                &mut self.idle_input,
                 &table,
                 r,
                 parts,
@@ -349,16 +304,30 @@ impl TasksView {
         }
     }
 
-    fn paint_row(&mut self, scene: &mut Scene, root: Affine, r: Rect, idx: usize, row: &TaskEntry) {
+    fn paint_row(
+        &mut self,
+        scene: &mut Scene,
+        root: Affine,
+        r: Rect,
+        idx: usize,
+        row: &TaskEntry,
+        caret_on: bool,
+    ) {
+        let renaming = self
+            .rename
+            .as_ref()
+            .is_some_and(|rename| (rename.document, rename.node) == (row.document, row.node));
         // The whole row counts as hovered when any of its controls is, or the
         // fill would drop away the moment the pointer reached the `…`.
         let on_row = matches!(
             self.hover,
-            Some(Hit::Row(j) | Hit::Complete(j) | Hit::Dots(j) | Hit::ListChip(j)) if j == idx
+            Some(
+                Hit::Row(j) | Hit::Complete(j) | Hit::Dots(j) | Hit::ListChip(j) | Hit::ValueChip(j, _)
+            ) if j == idx
         );
         // **Selected outranks hovered**, which is the table's own rule — one
         // fill, chosen here rather than two drawn over each other.
-        let state = if self.selected_row() == Some(idx) {
+        let state = if self.is_selected(idx) {
             RowState::Selected
         } else if on_row {
             RowState::Hovered
@@ -378,8 +347,10 @@ impl TasksView {
             residue: row.residue,
             glyph: self.row_glyph(row),
             emoji: row.icon.as_deref(),
-            title: &row.title,
-            context: &context,
+            // The rename field stands where the words were; the row draws
+            // none of its own under it.
+            title: if renaming { "" } else { &row.title },
+            context: if renaming { "" } else { &context },
             chips: &chips,
             chip_widths: &chip_widths,
             state,
@@ -387,6 +358,20 @@ impl TasksView {
         };
         let table = self.table();
         super::row::paint(scene, root, &mut self.engine, &table, r, &face);
+        if renaming
+            && let Some(field) = self.rename_field()
+            && let Some(rename) = self.rename.as_mut()
+        {
+            rename.input.draw(
+                scene,
+                root,
+                &mut self.engine,
+                super::capture::input_rect(field),
+                koru_editor::components::text_input::InputStyle::bare(theme::role::row()),
+                None,
+                caret_on,
+            );
+        }
         // The landing light, over the row and fading: the document's search
         // flash, on the page — so *View task* says where the task is.
         if let Some(alpha) = self.flash_alpha(row.document, row.node) {
@@ -423,7 +408,7 @@ impl TasksView {
 
     /// The one thing the table cannot say: that there is nothing to say.
     ///
-    /// **One row on the chip shape**, whichever of the three states it is: the
+    /// **One row on the chip shape**, whichever of the two states it is: the
     /// fact at the text column, and — for an empty bucket alone — the thing to
     /// do about it at the right end. Nothing illustrated, nothing centred in
     /// dead space; the row sits where the first task would be, so the page still
@@ -473,25 +458,6 @@ impl TasksView {
             scene::centre_y_in(&layout, chip),
             Some(p.text_dim),
         );
-
-        // **Add a task**, at the right end. `accent`, because it is the one
-        // thing on this row that is an offer rather than a statement — and the
-        // hover is the whole affordance, as everywhere else on this page.
-        let Some(r) = self.empty_action_rect() else {
-            return;
-        };
-        let hot = self.hover == Some(Hit::EmptyAction);
-        let layout = self
-            .engine
-            .simple_layout(states::ADD_A_TASK, theme::role::row());
-        scene::draw_layout_first_line(
-            scene,
-            root,
-            &layout,
-            r.x,
-            scene::centre_y_in(&layout, r),
-            Some(if hot { p.text } else { p.accent }),
-        );
     }
 }
 
@@ -513,7 +479,7 @@ impl TasksView {
 /// `panes::explore::rail`, at a size fixed to a nav row's icon lane; making it
 /// public would spend a name in that module so this page could pass a different number
 /// to it.
-fn draw_swatch(scene: &mut Scene, root: Affine, r: Rect, token: Option<&str>) {
+pub(super) fn draw_swatch(scene: &mut Scene, root: Affine, r: Rect, token: Option<&str>) {
     let colour = token
         .and_then(theme::accent_tone)
         .map(|tone| tone.swatch)

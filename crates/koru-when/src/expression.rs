@@ -85,6 +85,9 @@ pub enum DateExpression {
     NextWeek,
     /// Monday = 0, matching chrono's `num_days_from_monday`.
     Weekday(u8),
+    /// `next friday`: that weekday in **next week**. Which day starts a week
+    /// is the resolver's, as it is for [`NextWeek`](Self::NextWeek).
+    NextWeekday(u8),
     MonthDay {
         month: u32,
         day: u32,
@@ -302,6 +305,15 @@ fn parse_date(
     }
     if Vocabulary::is(words.yesterday, head) {
         return Some((DateExpression::Yesterday, 1));
+    }
+    if let Some(index) = tokens.get(1).and_then(|second| words.weekday(second)) {
+        let index = u8::try_from(index).ok()?;
+        if Vocabulary::is(words.next_word, head) {
+            return Some((DateExpression::NextWeekday(index), 2));
+        }
+        if Vocabulary::is(words.this_word, head) {
+            return Some((DateExpression::Weekday(index), 2));
+        }
     }
     if let Some(index) = words.weekday(head) {
         return Some((DateExpression::Weekday(u8::try_from(index).ok()?), 1));

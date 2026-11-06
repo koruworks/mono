@@ -482,6 +482,33 @@ impl Paragraph {
     /// Adopt fresh content, keeping the layout when nothing that affects it
     /// changed. Without this every keystroke would re-shape every row in the
     /// outline, since a rebuild reads the whole document.
+    /// The chips this row wears for `node`: the attribute chips, and — on the
+    /// document's title — the list the document's task is in.
+    fn chips_for(&self, node: &Node) -> Vec<crate::chips::ChipSpec> {
+        let mut chips = crate::chips::attribute_chips(node);
+        if self.is_title
+            && let Some(list) = list_of(node)
+        {
+            chips.insert(0, crate::chips::ChipSpec::List(list));
+        }
+        chips
+    }
+
+    /// **The title wears its list** — called once the row is known to be the
+    /// title, which is decided by the body after the row is built. Ahead of
+    /// the due chip, in the Tasks page's order: where the task is filed, then
+    /// when it is due.
+    pub(crate) fn wear_title_chips(&mut self) {
+        let Some(list) = self.list else {
+            return;
+        };
+        let chip = crate::chips::ChipSpec::List(list);
+        if self.is_title && !self.chips.contains(&chip) {
+            self.chips.insert(0, chip);
+            self.dirty = true;
+        }
+    }
+
     pub(crate) fn adopt(
         &mut self,
         node: &Node,
@@ -517,7 +544,7 @@ impl Paragraph {
         let language = node.meta.language.clone();
         let table_layout = node.meta.table_layout.unwrap_or_default();
         let image = image_of(&node.content, &node.meta);
-        let chips = crate::chips::attribute_chips(node);
+        let chips = self.chips_for(node);
         // A row's font is no longer stored — it is read live from the body /
         // headings / code globals in `font_choice`, so `adopt` has no font field
         // to track. A role change re-shapes rows through `Body::invalidate`,

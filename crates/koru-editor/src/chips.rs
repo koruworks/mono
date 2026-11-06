@@ -82,6 +82,12 @@ pub enum ChipSpec {
     Priority(Priority),
     /// The node's `koru.color`, as its stable storage token.
     Color(String),
+    /// **The list the task is in, by name** — worn by a document's **title**
+    /// alone ([`Paragraph::wear_title_chips`](crate::paragraph::Paragraph::wear_title_chips)).
+    /// Every other task line says its list only through the due chip's
+    /// colour; the title is the one line that names the whole document's
+    /// task, so it names the list too, and pressing it opens the list's page.
+    List(ListId),
 }
 
 /// The chips `node`'s attributes earn, in display order: tags first (attr
@@ -266,6 +272,14 @@ impl ListLookup {
         &self.listed
     }
 
+    /// This list's name, while the table has it.
+    pub fn name(&self, id: ListId) -> Option<&str> {
+        self.listed
+            .iter()
+            .find(|(list, name, _)| *list == id && !name.is_empty())
+            .map(|(_, name, _)| name.as_str())
+    }
+
     /// This list's accent token, or `None` for a list with no colour **and**
     /// for one the table has forgotten.
     ///
@@ -366,10 +380,17 @@ fn face_of<'a>(
         ChipSpec::Priority(p) => (
             ChipKind::Priority,
             priority_label(*p).to_owned(),
-            None,
+            Some(priority_accent(*p).to_owned()),
             None,
         ),
         ChipSpec::Color(token) => (ChipKind::Swatch, String::new(), Some(token.clone()), None),
+        // The list's name in the list's colour — the Tasks page's list chip.
+        ChipSpec::List(id) => (
+            ChipKind::Tag,
+            lists.name(*id).unwrap_or("List").to_owned(),
+            lists.resolve(*id).map(str::to_owned),
+            None,
+        ),
     }
 }
 
@@ -494,6 +515,23 @@ fn row_bucket(row: &Paragraph, today: NaiveDate) -> Option<Bucket> {
         today,
         &SystemZone::detect(),
     ))
+}
+
+/// **The level's colour**, as an accent token: hot to cool, so the level
+/// reads at a glance — Urgent red, High orange, Medium yellow, Low blue. The
+/// one place it is decided; the chip, the Tasks page's chip and both
+/// priority pickers ask here. From the shared accent set, so *red* on a
+/// priority is the *red* a line's colour dot is, in every theme.
+///
+/// Priority was neutral by rule once (invariant 13: colour is presentation,
+/// a priority is importance); the owner chose colour for it on 2026-11-05.
+pub fn priority_accent(p: Priority) -> &'static str {
+    match p {
+        Priority::Urgent => "red",
+        Priority::High => "orange",
+        Priority::Medium => "yellow",
+        Priority::Low => "blue",
+    }
 }
 
 /// The level's display name — the chip's whole text. The `P1`-style

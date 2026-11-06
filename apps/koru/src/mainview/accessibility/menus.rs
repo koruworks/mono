@@ -71,6 +71,12 @@ impl MainView {
         {
             return node;
         }
+        // The launcher, the same way: a menu of its tiles.
+        if blockers == Blockers::Modal(koru_workspace_host::routing::ModalKind::Launcher)
+            && let Some(node) = self.launcher_semantics(cx)
+        {
+            return node;
+        }
         // The font picker is projected in full: a search field, the families
         // on screen and the toggle, not a hollow dialog.
         if blockers == Blockers::Prompt(koru_workspace_host::routing::PromptKind::FontPicker)
@@ -132,6 +138,11 @@ impl MainView {
         }
         if blockers == Blockers::Modal(koru_workspace_host::routing::ModalKind::PlaceChooser)
             && let Some(occurrence) = self.place_chooser_focus(cx)
+        {
+            return occurrence;
+        }
+        if blockers == Blockers::Modal(koru_workspace_host::routing::ModalKind::Launcher)
+            && let Some(occurrence) = self.launcher_focus(cx)
         {
             return occurrence;
         }
@@ -334,6 +345,7 @@ fn modal_keyword(kind: koru_workspace_host::routing::ModalKind) -> &'static str 
         K::Recording => "recording",
         K::ContextMenu => "menu",
         K::PlaceChooser => "place-chooser",
+        K::Launcher => "launcher",
         K::MediaViewer => "media-viewer",
     }
 }
@@ -364,7 +376,7 @@ pub(super) fn is_blocker_target(view: &MainView, target: Occurrence) -> bool {
     if let Some(id) = instance_of(target, MENU) {
         return view.menu_row_at(id).is_some() || view.names_a_live_menu(id);
     }
-    if super::place_chooser::is_target(view, target) {
+    if super::place_chooser::is_target(view, target) || super::launcher::is_target(view, target) {
         return true;
     }
     // The reminder popover's own controls, when it is what is standing. A menu

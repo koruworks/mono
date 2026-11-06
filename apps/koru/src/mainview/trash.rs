@@ -57,7 +57,7 @@ pub(super) enum ConfirmSubject {
     /// paragraph stays — but the confirm machinery is one machinery, and a
     /// second dialog type beside it would be a second set of answers to *what
     /// does Escape mean*.
-    RemoveFromTasks(super::tasks::PendingTaskEdit),
+    RemoveFromTasks(Vec<super::tasks::PendingTaskEdit>),
     /// V-6: deleting a list from the tasks rail.
     ///
     /// **The second one in this enum that bins nothing.** The list's registry
@@ -729,7 +729,9 @@ impl MainView {
             // row leaves the page and the numbers now, and the store confirms
             // it a moment later.
             ConfirmSubject::RemoveFromTasks(pending) => {
-                self.queue_task_command(pending.command, true)
+                for edit in pending {
+                    self.queue_task_command(edit.command, true);
+                }
             }
             // Queued on *yes* and nowhere else, for that same reason — and
             // through `apply_tasks_rail`, so a list's deletion travels the one

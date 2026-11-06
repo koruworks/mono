@@ -563,6 +563,7 @@ impl MainView {
         // Where the menu would be: it is opened in a menu's place, and its
         // targets' names are tooltips drawn after it.
         self.draw_place_chooser(scene, root);
+        self.draw_launcher(scene, root);
         // After the menu, because a menu control's chip must not end up under
         // the panel it belongs to. See `draw_tooltip`.
         self.draw_tooltip(scene, root);

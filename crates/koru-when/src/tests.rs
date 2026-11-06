@@ -72,7 +72,8 @@ fn legacy_parse_and_parse_in_regression_goldens() {
         ("", None),
         ("9", None),
         ("in +2w", None),
-        ("next friday", None),
+        // Taught on 2026-11-05: the weekday in next week (Monday-started).
+        ("next friday", Some(When::Date(day(2026, 9, 4)))),
         ("2027-10-28", None),
         ("tomorrow 9am extra", None),
         ("EST", None),
@@ -863,7 +864,7 @@ fn what_the_grammar_does_not_know_is_none() {
         "",
         "   ",
         "someday",
-        "next friday", // "next" is not grammar; plain "friday" already is
+        "next", // a modifier with no weekday is nothing
         "in",
         "in h",
         "in 2fortnights",
@@ -899,5 +900,41 @@ fn the_english_table_is_the_one_parse_uses() {
     assert_eq!(
         parse_in("sept 10", here(), DateOrder::default(), &ENGLISH),
         parse("sept 10", here(), DateOrder::default())
+    );
+}
+
+/// **`next` and `this` modify any weekday** — one rule over the table's
+/// weekdays, not a phrase list. On Thursday 5 November 2026: *friday* and
+/// *this friday* are the 6th, the coming one; *next friday* is the 13th, the
+/// Friday of next week; and a weekday named on its own day is still a week
+/// on, with or without `this`.
+#[test]
+fn next_and_this_modify_any_weekday() {
+    let thursday =
+        Reference::without_selection(day(2026, 11, 5).and_hms_opt(10, 0, 0).expect("a time"));
+    let on = |phrase: &str| parse(phrase, thursday, DateOrder::default());
+    assert_eq!(on("friday"), Some(When::Date(day(2026, 11, 6))));
+    assert_eq!(on("this friday"), Some(When::Date(day(2026, 11, 6))));
+    assert_eq!(on("coming fri"), Some(When::Date(day(2026, 11, 6))));
+    assert_eq!(on("next friday"), Some(When::Date(day(2026, 11, 13))));
+    assert_eq!(on("next fri"), Some(When::Date(day(2026, 11, 13))));
+    assert_eq!(on("next monday"), Some(When::Date(day(2026, 11, 9))));
+    assert_eq!(on("next thursday"), Some(When::Date(day(2026, 11, 12))));
+    assert_eq!(on("this thursday"), Some(When::Date(day(2026, 11, 12))));
+    assert_eq!(
+        on("next friday 9am"),
+        Some(When::Wall(day(2026, 11, 13).and_hms_opt(9, 0, 0).unwrap())),
+        "with a time, like any day phrase"
+    );
+    assert_eq!(on("next"), None);
+    assert_eq!(
+        parse_expression("next friday", Language::English, DateOrder::default()).and_then(|e| {
+            match e {
+                TemporalExpression::Date(date) => Some(date),
+                _ => None,
+            }
+        }),
+        Some(DateExpression::NextWeekday(4)),
+        "unresolved, the week's start is left to the resolver"
     );
 }

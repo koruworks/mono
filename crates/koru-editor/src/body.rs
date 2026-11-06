@@ -370,6 +370,7 @@ impl Body {
                 }
             };
             row.is_title = true;
+            row.wear_title_chips();
             note_unfinished_children(ws, &mut row);
             self.rows.push(row);
         }

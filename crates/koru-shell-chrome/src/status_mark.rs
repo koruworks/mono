@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! **A small status mark** — the spinning ring a running chat wears and the
-//! dot that says *this needs you* or *something new*, drawn the same way on
-//! a tab and at the end of a Chats row (koru-ai D83).
+//! **A small status mark** — the spinning ring a running chat wears, the
+//! question mark that says *this is waiting on your answer*, and the dot
+//! that says *something new*, drawn the same way on a tab and at the end of
+//! a Chats row (koru-ai D83).
 //!
 //! Spelled in colours and a phase, never in a chat's words: what a mark
 //! *means* is the host's. The ring's turn is read off one process clock
@@ -15,7 +16,8 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use koru_draw::geometry::Rect;
-use koru_draw::scene;
+use koru_draw::text::TextEngine;
+use koru_draw::{icons, scene, theme};
 use vello::Scene;
 use vello::kurbo::{Affine, Arc, Point, Stroke, Vec2};
 use vello::peniko::Color;
@@ -33,7 +35,11 @@ pub enum StatusMark {
     /// Something is running. `phase` is how far round the ring is, `0..1`;
     /// `None` holds it still (reduced motion).
     Spinner { phase: Option<f32>, color: Color },
-    /// A dot: something waits for the person, or arrived unseen.
+    /// The question glyph: the chat stopped to ask the person something —
+    /// a question, an approval, a permission. Like the ring it takes the
+    /// tab icon's place, because it is what the person can act on.
+    Question(Color),
+    /// A dot: something arrived unseen.
     Dot(Color),
 }
 
@@ -54,14 +60,32 @@ pub fn spin_phase(now: Instant) -> f32 {
 }
 
 /// The mark, centred in `slot` — a Chats row's end, or a tab's icon slot
-/// in place of the icon. A ring is as wide as a 14 px icon; a dot is 7.
-pub fn draw(scene: &mut Scene, root: Affine, slot: Rect, mark: StatusMark) {
+/// in place of the icon. A ring and the question glyph are as wide as a
+/// 14 px icon; a dot is 7.
+pub fn draw(
+    scene: &mut Scene,
+    root: Affine,
+    engine: &mut TextEngine,
+    slot: Rect,
+    mark: StatusMark,
+) {
     let cx = slot.x + slot.w * 0.5;
     let cy = slot.y + slot.h * 0.5;
     match mark {
         StatusMark::Spinner { phase, color } => {
             let r = (slot.w.min(slot.h) * 0.5 - 1.0).clamp(2.0, 6.0);
             draw_ring(scene, root, cx, cy, r, phase.unwrap_or(0.0), color);
+        }
+        StatusMark::Question(color) => {
+            let glyph = engine.icon_layout(icons::QUESTION, theme::CAPTION_ICON);
+            scene::draw_layout(
+                scene,
+                root,
+                &glyph,
+                cx - glyph.width() * 0.5,
+                cy - glyph.height() * 0.5,
+                Some(color),
+            );
         }
         StatusMark::Dot(color) => {
             scene::fill(scene, root, color, &scene::circle(cx, cy, 3.5));
@@ -146,5 +170,6 @@ mod tests {
             .animating()
         );
         assert!(!StatusMark::Dot(c).animating());
+        assert!(!StatusMark::Question(c).animating());
     }
 }

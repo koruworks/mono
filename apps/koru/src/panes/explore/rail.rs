@@ -292,6 +292,10 @@ pub struct TasksRail {
     /// is pushed from a document a peer also writes, so the row a name is being
     /// typed over may move under the field.
     renaming: Option<ListId>,
+    /// **The list a dragged task would join**: tasks carried off a Tasks
+    /// page over this list's row. Pushed by the container, which owns the
+    /// drag; the rail only lights the row.
+    drop_target: Option<ListId>,
     scroll: f32,
 }
 
@@ -842,6 +846,18 @@ impl TasksRail {
         changed
     }
 
+    /// Light `list`'s row as where dragged tasks would land, or none.
+    /// Answers whether that changed.
+    pub fn set_drop_target(&mut self, list: Option<ListId>) -> bool {
+        let changed = self.drop_target != list;
+        self.drop_target = list;
+        changed
+    }
+
+    pub fn drop_target(&self) -> Option<ListId> {
+        self.drop_target
+    }
+
     pub fn clear_hover(&mut self) -> bool {
         let changed = self.hover.is_some();
         self.hover = None;
@@ -946,7 +962,21 @@ impl TasksRail {
                     record.property("active", active, "view state");
                 },
             );
-            if active {
+            let dropping = matches!(row, RailRow::List(i)
+                if self.drop_target.is_some()
+                    && self.lists.get(i).map(|list| list.id) == self.drop_target);
+            if dropping {
+                // Where the carried tasks would land: lit, and ringed in the
+                // accent so it reads as a target rather than a hover.
+                scene::fill(scene, root, p.hover_tint, &row_chip(r));
+                scene::stroke(
+                    scene,
+                    root,
+                    p.accent,
+                    1.5,
+                    &row_chip(Rect::new(r.x + 0.75, r.y + 0.75, r.w - 1.5, r.h - 1.5)),
+                );
+            } else if active {
                 draw_chosen_row(scene, root, r, p);
             } else if self.hover == Some(row) && !matches!(row, RailRow::ListsHeading) {
                 scene::fill(scene, root, p.hover_tint, &row_chip(r));

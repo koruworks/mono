@@ -173,9 +173,8 @@ mod imp {
                 "File",
                 true,
                 &[
-                    &row(&mut rows, ShortcutId::AddContent),
+                    &row(&mut rows, ShortcutId::New),
                     &row(&mut rows, ShortcutId::NewTab),
-                    &row(&mut rows, ShortcutId::NewWindow),
                     &PredefinedMenuItem::separator(),
                     &row(&mut rows, ShortcutId::RenameDocument),
                     // **No *Move to Trash* row**, and it is the `Press` model

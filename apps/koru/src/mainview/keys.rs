@@ -3,7 +3,7 @@
 //! The chords the container claims before the active tab sees anything.
 //!
 //! Every one was checked against `koru_editor::input::keymap::DEFAULT` and the
-//! two the shell already owns (Ctrl+N, Ctrl+Shift+T). Where only the Ctrl+Shift
+//! one the shell already owns (Ctrl+Shift+T). Where only the Ctrl+Shift
 //! form is bound in the editor — Ctrl+Shift+E is align-centre — the plain form
 //! is free, which is why each arm below also requires `!shift`.
 //!
@@ -30,8 +30,8 @@ pub enum Chord {
     /// the last one by hand — never an empty window.
     CloseAllTabs,
     NewTab,
-    /// Open the same create/import menu as the caption `+`.
-    AddContent,
+    /// Open the New… launcher, the tab strip's `+`.
+    New,
     CloseTab,
     /// Ctrl+P or Ctrl+Shift+F — global search in this window.
     Search,
@@ -198,8 +198,6 @@ fn resolve_any(key: &Key, text: Option<&str>, mods: ModifiersState) -> Option<Ch
     }
     // The chords that want Shift:
     //
-    // - `Ctrl+Shift+A` opens Add…, the caption `+` menu. Plain `Ctrl+A` stays
-    //   the editor's Select all.
     // - `Ctrl+W` closes a tab, so `Ctrl+Shift+W` closing *every* tab is the
     //   shape people already expect from a browser.
     // - **The explore pane is `Ctrl+Shift+E`, not `Ctrl+E`.** It gave the plain
@@ -222,7 +220,6 @@ fn resolve_any(key: &Key, text: Option<&str>, mods: ModifiersState) -> Option<Ch
     // not "fix" a failure there by relaxing the assertion.
     if mods.shift_key() {
         return match ctrl_letter(key, text)? {
-            'a' => Some(Chord::AddContent),
             'w' => Some(Chord::CloseAllTabs),
             'e' => Some(Chord::ToggleSidebar),
             'o' => Some(Chord::ManageWorkspaces),
@@ -239,6 +236,9 @@ fn resolve_any(key: &Key, text: Option<&str>, mods: ModifiersState) -> Option<Ch
     let c = ctrl_letter(key, text)?;
     match c {
         't' => Some(Chord::NewTab),
+        // The New… launcher. The shell gave Ctrl+N up when New window lost
+        // its chord: a second window is the tab menu's *Move to New Window*.
+        'n' => Some(Chord::New),
         'w' => Some(Chord::CloseTab),
         'j' => Some(Chord::ToggleContext),
         'p' => Some(Chord::Search),

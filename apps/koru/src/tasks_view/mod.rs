@@ -65,14 +65,16 @@ pub mod accessibility;
 mod capture;
 mod draw;
 pub mod echo;
+mod heading;
 mod menu;
 mod pickers;
 pub mod query;
+mod rank;
 mod row;
 mod states;
 mod view;
 
-pub use menu::row_menu;
+pub use menu::{row_menu, rows_menu};
 pub use query::TaskEntry;
 pub use view::{ListFace, Request, TasksView, due_sentence};
 

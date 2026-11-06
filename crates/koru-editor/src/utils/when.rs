@@ -519,6 +519,27 @@ fn resolve_date(
                 .checked_add_signed(TimeDelta::days(i64::from(delta)))
                 .ok_or(ResolutionIssue::Unsupported)
         }
+        // That weekday in next week: the week's first day, by the person's
+        // week start exactly as `NextWeek` reads it, then on to the weekday.
+        DateExpression::NextWeekday(index) => {
+            if index > 6 {
+                return Err(ResolutionIssue::Unsupported);
+            }
+            let start = match context
+                .week_start_override
+                .unwrap_or(context.system_week_start)
+            {
+                WeekStart::Monday => 0,
+                WeekStart::Saturday => 5,
+                WeekStart::Sunday => 6,
+            };
+            let current = today.weekday().num_days_from_monday();
+            let to_next_week = 7 - (current + 7 - start) % 7;
+            let into_week = (u32::from(index) + 7 - start) % 7;
+            today
+                .checked_add_signed(TimeDelta::days(i64::from(to_next_week + into_week)))
+                .ok_or(ResolutionIssue::Unsupported)
+        }
         DateExpression::Weekday(index) => {
             if index > 6 {
                 return Err(ResolutionIssue::Unsupported);

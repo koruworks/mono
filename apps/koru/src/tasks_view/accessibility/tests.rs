@@ -643,10 +643,11 @@ fn the_queues_name_is_localized_and_the_drawn_heading_is_not() {
     );
 }
 
-/// **The list chip is the one chip that is a control**, so it is the one that
-/// is published as one — and following it asks for the page it names.
+/// **The list chip is published as a control** — a button that opens the
+/// list picker to change the list, never the list's page (the owner's ask,
+/// 2026-11-05). Going to the list is the row menu's *Go to list*.
 #[test]
-fn the_list_chip_is_a_control_and_opens_the_list() {
+fn the_list_chip_is_a_control_and_opens_the_list_picker() {
     use koru_core::ids::ListId;
     let list = ListId::new();
     let mut view = page(&["Buy milk"]);
@@ -659,7 +660,7 @@ fn the_list_chip_is_a_control_and_opens_the_list() {
 
     let chip = find(&view, &row_occurrence(&view, 0, parts::LIST_CHIP).locator())
         .expect("the list chip is published");
-    assert_eq!(chip.role, Role::Link);
+    assert_eq!(chip.role, Role::Button);
     assert_eq!(
         chip.label.as_deref(),
         Some("Bike Project"),
@@ -667,10 +668,8 @@ fn the_list_chip_is_a_control_and_opens_the_list() {
     );
 
     assert!(view.accessibility_action(row_occurrence(&view, 0, parts::LIST_CHIP), Action::Click));
-    match view.take_request() {
-        Some(Request::OpenList { list: asked }) => assert_eq!(asked, list),
-        other => panic!("expected the list's page, got {other:?}"),
-    }
+    assert_eq!(view.take_request(), None, "nothing opened");
+    assert!(view.list_picker_for_test().is_some(), "the list picker");
 }
 
 /// A row below the fold is revealed through the page's own scrolling, which is

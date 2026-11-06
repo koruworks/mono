@@ -1012,14 +1012,6 @@ fn a_session_dropped_on_a_project_row_sends_the_move_verb() {
 // drives the right verb or Outcome. These read the verbs off a test backend
 // whose command channel the suite holds, exactly as the project tests do.
 
-fn a_agent_session(id: SessionId, name: &str) -> SessionSummary {
-    use koru_session_protocol::*;
-    let mut session = a_running_session(id, None);
-    session.display_name = name.to_owned();
-    session.profile = SessionProfileKey::BuiltIn("claude".parse::<BuiltInProfileKey>().unwrap());
-    session
-}
-
 fn a_running_session(id: SessionId, project: Option<ProjectId>) -> SessionSummary {
     use koru_session_protocol::*;
     SessionSummary {
@@ -1056,111 +1048,6 @@ fn the_session_menu_offers_the_original_four_items() {
             MenuAction::SessionTerminate,
         ]
     );
-}
-
-/// Opening Add… snapshots live sessions into *Active ▸* under Shell or
-/// Agents, partitioned by launch-profile kind — a RawPty Claude still sits
-/// under Agents, not Shell.
-#[test]
-fn the_plus_menu_lists_running_sessions_in_their_kind_flyout() {
-    let (mut v, mut workspace) = container();
-    let shell = SessionId::mint();
-    let agent = SessionId::mint();
-    v.explore.set_agent_sessions(vec![
-        a_running_session(shell, None),
-        a_agent_session(agent, "Claude"),
-    ]);
-    assert!(v.key(&mut workspace.ws, &ch("a"), Some("a"), PRIMARY_SHIFT));
-
-    let shells = context_menu::submenu(MenuAction::NewShell).expect("Shell flyout");
-    assert_eq!(shells[0], MenuAction::ActiveShells);
-    assert_eq!(shells[1], MenuAction::Divider);
-    assert!(!shells.contains(&MenuAction::OpenRunningSession(shell)));
-    assert!(!shells.contains(&MenuAction::OpenRunningSession(agent)));
-    assert_eq!(
-        context_menu::submenu(MenuAction::ActiveShells),
-        Some(vec![MenuAction::OpenRunningSession(shell)])
-    );
-
-    let agents = context_menu::submenu(MenuAction::NewAgent).expect("Agents flyout");
-    assert_eq!(agents[0], MenuAction::ActiveAgents);
-    assert_eq!(agents[1], MenuAction::Divider);
-    assert!(!agents.contains(&MenuAction::OpenRunningSession(agent)));
-    assert_eq!(
-        context_menu::submenu(MenuAction::ActiveAgents),
-        Some(vec![MenuAction::OpenRunningSession(agent)])
-    );
-
-    context_menu::set_plus_snapshots(vec![], vec![], vec![], vec![]);
-}
-
-/// Hovering *Active* opens a second flyout of the running sessions — the
-/// menu widget only holds one flyout, so this is a third panel on the
-/// container, not a nested widget.
-#[test]
-fn the_plus_menu_active_row_opens_the_running_list() {
-    let (mut v, mut workspace) = container();
-    let shell = SessionId::mint();
-    let agent = SessionId::mint();
-    v.explore.set_agent_sessions(vec![
-        a_running_session(shell, None),
-        a_agent_session(agent, "Claude"),
-    ]);
-    assert!(v.key(&mut workspace.ws, &ch("a"), Some("a"), PRIMARY_SHIFT));
-
-    let agents = v
-        .menu
-        .as_ref()
-        .unwrap()
-        .items()
-        .iter()
-        .position(|a| *a == MenuAction::NewAgent)
-        .expect("Agents row");
-    assert!(v.open_submenu(agents));
-    let active = v
-        .submenu
-        .as_ref()
-        .unwrap()
-        .1
-        .items()
-        .iter()
-        .position(|a| *a == MenuAction::ActiveAgents)
-        .expect("Active row");
-    assert!(v.open_nested_submenu(active));
-    assert_eq!(
-        v.nested.as_ref().unwrap().1.items(),
-        &[MenuAction::OpenRunningSession(agent)]
-    );
-
-    let shells = v
-        .menu
-        .as_ref()
-        .unwrap()
-        .items()
-        .iter()
-        .position(|a| *a == MenuAction::NewShell)
-        .expect("Shell row");
-    assert!(v.open_submenu(shells));
-    assert!(
-        v.nested.is_none(),
-        "switching flyout closes the nested list"
-    );
-    let active = v
-        .submenu
-        .as_ref()
-        .unwrap()
-        .1
-        .items()
-        .iter()
-        .position(|a| *a == MenuAction::ActiveShells)
-        .expect("Active row");
-    assert!(v.open_nested_submenu(active));
-    assert_eq!(
-        v.nested.as_ref().unwrap().1.items(),
-        &[MenuAction::OpenRunningSession(shell)]
-    );
-
-    context_menu::set_plus_snapshots(vec![], vec![], vec![], vec![]);
 }
 
 /// Picking a running session from Add… attaches (or focuses) it, the same

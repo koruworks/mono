@@ -255,8 +255,7 @@ impl MainView {
                 self.open_search();
             }
             ChromeStop::Lane(LaneControl::New) => {
-                let square = self.settled_lane_controls().new;
-                self.open_new_tab_menu_at(square);
+                self.open_launcher();
             }
             // The control the ring is on, read the way the ring reads it:
             // Help, Settings and the profile square each do what a press on

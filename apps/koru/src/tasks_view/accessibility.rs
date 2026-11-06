@@ -251,6 +251,7 @@ impl TasksView {
             (Some(Picker::List(_)), _) => 1,
             (Some(Picker::Priority(_)), _) => 2,
             (Some(Picker::Due(_)), _) => 3,
+            (Some(Picker::Color(_)), _) => 5,
             (None, Some(_)) => 4,
             (None, None) => 0,
         });
@@ -435,13 +436,14 @@ impl TasksView {
         rect: Rect,
         i: usize,
     ) -> Option<SemanticNode> {
-        let list = self.leads_to_list(row)?;
+        let list = row.list?;
         let face = self.list_face(list)?;
         let chips = self.row_chips(row);
         let at = chips.iter().position(|chip| chip.list.is_some())?;
         let bounds = self.row_chip_rects(rect, i).get(at).copied()?;
         Some(
-            SemanticNode::new(cx.model(row.node, parts::LIST_CHIP), Role::Link)
+            // A button now, not a link: it opens the list picker.
+            SemanticNode::new(cx.model(row.node, parts::LIST_CHIP), Role::Button)
                 .with_label(face.name.clone())
                 .with_bounds(cx.place(bounds))
                 .with_action(Action::Click),
@@ -468,6 +470,9 @@ impl TasksView {
                 picker.menu.panel(self.viewport),
             ),
             (Some(Picker::Due(picker)), _) => (Key::A11yTaskDuePicker, picker.panel),
+            (Some(Picker::Color(picker)), _) => {
+                (Key::A11yTaskColorPicker, picker.menu.panel(self.viewport))
+            }
             (None, Some(menu)) => (Key::A11yMoreActions, menu.panel(self.viewport)),
             (None, None) => return None,
         };
@@ -540,7 +545,7 @@ impl TasksView {
                 self.select_row(i);
                 self.menu_for_selected()
             }
-            (p, Action::Click) if p == parts::LIST_CHIP => self.open_row_list(i),
+            (p, Action::Click) if p == parts::LIST_CHIP => self.press_list_chip(i, None),
             _ => false,
         }
     }

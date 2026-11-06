@@ -41,6 +41,13 @@ pub(super) enum Picker {
     List(ListPicker),
     Priority(PriorityPick),
     Due(DuePick),
+    Color(ColorPicker),
+}
+
+/// The colour picker, and the rows it decides for.
+pub(super) struct ColorPicker {
+    pub target: Target,
+    pub menu: Menu<super::menu::ColorPick>,
 }
 
 /// The membership picker, and the row it belongs to.
@@ -54,17 +61,37 @@ pub(super) struct ListPicker {
     pub menu: Menu<ListPick>,
 }
 
-/// What a picker is deciding for: a row on the page, whose change leaves as
+/// What a picker is deciding for: rows on the page, whose change leaves as
 /// a request, or the capture row, whose pick rides on the words until Enter.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+///
+/// **Rows, not a row.** One task is a set of one; a Ctrl/Shift selection is
+/// the same picker deciding for every row in it, so the one-row and the
+/// many-row paths are one path and cannot come to differ.
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub(super) enum Target {
-    Row { document: DocumentId, node: NodeId },
+    Rows(Vec<(DocumentId, NodeId)>),
     Capture,
 }
 
 impl Target {
+    #[cfg(test)]
     pub fn row(document: DocumentId, node: NodeId) -> Self {
-        Self::Row { document, node }
+        Self::Rows(vec![(document, node)])
+    }
+
+    /// The request a pick makes for these rows: `each` for one row, or one
+    /// for every row, left as one [`Request::Many`] so the gesture is one.
+    /// `None` for the capture row, whose pick is worn rather than sent.
+    pub fn request(&self, each: impl Fn(DocumentId, NodeId) -> Request) -> Option<Request> {
+        match self {
+            Self::Rows(rows) if rows.len() == 1 => Some(each(rows[0].0, rows[0].1)),
+            Self::Rows(rows) => Some(Request::Many(
+                rows.iter()
+                    .map(|&(document, node)| each(document, node))
+                    .collect(),
+            )),
+            Self::Capture => None,
+        }
     }
 }
 
@@ -135,6 +162,24 @@ impl MenuItem for PriorityRow {
         }
     }
 
+    /// The editor's priority picker's glyphs: a flag per level, Clear's
+    /// eraser — so the two pickers are one picker in two places.
+    fn icon(&self) -> Option<char> {
+        match self {
+            Self::Level { .. } => Some(koru_draw::icons::FLAG),
+            Self::Clear => Some(koru_draw::icons::CLEAR),
+            Self::Divider => None,
+        }
+    }
+
+    /// The flag in its level's colour, as on the chip.
+    fn icon_accent(&self) -> Option<&str> {
+        match self {
+            Self::Level { level, .. } => Some(koru_editor::chips::priority_accent(*level)),
+            _ => None,
+        }
+    }
+
     fn divider(&self) -> bool {
         matches!(self, Self::Divider)
     }
@@ -176,13 +221,13 @@ impl PriorityPick {
             Some(PriorityRow::Clear) => None,
             Some(PriorityRow::Divider) | None => return Choice::Stay,
         };
-        match self.target {
-            Target::Row { document, node } => Choice::Request(Request::SetPriority {
-                document,
-                node,
-                priority,
-            }),
-            Target::Capture => Choice::Picked(Picked::Priority(priority)),
+        match self.target.request(|document, node| Request::SetPriority {
+            document,
+            node,
+            priority,
+        }) {
+            Some(request) => Choice::Request(request),
+            None => Choice::Picked(Picked::Priority(priority)),
         }
     }
 }
@@ -215,10 +260,25 @@ impl DuePick {
     /// Where the panel goes: hanging under the row's `…`, right edge aligned
     /// to it, the way the two menus are — and kept inside the viewport, above
     /// the row when there is no room below it.
-    pub fn place(dots: Rect, (w, h): (f32, f32), viewport: (f32, f32)) -> Rect {
+    pub fn place(dots: Rect, size: (f32, f32), viewport: (f32, f32)) -> Rect {
+        Self::fit(dots.x + dots.w - size.0, dots, size, viewport)
+    }
+
+    /// Where the panel goes under the words that opened it — the capture
+    /// row's `/due`: its **left** edge at `at`, the `/` that was typed, so the
+    /// calendar opens where the eye already is rather than at the far end of
+    /// the row. Kept inside the viewport the same way.
+    pub fn place_under(at: Rect, size: (f32, f32), viewport: (f32, f32)) -> Rect {
+        Self::fit(at.x, at, size, viewport)
+    }
+
+    /// A panel of `size` starting at `x`, below `anchor` when it fits and
+    /// above it otherwise, inside the viewport.
+    fn fit(x: f32, anchor: Rect, (w, h): (f32, f32), viewport: (f32, f32)) -> Rect {
         const GAP: f32 = 4.0;
         let pad = theme::PANEL_PAD;
-        let mut x = dots.x + dots.w - w;
+        let dots = anchor;
+        let mut x = x;
         if x + w > viewport.0 - pad {
             x = viewport.0 - pad - w;
         }
@@ -241,7 +301,7 @@ impl DuePick {
 
     /// The grid's answer, in the page's vocabulary.
     pub fn resolve(&self, pick: Pick) -> Choice {
-        resolve_pick(self.target, &self.grid, pick)
+        resolve_pick(&self.target, &self.grid, pick)
     }
 }
 
@@ -252,7 +312,7 @@ impl DuePick {
 /// function every surface uses, so the same words in the same panel store
 /// what the editor stores. Clear is the same request with no due — one
 /// dimension, both directions. Nothing is nothing, and the panel stays.
-pub(super) fn resolve_pick(target: Target, grid: &DateGrid, pick: Pick) -> Choice {
+pub(super) fn resolve_pick(target: &Target, grid: &DateGrid, pick: Pick) -> Choice {
     let due = match pick {
         Pick::None => return Choice::Stay,
         Pick::Day(day) => Some(Temporal::Date(DateOnly::new(day))),
@@ -268,12 +328,12 @@ pub(super) fn resolve_pick(target: Target, grid: &DateGrid, pick: Pick) -> Choic
         }
         Pick::Clear => None,
     };
-    match target {
-        Target::Row { document, node } => Choice::Request(Request::SetDue {
-            document,
-            node,
-            due,
-        }),
-        Target::Capture => Choice::Picked(Picked::Due(due)),
+    match target.request(|document, node| Request::SetDue {
+        document,
+        node,
+        due: due.clone(),
+    }) {
+        Some(request) => Choice::Request(request),
+        None => Choice::Picked(Picked::Due(due)),
     }
 }

@@ -2139,7 +2139,21 @@ pub enum Key {
     /// The three panels the page opens over a row.
     A11yTaskDuePicker,
     A11yTaskPriorityPicker,
+    A11yTaskColorPicker,
     A11yTaskListPicker,
+    // ---------------------------------------------------- the New… launcher
+    //
+    // The `+` button's dialog: its name, the button's tooltip, and the two
+    // words the session kinds do not already have (`TerminalKindAgent`,
+    // `TerminalKindShell` name the other two tiles).
+    LauncherTitle,
+    LauncherTooltip,
+    LauncherDocument,
+    LauncherTask,
+    LauncherChat,
+    LauncherImport,
+    /// The launcher's footer: what Alt and Shift add to a choice.
+    LauncherHint,
     // ---------------------------------------------------- reminders (Plan 2.2)
     //
     // **Almost everything this surface says already had a row.** `Reminder`,
@@ -2873,7 +2887,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2003] = [
+    pub const ALL: [Key; 2011] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4350,7 +4364,15 @@ impl Key {
         Key::A11yTaskBucketCompleted,
         Key::A11yTaskDuePicker,
         Key::A11yTaskPriorityPicker,
+        Key::A11yTaskColorPicker,
         Key::A11yTaskListPicker,
+        Key::LauncherTitle,
+        Key::LauncherTooltip,
+        Key::LauncherDocument,
+        Key::LauncherTask,
+        Key::LauncherChat,
+        Key::LauncherImport,
+        Key::LauncherHint,
         Key::A11yReminderOnThisItem,
         Key::A11yReminderUnconfirmed,
         Key::A11yReminderNewsSaved,
@@ -14926,7 +14948,15 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::A11yTaskBucketCompleted, en: "Completed", es: "Completadas", pt_br: "Concluídas", de: "Abgeschlossen", fr: "Terminées", ar: "مكتملة", zh_hans: "已完成", ja: "完了" },
     Row { key: Key::A11yTaskDuePicker, en: "Due date", es: "Fecha de vencimiento", pt_br: "Data de entrega", de: "Fälligkeitsdatum", fr: "Échéance", ar: "تاريخ الاستحقاق", zh_hans: "截止日期", ja: "期限" },
     Row { key: Key::A11yTaskPriorityPicker, en: "Priority", es: "Prioridad", pt_br: "Prioridade", de: "Priorität", fr: "Priorité", ar: "الأولوية", zh_hans: "优先级", ja: "優先度" },
+    Row { key: Key::A11yTaskColorPicker, en: "Color", es: "Color", pt_br: "Cor", de: "Farbe", fr: "Couleur", ar: "اللون", zh_hans: "颜色", ja: "色" },
     Row { key: Key::A11yTaskListPicker, en: "List", es: "Lista", pt_br: "Lista", de: "Liste", fr: "Liste", ar: "قائمة", zh_hans: "列表", ja: "リスト" },
+    Row { key: Key::LauncherTitle, en: "New", es: "Nuevo", pt_br: "Novo", de: "Neu", fr: "Nouveau", ar: "جديد", zh_hans: "新建", ja: "新規" },
+    Row { key: Key::LauncherTooltip, en: "New…", es: "Nuevo…", pt_br: "Novo…", de: "Neu…", fr: "Nouveau…", ar: "جديد…", zh_hans: "新建…", ja: "新規…" },
+    Row { key: Key::LauncherDocument, en: "Document", es: "Documento", pt_br: "Documento", de: "Dokument", fr: "Document", ar: "مستند", zh_hans: "文档", ja: "ドキュメント" },
+    Row { key: Key::LauncherTask, en: "Task", es: "Tarea", pt_br: "Tarefa", de: "Aufgabe", fr: "Tâche", ar: "مهمة", zh_hans: "任务", ja: "タスク" },
+    Row { key: Key::LauncherChat, en: "Chat", es: "Chat", pt_br: "Chat", de: "Chat", fr: "Discussion", ar: "محادثة", zh_hans: "聊天", ja: "チャット" },
+    Row { key: Key::LauncherImport, en: "Import", es: "Importar", pt_br: "Importar", de: "Importieren", fr: "Importer", ar: "استيراد", zh_hans: "导入", ja: "インポート" },
+    Row { key: Key::LauncherHint, en: "Hold Alt to choose where it opens, Shift to pick a list or profile", es: "Mantén Alt para elegir dónde se abre, Mayús para elegir una lista o un perfil", pt_br: "Segure Alt para escolher onde abre, Shift para escolher uma lista ou um perfil", de: "Alt halten, um den Ort zu wählen, Umschalt für eine Liste oder ein Profil", fr: "Maintenez Alt pour choisir où l’ouvrir, Maj pour choisir une liste ou un profil", ar: "اضغط Alt مطولًا لاختيار مكان الفتح، وShift لاختيار قائمة أو ملف تعريف", zh_hans: "按住 Alt 选择打开位置，按住 Shift 选择列表或配置", ja: "Alt を押したままで開く場所を、Shift でリストまたはプロファイルを選択" },
     Row { key: Key::A11yReminderOnThisItem, en: "Reminders on this item", es: "Recordatorios de este elemento", pt_br: "Lembretes deste item", de: "Erinnerungen zu diesem Eintrag", fr: "Rappels sur cet élément", ar: "التذكيرات على هذا العنصر", zh_hans: "此条目的提醒", ja: "この項目のリマインダー" },
     Row { key: Key::A11yReminderUnconfirmed, en: "Not confirmed by storage yet", es: "Aún no confirmado por el almacenamiento", pt_br: "Ainda não confirmado pelo armazenamento", de: "Vom Speicher noch nicht bestätigt", fr: "Pas encore confirmé par le stockage", ar: "لم يؤكِّده التخزين بعد", zh_hans: "存储尚未确认", ja: "ストレージがまだ確認していません" },
     Row { key: Key::A11yReminderNewsSaved, en: "Reminder saved.", es: "Recordatorio guardado.", pt_br: "Lembrete salvo.", de: "Erinnerung gespeichert.", fr: "Rappel enregistré.", ar: "تم حفظ التذكير.", zh_hans: "提醒已保存。", ja: "リマインダーを保存しました。" },

@@ -134,6 +134,15 @@ impl Metrics {
         radius: 6.0,
     };
 
+    /// A control inside a page or a row rather than a strip: the standard
+    /// glyph, with none of the tab strip's insets, so its hover square is
+    /// the slot it is given — a page's `…`, a list row's `…`.
+    pub const INLINE: Self = Self {
+        inset_top: 0.0,
+        inset_bottom: 0.0,
+        ..Self::STANDARD
+    };
+
     /// Search-panel controls: 10% smaller glyphs with 4 px on every side.
     pub const COMPACT: Self = Self {
         icon_size: theme::CAPTION_ICON * 0.90,

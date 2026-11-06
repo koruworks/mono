@@ -720,6 +720,12 @@ impl View for Leaf {
         }
     }
 
+    fn take_wants_task_list(&mut self) -> Option<koru_core::ids::ListId> {
+        match self {
+            Self::Document(d) => View::take_wants_task_list(d),
+        }
+    }
+
     fn take_wants_global_settings(&mut self) -> bool {
         match self {
             Self::Document(d) => View::take_wants_global_settings(d),

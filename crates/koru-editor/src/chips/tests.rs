@@ -86,12 +86,12 @@ fn set_attributes_earn_chips_in_display_order() {
     assert!(attribute_chips(&read(&ws, id)).is_empty());
 }
 
-/// The due and priority chips are neutral labelled lozenges: the label is
-/// derived at draw time against the pass's `today` (never cached — a chip
-/// that says "Today" must stop saying it tomorrow), and the accent slot is
-/// `None` by construction — no overdue tint, no per-level color.
+/// The due chip is a neutral labelled lozenge, its label derived at draw time
+/// against the pass's `today` (never cached — a chip that says "Today" must
+/// stop saying it tomorrow) and no overdue tint; **the priority chip wears its
+/// level's colour** (`priority_accent`, the owner's choice of 2026-11-05).
 #[test]
-fn due_and_priority_chips_are_neutral_and_dated_against_today() {
+fn the_due_chip_is_neutral_and_dated_and_the_priority_wears_its_level() {
     let mut ws = ws();
     let id = ws
         .insert(Parent::Root, Node::paragraph("row").unwrap())
@@ -126,7 +126,11 @@ fn due_and_priority_chips_are_neutral_and_dated_against_today() {
         (boxes[1].kind, boxes[1].label.as_str()),
         (ChipKind::Priority, "Urgent")
     );
-    assert_eq!(boxes[1].accent, None, "no accent on a priority chip");
+    assert_eq!(
+        boxes[1].accent.as_deref(),
+        Some("red"),
+        "Urgent is red, by `priority_accent`"
+    );
 
     // The same spec against a distant today: the label re-derives.
     let far = chrono::NaiveDate::from_ymd_opt(2026, 6, 1).unwrap();
@@ -880,4 +884,41 @@ fn a_completed_task_leads_with_the_check_square_dated_or_not() {
             "completed, dated: {dated} — the check-square either way"
         );
     }
+}
+
+/// **A document's title names its list; its other lines do not.** The title
+/// is the line that stands for the whole document's task, so it wears the
+/// list's name — ahead of the due chip, in the Tasks page's order — and a
+/// body line keeps saying its list through the due chip's colour alone.
+#[test]
+fn the_title_wears_its_list_by_name_and_a_body_line_does_not() {
+    let mut ws = WorkspaceDoc::create(WorkspaceId::new(), "Test").unwrap();
+    let (mut row, list) = task_in_a_list(&mut ws);
+    assert!(
+        !row.chips.contains(&ChipSpec::List(list)),
+        "a body line: the colour only"
+    );
+
+    row.is_title = true;
+    row.wear_title_chips();
+    assert_eq!(row.chips.first(), Some(&ChipSpec::List(list)), "first");
+    let before = row.chips.clone();
+    row.wear_title_chips();
+    assert_eq!(row.chips, before, "worn once");
+
+    let mut lists = ListLookup::default();
+    lists.replace_named([(list, "Bike Project".to_owned(), Some("blue".to_owned()))]);
+    let boxes = chip_boxes_on(
+        &row,
+        &mut TextEngine::new(),
+        &TagLookup::default(),
+        &lists,
+        chrono::NaiveDate::from_ymd_opt(2026, 8, 31).unwrap(),
+    );
+    assert_eq!(boxes[0].label, "Bike Project", "by name");
+    assert_eq!(
+        boxes[0].accent.as_deref(),
+        Some("blue"),
+        "in the list's colour"
+    );
 }

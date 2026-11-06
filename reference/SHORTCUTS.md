@@ -10,7 +10,6 @@ Chords are shown as this platform writes them.
 
 | | |
 | --- | --- |
-| `Ctrl+N` | New window |
 | `Ctrl+Alt+A` | Keep window on top |
 | `Ctrl+=` | Zoom in |
 | `Ctrl+-` | Zoom out |
@@ -37,7 +36,7 @@ Chords are shown as this platform writes them.
 | | |
 | --- | --- |
 | `Ctrl+T` | New tab |
-| `Ctrl+Shift+A` | Add… |
+| `Ctrl+N` | New… |
 | `Ctrl+W` | Close tab |
 | `Ctrl+Shift+W` | Close all tabs |
 | `Ctrl+P` | Search |

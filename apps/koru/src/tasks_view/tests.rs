@@ -408,14 +408,16 @@ fn the_longest_trailing_phrase_wins() {
     );
 }
 
-/// …and *longest that parses*, not longest that looks like one. `next friday`
-/// is deliberately not in the grammar — plain `friday` already means the next
-/// one — so the word `next` stays in the title rather than being eaten by a
-/// phrase nobody can spell.
+/// …and *longest that parses*, not longest that looks like one. `next tuesday`
+/// is in the grammar now (the owner's 2026-11-05 ask: *next* over any weekday
+/// is a rule of the parser, not a list of phrases), so the whole phrase
+/// leaves the title; a word the grammar does not know stays in it.
 #[test]
 fn only_a_phrase_the_grammar_knows_leaves_the_title() {
-    let (title, _) = split_date("Ship the beta next tuesday", today()).expect("a date word");
-    assert_eq!(title, "Ship the beta next");
+    let (title, _) = split_date("Ship the beta next tuesday", today()).expect("a date phrase");
+    assert_eq!(title, "Ship the beta");
+    let (title, _) = split_date("Ship the beta soonish tuesday", today()).expect("a date word");
+    assert_eq!(title, "Ship the beta soonish");
 }
 
 /// A phrase that would leave no title at all is refused: somebody typing only
@@ -508,6 +510,9 @@ fn a_task_typed_into_a_list_carries_it() {
             due: None,
             list: Some(id),
             priority: None,
+            // A list page is ordered by hand unless somebody chose a sort, and
+            // a typed task goes on top of it.
+            rank: Some(0),
         })
     );
 }
@@ -582,18 +587,13 @@ fn a_whole_row_click_selects_and_asks_for_nothing() {
     );
 }
 
-/// **A double click goes to the origin, in a new tab.**
-///
-/// The single click selects, so select-then-act leaves the second click free
-/// and this is what it is for. The new tab is not a flourish: going back does
-/// not return you to the queue and the row you were on — the Tasks page is a
-/// tab rather than a history entry — so a gesture that replaced this page
-/// would be a one-way door. A second tab leaves the page where it is, and the
-/// way back is the tab you came from.
+/// **A double click renames, and goes nowhere** (the owner's ask,
+/// 2026-11-05): a page-made task lives in the hidden tasks document, and a
+/// double click that opened it showed storage rather than the task. Opening
+/// is the row menu's *Open document*, and Enter.
 #[test]
-fn a_double_click_goes_to_the_origin_in_a_new_tab() {
+fn a_double_click_renames_rather_than_opening() {
     let row = entry("Open me", None);
-    let (document, node) = (row.document, row.node);
     let mut view = view_on(RailTarget::Bucket(Bucket::Today), vec![row]);
     let line = view.line_of_task_for_test(0).expect("a line");
     let r = view.line_rect_for_test(line);
@@ -601,26 +601,17 @@ fn a_double_click_goes_to_the_origin_in_a_new_tab() {
     let mut doc = koru_core::schema::WorkspaceDoc::create(WorkspaceId::new(), "Test")
         .expect("an in-memory document");
     let (x, y) = (text.x + text.w * 0.5, text.y + text.h * 0.5);
-
-    // The first click of the pair, which is what puts the selection under it.
     koru_workspace_host::View::mouse_down(&mut view, &mut doc, x, y, false);
     assert_eq!(
         view.take_request(),
         None,
-        "a single click still navigates nowhere"
+        "a single click navigates nowhere"
     );
-
     assert!(koru_workspace_host::View::mouse_double_click(
         &mut view, &doc, x, y
     ));
-    assert_eq!(
-        view.take_request(),
-        Some(Request::Open {
-            document,
-            node,
-            new_tab: true,
-        }),
-    );
+    assert_eq!(view.take_request(), None, "nor does the double click");
+    assert!(view.rename.is_some(), "it renames");
 }
 
 /// Where a row's text column is pressed, the row's own open target.
@@ -728,13 +719,13 @@ fn alt_on_a_rows_controls_keeps_their_meaning() {
     );
 }
 
-/// A double click on the chips, the header or empty space is not a row's
-/// gesture and asks for nothing — the hit test is the gate, exactly as it is
-/// for the single click.
+/// A double click on the heading or empty space is not a row's gesture and
+/// asks for nothing — the hit test is the gate, exactly as it is for the
+/// single click.
 #[test]
 fn a_double_click_off_a_row_asks_for_nothing() {
     let mut view = view_on(RailTarget::Bucket(Bucket::Today), vec![entry("x", None)]);
-    let chip = view.chip_rects_for_test()[0];
+    let chip = view.heading_area();
     let doc = koru_core::schema::WorkspaceDoc::create(WorkspaceId::new(), "Test")
         .expect("an in-memory document");
     assert!(!koru_workspace_host::View::mouse_double_click(
@@ -1121,22 +1112,6 @@ fn press_at(view: &mut TasksView, at: Rect) {
     );
 }
 
-fn chip_named(view: &TasksView, label: &str) -> Rect {
-    let i = view
-        .chips_for_test()
-        .iter()
-        .position(|chip| chip.label == label)
-        .unwrap_or_else(|| panic!("this page offers a {label} chip"));
-    view.chip_rects_for_test()[i]
-}
-
-/// Press the chip with this label — by its label, because the label is what a
-/// person presses and because the set of chips is not the same on every page.
-fn press_chip(view: &mut TasksView, label: &str) {
-    let r = chip_named(view, label);
-    press_at(view, r);
-}
-
 fn press_dots(view: &mut TasksView) {
     let r = view.header_dots_for_test();
     press_at(view, r);
@@ -1149,70 +1124,27 @@ fn press_overflow_row(view: &mut TasksView, row: usize) {
     press_at(view, r);
 }
 
-/// **The chips row hits back.** Every chip is drawn into a rectangle from
-/// `chip_rects` and every press is resolved against those same rectangles, so a
-/// chip cannot become pressable where it is not drawn — the row's own rule,
-/// applied to the header.
+/// **A filter changes the query and only the query.** Every other field of the
+/// wire body is asserted unmoved, so a filter that also changed the bucket, the
+/// list or the page size fails here rather than in somebody's window. No page
+/// draws the filter row now; the query still has the dimension.
 #[test]
-fn the_chips_row_hits_back() {
-    let view = view_on(RailTarget::Bucket(Bucket::Today), Vec::new());
-    let rects = view.chip_rects_for_test();
-    // **The component's air, on both ends.** A chip wearing a caret has the
-    // same inset from its label to the left border as from the caret to the
-    // right one — the shared arithmetic, asserted where the chips are drawn.
-    for (chip, r) in view.chips_for_test().iter().zip(&rects) {
-        assert_eq!(r.h, koru_ui::label_chip::Size::Regular.height());
-        if let Some(mark) = chip.chip().trail_rect(*r) {
-            assert_eq!(
-                (r.x + r.w) - (mark.x + mark.w),
-                koru_ui::label_chip::REGULAR_PAD_X,
-                "the mark keeps the label's own inset"
-            );
-        }
-    }
-    assert_eq!(
-        rects.len(),
-        view.chips_for_test().len(),
-        "one rectangle per chip, measured when the row was built"
-    );
-    for (i, r) in rects.iter().enumerate() {
-        assert_eq!(
-            view.hit_for_test(r.x + r.w * 0.5, r.y + r.h * 0.5),
-            Some(Hit::Chip(i)),
-            "the middle of chip {i} is chip {i}"
-        );
-    }
-    // The chips sit in the header band, above every row: the first line of the
-    // list must not be reachable where a chip is.
-    let first = view.line_rect_for_test(0);
-    assert!(
-        rects.iter().all(|r| r.y + r.h <= first.y),
-        "the chips row is above the capture row, not over it"
-    );
-    let d = view.header_dots_for_test();
-    assert_eq!(
-        view.hit_for_test(d.x + d.w * 0.5, d.y + d.h * 0.5),
-        Some(Hit::HeaderDots),
-        "the page's own `…` is its own target"
-    );
-}
-
-/// **A chip changes the query and only the query.** Every other field of the
-/// wire body is asserted unmoved, so a chip that also changed the bucket, the
-/// list or the page size fails here rather than in somebody's window.
-#[test]
-fn a_chip_changes_the_query_and_nothing_else() {
+fn a_filter_changes_the_query_and_nothing_else() {
     let mut view = view_on(RailTarget::Bucket(Bucket::Today), Vec::new());
     let plain = query_of(&view);
     assert_eq!(plain.min_priority, None);
     assert!(plain.due.is_none());
 
-    press_chip(&mut view, "Priority \u{2265} High");
+    let high = query::Filters {
+        min_high: true,
+        ..view.filters()
+    };
+    view.set_filters(high);
     let q = query_of(&view);
     assert_eq!(
         q.min_priority.as_deref(),
         Some("high"),
-        "the chip is a `min_priority`, not a sift over the answer"
+        "the floor is a `min_priority`, not a sift over the answer"
     );
     assert_eq!(q.bucket, plain.bucket, "the page is still Today");
     assert_eq!(q.list, plain.list);
@@ -1221,37 +1153,92 @@ fn a_chip_changes_the_query_and_nothing_else() {
     assert!(!q.include_trashed);
     assert_eq!(q.sort, plain.sort);
     assert!(q.due.is_none(), "priority is not a due window");
-    assert!(
-        view.chips_for_test()[0].active,
-        "…and the chip inverts, which is the only thing that says so"
-    );
     assert_eq!(
         view.panel().filters(),
         view.filters(),
-        "the panel asks with what the chips say — one state, pushed down, so the \
-         page in flight cannot be answered under the old filter"
+        "the panel asks with the page's filters — one state, pushed down, so \
+         the page in flight cannot be answered under the old filter"
     );
-
-    // Pressing it again clears the dimension rather than setting it twice.
-    press_chip(&mut view, "Priority \u{2265} High");
-    assert_eq!(query_of(&view).min_priority, None);
 }
 
-/// **The due dimension is one dimension, and one page offers it.**
-///
-/// *Overdue* and *This week* ask *when*, and ANDing them would ask for a due
-/// both before today and after it — so the selector moves the dimension rather
-/// than adding a second window. It is drawn on a list and on nothing else: a
-/// queue is already a due window, so a second one over it is redundant where it
-/// agrees and empty where it does not. The edges are asserted here because they
-/// are the ones the rail's own split count uses, and the two must not drift.
+/// **The heading is one element row** — the list's swatch, then the title,
+/// the date and the count — where it was a title layout and a second layout of
+/// `· Nov 5   5 open` placed after it by hand. The notes sit on the title's
+/// baseline: their line boxes end where the title's does.
 #[test]
-fn the_due_window_is_one_dimension_on_the_one_page_that_offers_it() {
+fn the_heading_is_one_row_of_title_date_and_count() {
+    use super::heading::{DATE, HEADING, HEADING_TEXT, SWATCH, SWATCH_STEP, TITLE};
+    use koru_draw::theme::{Profile, roles};
+    assert_eq!(super::draw::TITLE, roles::SUBTITLE.style());
+    assert_eq!(SWATCH_STEP.px(Profile::Desktop), super::view::SWATCH_GAP);
+
+    let today = view_on(RailTarget::Bucket(Bucket::Today), vec![entry("One", None)]);
+    let (_, frame) = crate::input_engine::with(|engine| today.heading_frame(engine));
+    assert!(frame.diagnostics.is_empty(), "{:?}", frame.diagnostics);
+    // No count before the store has answered: a `0` meaning *not looked yet*
+    // is a lie a reader cannot see through.
+    let names: Vec<&str> = frame.nodes.iter().map(|node| node.name).collect();
+    assert_eq!(names, [HEADING, HEADING_TEXT, TITLE, DATE]);
+    let title = frame.rect_of(TITLE).expect("a title");
+    let date = frame.rect_of(DATE).expect("Today's date");
+    assert_eq!(title.x, today.title_x_for_test());
+    assert!(date.x > title.x + title.w, "the date follows the title");
+    // **One baseline**: where each line is drawn (its box, less the push
+    // down the note was given) plus where its own shaped line puts the
+    // baseline. Read from the frame, so a change to either side shows.
+    let heading = today.heading();
+    let date_text = format!(
+        "{}{}",
+        super::heading::DATE_DOT,
+        heading.date.as_deref().expect("Today has a date")
+    );
+    assert_eq!(
+        date.h,
+        roles::SUBTITLE.style().metrics.line_height,
+        "the date is the title's size"
+    );
+    let (title_base, date_base) = crate::input_engine::with(|engine| {
+        (
+            title.y + super::heading::baseline(engine, &heading.title, roles::SUBTITLE),
+            date.y + super::heading::baseline(engine, &date_text, roles::SUBTITLE),
+        )
+    });
+    assert!(
+        (title_base - date_base).abs() < 0.01,
+        "the date sits on the title's baseline: {title_base} vs {date_base}"
+    );
+
+    let (id, face) = list_face("Wedding", Some("pink"));
+    let mut list = view_on(RailTarget::List(id), Vec::new());
+    list.set_lists(vec![face]);
+    let (_, frame) = crate::input_engine::with(|engine| list.heading_frame(engine));
+    let names: Vec<&str> = frame.nodes.iter().map(|node| node.name).collect();
+    assert_eq!(names, [HEADING, SWATCH, HEADING_TEXT, TITLE]);
+    assert_eq!(
+        frame.rect_of(TITLE).map(|r| r.x),
+        Some(list.title_x_for_test()),
+        "past the swatch, where the title always started"
+    );
+}
+
+/// **The due windows ask the store for the rail's own edges.** No page draws
+/// the due selector while lists have no chip row, but the query still has the
+/// dimension; these are the edges the rail's split count uses, and the two
+/// must not drift.
+#[test]
+fn the_due_windows_ask_for_the_rails_own_edges() {
     let (id, face) = list_face("Wedding", Some("pink"));
     let mut view = view_on(RailTarget::List(id), Vec::new());
     view.set_lists(vec![face]);
+    let at = |view: &mut TasksView, window| {
+        let filters = query::Filters {
+            window,
+            ..view.filters()
+        };
+        view.set_filters(filters);
+    };
 
-    press_chip(&mut view, "Any date");
+    at(&mut view, query::DueWindow::Overdue);
     let overdue = query_of(&view).due.expect("a window");
     assert_eq!(
         overdue.dates.and_then(|d| d.before).as_deref(),
@@ -1264,131 +1251,36 @@ fn the_due_window_is_one_dimension_on_the_one_page_that_offers_it() {
         "…and *before now* for a zoned value, each read in its own terms"
     );
 
-    press_chip(&mut view, "Overdue");
-    let week = query_of(&view).due.expect("a window");
-    let dates = week.dates.expect("a date window");
+    at(&mut view, query::DueWindow::ThisWeek);
+    let dates = query_of(&view).due.expect("a window").dates.expect("dates");
     assert_eq!(dates.after.as_deref(), Some("2026-08-31"), "from today");
     assert_eq!(
         dates.before.as_deref(),
         Some("2026-09-07"),
         "through Sunday inclusive, spelled as the exclusive day after it"
     );
-    let active: Vec<String> = view
-        .chips_for_test()
-        .iter()
-        .filter(|c| c.active)
-        .map(|c| c.label.clone())
-        .collect();
-    assert_eq!(
-        active,
-        vec!["This week".to_owned()],
-        "one value of one dimension, so Overdue went out as This week came in"
-    );
 
-    press_chip(&mut view, "This week");
-    assert!(
-        query_of(&view).due.is_none(),
-        "three values, so the selector comes back to the one that narrows nothing"
-    );
+    at(&mut view, query::DueWindow::Any);
+    assert!(query_of(&view).due.is_none(), "any date narrows nothing");
 }
 
-/// **A queue offers one chip, and the due dimension is not it.**
-///
-/// Every bucket *is* a due window, so a second one over it is redundant where
-/// the two agree and empty where they do not: *This week* over Next asks for
-/// this week's work inside this week's work, and *Overdue* over Next, Upcoming
-/// or Later asks for work due before today on a page that starts at today —
-/// an answer that is empty by construction and can never be anything else. The
-/// design drew both on every queue; acceptance found them there and they came
-/// off. What is left is the one filter that narrows a queue and can be read off
-/// its own rows.
+/// **A due window is a list's alone.** A list's window carried to a queue
+/// would narrow it with nothing on screen saying so, and a queue is already a
+/// due window: leaving a list clears it.
 #[test]
-fn a_queue_offers_no_due_chip() {
-    for bucket in [
-        Bucket::Today,
-        Bucket::Next,
-        Bucket::Upcoming,
-        Bucket::Later,
-        Bucket::Completed,
-    ] {
-        let view = view_on(RailTarget::Bucket(bucket), Vec::new());
-        let labels: Vec<String> = view
-            .chips_for_test()
-            .iter()
-            .map(|c| c.label.clone())
-            .collect();
-        assert_eq!(
-            labels,
-            vec!["Priority \u{2265} High".to_owned()],
-            "{bucket:?} draws the one chip that narrows it"
-        );
-    }
-}
-
-/// **A filter the next page cannot show is a filter the next page must not
-/// apply.**
-///
-/// The due dimension is offered on a list and nowhere else, so a list's
-/// *Overdue* carried across to a queue would go on narrowing the answer with no
-/// chip on screen saying so — a page quietly missing rows, and nothing to
-/// press to get them back. Worse than a wrong filter, which at least shows.
-#[test]
-fn leaving_a_list_clears_the_filter_the_queue_cannot_draw() {
+fn leaving_a_list_clears_its_due_window() {
     let (id, face) = list_face("Wedding", Some("pink"));
     let mut view = view_on(RailTarget::List(id), Vec::new());
     view.set_lists(vec![face]);
-    press_chip(&mut view, "Any date");
-    assert!(
-        query_of(&view).due.is_some(),
-        "the list page set the dimension"
-    );
-
+    let filters = query::Filters {
+        window: query::DueWindow::Overdue,
+        ..view.filters()
+    };
+    view.set_filters(filters);
+    assert!(query_of(&view).due.is_some(), "the list asks with it");
     view.set_target(RailTarget::Bucket(Bucket::Today));
-    assert!(
-        query_of(&view).due.is_none(),
-        "and the queue asks without it, not with it and no chip"
-    );
-    assert_eq!(
-        view.filters().window,
-        query::DueWindow::Any,
-        "cleared in the state the panel is asked from, not only in the drawing"
-    );
-}
-
-/// **The lifecycle chip is offered where the store applies it.**
-///
-/// A bucket names its own lifecycle, so a queue page's `lifecycle` is discarded
-/// rather than ANDed (`TaskQuery::bucket`). A chip that could not narrow the
-/// page would be a control the answer cannot hear, so a queue draws none — and
-/// a list, whose lifecycle the reader owns, does.
-#[test]
-fn the_lifecycle_chip_is_offered_where_it_bites() {
-    let queue = view_on(RailTarget::Bucket(Bucket::Today), Vec::new());
-    assert!(
-        !queue
-            .chips_for_test()
-            .iter()
-            .any(|c| c.label == "Open" || c.label == "Completed" || c.label == "All"),
-        "a queue names its own lifecycle"
-    );
-
-    let id = koru_core::ids::ListId::new();
-    let mut list = view_on(RailTarget::List(id), Vec::new());
-    assert_eq!(query_of(&list).lifecycle, LifecycleFilter::Open);
-    press_chip(&mut list, "Open");
-    assert_eq!(
-        query_of(&list).lifecycle,
-        LifecycleFilter::Completed,
-        "the selector cycles, and its label is its value"
-    );
-    press_chip(&mut list, "Completed");
-    assert_eq!(query_of(&list).lifecycle, LifecycleFilter::All);
-    press_chip(&mut list, "All");
-    assert_eq!(
-        query_of(&list).lifecycle,
-        LifecycleFilter::Open,
-        "…and comes back to the default"
-    );
+    assert!(query_of(&view).due.is_none(), "the queue asks without it");
+    assert_eq!(view.filters().window, query::DueWindow::Any);
 }
 
 /// **An active chip draws from the tokens that already exist.**
@@ -1436,15 +1328,18 @@ fn the_overflow_holds_exactly_the_query_changers() {
             OverflowRow::Sort(TaskSort::Modified),
         ]
     );
-    let items = overflow_items(&Filters::default());
-    assert_eq!(items.len(), 6, "six rows; a menu is not a settings page");
+    // A queue adds *Manual* last (2026-11-05); the archive keeps the six.
+    let archive = overflow_items(&Filters::default(), RailTarget::Bucket(Bucket::Completed));
+    assert_eq!(archive.len(), 6, "six rows; a menu is not a settings page");
+    let items = overflow_items(&Filters::default(), RailTarget::Bucket(Bucket::Today));
+    assert_eq!(items.len(), 7);
     assert_eq!(
         items
             .iter()
             .filter(|i| koru_ui::MenuItem::selectable(*i))
             .count(),
-        4,
-        "one toggle and three sorts; the heading and the rule are not pressable"
+        5,
+        "one toggle and four sorts; the heading and the rule are not pressable"
     );
     assert_eq!(
         items[3].checked,
@@ -1729,7 +1624,10 @@ fn a_list_page_is_the_query_and_nothing_is_sifted_here() {
     assert_eq!(list.bucket, None, "a list is a filter, not a bucket");
     assert_eq!(list.workspaces, queue.workspaces);
     assert_eq!(list.limit, queue.limit);
-    assert_eq!(list.sort, queue.sort);
+    // **The one difference in order**: a list opens in the order somebody
+    // dragged it into, a queue by due.
+    assert_eq!(list.sort, TaskSort::Manual);
+    assert_eq!(queue.sort, TaskSort::Due);
     assert_eq!(list.min_priority, queue.min_priority);
     assert_eq!(list.include_trashed, queue.include_trashed);
     assert!(
@@ -1806,66 +1704,26 @@ fn a_forgotten_list_still_has_a_readable_page() {
     );
 }
 
-/// **`1d`'s chips row**: the lifecycle selector, and the due dimension as one
-/// chip reading *Any date*.
-///
-/// A queue draws the two value chips (`1a`) because it is already a due window;
-/// a list spans all time, so the honest reading of the dimension is its current
-/// value. The chip is a selector, so it cycles the same dimension the two chips
-/// move — one piece of state, and a list page can still ask for *Overdue*.
+/// **No Tasks page draws a filter row, for now** (the owner, 2026-11-05): a
+/// list is every open task in it and a queue is its bucket, at any priority
+/// and any date. Every page's header ends at the heading's line.
 #[test]
-fn a_list_page_offers_one_due_chip_reading_any_date() {
+fn no_page_draws_a_filter_row_and_a_list_asks_for_every_open_task() {
     let (id, face) = list_face("Wedding", Some("pink"));
     let mut view = view_on(RailTarget::List(id), Vec::new());
     view.set_lists(vec![face]);
-    let labels: Vec<String> = view
-        .chips_for_test()
-        .iter()
-        .map(|c| c.label.clone())
-        .collect();
-    assert_eq!(
-        labels,
-        vec!["Priority \u{2265} High", "Open", "Any date"],
-        "1d: the same header band, the lifecycle selector, and one due chip"
-    );
-    let due = view.chips_for_test().pop().expect("the due chip");
-    assert!(
-        !due.active,
-        "Any date narrows nothing, so it is not switched on"
-    );
-    assert!(due.caret, "…and it is a selector: its label is its value");
+    let q = query_of(&view);
+    assert_eq!(q.lifecycle, LifecycleFilter::Open, "every open task");
+    assert!(q.due.is_none(), "at any date");
+    assert!(q.min_priority.is_none(), "at any priority");
 
-    press_chip(&mut view, "Any date");
-    assert_eq!(view.chips_for_test()[2].label, "Overdue");
-    assert!(
-        query_of(&view).due.is_some(),
-        "the selector moves the same field the two chips move"
-    );
-    press_chip(&mut view, "Overdue");
-    assert_eq!(view.chips_for_test()[2].label, "This week");
-    press_chip(&mut view, "This week");
+    let queue = view_on(RailTarget::Bucket(Bucket::Today), Vec::new());
+    assert!(query_of(&queue).min_priority.is_none());
     assert_eq!(
-        view.chips_for_test()[2].label,
-        "Any date",
-        "three values, so it comes back to the one that narrows nothing"
+        view.header_h_for_test(),
+        queue.header_h_for_test(),
+        "one header, ending at the heading's line, on every page"
     );
-    assert!(query_of(&view).due.is_none());
-}
-
-/// The list page's chips hit back, exactly as a queue's do — the set is not the
-/// same set, and the rectangles are measured from it rather than from a count.
-#[test]
-fn the_list_pages_chips_hit_back() {
-    let (id, _) = list_face("Wedding", None);
-    let view = view_on(RailTarget::List(id), Vec::new());
-    let rects = view.chip_rects_for_test();
-    assert_eq!(rects.len(), view.chips_for_test().len());
-    for (i, r) in rects.iter().enumerate() {
-        assert_eq!(
-            view.hit_for_test(r.x + r.w * 0.5, r.y + r.h * 0.5),
-            Some(Hit::Chip(i))
-        );
-    }
 }
 
 /// **Membership shows on the row as one more chip in the existing family**
@@ -2189,43 +2047,22 @@ fn empty_page(target: RailTarget) -> TasksView {
     view_answered(target, Vec::new())
 }
 
-/// **An empty bucket is the fact plus the thing to do about it** â€” and it says
-/// nothing about the workspace, because one empty queue is not an empty
-/// workspace.
+/// **An answered empty page draws nothing under its capture row** (the
+/// owner's ask, 2026-11-05): no *Nothing due today.* sentence and no second
+/// *Add a task* — the capture row is already the page's first row and says
+/// what to do. Every queue and a list alike.
 #[test]
-fn an_empty_bucket_states_the_fact_and_offers_the_action() {
-    let view = empty_page(RailTarget::Bucket(Bucket::Today));
-    let state = view.empty_for_test().expect("an empty page is in a state");
-    assert_eq!(state.line(), "Nothing due today.");
-    assert_eq!(state.action(), Some("Add a task"));
-    assert!(!state.dotted(), "there is nothing in progress to report");
-}
-
-/// **An empty page states its own fact and never teaches.**
-///
-/// This is the retired state's own fixture — an answered-empty queue in a
-/// workspace with nothing anywhere else either — and it now draws the bucket's
-/// own sentence with the action beside it, the same page as any other empty
-/// queue. That is the change, and the assertion that carries it is the last
-/// one: no page says `/task` at anybody any more.
-///
-/// The action is the other half. The teaching state withheld it on the grounds
-/// that its own body was the instruction, which left the emptiest workspace in
-/// the app as the one page with nothing to press.
-#[test]
-fn an_empty_page_states_its_own_fact_and_never_teaches() {
-    let view = empty_page(RailTarget::Bucket(Bucket::Today));
-    let state = view.empty_for_test().expect("a state");
-    assert_eq!(state.line(), "Nothing due today.");
-    assert_eq!(
-        state.action(),
-        Some("Add a task"),
-        "the offer the teaching state used to withhold"
-    );
-    assert!(
-        !state.line().contains("/task"),
-        "the sentence that taught is gone from every page"
-    );
+fn an_answered_empty_page_draws_no_state() {
+    let (bike, _) = list_face("Bike Project", Some("blue"));
+    for target in [
+        RailTarget::Bucket(Bucket::Today),
+        RailTarget::Bucket(Bucket::Upcoming),
+        RailTarget::Bucket(Bucket::Completed),
+        RailTarget::List(bike),
+    ] {
+        let view = empty_page(target);
+        assert_eq!(view.empty_for_test(), None, "{target:?}");
+    }
 }
 
 /// **A mid-sweep zero never reads as "you have no tasks"** — it outranks the
@@ -2254,7 +2091,6 @@ fn a_sweep_is_not_an_empty_workspace() {
     assert_eq!(state, Empty::Cold);
     assert_eq!(state.line(), "Checking your workspaces\u{2026}");
     assert!(state.dotted(), "the one state with something in progress");
-    assert_eq!(state.action(), None, "a sweep is not something to act on");
 }
 
 /// **A store that would not answer says so**, and outranks both â€” an empty
@@ -2281,65 +2117,6 @@ fn nothing_is_said_before_the_first_answer() {
     let mut view = TasksView::new(RailTarget::Bucket(Bucket::Today));
     view.set_viewport(1000.0, 700.0);
     assert_eq!(view.empty_for_test(), None);
-}
-
-/// A list is another bucket, and its empty state says what it is: SPEC Â§8 makes
-/// a list a filter over all time, so *due* is not what is missing from it.
-#[test]
-fn an_empty_list_says_it_is_a_list() {
-    let (bike, _) = list_face("Bike Project", Some("blue"));
-    let view = empty_page(RailTarget::List(bike));
-    let state = view.empty_for_test().expect("a state");
-    assert_eq!(state.line(), "Nothing in this list yet.");
-    assert_eq!(state.action(), Some("Add a task"));
-}
-
-/// The archive is the one queue whose emptiness is not a gap to fill.
-#[test]
-fn the_completed_archive_offers_nothing_to_add() {
-    let view = empty_page(RailTarget::Bucket(Bucket::Completed));
-    let state = view.empty_for_test().expect("a state");
-    assert_eq!(state.line(), "Nothing completed yet.");
-    assert_eq!(state.action(), None);
-    assert_eq!(
-        view.empty_action_rect_for_test(),
-        None,
-        "and there is nothing there to press"
-    );
-}
-
-/// **The action hits back**, and what it does is put the caret in the capture
-/// row that is already the list's first row â€” it opens nothing of its own.
-#[test]
-fn the_empty_action_hits_back_and_starts_a_capture() {
-    let mut view = empty_page(RailTarget::Bucket(Bucket::Today));
-    let r = view
-        .empty_action_rect_for_test()
-        .expect("an empty bucket offers one");
-    assert_eq!(
-        view.hit_for_test(r.x + r.w * 0.5, r.y + r.h * 0.5),
-        Some(Hit::EmptyAction)
-    );
-    let mut doc = koru_core::schema::WorkspaceDoc::create(WorkspaceId::new(), "Test")
-        .expect("an in-memory document");
-    koru_workspace_host::View::mouse_down(&mut view, &mut doc, r.x + 2.0, r.y + r.h * 0.5, false);
-    assert!(view.capturing_for_test(), "the caret is in the capture row");
-    assert_eq!(view.take_request(), None, "and nothing else was asked for");
-}
-
-/// The empty row sits **where the first task would be** â€” under the capture row.
-/// Nothing centred in dead space.
-#[test]
-fn the_empty_row_sits_under_the_capture_row() {
-    let view = empty_page(RailTarget::Bucket(Bucket::Today));
-    let capture = view.line_rect_for_test(0);
-    let r = view
-        .empty_action_rect_for_test()
-        .expect("an empty bucket offers one");
-    assert!(
-        r.y >= capture.y + capture.h,
-        "the state's row begins where the next row would"
-    );
 }
 
 // ------------------------------------------------------------ the rollover (V-5)
@@ -2600,6 +2377,7 @@ fn a_capture_into_later_invents_no_date() {
             due: None,
             list: None,
             priority: None,
+            rank: None,
         })
     );
 }
@@ -2752,7 +2530,7 @@ fn the_four_picks_resolve_to_the_four_answers() {
     let grid = DateGrid::bare(today());
     let day = NaiveDate::from_ymd_opt(2026, 9, 4).unwrap();
     assert_eq!(
-        resolve_pick(Target::row(document, node), &grid, Pick::Day(day)),
+        resolve_pick(&Target::row(document, node), &grid, Pick::Day(day)),
         Choice::Request(Request::SetDue {
             document,
             node,
@@ -2761,7 +2539,7 @@ fn the_four_picks_resolve_to_the_four_answers() {
         "a day stores a calendar date, as the document's picker stores one"
     );
     assert_eq!(
-        resolve_pick(Target::row(document, node), &grid, Pick::Clear),
+        resolve_pick(&Target::row(document, node), &grid, Pick::Clear),
         Choice::Request(Request::SetDue {
             document,
             node,
@@ -2769,11 +2547,11 @@ fn the_four_picks_resolve_to_the_four_answers() {
         })
     );
     assert_eq!(
-        resolve_pick(Target::row(document, node), &grid, Pick::None),
+        resolve_pick(&Target::row(document, node), &grid, Pick::None),
         Choice::Stay
     );
     match resolve_pick(
-        Target::row(document, node),
+        &Target::row(document, node),
         &grid,
         Pick::Timed("tomorrow 9am".into()),
     ) {
@@ -3400,18 +3178,25 @@ fn the_list_chip_opens_the_list_and_only_where_it_leads_somewhere_else() {
         .position(|chip| chip.kind == ChipKind::Due)
         .expect("a dateless open row wears the dash");
     let (dx, dy) = rects[due].centre();
-    assert_eq!(view.hit_for_test(dx, dy), Some(Hit::Row(0)), "a label");
-
-    press_at(&mut view, rects[list_chip]);
+    // A value chip opens its own picker (the owner's ask: *click due,
+    // priority or color to change it*), so the dash is a target too.
     assert_eq!(
-        view.take_request(),
-        Some(Request::OpenList { list: birthday })
+        view.hit_for_test(dx, dy),
+        Some(Hit::ValueChip(0, ChipKind::Due)),
+        "its picker"
     );
+
+    // **A press opens the list picker**, to change it — never the list's
+    // page (the owner's ask, 2026-11-05). Going there is the menu's row.
+    press_at(&mut view, rects[list_chip]);
+    assert_eq!(view.take_request(), None, "nothing opened");
+    assert!(view.list_picker_for_test().is_some(), "the list picker");
     assert_eq!(
         view.selected_for_test(),
         Some(0),
         "and the press selected the row"
     );
+    view.picker = None;
 
     // The `\u{2026}` says so as well.
     let line = view.line_of_task_for_test(0).expect("a line");
@@ -3424,14 +3209,13 @@ fn the_list_chip_opens_the_list_and_only_where_it_leads_somewhere_else() {
     let (_, items) = super::row_menu(row.document, row.node, false, false, list, false);
     assert!(items.contains(&MenuAction::TaskGoToList));
 
-    // On the list's own page the chip is a label and the menu has no row.
+    // On the list's own page the chip still changes the list, and the
+    // menu has no *Go to list* row.
     let mut own = view_on(RailTarget::List(birthday), vec![row]);
     own.set_lists(vec![face]);
-    let chips = own.row_chips_for_test(0);
-    assert!(chips.iter().all(|chip| chip.list.is_none()));
     let rects = own.row_chip_rects_for_test(0);
     let (x, y) = rects[list_chip].centre();
-    assert_eq!(own.hit_for_test(x, y), Some(Hit::Row(0)));
+    assert_eq!(own.hit_for_test(x, y), Some(Hit::ListChip(0)));
     // A list page draws one-line rows, so its dots are not where Today's were.
     let line = own.line_of_task_for_test(0).expect("a line");
     let dots = own.parts_for_test(own.line_rect_for_test(line)).dots;
@@ -3637,6 +3421,341 @@ fn slash_due_on_the_input_opens_the_calendar_and_outranks_the_word() {
     assert_eq!(due, Some(koru_core::time::Temporal::Date(day)));
 }
 
+/// **`/due` opens the calendar under the `/` that was typed** — its left edge
+/// at the command, below the field — rather than hanging from the row's `…`
+/// at the far end of the page, where the eye is not.
+#[test]
+fn slash_due_opens_the_calendar_under_the_command() {
+    let mut view = view_on(RailTarget::Bucket(Bucket::Later), Vec::new());
+    let r = view.line_rect_for_test(0);
+    press_at(&mut view, r);
+    // One frame, so the row knows where its field is drawn.
+    view.paint(
+        &mut vello::Scene::new(),
+        vello::kurbo::Affine::IDENTITY,
+        true,
+    );
+    capture_slash(&mut view, "Chase it ", "/due");
+    let (_, _, panel) = view.due_picker_for_test().expect("the calendar opened");
+    let field = view.capture_rect();
+    let words = crate::input_engine::with(|engine| {
+        engine
+            .simple_layout("Chase it ", koru_draw::theme::role::row())
+            .width()
+    });
+    assert!(
+        (panel.x - (field.x + words)).abs() < 0.5,
+        "the panel starts at the `/`: {} vs {}",
+        panel.x,
+        field.x + words
+    );
+    assert!(panel.y >= field.y + field.h, "below the field");
+}
+
+/// **A coloured line wears its colour on the page**: the swatch the document
+/// draws after the same task's chips, last, in the line's own token.
+#[test]
+fn a_coloured_task_wears_its_swatch_last() {
+    let row = TaskEntry::of(
+        &wire_row(
+            "Notes Improve LLMs",
+            vec![attr(koru_core::attributes::KEY_COLOR, "text", "red")],
+        ),
+        today(),
+        now_ms(),
+    )
+    .expect("a parseable row");
+    assert_eq!(row.color.as_deref(), Some("red"));
+    let view = view_on(RailTarget::Bucket(Bucket::Today), vec![row]);
+    let chips = view.row_chips_for_test(0);
+    let last = chips.last().expect("chips");
+    assert_eq!(last.kind, koru_draw::chip::ChipKind::Swatch);
+    assert_eq!(last.accent.as_deref(), Some("red"));
+
+    let plain = view_on(
+        RailTarget::Bucket(Bucket::Today),
+        vec![entry("Plain", None)],
+    );
+    assert!(
+        plain
+            .row_chips_for_test(0)
+            .iter()
+            .all(|chip| chip.kind != koru_draw::chip::ChipKind::Swatch),
+        "no colour, no swatch"
+    );
+}
+
+/// **A value chip opens its picker at the pointer**: the due chip the
+/// calendar, the colour dot the colour picker — and a colour chosen there is
+/// one *set colour* for the row.
+#[test]
+fn a_value_chip_opens_its_picker_where_it_was_pressed() {
+    let row = TaskEntry::of(
+        &wire_row(
+            "Ship it",
+            vec![
+                attr(koru_core::attributes::KEY_DUE, "date", "2026-09-02"),
+                attr(koru_core::attributes::KEY_COLOR, "text", "red"),
+            ],
+        ),
+        today(),
+        now_ms(),
+    )
+    .expect("a parseable row");
+    let (document, node) = (row.document, row.node);
+    let mut view = view_on(RailTarget::Bucket(Bucket::Upcoming), vec![row]);
+    let chips = view.row_chips_for_test(0);
+    let rects = view.row_chip_rects_for_test(0);
+    let rect_of = |kind| {
+        chips
+            .iter()
+            .zip(&rects)
+            .find(|(chip, _)| chip.kind == kind)
+            .map(|(_, r)| *r)
+            .expect("the chip")
+    };
+
+    let due = rect_of(koru_draw::chip::ChipKind::Due);
+    press_at(&mut view, due);
+    let (_, _, panel) = view.due_picker_for_test().expect("the calendar opened");
+    let at = (due.x + due.w * 0.5, due.y + due.h * 0.5);
+    // Hung from the pointer: just under it, and spanning it — the chips sit
+    // at the row's right end, so the panel is pushed back inside the window
+    // rather than starting exactly at the press.
+    assert!(
+        panel.x <= at.0 && at.0 <= panel.x + panel.w && panel.y >= at.1 && panel.y - at.1 < 24.0,
+        "under the pointer, not the row's `…`: {panel:?} vs {at:?}"
+    );
+    koru_workspace_host::View::key(
+        &mut view,
+        &mut koru_core::schema::WorkspaceDoc::create(WorkspaceId::new(), "Test").unwrap(),
+        &Key::Named(NamedKey::Escape),
+        None,
+        ModifiersState::empty(),
+    );
+
+    press_at(&mut view, rect_of(koru_draw::chip::ChipKind::Swatch));
+    let rows = view
+        .color_picker_for_test()
+        .expect("the colour picker opened");
+    let blue = rows
+        .iter()
+        .position(|r| matches!(r, super::menu::ColorPick::Color { token: "blue", .. }))
+        .expect("blue is offered");
+    assert!(
+        rows.iter().any(|r| matches!(
+            r,
+            super::menu::ColorPick::Color {
+                token: "red",
+                checked: true
+            }
+        )),
+        "the line's own colour is checked"
+    );
+    assert!(view.choose_color(blue));
+    assert_eq!(
+        view.take_request(),
+        Some(Request::SetColor {
+            document,
+            node,
+            color: Some("blue".to_owned()),
+        })
+    );
+}
+
+// ------------------------------------------------- several rows at once
+
+/// Press the middle of task `row`'s line with `mods` held.
+fn press_row(view: &mut TasksView, row: usize, mods: ModifiersState) {
+    let line = view.line_of_task_for_test(row).expect("a line");
+    let r = view.line_rect_for_test(line);
+    let p = view.parts_for_test(r).text;
+    koru_workspace_host::View::set_mods(view, mods);
+    let mut doc = koru_core::schema::WorkspaceDoc::create(WorkspaceId::new(), "Test")
+        .expect("an in-memory document");
+    koru_workspace_host::View::mouse_down(
+        view,
+        &mut doc,
+        p.x + 4.0,
+        r.y + r.h * 0.5,
+        mods.control_key(),
+    );
+    koru_workspace_host::View::set_mods(view, ModifiersState::empty());
+}
+
+fn five_rows() -> TasksView {
+    view_on(
+        RailTarget::Bucket(Bucket::Today),
+        ["a", "b", "c", "d", "e"]
+            .into_iter()
+            .map(|t| entry(t, None))
+            .collect(),
+    )
+}
+
+/// **Ctrl+click adds a row or takes it out; Shift+click takes a range from
+/// the focused row; a plain click is one row again.**
+#[test]
+fn ctrl_and_shift_click_build_a_selection() {
+    let mut view = five_rows();
+    press_row(&mut view, 1, ModifiersState::empty());
+    press_row(&mut view, 3, ModifiersState::CONTROL);
+    assert_eq!(view.selection(), [1, 3], "Ctrl adds");
+    press_row(&mut view, 1, ModifiersState::CONTROL);
+    assert_eq!(view.selection(), [3], "and takes out");
+
+    press_row(&mut view, 0, ModifiersState::SHIFT);
+    assert_eq!(
+        view.selection(),
+        [0, 1, 2, 3],
+        "Shift ranges from the focused row"
+    );
+    press_row(&mut view, 4, ModifiersState::SHIFT);
+    assert_eq!(
+        view.selection(),
+        [3, 4],
+        "…from it again, not from the last press"
+    );
+
+    press_row(&mut view, 2, ModifiersState::empty());
+    assert_eq!(view.selection(), [2], "a plain click is one row");
+}
+
+/// **Delete asks to take the selection off Tasks**, every selected task and
+/// only those.
+#[test]
+fn delete_asks_to_remove_the_selection() {
+    let mut view = five_rows();
+    press_row(&mut view, 0, ModifiersState::empty());
+    press_row(&mut view, 2, ModifiersState::CONTROL);
+    let mut doc = koru_core::schema::WorkspaceDoc::create(WorkspaceId::new(), "Test")
+        .expect("an in-memory document");
+    assert!(koru_workspace_host::View::key(
+        &mut view,
+        &mut doc,
+        &Key::Named(NamedKey::Delete),
+        None,
+        ModifiersState::empty(),
+    ));
+    let Some(Request::RemoveTasks { tasks }) = view.take_request() else {
+        panic!("Delete asks to remove")
+    };
+    assert_eq!(tasks, view.selected_tasks());
+    assert_eq!(tasks.len(), 2);
+}
+
+/// **A right-click inside the selection is the selection's menu**; outside
+/// it, the row becomes the selection and gets its own.
+#[test]
+fn a_right_click_inside_a_selection_opens_the_selections_menu() {
+    let mut view = five_rows();
+    press_row(&mut view, 0, ModifiersState::empty());
+    press_row(&mut view, 1, ModifiersState::CONTROL);
+    let mut doc = koru_core::schema::WorkspaceDoc::create(WorkspaceId::new(), "Test")
+        .expect("an in-memory document");
+    let at = |view: &TasksView, row: usize| {
+        let r = view.line_rect_for_test(view.line_of_task_for_test(row).expect("a line"));
+        (r.x + 120.0, r.y + r.h * 0.5)
+    };
+    let (x, y) = at(&view, 1);
+    assert!(koru_workspace_host::View::context_menu(
+        &mut view, &mut doc, x, y
+    ));
+    let Some(Request::RowsMenu {
+        tasks, completed, ..
+    }) = view.take_request()
+    else {
+        panic!("the selection's menu")
+    };
+    assert_eq!(tasks.len(), 2);
+    assert!(!completed);
+
+    let (x, y) = at(&view, 3);
+    assert!(koru_workspace_host::View::context_menu(
+        &mut view, &mut doc, x, y
+    ));
+    assert!(matches!(view.take_request(), Some(Request::RowMenu { .. })));
+    assert_eq!(
+        view.selection(),
+        [3],
+        "the row outside became the selection"
+    );
+}
+
+/// **One pick, every selected row**: the selection's *Due* is the page's own
+/// calendar, and a day picked in it is one edit per row, left as one batch.
+#[test]
+fn a_pick_for_a_selection_is_one_edit_per_row() {
+    let mut view = five_rows();
+    let tasks: Vec<_> = [0usize, 2, 4]
+        .iter()
+        .map(|&i| (view.rows[i].document, view.rows[i].node))
+        .collect();
+    assert!(view.open_due_picker_for(&tasks));
+    let day = chrono::NaiveDate::from_ymd_opt(2026, 9, 20).unwrap();
+    assert!(view.pick_day_for_test(day));
+    let Some(Request::Many(edits)) = view.take_request() else {
+        panic!("one batch")
+    };
+    let want = Some(koru_core::time::Temporal::Date(
+        koru_core::time::DateOnly::new(day),
+    ));
+    let rows: Vec<_> = edits
+        .iter()
+        .map(|edit| match edit {
+            Request::SetDue {
+                document,
+                node,
+                due,
+            } => {
+                assert_eq!(*due, want);
+                (*document, *node)
+            }
+            other => panic!("a due edit, not {other:?}"),
+        })
+        .collect();
+    assert_eq!(rows, tasks, "one per selected row, in the page's order");
+}
+
+/// **Adding a task leaves the caret in the capture row**, emptied, so a run
+/// of tasks is one Enter after another.
+#[test]
+fn adding_a_task_leaves_the_caret_in_an_empty_capture_row() {
+    let mut view = view_on(RailTarget::Bucket(Bucket::Today), Vec::new());
+    type_into_capture(&mut view, "Test");
+    enter(&mut view);
+    assert!(
+        matches!(view.take_request(), Some(Request::Capture { .. })),
+        "Enter asked for the task"
+    );
+    assert!(view.capturing_for_test(), "the caret is still in the row");
+    assert_eq!(
+        view.capture_value_for_test().as_deref(),
+        Some(""),
+        "and the row is empty for the next one"
+    );
+    enter(&mut view);
+    assert_eq!(view.take_request(), None, "an empty row asks for nothing");
+}
+
+/// The capture row, pressed and typed into.
+fn type_into_capture(view: &mut TasksView, words: &str) {
+    let r = view.line_rect_for_test(0);
+    press_at(view, r);
+    let mut doc = koru_core::schema::WorkspaceDoc::create(WorkspaceId::new(), "Test")
+        .expect("an in-memory document");
+    for ch in words.chars() {
+        let text = ch.to_string();
+        koru_workspace_host::View::key(
+            view,
+            &mut doc,
+            &Key::Character(text.clone().into()),
+            Some(&text),
+            ModifiersState::empty(),
+        );
+    }
+}
+
 // --------------------------------------- the Completed window (round nine)
 
 /// **The page asks for a window.**
@@ -3700,4 +3819,404 @@ fn the_pin_row_dispatches_the_canonical_command_in_both_directions() {
         // which is what makes one variant serve both ends.
         assert_eq!(matches!(action, MenuAction::TaskPinToday), sent);
     }
+}
+
+// ------------------------------------------------- the manual order (drag)
+
+fn ranked(title: &str, rank: Option<i64>) -> TaskEntry {
+    let attributes = rank
+        .map(|r| {
+            vec![attr(
+                koru_core::attributes::KEY_RANK,
+                "number",
+                &r.to_string(),
+            )]
+        })
+        .unwrap_or_default();
+    TaskEntry::of(&wire_row(title, attributes), today(), now_ms()).expect("a parseable row")
+}
+
+fn list_page(rows: Vec<TaskEntry>) -> TasksView {
+    view_on(RailTarget::List(koru_core::ids::ListId::new()), rows)
+}
+
+fn row_rect(view: &TasksView, row: usize) -> Rect {
+    let line = view
+        .line_of_task_for_test(row)
+        .expect("every task earns a line");
+    view.line_rect_for_test(line)
+}
+
+/// Where a press on `row` lands: in its words, clear of every control.
+fn press_point(view: &TasksView, row: usize) -> (f32, f32) {
+    let t = view.parts_for_test(row_rect(view, row)).text;
+    (t.x + 4.0, t.y + t.h * 0.5)
+}
+
+fn titles(view: &TasksView) -> Vec<String> {
+    view.rows.iter().map(|row| row.title.clone()).collect()
+}
+
+fn a_doc() -> koru_core::schema::WorkspaceDoc {
+    koru_core::schema::WorkspaceDoc::create(WorkspaceId::new(), "Test").expect("a document")
+}
+
+/// Press `row`, move past the threshold, and release at `to_y`.
+fn drag_row(view: &mut TasksView, row: usize, to_y: f32) {
+    let mut doc = a_doc();
+    let (x, y) = press_point(view, row);
+    assert!(koru_workspace_host::View::mouse_down(
+        view, &mut doc, x, y, false
+    ));
+    koru_workspace_host::View::mouse_move(view, x, y + 1.0);
+    koru_workspace_host::View::mouse_move(view, x, to_y);
+    koru_workspace_host::View::mouse_up(view, &mut doc);
+}
+
+/// **A press on a row arms a drag on a list ordered by hand, and only
+/// there** — no grip: the row is what is held. A queue has no order of its
+/// **Every page's rows can be carried; only a page ordered by hand takes
+/// them back in a new place.** A press arms a drag anywhere (a queue's rows
+/// can be dropped on a list in the sidebar), but a queue by due date and a
+/// list by due offer no gap and ask for no rank.
+#[test]
+fn a_press_arms_a_drag_everywhere_but_only_a_manual_page_reorders() {
+    let mut doc = a_doc();
+    let mut list = list_page(vec![ranked("A", None), ranked("B", None)]);
+    let at = press_point(&list, 0);
+    koru_workspace_host::View::mouse_down(&mut list, &mut doc, at.0, at.1, false);
+    assert!(list.drag.is_some(), "armed");
+    koru_workspace_host::View::mouse_up(&mut list, &mut doc);
+    assert!(list.drag.is_none());
+    assert_eq!(list.selection(), [0], "a press that never moved is a click");
+
+    let mut queue = view_on(
+        RailTarget::Bucket(Bucket::Today),
+        vec![entry("A", None), entry("B", None)],
+    );
+    let top = row_rect(&queue, 0);
+    drag_row(&mut queue, 1, top.y + 2.0);
+    assert_eq!(queue.take_request(), None, "by due date: no new place");
+    assert_eq!(titles(&queue), ["A", "B"]);
+}
+
+/// **A press on the page's empty space clears the selection** — a whole
+/// Ctrl+click selection, not only the last row.
+#[test]
+fn a_press_on_empty_space_unselects_every_task() {
+    let mut doc = a_doc();
+    let mut view = view_on(
+        RailTarget::Bucket(Bucket::Today),
+        vec![entry("A", None), entry("B", None)],
+    );
+    let a = press_point(&view, 0);
+    koru_workspace_host::View::mouse_down(&mut view, &mut doc, a.0, a.1, false);
+    koru_workspace_host::View::mouse_up(&mut view, &mut doc);
+    let b = press_point(&view, 1);
+    koru_workspace_host::View::mouse_down(&mut view, &mut doc, b.0, b.1, true);
+    assert_eq!(view.selection(), [0, 1]);
+    let below = row_rect(&view, 1);
+    let (x, y) = (below.x + below.w * 0.5, below.y + below.h + 120.0);
+    assert_eq!(view.hit_for_test(x, y), None, "empty space");
+    assert!(koru_workspace_host::View::mouse_down(
+        &mut view, &mut doc, x, y, false
+    ));
+    assert!(view.selection().is_empty());
+}
+
+/// **Carried rows dropped on a list join it** — the selection, each task
+/// once — and while they are over the sidebar the page offers no gap.
+#[test]
+fn carried_rows_dropped_on_a_list_join_it() {
+    let mut doc = a_doc();
+    let mut view = view_on(
+        RailTarget::Bucket(Bucket::Today),
+        vec![entry("A", None), entry("B", None)],
+    );
+    let (x, y) = press_point(&view, 0);
+    koru_workspace_host::View::mouse_down(&mut view, &mut doc, x, y, false);
+    koru_workspace_host::View::mouse_move(&mut view, x, y + 10.0);
+    assert!(view.carrying_rows());
+    assert!(view.set_rows_outside(true));
+    koru_workspace_host::View::mouse_move(&mut view, x, y + 12.0);
+    assert_eq!(
+        view.drag.as_ref().and_then(|d| d.gap),
+        None,
+        "no gap over the sidebar"
+    );
+    let bike = koru_core::ids::ListId::new();
+    assert!(view.drop_rows_into_list(bike));
+    assert!(view.drag.is_none());
+    match view.take_request() {
+        Some(Request::SetList { list, .. }) => assert_eq!(list, Some(bike)),
+        other => panic!("one list change: {other:?}"),
+    }
+}
+
+/// **A click inside a selection of several narrows it to that row** — but
+/// only on release, so a press there can still drag the whole selection.
+#[test]
+fn a_click_in_a_selection_narrows_it_on_release() {
+    let mut doc = a_doc();
+    let mut view = list_page(vec![
+        ranked("A", None),
+        ranked("B", None),
+        ranked("C", None),
+    ]);
+    let a = press_point(&view, 0);
+    koru_workspace_host::View::mouse_down(&mut view, &mut doc, a.0, a.1, false);
+    koru_workspace_host::View::mouse_up(&mut view, &mut doc);
+    let c = press_point(&view, 2);
+    koru_workspace_host::View::mouse_down(&mut view, &mut doc, c.0, c.1, true);
+    assert_eq!(view.selection(), [0, 2]);
+    koru_workspace_host::View::mouse_down(&mut view, &mut doc, a.0, a.1, false);
+    assert_eq!(view.selection(), [0, 2], "kept whole while held");
+    koru_workspace_host::View::mouse_up(&mut view, &mut doc);
+    assert_eq!(view.selection(), [0]);
+}
+
+/// **A double click renames the task in place** — it never opens the
+/// hidden tasks document. Enter keeps the new words and asks for them once;
+/// the row shows them at once.
+#[test]
+fn a_double_click_renames_the_task_in_place() {
+    let mut doc = a_doc();
+    let mut view = list_page(vec![ranked("Old name", None)]);
+    let at = press_point(&view, 0);
+    assert!(koru_workspace_host::View::mouse_double_click(
+        &mut view, &doc, at.0, at.1
+    ));
+    assert!(view.rename.is_some());
+    assert_eq!(view.take_request(), None, "nothing opened");
+    for _ in 0.."name".len() {
+        koru_workspace_host::View::key(
+            &mut view,
+            &mut doc,
+            &Key::Named(NamedKey::Backspace),
+            None,
+            ModifiersState::empty(),
+        );
+    }
+    koru_workspace_host::View::key(
+        &mut view,
+        &mut doc,
+        &Key::Character("task".into()),
+        Some("task"),
+        ModifiersState::empty(),
+    );
+    koru_workspace_host::View::key(
+        &mut view,
+        &mut doc,
+        &Key::Named(NamedKey::Enter),
+        None,
+        ModifiersState::empty(),
+    );
+    assert!(view.rename.is_none());
+    let Some(Request::Retitle { title, .. }) = view.take_request() else {
+        panic!("a rename");
+    };
+    assert_eq!(title, "Old task");
+    assert_eq!(titles(&view), ["Old task"], "drawn at once");
+}
+
+/// Escape puts the old words back, and an unchanged Enter asks for nothing.
+#[test]
+fn escape_or_no_change_renames_nothing() {
+    let mut doc = a_doc();
+    let mut view = list_page(vec![ranked("Same", None)]);
+    assert!(view.begin_rename(0));
+    koru_workspace_host::View::key(
+        &mut view,
+        &mut doc,
+        &Key::Named(NamedKey::Enter),
+        None,
+        ModifiersState::empty(),
+    );
+    assert_eq!(view.take_request(), None);
+    assert!(view.begin_rename(0));
+    koru_workspace_host::View::key(
+        &mut view,
+        &mut doc,
+        &Key::Character("x".into()),
+        Some("x"),
+        ModifiersState::empty(),
+    );
+    koru_workspace_host::View::key(
+        &mut view,
+        &mut doc,
+        &Key::Named(NamedKey::Escape),
+        None,
+        ModifiersState::empty(),
+    );
+    assert!(view.rename.is_none());
+    assert_eq!(view.take_request(), None);
+    assert_eq!(titles(&view), ["Same"]);
+}
+
+/// **A drag up puts the row where it was dropped**, at once, and asks for the
+/// one rank that says so — the neighbours keep theirs.
+#[test]
+fn dragging_a_row_up_moves_it_and_writes_one_rank() {
+    use super::rank::GAP;
+    let mut view = list_page(vec![
+        ranked("A", Some(GAP)),
+        ranked("B", Some(2 * GAP)),
+        ranked("C", Some(3 * GAP)),
+    ]);
+    let top = row_rect(&view, 0);
+    drag_row(&mut view, 2, top.y + 2.0);
+    let request = view.take_request().expect("the drop asked for a rank");
+    let Request::SetRank {
+        rank: Some(rank), ..
+    } = request
+    else {
+        panic!("one rank, for the moved row: {request:?}");
+    };
+    assert!(rank < GAP);
+    assert_eq!(titles(&view), ["C", "A", "B"], "drawn where it was dropped");
+}
+
+/// **A selection moves together**, keeping its own order — Explore's
+/// multi-drag, on a list page. The first drag on a list nobody ordered ranks
+/// only what it has to; the rest follow by due.
+#[test]
+fn a_selection_is_dragged_together_in_its_order() {
+    let mut view = list_page(vec![
+        ranked("A", None),
+        ranked("B", None),
+        ranked("C", None),
+        ranked("D", None),
+    ]);
+    let mut doc = a_doc();
+    // Select B, then Ctrl+click D.
+    let b = view.parts_for_test(row_rect(&view, 1)).text;
+    koru_workspace_host::View::mouse_down(&mut view, &mut doc, b.x + 4.0, b.y + b.h * 0.5, false);
+    koru_workspace_host::View::mouse_up(&mut view, &mut doc);
+    let d = view.parts_for_test(row_rect(&view, 3)).text;
+    koru_workspace_host::View::mouse_down(&mut view, &mut doc, d.x + 4.0, d.y + d.h * 0.5, true);
+    assert_eq!(view.selection(), [1, 3]);
+
+    let top = row_rect(&view, 0);
+    drag_row(&mut view, 1, top.y + 2.0);
+    let Some(Request::Many(requests)) = view.take_request() else {
+        panic!("one rank per moved row");
+    };
+    assert_eq!(requests.len(), 2);
+    assert_eq!(titles(&view), ["B", "D", "A", "C"]);
+}
+
+/// **Escape takes a drag back**: nothing is asked for and nothing moves.
+#[test]
+fn escape_cancels_a_drag() {
+    let mut view = list_page(vec![ranked("A", None), ranked("B", None)]);
+    let mut doc = a_doc();
+    let (x, y) = press_point(&view, 1);
+    koru_workspace_host::View::mouse_down(&mut view, &mut doc, x, y, false);
+    let up = row_rect(&view, 0).y + 2.0;
+    koru_workspace_host::View::mouse_move(&mut view, x, up);
+    assert!(koru_workspace_host::View::key(
+        &mut view,
+        &mut doc,
+        &Key::Named(NamedKey::Escape),
+        None,
+        ModifiersState::empty(),
+    ));
+    koru_workspace_host::View::mouse_up(&mut view, &mut doc);
+    assert_eq!(view.take_request(), None);
+    assert_eq!(titles(&view), ["A", "B"]);
+}
+
+/// **A list's menu offers its manual order first, and it is the one
+/// checked**; a queue's menu never offers it.
+#[test]
+fn a_list_menu_leads_with_the_manual_order() {
+    let list = RailTarget::List(koru_core::ids::ListId::new());
+    let items = overflow_items(&Filters::default(), list);
+    let sorts: Vec<_> = items
+        .iter()
+        .filter_map(|item| match item.row {
+            OverflowRow::Sort(sort) => Some((sort, item.checked)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(sorts[0], (TaskSort::Manual, Some(true)));
+    assert!(
+        sorts[1..]
+            .iter()
+            .all(|(_, checked)| *checked == Some(false))
+    );
+    // A queue offers it last, unchecked — it opens by due date — and the
+    // archive never offers it.
+    let queue = overflow_items(&Filters::default(), RailTarget::Bucket(Bucket::Today));
+    let last = queue.last().expect("rows");
+    assert_eq!(last.row, OverflowRow::Sort(TaskSort::Manual));
+    assert_eq!(last.checked, Some(false));
+    let archive = overflow_items(&Filters::default(), RailTarget::Bucket(Bucket::Completed));
+    assert!(
+        !archive
+            .iter()
+            .any(|item| item.row == OverflowRow::Sort(TaskSort::Manual))
+    );
+}
+
+/// **A queue set to Manual is dragged like a list** (the owner's ask,
+/// 2026-11-05): a press arms a drag on Later once Manual is chosen, never on
+/// Later by due date, and never on Completed.
+#[test]
+fn a_queue_set_to_manual_can_be_dragged() {
+    let mut doc = a_doc();
+    let rows = || vec![entry("A", None), entry("B", None)];
+    let later = view_on(RailTarget::Bucket(Bucket::Later), rows());
+    assert!(!later.manual_order(), "by due date: no order of its own");
+
+    let mut manual = view_on(RailTarget::Bucket(Bucket::Later), rows());
+    let mut filters = Filters::default();
+    filters.set_sort_for(RailTarget::Bucket(Bucket::Later), TaskSort::Manual);
+    manual.filters = filters.clone();
+    assert!(manual.manual_order());
+    let at = press_point(&manual, 0);
+    koru_workspace_host::View::mouse_down(&mut manual, &mut doc, at.0, at.1, false);
+    assert!(manual.drag.is_some(), "Manual: armed");
+
+    let mut archive = view_on(RailTarget::Bucket(Bucket::Completed), Vec::new());
+    archive.filters = filters;
+    assert!(!archive.manual_order(), "the archive has no order to drag");
+}
+
+/// **A task typed into a list ordered by hand goes on top of it.**
+#[test]
+fn a_task_typed_into_a_ranked_list_goes_on_top() {
+    use super::rank::GAP;
+    let mut view = list_page(vec![ranked("A", Some(5 * GAP)), ranked("B", Some(6 * GAP))]);
+    let mut doc = a_doc();
+    let r = view.line_rect_for_test(0);
+    koru_workspace_host::View::mouse_down(
+        &mut view,
+        &mut doc,
+        r.x + r.w * 0.5,
+        r.y + r.h * 0.5,
+        false,
+    );
+    for ch in "New".chars() {
+        let text = ch.to_string();
+        koru_workspace_host::View::key(
+            &mut view,
+            &mut doc,
+            &Key::Character(text.clone().into()),
+            Some(&text),
+            ModifiersState::empty(),
+        );
+    }
+    koru_workspace_host::View::key(
+        &mut view,
+        &mut doc,
+        &Key::Named(NamedKey::Enter),
+        None,
+        ModifiersState::empty(),
+    );
+    let Some(Request::Capture { rank, .. }) = view.take_request() else {
+        panic!("a capture");
+    };
+    assert_eq!(rank, Some(4 * GAP));
+    assert_eq!(titles(&view)[0], "New", "drawn on top at once");
 }

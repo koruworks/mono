@@ -35,6 +35,8 @@
 //! | --- | --- |
 //! | `today`, `tomorrow`, `yesterday` | that day |
 //! | `friday`, `fri`, `thurs` | the **next strict** occurrence — `friday` typed on a Friday is next Friday |
+//! | `this friday`, `coming fri` | the same: the modifier says what the bare weekday already does |
+//! | `next friday`, `next fri` | that weekday **in next week** — Thursday's *next friday* is eight days on, not one |
 //! | `aug 31`, `august 31`, `31 aug`, `sept 10` | month and day, either way round |
 //! | `aug 31 2027` | with an explicit four-digit year |
 //! | `10/28`, `28/10`, `10/28/2027`, `2027-10-28` | numeric dates — see below |
@@ -114,8 +116,7 @@
 //!
 //! # What is deliberately not grammar
 //!
-//! `next friday` (plain `friday` already means the next one), `last tuesday`,
-//! `end of month`, a trailing period on an abbreviation
+//! `last tuesday`, `end of month`, a trailing period on an abbreviation
 //! (`sept.`), and every language that is not English. Each is a table entry or
 //! a small arm away; none has been asked for, and a form that half-parses is
 //! worse than one that opens the picker.
@@ -423,6 +424,16 @@ fn date_phrase(
     if Vocabulary::is(words.yesterday, head) {
         return Some((calendar::shift_days(today, -1), 1));
     }
+    // A weekday with its modifier — `next friday`, `this friday` — before
+    // the bare weekday, which is the modifier's own head word.
+    if let Some(index) = tokens.get(1).and_then(|second| words.weekday(second)) {
+        if Vocabulary::is(words.next_word, head) {
+            return Some((weekday_next_week(today, index), 2));
+        }
+        if Vocabulary::is(words.this_word, head) {
+            return Some((next_weekday(today, index), 2));
+        }
+    }
     if let Some(index) = words.weekday(head) {
         return Some((next_weekday(today, index), 1));
     }
@@ -569,6 +580,17 @@ fn next_weekday(today: NaiveDate, days_from_monday: usize) -> NaiveDate {
     let ahead = (target + 7 - today.weekday().num_days_from_monday()) % 7;
     let ahead = if ahead == 0 { 7 } else { ahead };
     calendar::shift_days(today, i64::from(ahead))
+}
+
+/// **`next friday`**: that weekday in the week after this one — Thursday
+/// the 5th's *next friday* is the 13th, where its *friday* is the 6th. Weeks
+/// start on Monday here, as this parser's weekday numbering does; the
+/// unresolved expression ([`DateExpression::NextWeekday`]) leaves the week's
+/// start to its resolver.
+fn weekday_next_week(today: NaiveDate, days_from_monday: usize) -> NaiveDate {
+    let into_week = i64::from(today.weekday().num_days_from_monday());
+    let next_monday = calendar::shift_days(today, 7 - into_week);
+    calendar::shift_days(next_monday, (days_from_monday % 7) as i64)
 }
 
 /// Which day a **bare** time lands on: today, unless that moment has already

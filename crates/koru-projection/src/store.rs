@@ -2854,7 +2854,16 @@ pub enum TaskSort {
     Due,
     Priority,
     Modified,
+    /// The dragged order: `koru.rank` ascending, then the never-ranked tasks
+    /// by due, then the undated ones of those — see [`MANUAL_UNRANKED`].
+    Manual,
 }
+
+/// Where a never-ranked task's due puts it in [`TaskSort::Manual`]: far past
+/// every rank a person can drag to (ranks stay inside an `f64`'s exact
+/// integers, under 2^53), so the unranked follow the ranked, by due, inside
+/// the same one-number key the keyset cursor pages on.
+pub const MANUAL_UNRANKED: i64 = 1 << 60;
 
 /// One page of tasks, and whether the cursor that asked for it still existed.
 ///
@@ -3301,13 +3310,23 @@ fn task_sort_key_sql(sort: TaskSort) -> String {
             koru_core::attributes::KEY_PRIORITY
         ),
         TaskSort::Modified => "d.modified_at".to_owned(),
+        // One number, so the keyset cursor pages it as it pages the others:
+        // the rank where there is one, else the due pushed past every rank,
+        // else NULL — last, by reference, the tie-break every sort shares.
+        TaskSort::Manual => format!(
+            "(COALESCE((SELECT MIN(CAST(a.value AS INTEGER)) FROM attrs a \
+             WHERE a.document_id = n.document_id AND a.node_id = n.node_id \
+             AND a.role = '{}'), {MANUAL_UNRANKED} + ({})))",
+            koru_core::attributes::KEY_RANK,
+            due_sort_key_sql()
+        ),
     }
 }
 
 /// Whether smaller is earlier. Only a due date is: a bigger priority rank and a
 /// later modification both sort first.
 fn ascending(sort: TaskSort) -> bool {
-    matches!(sort, TaskSort::Due)
+    matches!(sort, TaskSort::Due | TaskSort::Manual)
 }
 
 /// `ORDER BY (key) IS NULL, (key) …, task ASC`.

@@ -274,11 +274,25 @@ impl Workspace {
         list: Option<ListId>,
         priority: Option<Priority>,
     ) -> Result<NativeTask, koru_store_core::errors::Error> {
+        self.create_native_task_ranked(title, due, list, priority, None)
+    }
+
+    /// [`create_native_task`](Self::create_native_task), placed: `rank` is
+    /// where the task sits in its list's dragged order (`koru.rank`) — the
+    /// top, for a task typed into a list page that is ordered by hand.
+    pub fn create_native_task_ranked(
+        &mut self,
+        title: &str,
+        due: Option<Temporal>,
+        list: Option<ListId>,
+        priority: Option<Priority>,
+        rank: Option<i64>,
+    ) -> Result<NativeTask, koru_store_core::errors::Error> {
         let document = self.ensure_task_list()?;
         let current = self.current;
         let ((node, created, dated), landed) = if self.active == Some(document) {
             let before = own_counter(&self.ws);
-            let planted = plant_native_task(&mut self.ws, title, due, list, priority)?;
+            let planted = plant_native_task_ranked(&mut self.ws, title, due, list, priority, rank)?;
             let published = self.publish_active();
             let landed = Landed::of(current, document, &self.ws, published, before);
             (planted, landed)
@@ -290,7 +304,7 @@ impl Workspace {
                 )
             })?;
             let before = own_counter(doc);
-            let planted = plant_native_task(doc, title, due, list, priority)?;
+            let planted = plant_native_task_ranked(doc, title, due, list, priority, rank)?;
             // Published now rather than on the next turn: a task captured in
             // the Tasks view must exist for every other window the moment it
             // exists here, and a parked document never publishes on the tick.
@@ -677,6 +691,19 @@ pub fn plant_native_task(
     list: Option<ListId>,
     priority: Option<Priority>,
 ) -> Result<(NodeId, TaskOutcome, Option<TaskOutcome>), koru_store_core::errors::Error> {
+    plant_native_task_ranked(doc, title, due, list, priority, None)
+}
+
+/// [`plant_native_task`] with the task's place in its list's dragged order,
+/// written in the same undo step as the rest of it.
+pub fn plant_native_task_ranked(
+    doc: &mut WorkspaceDoc,
+    title: &str,
+    due: Option<Temporal>,
+    list: Option<ListId>,
+    priority: Option<Priority>,
+    rank: Option<i64>,
+) -> Result<(NodeId, TaskOutcome, Option<TaskOutcome>), koru_store_core::errors::Error> {
     let root = document_root(doc).ok_or_else(|| {
         koru_store_core::errors::Error::new(
             koru_store_core::errors::Code::InvalidRequest,
@@ -704,6 +731,16 @@ pub fn plant_native_task(
             // open. One node is a legitimate use of it.
             doc.set_attribute_on_all(&[node], KEY_LIST, AttrValue::Text(list.to_storage()))
                 .map_err(internal)?;
+        }
+        if let Some(rank) = rank {
+            // The in-group door again: one undo step takes the task back
+            // whole, its place in the list with it.
+            doc.set_attribute_on_all(
+                &[node],
+                koru_core::attributes::KEY_RANK,
+                AttrValue::Number(rank as f64),
+            )
+            .map_err(internal)?;
         }
         if let Some(level) = priority {
             // The same in-group door, for the same reason: one undo step.

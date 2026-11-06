@@ -182,8 +182,8 @@ pub use clipboard_markdown::parse as parse_markdown;
 /// a drawn diagram.
 pub use diagram::{CopyDiagram, SaveDiagram};
 pub use settings::{
-    DocViewPrefs, MAX_RECENTS, PinnedTabRef, PopoutClose, SessionRecovery, Settings,
-    TabRef, TasksTabRef, TerminalLook,
+    DocViewPrefs, MAX_RECENTS, PinnedTabRef, PopoutClose, SessionRecovery, Settings, TabRef,
+    TasksTabRef, TerminalLook,
 };
 
 /// A decoded image ready to become a block, produced by the shell from the
@@ -1530,6 +1530,11 @@ pub trait View {
     }
 
     fn take_wants_task_view(&mut self) -> Option<koru_core::NodeId> {
+        None
+    }
+
+    /// A list's page asked for — a document title's list chip. Default: no.
+    fn take_wants_task_list(&mut self) -> Option<koru_core::ids::ListId> {
         None
     }
 
