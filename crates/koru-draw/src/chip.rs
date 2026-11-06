@@ -28,9 +28,10 @@ use crate::theme::{self, Brush};
 /// Which recipe a chip draws with.
 ///
 /// `Tag` is a labelled lozenge; `Swatch` is a bare dot. `Due` and `Priority`
-/// (A3/A4) are labelled lozenges too, always in the quiet neutral colors —
-/// a due date is not urgent-red and a priority is not colored, because color
-/// stays presentation (invariant 13) and derived states like overdue are
+/// (A3/A4) are labelled lozenges too. A due date is in the quiet neutral
+/// colours (or its list's); a priority wears its level's accent — the
+/// mapping is `koru_editor::chips::priority_accent`, chosen by the owner on
+/// 2026-11-05 over the old neutral rule. Derived states like overdue are
 /// computed by views, never painted here.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum ChipKind {

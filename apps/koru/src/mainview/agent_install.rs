@@ -261,7 +261,7 @@ impl MainView {
         let name = fill(t(lang, Key::SettingsAgentInstallTab), &[&row.name]);
         let profile =
             koru_session_profiles::LaunchProfile::custom(SessionProfileId::mint(), name, argv);
-        let tab = self.open_launch_tab(profile, None);
+        let tab = self.open_launch_tab(profile, None, None);
         self.agent_installs.retain(|install| install.key != key);
         self.agent_installs.push(AgentInstall {
             key: key.to_owned(),

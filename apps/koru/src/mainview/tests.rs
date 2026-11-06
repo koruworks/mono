@@ -18,16 +18,16 @@ use koru_core::schema::Parent;
 use koru_editor::Editing;
 
 #[test]
-fn socials_menu_focuses_one_tab_and_keeps_it_out_of_document_reuse() {
+fn socials_focuses_one_tab_and_keeps_it_out_of_document_reuse() {
     let (mut view, _) = container();
-    assert!(view.run_menu_action(MenuSubject::NewTab, MenuAction::Socials));
+    assert!(view.open_socials_tab());
     let count = view.tabs().len();
     assert!(matches!(view.tabs().active_tab().view, TabView::Socials(_)));
     assert!(!view.tabs().active_tab().is_reusable());
     assert!(view.explore.showing_socials());
     assert!(view.sidebar.is_open());
     let shared = view.explore.socials().expect("navigator owns the surface");
-    assert!(view.run_menu_action(MenuSubject::NewTab, MenuAction::Socials));
+    assert!(view.open_socials_tab());
     assert_eq!(view.tabs().len(), count);
     assert!(std::rc::Rc::ptr_eq(
         &shared,
@@ -298,7 +298,7 @@ fn the_library_background_opens_import_as_a_submenu() {
     assert!(v.open_submenu(0));
     assert_eq!(
         v.submenu.as_ref().unwrap().1.items(),
-        context_menu::import_items()
+        context_menu::import_menu_items()
     );
 }
 
@@ -1517,15 +1517,16 @@ fn ctrl_w_closes_and_ctrl_t_opens() {
     assert_eq!(v.tabs().len(), before);
 }
 
+/// **Ctrl+N opens the New… launcher**, the `+` button's dialog; Ctrl+Shift+A,
+/// the old Add… chord, opens nothing.
 #[test]
-fn ctrl_shift_a_opens_the_same_add_menu_as_the_plus() {
+fn ctrl_n_opens_the_launcher_the_plus_opens() {
     let (mut v, mut workspace) = container();
-    assert!(v.menu.is_none());
-    assert!(v.key(&mut workspace.ws, &ch("a"), Some("a"), PRIMARY_SHIFT,));
-    assert_eq!(
-        v.menu.as_ref().unwrap().items(),
-        context_menu::new_tab_items()
-    );
+    assert!(v.launcher.is_none());
+    let _ = v.key(&mut workspace.ws, &ch("a"), Some("a"), PRIMARY_SHIFT);
+    assert!(v.launcher.is_none() && v.menu.is_none());
+    assert!(v.key(&mut workspace.ws, &ch("n"), Some("n"), PRIMARY));
+    assert!(v.launcher.is_some());
 }
 
 #[test]
@@ -1575,33 +1576,22 @@ fn the_welcome_page_greets_the_owner_onboarding_named_for_this_profile() {
 }
 
 #[test]
-fn the_add_menu_always_offers_one_welcome_row_that_selects_the_welcome_tab() {
+fn opening_welcome_selects_the_one_welcome_tab() {
     let (mut v, _workspace) = on_document();
     let welcome = v
         .tabs()
         .iter()
         .position(|t| matches!(t.view, TabView::Welcome(_)))
         .expect("the document fixture opens beside Welcome");
-    assert!(v.open_new_tab_menu());
-    let items = v.menu.as_ref().unwrap().items().to_vec();
-    assert_eq!(
-        items
-            .iter()
-            .filter(|a| **a == MenuAction::OpenWelcome)
-            .count(),
-        1,
-        "one Welcome row, open or not"
-    );
-    v.menu = None;
     let before = v.tabs().len();
-    assert!(v.run_menu_action(MenuSubject::NewTab, MenuAction::OpenWelcome));
+    assert!(v.open_welcome_tab());
     assert_eq!(v.tabs().active(), welcome, "it selects the open one");
     assert_eq!(v.tabs().len(), before, "and adds nothing");
 
-    // Where a Welcome tab can be closed, the same row brings it back.
+    // Where a Welcome tab can be closed, the same call brings it back.
     if v.close(welcome) {
         assert!(!v.tabs().has_welcome());
-        assert!(v.run_menu_action(MenuSubject::NewTab, MenuAction::OpenWelcome));
+        assert!(v.open_welcome_tab());
         assert!(v.tabs().has_welcome());
     }
 }
@@ -1703,41 +1693,6 @@ fn the_plus_menu_focuses_a_tab_already_showing_the_recent() {
     );
 }
 
-/// A Chats flyout opened before the list has landed stays empty; when the
-/// snapshot is filled, the open flyout is rebuilt rather than waiting for
-/// the next Add….
-#[test]
-fn the_plus_menu_chats_flyout_fills_when_the_list_arrives() {
-    let (mut v, mut workspace) = container();
-    assert!(v.key(&mut workspace.ws, &ch("a"), Some("a"), PRIMARY_SHIFT));
-    let chats = v
-        .menu
-        .as_ref()
-        .unwrap()
-        .items()
-        .iter()
-        .position(|a| *a == MenuAction::Chats)
-        .expect("Chats row");
-    assert!(v.open_submenu(chats));
-    assert_eq!(
-        v.submenu.as_ref().unwrap().1.items(),
-        &[MenuAction::NewAiChat]
-    );
-
-    let id = koru_ai_ui::ChatId::new();
-    context_menu::set_plus_snapshots(vec![], vec![], vec![], vec![(id, "Chat with Qwen".into())]);
-    v.rebuild_plus_chats_flyout();
-    assert_eq!(
-        v.submenu.as_ref().unwrap().1.items(),
-        &[
-            MenuAction::NewAiChat,
-            MenuAction::Divider,
-            MenuAction::OpenRecentChat(id),
-        ]
-    );
-    context_menu::set_plus_snapshots(vec![], vec![], vec![], vec![]);
-}
-
 /// **A machine missing a shell dims its row; a missing agent is not
 /// listed** (product decision, 2026-11-05). A shell row keeps Koru
 /// Terminal's rule — dimmed with the *Not installed* note — while the
@@ -1745,7 +1700,7 @@ fn the_plus_menu_chats_flyout_fills_when_the_list_arrives() {
 /// *Manage…*, where the rest are installed. The probe's answer is
 /// **injected**: what is under test is the menu's reflection of an answer,
 /// never what happens to be on the test machine's real `PATH` — the menus
-/// are built directly rather than through `open_new_tab_menu`, whose refresh
+/// are built directly rather than through the launcher, whose refresh
 /// would race a real probe against the injection.
 #[test]
 fn a_missing_shell_dims_and_a_missing_agent_is_not_listed() {
@@ -1839,47 +1794,6 @@ fn a_missing_shell_dims_and_a_missing_agent_is_not_listed() {
             Some("Not installed")
         );
     }
-    context_menu::set_profile_presence(None);
-}
-
-/// **The answer landing under an open *Agents* flyout rebuilds it**, so the
-/// agents it says are missing leave while the person is looking, the way the
-/// *Chats* flyout fills when its list arrives.
-#[test]
-fn an_open_agents_flyout_drops_the_agents_the_probe_says_are_missing() {
-    let (mut v, _workspace) = container();
-    // Built directly rather than through `open_new_tab_menu`, whose refresh
-    // would race a real probe against the injection below.
-    let items = context_menu::new_tab_items();
-    let agents_row = items
-        .iter()
-        .position(|a| *a == MenuAction::NewAgent)
-        .expect("Agents row");
-    v.menu = Some(ContextMenu::new(
-        &mut v.engine,
-        MenuSubject::NewTab,
-        (100.0, 100.0),
-        items,
-    ));
-    // This "machine" has no agents.
-    let profiles = koru_session_profiles::built_in_profiles();
-    v.profile_probe.set_for_test(
-        profiles
-            .iter()
-            .map(|profile| profile.kind != koru_session_protocol::ProfileKind::Agent)
-            .collect(),
-    );
-    context_menu::set_profile_presence(None);
-    assert!(v.open_submenu(agents_row));
-    assert!(
-        v.submenu.as_ref().unwrap().1.items().len() > 1,
-        "opened on no answer: the full list"
-    );
-    assert!(v.refresh_open_agent_flyout());
-    assert_eq!(
-        v.submenu.as_ref().unwrap().1.items(),
-        &[MenuAction::ManageAgents]
-    );
     context_menu::set_profile_presence(None);
 }
 
@@ -8104,6 +8018,7 @@ fn the_command_bar_offers_new_task_and_new_document_from_the_typed_text() {
             due,
             list,
             priority,
+            ..
         } => Some((
             title.clone(),
             due.is_none(),
@@ -8741,7 +8656,7 @@ fn every_caption_tooltip_takes_its_chord_from_the_registry() {
         (Hit::Search, ShortcutId::Search),
         // The historical hit name is the caption `+`; it now opens Add rather
         // than directly creating the Ctrl+T document.
-        (Hit::NewTab, ShortcutId::AddContent),
+        (Hit::NewTab, ShortcutId::New),
     ] {
         let Some(tip) = v.caption_tooltip(hit) else {
             continue;
@@ -8885,15 +8800,15 @@ fn no_tooltip_shows_while_a_rail_view_is_carried() {
 }
 
 #[test]
-fn the_plus_tooltip_names_add_and_its_own_shortcut() {
+fn the_plus_tooltip_names_new_and_its_own_shortcut() {
     let (v, _workspace) = container();
     let tip = v
         .caption_tooltip(Hit::NewTab)
         .expect("the visible plus has a tooltip");
-    assert_eq!(tip.label, "Add…");
+    assert_eq!(tip.label, "New…");
     assert_eq!(
         tip.shortcut,
-        Some(koru_keys::label_of(koru_keys::ShortcutId::AddContent))
+        Some(koru_keys::label_of(koru_keys::ShortcutId::New))
     );
 }
 
@@ -10356,6 +10271,7 @@ fn every_task_command_leaves_through_the_pane_the_shell_holds() {
             due: None,
             list: None,
             priority: None,
+            rank: None,
         },
         TaskCommand::Remove { document, node },
         TaskCommand::SetList {
@@ -10398,6 +10314,7 @@ fn every_task_command_leaves_through_the_pane_the_shell_holds() {
                 due: None,
                 list: None,
                 priority: None,
+                rank: None,
             },
             "the store would not take it"
         ),
@@ -11209,6 +11126,92 @@ fn remove_from_tasks_goes_through_the_confirm() {
     );
 }
 
+/// **A selection's menu acts on every task in it**: *Complete* is one command
+/// per task, *Remove from Tasks* is one question for the set and one command
+/// per task on its yes, and *Add document* gives each page-made task a
+/// home and opens none of them.
+#[test]
+fn a_selections_menu_acts_on_every_task() {
+    use koru_workspace_host::tasks::TaskCommand;
+    let (mut v, _w) = on_tasks();
+    let tasks: Vec<_> = (0..3)
+        .map(|_| (koru_core::DocumentId::new(), NodeId::new()))
+        .collect();
+    let native = tasks[1..].to_vec();
+    let subject = MenuSubject::Tasks {
+        tasks: tasks.clone(),
+        native: native.clone(),
+    };
+
+    v.run_menu_action_for_test(subject.clone(), MenuAction::TaskComplete);
+    assert_eq!(
+        View::take_wants_task_commands(&mut v),
+        tasks
+            .iter()
+            .map(|&(document, node)| TaskCommand::Complete {
+                document,
+                node,
+                completed: true,
+            })
+            .collect::<Vec<_>>()
+    );
+
+    v.run_menu_action_for_test(subject.clone(), MenuAction::TaskRemove);
+    assert!(
+        View::take_wants_task_commands(&mut v).is_empty(),
+        "asked first"
+    );
+    assert!(v.confirm.is_some(), "one question for the set");
+    v.settle_confirm(true);
+    assert_eq!(
+        View::take_wants_task_commands(&mut v),
+        tasks
+            .iter()
+            .map(|&(document, node)| TaskCommand::Remove { document, node })
+            .collect::<Vec<_>>()
+    );
+
+    v.run_menu_action_for_test(subject, MenuAction::TaskCreateDocument);
+    assert_eq!(
+        View::take_wants_task_commands(&mut v),
+        native
+            .iter()
+            .map(|&(document, node)| TaskCommand::CreateHome { document, node })
+            .collect::<Vec<_>>(),
+        "a home for each page-made task, and only those"
+    );
+    assert!(
+        v.pending_landings
+            .iter()
+            .all(|landing| *landing == super::Landing::Plain),
+        "none of the new documents is opened"
+    );
+}
+
+/// The selection's menu offers what applies to every task, and nothing that
+/// names one.
+#[test]
+fn a_selections_menu_holds_what_applies_to_every_task() {
+    let a = (koru_core::DocumentId::new(), NodeId::new());
+    let b = (koru_core::DocumentId::new(), NodeId::new());
+    let (_, items) = crate::tasks_view::rows_menu(vec![a, b], vec![b], false);
+    assert_eq!(
+        items,
+        vec![
+            MenuAction::TaskCreateDocument,
+            MenuAction::Divider,
+            MenuAction::TaskComplete,
+            MenuAction::TaskDue,
+            MenuAction::TaskPriority,
+            MenuAction::TaskList,
+            MenuAction::Divider,
+            MenuAction::TaskRemove,
+        ]
+    );
+    let (_, done) = crate::tasks_view::rows_menu(vec![a, b], Vec::new(), true);
+    assert_eq!(done.first(), Some(&MenuAction::TaskReopen));
+}
+
 /// A failed capture gives the typing back rather than only naming it.
 #[test]
 fn a_failed_capture_puts_the_words_back_in_the_row() {
@@ -11222,6 +11225,7 @@ fn a_failed_capture_puts_the_words_back_in_the_row() {
         due: None,
         list: None,
         priority: None,
+        rank: None,
     };
     assert!(View::task_command_failed(
         &mut v,
@@ -11427,6 +11431,7 @@ fn a_capture_that_lands_elsewhere_raises_a_toast_with_a_way_there_and_back() {
             due: Some(Temporal::Date(DateOnly::new(today))),
             list: None,
             priority: None,
+            rank: None,
         },
         false,
     );
@@ -11439,6 +11444,7 @@ fn a_capture_that_lands_elsewhere_raises_a_toast_with_a_way_there_and_back() {
             due: Some(far.clone()),
             list: None,
             priority: None,
+            rank: None,
         },
         false,
     );
@@ -11513,6 +11519,7 @@ fn a_capture_that_lands_elsewhere_raises_a_toast_with_a_way_there_and_back() {
             due: Some(far),
             list: Some(birthday),
             priority: None,
+            rank: None,
         },
         false,
     );

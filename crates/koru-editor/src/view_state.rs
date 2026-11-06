@@ -941,6 +941,10 @@ pub struct ViewState {
     /// offered at all — so a task you were reading in its document could only
     /// be found again by remembering which queue it fell in.
     pub wants_task_view: Option<NodeId>,
+    /// **Open this list's page** — the title's list chip was pressed. The
+    /// container owns the Tasks tab and the rail, so it is asked, as it is
+    /// for [`wants_task_view`](Self::wants_task_view).
+    pub wants_task_list: Option<koru_core::ids::ListId>,
     /// **The row whose task the due chip's `×` was pressed on.**
     ///
     /// A request rather than an edit, because what the `×` asks for is a
@@ -1244,6 +1248,7 @@ impl Default for ViewState {
             wants_reminder_context: None,
             wants_file_action: None,
             wants_task_view: None,
+            wants_task_list: None,
             wants_remove_from_tasks: None,
             wants_copy_image: None,
             wants_paste_image: None,

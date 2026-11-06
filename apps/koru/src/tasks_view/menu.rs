@@ -39,6 +39,7 @@ use koru_store_wire::tasks::TaskSort;
 use super::query::Filters;
 use super::view::ListFace;
 use crate::mainview::context_menu::{MenuAction, MenuSubject};
+use crate::panes::explore::rail::{Bucket, RailTarget};
 
 /// One task row's menu: the places it leads, three ways to change it, and the
 /// one way to take it off this list.
@@ -47,6 +48,35 @@ use crate::mainview::context_menu::{MenuAction, MenuSubject};
 /// control the tick is, spelled as a sentence. `list` is the list the row is in
 /// when this page is not already that list's own, and it puts *Go to list*
 /// beside *View in origin*.
+/// **The menu over several selected tasks**: what applies to every one of
+/// them, and nothing that names one — no *Open document*, no *Go to list*.
+/// *Add document* leads when any of them was typed into this page and so
+/// has no document; *Reopen* replaces *Complete* when every one is done.
+pub fn rows_menu(
+    tasks: Vec<(DocumentId, NodeId)>,
+    native: Vec<(DocumentId, NodeId)>,
+    completed: bool,
+) -> (MenuSubject, Vec<MenuAction>) {
+    let mut items = Vec::new();
+    if !native.is_empty() {
+        items.push(MenuAction::TaskCreateDocument);
+        items.push(MenuAction::Divider);
+    }
+    items.extend([
+        if completed {
+            MenuAction::TaskReopen
+        } else {
+            MenuAction::TaskComplete
+        },
+        MenuAction::TaskDue,
+        MenuAction::TaskPriority,
+        MenuAction::TaskList,
+        MenuAction::Divider,
+        MenuAction::TaskRemove,
+    ]);
+    (MenuSubject::Tasks { tasks, native }, items)
+}
+
 pub fn row_menu(
     document: DocumentId,
     node: NodeId,
@@ -234,6 +264,44 @@ impl OverflowRow {
         Self::Sort(TaskSort::Modified),
     ];
 
+    /// A queue page's rows — Today, Next, Upcoming, Later: the same, with
+    /// the dragged order offered last (the owner's ask, 2026-11-05). A queue
+    /// opens by due date; *Manual* is a choice, and the order it shows is the
+    /// one rank every page reads, so a task moved up here is moved up in its
+    /// list too.
+    pub const QUEUE_ROWS: [Self; 7] = [
+        Self::RecentlyCompleted,
+        Self::Divider,
+        Self::SortHeading,
+        Self::Sort(TaskSort::Due),
+        Self::Sort(TaskSort::Priority),
+        Self::Sort(TaskSort::Modified),
+        Self::Sort(TaskSort::Manual),
+    ];
+
+    /// A list page's rows: the same, with the order somebody dragged it
+    /// into first — the order a list page opens in.
+    pub const LIST_ROWS: [Self; 7] = [
+        Self::RecentlyCompleted,
+        Self::Divider,
+        Self::SortHeading,
+        Self::Sort(TaskSort::Manual),
+        Self::Sort(TaskSort::Due),
+        Self::Sort(TaskSort::Priority),
+        Self::Sort(TaskSort::Modified),
+    ];
+
+    /// The rows `target`'s page offers.
+    pub fn rows(target: RailTarget) -> &'static [Self] {
+        match target {
+            RailTarget::List(_) => &Self::LIST_ROWS,
+            // The archive is ordered by when things were finished, and has
+            // nothing to drag into an order of its own.
+            RailTarget::Bucket(Bucket::Completed) => &Self::ROWS,
+            _ => &Self::QUEUE_ROWS,
+        }
+    }
+
     fn label(self) -> &'static str {
         match self {
             Self::RecentlyCompleted => "Show recently completed",
@@ -242,15 +310,16 @@ impl OverflowRow {
             Self::Sort(TaskSort::Due) => "Due date",
             Self::Sort(TaskSort::Priority) => "Priority",
             Self::Sort(TaskSort::Modified) => "Modified",
+            Self::Sort(TaskSort::Manual) => "Manual",
         }
     }
 
     /// Whether this row is a check at all, and — when the state is in hand —
     /// whether it is set. A row with no check answer reserves no check column.
-    fn checked(self, filters: &Filters) -> Option<bool> {
+    fn checked(self, filters: &Filters, target: RailTarget) -> Option<bool> {
         match self {
             Self::RecentlyCompleted => Some(filters.recently_completed),
-            Self::Sort(sort) => Some(filters.sort == sort),
+            Self::Sort(sort) => Some(filters.sort_for(target) == sort),
             Self::Divider | Self::SortHeading => None,
         }
     }
@@ -271,21 +340,21 @@ pub struct OverflowItem {
 }
 
 /// The whole menu, built against the filters as they stand.
-pub fn overflow_items(filters: &Filters) -> Vec<OverflowItem> {
-    OverflowRow::ROWS
+pub fn overflow_items(filters: &Filters, target: RailTarget) -> Vec<OverflowItem> {
+    OverflowRow::rows(target)
         .iter()
         .map(|row| OverflowItem {
             row: *row,
-            checked: row.checked(filters),
+            checked: row.checked(filters, target),
         })
         .collect()
 }
 
 /// Refresh the checks in place. The rows and their widths do not move — only
 /// the marks — which is what lets the panel stay open under the pointer.
-pub fn sync(items: &mut [OverflowItem], filters: &Filters) {
+pub fn sync(items: &mut [OverflowItem], filters: &Filters, target: RailTarget) {
     for item in items.iter_mut() {
-        item.checked = item.row.checked(filters);
+        item.checked = item.row.checked(filters, target);
     }
 }
 
@@ -327,5 +396,66 @@ impl koru_ui::MenuItem for OverflowItem {
     fn disabled_reason(&self) -> Option<Cow<'static, str>> {
         (self.row == OverflowRow::RecentlyCompleted)
             .then_some(Cow::Borrowed("Everything on this page is completed"))
+    }
+}
+
+/// One row of the colour picker: the shared accent colours, the line's own
+/// one checked, then *Clear* — the editor's colour chooser, as a menu.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum ColorPick {
+    Color { token: &'static str, checked: bool },
+    Divider,
+    Clear,
+}
+
+/// The colour picker's rows: every accent colour in its own order, then
+/// *Clear* while the line has one.
+pub fn color_picker_items(current: Option<&str>) -> Vec<ColorPick> {
+    let mut items: Vec<ColorPick> = koru_core::attributes::AccentColor::ALL
+        .into_iter()
+        .map(|color| ColorPick::Color {
+            token: color.as_str(),
+            checked: current == Some(color.as_str()),
+        })
+        .collect();
+    if current.is_some() {
+        items.push(ColorPick::Divider);
+        items.push(ColorPick::Clear);
+    }
+    items
+}
+
+impl koru_ui::MenuItem for ColorPick {
+    fn label(&self) -> Cow<'_, str> {
+        match self {
+            Self::Color { token, .. } => {
+                let mut name = token.to_string();
+                if let Some(first) = name.get_mut(..1) {
+                    first.make_ascii_uppercase();
+                }
+                Cow::Owned(name)
+            }
+            Self::Divider => Cow::Borrowed(""),
+            Self::Clear => Cow::Borrowed("Clear"),
+        }
+    }
+
+    fn checked(&self) -> Option<bool> {
+        match self {
+            Self::Color { checked, .. } => Some(*checked),
+            _ => None,
+        }
+    }
+
+    /// The colour itself ahead of its name.
+    fn swatch(&self) -> Option<Option<&str>> {
+        match self {
+            Self::Color { token, .. } => Some(Some(token)),
+            _ => None,
+        }
+    }
+
+    fn divider(&self) -> bool {
+        matches!(self, Self::Divider)
     }
 }

@@ -487,6 +487,10 @@ impl View for DocumentPane {
         View::take_wants_task_view(&mut self.doc)
     }
 
+    fn take_wants_task_list(&mut self) -> Option<koru_core::ids::ListId> {
+        View::take_wants_task_list(&mut self.doc)
+    }
+
     fn task_command_failed(
         &mut self,
         command: &koru_workspace_host::tasks::TaskCommand,
@@ -2012,6 +2016,13 @@ impl View for ManagerView {
         match self {
             Self::Container(v) => v.take_wants_task_view(),
             Self::Document(v) => v.take_wants_task_view(),
+        }
+    }
+
+    fn take_wants_task_list(&mut self) -> Option<koru_core::ids::ListId> {
+        match self {
+            Self::Container(v) => v.take_wants_task_list(),
+            Self::Document(v) => v.take_wants_task_list(),
         }
     }
 

@@ -73,9 +73,11 @@ pub trait MenuItem {
     fn divider(&self) -> bool {
         false
     }
-    /// A toggle row: `Some(state)` reserves the check column and draws the
-    /// check when set, so toggling never shifts the label; `None` is an
-    /// ordinary row.
+    /// A toggle row: `Some(state)` reserves the check lane at the row's
+    /// **right-hand end** and draws the check there when set, so toggling never
+    /// shifts anything; `None` is an ordinary row. On the right rather than
+    /// leading the label, so a menu's labels line up at one edge whether a row
+    /// is a toggle or not, and a leading icon or swatch keeps its place.
     fn checked(&self) -> Option<bool> {
         None
     }
@@ -125,6 +127,12 @@ pub trait MenuItem {
     /// A dot at the row's right-hand end: there is news behind this heading.
     fn unread(&self) -> bool {
         false
+    }
+    /// An accent token the row's leading icon is drawn in, rather than the
+    /// row's ink — a priority's flag in its level's colour. `None`, the
+    /// default, draws the icon as the label is drawn.
+    fn icon_accent(&self) -> Option<&str> {
+        None
     }
 }
 
@@ -241,18 +249,29 @@ pub enum Anchor {
     Cursor,
     /// Top-**right** at the point. For a button at the right of a row.
     ButtonRight,
+    /// **Centred on the point.** For a menu a key opened, with nothing
+    /// under the pointer to hang it from — the window's middle, usually.
+    Centre,
 }
 
-/// What a row leads with, if anything: its own icon, or the check a toggle
-/// row reserves the column for whether or not it is set.
+/// What a row leads with, if anything: its own icon. A toggle's check is
+/// not a lead — it sits in [`check_lane`] at the row's right-hand end.
 fn leading<T: MenuItem>(item: &T) -> Option<char> {
-    if let Some(glyph) = item.icon() {
-        return Some(glyph);
-    }
+    item.icon()
+}
+
+/// The room a toggle row's check takes at the far right, with the gap before
+/// it; nothing for a row that is not a toggle. Reserved whether or not the
+/// check is set, so toggling never moves the row's other trailing content.
+fn check_lane<T: MenuItem>(engine: &mut TextEngine, item: &T) -> f32 {
     if item.checked().is_some() {
-        return Some(koru_draw::icons::CHECK);
+        SHORTCUT_GAP
+            + engine
+                .icon_layout(koru_draw::icons::CHECK, theme::CAPTION_ICON)
+                .width()
+    } else {
+        0.0
     }
-    None
 }
 
 /// How wide the panel has to be to hold `items` comfortably: the widest row
@@ -301,8 +320,14 @@ pub fn measure_width<T: MenuItem>(engine: &mut TextEngine, items: &[T]) -> f32 {
 }
 
 /// What a row draws at its right edge — the submenu's `›`, a chord or a
-/// trailing glyph — with the gap before it: the room its label leaves.
+/// trailing glyph, and a toggle's check past it — with the gaps before them:
+/// the room its label leaves.
 fn trailing_width<T: MenuItem>(engine: &mut TextEngine, item: &T) -> f32 {
+    check_lane(engine, item) + trailing_content_width(engine, item)
+}
+
+/// [`trailing_width`] without the check lane.
+fn trailing_content_width<T: MenuItem>(engine: &mut TextEngine, item: &T) -> f32 {
     if item.has_submenu() {
         SHORTCUT_GAP
             + engine
@@ -599,8 +624,12 @@ impl<T: MenuItem> Menu<T> {
             // The point is the menu's right edge, so it hangs back under the
             // button rather than out past it.
             Anchor::ButtonRight => self.anchor.0 - self.width,
+            Anchor::Centre => self.anchor.0 - self.width * 0.5,
         };
-        let mut y = self.anchor.1;
+        let mut y = match self.align {
+            Anchor::Centre => self.anchor.1 - h * 0.5,
+            _ => self.anchor.1,
+        };
         if x + self.width > viewport.0 - EDGE_MARGIN {
             x = (viewport.0 - EDGE_MARGIN - self.width).max(EDGE_MARGIN);
         }
@@ -1120,8 +1149,8 @@ impl<T: MenuItem> Menu<T> {
                 (true, true) => pal.close_hover,
                 (true, false) => pal.text,
             };
-            // A row with a leading slot — its own icon, or the column a toggle
-            // row reserves — draws it first, then the label indented past it.
+            // A row with a leading slot — its own icon — draws it first, then
+            // the label indented past it.
             let mut text_x = p.x + ROW_PAD_X;
             if leading(item).is_none()
                 && let Some(token) = item.swatch()
@@ -1173,19 +1202,18 @@ impl<T: MenuItem> Menu<T> {
                 } else {
                     engine.icon_layout(glyph, theme::CAPTION_ICON)
                 };
-                // A toggle row shows the check only while set; the slot stays,
-                // so toggling never shifts the label.
-                let visible = item.icon().is_some() || item.checked() == Some(true);
-                if visible {
-                    scene::draw_layout(
-                        scene,
-                        root,
-                        &icon,
-                        text_x,
-                        r.y + (r.h - icon.height()) * 0.5,
-                        Some(colour),
-                    );
-                }
+                let icon_ink = item
+                    .icon_accent()
+                    .and_then(theme::accent_tone)
+                    .map_or(colour, |tone| tone.swatch);
+                scene::draw_layout(
+                    scene,
+                    root,
+                    &icon,
+                    text_x,
+                    r.y + (r.h - icon.height()) * 0.5,
+                    Some(icon_ink),
+                );
                 text_x += icon.width() + 8.0;
             }
             // **A label past the menu's ceiling ends in an ellipsis inside
@@ -1213,6 +1241,23 @@ impl<T: MenuItem> Menu<T> {
                 "theme::role::row()",
                 colour,
             );
+            // **A toggle's check, at the far right** — drawn only while set,
+            // in a lane reserved either way, so toggling moves nothing. A
+            // chord, `›` or trailing glyph the row also has sits just left
+            // of the lane.
+            let check_w = check_lane(engine, item);
+            if item.checked() == Some(true) {
+                let check = engine.icon_layout(koru_draw::icons::CHECK, theme::CAPTION_ICON);
+                scene::draw_layout(
+                    scene,
+                    root,
+                    &check,
+                    p.x + p.w - check.width() - ROW_PAD_X,
+                    r.y + (r.h - check.height()) * 0.5,
+                    Some(colour),
+                );
+            }
+            let end = p.x + p.w - ROW_PAD_X - check_w;
             // A row that opens a submenu wears a `›` where a chord would be:
             // the chord column is where "there is more to this row" already
             // lives, and a second column for one row would be a column.
@@ -1222,7 +1267,7 @@ impl<T: MenuItem> Menu<T> {
                     scene,
                     root,
                     &caret,
-                    p.x + p.w - caret.width() - ROW_PAD_X,
+                    end - caret.width(),
                     r.y + (r.h - caret.height()) * 0.5,
                     Some(colour),
                 );
@@ -1234,7 +1279,7 @@ impl<T: MenuItem> Menu<T> {
                     scene,
                     root,
                     &hint,
-                    p.x + p.w - hint.width() - ROW_PAD_X,
+                    end - hint.width(),
                     r.y + (r.h - hint_h) * 0.5,
                     theme::role::hint(),
                     "theme::role::hint()",
@@ -1248,7 +1293,7 @@ impl<T: MenuItem> Menu<T> {
                     scene,
                     root,
                     &icon,
-                    p.x + p.w - icon.width() - ROW_PAD_X,
+                    end - icon.width(),
                     r.y + (r.h - icon.height()) * 0.5,
                     Some(pal.text_dim),
                 );

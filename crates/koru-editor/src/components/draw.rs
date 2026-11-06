@@ -524,9 +524,9 @@ pub fn draw_overlay(
             }
         }
         // The color picker's recipe over the four levels: a leading glyph
-        // column, the label, a trailing check on the current one. The flag
-        // is the same neutral hint tone on every row — no color per level,
-        // because priority is importance, not ink (invariant 13).
+        // column, the label, a trailing check on the current one. **The flag
+        // wears its level's colour** — the chip's (`priority_accent`) — and
+        // Clear's glyph stays the neutral hint tone.
         Kind::Priorities { sel, rows, current } => {
             for (i, row) in rows.iter().enumerate() {
                 let ry = py + theme::PANEL_PAD + i as f32 * theme::ROW_H;
@@ -536,15 +536,11 @@ pub fn draw_overlay(
                     None => ("Clear", icons::CLEAR),
                     Some(level) => (crate::chips::priority_label(*level), icons::FLAG),
                 };
+                let ink = row
+                    .and_then(|level| theme::accent_tone(crate::chips::priority_accent(level)))
+                    .map_or(theme::p().row_hint, |tone| tone.swatch);
                 let icon = view.engine.icon_layout(glyph, 15.0);
-                draw_layout(
-                    scene,
-                    root,
-                    &icon,
-                    px + 10.0,
-                    ry + 7.0,
-                    Some(theme::p().row_hint),
-                );
+                draw_layout(scene, root, &icon, px + 10.0, ry + 7.0, Some(ink));
                 let label = view.engine.simple_layout(
                     label_text,
                     theme::role::ui().with_weight(if on {

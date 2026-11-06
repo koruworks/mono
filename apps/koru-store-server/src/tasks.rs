@@ -358,6 +358,7 @@ fn translate(query: &wire::TaskQuery) -> Result<TaskRowQuery, TaskServiceError> 
             wire::TaskSort::Due => TaskSort::Due,
             wire::TaskSort::Priority => TaskSort::Priority,
             wire::TaskSort::Modified => TaskSort::Modified,
+            wire::TaskSort::Manual => TaskSort::Manual,
         },
         // Already clamped at the boundary (`routes::tasks::query`); clamping it
         // again here would be a second answer to one question.

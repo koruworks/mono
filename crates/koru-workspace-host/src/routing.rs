@@ -107,6 +107,10 @@ pub enum ModalKind {
     /// middle. A menu's rule: it takes every key while it stands, and a press
     /// outside it closes it with nothing opened.
     PlaceChooser,
+    /// The `+` button's New… dialog: a centred grid of what can be made,
+    /// each chosen by its letter. The place chooser's rule: every key is
+    /// its while it stands, a press off it closes it.
+    Launcher,
     /// The internal session recorder's setup modal (F9 / the caption menu).
     ///
     /// It *has* text fields — a prompt, by that token — but dictating into a

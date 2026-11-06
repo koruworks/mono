@@ -72,6 +72,7 @@ use crate::panes::explore::accessibility::Context as ExploreContext;
 mod chrome;
 mod commands;
 pub(crate) mod document;
+mod launcher;
 mod menus;
 pub(crate) mod persistence;
 mod place_chooser;
@@ -475,6 +476,16 @@ impl MainView {
                 rev.byte(0);
             }
         }
+        // The launcher, the same: a new opening, or its highlight moving.
+        match self.launcher.as_ref().map(|ask| &ask.launcher) {
+            Some(launcher) => {
+                rev.u64(launcher.instance());
+                rev.u64(launcher.tile_instance(launcher.highlight()));
+            }
+            None => {
+                rev.byte(0);
+            }
+        }
         // The Tasks page, when it is the tab in front of the person. It is part
         // of the chrome's fingerprint rather than the body's because it is
         // re-sent whole with the chrome: a row ticked on it has to make the
@@ -516,6 +527,9 @@ impl MainView {
             return true;
         }
         if place_chooser::action(self, ws, target, action) {
+            return true;
+        }
+        if launcher::action(self, target, action) {
             return true;
         }
         if persistence::action(self, target, action) {

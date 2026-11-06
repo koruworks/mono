@@ -52,6 +52,7 @@ pub mod icon_button;
 pub mod key_chip;
 pub mod keys;
 pub mod label_chip;
+pub mod launcher;
 pub mod logo;
 pub mod measurement_badge;
 pub mod media_viewer;

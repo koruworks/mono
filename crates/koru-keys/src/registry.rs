@@ -85,7 +85,6 @@ impl Layer {
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum ShortcutId {
     // ------------------------------------------------------------- the shell
-    NewWindow,
     PinWindow,
     ToggleUiInspector,
     ToggleInspectorSpacingRays,
@@ -138,7 +137,9 @@ pub enum ShortcutId {
     TerminalToggleExplore,
     // ---------------------------------------------------------- the container
     NewTab,
-    AddContent,
+    /// The New… launcher: a document, a task, an agent or a shell, each
+    /// chosen by its letter. The `+` button's chord.
+    New,
     CloseTab,
     CloseAllTabs,
     /// Global search in this window.
@@ -520,12 +521,6 @@ pub const REGISTRY: &[Shortcut] = &[
     ),
     // ------------------------------------------------------------- the shell
     s(
-        ShortcutId::NewWindow,
-        Layer::Shell,
-        "New window",
-        Chord::new(On::Letter('n'), PRIMARY),
-    ),
-    s(
         ShortcutId::PinWindow,
         Layer::Shell,
         "Keep window on top",
@@ -624,10 +619,10 @@ pub const REGISTRY: &[Shortcut] = &[
         Chord::new(On::Letter('t'), PRIMARY),
     ),
     s(
-        ShortcutId::AddContent,
+        ShortcutId::New,
         Layer::Container,
-        "Add…",
-        Chord::new(On::Letter('a'), PRIMARY_SHIFT),
+        "New…",
+        Chord::new(On::Letter('n'), PRIMARY),
     ),
     Shortcut {
         shares_chord_with: Some(ShortcutId::CloseDocumentWindow),

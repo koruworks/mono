@@ -124,7 +124,6 @@ impl TabView {
             Self::Welcome(_)
             | Self::Settings(_)
             | Self::Home(_)
-            | Self::Tasks(_)
             | Self::Reminders(_)
             | Self::Trash(_)
             | Self::AiChat(_)
@@ -135,6 +134,9 @@ impl TabView {
             // follows the pointer out of the band exactly as it does in the
             // library's own pages (ADR-372).
             Self::Result(r) => r.is_dragging(),
+            // A row held on a Tasks page follows the pointer out of the page:
+            // it can be dropped on a list in the sidebar.
+            Self::Tasks(t) => t.holding_rows(),
             Self::Socials(view) => view.is_dragging(),
             Self::Manage(view) => view.is_dragging(),
             Self::Diff(d) => d.is_dragging(),

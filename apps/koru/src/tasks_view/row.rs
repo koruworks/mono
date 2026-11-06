@@ -239,6 +239,21 @@ fn geometry(r: Rect, chip_widths: &[f32]) -> (RowParts, Vec<Rect>) {
     (parts, chips)
 }
 
+/// **Where a rename field stands on a row**: the title's own box, laid out
+/// as the row lays it out — after the kind glyph when the row wears one,
+/// before the chips — so the words being edited sit where they were drawn.
+pub(super) fn title_field(r: Rect, has_icon: bool, chip_widths: &[f32]) -> Rect {
+    let table = Table::new(r, Metrics::manager(), 0.0);
+    let mut face = RowFace::blank(chip_widths);
+    if has_icon {
+        face.glyph = Some(icons::DOCUMENT);
+    }
+    let tree = tree(&face, table);
+    let frame = crate::input_engine::with(|engine| layout(&tree, engine, r));
+    let title = frame.rect_of(TITLE).unwrap_or(r);
+    Rect::new(title.x, r.y, title.w, r.h)
+}
+
 /// Where the pieces of one row are, from its rectangle and nothing else.
 pub(super) fn parts(r: Rect) -> RowParts {
     geometry(r, &[]).0
@@ -478,13 +493,13 @@ impl Leaf for MenuLeaf {
         &self,
         scene: &mut Scene,
         root: Affine,
-        _engine: &mut TextEngine,
+        engine: &mut TextEngine,
         at: Rect,
         _cx: &FrameCx,
         _state: ElState,
     ) {
         if let Some(hot) = self.dots {
-            self.table.paint_trailing_dots(scene, root, at, hot);
+            self.table.paint_trailing_dots(scene, root, engine, at, hot);
         }
     }
 }

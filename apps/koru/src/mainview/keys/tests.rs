@@ -75,10 +75,8 @@ fn the_container_chords_resolve() {
         Some(Chord::FocusChrome)
     );
     assert_eq!(resolve(&ch("t"), Some("t"), PRIMARY), Some(Chord::NewTab));
-    assert_eq!(
-        resolve(&ch("a"), Some("a"), PRIMARY_SHIFT),
-        Some(Chord::AddContent)
-    );
+    assert_eq!(resolve(&ch("n"), Some("n"), PRIMARY), Some(Chord::New));
+    assert_eq!(resolve(&ch("a"), Some("a"), PRIMARY_SHIFT), None);
     assert_eq!(resolve(&ch("w"), Some("w"), PRIMARY), Some(Chord::CloseTab));
     assert_eq!(resolve(&ch("p"), Some("p"), PRIMARY), Some(Chord::Search));
     assert_eq!(
@@ -317,10 +315,6 @@ fn delete_with_any_supported_modifiers_is_not_a_container_chord() {
 /// And it does not shadow the shifted letters that share the branch.
 #[test]
 fn the_shifted_letters_still_resolve() {
-    assert_eq!(
-        resolve(&ch("a"), Some("a"), PRIMARY_SHIFT),
-        Some(Chord::AddContent)
-    );
     assert_eq!(
         resolve(&ch("w"), Some("w"), PRIMARY_SHIFT),
         Some(Chord::CloseAllTabs)

@@ -64,16 +64,21 @@ impl TrashView {
             top + title.height() + TITLE_GAP,
             Some(p.text_dim),
         );
-        let d = self.header_dots();
-        if self.hover == Some(Hit::HeaderDots) {
-            scene::fill(
-                scene,
-                root,
-                p.hover_tint,
-                &scene::rrect(d.x, d.y, d.w, d.h, 5.0),
-            );
-        }
-        scene::dots_three(scene, root, d, p.text_dim);
+        // The icon button every `…` in the app is, as the Tasks page's.
+        let dots = self.header_dots();
+        koru_ui::icon_button::draw_with(
+            scene,
+            root,
+            &mut self.engine,
+            dots,
+            koru_draw::icons::DOTS_THREE,
+            koru_ui::icon_button::State {
+                hovered: self.hover == Some(Hit::HeaderDots),
+                active: false,
+                disabled: false,
+            },
+            koru_ui::icon_button::Metrics::INLINE,
+        );
     }
 
     /// The one thing the table cannot say: that there is nothing to say.
@@ -221,7 +226,13 @@ impl TrashView {
                     self.hover == Some(Hit::Restore(i)),
                     false,
                 );
-                t.paint_trailing_dots(scene, root, c[1], self.hover == Some(Hit::Dots(i)));
+                t.paint_trailing_dots(
+                    scene,
+                    root,
+                    &mut self.engine,
+                    c[1],
+                    self.hover == Some(Hit::Dots(i)),
+                );
             }
         }
     }

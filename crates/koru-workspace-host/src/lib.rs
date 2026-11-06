@@ -1533,6 +1533,11 @@ pub trait View {
         None
     }
 
+    /// A list's page asked for — a document title's list chip. Default: no.
+    fn take_wants_task_list(&mut self) -> Option<koru_core::ids::ListId> {
+        None
+    }
+
     /// One of those commands refused, with a sentence for a person.
     ///
     /// **The return channel exists because of `Create`.** A capture that failed

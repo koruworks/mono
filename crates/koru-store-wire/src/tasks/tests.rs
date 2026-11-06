@@ -133,6 +133,7 @@ fn the_lifecycle_and_sort_tokens_are_snake_case() {
         (TaskSort::Due, "\"due\""),
         (TaskSort::Priority, "\"priority\""),
         (TaskSort::Modified, "\"modified\""),
+        (TaskSort::Manual, "\"manual\""),
     ] {
         assert_eq!(serde_json::to_string(&value).unwrap(), token);
     }

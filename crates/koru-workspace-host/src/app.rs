@@ -16905,36 +16905,6 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                     self.wake(id);
                     return;
                 }
-                // Ctrl+N opens another window on the same workspace. Two views
-                // of one document, which is the whole point of the seam: type
-                // in either and both follow.
-                //
-                // **Alt has to be excluded, not just Shift.** `Ctrl+Alt+N` is a
-                // document's Narrow layout, and without this it opened a second
-                // window instead — the shell claiming a chord it does not own,
-                // three modifiers deep, which is exactly why `keys::resolve`
-                // checks all three.
-                if koru_keys::primary_only(mods)
-                    && ctrl_letter(&logical_key, event.text.as_deref()) == Some('n')
-                {
-                    inputdebug::write(format_args!(
-                        "[Koru][input][pid={}] shell claimed=new-window",
-                        std::process::id()
-                    ));
-                    let view = self.host.duplicate(&self.runtime.workspace.ws);
-                    let title = self.app_window_title();
-                    let new_id = self.open_pane(event_loop, view, &title);
-                    self.reveal_pane(new_id);
-                    // The first `set_visible(true)` on a hidden window is
-                    // `SW_SHOWNOACTIVATE`, so the activation that creation-time
-                    // visibility used to provide has to be asked for.
-                    if let Some(pane) = self.panes.get(&new_id) {
-                        pane.window.focus_window();
-                    }
-                    self.request_redraw(new_id);
-                    return;
-                }
-
                 // Ctrl+Tab cycles tabs, and it can only be resolved here.
                 //
                 // On Windows Ctrl+I arrives as `NamedKey::Tab`, and the key map
