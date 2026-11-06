@@ -355,3 +355,33 @@ fn a_permanent_delete_is_a_recoverable_tombstone_and_a_concurrent_write_is_a_con
     assert_eq!(ws.page_resolution(page), Resolution::Live);
     let _ = settle(&mut ws, document);
 }
+
+/// The `+` menu's two items, through the workspace: a page shows no note
+/// until it has a document or is asked to, and its attachments are
+/// references the page state carries in attached order.
+#[test]
+fn a_pages_note_and_attachments_ride_on_its_state() {
+    use crate::system::SystemStore;
+    use crate::system::tests::FakeStore;
+    use std::sync::Arc;
+
+    let root = tempfile::tempdir().unwrap();
+    let id = WorkspaceId::new();
+    let mut ws = workspace_at(root.path(), id);
+    ws.system_store_for_tests = Some(Arc::new(FakeStore::new([])) as Arc<dyn SystemStore>);
+    let list = ws.create_list("Bike", None).expect("a list");
+    let page = PageKey::List(list);
+
+    let state = ws.ensure_page(page).unwrap();
+    assert!(!state.note_shown, "an empty page shows no band");
+    assert!(state.attachments.is_empty());
+
+    assert!(ws.set_page_note_shown(page, true));
+    assert!(ws.ensure_page(page).unwrap().note_shown, "asked for");
+
+    let (a, b) = (DocumentId::new(), DocumentId::new());
+    assert!(ws.attach_files_to_page(page, &[a, b]));
+    assert_eq!(ws.ensure_page(page).unwrap().attachments, vec![a, b]);
+    assert!(ws.detach_file_from_page(page, a));
+    assert_eq!(ws.ensure_page(page).unwrap().attachments, vec![b]);
+}

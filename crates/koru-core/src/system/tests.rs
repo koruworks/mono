@@ -958,3 +958,65 @@ fn the_deletion_protocol_round_trips_through_the_page_record() {
     );
     assert_eq!(a.deletion_record(pa, 0).resolve(), Resolution::Deleted);
 }
+
+/// Plus-menu decisions 1 and 2: whether a page shows its note is on the
+/// page's record, so every device agrees; absent, a page shows its note
+/// exactly when it has ever had a document, so nobody's words go behind a
+/// default and an empty page shows no band until asked.
+#[test]
+fn a_pages_note_is_shown_once_it_has_a_document_and_otherwise_by_hand() {
+    let mut sys = SystemDoc::create().unwrap();
+    let list = sys.create_list("Bike", None, 1).unwrap();
+    let page = PageKey::List(list);
+    assert!(!sys.page_note_shown(page), "nothing written: no band");
+    sys.add_page_generation(page, 0).unwrap();
+    assert!(sys.page_note_shown(page), "a document exists: shown");
+    assert!(sys.set_page_note_shown(page, false).unwrap());
+    assert!(!sys.page_note_shown(page), "hidden by hand");
+    assert!(sys.set_page_note_shown(page, true).unwrap());
+    assert!(sys.page_note_shown(page));
+
+    let today = PageKey::Bucket(crate::tasks::Bucket::Today);
+    assert!(!sys.page_note_shown(today));
+    assert!(
+        sys.set_page_note_shown(today, true).unwrap(),
+        "a bucket's record is made on first use"
+    );
+    assert!(sys.page_note_shown(today));
+
+    let gone = PageKey::List(ListId::new());
+    assert!(
+        !sys.set_page_note_shown(gone, true).unwrap(),
+        "no such list"
+    );
+}
+
+/// Plus-menu decisions 3 and 4: a page's attachments are a set of file
+/// references in attached order — attaching twice keeps the place, two
+/// replicas attaching different files both keep theirs, and removing takes
+/// only the reference.
+#[test]
+fn a_pages_attachments_are_references_in_attached_order() {
+    let mut sys = SystemDoc::create().unwrap();
+    let list = sys.create_list("Bike", None, 1).unwrap();
+    let page = PageKey::List(list);
+    let (a, b, c) = (DocumentId::new(), DocumentId::new(), DocumentId::new());
+    assert!(sys.page_attachments(page).is_empty());
+    assert!(sys.attach_to_page(page, b, 20).unwrap());
+    assert!(sys.attach_to_page(page, a, 10).unwrap());
+    assert!(
+        sys.attach_to_page(page, b, 30).unwrap(),
+        "again: keeps its place"
+    );
+    assert_eq!(sys.page_attachments(page), vec![a, b]);
+
+    let mut other = SystemDoc::create().unwrap();
+    other.import(&sys.export_all_updates().unwrap()).unwrap();
+    assert!(other.attach_to_page(page, c, 40).unwrap());
+    assert!(sys.detach_from_page(page, a).unwrap());
+    assert!(!sys.detach_from_page(page, a).unwrap(), "already gone");
+    sys.import(&other.export_all_updates().unwrap()).unwrap();
+    other.import(&sys.export_all_updates().unwrap()).unwrap();
+    assert_eq!(sys.page_attachments(page), vec![b, c], "both kept theirs");
+    assert_eq!(other.page_attachments(page), sys.page_attachments(page));
+}

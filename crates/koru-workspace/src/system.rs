@@ -596,6 +596,40 @@ impl SystemSession {
         })
     }
 
+    /// Whether the page shows its note inline, or `None` while the open is
+    /// in flight.
+    pub(crate) fn page_note_shown(&self, page: PageKey) -> Option<bool> {
+        let doc = self
+            .active
+            .as_ref()
+            .map(|live| &live.doc)
+            .or(self.local.as_ref())?;
+        Some(doc.page_note_shown(page))
+    }
+
+    pub(crate) fn set_page_note_shown(&mut self, page: PageKey, shown: bool) -> bool {
+        self.edit_list(|doc| doc.set_page_note_shown(page, shown).unwrap_or(false))
+    }
+
+    /// The files attached to the page, in attached order, or `None` while
+    /// the open is in flight.
+    pub(crate) fn page_attachments(&self, page: PageKey) -> Option<Vec<DocumentId>> {
+        let doc = self
+            .active
+            .as_ref()
+            .map(|live| &live.doc)
+            .or(self.local.as_ref())?;
+        Some(doc.page_attachments(page))
+    }
+
+    pub(crate) fn attach_to_page(&mut self, page: PageKey, file: DocumentId, now_ms: i64) -> bool {
+        self.edit_list(|doc| doc.attach_to_page(page, file, now_ms).unwrap_or(false))
+    }
+
+    pub(crate) fn detach_from_page(&mut self, page: PageKey, file: DocumentId) -> bool {
+        self.edit_list(|doc| doc.detach_from_page(page, file).unwrap_or(false))
+    }
+
     /// Record a page's generation, creating the local document if the
     /// workspace has none yet — a bucket's page may be the first thing a
     /// workspace ever puts in its system document.

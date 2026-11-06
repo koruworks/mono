@@ -209,7 +209,44 @@ impl Workspace {
             self.page_resolution(page),
             koru_core::pages::deletion::Resolution::Conflict(_)
         );
+        if let Some(system) = &self.system {
+            state.note_shown = system.page_note_shown(page).unwrap_or(false);
+            state.attachments = system.page_attachments(page).unwrap_or_default();
+        }
         Some(state)
+    }
+
+    /// Show or hide the page's note inline (the `+` menu's *Inline
+    /// description*), on the page's record so every device agrees.
+    pub fn set_page_note_shown(&mut self, page: PageKey, shown: bool) -> bool {
+        match &mut self.system {
+            Some(system) => system.set_page_note_shown(page, shown),
+            None => false,
+        }
+    }
+
+    /// Attach workspace files to the page as context. The files are already
+    /// the workspace's; the page holds references.
+    pub fn attach_files_to_page(&mut self, page: PageKey, files: &[DocumentId]) -> bool {
+        let now = crate::open::now_ms();
+        let Some(system) = &mut self.system else {
+            return false;
+        };
+        let mut changed = false;
+        for (i, file) in files.iter().enumerate() {
+            // Stamped a millisecond apart so a batch keeps the order it
+            // was chosen in on every replica.
+            changed |= system.attach_to_page(page, *file, now + i as i64);
+        }
+        changed
+    }
+
+    /// Take a file off the page: the reference goes, the file stays.
+    pub fn detach_file_from_page(&mut self, page: PageKey, file: DocumentId) -> bool {
+        match &mut self.system {
+            Some(system) => system.detach_from_page(page, file),
+            None => false,
+        }
     }
 
     fn ensure_page_inner(&mut self, page: PageKey) -> Option<PageState> {
@@ -238,6 +275,8 @@ impl Workspace {
                 generation,
                 phase: PagePhase::Ready,
                 conflict: false,
+                note_shown: false,
+                attachments: Vec::new(),
             });
         }
         let title = self.page_title(page);

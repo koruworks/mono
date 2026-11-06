@@ -14419,6 +14419,8 @@ fn repointing_the_tasks_tab_never_lands_the_old_note_as_a_tab() {
         generation: 0,
         phase: PagePhase::Empty,
         conflict: false,
+        note_shown: true,
+        attachments: Vec::new(),
     };
 
     assert!(v.open_tasks_tab(RailTarget::List(a), false));

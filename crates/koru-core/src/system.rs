@@ -159,6 +159,16 @@ const F_FROZEN_KIND: &str = "kind";
 const F_FROZEN_VALUE: &str = "value";
 const FROZEN_TEXT: &str = "text";
 const FROZEN_BUCKET: &str = "bucket";
+/// On a page record: whether the page shows its note inline above the
+/// rows. `page_note`, a bool, last-writer-wins. **Absent means "shown once
+/// the page has a document"**: a note somebody wrote is never hidden by
+/// default, and a page nobody wrote on shows no band until asked.
+const K_PAGE_NOTE: &str = "page_note";
+/// On a page record: the files attached to the page as context —
+/// `page_files.<DocumentId>` → the millisecond it was attached. A set:
+/// attaching is one key insert, removing deletes the key, so two devices
+/// attaching different files both keep theirs. Read in attached order.
+const K_PAGE_FILES: &str = "page_files";
 /// On a page record: the deletion protocol of each generation
 /// ([`crate::pages::deletion`]), keyed by generation then by the protocol's
 /// own keys. The persisted shape of a [`DeletionRecord`]; grow-only sets and
@@ -1084,6 +1094,91 @@ impl SystemDoc {
         Ok(true)
     }
 
+    // ---------------------------------------------- the note and the files
+
+    /// Whether the page shows its note inline: as written by hand, else
+    /// shown exactly when the page has ever had a document (plus-menu
+    /// decision 2: a note with words is never hidden by default).
+    pub fn page_note_shown(&self, page: PageKey) -> bool {
+        let written = self
+            .page_record(page)
+            .and_then(|record| match record.get(K_PAGE_NOTE)? {
+                ValueOrContainer::Value(LoroValue::Bool(shown)) => Some(shown),
+                _ => None,
+            });
+        written.unwrap_or_else(|| !self.page_generations(page).is_empty())
+    }
+
+    /// Show or hide the page's note. Answers whether the page exists to
+    /// write on; a deleted list's does not change.
+    pub fn set_page_note_shown(&mut self, page: PageKey, shown: bool) -> Result<bool> {
+        let Some(record) = self.page_record_for_write(page)? else {
+            return Ok(false);
+        };
+        record.insert(K_PAGE_NOTE, shown)?;
+        self.doc.commit();
+        Ok(true)
+    }
+
+    /// The files attached to the page, in the order they were attached
+    /// (ties by id, so every replica agrees). Empty for a page with none.
+    pub fn page_attachments(&self, page: PageKey) -> Vec<DocumentId> {
+        let Some(record) = self.page_record(page) else {
+            return Vec::new();
+        };
+        let Some(files) = record_map(&record, K_PAGE_FILES) else {
+            return Vec::new();
+        };
+        let mut out: Vec<(i64, DocumentId)> = files
+            .keys()
+            .filter_map(|key| {
+                let key = key.to_string();
+                let id = DocumentId::parse(&key)?;
+                let at = match files.get(&key)? {
+                    ValueOrContainer::Value(LoroValue::I64(ms)) => ms,
+                    _ => 0,
+                };
+                Some((at, id))
+            })
+            .collect();
+        out.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+        out.into_iter().map(|(_, id)| id).collect()
+    }
+
+    /// Attach a file to the page as context. Attaching one already there
+    /// keeps its place. Answers whether the page exists to write on.
+    pub fn attach_to_page(&mut self, page: PageKey, file: DocumentId, now_ms: i64) -> Result<bool> {
+        let Some(record) = self.page_record_for_write(page)? else {
+            return Ok(false);
+        };
+        let files = record.ensure_mergeable_map(K_PAGE_FILES)?;
+        let key = file.to_storage();
+        if files.get(&key).is_some() {
+            return Ok(true);
+        }
+        files.insert(&key, now_ms)?;
+        self.doc.commit();
+        Ok(true)
+    }
+
+    /// Take a file off the page. Only the reference goes — the file stays
+    /// in the workspace, where it was stored. Answers whether it was there.
+    pub fn detach_from_page(&mut self, page: PageKey, file: DocumentId) -> Result<bool> {
+        let Some(record) = self.page_record(page) else {
+            return Ok(false);
+        };
+        let Some(files) = record_map(&record, K_PAGE_FILES) else {
+            return Ok(false);
+        };
+        let key = file.to_storage();
+        if files.get(&key).is_none() {
+            return Ok(false);
+        }
+        files.delete(&key)?;
+        self.doc.commit();
+        Ok(true)
+    }
+
     // ----------------------------------------------------- deletion events
 
     /// The deletion protocol of one page-document generation, read whole
@@ -1445,10 +1540,7 @@ fn parse_decision(key: &str) -> Option<DecisionId> {
 
 fn parse_replica_event(key: &str) -> Option<(Replica, EventId)> {
     let (replica, event) = key.split_once('|')?;
-    Some((
-        u64::from_str_radix(replica, 16).ok()?,
-        parse_event(event)?,
-    ))
+    Some((u64::from_str_radix(replica, 16).ok()?, parse_event(event)?))
 }
 
 fn read_frozen(value: &LoroValue) -> Option<FrozenTitle> {

@@ -4249,6 +4249,8 @@ mod note {
             generation: 0,
             phase,
             conflict: false,
+            note_shown: true,
+            attachments: Vec::new(),
         }
     }
 
@@ -4259,6 +4261,8 @@ mod note {
             generation: 0,
             phase: PagePhase::Empty,
             conflict: true,
+            note_shown: true,
+            attachments: Vec::new(),
         }
     }
 

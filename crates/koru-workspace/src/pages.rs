@@ -78,6 +78,13 @@ pub struct PageState {
     /// conflict — deleted on one device, written on another (plan §6.2).
     /// The Tasks page shows the *Keep deleted* / *Recover* band when set.
     pub conflict: bool,
+    /// Whether the page shows its note inline (the `+` menu's *Inline
+    /// description*): written on the page's record, else shown exactly when
+    /// the page has ever had a document.
+    pub note_shown: bool,
+    /// The files attached to the page as context, in attached order — the
+    /// `+` menu's *Attachment*; references to workspace files.
+    pub attachments: Vec<DocumentId>,
 }
 
 /// The person's answer to a page document's deletion conflict (plan §6.3).
@@ -176,6 +183,8 @@ impl PageEntry {
             generation: self.generation,
             phase: self.phase.clone(),
             conflict: false,
+            note_shown: false,
+            attachments: Vec::new(),
         }
     }
 
