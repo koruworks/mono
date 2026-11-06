@@ -1028,6 +1028,9 @@ pub struct MainView {
     /// list in a tab of its own, not only in the band (plan D5, *body and own
     /// tab*).
     page_of: std::collections::HashMap<koru_core::DocumentId, Option<koru_core::ids::PageKey>>,
+    /// A note was just learned to be one: its own tab's title row is hidden
+    /// at the next catch-up, which has the document in hand.
+    hide_page_title_rows: bool,
     /// A Store document whose rename prompt should open once the shell has
     /// loaded it, and when to stop waiting for it. Explore rows carry manifest
     /// `DocumentId`s, while the prompt needs the root node inside that
@@ -1928,6 +1931,7 @@ impl MainView {
             active_document: None,
             tasks_activation: None,
             page_of: std::collections::HashMap::new(),
+            hide_page_title_rows: false,
             pending_document_rename: None,
             pending_document_attrs: None,
             pending_task_reveal: None,
@@ -2847,6 +2851,10 @@ impl MainView {
                 .find(|entry| entry.id.as_uuid() == node.as_uuid())
                 .map(|entry| entry.id)
         }) {
+            // A note has no title row to land in: its name is asked for.
+            if self.is_page_document(document) {
+                return self.prompt_rename_page(document);
+            }
             if self.active_document != Some(document) {
                 self.pending_document_rename = Some((document, Self::gesture_deadline()));
                 // Pinned to this window: the prompt is owed to whoever pressed
@@ -3128,6 +3136,29 @@ impl MainView {
 
     /// A project row's Rename…, seeded with the registry's current name so the
     /// field is an edit rather than a retype.
+    /// Whether `document` is a note above a Tasks page, as far as the shell
+    /// has told this window.
+    fn is_page_document(&self, document: koru_core::DocumentId) -> bool {
+        matches!(self.page_of.get(&document), Some(Some(_)))
+    }
+
+    /// Ask for a note's new name, seeded with its resolved title (plan §6.6:
+    /// a direct rename is the page's override, never root text).
+    fn prompt_rename_page(&mut self, document: koru_core::DocumentId) -> bool {
+        let name = self
+            .entries
+            .as_ref()
+            .and_then(|entries| entries.iter().find(|e| e.id == document))
+            .map(|entry| entry.title.clone())
+            .unwrap_or_default();
+        self.menu = None;
+        if self.new_document.is_some() {
+            return false;
+        }
+        self.new_document = Some(NewDocument::rename_page(&mut self.engine, document, &name));
+        true
+    }
+
     fn prompt_rename_agent_project(&mut self, id: koru_session_protocol::ProjectId) -> bool {
         let name = self
             .explore
@@ -3600,6 +3631,18 @@ impl MainView {
                     (purpose, self.session_verbs())
                 {
                     sender.rename_project(id, name.trim().to_owned());
+                }
+                true
+            }
+            NewDocumentAction::CreateDocument(name)
+                if matches!(purpose, PromptPurpose::RenamePage(_)) =>
+            {
+                self.new_document = None;
+                if let PromptPurpose::RenamePage(document) = purpose {
+                    self.ask_pane(PaneRequest::RenameDocument {
+                        document,
+                        title: name.trim().to_owned(),
+                    });
                 }
                 true
             }
@@ -4654,6 +4697,9 @@ impl MainView {
                     let Some(document) = self.tabs().get(tab).and_then(|tab| tab.document) else {
                         return false;
                     };
+                    if self.is_page_document(document) {
+                        return self.prompt_rename_page(document);
+                    }
                     self.pending_document_rename = Some((document, Self::gesture_deadline()));
                     let asked = self
                         .request_store_document_here(NodeId::from_uuid(document.as_uuid()), true);
@@ -8292,6 +8338,24 @@ impl MainView {
     /// a second O(rows) pass on the path AGENTS.md's responsiveness rules are
     /// about ([ADR-343-overlaycatchup](../../../docs/decisions/README.md)).
     fn catch_up_active(&mut self, ws: &WorkspaceDoc) {
+        // A note in a tab of its own shows no title row: its name is resolved
+        // (plan A2), and a row holding its empty root text would invite
+        // typing into a title nothing reads.
+        if std::mem::take(&mut self.hide_page_title_rows) {
+            let pages = &self.page_of;
+            for (_, group) in self.panes.iter_groups_mut() {
+                for tab in group.tabs_mut().iter_mut() {
+                    if let Some(document) = tab.document
+                        && matches!(pages.get(&document), Some(Some(_)))
+                        && let TabView::Leaf(leaf) = &mut tab.view
+                        && leaf.has_title_row()
+                        && leaf.body().root.is_some_and(|root| ws.read(root).is_ok())
+                    {
+                        leaf.hide_title_row(ws);
+                    }
+                }
+            }
+        }
         // **The active tab of every pane**, because every visible pane draws
         // its active tab from the document as it now stands: a page beside the
         // focused terminal is on screen, and an edit that arrives from the
@@ -9532,6 +9596,21 @@ impl MainView {
     fn refresh_labels(&mut self, ws: &WorkspaceDoc) {
         let active_document = self.active_document;
         let naming = self.naming;
+        let page_names: Vec<(koru_core::DocumentId, String)> = self
+            .page_of
+            .iter()
+            .filter(|(_, page)| page.is_some())
+            .filter_map(|(id, _)| {
+                let entries = self.entries.as_ref()?;
+                let entry = entries.iter().find(|e| e.id == *id)?;
+                let title = if entry.title.is_empty() {
+                    "Untitled".to_owned()
+                } else {
+                    entry.title.clone()
+                };
+                Some((*id, title))
+            })
+            .collect();
         for t in self.tabs_mut().iter_mut() {
             // **The Tasks tab is named for what it is showing**, and it is the
             // one tab whose name can change without anybody pressing anything:
@@ -9555,6 +9634,14 @@ impl MainView {
             // background document tab to that the moment anything changed. Its
             // label follows the manifest instead, through `set_entries`.
             if t.document != active_document {
+                continue;
+            }
+            // A note's name is resolved, never its root text, so its tab is
+            // named from the listing like a background tab — active or not.
+            if let Some(document) = t.document
+                && let Some((_, name)) = page_names.iter().find(|(id, _)| *id == document)
+            {
+                t.set_name(name);
                 continue;
             }
             // A title being typed into is held at the name it had when the
@@ -13760,6 +13847,12 @@ impl View for MainView {
             }
             false
         });
+        if page.is_some() {
+            // Its title is resolved, never its root text: the row that would
+            // show the root text goes, at the next catch-up, where the
+            // document is in hand.
+            self.hide_page_title_rows = true;
+        }
         changed
     }
 

@@ -18,7 +18,7 @@ use std::collections::BTreeSet;
 use std::sync::{Arc, mpsc};
 
 use koru_core::ids::{DocumentId, ListId, PageKey, TagId};
-use koru_core::system::{ListEntry, SystemDoc, TagEntry};
+use koru_core::system::{ListEntry, PageTitle, SystemDoc, TagEntry};
 
 use crate::{Workspace, explore, open, store};
 
@@ -489,6 +489,33 @@ impl SystemSession {
             .map(|live| &live.doc)
             .or(self.local.as_ref())?;
         Some(doc.page_generations(page))
+    }
+
+    /// The resolved title of a page document's generation, or `None` while
+    /// the open is in flight.
+    pub(crate) fn page_title(&self, page: PageKey, generation: u64) -> Option<PageTitle> {
+        let doc = self.active.as_ref().map(|live| &live.doc).or(self.local.as_ref())?;
+        Some(doc.page_title(page, generation))
+    }
+
+    /// Every list record, tombstones included, or none while the open is in
+    /// flight.
+    pub(crate) fn all_lists(&self) -> Option<Vec<ListEntry>> {
+        let doc = self.active.as_ref().map(|live| &live.doc).or(self.local.as_ref())?;
+        Some(doc.all_lists())
+    }
+
+    /// A direct rename of a page document's generation.
+    pub(crate) fn set_page_override(
+        &mut self,
+        page: PageKey,
+        generation: u64,
+        title: Option<&str>,
+    ) -> bool {
+        self.edit_list(|doc| {
+            doc.set_page_override(page, generation, title)
+                .unwrap_or(false)
+        })
     }
 
     /// Record a page's generation, creating the local document if the

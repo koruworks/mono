@@ -1921,6 +1921,9 @@ impl Workspace {
         id: koru_core::DocumentId,
         title: &str,
     ) -> Result<(), koru_store_core::errors::Error> {
+        // A note's rename is an override in the system document (plan §6.6);
+        // the manifest's copy follows as the cache it is.
+        self.rename_page_document(id, title);
         self.edit_manifest(|manifest| manifest.rename_document(explore::store_document(id), title))
     }
 
@@ -2186,8 +2189,15 @@ impl Workspace {
     /// [ADR-50-ondemand]: ../../../docs/decisions/README.md
     /// [ADR-91]: ../../../docs/decisions/ADR-076-100.md#adr-91-perdocument--a-document-keeps-a-root-node-for-its-title-and-the-manifest-mirrors-it
     fn reconcile_title(&mut self, active: koru_core::DocumentId) -> bool {
-        let Some(title) = self.active_title() else {
-            return false;
+        // A page document's title is resolved, never read off its root
+        // (plan A2): the manifest caches the semantic value — a list's name,
+        // a rename, a bucket's token — and is written only when it differs.
+        let title = match self.page_title_of(active) {
+            Some(resolved) => resolved.semantic(),
+            None => match self.active_title() {
+                Some(title) => title,
+                None => return false,
+            },
         };
         // HTTP creation can precede its manifest echo. Keep that existing
         // provisional projection current without creating a competing tree node.

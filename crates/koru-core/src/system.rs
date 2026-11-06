@@ -67,7 +67,7 @@
 //! [`DocumentId`]: crate::ids::DocumentId
 //! [`TagId`]: crate::ids::TagId
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use loro::{LoroDoc, LoroMap, LoroValue, ValueOrContainer};
 
@@ -77,6 +77,7 @@ use crate::attributes::{
 use crate::ids::{DocumentId, ListId, PageKey, TagId};
 use crate::schema::{Result, StoreError};
 use crate::tags;
+use crate::tasks::Bucket;
 use crate::time::TimeZoneName;
 
 // Root containers.
@@ -144,6 +145,19 @@ const K_LIST_DELETED: &str = "deleted";
 /// the numeric maximum; a replacement after a deletion adds the next key.
 /// Absent on a page that has never had a document.
 const K_PAGE_GENS: &str = "page_gens";
+/// On a page record: a direct rename of generation *n*'s document — a
+/// person's title, last-writer-wins, always text. `page_override.<n>`.
+/// A list rename removes the current generation's (plan Q10).
+const K_PAGE_OVERRIDE: &str = "page_override";
+/// On a page record: a superseded generation's own name, frozen when its
+/// replacement was made — **one tagged value** `{kind, value}` written by one
+/// insert, so two concurrent writers can never leave a kind from one and a
+/// value from the other. `page_frozen.<n>`.
+const K_PAGE_FROZEN: &str = "page_frozen";
+const F_FROZEN_KIND: &str = "kind";
+const F_FROZEN_VALUE: &str = "value";
+const FROZEN_TEXT: &str = "text";
+const FROZEN_BUCKET: &str = "bucket";
 
 /// One tag, as the table knows it.
 #[derive(Clone, PartialEq, Debug)]
@@ -210,6 +224,36 @@ impl ListEntry {
     /// as two rows of the same rail.
     pub fn fold_key(&self) -> String {
         tags::fold_key(&self.name)
+    }
+}
+
+/// A superseded page document's own name, frozen when its replacement was
+/// made (page-document plan §6.6). A person's title or a list's name is
+/// shown literally; a bucket's token is localized by every reader, so a
+/// Spanish device replacing *Today* leaves an archived note that reads *Hoy*
+/// there and *Today* here.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum FrozenTitle {
+    Text(String),
+    Bucket(String),
+}
+
+/// A page document's resolved title: a semantic value, never a localized
+/// label. The manifest caches [`semantic`](Self::semantic); a reader shows
+/// a bucket in its own language.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum PageTitle {
+    Text(String),
+    Bucket(Bucket),
+}
+
+impl PageTitle {
+    /// The stored form: the text itself, or a bucket's token.
+    pub fn semantic(&self) -> String {
+        match self {
+            Self::Text(text) => text.clone(),
+            Self::Bucket(bucket) => bucket.as_str().to_owned(),
+        }
     }
 }
 
@@ -820,6 +864,16 @@ impl SystemDoc {
             return Ok(false);
         };
         record.insert(K_LIST_NAME, name)?;
+        // The list's note follows the list again (plan Q5, Q10): a direct
+        // rename of the current generation's document is taken back in the
+        // same commit, as this replica sees the current generation. A
+        // superseded generation keeps its own name.
+        if let Some(current) = self.current_page_generation(PageKey::List(list))
+            && let Some(overrides) = record_map(&record, K_PAGE_OVERRIDE)
+            && overrides.get(&current.to_string()).is_some()
+        {
+            overrides.delete(&current.to_string())?;
+        }
         self.doc.commit();
         Ok(true)
     }
@@ -997,14 +1051,148 @@ impl SystemDoc {
         let Some(record) = self.page_record_for_write(page)? else {
             return Ok(false);
         };
-        if self.page_generations(page).contains(&generation) {
+        let known = self.page_generations(page);
+        if known.contains(&generation) {
             return Ok(true);
+        }
+        // **A replacement freezes the names it supersedes**, in the same
+        // commit (§6.6): each older generation keeps the name it had — its
+        // own title if it was renamed, else the list's name as it stands, else
+        // the bucket's token — so a later list rename moves only the new one.
+        for older in known.into_iter().filter(|g| *g < generation) {
+            if self.page_frozen(page, older).is_none() {
+                let frozen = self.frozen_name(page, older);
+                write_frozen(&record, older, &frozen)?;
+            }
         }
         record
             .ensure_mergeable_map(K_PAGE_GENS)?
             .insert(&generation.to_string(), true)?;
         self.doc.commit();
         Ok(true)
+    }
+
+    /// Every list record, **tombstones included**, in rail order — what the
+    /// map from a page document back to its page needs, since a deleted
+    /// list keeps its document.
+    pub fn all_lists(&self) -> Vec<ListEntry> {
+        let lists = self.doc.get_map(C_LISTS);
+        let mut out = Vec::new();
+        let keys: Vec<String> = lists.keys().map(|k| k.to_string()).collect();
+        for key in keys {
+            let Some(id) = ListId::parse(&key) else {
+                continue;
+            };
+            let Some(ValueOrContainer::Container(c)) = lists.get(&key) else {
+                continue;
+            };
+            let Ok(record) = c.into_map() else { continue };
+            out.push(read_list(id, &record));
+        }
+        out.sort_by(|a, b| {
+            a.order
+                .is_none()
+                .cmp(&b.order.is_none())
+                .then(a.order.cmp(&b.order))
+                .then(a.name.cmp(&b.name))
+                .then(a.id.cmp(&b.id))
+        });
+        out
+    }
+
+    /// A direct rename of generation `generation`'s document, if one stands.
+    pub fn page_override(&self, page: PageKey, generation: u64) -> Option<String> {
+        let record = self.page_record(page)?;
+        let overrides = record_map(&record, K_PAGE_OVERRIDE)?;
+        overrides
+            .get(&generation.to_string())
+            .and_then(crate::schema::as_string)
+    }
+
+    /// Rename generation `generation`'s document directly — Explore's
+    /// *Rename*, MCP's — or take the rename back with `None`. A superseded
+    /// generation's rename is also its frozen name: for one, `frozen` *is*
+    /// its name. Answers `false` for a page record that does not exist.
+    pub fn set_page_override(
+        &mut self,
+        page: PageKey,
+        generation: u64,
+        title: Option<&str>,
+    ) -> Result<bool> {
+        let Some(record) = self.page_record_for_write(page)? else {
+            return Ok(false);
+        };
+        let key = generation.to_string();
+        let overrides = record.ensure_mergeable_map(K_PAGE_OVERRIDE)?;
+        match title {
+            Some(title) => overrides.insert(&key, title)?,
+            None if overrides.get(&key).is_some() => overrides.delete(&key)?,
+            None => {}
+        }
+        let superseded = self
+            .current_page_generation(page)
+            .is_some_and(|current| generation < current);
+        if superseded && let Some(title) = title {
+            write_frozen(&record, generation, &FrozenTitle::Text(title.to_owned()))?;
+        }
+        self.doc.commit();
+        Ok(true)
+    }
+
+    /// A superseded generation's frozen name, if its replacement froze one.
+    pub fn page_frozen(&self, page: PageKey, generation: u64) -> Option<FrozenTitle> {
+        let record = self.page_record(page)?;
+        let frozen = record_map(&record, K_PAGE_FROZEN)?;
+        let ValueOrContainer::Value(value) = frozen.get(&generation.to_string())? else {
+            return None;
+        };
+        read_frozen(&value)
+    }
+
+    /// What generation `generation`'s name would freeze as right now.
+    fn frozen_name(&self, page: PageKey, generation: u64) -> FrozenTitle {
+        if let Some(title) = self.page_override(page, generation) {
+            return FrozenTitle::Text(title);
+        }
+        match page {
+            PageKey::List(list) => FrozenTitle::Text(
+                self.list_entry(list)
+                    .map(|entry| entry.name)
+                    .unwrap_or_default(),
+            ),
+            PageKey::Bucket(bucket) => FrozenTitle::Bucket(bucket.as_str().to_owned()),
+        }
+    }
+
+    /// **The title of generation `generation`'s document** (plan §6.6): the
+    /// current generation is its override, else the list's name as it stands
+    /// (a deleted list's last name) or the bucket; a superseded one is its
+    /// frozen name, else its override, else the same. Never root text.
+    pub fn page_title(&self, page: PageKey, generation: u64) -> PageTitle {
+        let superseded = self
+            .current_page_generation(page)
+            .is_some_and(|current| generation < current);
+        if superseded && let Some(frozen) = self.page_frozen(page, generation) {
+            return match frozen {
+                FrozenTitle::Text(text) => PageTitle::Text(text),
+                FrozenTitle::Bucket(token) => Bucket::ALL
+                    .into_iter()
+                    .find(|b| b.as_str() == token)
+                    .map(PageTitle::Bucket)
+                    .unwrap_or(PageTitle::Text(token)),
+            };
+        }
+        if let Some(title) = self.page_override(page, generation) {
+            return PageTitle::Text(title);
+        }
+        match page {
+            PageKey::List(list) => PageTitle::Text(
+                self.list_entry(list)
+                    .map(|entry| entry.name)
+                    .unwrap_or_default(),
+            ),
+            PageKey::Bucket(bucket) => PageTitle::Bucket(bucket),
+        }
     }
 
     fn list_record(&self, list: ListId) -> Option<LoroMap> {
@@ -1023,6 +1211,46 @@ impl SystemDoc {
             .deleted_ms
             .is_none()
             .then_some(record)
+    }
+}
+
+/// A mergeable map under a record, if it exists.
+fn record_map(record: &LoroMap, key: &str) -> Option<LoroMap> {
+    match record.get(key)? {
+        ValueOrContainer::Container(c) => c.into_map().ok(),
+        _ => None,
+    }
+}
+
+/// One frozen name as its stored value: a whole map, one insert.
+fn write_frozen(record: &LoroMap, generation: u64, frozen: &FrozenTitle) -> Result<()> {
+    let (kind, value) = match frozen {
+        FrozenTitle::Text(text) => (FROZEN_TEXT, text.as_str()),
+        FrozenTitle::Bucket(token) => (FROZEN_BUCKET, token.as_str()),
+    };
+    let stored = LoroValue::from(HashMap::from([
+        (F_FROZEN_KIND.to_string(), LoroValue::from(kind)),
+        (F_FROZEN_VALUE.to_string(), LoroValue::from(value)),
+    ]));
+    record
+        .ensure_mergeable_map(K_PAGE_FROZEN)?
+        .insert(&generation.to_string(), stored)?;
+    Ok(())
+}
+
+fn read_frozen(value: &LoroValue) -> Option<FrozenTitle> {
+    let LoroValue::Map(map) = value else {
+        return None;
+    };
+    let text = |key: &str| match map.get(key)? {
+        LoroValue::String(s) => Some(s.to_string()),
+        _ => None,
+    };
+    let (kind, value) = (text(F_FROZEN_KIND)?, text(F_FROZEN_VALUE)?);
+    match kind.as_str() {
+        FROZEN_TEXT => Some(FrozenTitle::Text(value)),
+        FROZEN_BUCKET => Some(FrozenTitle::Bucket(value)),
+        _ => None,
     }
 }
 

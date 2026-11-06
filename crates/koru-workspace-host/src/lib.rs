@@ -2470,6 +2470,13 @@ pub enum PaneRequest {
     /// whatever is open, which is a different thing that happens to look the
     /// same in the sidebar until you reopen.
     CreateDocument(String),
+    /// Rename a document by id — a note above a Tasks page, whose title is
+    /// not a row anybody can type into: the workspace writes the override
+    /// and the manifest follows.
+    RenameDocument {
+        document: koru_core::DocumentId,
+        title: String,
+    },
     /// Create a document **inside** `parent` — as its last child — and open
     /// it: a sidebar row's `+` (the review's note). The same round trip as
     /// [`CreateDocument`](Self::CreateDocument), placed under the row.
@@ -2866,6 +2873,7 @@ impl PaneRequest {
             Self::NewWorkspace { .. } => "request.new_workspace",
             Self::NewWorkspaceIn(..) => "request.new_workspace_in",
             Self::CreateDocument { .. } => "request.create_document",
+            Self::RenameDocument { .. } => "request.rename_document",
             Self::CreateDocumentIn { .. } => "request.create_document_in",
             Self::CreateCanvas(..) => "request.create_canvas",
             Self::CopyDocument { .. } => "request.copy_document",

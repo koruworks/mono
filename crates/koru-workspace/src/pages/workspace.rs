@@ -3,6 +3,8 @@
 //! The workspace's half of the page registry: what the shell asks, and what
 //! each store turn does for the pages in flight.
 
+use koru_core::system::PageTitle;
+
 use super::*;
 
 impl Workspace {
@@ -72,6 +74,74 @@ impl Workspace {
             document = page_document_id(workspace, page, generation);
         }
         Some((document, generation))
+    }
+
+    /// Every page document this workspace's system document knows: each
+    /// list's (tombstones included — a deleted list keeps its document) and
+    /// each bucket's, for every generation it has had. Derived, never
+    /// stored (plan §6.6's page-document map).
+    pub fn page_documents(&mut self) -> Vec<(DocumentId, PageKey, u64)> {
+        let Some(workspace) = self.current else {
+            return Vec::new();
+        };
+        self.ensure_system(false);
+        let Some(system) = &self.system else {
+            return Vec::new();
+        };
+        let mut pages: Vec<PageKey> = system
+            .all_lists()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|list| PageKey::List(list.id))
+            .collect();
+        pages.extend(koru_core::tasks::Bucket::ALL.into_iter().map(PageKey::Bucket));
+        let mut out = Vec::new();
+        for page in pages {
+            for generation in system.page_generations(page).unwrap_or_default() {
+                out.push((page_document_id(workspace, page, generation), page, generation));
+            }
+        }
+        out
+    }
+
+    /// The resolved title of a page document — `None` for a document that
+    /// is nobody's note.
+    pub fn page_title_of(&mut self, document: DocumentId) -> Option<PageTitle> {
+        let (page, generation) = self
+            .page_documents()
+            .into_iter()
+            .find(|(id, _, _)| *id == document)
+            .map(|(_, page, generation)| (page, generation))
+            .or_else(|| {
+                self.pages
+                    .entries
+                    .get(&document)
+                    .map(|entry| (entry.page, entry.generation))
+            })?;
+        self.system
+            .as_ref()
+            .and_then(|system| system.page_title(page, generation))
+    }
+
+    /// A direct rename of a page document: its own title from now on, until
+    /// the list is renamed (Q5). Answers whether `document` was a note.
+    pub(crate) fn rename_page_document(&mut self, document: DocumentId, title: &str) -> bool {
+        let Some((_, page, generation)) = self
+            .page_documents()
+            .into_iter()
+            .find(|(id, _, _)| *id == document)
+        else {
+            return false;
+        };
+        let title = title.trim();
+        let Some(system) = &mut self.system else {
+            return false;
+        };
+        let changed = system.set_page_override(page, generation, (!title.is_empty()).then_some(title));
+        if changed {
+            self.lists_changed = true;
+        }
+        true
     }
 
     /// Which page `document` is the note of, if any — the registry's answer

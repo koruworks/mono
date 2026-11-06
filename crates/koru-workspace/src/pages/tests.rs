@@ -237,3 +237,57 @@ fn a_buckets_page_is_per_workspace_and_the_first_input_records_its_generation() 
     assert!(b.system.is_none(), "B wrote nothing and records nothing");
     let _ = settle(&mut a, a_today.document);
 }
+
+/// Rung 9 (P5): a note's title is the list's name, resolved — never its
+/// root text; renaming the note directly gives it its own name; renaming
+/// the list takes the title back.
+#[test]
+fn a_notes_title_is_resolved_from_the_list_and_a_direct_rename_overrides_it() {
+    use crate::system::SystemStore;
+    use crate::system::tests::FakeStore;
+    use koru_core::system::PageTitle;
+    use std::sync::Arc;
+
+    let root = tempfile::tempdir().unwrap();
+    let id = WorkspaceId::new();
+    let mut ws = workspace_at(root.path(), id);
+    ws.system_store_for_tests = Some(Arc::new(FakeStore::new([])) as Arc<dyn SystemStore>);
+    let list = ws.create_list("Bike", None).expect("a list");
+    let page = PageKey::List(list);
+    let state = ws.ensure_page(page).unwrap();
+    let document = state.document;
+
+    assert_eq!(
+        ws.page_title_of(document),
+        Some(PageTitle::Text("Bike".into())),
+        "named for its list from the start"
+    );
+    ws.others
+        .get_mut(&document)
+        .unwrap()
+        .set_text(genesis_seed_id(document), "notes")
+        .unwrap();
+    ws.tick_pages();
+    assert_eq!(
+        ws.page_title_of(document),
+        Some(PageTitle::Text("Bike".into()))
+    );
+    assert_eq!(ws.page_of_document(document), Some(page));
+
+    assert!(ws.rename_page_document(document, "Old research"));
+    assert_eq!(
+        ws.page_title_of(document),
+        Some(PageTitle::Text("Old research".into()))
+    );
+    assert!(ws.rename_list(list, "Bike Build"));
+    assert_eq!(
+        ws.page_title_of(document),
+        Some(PageTitle::Text("Bike Build".into())),
+        "the list rename takes the title back"
+    );
+    assert!(
+        !ws.rename_page_document(DocumentId::new(), "x"),
+        "nobody's note"
+    );
+    let _ = settle(&mut ws, document);
+}

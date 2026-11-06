@@ -709,3 +709,129 @@ fn two_peers_adding_generations_offline_converge_on_the_union() {
     assert_eq!(a.current_page_generation(page), Some(2));
     assert_eq!(b.current_page_generation(page), Some(2));
 }
+
+// ------------------------------------------------------------ titles
+
+fn sync(a: &mut SystemDoc, b: &mut SystemDoc) {
+    let from_a = a.export_all_updates().unwrap();
+    let from_b = b.export_all_updates().unwrap();
+    a.import(&from_b).unwrap();
+    b.import(&from_a).unwrap();
+}
+
+/// §6.6: the current generation reads the list's name; a direct rename
+/// overrides it; a list rename takes the override back (Q5, Q10).
+#[test]
+fn a_lists_note_follows_the_list_until_renamed_directly_and_again_after() {
+    let mut sys = SystemDoc::create().unwrap();
+    let list = sys.create_list("Bike", None, 1).unwrap();
+    let page = PageKey::List(list);
+    sys.add_page_generation(page, 0).unwrap();
+    assert_eq!(sys.page_title(page, 0), PageTitle::Text("Bike".into()));
+
+    assert!(sys.set_page_override(page, 0, Some("Old research")).unwrap());
+    assert_eq!(sys.page_title(page, 0), PageTitle::Text("Old research".into()));
+    assert!(sys.rename_list(list, "Bike Build").unwrap());
+    assert_eq!(sys.page_override(page, 0), None, "the list rename took it back");
+    assert_eq!(sys.page_title(page, 0), PageTitle::Text("Bike Build".into()));
+
+    sys.delete_list(list, 2).unwrap();
+    assert_eq!(
+        sys.page_title(page, 0),
+        PageTitle::Text("Bike Build".into()),
+        "a deleted list's note keeps its last name (D4)"
+    );
+    assert_eq!(sys.all_lists().len(), 1, "tombstones included");
+    assert!(sys.lists().is_empty());
+}
+
+/// §6.6: a replacement freezes the superseded generation's name in the
+/// same commit, so a later list rename moves only the new document — and
+/// a concurrent rename cannot erase it, because the renaming replica never
+/// wrote the frozen key.
+#[test]
+fn a_replacement_freezes_the_old_notes_name_and_a_concurrent_list_rename_moves_only_the_new() {
+    let mut a = SystemDoc::create().unwrap();
+    let list = a.create_list("Bike", None, 1).unwrap();
+    let page = PageKey::List(list);
+    a.add_page_generation(page, 0).unwrap();
+    a.set_page_override(page, 0, Some("Old research")).unwrap();
+    let mut b = SystemDoc::from_snapshot(&a.export_snapshot().unwrap()).unwrap();
+
+    a.add_page_generation(page, 1).unwrap();
+    assert_eq!(
+        a.page_frozen(page, 0),
+        Some(FrozenTitle::Text("Old research".into()))
+    );
+    b.rename_list(list, "Bike Build").unwrap();
+    sync(&mut a, &mut b);
+    for (who, sys) in [("a", &a), ("b", &b)] {
+        assert_eq!(sys.page_generations(page), vec![0, 1], "{who}");
+        assert_eq!(sys.page_override(page, 0), None, "{who}: B removed it");
+        assert_eq!(
+            sys.page_title(page, 0),
+            PageTitle::Text("Old research".into()),
+            "{who}: generation 0 is superseded and keeps its frozen name"
+        );
+        assert_eq!(
+            sys.page_title(page, 1),
+            PageTitle::Text("Bike Build".into()),
+            "{who}: generation 1 follows the list"
+        );
+    }
+}
+
+/// §6.6: a replaced bucket note freezes the bucket, not a label, so every
+/// reader localizes it; a literal title `bucket:today` stays literal.
+#[test]
+fn a_replaced_bucket_note_freezes_the_bucket_and_a_literal_title_stays_literal() {
+    let mut sys = SystemDoc::create().unwrap();
+    let today = PageKey::Bucket(crate::tasks::Bucket::Today);
+    sys.add_page_generation(today, 0).unwrap();
+    assert_eq!(sys.page_title(today, 0), PageTitle::Bucket(crate::tasks::Bucket::Today));
+    sys.add_page_generation(today, 1).unwrap();
+    assert_eq!(sys.page_frozen(today, 0), Some(FrozenTitle::Bucket("today".into())));
+    assert_eq!(sys.page_title(today, 0), PageTitle::Bucket(crate::tasks::Bucket::Today));
+
+    sys.set_page_override(today, 1, Some("bucket:today")).unwrap();
+    sys.add_page_generation(today, 2).unwrap();
+    assert_eq!(
+        sys.page_frozen(today, 1),
+        Some(FrozenTitle::Text("bucket:today".into()))
+    );
+    assert_eq!(sys.page_title(today, 1), PageTitle::Text("bucket:today".into()));
+    assert_eq!(sys.page_title(today, 2), PageTitle::Bucket(crate::tasks::Bucket::Today));
+}
+
+/// §6.6: a direct rename of a superseded generation is its frozen name too,
+/// and two writers freezing one generation concurrently with different
+/// kinds converge on one whole value — never a kind from one and a value
+/// from the other.
+#[test]
+fn frozen_names_are_whole_values() {
+    let mut a = SystemDoc::create().unwrap();
+    let today = PageKey::Bucket(crate::tasks::Bucket::Today);
+    a.add_page_generation(today, 0).unwrap();
+    let mut b = SystemDoc::from_snapshot(&a.export_snapshot().unwrap()).unwrap();
+
+    // A replaces Today (freezing the bucket); B, not seeing that, renames
+    // generation 0 directly and then replaces it too (freezing text).
+    a.add_page_generation(today, 1).unwrap();
+    b.set_page_override(today, 0, Some("Monday's plan")).unwrap();
+    b.add_page_generation(today, 1).unwrap();
+    sync(&mut a, &mut b);
+    let frozen = a.page_frozen(today, 0).expect("frozen");
+    assert_eq!(frozen, b.page_frozen(today, 0).unwrap(), "converged");
+    assert!(
+        matches!(
+            &frozen,
+            FrozenTitle::Bucket(t) if t == "today"
+        ) || matches!(&frozen, FrozenTitle::Text(t) if t == "Monday's plan"),
+        "one of the two whole values: {frozen:?}"
+    );
+
+    // Renaming a superseded generation afterwards is a frozen name as well.
+    a.set_page_override(today, 0, Some("Archived")).unwrap();
+    assert_eq!(a.page_frozen(today, 0), Some(FrozenTitle::Text("Archived".into())));
+    assert_eq!(a.page_title(today, 0), PageTitle::Text("Archived".into()));
+}

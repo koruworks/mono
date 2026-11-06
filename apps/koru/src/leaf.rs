@@ -202,6 +202,12 @@ impl Leaf {
         d.editor.body.focus = d.editor.body.first_body_row();
     }
 
+    /// Whether the document's title is the first row.
+    pub fn has_title_row(&self) -> bool {
+        let Self::Document(d) = self;
+        d.editor.body.title_row
+    }
+
     /// What the first empty paragraph reads, in place of *Start typing…*.
     pub fn set_body_placeholder(&mut self, placeholder: String) {
         let Self::Document(d) = self;

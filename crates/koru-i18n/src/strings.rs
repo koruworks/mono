@@ -2911,13 +2911,17 @@ pub enum Key {
     PageSaveFailed,
     /// The band's notice when an existing note would not open.
     PageOpenFailed,
+    /// The rename prompt's title for a note.
+    PageRenameTitle,
+    /// Its field's placeholder.
+    PageRenamePlaceholder,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2033] = [
+    pub const ALL: [Key; 2035] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4951,6 +4955,8 @@ impl Key {
         Key::PageNote,
         Key::PageSaveFailed,
         Key::PageOpenFailed,
+        Key::PageRenameTitle,
+        Key::PageRenamePlaceholder,
     ];
 }
 
@@ -15877,5 +15883,27 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
         ar: "تعذّر فتح هذه الملاحظة",
         zh_hans: "无法打开此笔记",
         ja: "このメモを開けませんでした",
+    },
+    Row {
+        key: Key::PageRenameTitle,
+        en: "Rename note",
+        es: "Cambiar el nombre de la nota",
+        pt_br: "Renomear nota",
+        de: "Notiz umbenennen",
+        fr: "Renommer la note",
+        ar: "إعادة تسمية الملاحظة",
+        zh_hans: "重命名笔记",
+        ja: "メモの名前を変更",
+    },
+    Row {
+        key: Key::PageRenamePlaceholder,
+        en: "Name",
+        es: "Nombre",
+        pt_br: "Nome",
+        de: "Name",
+        fr: "Nom",
+        ar: "الاسم",
+        zh_hans: "名称",
+        ja: "名前",
     },
 ];

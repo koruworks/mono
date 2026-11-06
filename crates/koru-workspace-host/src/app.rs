@@ -3286,6 +3286,17 @@ fn pane_profile_summary(
     live
 }
 
+/// The localized name of an agenda bucket, for a note listed under its token.
+fn bucket_label_key(bucket: koru_core::tasks::Bucket) -> koru_i18n::Key {
+    match bucket {
+        koru_core::tasks::Bucket::Today => koru_i18n::Key::A11yTaskBucketToday,
+        koru_core::tasks::Bucket::Next => koru_i18n::Key::A11yTaskBucketNext,
+        koru_core::tasks::Bucket::Upcoming => koru_i18n::Key::A11yTaskBucketUpcoming,
+        koru_core::tasks::Bucket::Later => koru_i18n::Key::A11yTaskBucketLater,
+        koru_core::tasks::Bucket::Completed => koru_i18n::Key::A11yTaskBucketCompleted,
+    }
+}
+
 fn restore_onboarding_profile(root: Option<&Path>, raw_profile: &str) -> OnboardingCreation {
     let Some(profile) = koru_core::ProfileId::parse(raw_profile) else {
         return OnboardingCreation::RestoreFailed {
@@ -7945,7 +7956,22 @@ Nothing was written. The store starts on demand, so this usually means it could 
     /// takes for a document created in another window to appear here without
     /// anyone clicking anything.
     fn push_entries(&mut self) -> bool {
-        let (entries, trashed) = self.runtime.workspace.entries_and_trashed();
+        let (mut entries, mut trashed) = self.runtime.workspace.entries_and_trashed();
+        // A bucket's note is listed under its token; a person reads it in
+        // their language (plan §6.6: the manifest holds a semantic value and
+        // every reader localizes).
+        let pages = self.runtime.workspace.page_documents();
+        if !pages.is_empty() {
+            let lang = crate::accessibility::ui_lang();
+            for entry in entries.iter_mut().chain(trashed.iter_mut()) {
+                if let Some((_, koru_core::ids::PageKey::Bucket(bucket), _)) =
+                    pages.iter().find(|(id, _, _)| *id == entry.id)
+                    && entry.title == bucket.as_str()
+                {
+                    entry.title = koru_i18n::t(lang, bucket_label_key(*bucket)).to_owned();
+                }
+            }
+        }
         // Which of them is open, from the workspace rather than left to the pane
         // to work out: a row is keyed by `DocumentId` and a tab's root is a
         // `NodeId` inside a document, and only this side holds both.
@@ -8998,6 +9024,15 @@ Nothing was written. The store starts on demand, so this usually means it could 
             }
             PaneRequest::NewWorkspace(name) => self.new_workspace(&name),
             PaneRequest::CreateDocument(title) => self.create_document(source, &title, false),
+            PaneRequest::RenameDocument { document, title } => {
+                if let Err(error) = self.runtime.workspace.rename_document(document, &title) {
+                    self.report(
+                        ErrorReport::new("Couldn't rename that note", "Its name is unchanged.")
+                            .with_details(error),
+                    );
+                }
+                self.push_entries();
+            }
             PaneRequest::CreateDocumentIn { parent, title } => {
                 self.create_child_document(source, parent, &title)
             }
