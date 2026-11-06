@@ -2393,6 +2393,12 @@ pub enum Key {
     ImageHeldByCloudOff,
     ImageHeldTooLarge,
     ImageHeldUnknown,
+    // Attaching a picture runs off the event loop: the placeholder's name for
+    // a screen reader while it loads, and the report when it cannot be added.
+    ImageLoading,
+    ImageAddFailed,
+    ImageAddFailedBody,
+    ImageAddPartlyFailedBody,
     // Manage Profiles: how far a Profile's Cloud sync has got, across every
     // Workspace. The per-row state reuses the CloudTab* words above so this
     // surface and the context pane never describe one hold two ways.
@@ -2901,7 +2907,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2025] = [
+    pub const ALL: [Key; 2029] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4544,6 +4550,10 @@ impl Key {
         Key::ImageHeldByCloudOff,
         Key::ImageHeldTooLarge,
         Key::ImageHeldUnknown,
+        Key::ImageLoading,
+        Key::ImageAddFailed,
+        Key::ImageAddFailedBody,
+        Key::ImageAddPartlyFailedBody,
         Key::CloudProgressWorkspaces,
         Key::CloudProgressDocuments,
         Key::CloudProgressFiles,
@@ -15178,6 +15188,10 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::ImageHeldByCloudOff, en: "Cloud sync is off for this Profile.", es: "La sincronización en la nube está desactivada para este perfil.", pt_br: "A sincronização na nuvem está desativada para este perfil.", de: "Cloud-Sync ist für dieses Profil aus.", fr: "La synchronisation cloud est désactivée pour ce profil.", ar: "مزامنة السحابة موقوفة لهذا الملف الشخصي.", zh_hans: "此配置文件的云同步已关闭。", ja: "このプロファイルのクラウド同期はオフです。" },
     Row { key: Key::ImageHeldTooLarge, en: "This file is too large to sync today.", es: "Este archivo es demasiado grande para sincronizarse por ahora.", pt_br: "Este arquivo é grande demais para sincronizar por enquanto.", de: "Diese Datei ist derzeit zu groß zum Synchronisieren.", fr: "Ce fichier est pour l’instant trop volumineux pour être synchronisé.", ar: "هذا الملف أكبر من أن تتم مزامنته حاليًا.", zh_hans: "此文件目前太大，无法同步。", ja: "このファイルは現在同期するには大きすぎます。" },
     Row { key: Key::ImageHeldUnknown, en: "Not here yet: {}", es: "Todavía no está aquí: {}", pt_br: "Ainda não está aqui: {}", de: "Noch nicht hier: {}", fr: "Pas encore ici : {}", ar: "ليست هنا بعد: {}", zh_hans: "尚未到达：{}", ja: "まだここにありません: {}" },
+    Row { key: Key::ImageLoading, en: "Loading image", es: "Cargando imagen", pt_br: "Carregando imagem", de: "Bild wird geladen", fr: "Chargement de l’image", ar: "جارٍ تحميل الصورة", zh_hans: "正在加载图片", ja: "画像を読み込み中" },
+    Row { key: Key::ImageAddFailed, en: "Couldn’t add that image", es: "No se pudo añadir esa imagen", pt_br: "Não foi possível adicionar essa imagem", de: "Das Bild konnte nicht hinzugefügt werden", fr: "Impossible d’ajouter cette image", ar: "تعذّرت إضافة هذه الصورة", zh_hans: "无法添加该图片", ja: "その画像を追加できませんでした" },
+    Row { key: Key::ImageAddFailedBody, en: "It could not be read or stored as a picture. The document was not changed.", es: "No se pudo leer ni guardar como imagen. El documento no se modificó.", pt_br: "Não foi possível lê-la ou armazená-la como imagem. O documento não foi alterado.", de: "Es konnte nicht als Bild gelesen oder gespeichert werden. Das Dokument wurde nicht geändert.", fr: "Elle n’a pas pu être lue ni enregistrée comme image. Le document n’a pas été modifié.", ar: "تعذّرت قراءتها أو حفظها كصورة. لم يتغيّر المستند.", zh_hans: "无法将其读取或存储为图片。文档未被更改。", ja: "画像として読み込むことも保存することもできませんでした。ドキュメントは変更されていません。" },
+    Row { key: Key::ImageAddPartlyFailedBody, en: "The other images were added. This one could not be read or stored as a picture.", es: "Las demás imágenes se añadieron. Esta no se pudo leer ni guardar como imagen.", pt_br: "As outras imagens foram adicionadas. Esta não pôde ser lida nem armazenada como imagem.", de: "Die anderen Bilder wurden hinzugefügt. Dieses konnte nicht als Bild gelesen oder gespeichert werden.", fr: "Les autres images ont été ajoutées. Celle-ci n’a pas pu être lue ni enregistrée comme image.", ar: "أُضيفت الصور الأخرى. تعذّرت قراءة هذه الصورة أو حفظها.", zh_hans: "其他图片已添加。这张图片无法读取或存储。", ja: "ほかの画像は追加されました。この画像は読み込むことも保存することもできませんでした。" },
     // ---------------- Manage Profiles: a Profile's Cloud sync progress
     Row { key: Key::CloudProgressWorkspaces, en: "{} of {} workspaces synced", es: "{} de {} espacios de trabajo sincronizados", pt_br: "{} de {} espaços de trabalho sincronizados", de: "{} von {} Arbeitsbereichen synchronisiert", fr: "{} espaces de travail sur {} synchronisés", ar: "تمت مزامنة {} من {} مساحات عمل", zh_hans: "已同步 {} / {} 个工作区", ja: "{} / {} 件のワークスペースを同期済み" },
     Row { key: Key::CloudProgressDocuments, en: "{} of {} documents", es: "{} de {} documentos", pt_br: "{} de {} documentos", de: "{} von {} Dokumenten", fr: "{} documents sur {}", ar: "{} من {} مستندات", zh_hans: "{} / {} 个文档", ja: "{} / {} 件のドキュメント" },

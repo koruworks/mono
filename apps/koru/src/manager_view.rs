@@ -575,6 +575,41 @@ impl View for DocumentPane {
         View::paste_text(&mut self.doc, ws, text);
     }
 
+    fn begin_image_import(
+        &mut self,
+        ws: &WorkspaceDoc,
+        ticket: koru_workspace_host::ImageTicket,
+        place: &koru_workspace_host::ImagePlace,
+    ) {
+        View::begin_image_import(&mut self.doc, ws, ticket, place);
+    }
+
+    fn size_image_import(
+        &mut self,
+        ticket: koru_workspace_host::ImageTicket,
+        sizes: &[(u32, u32)],
+    ) {
+        View::size_image_import(&mut self.doc, ticket, sizes);
+    }
+
+    fn finish_image_import(
+        &mut self,
+        ws: &mut WorkspaceDoc,
+        ticket: koru_workspace_host::ImageTicket,
+        place: koru_workspace_host::ImagePlace,
+        images: &[koru_workspace_host::PastedImage],
+    ) {
+        View::finish_image_import(&mut self.doc, ws, ticket, place, images);
+    }
+
+    fn end_image_import(&mut self, ticket: koru_workspace_host::ImageTicket) -> bool {
+        View::end_image_import(&mut self.doc, ticket)
+    }
+
+    fn image_mip_side(&self) -> Option<koru_workspace_host::ImageMipSide> {
+        View::image_mip_side(&self.doc)
+    }
+
     fn paste_rich(
         &mut self,
         ws: &mut WorkspaceDoc,
