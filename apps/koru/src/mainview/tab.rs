@@ -1578,7 +1578,9 @@ impl Tab {
     /// [`document`](Self::document) keeps meaning *this tab is that document*.
     pub fn edits(&self) -> Option<koru_core::DocumentId> {
         self.document.or_else(|| match &self.view {
-            TabView::Tasks(t) if t.page_is_local() => t.page_document(),
+            // Only while the note is shown: a hidden note is not edited
+            // here, so its document need not be activated for the tab.
+            TabView::Tasks(t) if t.page_is_local() && t.note_shown() => t.page_document(),
             _ => None,
         })
     }

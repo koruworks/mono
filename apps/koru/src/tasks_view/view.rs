@@ -59,6 +59,8 @@ pub(super) const HEADER_GAP: f32 = 22.0;
 pub(super) const CONTROL_W: f32 = 18.0;
 /// Between the control and the text column.
 pub(super) const CONTROL_GAP: f32 = 10.0;
+/// Between the attachments lane's chips, and under the lane.
+pub(super) const LANE_GAP: f32 = 8.0;
 /// The `…` at a row's right end.
 pub(super) const DOTS_W: f32 = 24.0;
 /// The lane the `…` sits in, **reserved on every row** whether or not it is
@@ -131,6 +133,10 @@ pub(super) enum Hit {
     NoteOpen,
     /// The note's grip, along its band's bottom edge: a drag sizes the band.
     NoteGrip,
+    /// The `+` right of the heading's words, which opens the page's menu.
+    HeaderPlus,
+    /// A file in the attachments lane under the heading, by lane order.
+    Attachment(usize),
 }
 
 /// A drag of rows, from the press on a row of a list ordered by hand to the
@@ -301,6 +307,13 @@ pub enum Request {
     ListColor { list: ListId, at: (f32, f32) },
     /// The heading's words, renamed in place (a double click on the title).
     RenameList { list: ListId, name: String },
+    /// The heading's `+` was pressed: the page's menu at `at` — the note
+    /// inline, files as context. The container's one menu vocabulary.
+    PageMenu { at: (f32, f32) },
+    /// A right-click on a file in the lane: its menu at `at`.
+    AttachmentMenu { file: DocumentId, at: (f32, f32) },
+    /// A press on a file in the lane: open it, as a file pill does.
+    OpenAttachment { file: DocumentId },
 }
 
 /// One list, as the header and the membership chip need it. Pushed by the
@@ -432,6 +445,17 @@ pub struct TasksView {
     /// rows have to show. Coalesced — one re-ask per quarter second of
     /// typing, not one per keystroke — and flushed by `maintain`.
     task_touch: Option<(std::time::Instant, super::query::WriteRequirement)>,
+    /// The files attached to the page as context, with their names from the
+    /// listing — what the lane under the heading shows, in attached order.
+    pub(super) attachments: Vec<(DocumentId, String)>,
+    /// Where each lane chip was laid out this frame, in lane order.
+    pub(super) lane: Vec<Rect>,
+    /// The lane's height this frame — what the band and the rows move down
+    /// by; zero with nothing attached.
+    lane_h: f32,
+    /// Where the heading's words ended when last painted, so the `+` sits
+    /// right of them.
+    pub(super) heading_text_right: f32,
 }
 
 impl TasksView {
@@ -482,6 +506,10 @@ impl TasksView {
             heading_rename: None,
             pointer: (-1.0, -1.0),
             task_touch: None,
+            attachments: Vec::new(),
+            lane: Vec::new(),
+            lane_h: 0.0,
+            heading_text_right: 0.0,
         }
     }
 
@@ -729,7 +757,10 @@ impl TasksView {
             | Request::RemoveTasks { .. }
             | Request::OpenNote { .. }
             | Request::ListColor { .. }
-            | Request::RenameList { .. } => return,
+            | Request::RenameList { .. }
+            | Request::PageMenu { .. }
+            | Request::AttachmentMenu { .. }
+            | Request::OpenAttachment { .. } => return,
             Request::Many(_) => unreachable!("taken apart above"),
         };
         crate::tasks::debug_line(format_args!(
@@ -1944,8 +1975,14 @@ impl TasksView {
         if self.header_dots().contains(x, y) {
             return Some(Hit::HeaderDots);
         }
+        if self.plus_rect().contains(x, y) {
+            return Some(Hit::HeaderPlus);
+        }
         if self.swatch_rect().is_some_and(|r| r.contains(x, y)) {
             return Some(Hit::Swatch);
+        }
+        if let Some(i) = self.lane.iter().position(|r| r.contains(x, y)) {
+            return Some(Hit::Attachment(i));
         }
         if let Some(hit) = self.band_hit(x, y) {
             return Some(hit);
@@ -3043,6 +3080,17 @@ impl TasksView {
         }
         match self.hit_at(x, y) {
             Some(Hit::HeaderDots) => self.open_overflow(),
+            Some(Hit::HeaderPlus) => {
+                self.pending = Some(Request::PageMenu { at: (x, y) });
+                true
+            }
+            Some(Hit::Attachment(i)) => match self.attachments.get(i) {
+                Some((file, _)) => {
+                    self.pending = Some(Request::OpenAttachment { file: *file });
+                    true
+                }
+                None => false,
+            },
             // The colour square: the list's colour menu, at the press.
             Some(Hit::Swatch) => match self.target {
                 RailTarget::List(list) => {
@@ -3758,6 +3806,16 @@ impl View for TasksView {
             self.picker = None;
             return true;
         }
+        // A file in the lane: its own menu, the page's one addition on it.
+        if let Some(Hit::Attachment(i)) = self.hit_at(x, y)
+            && let Some((file, _)) = self.attachments.get(i)
+        {
+            self.pending = Some(Request::AttachmentMenu {
+                file: *file,
+                at: (x, y),
+            });
+            return true;
+        }
         // A right-click in the note is the note's: the editor's menu, as in
         // a document tab, and the keyboard goes with it.
         if self
@@ -3803,6 +3861,7 @@ impl View for TasksView {
         // Also the moment the font role or the density could have moved under
         // us, which is what the heading's height depends on.
         self.measure_header();
+        self.layout_lane();
         if let Some(body) = &mut self.body {
             body.mark_dirty();
         }
@@ -3846,7 +3905,9 @@ impl View for TasksView {
                 | Hit::Capture
                 | Hit::HeaderDots
                 | Hit::Swatch
-                | Hit::NoteOpen,
+                | Hit::NoteOpen
+                | Hit::HeaderPlus
+                | Hit::Attachment(_),
             ) => koru_ui::cursor::PRESS,
             Some(Hit::NoteGrip) => CursorIcon::RowResize,
             None => koru_ui::cursor::IDLE,
@@ -3886,6 +3947,7 @@ impl View for TasksView {
         caret_on: bool,
         pointer: (f32, f32),
     ) {
+        self.layout_lane();
         self.layout_band();
         self.paint_under(scene, root);
         if let Some(body) = &mut self.body {
@@ -3948,6 +4010,33 @@ impl TasksView {
             .is_some_and(|page| page.phase != PagePhase::Loading)
     }
 
+    /// Whether the page shows its note inline — the `+` menu's *Inline
+    /// description*, from the page's record. Hidden until the shell has
+    /// said.
+    pub fn note_shown(&self) -> bool {
+        self.page.as_ref().is_some_and(|page| page.note_shown)
+    }
+
+    /// The files attached to the page, in attached order, as the shell
+    /// last said.
+    pub fn attachment_ids(&self) -> Vec<DocumentId> {
+        self.page
+            .as_ref()
+            .map(|page| page.attachments.clone())
+            .unwrap_or_default()
+    }
+
+    /// The lane's files with their names, from the container, which reads
+    /// the listing. Compare-first: pushed on every turn the listing moves.
+    pub fn set_attachment_faces(&mut self, faces: Vec<(DocumentId, String)>) -> bool {
+        if self.attachments == faces {
+            return false;
+        }
+        self.attachments = faces;
+        self.layout_lane();
+        true
+    }
+
     /// Where the page's document stands, from the shell. Answers whether
     /// anything on screen changed.
     pub fn set_page_state(&mut self, state: &PageState) -> bool {
@@ -3956,7 +4045,9 @@ impl TasksView {
         }
         let other_document = self.page_document() != Some(state.document);
         self.page = Some(state.clone());
-        if other_document {
+        // A note hidden by the `+` menu has no band: the body goes with it,
+        // and comes back on the next catch-up when it is shown again.
+        if other_document || !state.note_shown {
             self.body = None;
             self.band_h = 0.0;
         }
@@ -4040,6 +4131,9 @@ impl TasksView {
         let Some(document) = self.page_document() else {
             return false;
         };
+        if !self.note_shown() {
+            return false;
+        }
         if let Some(body) = &mut self.body
             && body.document == document
         {
@@ -4129,17 +4223,74 @@ impl TasksView {
     /// Where the rows start: under the heading, the note's band and its
     /// notice when there is one.
     pub(super) fn rows_top(&self) -> f32 {
-        self.header_h + self.band_h + self.notice_h()
+        self.header_h + self.lane_h + self.band_h + self.notice_h()
+    }
+
+    /// The `+` right of the heading's words: the page's menu. The header's
+    /// `…` size, on the heading's line.
+    pub(super) fn plus_rect(&self) -> Rect {
+        let x = self.heading_text_right.max(PAD) + CONTROL_GAP;
+        let size = HEADER_DOTS;
+        Rect::new(
+            x,
+            self.title_top() + (super::draw::TITLE.metrics.line_height - size) * 0.5,
+            size,
+            size,
+        )
+    }
+
+    /// The lane's chip for one attachment: the file glyph and its name.
+    pub(super) fn lane_chip(name: &str) -> LabelChip<'_> {
+        LabelChip::new(name)
+            .size(koru_ui::label_chip::Size::Regular)
+            .lead(koru_ui::label_chip::Lead::Glyph(koru_draw::icons::FILE))
+    }
+
+    /// Lay the attachments lane out under the heading: chips left to right
+    /// from the page margin, wrapping to the next row when one would run
+    /// past the margin. Nothing attached, no lane.
+    pub(super) fn layout_lane(&mut self) {
+        self.lane.clear();
+        if self.attachments.is_empty() {
+            self.lane_h = 0.0;
+            return;
+        }
+        let right = (self.viewport.0 - PAD).max(PAD + 1.0);
+        let (mut x, mut y) = (PAD, self.header_h);
+        let mut row_h = 0.0_f32;
+        for (_, name) in &self.attachments {
+            let chip = Self::lane_chip(name);
+            let (w, h) = (chip.width(&mut self.engine), chip.height());
+            if x > PAD && x + w > right {
+                x = PAD;
+                y += row_h + LANE_GAP;
+                row_h = 0.0;
+            }
+            self.lane.push(Rect::new(x, y, w, h));
+            x += w + LANE_GAP;
+            row_h = row_h.max(h);
+        }
+        self.lane_h = (y + row_h + LANE_GAP) - self.header_h;
+    }
+
+    /// The lane's chips, for the suite.
+    #[cfg(test)]
+    pub(super) fn lane_for_test(&self) -> &[Rect] {
+        &self.lane
     }
 
     /// Lay the band out for this frame: the note's content up to its share
     /// of the page (D8). The rows move down by it.
     pub(super) fn layout_band(&mut self) {
         let before = self.band_h;
-        let (header_h, w, h) = (self.header_h, self.viewport.0, self.viewport.1);
+        let (top, w, h) = (
+            self.header_h + self.lane_h,
+            self.viewport.0,
+            self.viewport.1,
+        );
         let fixed = self.band_fixed_h;
         self.band_h = match &mut self.body {
-            Some(body) => body.layout(PAD, header_h, w, h, fixed),
+            Some(body) => body.layout(PAD, top, w, h, fixed),
             None => 0.0,
         };
         if (before - self.band_h).abs() > 0.5 {
@@ -4364,7 +4515,7 @@ impl TasksView {
         self.conflict_actions = None;
         let lang = crate::format::lang();
         let p = theme::p();
-        let mut top = self.header_h + self.band_h;
+        let mut top = self.header_h + self.lane_h + self.band_h;
         // The deletion conflict first: its own row, with two answers.
         if self.in_conflict() {
             let message = t(lang, koru_i18n::Key::PageDeletedElsewhere);

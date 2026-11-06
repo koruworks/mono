@@ -2492,6 +2492,8 @@ struct App<H: Host> {
     deleting_workspaces: HashSet<WorkspaceId>,
     /// `/attach` waits for the generic file importer to publish its file entry.
     pending_attachment: Option<(WindowId, NodeId)>,
+    /// A Tasks page whose `+` chose files: attached once the import lands.
+    pending_page_attachment: Option<koru_core::ids::PageKey>,
     /// Importable paths coalesced from winit's one-event-per-file drop stream.
     /// Batches wait here while any other import is active rather than being
     /// silently discarded by `import_busy`.
@@ -5522,6 +5524,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
             pending_import: None,
             deleting_workspaces: HashSet::new(),
             pending_attachment: None,
+            pending_page_attachment: None,
             pending_content_drops: VecDeque::new(),
             // Due once at startup: the share that opened this window was
             // staged before the process existed, so nothing will focus-event
@@ -6649,6 +6652,31 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 pane.view
                     .attachment_cancelled(&mut self.runtime.workspace.ws, node);
             }
+        }
+        // A Tasks page's `+` → *Attachment*: the same picker and the same
+        // import as `/attach` — the files become the workspace's — and then
+        // the page takes references to them. Skipped, not queued, while
+        // another import runs, exactly as `/attach` is.
+        let page_asks: Vec<(WindowId, koru_core::ids::PageKey)> = self
+            .panes
+            .iter_mut()
+            .flat_map(|(id, pane)| {
+                pane.view
+                    .take_wants_page_attachments()
+                    .into_iter()
+                    .map(move |page| (*id, page))
+            })
+            .collect();
+        for (id, page) in page_asks {
+            if self.import_busy {
+                continue;
+            }
+            let Some(paths) = crate::dialogs::pick_open_files("Attach files", &[], None, None)
+            else {
+                continue;
+            };
+            self.pending_page_attachment = Some(page);
+            self.import_content(id, "files", crate::ImportSourceSelection::Files(paths));
         }
         let requests: Vec<(WindowId, NodeId)> = self
             .panes
@@ -10087,6 +10115,13 @@ Nothing was written. The store starts on demand, so this usually means it could 
                     let _ = self.runtime.workspace.take_entries_changed();
                     self.push_entries();
                 }
+                if let Some(page) = self.pending_page_attachment.take() {
+                    let ids: Vec<koru_core::DocumentId> =
+                        files.iter().map(|(id, _)| *id).collect();
+                    if !ids.is_empty() {
+                        self.runtime.workspace.attach_files_to_page(page, &ids);
+                    }
+                }
                 if let Some((window, node)) = self.pending_attachment.take()
                     && let Some(pane) = self.panes.get_mut(&window)
                 {
@@ -11545,6 +11580,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
     /// Clear a pending `/attach`. When `cancelled`, restore the trigger row so
     /// the literal `/attach` text is not left behind.
     fn finish_pending_attachment(&mut self, cancelled: bool) {
+        self.pending_page_attachment = None;
         let Some((window, node)) = self.pending_attachment.take() else {
             return;
         };

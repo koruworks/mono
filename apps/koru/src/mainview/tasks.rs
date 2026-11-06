@@ -479,6 +479,58 @@ impl MainView {
                     self.handle_tasks_request(request);
                 }
             }
+            // The page's `+`: the note inline, and files as context.
+            crate::tasks_view::Request::PageMenu { at } => {
+                let Some((page, shown)) = (match &self.tabs().active_tab().view {
+                    TabView::Tasks(t) => t.page_key().map(|page| (page, t.note_shown())),
+                    _ => None,
+                }) else {
+                    return;
+                };
+                let mut menu = super::context_menu::ContextMenu::new(
+                    &mut self.engine,
+                    super::context_menu::MenuSubject::Page(page),
+                    to_window(at),
+                    super::context_menu::page_plus_items(shown),
+                );
+                let enabled = self.enabled_items(&menu);
+                menu.step(&enabled, 1);
+                self.menu = Some(menu);
+                self.submenu = None;
+                self.nested = None;
+            }
+            // A file on the page: its Files row's menu, plus taking it off
+            // the page. *Add note* or *Open note* is decided now, as the
+            // Files row decides it.
+            crate::tasks_view::Request::AttachmentMenu { file, at } => {
+                let Some(page) = (match &self.tabs().active_tab().view {
+                    TabView::Tasks(t) => t.page_key(),
+                    _ => None,
+                }) else {
+                    return;
+                };
+                let note = self.entries.as_ref().and_then(|entries| {
+                    entries
+                        .iter()
+                        .find(|entry| entry.id == file)
+                        .map(|entry| entry.note.is_some())
+                });
+                let mut menu = super::context_menu::ContextMenu::new(
+                    &mut self.engine,
+                    super::context_menu::MenuSubject::PageAttachment { page, file },
+                    to_window(at),
+                    super::context_menu::page_attachment_items(note),
+                );
+                let enabled = self.enabled_items(&menu);
+                menu.step(&enabled, 1);
+                self.menu = Some(menu);
+                self.submenu = None;
+                self.nested = None;
+            }
+            // A press on a file in the lane opens it, as a file pill does.
+            crate::tasks_view::Request::OpenAttachment { file } => {
+                self.ask_pane(koru_workspace_host::PaneRequest::OpenFile(file));
+            }
             // The note's corner control: its document in a tab of its own,
             // the way a Ctrl+Enter on a pill opens one — even when a tab is
             // already on it, since the person asked for another.

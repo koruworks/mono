@@ -4688,6 +4688,118 @@ mod note {
         assert!(body.menu_open(), "the editor's menu is up");
     }
 
+    /// Plus-menu decision 2: the note is hidden until the page's record says
+    /// to show it — no band, no body, the rows right under the heading — and
+    /// comes back when it does.
+    #[test]
+    fn the_note_is_hidden_until_the_page_shows_it() {
+        let (target, page, document, doc) = page();
+        let mut view = TasksView::new(target);
+        view.set_viewport(900.0, 600.0);
+        let mut hidden = state(page, document, PagePhase::Empty);
+        hidden.note_shown = false;
+        assert!(view.set_page_state(&hidden));
+        view.catch_up(&doc);
+        view.layout_band();
+        assert!(view.body.is_none(), "hidden: no body");
+        assert!(!view.note_shown());
+        assert_eq!(
+            view.rows_top(),
+            view.header_h,
+            "the rows sit under the heading"
+        );
+
+        assert!(view.set_page_state(&state(page, document, PagePhase::Empty)));
+        assert!(view.catch_up(&doc), "shown: the body is built");
+        view.layout_band();
+        assert!(view.body.is_some());
+        assert!(view.rows_top() > view.header_h);
+
+        assert!(view.set_page_state(&hidden));
+        assert!(view.body.is_none(), "hidden again: the body goes");
+    }
+
+    /// The `+` right of the heading's words asks for the page's menu at the
+    /// press — the container's vocabulary, not the page's.
+    #[test]
+    fn the_plus_right_of_the_heading_opens_the_pages_menu() {
+        let (_, _, _, mut doc, mut view) = note_view();
+        let mut scene = vello::Scene::new();
+        view.paint_heading(&mut scene, Affine::IDENTITY);
+        let plus = view.plus_rect();
+        assert!(
+            plus.x >= view.heading_text_right,
+            "right of the words: {} >= {}",
+            plus.x,
+            view.heading_text_right
+        );
+        let (x, y) = (plus.x + plus.w * 0.5, plus.y + plus.h * 0.5);
+        assert!(view.mouse_move(x, y));
+        assert_eq!(view.cursor_icon(), koru_ui::cursor::PRESS);
+        assert!(view.mouse_down(&mut doc, x, y, false));
+        assert_eq!(view.take_request(), Some(Request::PageMenu { at: (x, y) }));
+    }
+
+    /// Plus-menu decisions 3 to 5: attached files make a lane under the
+    /// heading, above the note; a press opens the file and a right-click
+    /// asks for its menu.
+    #[test]
+    fn attached_files_make_a_lane_that_opens_and_offers_its_menu() {
+        let (_, _, _, mut doc, mut view) = note_view();
+        let band_top = view.header_h;
+        let (a, b) = (DocumentId::new(), DocumentId::new());
+        assert!(view.set_attachment_faces(vec![
+            (a, "brief.pdf".to_owned()),
+            (b, "mock.png".to_owned()),
+        ]));
+        assert!(
+            !view.set_attachment_faces(vec![
+                (a, "brief.pdf".to_owned()),
+                (b, "mock.png".to_owned()),
+            ]),
+            "compare-first"
+        );
+        view.layout_band();
+        let lane: Vec<Rect> = view.lane_for_test().to_vec();
+        assert_eq!(lane.len(), 2);
+        assert!(lane[0].y >= band_top, "under the heading");
+        assert!(lane[1].x > lane[0].x, "left to right");
+        let band = view.body.as_ref().unwrap().band;
+        assert!(
+            band.y >= lane[0].y + lane[0].h,
+            "the note sits under the lane"
+        );
+        assert!(view.rows_top() >= band.y + band.h, "and the rows under both");
+
+        let (x, y) = (lane[0].x + lane[0].w * 0.5, lane[0].y + lane[0].h * 0.5);
+        assert!(view.mouse_move(x, y));
+        assert_eq!(view.cursor_icon(), koru_ui::cursor::PRESS);
+        assert!(view.mouse_down(&mut doc, x, y, false));
+        assert_eq!(
+            view.take_request(),
+            Some(Request::OpenAttachment { file: a })
+        );
+
+        let (x, y) = (lane[1].x + lane[1].w * 0.5, lane[1].y + lane[1].h * 0.5);
+        assert!(view.context_menu(&mut doc, x, y));
+        assert_eq!(
+            view.take_request(),
+            Some(Request::AttachmentMenu {
+                file: b,
+                at: (x, y)
+            })
+        );
+
+        assert!(view.set_attachment_faces(Vec::new()));
+        view.layout_band();
+        assert!(view.lane_for_test().is_empty());
+        assert_eq!(
+            view.body.as_ref().unwrap().band.y,
+            band_top,
+            "no lane, no gap"
+        );
+    }
+
     /// Review note: a note taller than its band shows the thumb a document
     /// tab shows, and the band is what it scrolls in.
     #[test]

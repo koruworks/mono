@@ -14587,3 +14587,63 @@ fn a_document_called_nobodys_note_is_asked_again_when_the_library_moves() {
         "asked again once the library moved"
     );
 }
+
+/// A Tasks page's `+` menu and a lane file's menu go up to the shell as page
+/// edits — the band's state is the page record's, files are the shell's to
+/// pick — and a file's own verbs take the Files row's door.
+#[test]
+fn the_page_plus_menu_and_an_attachments_menu_leave_as_page_edits() {
+    use koru_core::ids::PageKey;
+    use koru_workspace_host::tasks::ListEdit;
+    let (mut v, _w) = on_tasks();
+    let page = PageKey::List(koru_core::ids::ListId::new());
+    let file = koru_core::DocumentId::new();
+
+    assert!(v.run_menu_action_for_test(
+        MenuSubject::Page(page),
+        MenuAction::PageDescription { shown: false }
+    ));
+    assert!(v.run_menu_action_for_test(MenuSubject::Page(page), MenuAction::PageAttach));
+    assert_eq!(
+        View::take_wants_page_attachments(&mut v),
+        vec![page],
+        "the shell is asked to pick files for the page"
+    );
+    assert!(
+        View::take_wants_page_attachments(&mut v).is_empty(),
+        "drained"
+    );
+
+    assert!(v.run_menu_action_for_test(
+        MenuSubject::PageAttachment { page, file },
+        MenuAction::DetachFromPage
+    ));
+    let edits = View::take_wants_list_edits(&mut v);
+    assert!(
+        matches!(edits[0], ListEdit::NoteShown { page: p, shown: true } if p == page),
+        "showing the note is a page edit: {edits:?}"
+    );
+    assert!(
+        matches!(edits[1], ListEdit::Detach { page: p, file: f } if p == page && f == file),
+        "removing an attachment is a page edit: {edits:?}"
+    );
+
+    // A file's own verb on the lane's menu takes the Files row's door.
+    let _ = drain_pane_requests(&mut v);
+    assert!(v.run_menu_action_for_test(
+        MenuSubject::PageAttachment { page, file },
+        MenuAction::OpenFileInApp
+    ));
+    assert!(matches!(
+        View::take_pane_request(&mut v),
+        Some(koru_workspace_host::PaneRequest::OpenFile(f)) if f == file
+    ));
+}
+
+fn drain_pane_requests(v: &mut MainView) -> Vec<koru_workspace_host::PaneRequest> {
+    let mut out = Vec::new();
+    while let Some(request) = View::take_pane_request(v) {
+        out.push(request);
+    }
+    out
+}

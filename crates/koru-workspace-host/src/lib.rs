@@ -1556,6 +1556,13 @@ pub trait View {
         Vec::new()
     }
 
+    /// **Tasks pages whose `+` asked for files** — the shell opens the
+    /// picker, stores what is chosen as workspace files, and attaches them
+    /// to the page as context.
+    fn take_wants_page_attachments(&mut self) -> Vec<koru_core::ids::PageKey> {
+        Vec::new()
+    }
+
     /// The answer, per document: a page, or `None` for an ordinary one.
     fn set_page_of(
         &mut self,

@@ -136,8 +136,57 @@ impl TasksView {
         // element row (`heading.rs`): the swatch, the title, the date and the
         // count.
         self.paint_heading(scene, root);
+        self.paint_header_plus(scene, root);
         self.paint_freshness(scene, root);
         self.paint_header_dots(scene, root);
+        self.paint_lane(scene, root);
+    }
+
+    /// The `+` right of the heading's words: the page's menu — the note
+    /// inline, files as context. The icon button every control here is.
+    fn paint_header_plus(&mut self, scene: &mut Scene, root: Affine) {
+        let lit = self.hover == Some(Hit::HeaderPlus);
+        let plus = self.plus_rect();
+        koru_ui::icon_button::draw_with(
+            scene,
+            root,
+            &mut self.engine,
+            plus,
+            koru_draw::icons::PLUS,
+            koru_ui::icon_button::State {
+                hovered: lit,
+                active: false,
+                disabled: false,
+            },
+            koru_ui::icon_button::Metrics::INLINE,
+        );
+    }
+
+    /// The attachments lane under the heading: one chip per file, the file
+    /// glyph and its name, lit under the pointer as a control.
+    fn paint_lane(&mut self, scene: &mut Scene, root: Affine) {
+        if self.lane.is_empty() {
+            return;
+        }
+        let chips: Vec<(Rect, String)> = self
+            .lane
+            .iter()
+            .zip(self.attachments.iter())
+            .map(|(r, (_, name))| (*r, name.clone()))
+            .collect();
+        for (i, (r, name)) in chips.iter().enumerate() {
+            let chip = TasksView::lane_chip(name);
+            chip.draw(
+                scene,
+                root,
+                &mut self.engine,
+                *r,
+                koru_ui::label_chip::State {
+                    hovered: self.hover == Some(Hit::Attachment(i)),
+                    reveal: false,
+                },
+            );
+        }
     }
 
     /// The **Updating…** chip.

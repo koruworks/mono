@@ -744,6 +744,8 @@ pub struct MainView {
     /// here from the confirmation**, which is what makes that dialog the one
     /// door rather than a thing that can be walked around.
     list_edits: Vec<koru_workspace_host::tasks::ListEdit>,
+    /// Tasks pages whose `+` asked for files, for the shell's picker.
+    wants_page_attachment: Vec<koru_core::ids::PageKey>,
     /// The workspace list table as the shell last pushed it. The rail's names,
     /// swatches and order come from here; only the counts come off the wire.
     list_table: Vec<koru_core::system::ListEntry>,
@@ -1861,6 +1863,7 @@ impl MainView {
             new_list: None,
             wants_create_list: None,
             list_edits: Vec::new(),
+            wants_page_attachment: Vec::new(),
             list_table: Vec::new(),
             reminders: reminders::Controller::default(),
             reminder_creation: reminder_creation::Surface::default(),
@@ -3135,6 +3138,28 @@ impl MainView {
         if self.new_document.is_none() {
             self.new_document = Some(NewDocument::new_agent_project(&mut self.engine));
         }
+    }
+
+    /// A page's attachments as the lane shows them: each file's name from
+    /// the listing, or a neutral word for one the listing has not caught up
+    /// with yet.
+    fn attachment_faces(
+        &self,
+        files: &[koru_core::DocumentId],
+    ) -> Vec<(koru_core::DocumentId, String)> {
+        files
+            .iter()
+            .map(|file| {
+                let name = self
+                    .entries
+                    .as_ref()
+                    .and_then(|entries| entries.iter().find(|entry| entry.id == *file))
+                    .map(|entry| entry.title.clone())
+                    .filter(|title| !title.is_empty())
+                    .unwrap_or_else(|| "File".to_owned());
+                (*file, name)
+            })
+            .collect()
     }
 
     /// A Tasks tab is asking the shell to activate its note: remembered
@@ -4558,6 +4583,22 @@ impl MainView {
                             | MenuAction::ListDelete
                     )
             }
+            MenuSubject::Page(_) => matches!(
+                action,
+                MenuAction::PageDescription { .. } | MenuAction::PageAttach
+            ),
+            // A file's own rows, as its Files row offers them for one file,
+            // and taking it off the page.
+            MenuSubject::PageAttachment { .. } => matches!(
+                action,
+                MenuAction::DetachFromPage
+                    | MenuAction::OpenFileInApp
+                    | MenuAction::SaveFileAs
+                    | MenuAction::Rename
+                    | MenuAction::AddNote
+                    | MenuAction::OpenNote
+                    | MenuAction::MoveToTrash
+            ),
             // Emptying nothing is not an action, it is a no-op wearing a label.
             MenuSubject::Trash => {
                 matches!(action, MenuAction::EmptyTrash) && self.explore.trash_count() > 0
@@ -5079,6 +5120,36 @@ impl MainView {
             MenuSubject::RailTarget(target) => match action {
                 MenuAction::RailOpenInNewTab => self.open_tasks_tab(target, true),
                 _ => false,
+            },
+            // The page's `+`: both go up to the shell — the band's state is
+            // the page record's, and files are the shell's to pick.
+            MenuSubject::Page(page) => match action {
+                MenuAction::PageDescription { shown } => {
+                    self.list_edits
+                        .push(koru_workspace_host::tasks::ListEdit::NoteShown {
+                            page,
+                            shown: !shown,
+                        });
+                    true
+                }
+                MenuAction::PageAttach => {
+                    self.wants_page_attachment.push(page);
+                    true
+                }
+                _ => false,
+            },
+            // A file on a page: its own verbs are the Files row's, through
+            // the same door; only *Remove attachment* is the page's.
+            MenuSubject::PageAttachment { page, file } => match action {
+                MenuAction::DetachFromPage => {
+                    self.list_edits
+                        .push(koru_workspace_host::tasks::ListEdit::Detach { page, file });
+                    true
+                }
+                other => self.run_menu_action(
+                    MenuSubject::Files(vec![NodeId::from_uuid(file.as_uuid())]),
+                    other,
+                ),
             },
             MenuSubject::List(id) => match action {
                 MenuAction::RailOpenInNewTab => {
@@ -9637,6 +9708,17 @@ impl MainView {
     fn refresh_labels(&mut self, ws: &WorkspaceDoc) {
         let active_document = self.active_document;
         let naming = self.naming;
+        let titles: std::collections::HashMap<koru_core::DocumentId, String> = self
+            .entries
+            .as_ref()
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter(|entry| !entry.title.is_empty())
+                    .map(|entry| (entry.id, entry.title.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
         let page_names: Vec<(koru_core::DocumentId, String)> = self
             .page_of
             .iter()
@@ -9661,6 +9743,21 @@ impl MainView {
             // it.
             if matches!(t.view, TabView::Tasks(_) | TabView::Reminders(_)) {
                 t.refresh_tasks_label();
+                // The lane's names follow the listing, as the tab's does.
+                if let TabView::Tasks(page) = &mut t.view {
+                    let faces: Vec<(koru_core::DocumentId, String)> = page
+                        .attachment_ids()
+                        .into_iter()
+                        .map(|file| {
+                            let name = titles
+                                .get(&file)
+                                .cloned()
+                                .unwrap_or_else(|| "File".to_owned());
+                            (file, name)
+                        })
+                        .collect();
+                    page.set_attachment_faces(faces);
+                }
                 continue;
             }
             // **A note's resolved name stands where its title row would be**,
@@ -13844,9 +13941,13 @@ impl View for MainView {
     /// same request selecting it would make.
     fn set_page_state(&mut self, state: &koru_workspace::pages::PageState) -> bool {
         let mut changed = false;
+        let faces = self.attachment_faces(&state.attachments);
         self.each_tab_mut(|tab| {
             if let TabView::Tasks(t) = &mut tab.view {
                 changed |= t.set_page_state(state);
+                if t.page_key() == Some(state.page) {
+                    changed |= t.set_attachment_faces(faces.clone());
+                }
             }
             false
         });
@@ -13868,6 +13969,10 @@ impl View for MainView {
             });
         }
         changed
+    }
+
+    fn take_wants_page_attachments(&mut self) -> Vec<koru_core::ids::PageKey> {
+        std::mem::take(&mut self.wants_page_attachment)
     }
 
     /// Documents open in a tab of their own that the window has not yet

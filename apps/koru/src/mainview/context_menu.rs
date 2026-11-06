@@ -154,6 +154,15 @@ pub enum MenuSubject {
     /// index into it could act on whatever row slid into that position while it
     /// was open.
     List(ListId),
+    /// A Tasks page's `+` — the page (a list or a queue) and its two offers:
+    /// the note inline, and files as context.
+    Page(koru_core::ids::PageKey),
+    /// One file attached to a Tasks page, with the page it is on: a file's
+    /// own rows, plus taking it off the page.
+    PageAttachment {
+        page: koru_core::ids::PageKey,
+        file: koru_core::DocumentId,
+    },
     /// The Trash tab's own `…`. One row, and it empties the bin.
     Trash,
     /// The floor's `…` (E60): New workspace, Import… and its formats, Invite
@@ -570,6 +579,15 @@ pub enum MenuAction {
     /// memberships go with it and the tasks do not — which is a sentence worth
     /// reading before it happens rather than after.
     ListDelete,
+    /// The page's `+`: show the note inline — or hide it, when `shown`. The
+    /// words stay either way; this is the band, not the document.
+    PageDescription {
+        shown: bool,
+    },
+    /// The page's `+`: attach files from the computer as context.
+    PageAttach,
+    /// Take the file off the page. The file stays in the workspace's Files.
+    DetachFromPage,
 
     /// Take the row off the Tasks list. **Behind the E-3 confirm**, because it
     /// clears the due date and the marker on somebody's paragraph and the
@@ -1086,6 +1104,9 @@ impl MenuAction {
             | Self::ListColor
             | Self::ListSwatch(_)
             | Self::ListDelete
+            | Self::PageDescription { .. }
+            | Self::PageAttach
+            | Self::DetachFromPage
             | Self::AttributePriority => f::tasks(),
             // Canvases: the `+` flyout and its rows. A recent canvas is an
             // `OpenRecentDocument`, listed only inside this flyout.
@@ -1405,6 +1426,10 @@ impl MenuAction {
             MenuAction::TaskList => "List",
             MenuAction::ListColor => "Color",
             MenuAction::ListDelete => "Delete list\u{2026}",
+            MenuAction::PageDescription { shown: false } => "Inline description",
+            MenuAction::PageDescription { shown: true } => "Hide inline description",
+            MenuAction::PageAttach => "Attachment\u{2026}",
+            MenuAction::DetachFromPage => "Remove attachment",
             MenuAction::TaskRemove => "Remove from Tasks",
             MenuAction::WindowAlwaysOnTop => "Always on Top",
             MenuAction::WindowUnpinTop => "Turn Off Always on Top",
@@ -1611,6 +1636,8 @@ impl MenuAction {
             MenuAction::TaskGoToList => Some(koru_draw::icons::LIST),
             MenuAction::TaskCreateDocument => Some(koru_draw::icons::DOCUMENT),
             MenuAction::ListColor => Some(koru_draw::icons::PALETTE),
+            MenuAction::PageDescription { .. } => Some(koru_draw::icons::NOTE),
+            MenuAction::PageAttach => Some(koru_draw::icons::PAPERCLIP),
             MenuAction::ListDelete | MenuAction::DeleteAiChat => Some(koru_draw::icons::TRASH),
             MenuAction::Attributes => Some(koru_draw::icons::FADERS),
             MenuAction::AttributeTags => Some(koru_draw::icons::TAG),
@@ -2457,6 +2484,24 @@ pub fn list_color_items() -> Vec<MenuAction> {
         .into_iter()
         .map(MenuAction::ListSwatch)
         .collect()
+}
+
+/// A Tasks page's `+`: the note inline (or hidden, when it is shown), and
+/// files as context.
+pub fn page_plus_items(shown: bool) -> Vec<MenuAction> {
+    vec![
+        MenuAction::PageDescription { shown },
+        MenuAction::PageAttach,
+    ]
+}
+
+/// A file attached to a Tasks page: everything a file's own row offers,
+/// then taking it off the page — which leaves the file where it is.
+pub fn page_attachment_items(note: Option<bool>) -> Vec<MenuAction> {
+    let mut items = file_items(1, note);
+    items.push(MenuAction::Divider);
+    items.push(MenuAction::DetachFromPage);
+    items
 }
 
 /// `"teal"` → `"Teal"`. ASCII, because the tokens are.
