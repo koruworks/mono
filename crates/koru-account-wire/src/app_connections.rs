@@ -12,7 +12,7 @@
 //! account dispatcher does not serve them. [`INTERNAL_ROUTES`] are served
 //! only on the API's internal listener.
 
-use koru_account_core::{AppConnectionId, KoruIdentityId, ProfileId, WorkspaceId};
+use koru_account_core::{AppConnectionId, DocumentId, KoruIdentityId, ProfileId, WorkspaceId};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -33,6 +33,16 @@ pub const REVOKE_PATH: &str = "/oauth/revoke";
 
 pub const INTERNAL_CONNECTION_STATE_PATH: &str = "/internal/v1/mcp/connections/{connection_id}";
 pub const INTERNAL_SYNC_CREDENTIAL_PATH: &str = "/internal/v1/mcp/sync-credential";
+/// Take or renew a document claim (TECHNICAL.final §5.7).
+pub const INTERNAL_CLAIMS_PATH: &str = "/internal/v1/mcp/claims";
+/// Release a claim. The segment is the claim's handle, which the internal
+/// listener never logs.
+pub const INTERNAL_CLAIM_PATH: &str = "/internal/v1/mcp/claims/{claim_id}";
+/// Every live claim in one workspace, with the call's handles marked.
+pub const INTERNAL_CLAIMS_CHECK_PATH: &str = "/internal/v1/mcp/claims/check";
+/// A claim handle, in bytes: what any presented handle is bounded by. The
+/// API mints 43 (32 random bytes, unpadded base64url).
+pub const MAX_CLAIM_HANDLE_BYTES: usize = 128;
 /// The header that carries `KORU_MCP_INTERNAL_TOKEN` on every internal call.
 /// The person's MCP access token rides `Authorization: Bearer` beside it.
 pub const INTERNAL_TOKEN_HEADER: &str = "x-koru-internal-token";
@@ -90,6 +100,21 @@ pub const INTERNAL_ROUTES: &[ProtocolRoute] = &[
         method: Method::Post,
         path: INTERNAL_SYNC_CREDENTIAL_PATH,
         summary: "An app connection sync credential for one replica",
+    },
+    ProtocolRoute {
+        method: Method::Post,
+        path: INTERNAL_CLAIMS_PATH,
+        summary: "Take or renew a document claim under the claim lock",
+    },
+    ProtocolRoute {
+        method: Method::Delete,
+        path: INTERNAL_CLAIM_PATH,
+        summary: "Release a document claim; idempotent",
+    },
+    ProtocolRoute {
+        method: Method::Post,
+        path: INTERNAL_CLAIMS_CHECK_PATH,
+        summary: "Every live claim in a workspace, the presented handles marked",
     },
 ];
 
@@ -427,6 +452,142 @@ pub struct AppConnectionSyncCredentialRequestV1 {
     /// The replica's endpoint key, in its storage spelling.
     pub endpoint_id: String,
     pub stage: AppConnectionStageV1,
+}
+
+// --- Document claims (internal) ---------------------------------------------
+
+/// `POST /internal/v1/mcp/claims`: `claim_document`'s input as the host
+/// forwards it. With `claim_id`, the call **renews** that claim; without, the
+/// API mints a new handle. `purpose` is 1–120 characters, `agent_label`
+/// 1–64, both self-declared; `duration_seconds` is 60–900, default 300.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DocumentClaimRequestV1 {
+    pub version: Version1,
+    pub workspace_id: WorkspaceId,
+    pub document_id: DocumentId,
+    #[serde(default)]
+    pub claim_id: Option<String>,
+    #[serde(default)]
+    pub purpose: Option<String>,
+    #[serde(default)]
+    pub agent_label: Option<String>,
+    #[serde(default)]
+    pub duration_seconds: Option<u32>,
+}
+
+impl fmt::Debug for DocumentClaimRequestV1 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DocumentClaimRequestV1")
+            .field("workspace_id", &self.workspace_id)
+            .field("document_id", &self.document_id)
+            .field("renew", &self.claim_id.is_some())
+            .field("duration_seconds", &self.duration_seconds)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Who holds a claim: the connection's name, its client (the verified domain,
+/// or the client's own name when unverified), whether it is verified, and the
+/// self-declared label.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DocumentClaimHolderV1 {
+    pub connection_name: String,
+    pub client: String,
+    pub verified: bool,
+    pub agent_label: Option<String>,
+}
+
+/// One live claim, as any agent of the account may see it. Never the handle.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DocumentClaimV1 {
+    pub workspace_id: WorkspaceId,
+    pub document_id: DocumentId,
+    pub holder: DocumentClaimHolderV1,
+    pub purpose: Option<String>,
+    pub expires_at_millis: i64,
+}
+
+/// `POST /internal/v1/mcp/claims`, 200: the claim taken or renewed. Renewal
+/// keeps the handle.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DocumentClaimGrantV1 {
+    pub version: Version1,
+    pub claim_id: String,
+    pub renewed: bool,
+    pub claim: DocumentClaimV1,
+}
+
+impl fmt::Debug for DocumentClaimGrantV1 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DocumentClaimGrantV1")
+            .field("renewed", &self.renewed)
+            .field("claim", &self.claim)
+            .finish_non_exhaustive()
+    }
+}
+
+/// `POST /internal/v1/mcp/claims`, 409 `document_claimed`: who holds the
+/// document, what for and until when, judged by the database clock.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DocumentClaimedV1 {
+    pub code: String,
+    pub claim: DocumentClaimV1,
+    pub retry_after_seconds: i64,
+}
+
+/// `DELETE /internal/v1/mcp/claims/{claim_id}`, 200. `released` is false
+/// when the handle names no claim of this connection, or one already
+/// released; the tool answers the same either way.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DocumentClaimReleaseV1 {
+    pub version: Version1,
+    pub released: bool,
+}
+
+/// `POST /internal/v1/mcp/claims/check`: the workspace, and the handles the
+/// call presents (at most 16).
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DocumentClaimCheckRequestV1 {
+    pub version: Version1,
+    pub workspace_id: WorkspaceId,
+    #[serde(default)]
+    pub claim_ids: Vec<String>,
+}
+
+impl fmt::Debug for DocumentClaimCheckRequestV1 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DocumentClaimCheckRequestV1")
+            .field("workspace_id", &self.workspace_id)
+            .field("claim_ids", &self.claim_ids.len())
+            .finish()
+    }
+}
+
+/// One live claim of the checked workspace. `presented` is true when the
+/// call presented this claim's handle and the claim is its connection's: an
+/// edit of the document may go ahead.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CheckedDocumentClaimV1 {
+    pub claim: DocumentClaimV1,
+    pub presented: bool,
+}
+
+/// `POST /internal/v1/mcp/claims/check`, 200: every live claim in the
+/// workspace, read now. A document absent from `claims` is unclaimed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DocumentClaimCheckV1 {
+    pub version: Version1,
+    pub read_at_millis: i64,
+    pub claims: Vec<CheckedDocumentClaimV1>,
 }
 
 impl From<koru_account_core::workspace_authorization::AppConnectionAccess>

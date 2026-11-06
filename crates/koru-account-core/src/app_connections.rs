@@ -7,7 +7,10 @@
 //! §6.1; the schema is `docs/cloud-platform/contracts/app-connections-v1.md`).
 //!
 //! No secret crosses this port: codes and refresh tokens are SHA-256 digests,
-//! minted and compared by the caller.
+//! minted and compared by the caller. Document claims, which hold a
+//! connection's leases on documents, are [`claims`].
+
+pub mod claims;
 
 use koru_store_core::{ProfileId, WorkspaceId};
 use serde::{Deserialize, Serialize};

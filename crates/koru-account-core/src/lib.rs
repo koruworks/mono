@@ -33,7 +33,7 @@ pub use ids::{
     AccountSessionId, AppConnectionId, AuthFlowId, AuthIdentityId, IdParseError, KoruIdentityId,
 };
 pub use koru_device::{DeviceDescriptorV1, DeviceId};
-pub use koru_store_core::{ProfileId, WorkspaceId};
+pub use koru_store_core::{DocumentId, ProfileId, WorkspaceId};
 pub use model::*;
 pub use password::*;
 pub use ports::*;
