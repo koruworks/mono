@@ -132,7 +132,8 @@ where
         return Err(Refusal::PrincipalNotAllowed);
     }
     let remote = ReplicationEndpointId::from_bytes(*connection.remote_id().as_bytes());
-    let result = exchange_prepared(
+    let mut refused = false;
+    let result = exchange_answering(
         writer,
         reader,
         verifier,
@@ -141,13 +142,32 @@ where
         local_endpoint,
         generations,
         now_millis,
+        &mut refused,
     )
     .await;
-    if result.is_err() {
+    // A refusal the client was told is left for it to read: a reset would
+    // discard it unread. Every other failure resets, as before.
+    if result.is_err() && !(refused && delivered(writer).await) {
         let _ = writer.reset(1u32.into());
         let _ = reader.stop(1u32.into());
     }
     result
+}
+
+/// Finish the send side after a written `Refused` and wait, as [`refuse`]
+/// does, until the client has acknowledged every byte. A QUIC reset discards
+/// data its peer has not read yet, so the reset that followed used to lose
+/// the refusal it followed (Cloud MCP Q2.3-11). Nothing on the wire changes:
+/// the message is the one the client already decodes, and the stream then
+/// ends. `false` if it was not acknowledged within the bound.
+async fn delivered(writer: &mut iroh::endpoint::SendStream) -> bool {
+    if writer.finish().is_err() {
+        return false;
+    }
+    matches!(
+        tokio::time::timeout(std::time::Duration::from_secs(1), writer.stopped()).await,
+        Ok(Ok(None))
+    )
 }
 
 struct BorrowedAuthority<'a>(&'a dyn Authority);
@@ -208,6 +228,42 @@ where
     Prepared: Future<Output = Result<(A, Fenced), Refusal>>,
     Fenced: Future<Output = Refusal>,
 {
+    exchange_answering(
+        writer,
+        reader,
+        verifier,
+        prepare,
+        remote,
+        local,
+        generations,
+        now_millis,
+        &mut false,
+    )
+    .await
+}
+
+/// [`exchange_prepared`], also saying whether the worker's refusal was
+/// written to the client in full (`refused`).
+#[allow(clippy::too_many_arguments)]
+async fn exchange_answering<W, R, A, Prepare, Prepared, Fenced>(
+    writer: &mut W,
+    reader: &mut R,
+    verifier: &TokenCapabilityVerifier,
+    prepare: Prepare,
+    remote: ReplicationEndpointId,
+    local: ReplicationEndpointId,
+    generations: &mut ConnectionGenerations,
+    now_millis: impl Fn() -> i64,
+    refused: &mut bool,
+) -> Result<(PreparedSession, A), Refusal>
+where
+    W: AsyncWrite + Unpin,
+    R: AsyncRead + Unpin,
+    A: Authority,
+    Prepare: FnOnce(VerifiedClientHello) -> Prepared,
+    Prepared: Future<Output = Result<(A, Fenced), Refusal>>,
+    Fenced: Future<Output = Refusal>,
+{
     // The approved deadline starts at receipt of the first length byte, not at
     // connection creation. EOF before that byte creates no challenge or session.
     let first = reader.read_u8().await.map_err(|_| Refusal::Malformed)?;
@@ -228,8 +284,8 @@ where
         // A refusal the worker decides after the hello verified is the
         // worker's answer, and the client is told it: without this the
         // stream was only reset, and every dataset a worker could not serve
-        // read on the desktop as "malformed". Best effort; the reset that
-        // follows still closes the stream either way.
+        // read on the desktop as "malformed". Once it is written in full,
+        // the stream's owner lets the client read it before the stream ends.
         let (authority, fenced) = match prepare(verified).await {
             Ok(prepared) => prepared,
             Err(reason) => {
@@ -237,8 +293,8 @@ where
                     version: Version1,
                     code: reason.code().to_owned(),
                 }) {
-                    let _ = writer.write_all(&bytes).await;
-                    let _ = writer.flush().await;
+                    *refused =
+                        writer.write_all(&bytes).await.is_ok() && writer.flush().await.is_ok();
                 }
                 return Err(reason);
             }
