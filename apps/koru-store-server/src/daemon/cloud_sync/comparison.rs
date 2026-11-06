@@ -93,6 +93,11 @@ where
                     synced: outcome.documents_synced,
                     required: None,
                 });
+                // Cloud's durable revision equals the sampled one.
+                progress(Progress::Confirmed {
+                    unit,
+                    version: positions[document].clone(),
+                });
                 progress(Progress::Settled {
                     unit,
                     upload_deferred: false,

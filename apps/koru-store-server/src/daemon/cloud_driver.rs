@@ -546,6 +546,9 @@ async fn run_session(
                         tracing::debug!("cloud session: remote hint");
                         None
                     }
+                    // A device waits on no acknowledgement and reads its
+                    // session's end from the driver's result.
+                    Progress::Confirmed { .. } | Progress::SessionEnded(_) => None,
                 };
                 if let Some((unit, step)) = step {
                     let at = now_millis();

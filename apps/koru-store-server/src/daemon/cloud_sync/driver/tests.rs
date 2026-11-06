@@ -593,3 +593,88 @@ async fn a_session_that_may_not_upload_sends_nothing() {
         assert_eq!(budget.used(), 0);
     }
 }
+
+/// Cloud MCP Plan 2.3: **what Cloud holds, and why a session ended**, as a
+/// host waiting on an acknowledgement reads them. An acknowledged upload is
+/// `Confirmed` with a version that includes the local write; a refusal frame
+/// ends the session and is reported, code and all, before the next opens.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn confirmed_versions_and_session_ends_are_reported() {
+    let device = device();
+    let cloud = FakeCloud::default();
+    let scope = workspace_scope(device.workspace, device.profile, device.manifest);
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let record = Arc::clone(&seen);
+    let unit = document_unit(device.workspace, device.document);
+    let driver = Driver::spawn(
+        Sessions::new(cloud.clone(), scope, MemoryBudget::new(64 << 20), 2),
+        Parts {
+            progress: move |event: Progress| match event {
+                Progress::Confirmed { unit, version } => {
+                    record.lock().unwrap().push((Some((unit, version)), None))
+                }
+                Progress::SessionEnded(error) => {
+                    record.lock().unwrap().push((None, Some(error)));
+                }
+                _ => {}
+            },
+            plan: Plan::Workspace {
+                workspace_id: device.workspace,
+            },
+            stage: Stage::Full,
+            jobs: device.store.client(),
+            authorize: anyone(),
+            downloads: Arc::new(NoDownloads),
+            deferrals: Arc::default(),
+            permission: accept,
+            uploads: None,
+        },
+    );
+    passes(&driver, 1).await;
+    let (workspace, document) = (device.workspace, device.document);
+    let local = device
+        .store
+        .with_store(move |store| store.version(workspace, document))
+        .unwrap()
+        .unwrap();
+    let confirmed = seen
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|(confirmed, _)| confirmed.clone())
+        .find(|(confirmed, _)| *confirmed == unit)
+        .map(|(_, version)| loro::VersionVector::decode(&version).unwrap())
+        .expect("the uploaded document was confirmed");
+    assert!(confirmed.includes_vv(&local), "Cloud holds the local write");
+
+    // A refusal frame answering the next upload ends the session, and says so.
+    cloud.refuse_uploads(Some("sync_unit_exists"));
+    device
+        .store
+        .with_store(move |store| {
+            let doc = loro::LoroDoc::new();
+            doc.import(&store.snapshot(workspace, document)?).unwrap();
+            let before = doc.oplog_vv();
+            doc.get_text("probe").insert(0, "more ").unwrap();
+            doc.commit();
+            let at = Timestamp::now();
+            store.apply_update(
+                workspace,
+                document,
+                doc.export(loro::ExportMode::updates(&before)).unwrap(),
+                at,
+                koru_store_core::ports::UpdateOrigin::Store,
+            )?;
+            store.flush(workspace, document, at).map(|_| ())
+        })
+        .unwrap()
+        .unwrap();
+    eventually("the session's end was reported", || {
+        seen.lock()
+            .unwrap()
+            .iter()
+            .any(|(_, ended)| *ended == Some(koru_replication::cloud::transfer::Error::UnitExists))
+    })
+    .await;
+    driver.stop().await;
+}

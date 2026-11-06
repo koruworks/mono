@@ -387,6 +387,10 @@ pub struct AppConnectionStateV1 {
     /// Empty when revoked or not entitled.
     pub workspaces: Vec<AppConnectionWorkspaceV1>,
     pub read_at_millis: i64,
+    /// The connection's name now, 1 to 64 characters, which every commit the
+    /// host makes under it carries in its `actor/1` attribution
+    /// (`contracts/connector-attribution-v1.md`; Cloud MCP Q2.3-1).
+    pub name: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

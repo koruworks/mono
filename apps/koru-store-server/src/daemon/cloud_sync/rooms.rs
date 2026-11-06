@@ -94,6 +94,7 @@ impl<J: StoreJobs> Rooms<J> {
                             | Progress::Deferred { .. }
                             | Progress::Refused { .. }
                             | Progress::Unavailable { .. }
+                            | Progress::Confirmed { .. }
                     ) {
                         progress(event);
                     }

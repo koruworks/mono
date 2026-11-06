@@ -237,13 +237,26 @@ impl Driver {
     }
 
     /// Reconcile one document unit of this Workspace that the manifest need
-    /// not name, between passes, and say whether Cloud held it.
-    pub async fn fetch(&self, unit: Unit) -> Result<Fetched, FetchError> {
+    /// not name, between passes, and say whether Cloud held it. A unit whose
+    /// local content Cloud lacks is uploaded by the same exchange, as any
+    /// reconciled unit is.
+    ///
+    /// The request is sent when this is called, and the answer borrows
+    /// nothing of the driver, so a caller holding the driver behind a lock
+    /// need not hold the lock while it waits.
+    pub fn fetch(
+        &self,
+        unit: Unit,
+    ) -> impl Future<Output = Result<Fetched, FetchError>> + Send + 'static + use<> {
         let (reply, answer) = oneshot::channel();
-        self.commands
+        let sent = self
+            .commands
             .try_send(Command::Fetch { unit, reply })
-            .map_err(|_| FetchError::Stopped)?;
-        answer.await.unwrap_or(Err(FetchError::Stopped))
+            .map_err(|_| FetchError::Stopped);
+        async move {
+            sent?;
+            answer.await.unwrap_or(Err(FetchError::Stopped))
+        }
     }
 
     /// Stop, and return **only once the driver's task has exited**. See the
@@ -395,6 +408,9 @@ where
             ended = session => ended,
         };
         status.send_modify(|status| status.connected = false);
+        if let Err(error) = &ended {
+            progress(Progress::SessionEnded(*error));
+        }
         match ended {
             Ok(Ended::Advance(next, outcome)) => {
                 tracing::debug!(?next, "cloud driver: moving to another stage");

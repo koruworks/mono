@@ -1487,6 +1487,73 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         Ok(true)
     }
 
+    /// List a document this Store already holds in the workspace's manifest,
+    /// in one manifest commit labelled `attribution` when one is given.
+    ///
+    /// **The second half of a creation whose content went first**: a hosted
+    /// replica seeds a created document's content as an unlisted replica
+    /// document, waits for Cloud to acknowledge it, and only then lists it, so
+    /// Cloud never holds an entry for content it refused (Cloud MCP TECHNICAL
+    /// §5.5, §5.6). A replay of such a creation finishes the entry the same
+    /// way. The entry is keyed by document id, so a document the manifest
+    /// already names is left as it is and the answer is `None`; otherwise it
+    /// is the manifest delta.
+    #[allow(clippy::too_many_arguments)]
+    pub fn list_replica_document(
+        &mut self,
+        workspace: WorkspaceId,
+        document: DocumentId,
+        title: &str,
+        kind: &str,
+        parent: Option<DocumentId>,
+        index: Option<usize>,
+        attribution: Option<&str>,
+        at: Timestamp,
+    ) -> Result<Option<Vec<u8>>> {
+        self.ensure_open(workspace)?;
+        let open = self.open.get_mut(&workspace).expect("just opened");
+        if open.is_manifest(document) {
+            return Err(Error::new(
+                Code::DocumentExists,
+                "the replica document id is the manifest",
+            ));
+        }
+        match open.repo.document(document)? {
+            Some(state) if state.kind == DocumentKind::Document => {}
+            _ => return Err(Error::bare(Code::DocumentNotFound)),
+        }
+        if open.manifest.contains_document(document) {
+            return Ok(None);
+        }
+        let rollback = open.manifest.export_snapshot()?;
+        let peer = open.manifest.peer_id();
+        let before = open.manifest.version();
+        let attributed = attribution.map(|message| open.manifest.attribute_commits(message));
+        open.manifest
+            .add_document_at(document, title, kind, parent, index)?;
+        drop(attributed);
+        let delta = open.manifest.export_updates_since(&before)?;
+        let manifest_id = open.manifest_id;
+        if let Err(error) = commit_one(
+            open,
+            workspace,
+            &mut self.committed,
+            &mut self.sync_dirty,
+            manifest_id,
+            delta.clone(),
+            at,
+            crate::ports::UpdateOrigin::Store,
+        ) {
+            let restored = Manifest::from_snapshot(&rollback)?;
+            restored.set_peer_id(peer)?;
+            open.manifest = restored;
+            return Err(error);
+        }
+        open.repo.reindex(&open.manifest.entries())?;
+        self.catalog.record_location(document, workspace)?;
+        Ok(Some(delta))
+    }
+
     /// Rename a workspace.
     ///
     /// **Both names are written**, and they are two different facts that happen

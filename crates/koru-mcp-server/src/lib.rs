@@ -2732,6 +2732,16 @@ fn extraction_recovery(
             .iter()
             .any(|effect| effect.effect == kind && effect.state == effects::EffectState::Saved)
     };
+    // A destination whose own creation call ended partly saved is named by
+    // the port's report of that call, not by `target`: the call that would
+    // have handed its id back did not succeed (Cloud MCP Plan 2.3).
+    let target = target.or_else(|| {
+        effects
+            .iter()
+            .find(|effect| effect.effect == EffectKind::DestinationSeed)
+            .and_then(|effect| effect.document_id.as_deref())
+            .and_then(StoreDocumentId::parse)
+    });
     let created = target.filter(|_| saved(EffectKind::DestinationSeed));
     let message = if saved(EffectKind::Destination) {
         "The content was copied into target_document_id, but the source was not changed, so it is in both documents. Retry the source replacement with edit_document, or remove the copy."

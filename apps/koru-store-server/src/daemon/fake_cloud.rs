@@ -12,6 +12,13 @@
 //! **What it does not model** is the worker's authority: every unit the scope
 //! can name is served. The stage and direction rules are the worker's own
 //! tests (Cloud MCP Plan 1.3).
+//!
+//! **Faults a test can arm**, each a port-level stand-in for what the real
+//! worker does (Cloud MCP Plan 2.3): first creation wins (C23's rule, which
+//! the real worker applies to an app connection's uploads only), a refusal
+//! frame answering an upload, a commit whose acknowledgement is lost with the
+//! session, a join that is never answered, and a checkpoint that rewrites a
+//! unit's stored history as one history-retaining snapshot.
 
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
@@ -42,8 +49,31 @@ pub struct FakeCloud {
     hold_uploads: Arc<std::sync::atomic::AtomicBool>,
     /// While set, a session is closed as soon as it opens.
     close_at_once: Arc<std::sync::atomic::AtomicBool>,
+    /// While set, an upload rooted at the empty document for a unit Cloud
+    /// already holds is refused `sync_unit_exists` and not stored: the rule
+    /// the real worker applies to an app connection (TECHNICAL C23).
+    first_creation_wins: Arc<std::sync::atomic::AtomicBool>,
+    /// While set, every upload is answered with this refusal frame instead of
+    /// being stored, and the session ends.
+    refuse_uploads: Arc<Mutex<Option<String>>>,
+    /// While set, an upload is stored and the session then closes before it
+    /// is acknowledged: a commit whose acknowledgement is lost.
+    lose_acknowledgements: Arc<std::sync::atomic::AtomicBool>,
+    /// While set, a join is received and never answered.
+    hold_joins: Arc<std::sync::atomic::AtomicBool>,
+    /// While set, the upload faults above apply to this unit's uploads only.
+    target: Arc<Mutex<Option<Target>>>,
+    /// Bumped to let every held upload through.
+    release: Arc<tokio::sync::watch::Sender<u64>>,
     pub log: Arc<Mutex<Log>>,
     held: Arc<tokio::sync::Notify>,
+}
+
+/// Which uploads an armed fault applies to.
+#[derive(Clone, Copy, Debug)]
+enum Target {
+    Unit(Unit),
+    Fresh,
 }
 
 /// What every session of this worker saw.
@@ -53,6 +83,10 @@ pub struct Log {
     pub uploaded: Vec<Unit>,
     pub downloaded: Vec<Unit>,
     pub held: Vec<Unit>,
+    /// Uploads answered with a refusal frame, and its code.
+    pub refused: Vec<(Unit, String)>,
+    /// Joins received and never answered.
+    pub held_joins: Vec<Unit>,
     pub sessions_closed: usize,
 }
 
@@ -81,9 +115,78 @@ impl FakeCloud {
             .store(close, std::sync::atomic::Ordering::SeqCst);
     }
 
+    /// Hold every upload received from now on: received whole and not
+    /// acknowledged until [`FakeCloud::release_held`]. Turning it off holds no
+    /// new upload and leaves the held ones held.
     pub fn hold_uploads(&self, hold: bool) {
         self.hold_uploads
             .store(hold, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Let every held upload through, as if it had just arrived unheld: it is
+    /// stored and acknowledged, or refused by an armed rule.
+    pub fn release_held(&self) {
+        self.release.send_modify(|released| *released += 1);
+    }
+
+    /// Aim the upload faults at one unit's uploads, or at all of them.
+    pub fn target(&self, unit: Option<Unit>) {
+        *self.target.lock().unwrap() = unit.map(Target::Unit);
+    }
+
+    /// Aim the upload faults at units Cloud does not hold yet: a new
+    /// document's first content.
+    pub fn target_fresh(&self) {
+        *self.target.lock().unwrap() = Some(Target::Fresh);
+    }
+
+    /// Wait until at least `count` uploads have been held.
+    pub async fn uploads_held(&self, count: usize) {
+        loop {
+            let notified = self.held.notified();
+            if self.log.lock().unwrap().held.len() >= count {
+                return;
+            }
+            notified.await;
+        }
+    }
+
+    pub fn first_creation_wins(&self, on: bool) {
+        self.first_creation_wins
+            .store(on, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Answer every upload with `code`'s refusal frame, or stop doing so.
+    pub fn refuse_uploads(&self, code: Option<&str>) {
+        *self.refuse_uploads.lock().unwrap() = code.map(str::to_owned);
+    }
+
+    pub fn lose_acknowledgements(&self, lose: bool) {
+        self.lose_acknowledgements
+            .store(lose, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub fn hold_joins(&self, hold: bool) {
+        self.hold_joins
+            .store(hold, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Every unit Cloud holds now.
+    pub fn units(&self) -> Vec<Unit> {
+        self.units.lock().unwrap().keys().copied().collect()
+    }
+
+    /// Rewrite a unit's stored history as one history-retaining snapshot, as
+    /// a worker checkpoint retires the segments before it. The content and
+    /// every change, with its commit message, are kept.
+    pub fn checkpoint(&self, unit: Unit) {
+        let mut units = self.units.lock().unwrap();
+        if let Some(doc) = units.get_mut(&unit) {
+            let snapshot = doc.export(ExportMode::Snapshot).unwrap();
+            let fresh = LoroDoc::new();
+            fresh.import(&snapshot).unwrap();
+            *doc = fresh;
+        }
     }
 
     /// Wait until an upload is being held.
@@ -159,8 +262,31 @@ impl FakeCloud {
         }
         // The unit of the upload in flight, and whether it is being held.
         let mut incoming: Option<(Unit, bool)> = None;
+        let mut released = self.release.subscribe();
         loop {
-            let Ok(received) = records::read(&mut peer, deadline(), &budget).await else {
+            let read = records::read(&mut peer, deadline(), &budget);
+            let received = if matches!(incoming, Some((_, true))) {
+                tokio::select! {
+                    received = read => Some(received),
+                    _ = released.changed() => None,
+                }
+            } else {
+                Some(read.await)
+            };
+            let Some(received) = received else {
+                // A held upload let through: answered as if it had just
+                // arrived.
+                if self
+                    .received(&mut peer, &mut stream, scope, &budget)
+                    .await
+                    .is_err()
+                {
+                    return self.closed();
+                }
+                incoming = None;
+                continue;
+            };
+            let Ok(received) = received else {
                 return self.closed();
             };
             match received.into_parts().1 {
@@ -210,7 +336,46 @@ impl FakeCloud {
                         && let Some((unit, held)) = incoming
                         && !held
                     {
-                        if self.hold_uploads.load(std::sync::atomic::Ordering::SeqCst) {
+                        let aimed = match *self.target.lock().unwrap() {
+                            None => true,
+                            Some(Target::Unit(target)) => target == unit,
+                            Some(Target::Fresh) => self
+                                .units
+                                .lock()
+                                .unwrap()
+                                .get(&unit)
+                                .is_none_or(|doc| doc.oplog_vv().is_empty()),
+                        };
+                        if aimed && let Some(code) = self.refusal(&mut stream) {
+                            self.log.lock().unwrap().refused.push((unit, code.clone()));
+                            let _ = records::write(
+                                &mut peer,
+                                &Record::Peer(PeerFrame::Error { code }),
+                                deadline(),
+                                &budget,
+                            )
+                            .await;
+                            return self.closed();
+                        }
+                        if aimed
+                            && self
+                                .lose_acknowledgements
+                                .load(std::sync::atomic::Ordering::SeqCst)
+                        {
+                            if let Ok(complete) = stream.handoff(0, |_| Ok(()), |complete| complete)
+                            {
+                                let mut units = self.units.lock().unwrap();
+                                let _ = units
+                                    .entry(complete.unit)
+                                    .or_default()
+                                    .import(&complete.bytes);
+                            }
+                            self.log.lock().unwrap().uploaded.push(unit);
+                            drop(peer);
+                            return self.closed();
+                        }
+                        if aimed && self.hold_uploads.load(std::sync::atomic::Ordering::SeqCst) {
+                            released.mark_unchanged();
                             incoming = Some((unit, true));
                             self.log.lock().unwrap().held.push(unit);
                             self.held.notify_waiters();
@@ -231,6 +396,14 @@ impl FakeCloud {
 
     fn closed(&self) {
         self.log.lock().unwrap().sessions_closed += 1;
+    }
+
+    /// The refusal an armed fault answers this complete upload with, if any.
+    /// A refused upload is taken off the carrier and never stored.
+    fn refusal(&self, stream: &mut Stream) -> Option<String> {
+        let code = self.refuse_uploads.lock().unwrap().clone()?;
+        let _ = stream.handoff(0, |_| Ok(()), |complete| complete);
+        Some(code)
     }
 
     async fn metadata(
@@ -256,6 +429,10 @@ impl FakeCloud {
                 continue;
             };
             self.log.lock().unwrap().joined.push(request.unit);
+            if self.hold_joins.load(std::sync::atomic::Ordering::SeqCst) {
+                self.log.lock().unwrap().held_joins.push(request.unit);
+                continue;
+            }
             let (version, payload) = {
                 let mut units = self.units.lock().unwrap();
                 let doc = units.entry(request.unit).or_default();
@@ -300,6 +477,37 @@ impl FakeCloud {
         budget: &MemoryBudget,
     ) -> Result<(), transfer::Error> {
         let complete = stream.handoff(0, |_| Ok(()), |complete| complete)?;
+        if self
+            .first_creation_wins
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            let held = self
+                .units
+                .lock()
+                .unwrap()
+                .get(&complete.unit)
+                .is_some_and(|doc| !doc.oplog_vv().is_empty());
+            let creation = koru_replication::cloud::object::starts_from_empty(&complete.bytes)
+                .unwrap_or(false);
+            if held && creation {
+                // Refused before anything is stored, as the worker refuses
+                // before `reserve`.
+                let code = transfer::Error::UnitExists.code().to_owned();
+                self.log
+                    .lock()
+                    .unwrap()
+                    .refused
+                    .push((complete.unit, code.clone()));
+                let _ = records::write(
+                    peer,
+                    &Record::Peer(PeerFrame::Error { code }),
+                    Instant::now() + QUIET,
+                    budget,
+                )
+                .await;
+                return Err(transfer::Error::UnitExists);
+            }
+        }
         {
             let mut units = self.units.lock().unwrap();
             let doc = units.entry(complete.unit).or_default();

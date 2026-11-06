@@ -137,6 +137,22 @@ pub enum Progress {
     },
     /// Authenticated, content-free: the caller should schedule another pass.
     RemoteHint,
+    /// **Cloud holds at least `version` of this unit**, the encoded version
+    /// vector the pass last read for it: the unit settled with its upload
+    /// acknowledged, or with nothing to upload, and no local change since.
+    /// It is what a host that waits for an edit's acknowledgement reads
+    /// (Cloud MCP TECHNICAL §5.5): an edit is saved once a confirmed version
+    /// includes the frontier its local write produced.
+    Confirmed {
+        unit: Unit,
+        version: Vec<u8>,
+    },
+    /// The session ended on this carrier error, and the driver opens the next
+    /// one. A host with a submission in flight reads it: a refusal defined to
+    /// leave the unit unmoved (`sync_unit_exists`) proves the submission had
+    /// no effect, any other end leaves it unknown. Emitted by the
+    /// [`driver`] only; a single pass returns its error instead.
+    SessionEnded(Error),
 }
 
 /// One document unit's half of the coverage sample.
@@ -1034,6 +1050,18 @@ where
                 // uninterrupted run counts towards the bound.
                 if !refused {
                     ledger(deferrals, |held| held.cleared(unit));
+                }
+                // The version read last is the verify read, and with no local
+                // change Cloud's confirmed version includes it.
+                if !refused && !upload_deferred && !local_changed {
+                    let version = versions
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner())
+                        .get(&unit)
+                        .cloned();
+                    if let Some(version) = version {
+                        progress(Progress::Confirmed { unit, version });
+                    }
                 }
                 progress(Progress::Settled {
                     unit,
