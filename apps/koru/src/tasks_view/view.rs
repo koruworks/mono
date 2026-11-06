@@ -20,6 +20,7 @@ use koru_draw::theme;
 use koru_editor::utils::when::{self, Parsed, Reference};
 use koru_store_wire::tasks::{LifecycleFilter, TaskSort};
 use koru_ui::date_grid::DateGrid;
+use koru_ui::label_chip::LabelChip;
 use koru_ui::menu::{Anchor, Menu};
 use koru_ui::table::{Band, Metrics, Table};
 use koru_workspace_host::{Settings, View};
@@ -44,7 +45,8 @@ use super::states::{self, Empty};
 pub(super) const PAD: f32 = 40.0;
 /// Between the title and the row area.
 pub(super) const HEADER_GAP: f32 = 22.0;
-/// The complete control's square, at the head of every row.
+/// The complete control's square, at the head of every row: the press
+/// target. The box drawn in it is smaller (`RowParts::checkbox`).
 pub(super) const CONTROL_W: f32 = 18.0;
 /// Between the control and the text column.
 pub(super) const CONTROL_GAP: f32 = 10.0;
@@ -74,7 +76,7 @@ pub(super) const SWATCH_GAP: f32 = 10.0;
 pub(super) const CHIPS_TOP_GAP: f32 = 14.0;
 /// Air either side of a filter chip's label — **the component's**, so the
 /// empty state's action lines up with the chips over it.
-pub(super) const FILTER_PAD_X: f32 = koru_ui::filter_chip::PAD_X;
+pub(super) const FILTER_PAD_X: f32 = koru_ui::label_chip::REGULAR_PAD_X;
 /// Between one filter chip and the next.
 pub(super) const FILTER_GAP: f32 = 8.0;
 /// The most trailing words the capture row will try to read as a date.
@@ -255,17 +257,25 @@ pub(super) struct FilterChip {
 }
 
 impl FilterChip {
-    /// What this chip's trailing mark says — **the component's vocabulary**,
-    /// so measuring and drawing ask one question rather than two booleans.
-    pub(super) fn mark(&self) -> koru_ui::filter_chip::Mark {
-        use koru_ui::filter_chip::Mark;
-        if self.caret {
-            Mark::Caret
-        } else if self.clear {
-            Mark::Clear
-        } else {
-            Mark::None
-        }
+    /// This chip as **the one chip component** — regular, inverted while
+    /// its dimension is set, wearing a caret or the `×` — so measuring and
+    /// drawing ask one question rather than two booleans.
+    pub(super) fn chip(&self) -> LabelChip<'_> {
+        use koru_ui::label_chip::{Size, Tone, Trail};
+        LabelChip::new(&self.label)
+            .size(Size::Regular)
+            .tone(if self.active {
+                Tone::Inverted
+            } else {
+                Tone::Neutral
+            })
+            .trail(if self.caret {
+                Trail::Caret
+            } else if self.clear {
+                Trail::Clear
+            } else {
+                Trail::None
+            })
     }
 }
 
@@ -910,15 +920,7 @@ impl TasksView {
             .map(|chips| {
                 chips
                     .iter()
-                    .map(|chip| {
-                        self.engine.measure_attr_chip(
-                            chip.kind,
-                            &chip.label,
-                            chip.accent.as_deref(),
-                            None,
-                            false,
-                        ) + koru_draw::chip::extra_w(chip.kind)
-                    })
+                    .map(|chip| chip.label_chip().width(&mut self.engine))
                     .collect()
             })
             .collect();
@@ -1198,7 +1200,7 @@ impl TasksView {
 
     /// A chip's height — the component's, derived from the label's own line.
     pub(super) fn chip_h(&self) -> f32 {
-        koru_ui::filter_chip::height()
+        koru_ui::label_chip::Size::Regular.height()
     }
 
     pub(super) fn chips_top(&self) -> f32 {
@@ -1212,11 +1214,7 @@ impl TasksView {
         let chips = self.chips();
         let mut widths = Vec::with_capacity(chips.len());
         for chip in &chips {
-            widths.push(koru_ui::filter_chip::width(
-                &mut self.engine,
-                &chip.label,
-                chip.mark(),
-            ));
+            widths.push(chip.chip().width(&mut self.engine));
         }
         self.chip_ws = widths;
     }
@@ -2545,6 +2543,15 @@ pub(super) struct RowChip {
 }
 
 impl RowChip {
+    /// This chip as **the one chip component**: compact, in its accent's
+    /// tone, and **with no remove lane** — a chip on this page is a reading
+    /// of the row, and the control that changes it is the row's menu. It
+    /// reserved the lane once anyway, which left 6 px on the left of every
+    /// chip and 21 px on the right.
+    pub(super) fn label_chip(&self) -> LabelChip<'_> {
+        LabelChip::attribute(self.kind, &self.label, self.accent.as_deref())
+    }
+
     fn tag(label: String, accent: Option<String>) -> Self {
         Self {
             kind: ChipKind::Tag,
@@ -2558,7 +2565,14 @@ impl RowChip {
 /// The rectangles one row is made of.
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub(super) struct RowParts {
+    /// The complete control's **target** — what a press is resolved against
+    /// and what accessibility reports — a [`CONTROL_W`] square.
     pub control: Rect,
+    /// The box **drawn** inside it, at the document's own size
+    /// ([`theme::CHECKBOX_SIZE`]) and centred, so a task ticked here and in
+    /// its document is one box at one size, and the target stays the size a
+    /// pointer can hit.
+    pub checkbox: Rect,
     pub dots: Rect,
     /// Everything between the control and the chips: the kind icon, the title
     /// and — in Today — the context line under it.

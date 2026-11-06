@@ -865,7 +865,7 @@ thread_local! {
     /// The engine and cache the picker's layouts run on: its rows' words
     /// are shaped here, only for the rows in view, and kept across frames.
     /// One per UI thread, as the switcher's input layouts have
-    /// (`popover_elements::with_input_engine`).
+    /// (`input_engine::with` in the app).
     static LAYOUT: RefCell<Option<(TextEngine, TextCache)>> = const { RefCell::new(None) };
 }
 

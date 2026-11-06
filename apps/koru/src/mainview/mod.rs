@@ -4209,8 +4209,10 @@ impl MainView {
                     | MenuAction::TerminalFontIs(_) => self.session_profile_of_tab(tab).is_some(),
                     MenuAction::PinTab => {
                         in_range
-                            && (document.is_some()
-                                || self.tabs().get(tab).is_some_and(|t| t.view.is_pinnable()))
+                            && self
+                                .tabs()
+                                .get(tab)
+                                .is_some_and(koru_app_shell::TabElement::pinnable)
                             && !pinned
                     }
                     MenuAction::UnpinTab => in_range && pinned,
@@ -10605,7 +10607,7 @@ impl View for MainView {
                 self.focus_pane_at(x, y);
                 let tab = self.tabs().get(i);
                 let document = tab.is_some_and(|tab| tab.document.is_some());
-                let pinnable = tab.is_some_and(|tab| tab.view.is_pinnable());
+                let pinnable = tab.is_some_and(koru_app_shell::TabElement::pinnable);
                 let pinned = tab.is_some_and(|tab| tab.is_pinned());
                 let show_title = tab.is_some_and(|tab| tab.show_title);
                 let mcp = self

@@ -401,9 +401,8 @@ impl<T: TabElement> TabStrip<T> {
     /// to.
     ///
     /// **Whether it may be pinned is the tab's own answer**
-    /// ([`TabElement::pinnable`]): Koru refuses a draft, a release-notes page
-    /// and anything not over a document, and the strip only needs a bool. A
-    /// refusal puts the tab back where it was.
+    /// ([`TabElement::pinnable`]) — Koru's is *every tab* — and the strip only
+    /// needs a bool. A refusal puts the tab back where it was.
     pub fn pin(&mut self, i: usize, home: Uuid, show_title: bool) -> bool {
         let Some(loc) = self.loc(i) else {
             return false;
@@ -536,9 +535,9 @@ impl<T: TabElement> TabStrip<T> {
 
     /// Whether any tab in the strip is a placeholder.
     ///
-    /// A placeholder never names content and a pinned tab always does
-    /// ([`pin`](Self::pin) refuses anything else), so a pin is never a
-    /// placeholder whatever it currently draws.
+    /// A pin is never a placeholder whatever it currently draws: the element
+    /// answers [`TabElement::is_placeholder`] `false` for a pinned tab, since
+    /// a placeholder is what the strip drops or lets content replace.
     pub fn has_placeholder(&self) -> bool {
         self.iter().any(TabElement::is_placeholder)
     }

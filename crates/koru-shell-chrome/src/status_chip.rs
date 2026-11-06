@@ -86,37 +86,23 @@ pub fn draw(
     open: bool,
 ) {
     let p = theme::p();
-    // **`bubble_bg`, the tooltip's recipe, and no new colour.** The inverted
-    // surface reads as an instrument rather than as part of the page — which is
-    // exactly what this is — and `DESIGN.md` records a standing preference for
-    // not adding `Palette` fields. Dark in both themes, like the selection
-    // bubble.
-    scene::fill(
-        scene,
-        root,
-        p.bubble_bg,
-        &scene::rrect(chip.x, chip.y, chip.w, chip.h, chip.h * 0.5),
-    );
-    // **Clipped to the chip**, the way [`crate::branch`]'s pill is. The label is
-    // one word in English and [`CHIP_W`] was measured for it, but the word is
-    // the host's now and *Sin conexión* is not that word — an unclipped label
-    // would run out over the tabs beside it. English is unchanged: a label that
-    // fits is a clip that does nothing.
-    let label = engine.simple_layout(text.label, theme::role::hint());
-    scene.push_clip_layer(
-        vello::peniko::Fill::NonZero,
-        root,
-        &scene::rrect(chip.x, chip.y, chip.w, chip.h, chip.h * 0.5),
-    );
-    scene::draw_layout_first_line(
-        scene,
-        root,
-        &label,
-        chip.x + (chip.w - label.width()).max(0.0) * 0.5,
-        scene::centre_y_in(&label, chip),
-        Some(p.bubble_fg),
-    );
-    scene.pop_layer();
+    // **The one chip component, inverted** — `bubble_bg`, the tooltip's
+    // recipe, and no new colour. The inverted surface reads as an instrument
+    // rather than as part of the page — which is exactly what this is — and
+    // `DESIGN.md` records a standing preference for not adding `Palette`
+    // fields. The label is centred in the fixed [`CHIP_W`] and **clipped to
+    // the chip** by the component: the word is the host's, and *Sin
+    // conexión* is not the word the width was measured for.
+    koru_ui::LabelChip::new(text.label)
+        .size(koru_ui::label_chip::Size::Regular)
+        .tone(koru_ui::label_chip::Tone::Inverted)
+        .draw(
+            scene,
+            root,
+            engine,
+            chip,
+            koru_ui::label_chip::State::default(),
+        );
 
     if !open {
         return;

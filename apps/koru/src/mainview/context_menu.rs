@@ -1781,8 +1781,9 @@ pub const TAB_ITEMS: [MenuAction; 7] = [
 /// document — Welcome, Manage, Trash, drafts and release notes — keep the
 /// ordinary tab menu rather than showing document actions dimmed.
 ///
-/// `pinnable` is true for tabs that can be pinned even though they have no
-/// document, such as an AI chat tab.
+/// `pinnable` is the tab's own answer (`TabElement::pinnable`), never
+/// derived here from `document`: a second copy of the pin rule in the menu is
+/// how a task list once had no *Pin tab* row.
 #[cfg(test)]
 pub fn tab_items(
     document: bool,
@@ -1806,7 +1807,7 @@ pub fn tab_items_for(
     terminal_look: bool,
 ) -> Vec<MenuAction> {
     let mut items = Vec::new();
-    if (document || pinnable) && !pinned {
+    if pinnable && !pinned {
         items.push(MenuAction::PinTab);
         items.push(MenuAction::Divider);
     }

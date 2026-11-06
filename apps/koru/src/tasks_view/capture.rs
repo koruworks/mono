@@ -29,7 +29,6 @@ use vello::Scene;
 use vello::kurbo::Affine;
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 
-use super::row::paint_chip;
 use super::view::{CHIP_GAP, ListFace, RowChip, RowParts, split_date, temporal_of};
 
 /// What the capture row says before anybody types in it.
@@ -382,19 +381,11 @@ impl Capture {
     ) {
         let p = theme::p();
         let _ = table;
-        koru_draw::checkbox::outline(scene, root, parts.control, p.placeholder);
+        koru_draw::checkbox::outline(scene, root, parts.checkbox, p.placeholder);
         let chips = self.chips(today, lists);
         let widths: Vec<f32> = chips
             .iter()
-            .map(|chip| {
-                engine.measure_attr_chip(
-                    chip.kind,
-                    &chip.label,
-                    chip.accent.as_deref(),
-                    None,
-                    false,
-                ) + chip::extra_w(chip.kind)
-            })
+            .map(|chip| chip.label_chip().width(engine))
             .collect();
         let total: f32 =
             widths.iter().sum::<f32>() + chip::CHIP_GAP * (widths.len().saturating_sub(1)) as f32;
@@ -417,15 +408,12 @@ impl Capture {
         let mut x = parts.text.x + parts.text.w - total;
         let y = r.y + (r.h - chip::CHIP_H) * 0.5;
         for (chip, w) in chips.iter().zip(&widths) {
-            paint_chip(
+            chip.label_chip().draw(
                 scene,
                 root,
                 engine,
-                chip.kind,
-                &chip.label,
-                chip.accent.as_deref(),
-                x,
-                y,
+                Rect::new(x, y, *w, chip::CHIP_H),
+                koru_ui::label_chip::State::default(),
             );
             x += w + chip::CHIP_GAP;
         }
@@ -460,9 +448,9 @@ pub(super) fn paint_empty(
     if hovered {
         table.paint_row_fill(scene, root, r, RowState::Hovered);
     }
-    // A dashed-looking ghost: the same circle, drawn in the placeholder tone
+    // A dashed-looking ghost: the same box, drawn in the placeholder tone
     // so it reads as an outline of a control rather than as one.
-    koru_draw::checkbox::outline(scene, root, parts.control, p.placeholder);
+    koru_draw::checkbox::outline(scene, root, parts.checkbox, p.placeholder);
     let layout = engine.simple_layout(PLACEHOLDER, theme::role::row());
     scene::draw_layout_first_line(
         scene,

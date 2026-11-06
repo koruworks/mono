@@ -266,7 +266,7 @@ fn the_action_labels_are_the_ones_the_menu_offers() {
 fn a_document_tab_adds_rename_and_trash_without_changing_other_tabs() {
     assert_eq!(tab_items(false, false, false, false), TAB_ITEMS);
     assert_eq!(
-        tab_items(true, false, false, false),
+        tab_items(true, true, false, false),
         vec![
             MenuAction::PinTab,
             MenuAction::Divider,

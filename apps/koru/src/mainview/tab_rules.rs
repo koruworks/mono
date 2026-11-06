@@ -43,16 +43,19 @@ impl TabElement for Tab {
         self.home = scope.map(WorkspaceId::from_uuid);
     }
 
-    /// **Koru's pin rule, in one place.** A pin is a document you keep across
-    /// workspace switches, so a tab with no document is not one — and neither is
-    /// a draft (it has no document *yet*, in a private workspace) nor the
-    /// release-notes page (it is full, and never anybody's document).
+    /// **Koru's pin rule, in one place: every tab may be pinned.** A pin is a
+    /// tab kept at the left of the strip across workspace switches, and which
+    /// tab is worth keeping there is the person's call — a task list, the
+    /// Trash or a terminal as much as a document. It was documents and chats
+    /// only, written out again in the tab menu's build and its enable check,
+    /// which is why a task list could not be pinned; both now ask this.
     ///
-    /// AI chat tabs are pinnable even though they name no document, because the
-    /// surface is useful to keep at the left edge of the strip while working.
+    /// A pinned tab comes back after a restart when its kind has a saved form
+    /// (`TabRef`). Settings, Feedback, a version comparison, Socials and a
+    /// run's pages have none: they stay pinned for the session, and do not
+    /// come back.
     fn pinnable(&self) -> bool {
-        self.view.is_pinnable()
-            || (self.document.is_some() && self.draft.is_none() && self.whats_new.is_none())
+        true
     }
 
     fn show_title(&self) -> bool {
@@ -67,14 +70,20 @@ impl TabElement for Tab {
         Tab::is_reusable(self)
     }
 
-    /// The welcome tab, and only when it is genuinely empty.
+    /// The welcome tab, and only when it is genuinely empty — and never a
+    /// pinned one.
     ///
-    /// A welcome tab never names a document; a pinned tab always does, so a
-    /// document-bearing tab is never a placeholder whatever view it currently
-    /// holds. The `draft` check is the same rule from the other side: a draft is
-    /// content somebody has started typing.
+    /// A welcome tab never names a document, so a document-bearing tab is
+    /// never a placeholder whatever view it currently holds. The `draft` check
+    /// is the same rule from the other side: a draft is content somebody has
+    /// started typing. **A pin is never a placeholder** — the strip drops a
+    /// placeholder and lets opened content replace it, and a Welcome tab
+    /// somebody pinned is one they asked to keep.
     fn is_placeholder(&self) -> bool {
-        matches!(self.view, TabView::Welcome(_)) && self.draft.is_none() && self.document.is_none()
+        matches!(self.view, TabView::Welcome(_))
+            && self.pinned.is_none()
+            && self.draft.is_none()
+            && self.document.is_none()
     }
 }
 

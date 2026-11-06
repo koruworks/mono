@@ -38,9 +38,10 @@ use koru_core::ids::TagId;
 use koru_core::node::Node;
 use koru_core::tasks::{Bucket, TaskFields, is_task};
 use koru_core::time::Temporal;
-use koru_draw::chip::{self, CHIP_GAP, CHIP_H, ChipKind};
+use koru_draw::chip::{CHIP_GAP, CHIP_H, ChipKind};
 use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
+use koru_ui::label_chip::{LabelChip, Lead, State, Trail};
 
 use crate::paragraph::Paragraph;
 use crate::utils::dates;
@@ -554,6 +555,39 @@ pub struct ChipBox {
     /// the chip would paint short of where it is pressable. `None` on every kind
     /// but [`ChipKind::Due`], and on an open dateless one.
     pub lead: Option<char>,
+    /// The label is struck — a completed task's due.
+    pub struck: bool,
+}
+
+impl ChipBox {
+    /// This chip as **the one chip component** (`koru_ui::label_chip`): the
+    /// attribute chip its kind earns, its lead and strike, and the remove
+    /// lane — a chip in a document is the control that takes its attribute
+    /// off. Measuring, hit-testing and painting all ask this, so the three
+    /// cannot disagree about what the chip is.
+    pub fn face(&self) -> LabelChip<'_> {
+        face(
+            self.kind,
+            &self.label,
+            self.accent.as_deref(),
+            self.lead,
+            self.struck,
+        )
+    }
+}
+
+/// The chip component for one attribute chip — see [`ChipBox::face`].
+fn face<'a>(
+    kind: ChipKind,
+    label: &'a str,
+    accent: Option<&'a str>,
+    lead: Option<char>,
+    struck: bool,
+) -> LabelChip<'a> {
+    LabelChip::attribute(kind, label, accent)
+        .lead(lead.map_or(Lead::None, Lead::Glyph))
+        .struck(struck)
+        .trail(Trail::Remove)
 }
 
 /// Where a row's chips sit, in document coordinates — **the** geometry
@@ -616,11 +650,12 @@ pub fn chip_boxes_on(
         // true.
         let struck = lead == Some(bucket_glyph(Bucket::Completed));
         // The measured label (or, for a swatch, its dot), plus the remove lane
-        // every kind reserves beyond it — and the lead's lane, which is inside
-        // the lozenge and therefore inside the measurement.
-        let w = engine.measure_attr_chip(kind, &label, accent.as_deref(), lead, struck)
-            + chip::extra_w(kind);
+        // every chip here carries beyond it — and the lead's lane, which is
+        // inside the lozenge and therefore inside the measurement.
+        let chip = face(kind, &label, accent.as_deref(), lead, struck);
+        let w = chip.width(engine);
         let rect = Rect::new(x, y, w, CHIP_H);
+        let close = chip.trail_rect(rect);
         out.push(ChipBox {
             rect,
             // **Every chip offers its lane, the dateless task included.**
@@ -632,11 +667,12 @@ pub fn chip_boxes_on(
             // dateless task has as much of as a dated one — so the lane is
             // always there, and the one chip that used to hide it is the one
             // that most needs it.
-            close: chip::close_rect(kind, rect),
+            close,
             kind,
             label,
             accent,
             lead,
+            struck,
         });
         x += w + CHIP_GAP;
     }
@@ -711,26 +747,21 @@ pub fn draw_row_chips(
     hovered: Option<usize>,
 ) {
     for (i, placed) in chip_boxes(row, engine, tags, lists).into_iter().enumerate() {
-        // **The lead is in the key**, so this asks for the entry `chip_boxes`
-        // measured. Asking with `None` would answer a narrower visual than the
-        // rectangle underneath it — the chip would paint short of where it is
-        // pressable.
-        let Some(visual) = engine.attr_chips.get(
-            placed.kind,
-            &placed.label,
-            placed.accent.as_deref(),
-            placed.lead,
-        ) else {
-            continue;
-        };
-        chip::draw(
-            scene,
-            root,
-            visual,
-            placed.accent.as_deref(),
+        let rect = Rect::new(
             placed.rect.x,
             oy + (placed.rect.y - row.y),
-            placed.close.is_some() && hovered == Some(i),
+            placed.rect.w,
+            placed.rect.h,
+        );
+        placed.face().draw(
+            scene,
+            root,
+            engine,
+            rect,
+            State {
+                hovered: false,
+                reveal: placed.close.is_some() && hovered == Some(i),
+            },
         );
     }
 }

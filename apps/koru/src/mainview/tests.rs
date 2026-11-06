@@ -2591,15 +2591,14 @@ fn a_second_click_inside_one_document_reuses_its_tab() {
 fn tab_offers(v: &mut MainView, ws: &mut WorkspaceDoc, tab: usize, action: MenuAction) -> bool {
     right_click_tab(v, ws, tab);
     let menu = v.menu.clone().expect("the menu opened");
-    v.enabled_items(&menu)[item_of(action)]
+    v.enabled_items(&menu)[item_of(&menu, action)]
 }
 
-/// The index in [`TAB_ITEMS`] of `action`.
-fn item_of(action: MenuAction) -> usize {
-    context_menu::TAB_ITEMS
-        .iter()
-        .position(|&a| a == action)
-        .unwrap()
+/// The index of `action` in the open menu. **Read off the menu, not off
+/// [`TAB_ITEMS`]**: every tab may be pinned, so a tab's menu leads with *Pin
+/// tab* (or *Unpin*) and a divider before the items `TAB_ITEMS` lists.
+fn item_of(menu: &ContextMenu, action: MenuAction) -> usize {
+    menu.items().iter().position(|&a| a == action).unwrap()
 }
 
 /// Right-click the middle of tab `tab_index`, opening its menu.
@@ -2613,7 +2612,7 @@ fn right_click_tab(v: &mut MainView, ws: &mut WorkspaceDoc, tab_index: usize) {
 /// reading it out for the click point does not dismiss it.
 fn choose(v: &mut MainView, ws: &mut WorkspaceDoc, action: MenuAction) {
     let menu = v.menu.clone().expect("the menu is open");
-    let (x, y) = menu.item_rect(v.viewport, item_of(action)).centre();
+    let (x, y) = menu.item_rect(v.viewport, item_of(&menu, action)).centre();
     v.mouse_down(ws, x, y, false);
 }
 
@@ -2661,7 +2660,7 @@ fn a_store_document_tab_offers_rename_and_move_to_trash() {
     let menu = v.menu.as_ref().expect("the document tab menu opened");
     assert_eq!(
         menu.items(),
-        context_menu::tab_items(true, false, false, false)
+        context_menu::tab_items(true, true, false, false)
     );
     assert!(v.item_is_enabled(menu, MenuAction::Rename));
     assert!(v.item_is_enabled(menu, MenuAction::MoveToTrash));
@@ -2692,8 +2691,8 @@ fn a_store_document_tab_offers_rename_and_move_to_trash() {
     right_click_tab(&mut v, &mut workspace.ws, 0);
     assert_eq!(
         v.menu.as_ref().unwrap().items(),
-        context_menu::tab_items(false, false, false, false),
-        "Welcome does not show document-only actions"
+        context_menu::tab_items(false, true, false, false),
+        "Welcome does not show document-only actions (it may be pinned, like every tab)"
     );
 }
 
@@ -2793,20 +2792,19 @@ fn every_tabs_close_item_is_offered() {
     }
     // The bulk items still depend on there being something to bulk-close.
     right_click_tab(&mut v, &mut workspace.ws, 0);
-    let enabled = v.enabled_items(&v.menu.clone().unwrap());
-    assert!(enabled[item_of(MenuAction::CloseOthers)]);
+    let menu = v.menu.clone().unwrap();
+    let enabled = v.enabled_items(&menu);
+    assert!(enabled[item_of(&menu, MenuAction::CloseOthers)]);
     assert!(
-        !enabled[item_of(MenuAction::CloseLeft)],
+        !enabled[item_of(&menu, MenuAction::CloseLeft)],
         "nothing to the left"
     );
-    assert!(enabled[item_of(MenuAction::CloseRight)]);
-    // Pop Out still leads and a welcome tab is not poppable, so the menu opens
-    // on the first *enabled* item — which is Close, no longer dimmed.
+    assert!(enabled[item_of(&menu, MenuAction::CloseRight)]);
+    // The menu opens on the first *enabled* item — *Pin tab*, now that a
+    // welcome tab may be pinned too.
     right_click_tab(&mut v, &mut workspace.ws, 0);
-    assert_eq!(
-        v.menu.as_ref().unwrap().hover,
-        Some(item_of(MenuAction::Close))
-    );
+    let menu = v.menu.clone().unwrap();
+    assert_eq!(menu.hover, Some(item_of(&menu, MenuAction::PinTab)));
 
     // And choosing it does close the tab, rather than being inert.
     let before = labels(&v);
@@ -2830,9 +2828,13 @@ fn arrow_keys_drive_the_menu_and_enter_chooses() {
         v.key(ws, &Key::Named(NamedKey::ArrowDown), None, NONE);
     };
     // Down steps through every *selectable* item and wraps — it steps over the
-    // divider. Counted off `TAB_ITEMS` rather than a literal, so adding a row
-    // does not make this a lie.
-    let selectable: Vec<usize> = context_menu::TAB_ITEMS
+    // dividers. Counted off the open menu rather than a literal, so adding a
+    // row does not make this a lie.
+    let selectable: Vec<usize> = v
+        .menu
+        .as_ref()
+        .unwrap()
+        .items()
         .iter()
         .enumerate()
         .filter(|(_, a)| a.selectable())
@@ -2855,7 +2857,7 @@ fn arrow_keys_drive_the_menu_and_enter_chooses() {
         "Down wraps back to the top"
     );
     // Step down to Close Others, and Enter runs it.
-    let target = item_of(MenuAction::CloseOthers);
+    let target = item_of(v.menu.as_ref().unwrap(), MenuAction::CloseOthers);
     while v.menu.as_ref().unwrap().hover != Some(target) {
         down(&mut v, &mut workspace.ws);
     }
@@ -10791,6 +10793,45 @@ fn a_second_bucket_re_points_the_one_tasks_tab() {
         panic!("still a Tasks tab");
     };
     assert_eq!(tab.target(), RailTarget::Bucket(Bucket::Later));
+}
+
+/// **A pinned Tasks tab keeps its queue.** Pressing another bucket opens (or
+/// re-points) an unpinned page beside it; pressing the pinned queue again
+/// selects the pin rather than opening a second page on it.
+#[test]
+fn a_pinned_tasks_tab_is_not_re_pointed_by_the_rail() {
+    use crate::panes::explore::rail::{Bucket, RailRow, RailTarget};
+    let (mut v, mut w) = on_tasks();
+    let press = |v: &mut MainView, w: &mut Workspace, bucket| {
+        let (x, y) = rail_row(v, RailRow::Bucket(bucket)).centre();
+        v.mouse_down(&mut w.ws, x, y, false);
+    };
+    press(&mut v, &mut w, Bucket::Upcoming);
+    let at = v.tabs().active();
+    assert!(v.tabs_mut().pin(at, uuid::Uuid::new_v4(), true), "pinned");
+
+    press(&mut v, &mut w, Bucket::Later);
+    let targets = |v: &MainView| -> Vec<(bool, RailTarget)> {
+        v.tabs()
+            .iter()
+            .filter_map(|t| match &t.view {
+                TabView::Tasks(tasks) => Some((t.is_pinned(), tasks.target())),
+                _ => None,
+            })
+            .collect()
+    };
+    assert_eq!(
+        targets(&v),
+        [
+            (true, RailTarget::Bucket(Bucket::Upcoming)),
+            (false, RailTarget::Bucket(Bucket::Later)),
+        ],
+        "the pin kept Upcoming; Later opened beside it"
+    );
+
+    press(&mut v, &mut w, Bucket::Upcoming);
+    assert_eq!(targets(&v).len(), 2, "no second Upcoming page");
+    assert!(v.tabs().active_tab().is_pinned(), "the pin is in front");
 }
 
 /// The rail and the tab hold one answer, and the rail is the half put back:

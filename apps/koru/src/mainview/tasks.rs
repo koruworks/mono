@@ -50,6 +50,15 @@ pub(super) struct PendingTaskEdit {
     pub title: String,
 }
 
+/// The queue a Tasks or Reminders tab is showing; `None` for any other tab.
+fn tasks_target_of(tab: &Tab) -> Option<RailTarget> {
+    match &tab.view {
+        TabView::Tasks(t) => Some(t.target()),
+        TabView::Reminders(_) => Some(RailTarget::Reminders),
+        _ => None,
+    }
+}
+
 impl MainView {
     /// Open the Tasks tab on `target`, or point the existing one at it.
     ///
@@ -82,17 +91,22 @@ impl MainView {
         if !rail_target_shown(target) {
             return false;
         }
+        // **A pinned Tasks tab is kept on its queue**: it is a page somebody
+        // parked at the left of the strip, so a press re-points an unpinned
+        // Tasks tab (or opens one) and never moves the pin. A press for the
+        // queue a pin already shows selects that pin instead of opening a
+        // second page on it.
+        let repointable =
+            |t: &Tab| !t.is_pinned() && matches!(t.view, TabView::Tasks(_) | TabView::Reminders(_));
         let existing = (!new_tab).then(|| {
-            matches!(
-                self.tabs().active_tab().view,
-                TabView::Tasks(_) | TabView::Reminders(_)
-            )
-            .then(|| self.tabs().active())
-            .or_else(|| {
-                self.tabs()
-                    .iter()
-                    .position(|t| matches!(t.view, TabView::Tasks(_) | TabView::Reminders(_)))
-            })
+            self.tabs()
+                .iter()
+                .position(|t| t.is_pinned() && tasks_target_of(t) == Some(target))
+                .or_else(|| {
+                    repointable(self.tabs().active_tab())
+                        .then(|| self.tabs().active())
+                        .or_else(|| self.tabs().iter().position(repointable))
+                })
         });
         match existing.flatten() {
             Some(i) => {
