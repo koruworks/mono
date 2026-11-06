@@ -3335,7 +3335,7 @@ impl BuiltInDocument {
                     return true;
                 }
             }
-            let vp = self.editor.view.viewport;
+            let vp = self.menu_viewport();
             let rows = self.menu_rows(ws);
             let m = open.menu();
             if let Some(i) = m.item_at(&rows, vp, x, y) {
@@ -3547,7 +3547,7 @@ impl BuiltInDocument {
             return true;
         }
         if self.menu.is_some() {
-            let vp = self.editor.view.viewport;
+            let vp = self.menu_viewport();
             let rows = self.menu_shape();
             let toolbar = self.context_toolbar_panel();
             let toolbar_button = toolbar.and_then(|p| bubble::hit(p, x, y));

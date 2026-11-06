@@ -291,7 +291,7 @@ impl View for BuiltInDocument {
                 };
             }
             let rows = self.menu_shape();
-            let vp = self.editor.view.viewport;
+            let vp = self.menu_viewport();
             // Menu owns the cursor everywhere while open — not only over the
             // panel — matching mouse_move, which no longer falls through.
             return match open.menu().item_at(&rows, vp, x, y) {
@@ -1222,14 +1222,46 @@ impl View for BuiltInDocument {
         if self.viewer.is_some() {
             return;
         }
+        // An embedded view's menu is its host's to draw, after everything
+        // else on the host's page, so it floats over the rows below the band
+        // rather than being cut at the band's edge.
+        if self.editor.view.embedded.is_none() {
+            self.draw_menu(scene, root, ws);
+        }
+    }
+}
 
-        // An open menu paints last, over the bubble it hangs from and over the
-        // rows — the same reason the list flyout used to.
+impl BuiltInDocument {
+    /// The viewport an open menu is placed and hit-tested in: the view's
+    /// own, or for an embedded view the host's page as the editor's
+    /// `Embedded::panels` describes it — so a menu opened on a note's last
+    /// line opens downwards over the rows rather than being folded into the
+    /// band.
+    pub(crate) fn menu_viewport(&self) -> (f32, f32) {
+        match self.editor.view.embedded {
+            Some(embedded) => (
+                embedded.panels.x + embedded.panels.w,
+                embedded.panels.y + embedded.panels.h,
+            ),
+            None => self.editor.view.viewport,
+        }
+    }
+
+    /// Whether this view's own menu — a right-click's, the page menu — is
+    /// open.
+    pub fn menu_open(&self) -> bool {
+        self.menu.is_some()
+    }
+
+    /// The open menu, if any, last and over everything: the bubble it hangs
+    /// from and the rows — the same reason the list flyout used to. A host
+    /// embedding this view calls it with the host's other floating panels.
+    pub fn draw_menu(&mut self, scene: &mut Scene, root: Affine, ws: &WorkspaceDoc) {
         let Some(open) = self.menu else {
             return;
         };
         let rows = self.menu_rows(ws);
-        let vp = self.editor.view.viewport;
+        let vp = self.menu_viewport();
         let swatches = crate::page_menu::swatch_colors();
         let engine = &mut self.editor.view.engine;
         // Only the page menu's width rows carry leading art (a little page
@@ -1258,9 +1290,7 @@ impl View for BuiltInDocument {
             );
         }
     }
-}
 
-impl BuiltInDocument {
     /// Pasted images become new blocks at the target the editor recorded, one
     /// each, in the order the clipboard reported them. The whole paste is one
     /// undo group, and one `rebuild` + `reflow` — N images must not cost N

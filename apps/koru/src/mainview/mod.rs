@@ -9115,6 +9115,15 @@ impl MainView {
         }
     }
 
+    /// [`active_editing_leaf`](Self::active_editing_leaf), to read.
+    fn active_editing_leaf_ref(&self) -> Option<&Leaf> {
+        match &self.tabs().active_tab().view {
+            TabView::Leaf(leaf) => Some(leaf),
+            TabView::Tasks(t) => t.body_leaf(),
+            _ => None,
+        }
+    }
+
     fn drain_editor_toast(&mut self) -> bool {
         let message = self
             .active_editing_leaf()
@@ -13667,10 +13676,8 @@ impl View for MainView {
     }
 
     fn take_wants_sharing_toggle(&mut self) -> bool {
-        match self.active_view() {
-            TabView::Leaf(l) => View::take_wants_sharing_toggle(l),
-            _ => false,
-        }
+        self.active_editing_leaf()
+            .is_some_and(|leaf| View::take_wants_sharing_toggle(leaf))
     }
 
     fn take_wants_image(&mut self) -> Option<NodeId> {
@@ -13731,10 +13738,8 @@ impl View for MainView {
         if self.take_chat_wants_dictation() {
             return true;
         }
-        match self.active_view() {
-            TabView::Leaf(l) => View::take_wants_dictation(l),
-            _ => false,
-        }
+        self.active_editing_leaf()
+            .is_some_and(|leaf| View::take_wants_dictation(leaf))
     }
 
     fn set_tag_table(&mut self, tags: &[koru_core::system::TagEntry]) -> bool {
@@ -14074,41 +14079,31 @@ impl View for MainView {
     }
 
     fn take_wants_copy_image(&mut self) -> Option<String> {
-        match self.active_view() {
-            TabView::Leaf(l) => View::take_wants_copy_image(l),
-            _ => None,
-        }
+        self.active_editing_leaf()
+            .and_then(|leaf| View::take_wants_copy_image(leaf))
     }
 
     fn take_wants_copy_html(&mut self) -> Option<(String, String)> {
-        match self.active_view() {
-            TabView::Leaf(l) => View::take_wants_copy_html(l),
-            _ => None,
-        }
+        self.active_editing_leaf()
+            .and_then(|leaf| View::take_wants_copy_html(leaf))
     }
 
     fn apply_pending_image_cut(&mut self, ws: &mut WorkspaceDoc) -> bool {
-        match self.active_view() {
-            TabView::Leaf(l) => View::apply_pending_image_cut(l, ws),
-            _ => false,
-        }
+        self.active_editing_leaf()
+            .is_some_and(|leaf| View::apply_pending_image_cut(leaf, ws))
     }
 
     fn take_wants_paste_image(&mut self) -> Option<koru_workspace_host::PasteTarget> {
         if let Some(target) = self.canvas_wants_paste() {
             return Some(target);
         }
-        match self.active_view() {
-            TabView::Leaf(l) => View::take_wants_paste_image(l),
-            _ => None,
-        }
+        self.active_editing_leaf()
+            .and_then(|leaf| View::take_wants_paste_image(leaf))
     }
 
     fn take_wants_paste_rich(&mut self) -> Option<(koru_workspace_host::PasteTarget, String)> {
-        match self.active_view() {
-            TabView::Leaf(l) => View::take_wants_paste_rich(l),
-            _ => None,
-        }
+        self.active_editing_leaf()
+            .and_then(|leaf| View::take_wants_paste_rich(leaf))
     }
 
     fn insert_image(
@@ -14328,10 +14323,8 @@ impl View for MainView {
     }
 
     fn image_mip_side(&self) -> Option<koru_workspace_host::ImageMipSide> {
-        match &self.tabs().active_tab().view {
-            TabView::Leaf(l) => View::image_mip_side(l),
-            _ => None,
-        }
+        self.active_editing_leaf_ref()
+            .and_then(|leaf| View::image_mip_side(leaf))
     }
 
     fn paste_rich(
@@ -15512,10 +15505,8 @@ impl MainView {
     /// document, which is what makes the shortcut answer nothing there rather
     /// than reaching for a neighbour.
     fn reminder_subject(&self) -> Option<NodeId> {
-        match &self.tabs().active_tab().view {
-            TabView::Leaf(leaf) => leaf.caret_node(),
-            _ => None,
-        }
+        self.active_editing_leaf_ref()
+            .and_then(|leaf| leaf.caret_node())
     }
 
     /// `Ctrl+Shift+R` — the reminders on the item the caret is in.
@@ -16812,13 +16803,16 @@ impl MainView {
             .as_ref()
             .and_then(|(_, _, _, current)| *current);
         let choices = self.entity_workspaces.clone();
-        let applied = match self.active_view() {
-            TabView::Leaf(leaf) => {
+        // The picker that asked is the active tab's editor — a document
+        // tab's, or the note above a Tasks page. Answering only a document
+        // tab left the note's picker on *Searching…* for ever.
+        let applied = match self.active_editing_leaf() {
+            Some(leaf) => {
                 let context =
                     current.is_some_and(|current| leaf.set_entity_context(current, choices));
                 leaf.set_entity_search_results(hits, update.unavailable) || context
             }
-            _ => false,
+            None => false,
         };
         let titles = self.entity_titles.clone();
         let trashed = self.entity_trashed.clone();

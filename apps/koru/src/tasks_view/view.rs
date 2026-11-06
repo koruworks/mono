@@ -3759,7 +3759,7 @@ impl View for TasksView {
         self.begin_rename(i)
     }
 
-    fn context_menu(&mut self, _ws: &mut WorkspaceDoc, x: f32, y: f32) -> bool {
+    fn context_menu(&mut self, ws: &mut WorkspaceDoc, x: f32, y: f32) -> bool {
         // One panel at a time: a right-click while a panel is up dismisses it,
         // the way a press anywhere else does, rather than stacking a second
         // menu over the first.
@@ -3767,6 +3767,18 @@ impl View for TasksView {
             self.overflow = None;
             self.picker = None;
             return true;
+        }
+        // A right-click in the note is the note's: the editor's menu, as in
+        // a document tab, and the keyboard goes with it.
+        if self
+            .body
+            .as_ref()
+            .is_some_and(|body| body.contains(x, y) && body.is_in(ws))
+        {
+            self.clear_selection();
+            let body = self.body.as_mut().expect("checked above");
+            body.focus();
+            return body.context_menu(ws, x, y);
         }
         let Some(
             Hit::Row(i) | Hit::Complete(i) | Hit::Dots(i) | Hit::ListChip(i) | Hit::ValueChip(i, _),
@@ -3894,7 +3906,7 @@ impl View for TasksView {
         self.paint_over(scene, root, caret_on);
         // The note's picker floats over the rows and the page's own panels.
         if let Some(body) = &mut self.body {
-            body.draw_panels(scene, root);
+            body.draw_panels(scene, root, &workspace.ws);
         }
     }
 
@@ -3988,6 +4000,11 @@ impl TasksView {
     pub fn body_leaf_in(&mut self, ws: &WorkspaceDoc) -> Option<&mut Leaf> {
         let body = self.body.as_mut()?;
         (body.focused && body.is_in(ws)).then(|| body.leaf_mut())
+    }
+
+    /// The note's leaf, whatever has the keyboard, to read.
+    pub fn body_leaf(&self) -> Option<&Leaf> {
+        self.body.as_ref().map(PageBody::leaf)
     }
 
     /// The note's leaf, whatever has the keyboard — for an image import the

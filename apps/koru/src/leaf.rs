@@ -222,6 +222,25 @@ impl Leaf {
         d.set_title_display(name)
     }
 
+    /// Whether the document's own menu — a right-click's, the page menu — is
+    /// open.
+    pub fn menu_open(&self) -> bool {
+        let Self::Document(d) = self;
+        d.menu_open()
+    }
+
+    /// Draw the document's own open menu, for a host that embeds the leaf
+    /// and draws its floating panels after everything else on the page.
+    pub fn draw_menu(
+        &mut self,
+        scene: &mut vello::Scene,
+        root: vello::kurbo::Affine,
+        ws: &WorkspaceDoc,
+    ) {
+        let Self::Document(d) = self;
+        d.draw_menu(scene, root, ws);
+    }
+
     /// The name the leaf draws for its title, if one stands in for the row.
     #[cfg(test)]
     pub fn title_display(&self) -> Option<&str> {

@@ -221,15 +221,19 @@ impl PageBody {
 
     /// Draw the note's open picker, after everything else the page draws,
     /// so it floats over the rows rather than being cut at the band.
-    pub fn draw_panels(&mut self, scene: &mut Scene, root: Affine) {
+    pub fn draw_panels(&mut self, scene: &mut Scene, root: Affine, ws: &WorkspaceDoc) {
         if self.band.h <= 0.0 {
             return;
         }
-        koru_editor::draw::floating_panels(
-            scene,
-            root * Affine::translate((self.origin.0 as f64, self.origin.1 as f64)),
-            &mut self.leaf,
-        );
+        let origin = root * Affine::translate((self.origin.0 as f64, self.origin.1 as f64));
+        koru_editor::draw::floating_panels(scene, origin, &mut self.leaf);
+        // The document's own menu — a right-click's — over the rows too.
+        self.leaf.draw_menu(scene, origin, ws);
+    }
+
+    /// Whether the note's own menu (a right-click's) is open.
+    pub fn menu_open(&self) -> bool {
+        self.leaf.menu_open()
     }
 
     pub fn contains(&self, x: f32, y: f32) -> bool {
@@ -351,6 +355,14 @@ impl PageBody {
     pub fn mouse_up(&mut self, ws: &mut WorkspaceDoc) -> bool {
         self.dirty = true;
         Leaf::mouse_up(&mut self.leaf, ws)
+    }
+
+    /// A right-click in the band: the editor's own menu over the note, as
+    /// in a document tab. Drawn with the note's other panels, over the rows.
+    pub fn context_menu(&mut self, ws: &mut WorkspaceDoc, x: f32, y: f32) -> bool {
+        let (lx, ly) = self.local(x, y);
+        self.dirty = true;
+        View::context_menu(&mut self.leaf, ws, lx, ly)
     }
 
     pub fn mouse_double_click(&mut self, ws: &WorkspaceDoc, x: f32, y: f32) -> bool {

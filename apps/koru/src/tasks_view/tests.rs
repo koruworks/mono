@@ -4672,6 +4672,18 @@ mod note {
         );
     }
 
+    /// Acceptance round 2: a right-click in the note opens the editor's
+    /// own menu over it, as in a document tab, and takes the keyboard.
+    #[test]
+    fn a_right_click_in_the_note_opens_the_editors_menu() {
+        let (_, _, _, mut doc, mut view) = note_view();
+        let band = view.body.as_ref().unwrap().band;
+        assert!(view.context_menu(&mut doc, band.x + band.w * 0.5, band.y + band.h * 0.5));
+        let body = view.body.as_ref().unwrap();
+        assert!(body.focused, "the keyboard went with it");
+        assert!(body.menu_open(), "the editor's menu is up");
+    }
+
     /// Review note: a note taller than its band shows the thumb a document
     /// tab shows, and the band is what it scrolls in.
     #[test]
