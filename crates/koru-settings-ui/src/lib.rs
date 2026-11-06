@@ -95,7 +95,7 @@ pub use links::SettingsLinks;
 pub use page::{PageGroup, PageId};
 pub use state::{
     AgentAttention, AgentDefaults, AgentProviderRow, AgentProviderStatus, AiSlot, Availability,
-    DictionaryRow, Notice, RendererRow, VoiceFacts,
+    DictionaryRow, NeededVersion, Notice, RendererRow, VoiceFacts,
 };
 
 use action::Action;

@@ -45,6 +45,7 @@ pub(crate) fn guidance(row: &ProviderReadiness) -> Option<Key> {
         ExecutableAvailability::SignedOut { .. } => Some(Key::TerminalManagedSignInRequired),
         ExecutableAvailability::Incompatible {
             code: ErrorCode::CapabilityNotNegotiated,
+            ..
         } => Some(Key::TerminalManagedHostUpdateRequired),
         ExecutableAvailability::Incompatible { .. } => Some(Key::TerminalManagedUpdateRequired),
         ExecutableAvailability::Failed { .. } => Some(Key::TerminalManagedRetryRequired),

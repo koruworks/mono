@@ -188,9 +188,7 @@ pub(crate) fn agents_for(
                 availability: if snapshot.is_none() {
                     ExecutableAvailability::Checking
                 } else {
-                    ExecutableAvailability::Incompatible {
-                        code: ErrorCode::CapabilityNotNegotiated,
-                    }
+                    ExecutableAvailability::incompatible(ErrorCode::CapabilityNotNegotiated)
                 },
                 capabilities: Default::default(),
                 failure: None,

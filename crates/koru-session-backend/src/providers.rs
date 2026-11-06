@@ -46,9 +46,7 @@ fn legacy(managed: bool, delegation: bool) -> Vec<ProviderReadiness> {
                 availability: if managed && is_legacy_provider {
                     A::Available { version: None }
                 } else {
-                    A::Incompatible {
-                        code: ErrorCode::CapabilityNotNegotiated,
-                    }
+                    A::incompatible(ErrorCode::CapabilityNotNegotiated)
                 },
                 capabilities: CapabilitySet::new(if managed && delegation && is_legacy_provider {
                     vec![

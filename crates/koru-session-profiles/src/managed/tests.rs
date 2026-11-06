@@ -250,9 +250,7 @@ fn raw_only_profiles_never_become_managed_and_unavailable_host_answers_refuse_ex
         ExecutableAvailability::Failed {
             code: ErrorCode::ProviderFailed,
         },
-        ExecutableAvailability::Incompatible {
-            code: ErrorCode::ProviderIncompatible,
-        },
+        ExecutableAvailability::incompatible(ErrorCode::ProviderIncompatible),
     ] {
         let row = ProviderReadiness {
             availability,

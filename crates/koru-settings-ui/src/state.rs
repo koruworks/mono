@@ -264,11 +264,16 @@ pub enum AgentProviderStatus {
 /// checks already know.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AgentAttention {
-    /// A version Koru's managed route does not accept yet; `update` is the
-    /// command that updates it, named on the row when the agent has one,
-    /// and `desktop_app` the agent's desktop app, whose own copy updates
-    /// with the app — said after the command.
+    /// A version Koru's managed route does not accept yet. `found` is the
+    /// version the agent printed and `needed` what the route accepts, when
+    /// the session host said (one that predates them says neither, and the
+    /// row keeps its old sentence). `update` is the command that updates
+    /// it, named on the row when the agent has one, and `desktop_app` the
+    /// agent's desktop app, whose own copy updates with the app — said
+    /// after the command.
     UnsupportedVersion {
+        found: Option<String>,
+        needed: Option<NeededVersion>,
         update: Option<String>,
         desktop_app: Option<String>,
     },
@@ -276,9 +281,28 @@ pub enum AgentAttention {
     SignedOut { sign_in: Option<String> },
     /// The check itself failed.
     CheckFailed,
+    /// The agent's program did not start: `program --version` exited with
+    /// an error or printed nothing — Kimi's CLI under a Node.js too old for
+    /// it. Not a version Koru refused, so the row says to run the command
+    /// and see why, and not to update.
+    WontStart { program: String },
     /// The agent is installed but the program a chat runs it through is
     /// not — Claude's `claude-agent-acp`, Antigravity's `agy_acp_server`.
     AdapterMissing { program: String },
+}
+
+/// **What a managed route accepts of an agent's version**, as the row says
+/// it. The host decides which applies; the page only words it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum NeededVersion {
+    /// This release or a newer one: updating fixes it.
+    AtLeast(String),
+    /// Only reviewed releases, of which this is the newest.
+    Reviewed(String),
+    /// Only reviewed releases, and the version found is newer than every
+    /// one of them: this is as far as Koru has checked, and updating
+    /// cannot help.
+    CheckedUpTo(String),
 }
 
 impl AgentProviderStatus {
@@ -301,12 +325,19 @@ impl AgentProviderStatus {
             Self::NeedsAttention(why) => detail(
                 Key::SettingsAgentNeedsAttention,
                 match why {
+                    AgentAttention::UnsupportedVersion {
+                        found,
+                        needed: Some(needed),
+                        update,
+                        desktop_app,
+                    } => version_words(lang, found.as_deref(), needed, update, desktop_app),
                     AgentAttention::UnsupportedVersion { update: None, .. } => {
                         t(lang, Key::SettingsAgentUnsupportedVersion).to_owned()
                     }
                     AgentAttention::UnsupportedVersion {
                         update: Some(command),
                         desktop_app: None,
+                        ..
                     } => fill(
                         t(lang, Key::SettingsAgentUnsupportedVersionUpdate),
                         &[command],
@@ -314,6 +345,7 @@ impl AgentProviderStatus {
                     AgentAttention::UnsupportedVersion {
                         update: Some(command),
                         desktop_app: Some(app),
+                        ..
                     } => fill(
                         t(lang, Key::SettingsAgentUnsupportedVersionUpdateDesktopApp),
                         &[command, app],
@@ -327,11 +359,60 @@ impl AgentProviderStatus {
                     AgentAttention::CheckFailed => {
                         t(lang, Key::SettingsAgentCheckFailed).to_owned()
                     }
+                    AgentAttention::WontStart { program } => {
+                        fill(t(lang, Key::SettingsAgentWontStart), &[program])
+                    }
                     AgentAttention::AdapterMissing { program } => not_on_path(program),
                 },
             ),
         }
     }
+}
+
+/// **A refused version, said plainly**: what was found and what Koru needs,
+/// then — where updating is the fix — the update command and the desktop
+/// app's note. A version newer than everything Koru has checked gets no
+/// update command: updating cannot reach a release that is not out yet.
+fn version_words(
+    lang: koru_i18n::Lang,
+    found: Option<&str>,
+    needed: &NeededVersion,
+    update: &Option<String>,
+    desktop_app: &Option<String>,
+) -> String {
+    use koru_i18n::{Key, fill, t};
+    let mut words = match (needed, found) {
+        (NeededVersion::AtLeast(needed), Some(found)) => fill(
+            t(lang, Key::SettingsAgentVersionFoundNeedsAtLeast),
+            &[found, needed],
+        ),
+        (NeededVersion::AtLeast(needed), None) => {
+            fill(t(lang, Key::SettingsAgentVersionNeedsAtLeast), &[needed])
+        }
+        (NeededVersion::CheckedUpTo(newest), Some(found)) => {
+            return fill(
+                t(lang, Key::SettingsAgentVersionFoundNewerThanChecked),
+                &[found, newest],
+            );
+        }
+        (NeededVersion::Reviewed(newest), Some(found)) => fill(
+            t(lang, Key::SettingsAgentVersionFoundUnchecked),
+            &[found, newest],
+        ),
+        (NeededVersion::Reviewed(newest) | NeededVersion::CheckedUpTo(newest), None) => {
+            fill(t(lang, Key::SettingsAgentVersionNewestSupported), &[newest])
+        }
+    };
+    let mut then = |sentence: String| {
+        words = fill(t(lang, Key::SettingsAgentSentences), &[&words, &sentence]);
+    };
+    if let Some(command) = update {
+        then(fill(t(lang, Key::SettingsAgentRunToUpdate), &[command]));
+        if let Some(app) = desktop_app {
+            then(fill(t(lang, Key::SettingsAgentDesktopAppUpdates), &[app]));
+        }
+    }
+    words
 }
 
 #[cfg(test)]

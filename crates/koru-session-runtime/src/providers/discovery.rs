@@ -9,9 +9,11 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use koru_session_protocol::{AgentModes, ErrorCode, ProviderKind, ProviderModels};
+use koru_session_protocol::{AgentModes, ErrorCode, ProviderKind, ProviderModels, VersionNeed};
 
-use super::{AgentCapabilities, ProviderDiagnostic, ProviderFailure, ProviderStage};
+use super::{
+    AgentCapabilities, ProviderDiagnostic, ProviderFailure, ProviderStage, ProviderVersion,
+};
 
 /// Production factories resolve through the same PATH/PATHEXT candidate
 /// selection as managed CreateProfile. This belongs in factory construction,
@@ -93,8 +95,12 @@ pub enum ManagedAvailability {
     SignedOut {
         code: ErrorCode,
     },
+    /// Refused by the route. `found` and `needed` are the version refusal's
+    /// facts when the refusal was the version, for the window to name.
     Incompatible {
         code: ErrorCode,
+        found: Option<ProviderVersion>,
+        needed: Option<VersionNeed>,
     },
     Failed {
         code: ErrorCode,
@@ -144,8 +150,16 @@ impl ManagedAvailability {
                 Default::default(),
                 None,
             ),
-            Self::Incompatible { code } => (
-                A::Incompatible { code: code.clone() },
+            Self::Incompatible {
+                code,
+                found,
+                needed,
+            } => (
+                A::Incompatible {
+                    code: code.clone(),
+                    found: found.as_ref().map(|version| version.as_str().to_owned()),
+                    needed: needed.clone(),
+                },
                 Default::default(),
                 None,
             ),
@@ -245,6 +259,8 @@ impl DiscoveryRun {
                         }
                         Ok(Ok(_)) => ManagedAvailability::Incompatible {
                             code: ErrorCode::ProviderIncompatible,
+                            found: None,
+                            needed: None,
                         },
                         Ok(Err(failure)) => classify_failure(failure),
                         Err(_) => ManagedAvailability::Failed {
@@ -327,10 +343,42 @@ pub(crate) fn classify_failure(failure: ProviderFailure) -> ManagedAvailability 
         | ErrorCode::ProfileIncompatible
         | ErrorCode::ProtocolIncompatible
         | ErrorCode::CapabilityNotNegotiated => {
-            ManagedAvailability::Incompatible { code: failure.code }
+            let (found, needed) = failure
+                .version
+                .map_or((None, None), |refusal| (refusal.found, refusal.needed));
+            ManagedAvailability::Incompatible {
+                code: failure.code,
+                found,
+                needed,
+            }
         }
         _ => failed_availability(failure),
     }
+}
+
+/// **What a `--version` run printed, or the failure that it said nothing.**
+///
+/// A run that exits non-zero, or prints nothing at all, never got as far as
+/// naming a version: the agent's program does not start on this computer.
+/// Kimi's CLI under a Node.js too old for it is one — it exits 1 with a
+/// `SyntaxError` on stderr and nothing on stdout. That is `UnexpectedExit`
+/// at the version stage with `ProviderFailed`, which readiness reads as
+/// *Failed*: calling it an unsupported version sent people to update an
+/// agent whose version was never the problem. Output that is there but is
+/// not text is `Ok(None)`: the program ran and printed something no route
+/// can read, which stays the route's refusal.
+pub(crate) fn version_print(success: bool, stdout: &[u8]) -> Result<Option<&str>, ProviderFailure> {
+    let did_not_start = || {
+        ProviderFailure::new(
+            ErrorCode::ProviderFailed,
+            ProviderStage::Version,
+            ProviderDiagnostic::UnexpectedExit,
+        )
+    };
+    if !success || stdout.iter().all(u8::is_ascii_whitespace) {
+        return Err(did_not_start());
+    }
+    Ok(std::str::from_utf8(stdout).ok())
 }
 
 fn failed_availability(failure: ProviderFailure) -> ManagedAvailability {
@@ -474,6 +522,7 @@ pub fn run_probe_command(
             stage: ProviderStage::Spawn,
             diagnostic,
             os_code: error.raw_os_error(),
+            version: None,
         }
     })?;
 

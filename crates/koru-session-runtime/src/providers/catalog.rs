@@ -605,7 +605,7 @@ impl ProviderCatalogCache {
                 ExecutableAvailability::Available { .. } | ExecutableAvailability::Checking => {}
                 ExecutableAvailability::Missing => return Err(ErrorCode::ProviderUnavailable),
                 ExecutableAvailability::SignedOut { code }
-                | ExecutableAvailability::Incompatible { code }
+                | ExecutableAvailability::Incompatible { code, .. }
                 | ExecutableAvailability::Failed { code } => return Err(code),
             }
             let Some(left) = deadline

@@ -206,7 +206,7 @@ pub fn managed_launch_mode(
         ExecutableAvailability::Checking => return Err(ErrorCode::ProviderUnavailable),
         ExecutableAvailability::Missing => return Err(ErrorCode::ProfileMissing),
         ExecutableAvailability::SignedOut { code }
-        | ExecutableAvailability::Incompatible { code }
+        | ExecutableAvailability::Incompatible { code, .. }
         | ExecutableAvailability::Failed { code } => return Err(code.clone()),
     }
     if intent == LaunchIntent::Delegation
