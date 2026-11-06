@@ -22,9 +22,9 @@ fn six_brand_rows_and_recovery_guidance_fit_all_eight_languages_without_column_o
             row
         })
         .collect();
-    agents[0].readiness.availability = ExecutableAvailability::Incompatible {
-        code: koru_session_protocol::ErrorCode::CapabilityNotNegotiated,
-    };
+    agents[0].readiness.availability = ExecutableAvailability::incompatible(
+        koru_session_protocol::ErrorCode::CapabilityNotNegotiated,
+    );
     let mut modal = Delegation::open(&mut engine, world(agents));
     modal.activate(Hit::Agent(0));
     for lang in koru_i18n::Lang::ALL {

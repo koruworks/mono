@@ -506,7 +506,7 @@ run_all_verb() {
   cargo build "${packages[@]}" || exit 1
 
   local bin="$PWD/target/debug"
-  local -a agent_start=(--console --tray) app_args=()
+  local -a agent_start=(--console --tray)
   STORE_ROOT_ARGS=() AGENT_ROOT_ARGS=()
   RUN_ALL_SIGNALLED=0
   if [ -n "${KORU_ROOT:-}" ]; then
@@ -518,7 +518,6 @@ run_all_verb() {
     STORE_ROOT_ARGS=(--root "$root")
     AGENT_ROOT_ARGS=(--root "$root")
     agent_start=(--root "$root" --console --tray)
-    app_args=(--root "$root")
   fi
 
   trap run_all_signal INT TERM
@@ -591,18 +590,28 @@ run_all_verb() {
   fi
 
   echo "[Koru] API Gateway ready, Agent pid $agent_pid"
-  echo "[Koru] launching Koru; Ctrl+C stops this worktree's complete stack"
-  "$bin/koru" ${app_args[@]+"${app_args[@]}"} &
-  local app_pid=$!
-
-  # Fork happens before exec replaces the child with the exact image. Give
-  # that handoff a bounded moment so the first exact-path probe cannot mistake
-  # a healthy launch for an already-closed UI.
-  for ((attempt = 0; attempt < 100; attempt++)); do
-    [ "$RUN_ALL_SIGNALLED" = 1 ] && break
-    image_running "$bin/koru" && break
-    sleep 0.01 || true
-  done
+  echo "[Koru] asking Agent to launch Koru; Ctrl+C stops this worktree's complete stack"
+  # **The Agent launches the window, not this script** — run-all.ps1's
+  # `koru-agent open --inherit-stdio`. The Agent vouches only for a window
+  # whose pid is in its own launch table (ADR-267), and archiving or deleting
+  # a workspace needs that vouch. Starting `$bin/koru` here, beside the
+  # Agent, produced a window that greyed both out with "This window was not
+  # started by Koru".
+  local open_output app_pid
+  if ! open_output="$("$bin/koru-agent" open --inherit-stdio ${AGENT_ROOT_ARGS[@]+"${AGENT_ROOT_ARGS[@]}"})"; then
+    run_all_stop
+    trap - INT TERM
+    echo "koru: the Koru Agent could not open the workspace window" >&2
+    exit 1
+  fi
+  echo "$open_output"
+  app_pid="$(printf '%s\n' "$open_output" | sed -n 's/^opened Koru, pid \([0-9][0-9]*\)$/\1/p' | head -n 1)"
+  if [ -z "$app_pid" ]; then
+    run_all_stop
+    trap - INT TERM
+    echo "koru: the Koru Agent restored an existing window; cannot monitor a new session" >&2
+    exit 1
+  fi
 
   # Keep Agent and Gateway available until no Koru UI from this exact
   # target/debug directory remains.
@@ -612,15 +621,8 @@ run_all_verb() {
   done
   run_all_stop
   trap - INT TERM
-
-  local app_exit=0
-  wait "$app_pid" 2>/dev/null || app_exit=$?
-  # A signal is the ordinary way this runner ends; cleanup deliberately hides
-  # the UI exit codes it caused. Without one, preserve unexpected failures.
-  if [ "$RUN_ALL_SIGNALLED" != 1 ] && [ "$app_exit" != 0 ]; then
-    echo "koru: Koru exited with code $app_exit" >&2
-    exit "$app_exit"
-  fi
+  # The window is the Agent's child now, not this shell's, so its exit code
+  # is not ours to `wait` for; a failure shows in the console it inherited.
 }
 
 # The escape hatch for a stack something else leaked (a test run, a crashed

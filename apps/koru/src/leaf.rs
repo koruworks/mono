@@ -160,6 +160,17 @@ impl Leaf {
         d.editor.view_mut().images_offline = offline;
     }
 
+    /// Whether this tab is drawing the placeholder for `ticket` — so the
+    /// container can hand the finished image to the tab that asked for it.
+    pub fn holds_image_import(&self, ticket: koru_workspace_host::ImageTicket) -> bool {
+        let Self::Document(d) = self;
+        d.editor
+            .view
+            .pending_images
+            .iter()
+            .any(|pending| pending.ticket == ticket.0)
+    }
+
     /// Make this a page that can be read and not written.
     ///
     /// **Set once, when the view is built, and never unset** — see
@@ -995,6 +1006,51 @@ impl View for Leaf {
     fn paste_text(&mut self, ws: &mut WorkspaceDoc, text: &str) {
         match self {
             Self::Document(d) => View::paste_text(d, ws, text),
+        }
+    }
+
+    fn begin_image_import(
+        &mut self,
+        ws: &WorkspaceDoc,
+        ticket: koru_workspace_host::ImageTicket,
+        place: &koru_workspace_host::ImagePlace,
+    ) {
+        match self {
+            Self::Document(d) => View::begin_image_import(d, ws, ticket, place),
+        }
+    }
+
+    fn size_image_import(
+        &mut self,
+        ticket: koru_workspace_host::ImageTicket,
+        sizes: &[(u32, u32)],
+    ) {
+        match self {
+            Self::Document(d) => View::size_image_import(d, ticket, sizes),
+        }
+    }
+
+    fn finish_image_import(
+        &mut self,
+        ws: &mut WorkspaceDoc,
+        ticket: koru_workspace_host::ImageTicket,
+        place: koru_workspace_host::ImagePlace,
+        images: &[koru_workspace_host::PastedImage],
+    ) {
+        match self {
+            Self::Document(d) => View::finish_image_import(d, ws, ticket, place, images),
+        }
+    }
+
+    fn end_image_import(&mut self, ticket: koru_workspace_host::ImageTicket) -> bool {
+        match self {
+            Self::Document(d) => View::end_image_import(d, ticket),
+        }
+    }
+
+    fn image_mip_side(&self) -> Option<koru_workspace_host::ImageMipSide> {
+        match self {
+            Self::Document(d) => View::image_mip_side(d),
         }
     }
 

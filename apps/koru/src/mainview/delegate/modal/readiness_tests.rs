@@ -73,9 +73,7 @@ fn each_readiness_state_has_a_distinct_localized_reason() {
             I18nKey::TerminalManagedSignInRequired,
         ),
         (
-            Availability::Incompatible {
-                code: ErrorCode::ProviderIncompatible,
-            },
+            Availability::incompatible(ErrorCode::ProviderIncompatible),
             I18nKey::TerminalManagedUnsupported,
             I18nKey::TerminalManagedUpdateRequired,
         ),
@@ -87,9 +85,7 @@ fn each_readiness_state_has_a_distinct_localized_reason() {
             I18nKey::TerminalManagedRetryRequired,
         ),
         (
-            Availability::Incompatible {
-                code: ErrorCode::CapabilityNotNegotiated,
-            },
+            Availability::incompatible(ErrorCode::CapabilityNotNegotiated),
             I18nKey::TerminalManagedUnsupported,
             I18nKey::TerminalManagedHostUpdateRequired,
         ),

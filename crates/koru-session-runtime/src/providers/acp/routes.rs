@@ -3,7 +3,7 @@
 //! Exact CLI dialects and immutable process policy; no registration side effects.
 use super::*;
 use koru_session_profiles::{self as profiles, ManagedProviderRegistration};
-use koru_session_protocol::ProviderKind;
+use koru_session_protocol::{ProviderKind, VersionNeed};
 use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
 
@@ -327,19 +327,14 @@ impl AcpRoute {
     }
 
     pub(super) fn parse_version(&self, output: &str) -> Result<ProviderVersion, ProviderFailure> {
-        let rejected = || {
-            failure(
-                ErrorCode::ProviderIncompatible,
-                ProviderStage::Version,
-                ProviderDiagnostic::VersionRejected,
-            )
-        };
+        let unreadable = |error: ProviderFailure| error.refusing(None, self.need());
         if self.dialect == AcpDialect::Generic {
             let token = output
                 .split_ascii_whitespace()
                 .last()
-                .ok_or_else(rejected)?;
-            return ProviderVersion::from_str(token.strip_prefix('v').unwrap_or(token));
+                .ok_or_else(|| self.refused(None))?;
+            return ProviderVersion::from_str(token.strip_prefix('v').unwrap_or(token))
+                .map_err(unreadable);
         }
         let printed = output.trim();
         if let Some((_, version)) = self
@@ -353,13 +348,65 @@ impl AcpRoute {
         // Not a pinned print: read the number the CLI printed and admit it
         // when it is at or above the qualified pin (the review's note). A
         // digest-identified route has no number to read.
-        let token = self.dialect.printed_version(printed).ok_or_else(rejected)?;
-        let version = ProviderVersion::from_str(token)?;
+        let token = self
+            .dialect
+            .printed_version(printed)
+            .ok_or_else(|| self.refused(None))?;
+        let version = ProviderVersion::from_str(token).map_err(unreadable)?;
+        self.admit(version)
+    }
+
+    /// **A `--version` run's answer**: the version it printed, if this route
+    /// accepts it. A run that failed or printed nothing is the program not
+    /// starting (`version_print`), never a refused version; a print this
+    /// route cannot read is refused with no version found.
+    pub(super) fn read_print(
+        &self,
+        success: bool,
+        stdout: &[u8],
+    ) -> Result<ProviderVersion, ProviderFailure> {
+        let version = match crate::providers::discovery::version_print(success, stdout)? {
+            Some(text) => self.parse_version(text)?,
+            None => return Err(self.refused(None)),
+        };
+        self.admit(version)
+    }
+
+    /// `version`, if this route accepts it; refused, naming it, if not.
+    pub(super) fn admit(
+        &self,
+        version: ProviderVersion,
+    ) -> Result<ProviderVersion, ProviderFailure> {
         if self.supports(&version) {
             Ok(version)
         } else {
-            Err(rejected())
+            Err(self.refused(Some(version)))
         }
+    }
+
+    /// The version stage's refusal, carrying what was found and
+    /// [`need`](Self::need), so readiness can say both.
+    pub(super) fn refused(&self, found: Option<ProviderVersion>) -> ProviderFailure {
+        failure(
+            ErrorCode::ProviderIncompatible,
+            ProviderStage::Version,
+            ProviderDiagnostic::VersionRejected,
+        )
+        .refusing(found, self.need())
+    }
+
+    /// **What this route accepts, as a refusal says it**: the qualified pin
+    /// as a floor where newer releases are admitted
+    /// ([`AcpRoute::supports`]), else the newest of its list. `None` for a
+    /// route with no list at all.
+    pub(super) fn need(&self) -> Option<VersionNeed> {
+        if self.dialect.admits_newer_releases() {
+            return self
+                .supported_versions
+                .first()
+                .map(|pin| VersionNeed::AtLeast(pin.as_str().to_owned()));
+        }
+        VersionNeed::reviewed(self.supported_versions.iter().map(ProviderVersion::as_str))
     }
 
     /// **A started session's sign-in, read from the models it listed.** A

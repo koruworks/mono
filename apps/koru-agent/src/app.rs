@@ -6467,10 +6467,8 @@ fn spawn_koru_with_stdio(args: &[String], inherit_stdio: bool) -> std::io::Resul
         ));
     }
     let exe = std::env::current_exe()?;
-    let dir = exe
-        .parent()
+    let candidate = koru_beside(&exe)
         .ok_or_else(|| std::io::Error::other("this executable has no directory"))?;
-    let candidate = dir.join(if cfg!(windows) { "koru.exe" } else { "koru" });
     if !candidate.exists() {
         return Err(std::io::Error::other(format!(
             "{} is not beside this executable",
@@ -6488,6 +6486,21 @@ fn spawn_koru_with_stdio(args: &[String], inherit_stdio: bool) -> std::io::Resul
         detach(&mut command);
     }
     Ok(remember_launch(command.spawn()?))
+}
+
+/// The `koru` executable that belongs with the Agent at `agent_exe`: its
+/// sibling, never a `PATH` lookup.
+///
+/// One function for both directions the Agent asks the question — the
+/// window it starts ([`spawn_koru`]) and the window that started it
+/// ([`crate::grants::trust_launcher`]) — so the binary it vouches for can
+/// never be a different one from the binary it would have launched.
+pub(crate) fn koru_beside(agent_exe: &std::path::Path) -> Option<std::path::PathBuf> {
+    Some(
+        agent_exe
+            .parent()?
+            .join(if cfg!(windows) { "koru.exe" } else { "koru" }),
+    )
 }
 
 /// **Where a launch becomes a fact.** Every window this Agent starts passes

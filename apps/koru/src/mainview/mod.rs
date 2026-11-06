@@ -13846,6 +13846,122 @@ impl View for MainView {
         }
     }
 
+    /// The placeholder belongs to the document tab that asked. A canvas draws
+    /// none: its image still arrives, through `finish_image_import`'s default
+    /// route below.
+    fn begin_image_import(
+        &mut self,
+        ws: &WorkspaceDoc,
+        ticket: koru_workspace_host::ImageTicket,
+        place: &koru_workspace_host::ImagePlace,
+    ) {
+        // `/image` names the tab that asked; the blocking picker may have let
+        // the focus wander.
+        let i = match place {
+            koru_workspace_host::ImagePlace::Convert(_) => {
+                self.image_request.unwrap_or(self.tabs().active())
+            }
+            _ => self.tabs().active(),
+        };
+        if let Some(TabView::Leaf(l)) = self.tabs_mut().get_mut(i).map(|t| &mut t.view) {
+            View::begin_image_import(l, ws, ticket, place);
+        }
+    }
+
+    fn size_image_import(
+        &mut self,
+        ticket: koru_workspace_host::ImageTicket,
+        sizes: &[(u32, u32)],
+    ) {
+        for (_, group) in self.panes.iter_groups_mut() {
+            for tab in group.iter_tabs_mut() {
+                if let TabView::Leaf(l) = &mut tab.view
+                    && l.holds_image_import(ticket)
+                {
+                    View::size_image_import(l, ticket, sizes);
+                }
+            }
+        }
+    }
+
+    /// To the tab drawing the placeholder, whichever pane it is in. The shell
+    /// only finishes an import while its document is the one in front, so
+    /// that tab's document is `ws`. With no tab holding it — a canvas asked,
+    /// or the tab was closed — the routes these images always took.
+    fn finish_image_import(
+        &mut self,
+        ws: &mut WorkspaceDoc,
+        ticket: koru_workspace_host::ImageTicket,
+        place: koru_workspace_host::ImagePlace,
+        images: &[koru_workspace_host::PastedImage],
+    ) {
+        let mut place = Some(place);
+        for (_, group) in self.panes.iter_groups_mut() {
+            for tab in group.iter_tabs_mut() {
+                if let TabView::Leaf(l) = &mut tab.view
+                    && l.holds_image_import(ticket)
+                    && let Some(place) = place.take()
+                {
+                    View::finish_image_import(l, ws, ticket, place, images);
+                }
+            }
+        }
+        match place {
+            None => {
+                // The `/image` ask, if this was one, is answered.
+                self.image_request = None;
+                self.explore_stale = true;
+            }
+            Some(koru_workspace_host::ImagePlace::Paste(target)) => {
+                View::paste_images(self, ws, target, images)
+            }
+            Some(koru_workspace_host::ImagePlace::Append) => {
+                for image in images {
+                    View::append_image(
+                        self,
+                        ws,
+                        &image.hash,
+                        &image.mime,
+                        image.width,
+                        image.height,
+                    );
+                }
+            }
+            Some(koru_workspace_host::ImagePlace::Convert(node)) => {
+                if let Some(image) = images.first() {
+                    View::insert_image(
+                        self,
+                        ws,
+                        node,
+                        &image.hash,
+                        &image.mime,
+                        image.width,
+                        image.height,
+                    );
+                }
+            }
+        }
+    }
+
+    fn end_image_import(&mut self, ticket: koru_workspace_host::ImageTicket) -> bool {
+        let mut drawn = false;
+        for (_, group) in self.panes.iter_groups_mut() {
+            for tab in group.iter_tabs_mut() {
+                if let TabView::Leaf(l) = &mut tab.view {
+                    drawn |= View::end_image_import(l, ticket);
+                }
+            }
+        }
+        drawn
+    }
+
+    fn image_mip_side(&self) -> Option<koru_workspace_host::ImageMipSide> {
+        match &self.tabs().active_tab().view {
+            TabView::Leaf(l) => View::image_mip_side(l),
+            _ => None,
+        }
+    }
+
     fn paste_rich(
         &mut self,
         ws: &mut WorkspaceDoc,

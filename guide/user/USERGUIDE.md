@@ -3470,8 +3470,16 @@ the agent's own install page, and its status in plain words: **Ready**;
 **Not installed**, naming the program that is not on your `PATH` (*`grok`
 isn't on PATH.*); or **Needs attention**, with the reason Koru already knows —
 a version Koru does not support yet, signed out, the program a chat runs the
-agent through missing (Claude's `claude-agent-acp`, say), or a check that
-failed. Where Koru knows the command that fixes it, the row names it — Devin's
+agent through missing (Claude's `claude-agent-acp`, say), the agent's program
+not starting, or a check that failed. A version row names the version found
+and the one Koru needs: *Found 1.18.25; Koru needs 1.18.27 or newer.* Every
+agent is accepted from a checked release onwards, so a newer release of the
+agent works without waiting for a Koru update; only a release older than the
+one Koru names is refused, and updating the agent fixes it. When the agent's `--version` fails or prints nothing,
+the row says so instead — *`kimi --version` failed, so the agent can't start
+on this computer. Run it in a terminal to see why.* — because the version was
+never the problem (Kimi's CLI under a Node.js too old for it is one way to
+get there). Where Koru knows the command that fixes it, the row names it — Devin's
 reads *Run `devin update` to update it.* for a version Koru does not support
 yet, adding that the copy inside the Devin desktop app updates with the app,
 and *Run `devin auth login` to sign in.* when it is signed out. The status reads what Koru's own checks found; **Refresh status** runs
@@ -3503,12 +3511,22 @@ row reads **Ready** without restarting Koru. Closing the tab early leaves the
 installer running, and Koru checks again when it ends. Pressing **Install**
 again while its tab is open brings that tab forward.
 
-Koru looks for an agent's program on your `PATH` — on Windows the `PATH` as it
-is now, so a program installed while Koru is running is found without
-restarting Koru — and where the agent's installer puts it: for Claude Code,
-`~/.local/bin` (`%USERPROFILE%\.local\bin` on Windows), npm's global folder
-(`%APPDATA%\npm` on Windows; Homebrew's or `/usr/local/bin` on a Mac), and
-WinGet's links. `claude-agent-acp` is looked for in npm's global folder. The
+Koru looks for an agent's program on the `PATH` a new terminal would have,
+even when Koru itself was started from Finder, the Dock or a login item, which
+on a Mac get only `/usr/bin:/bin:/usr/sbin:/sbin`. On a Mac or Linux that is
+Koru's own `PATH`, then the `PATH` your login shell sets up (`$SHELL -l`,
+asked once when Koru starts looking), then the folders the agents' installers
+use — `~/.local/bin` (Claude Code, Codex, Muse, Devin), `~/.opencode/bin`,
+`~/.grok/bin`, and on a Mac Homebrew's `/opt/homebrew/bin` and
+`/usr/local/bin`, where npm puts `node` and the npm-installed agents. On
+Windows it is Koru's `PATH` and the `PATH` as Windows holds it now, so a
+program installed while Koru is running is found without restarting Koru.
+Claude Code is also looked for in `~/.claude/local`, npm's global folder
+(`%APPDATA%\npm` on Windows) and WinGet's links. Everything Koru starts — an
+agent's chat, its version check, a terminal tab, an **Install** tab — runs
+with that same `PATH`, so a program that needs `node` finds it. A folder only
+your interactive shell adds (`~/.zshrc`, `~/.bashrc`) beyond those is not
+seen; put it in your login profile (`~/.zprofile`, `~/.profile`) instead. The
 chat model picker uses the same words: an agent whose chat program is missing
 reads **Needs attention** there too, not **Not installed**, and the picker
 checks a missing agent again when you next open it.

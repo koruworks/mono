@@ -182,6 +182,12 @@ pub struct Body {
     /// container's meta anyway; a box is never a row of its own, so nothing
     /// on a row could hold this without copying it onto every line inside.
     callout_boxes: HashMap<NodeId, CalloutBox>,
+    /// Vertical room between rows that belongs to no row: a placeholder for
+    /// an image still loading (`crate::pending_image`). Resolved to row
+    /// indices before every reflow and given its `top` by the same
+    /// positioning pass the rows get theirs from, so what is drawn there and
+    /// the rows pushed below it cannot disagree. Empty — and free — otherwise.
+    pub(crate) reserved: Vec<crate::pending_image::Reserved>,
 }
 
 /// A callout box as the rows see it: a [`Kind::Callout`] container whose
@@ -1638,6 +1644,12 @@ impl Body {
             row.place_caret(0);
         }
         Some(0)
+    }
+
+    /// The room reserved between rows this frame for images still loading,
+    /// in row order, with the content y each opens at.
+    pub fn reserved(&self) -> &[crate::pending_image::Reserved] {
+        &self.reserved
     }
 
     pub fn index_of(&self, id: NodeId) -> Option<usize> {

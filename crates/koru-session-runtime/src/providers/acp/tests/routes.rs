@@ -530,3 +530,60 @@ fn grok_wrong_startup_session_and_wrong_metadata_carrier_cannot_satisfy_guard() 
             .is_err()
     );
 }
+
+/// **A refused print names the version found and the floor** — OpenCode
+/// 1.18.25 under the 1.18.27 pin — while a crashed `--version` (Kimi under
+/// a too-old Node.js) is the program not starting, which readiness reads
+/// as *Failed* and never as an unsupported version.
+#[test]
+fn a_refused_print_names_both_versions_and_a_crash_did_not_start() {
+    use crate::providers::ManagedAvailability;
+    use crate::providers::discovery::classify_failure;
+    use koru_session_protocol::VersionNeed;
+    let opencode = AcpRoute::opencode();
+    assert_eq!(
+        opencode.need(),
+        Some(VersionNeed::AtLeast("1.18.27".into()))
+    );
+    assert_eq!(
+        classify_failure(opencode.read_print(true, b"1.18.25\n").unwrap_err()),
+        ManagedAvailability::Incompatible {
+            code: ErrorCode::ProviderIncompatible,
+            found: Some(ProviderVersion::from_str("1.18.25").unwrap()),
+            needed: Some(VersionNeed::AtLeast("1.18.27".into())),
+        }
+    );
+    assert_eq!(
+        opencode.read_print(true, b"1.18.30\n").unwrap().as_str(),
+        "1.18.30"
+    );
+    // A print with no number to read: refused, with nothing found.
+    assert_eq!(
+        classify_failure(
+            opencode
+                .read_print(true, b"opencode, a build\n")
+                .unwrap_err()
+        ),
+        ManagedAvailability::Incompatible {
+            code: ErrorCode::ProviderIncompatible,
+            found: None,
+            needed: Some(VersionNeed::AtLeast("1.18.27".into())),
+        }
+    );
+    let kimi = AcpRoute::kimi();
+    for (success, stdout) in [(false, &b""[..]), (true, b"")] {
+        assert!(matches!(
+            classify_failure(kimi.read_print(success, stdout).unwrap_err()),
+            ManagedAvailability::Failed {
+                stage: ProviderStage::Version,
+                diagnostic: ProviderDiagnostic::UnexpectedExit,
+                ..
+            }
+        ));
+    }
+    // A digest-identified route has a reviewed list, not a floor.
+    assert_eq!(
+        AcpRoute::antigravity().need(),
+        Some(VersionNeed::Reviewed("1.2.1".into()))
+    );
+}

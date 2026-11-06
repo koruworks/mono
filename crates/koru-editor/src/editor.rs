@@ -1567,6 +1567,9 @@ pub trait Editing {
         // Rows wrap to the page width in Page/Narrow, not the raw viewport —
         // see `set_viewport` for why this is the effective width.
         let layout_w = view.view_mode.effective_w(view.viewport.0);
+        // Room for any image still loading, resolved to rows before they are
+        // positioned. Nothing at all when none is.
+        crate::pending_image::reserve(body, &view.pending_images, layout_w);
         let (scroll, viewport_h) = (view.scroll, view.viewport.1);
         rowlayout::reflow(&mut view.engine, body, layout_w, inset, scroll, viewport_h);
         crate::draw::reserve_reminder_space(
@@ -1617,6 +1620,7 @@ pub trait Editing {
         }
         let layout_w = view.view_mode.effective_w(view.viewport.0);
         rowlayout::build_row(&mut view.engine, row, layout_w);
+        crate::pending_image::reserve(body, &view.pending_images, layout_w);
         let (scroll, viewport_h) = (view.scroll, view.viewport.1);
         rowlayout::reflow(&mut view.engine, body, layout_w, inset, scroll, viewport_h);
         crate::draw::reserve_reminder_space(

@@ -41,9 +41,13 @@
 //! star pressed in any chat is stored from here and handed to every other.
 
 use koru_session_profiles::{LaunchProfile, managed_provider};
-use koru_session_protocol::{ExecutableAvailability, ProviderReadiness};
+use koru_session_protocol::{
+    ExecutableAvailability, ProviderDiagnostic, ProviderReadiness, ProviderStage, VersionNeed,
+};
 use koru_settings::AgentPermission;
-use koru_settings_ui::{AgentAttention, AgentDefaults, AgentProviderRow, AgentProviderStatus};
+use koru_settings_ui::{
+    AgentAttention, AgentDefaults, AgentProviderRow, AgentProviderStatus, NeededVersion,
+};
 
 use super::{MainView, TabView, context_menu};
 
@@ -202,15 +206,45 @@ pub(crate) fn agent_status(
                 sign_in: registration.sign_in_command.map(str::to_owned),
             })
         }
-        ExecutableAvailability::Incompatible { .. } => {
+        ExecutableAvailability::Incompatible { found, needed, .. } => {
             AgentProviderStatus::NeedsAttention(AgentAttention::UnsupportedVersion {
+                found: found.clone(),
+                needed: needed
+                    .as_ref()
+                    .map(|needed| needed_version(needed, found.as_deref())),
                 update: registration.update_command.map(str::to_owned),
                 desktop_app: registration.desktop_app.map(str::to_owned),
+            })
+        }
+        // The version command itself failed: the program does not start
+        // here (`koru_session_runtime`'s `version_print`). Every other
+        // failure is the check's own.
+        ExecutableAvailability::Failed { .. }
+            if row.failure.as_ref().is_some_and(|failure| {
+                failure.stage == ProviderStage::Version
+                    && failure.diagnostic == ProviderDiagnostic::UnexpectedExit
+            }) =>
+        {
+            AgentProviderStatus::NeedsAttention(AgentAttention::WontStart {
+                program: registration.executable.to_owned(),
             })
         }
         ExecutableAvailability::Failed { .. } => {
             AgentProviderStatus::NeedsAttention(AgentAttention::CheckFailed)
         }
+    }
+}
+
+/// What the route needs, as the row says it: a reviewed list that the
+/// version found has outgrown reads *checked up to*, since updating cannot
+/// help there.
+fn needed_version(needed: &VersionNeed, found: Option<&str>) -> NeededVersion {
+    match needed {
+        VersionNeed::AtLeast(floor) => NeededVersion::AtLeast(floor.clone()),
+        VersionNeed::Reviewed(newest) if found.is_some_and(|found| needed.outgrown_by(found)) => {
+            NeededVersion::CheckedUpTo(newest.clone())
+        }
+        VersionNeed::Reviewed(newest) => NeededVersion::Reviewed(newest.clone()),
     }
 }
 

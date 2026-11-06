@@ -19,6 +19,14 @@
 //! the operating system's answer rather than the peer's claim. The two together
 //! are the anchor: *this connection belongs to a process I launched*.
 //!
+//! **One process it did not launch is trusted too: the one that launched it.**
+//! A cold start from Finder, the Start menu or a shortcut runs `koru` first,
+//! and `koru` starts the Agent — so the first window was never in the table.
+//! At startup the Agent asks the operating system for its parent's pid and
+//! that parent's executable, and records the pid when the executable is the
+//! `koru` beside its own; see [`launcher`] and ADR-267's 2026-11-06
+//! amendment.
+//!
 //! ## What this is not
 //!
 //! It is not proof against a determined local process. On a single-user desktop
@@ -43,6 +51,9 @@
 
 use std::collections::HashMap;
 use std::sync::Mutex;
+
+mod launcher;
+pub use launcher::trust_launcher;
 
 /// How long a minted grant is good for.
 ///
@@ -81,8 +92,9 @@ pub enum Refusal {
 }
 
 impl GrantAuthority {
-    /// Record a process this Agent started. Called from every spawn path, so
-    /// the table is a fact about launches rather than about intentions.
+    /// Record a process this Agent started, or the `koru` that started it.
+    /// Called from every spawn path and once at startup, so the table is a
+    /// fact about launches rather than about intentions.
     pub fn launched(&mut self, pid: u32, at_millis: i64) {
         if self.launched.len() >= LAUNCHED_CAPACITY
             && let Some(oldest) = self
@@ -152,7 +164,9 @@ fn with<T>(action: impl FnOnce(&mut GrantAuthority) -> T) -> T {
     action(&mut authority().lock().unwrap_or_else(|held| held.into_inner()))
 }
 
-/// Remember a process this Agent just started. Every spawn path calls it, which
+/// Remember a process this Agent just started. (The one it did not start, its
+/// launcher, goes into the same table through [`trust_launcher`].) Every spawn
+/// path calls it, which
 /// is why it takes a bare pid: what matters is that the operating system gave
 /// this number back from *our* `spawn`, not which product it was.
 pub fn record_launch(pid: u32) {

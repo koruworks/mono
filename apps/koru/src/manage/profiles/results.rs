@@ -210,8 +210,11 @@ impl ProfilesController {
         self.selected = self.profiles.first().map(|row| row.id);
         self.hints.clamp_scroll = true;
         self.notice = Some(
-            "Profile removed from this device. Its hosted recovery listing remains available after sign-in."
-                .into(),
+            koru_i18n::t(
+                crate::format::lang(),
+                koru_i18n::Key::ProfilesRemovedFromDevice,
+            )
+            .into(),
         );
         if self
             .pending_hosted_delete
@@ -235,14 +238,27 @@ impl ProfilesController {
             if let Some(pending) = self.pending_hosted_delete.as_mut() {
                 pending.stage = HostedDeleteStage::CleanupFailed;
             }
-            self.notice = Some("hosted_cleanup_failed".into());
+            // No notice: the CleanupFailed stage draws its own block — what
+            // happened, *Finish removing from this device*, *Try again later*
+            // (`profile_page`). This set the notice to the bare code
+            // `hosted_cleanup_failed`, which the page draws verbatim, so the
+            // person read an identifier under the explanation.
+            self.notice = None;
             return true;
         }
         self.notice = Some(match code {
             "profile_not_empty" => "Delete all Workspaces in this Profile first.".into(),
-            "profile_cascade_incomplete" => concat!(
-                "Some Workspaces may already be in Trash. The Profile remains on this device. ",
-                "Try again to continue from the current Store state."
+            "profile_cascade_incomplete" => koru_i18n::t(
+                crate::format::lang(),
+                koru_i18n::Key::ProfilesRemoveCascadeIncomplete,
+            )
+            .into(),
+            // Refused before anything moved, and refused again on every retry:
+            // the window holds no first-party grant (ADR-267). Saying "try
+            // again" here sent people round a loop that could not end.
+            "profile_cascade_not_permitted" => koru_i18n::t(
+                crate::format::lang(),
+                koru_i18n::Key::ProfilesRemoveNotPermitted,
             )
             .into(),
             _ => "Koru couldn't remove this Profile. Nothing was deleted.".into(),

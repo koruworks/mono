@@ -2393,6 +2393,12 @@ pub enum Key {
     ImageHeldByCloudOff,
     ImageHeldTooLarge,
     ImageHeldUnknown,
+    // Attaching a picture runs off the event loop: the placeholder's name for
+    // a screen reader while it loads, and the report when it cannot be added.
+    ImageLoading,
+    ImageAddFailed,
+    ImageAddFailedBody,
+    ImageAddPartlyFailedBody,
     // Manage Profiles: how far a Profile's Cloud sync has got, across every
     // Workspace. The per-row state reuses the CloudTab* words above so this
     // surface and the context pane never describe one hold two ways.
@@ -2631,6 +2637,15 @@ pub enum Key {
     SettingsAgentSignedOutRun,
     SettingsAgentUnsupportedVersionUpdateDesktopApp,
     SettingsAgentCheckFailed,
+    SettingsAgentWontStart,
+    SettingsAgentVersionFoundNeedsAtLeast,
+    SettingsAgentVersionNeedsAtLeast,
+    SettingsAgentVersionFoundNewerThanChecked,
+    SettingsAgentVersionFoundUnchecked,
+    SettingsAgentVersionNewestSupported,
+    SettingsAgentRunToUpdate,
+    SettingsAgentDesktopAppUpdates,
+    SettingsAgentSentences,
     SettingsAgentStatusDetail,
     SettingsAgentSetupGuide,
     SettingsAgentInstall,
@@ -2886,13 +2901,25 @@ pub enum Key {
     PlaceSplitLeft,
     /// Its middle: a new tab in the current pane, no split.
     PlaceNewTab,
+    // ---- removing a Profile from this device (Profiles page notices)
+    /// Done: the Profile is gone from this device, and the hosted listing is
+    /// what brings it back.
+    ProfilesRemovedFromDevice,
+    /// The Workspace cascade stopped part-way. Retrying continues from where
+    /// it got to, which is why this one says to try again.
+    ProfilesRemoveCascadeIncomplete,
+    /// The cascade was refused before it touched anything: this window holds
+    /// no first-party grant (ADR-267). Retrying cannot change that, so unlike
+    /// the sentence above it does not suggest it. Worded as
+    /// `WorkspacesNotPermitted` is, because it is the same refusal.
+    ProfilesRemoveNotPermitted,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2016] = [
+    pub const ALL: [Key; 2032] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4535,6 +4562,10 @@ impl Key {
         Key::ImageHeldByCloudOff,
         Key::ImageHeldTooLarge,
         Key::ImageHeldUnknown,
+        Key::ImageLoading,
+        Key::ImageAddFailed,
+        Key::ImageAddFailedBody,
+        Key::ImageAddPartlyFailedBody,
         Key::CloudProgressWorkspaces,
         Key::CloudProgressDocuments,
         Key::CloudProgressFiles,
@@ -4734,6 +4765,15 @@ impl Key {
         Key::SettingsAgentSignedOutRun,
         Key::SettingsAgentUnsupportedVersionUpdateDesktopApp,
         Key::SettingsAgentCheckFailed,
+        Key::SettingsAgentWontStart,
+        Key::SettingsAgentVersionFoundNeedsAtLeast,
+        Key::SettingsAgentVersionNeedsAtLeast,
+        Key::SettingsAgentVersionFoundNewerThanChecked,
+        Key::SettingsAgentVersionFoundUnchecked,
+        Key::SettingsAgentVersionNewestSupported,
+        Key::SettingsAgentRunToUpdate,
+        Key::SettingsAgentDesktopAppUpdates,
+        Key::SettingsAgentSentences,
         Key::SettingsAgentStatusDetail,
         Key::SettingsAgentSetupGuide,
         Key::SettingsAgentInstall,
@@ -4909,6 +4949,9 @@ impl Key {
         Key::PlaceSplitDown,
         Key::PlaceSplitLeft,
         Key::PlaceNewTab,
+        Key::ProfilesRemovedFromDevice,
+        Key::ProfilesRemoveCascadeIncomplete,
+        Key::ProfilesRemoveNotPermitted,
     ];
 }
 
@@ -15160,6 +15203,10 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::ImageHeldByCloudOff, en: "Cloud sync is off for this Profile.", es: "La sincronización en la nube está desactivada para este perfil.", pt_br: "A sincronização na nuvem está desativada para este perfil.", de: "Cloud-Sync ist für dieses Profil aus.", fr: "La synchronisation cloud est désactivée pour ce profil.", ar: "مزامنة السحابة موقوفة لهذا الملف الشخصي.", zh_hans: "此配置文件的云同步已关闭。", ja: "このプロファイルのクラウド同期はオフです。" },
     Row { key: Key::ImageHeldTooLarge, en: "This file is too large to sync today.", es: "Este archivo es demasiado grande para sincronizarse por ahora.", pt_br: "Este arquivo é grande demais para sincronizar por enquanto.", de: "Diese Datei ist derzeit zu groß zum Synchronisieren.", fr: "Ce fichier est pour l’instant trop volumineux pour être synchronisé.", ar: "هذا الملف أكبر من أن تتم مزامنته حاليًا.", zh_hans: "此文件目前太大，无法同步。", ja: "このファイルは現在同期するには大きすぎます。" },
     Row { key: Key::ImageHeldUnknown, en: "Not here yet: {}", es: "Todavía no está aquí: {}", pt_br: "Ainda não está aqui: {}", de: "Noch nicht hier: {}", fr: "Pas encore ici : {}", ar: "ليست هنا بعد: {}", zh_hans: "尚未到达：{}", ja: "まだここにありません: {}" },
+    Row { key: Key::ImageLoading, en: "Loading image", es: "Cargando imagen", pt_br: "Carregando imagem", de: "Bild wird geladen", fr: "Chargement de l’image", ar: "جارٍ تحميل الصورة", zh_hans: "正在加载图片", ja: "画像を読み込み中" },
+    Row { key: Key::ImageAddFailed, en: "Couldn’t add that image", es: "No se pudo añadir esa imagen", pt_br: "Não foi possível adicionar essa imagem", de: "Das Bild konnte nicht hinzugefügt werden", fr: "Impossible d’ajouter cette image", ar: "تعذّرت إضافة هذه الصورة", zh_hans: "无法添加该图片", ja: "その画像を追加できませんでした" },
+    Row { key: Key::ImageAddFailedBody, en: "It could not be read or stored as a picture. The document was not changed.", es: "No se pudo leer ni guardar como imagen. El documento no se modificó.", pt_br: "Não foi possível lê-la ou armazená-la como imagem. O documento não foi alterado.", de: "Es konnte nicht als Bild gelesen oder gespeichert werden. Das Dokument wurde nicht geändert.", fr: "Elle n’a pas pu être lue ni enregistrée comme image. Le document n’a pas été modifié.", ar: "تعذّرت قراءتها أو حفظها كصورة. لم يتغيّر المستند.", zh_hans: "无法将其读取或存储为图片。文档未被更改。", ja: "画像として読み込むことも保存することもできませんでした。ドキュメントは変更されていません。" },
+    Row { key: Key::ImageAddPartlyFailedBody, en: "The other images were added. This one could not be read or stored as a picture.", es: "Las demás imágenes se añadieron. Esta no se pudo leer ni guardar como imagen.", pt_br: "As outras imagens foram adicionadas. Esta não pôde ser lida nem armazenada como imagem.", de: "Die anderen Bilder wurden hinzugefügt. Dieses konnte nicht als Bild gelesen oder gespeichert werden.", fr: "Les autres images ont été ajoutées. Celle-ci n’a pas pu être lue ni enregistrée comme image.", ar: "أُضيفت الصور الأخرى. تعذّرت قراءة هذه الصورة أو حفظها.", zh_hans: "其他图片已添加。这张图片无法读取或存储。", ja: "ほかの画像は追加されました。この画像は読み込むことも保存することもできませんでした。" },
     // ---------------- Manage Profiles: a Profile's Cloud sync progress
     Row { key: Key::CloudProgressWorkspaces, en: "{} of {} workspaces synced", es: "{} de {} espacios de trabajo sincronizados", pt_br: "{} de {} espaços de trabalho sincronizados", de: "{} von {} Arbeitsbereichen synchronisiert", fr: "{} espaces de travail sur {} synchronisés", ar: "تمت مزامنة {} من {} مساحات عمل", zh_hans: "已同步 {} / {} 个工作区", ja: "{} / {} 件のワークスペースを同期済み" },
     Row { key: Key::CloudProgressDocuments, en: "{} of {} documents", es: "{} de {} documentos", pt_br: "{} de {} documentos", de: "{} von {} Dokumenten", fr: "{} documents sur {}", ar: "{} من {} مستندات", zh_hans: "{} / {} 个文档", ja: "{} / {} 件のドキュメント" },
@@ -15366,6 +15413,15 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::SettingsAgentSignedOutRun, en: "Signed out. Run `{}` to sign in.", es: "Sesión cerrada. Ejecuta `{}` para iniciar sesión.", pt_br: "Desconectado. Execute `{}` para fazer login.", de: "Abgemeldet. Führe `{}` aus, um dich anzumelden.", fr: "Déconnecté. Exécutez `{}` pour vous connecter.", ar: "غير مسجّل الدخول. شغّل `{}` لتسجيل الدخول.", zh_hans: "未登录。运行 `{}` 进行登录。", ja: "サインアウトしています。`{}` を実行してサインインしてください。" },
     Row { key: Key::SettingsAgentUnsupportedVersionUpdateDesktopApp, en: "This version isn't one Koru supports yet. Run `{}` to update it. If you use the {} desktop app, its copy updates with the app.", es: "Koru aún no admite esta versión. Ejecuta `{}` para actualizarla. Si usas la aplicación de escritorio de {}, su copia se actualiza con la aplicación.", pt_br: "O Koru ainda não oferece suporte a esta versão. Execute `{}` para atualizá-la. Se você usa o aplicativo para desktop do {}, a cópia dele é atualizada com o aplicativo.", de: "Koru unterstützt diese Version noch nicht. Führe `{}` aus, um sie zu aktualisieren. Wenn du die Desktop-App von {} verwendest, wird ihre Kopie mit der App aktualisiert.", fr: "Koru ne prend pas encore en charge cette version. Exécutez `{}` pour la mettre à jour. Si vous utilisez l'application de bureau {}, sa copie se met à jour avec l'application.", ar: "لا يدعم Koru هذا الإصدار بعد. شغّل `{}` لتحديثه. إذا كنت تستخدم تطبيق {} لسطح المكتب، فإن نسخته تتحدّث مع التطبيق.", zh_hans: "Koru 尚不支持此版本。运行 `{}` 进行更新。如果你使用 {} 桌面应用，它自带的副本会随应用一起更新。", ja: "このバージョンにはまだ Koru が対応していません。`{}` を実行して更新してください。{} のデスクトップアプリを使っている場合、そのコピーはアプリと一緒に更新されます。" },
     Row { key: Key::SettingsAgentCheckFailed, en: "Koru couldn't check it.", es: "Koru no pudo comprobarlo.", pt_br: "O Koru não conseguiu verificá-lo.", de: "Koru konnte es nicht prüfen.", fr: "Koru n'a pas pu le vérifier.", ar: "تعذّر على Koru التحقق منه.", zh_hans: "Koru 无法检查它。", ja: "Koru が確認できませんでした。" },
+    Row { key: Key::SettingsAgentWontStart, en: "`{} --version` failed, so the agent can't start on this computer. Run it in a terminal to see why.", es: "`{} --version` falló, así que el agente no puede iniciarse en este equipo. Ejecútalo en una terminal para ver por qué.", pt_br: "`{} --version` falhou, então o agente não consegue iniciar neste computador. Execute-o em um terminal para ver o motivo.", de: "`{} --version` ist fehlgeschlagen, daher kann der Agent auf diesem Computer nicht starten. Führe den Befehl in einem Terminal aus, um den Grund zu sehen.", fr: "`{} --version` a échoué : l'agent ne peut pas démarrer sur cet ordinateur. Exécutez la commande dans un terminal pour savoir pourquoi.", ar: "فشل `{} --version`، لذا لا يمكن للوكيل أن يبدأ على هذا الكمبيوتر. شغّله في الطرفية لمعرفة السبب.", zh_hans: "`{} --version` 运行失败，因此该智能体无法在这台电脑上启动。请在终端中运行它查看原因。", ja: "`{} --version` が失敗したため、このコンピューターではエージェントを起動できません。ターミナルで実行して原因を確認してください。" },
+    Row { key: Key::SettingsAgentVersionFoundNeedsAtLeast, en: "Found {}; Koru needs {} or newer.", es: "Se encontró {}; Koru necesita {} o posterior.", pt_br: "Foi encontrada a versão {}; o Koru precisa da {} ou mais recente.", de: "Gefunden: {}; Koru benötigt {} oder neuer.", fr: "Version trouvée : {} ; Koru nécessite {} ou une version plus récente.", ar: "عُثر على {}؛ يحتاج Koru إلى {} أو أحدث.", zh_hans: "找到的版本为 {}；Koru 需要 {} 或更新版本。", ja: "見つかったバージョンは {} です。Koru には {} 以降が必要です。" },
+    Row { key: Key::SettingsAgentVersionNeedsAtLeast, en: "Koru needs {} or newer.", es: "Koru necesita {} o posterior.", pt_br: "O Koru precisa da versão {} ou mais recente.", de: "Koru benötigt {} oder neuer.", fr: "Koru nécessite {} ou une version plus récente.", ar: "يحتاج Koru إلى {} أو أحدث.", zh_hans: "Koru 需要 {} 或更新版本。", ja: "Koru には {} 以降が必要です。" },
+    Row { key: Key::SettingsAgentVersionFoundNewerThanChecked, en: "Found {}; Koru has only checked up to {} so far.", es: "Se encontró {}; por ahora Koru solo ha comprobado hasta la {}.", pt_br: "Foi encontrada a versão {}; por enquanto o Koru só verificou até a {}.", de: "Gefunden: {}; Koru hat bisher nur Versionen bis {} geprüft.", fr: "Version trouvée : {} ; pour l'instant, Koru n'a vérifié que jusqu'à la {}.", ar: "عُثر على {}؛ لم يتحقق Koru حتى الآن إلا من الإصدارات حتى {}.", zh_hans: "找到的版本为 {}；Koru 目前只检查到 {}。", ja: "見つかったバージョンは {} です。Koru が確認済みなのは今のところ {} までです。" },
+    Row { key: Key::SettingsAgentVersionFoundUnchecked, en: "Found {}, which Koru hasn't checked; the newest it supports is {}.", es: "Se encontró {}, que Koru no ha comprobado; la más reciente que admite es {}.", pt_br: "Foi encontrada a versão {}, que o Koru não verificou; a mais recente compatível é a {}.", de: "Gefunden: {}, diese Version hat Koru nicht geprüft; die neueste unterstützte ist {}.", fr: "Version trouvée : {}, que Koru n'a pas vérifiée ; la plus récente prise en charge est la {}.", ar: "عُثر على {}، ولم يتحقق Koru منه؛ أحدث إصدار يدعمه هو {}.", zh_hans: "找到的版本为 {}，Koru 尚未检查过它；支持的最新版本是 {}。", ja: "見つかったバージョン {} は Koru が確認していません。対応している最新バージョンは {} です。" },
+    Row { key: Key::SettingsAgentVersionNewestSupported, en: "The newest version Koru supports is {}.", es: "La versión más reciente que admite Koru es {}.", pt_br: "A versão mais recente compatível com o Koru é a {}.", de: "Die neueste Version, die Koru unterstützt, ist {}.", fr: "La version la plus récente prise en charge par Koru est la {}.", ar: "أحدث إصدار يدعمه Koru هو {}.", zh_hans: "Koru 支持的最新版本是 {}。", ja: "Koru が対応している最新バージョンは {} です。" },
+    Row { key: Key::SettingsAgentRunToUpdate, en: "Run `{}` to update it.", es: "Ejecuta `{}` para actualizarla.", pt_br: "Execute `{}` para atualizá-la.", de: "Führe `{}` aus, um sie zu aktualisieren.", fr: "Exécutez `{}` pour la mettre à jour.", ar: "شغّل `{}` لتحديثه.", zh_hans: "运行 `{}` 进行更新。", ja: "`{}` を実行して更新してください。" },
+    Row { key: Key::SettingsAgentDesktopAppUpdates, en: "If you use the {} desktop app, its copy updates with the app.", es: "Si usas la aplicación de escritorio de {}, su copia se actualiza con la aplicación.", pt_br: "Se você usa o aplicativo para desktop do {}, a cópia dele é atualizada com o aplicativo.", de: "Wenn du die Desktop-App von {} verwendest, wird ihre Kopie mit der App aktualisiert.", fr: "Si vous utilisez l'application de bureau {}, sa copie se met à jour avec l'application.", ar: "إذا كنت تستخدم تطبيق {} لسطح المكتب، فإن نسخته تتحدّث مع التطبيق.", zh_hans: "如果你使用 {} 桌面应用，它自带的副本会随应用一起更新。", ja: "{} のデスクトップアプリを使っている場合、そのコピーはアプリと一緒に更新されます。" },
+    Row { key: Key::SettingsAgentSentences, en: "{} {}", es: "{} {}", pt_br: "{} {}", de: "{} {}", fr: "{} {}", ar: "{} {}", zh_hans: "{}{}", ja: "{}{}" },
     Row { key: Key::SettingsAgentStatusDetail, en: "{} — {}", es: "{} — {}", pt_br: "{} — {}", de: "{} — {}", fr: "{} — {}", ar: "{} — {}", zh_hans: "{} — {}", ja: "{} — {}" },
     Row { key: Key::SettingsAgentSetupGuide, en: "Setup guide ↗", es: "Guía de instalación ↗", pt_br: "Guia de instalação ↗", de: "Einrichtungsanleitung ↗", fr: "Guide d'installation ↗", ar: "دليل الإعداد ↗", zh_hans: "设置指南 ↗", ja: "セットアップガイド ↗" },
     // Agent providers: *Install*, and the lines its terminal tab prints.
@@ -15777,5 +15833,38 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
         ar: "علامة تبويب جديدة",
         zh_hans: "新建标签页",
         ja: "新しいタブ",
+    },
+    Row {
+        key: Key::ProfilesRemovedFromDevice,
+        en: "Profile removed from this device. Its hosted recovery listing remains available after sign-in.",
+        es: "Perfil eliminado de este dispositivo. Su registro de recuperación alojado sigue disponible después de iniciar sesión.",
+        pt_br: "Perfil removido deste dispositivo. O registro de recuperação hospedado continua disponível depois de entrar.",
+        de: "Profil von diesem Gerät entfernt. Sein gehosteter Wiederherstellungseintrag bleibt nach der Anmeldung verfügbar.",
+        fr: "Profil supprimé de cet appareil. Sa fiche de récupération hébergée reste disponible après connexion.",
+        ar: "تمت إزالة الملف الشخصي من هذا الجهاز. يظل سجل الاسترداد المستضاف الخاص به متاحًا بعد تسجيل الدخول.",
+        zh_hans: "已从此设备移除配置。登录后仍可使用其托管的恢复记录。",
+        ja: "このデバイスからプロフィールを削除しました。ホストされた復元用の一覧は、サインイン後も引き続き利用できます。",
+    },
+    Row {
+        key: Key::ProfilesRemoveCascadeIncomplete,
+        en: "Some Workspaces may already be in Trash. The Profile remains on this device. Try again to continue from the current Store state.",
+        es: "Es posible que algunos espacios de trabajo ya estén en la Papelera. El perfil sigue en este dispositivo. Vuelve a intentarlo para continuar desde el estado actual del almacén.",
+        pt_br: "Alguns espaços de trabalho podem já estar na Lixeira. O perfil continua neste dispositivo. Tente novamente para continuar a partir do estado atual do armazenamento.",
+        de: "Einige Arbeitsbereiche befinden sich möglicherweise bereits im Papierkorb. Das Profil bleibt auf diesem Gerät. Versuche es erneut, um vom aktuellen Stand des Speichers aus fortzufahren.",
+        fr: "Certains espaces de travail sont peut-être déjà dans la corbeille. Le profil reste sur cet appareil. Réessayez pour reprendre à partir de l'état actuel du stockage.",
+        ar: "قد تكون بعض مساحات العمل في سلة المهملات بالفعل. يظل الملف الشخصي على هذا الجهاز. أعد المحاولة للمتابعة من الحالة الحالية للمخزن.",
+        zh_hans: "部分工作区可能已在回收站中。该配置仍保留在此设备上。请重试，以便从存储的当前状态继续。",
+        ja: "一部のワークスペースはすでにゴミ箱に移動している可能性があります。プロフィールはこのデバイスに残っています。もう一度試すと、ストアの現在の状態から続行します。",
+    },
+    Row {
+        key: Key::ProfilesRemoveNotPermitted,
+        en: "This window was not started by Koru, so it cannot remove this Profile's Workspaces. Nothing was deleted, and the Profile remains on this device.",
+        es: "Koru no inició esta ventana, por lo que no puede eliminar los espacios de trabajo de este perfil. No se eliminó nada y el perfil sigue en este dispositivo.",
+        pt_br: "Esta janela não foi iniciada pelo Koru, portanto não pode remover os espaços de trabalho deste perfil. Nada foi excluído, e o perfil continua neste dispositivo.",
+        de: "Dieses Fenster wurde nicht von Koru gestartet und kann daher die Arbeitsbereiche dieses Profils nicht entfernen. Es wurde nichts gelöscht, und das Profil bleibt auf diesem Gerät.",
+        fr: "Cette fenêtre n'a pas été lancée par Koru : elle ne peut pas supprimer les espaces de travail de ce profil. Rien n'a été supprimé et le profil reste sur cet appareil.",
+        ar: "لم يشغّل Koru هذه النافذة، لذا لا يمكنها إزالة مساحات العمل الخاصة بهذا الملف الشخصي. لم يُحذف أي شيء، ويظل الملف الشخصي على هذا الجهاز.",
+        zh_hans: "此窗口不是由 Koru 启动的，因此无法删除此配置的工作区。没有删除任何内容，该配置仍保留在此设备上。",
+        ja: "このウィンドウは Koru が起動したものではないため、このプロフィールのワークスペースを削除できません。何も削除されておらず、プロフィールはこのデバイスに残っています。",
     },
 ];
