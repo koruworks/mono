@@ -2901,13 +2901,25 @@ pub enum Key {
     PlaceSplitLeft,
     /// Its middle: a new tab in the current pane, no split.
     PlaceNewTab,
+    // ---- removing a Profile from this device (Profiles page notices)
+    /// Done: the Profile is gone from this device, and the hosted listing is
+    /// what brings it back.
+    ProfilesRemovedFromDevice,
+    /// The Workspace cascade stopped part-way. Retrying continues from where
+    /// it got to, which is why this one says to try again.
+    ProfilesRemoveCascadeIncomplete,
+    /// The cascade was refused before it touched anything: this window holds
+    /// no first-party grant (ADR-267). Retrying cannot change that, so unlike
+    /// the sentence above it does not suggest it. Worded as
+    /// `WorkspacesNotPermitted` is, because it is the same refusal.
+    ProfilesRemoveNotPermitted,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2029] = [
+    pub const ALL: [Key; 2032] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4937,6 +4949,9 @@ impl Key {
         Key::PlaceSplitDown,
         Key::PlaceSplitLeft,
         Key::PlaceNewTab,
+        Key::ProfilesRemovedFromDevice,
+        Key::ProfilesRemoveCascadeIncomplete,
+        Key::ProfilesRemoveNotPermitted,
     ];
 }
 
@@ -15818,5 +15833,38 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
         ar: "علامة تبويب جديدة",
         zh_hans: "新建标签页",
         ja: "新しいタブ",
+    },
+    Row {
+        key: Key::ProfilesRemovedFromDevice,
+        en: "Profile removed from this device. Its hosted recovery listing remains available after sign-in.",
+        es: "Perfil eliminado de este dispositivo. Su registro de recuperación alojado sigue disponible después de iniciar sesión.",
+        pt_br: "Perfil removido deste dispositivo. O registro de recuperação hospedado continua disponível depois de entrar.",
+        de: "Profil von diesem Gerät entfernt. Sein gehosteter Wiederherstellungseintrag bleibt nach der Anmeldung verfügbar.",
+        fr: "Profil supprimé de cet appareil. Sa fiche de récupération hébergée reste disponible après connexion.",
+        ar: "تمت إزالة الملف الشخصي من هذا الجهاز. يظل سجل الاسترداد المستضاف الخاص به متاحًا بعد تسجيل الدخول.",
+        zh_hans: "已从此设备移除配置。登录后仍可使用其托管的恢复记录。",
+        ja: "このデバイスからプロフィールを削除しました。ホストされた復元用の一覧は、サインイン後も引き続き利用できます。",
+    },
+    Row {
+        key: Key::ProfilesRemoveCascadeIncomplete,
+        en: "Some Workspaces may already be in Trash. The Profile remains on this device. Try again to continue from the current Store state.",
+        es: "Es posible que algunos espacios de trabajo ya estén en la Papelera. El perfil sigue en este dispositivo. Vuelve a intentarlo para continuar desde el estado actual del almacén.",
+        pt_br: "Alguns espaços de trabalho podem já estar na Lixeira. O perfil continua neste dispositivo. Tente novamente para continuar a partir do estado atual do armazenamento.",
+        de: "Einige Arbeitsbereiche befinden sich möglicherweise bereits im Papierkorb. Das Profil bleibt auf diesem Gerät. Versuche es erneut, um vom aktuellen Stand des Speichers aus fortzufahren.",
+        fr: "Certains espaces de travail sont peut-être déjà dans la corbeille. Le profil reste sur cet appareil. Réessayez pour reprendre à partir de l'état actuel du stockage.",
+        ar: "قد تكون بعض مساحات العمل في سلة المهملات بالفعل. يظل الملف الشخصي على هذا الجهاز. أعد المحاولة للمتابعة من الحالة الحالية للمخزن.",
+        zh_hans: "部分工作区可能已在回收站中。该配置仍保留在此设备上。请重试，以便从存储的当前状态继续。",
+        ja: "一部のワークスペースはすでにゴミ箱に移動している可能性があります。プロフィールはこのデバイスに残っています。もう一度試すと、ストアの現在の状態から続行します。",
+    },
+    Row {
+        key: Key::ProfilesRemoveNotPermitted,
+        en: "This window was not started by Koru, so it cannot remove this Profile's Workspaces. Nothing was deleted, and the Profile remains on this device.",
+        es: "Koru no inició esta ventana, por lo que no puede eliminar los espacios de trabajo de este perfil. No se eliminó nada y el perfil sigue en este dispositivo.",
+        pt_br: "Esta janela não foi iniciada pelo Koru, portanto não pode remover os espaços de trabalho deste perfil. Nada foi excluído, e o perfil continua neste dispositivo.",
+        de: "Dieses Fenster wurde nicht von Koru gestartet und kann daher die Arbeitsbereiche dieses Profils nicht entfernen. Es wurde nichts gelöscht, und das Profil bleibt auf diesem Gerät.",
+        fr: "Cette fenêtre n'a pas été lancée par Koru : elle ne peut pas supprimer les espaces de travail de ce profil. Rien n'a été supprimé et le profil reste sur cet appareil.",
+        ar: "لم يشغّل Koru هذه النافذة، لذا لا يمكنها إزالة مساحات العمل الخاصة بهذا الملف الشخصي. لم يُحذف أي شيء، ويظل الملف الشخصي على هذا الجهاز.",
+        zh_hans: "此窗口不是由 Koru 启动的，因此无法删除此配置的工作区。没有删除任何内容，该配置仍保留在此设备上。",
+        ja: "このウィンドウは Koru が起動したものではないため、このプロフィールのワークスペースを削除できません。何も削除されておらず、プロフィールはこのデバイスに残っています。",
     },
 ];

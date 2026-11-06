@@ -210,8 +210,11 @@ impl ProfilesController {
         self.selected = self.profiles.first().map(|row| row.id);
         self.hints.clamp_scroll = true;
         self.notice = Some(
-            "Profile removed from this device. Its hosted recovery listing remains available after sign-in."
-                .into(),
+            koru_i18n::t(
+                crate::format::lang(),
+                koru_i18n::Key::ProfilesRemovedFromDevice,
+            )
+            .into(),
         );
         if self
             .pending_hosted_delete
@@ -240,9 +243,17 @@ impl ProfilesController {
         }
         self.notice = Some(match code {
             "profile_not_empty" => "Delete all Workspaces in this Profile first.".into(),
-            "profile_cascade_incomplete" => concat!(
-                "Some Workspaces may already be in Trash. The Profile remains on this device. ",
-                "Try again to continue from the current Store state."
+            "profile_cascade_incomplete" => koru_i18n::t(
+                crate::format::lang(),
+                koru_i18n::Key::ProfilesRemoveCascadeIncomplete,
+            )
+            .into(),
+            // Refused before anything moved, and refused again on every retry:
+            // the window holds no first-party grant (ADR-267). Saying "try
+            // again" here sent people round a loop that could not end.
+            "profile_cascade_not_permitted" => koru_i18n::t(
+                crate::format::lang(),
+                koru_i18n::Key::ProfilesRemoveNotPermitted,
             )
             .into(),
             _ => "Koru couldn't remove this Profile. Nothing was deleted.".into(),

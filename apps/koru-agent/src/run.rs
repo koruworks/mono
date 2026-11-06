@@ -154,6 +154,12 @@ pub fn run(
     };
     koru_ipc::ipc_debug!("agent: bound {}", listener.endpoint().name());
 
+    // 1b. The window that started us, if it is the `koru` beside us. Here —
+    //     after the claim, so an Agent that stands down reads nothing, and
+    //     before the accept loop, so that window's first grant request already
+    //     finds its pid. See `grants::launcher`.
+    crate::grants::trust_launcher();
+
     // 2. Who this device is. A file that will not parse is replaced rather than
     //    fatal — see `device.rs`.
     //    A reset the last run was asked for happens first, before anything

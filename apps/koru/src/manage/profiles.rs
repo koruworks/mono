@@ -365,6 +365,16 @@ impl ProfilesController {
     pub fn selected(&self) -> Option<ProfileId> {
         self.selected
     }
+    /// The page moved to `profile` by itself — a removed Profile's page
+    /// falling back to the open one — rather than because somebody chose it.
+    ///
+    /// Unlike [`Intent::Select`] this keeps the notice: what it says is the
+    /// result that caused the move ("Profile removed from this device"), and
+    /// the page it lands on is where that result is read.
+    pub fn follow_page(&mut self, profile: ProfileId) {
+        self.selected = Some(profile);
+        self.confirm_offline = false;
+    }
     /// The Profile this window has open.
     pub fn current(&self) -> Option<ProfileId> {
         self.current
