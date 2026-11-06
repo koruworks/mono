@@ -31,6 +31,7 @@ pub enum HttpMethod {
     Get,
     Post,
     Put,
+    Patch,
 }
 
 pub struct HttpRequest {
@@ -131,6 +132,7 @@ impl Transport for ReqwestTransport {
             HttpMethod::Get => self.client.get(url),
             HttpMethod::Post => self.client.post(url),
             HttpMethod::Put => self.client.put(url),
+            HttpMethod::Patch => self.client.patch(url),
         };
         for (name, value) in request.headers {
             builder = builder.header(name, value);
@@ -932,7 +934,10 @@ impl AccountClient {
                             csrf.0.as_str()
                         ),
                     ));
-                    if matches!(route.method, Method::Delete | Method::Post | Method::Put) {
+                    if matches!(
+                        route.method,
+                        Method::Delete | Method::Post | Method::Put | Method::Patch
+                    ) {
                         headers.push((CSRF_HEADER.into(), csrf.0.to_string()));
                         headers.push(("origin".into(), origin.clone()));
                     }
@@ -948,7 +953,10 @@ impl AccountClient {
                         "cookie".into(),
                         format!("{WEB_SESSION_COOKIE}={}; {CSRF_COOKIE}={csrf}", session.0),
                     ));
-                    if matches!(route.method, Method::Delete | Method::Post | Method::Put) {
+                    if matches!(
+                        route.method,
+                        Method::Delete | Method::Post | Method::Put | Method::Patch
+                    ) {
                         headers.push((CSRF_HEADER.into(), csrf.to_owned()));
                         headers.push(("origin".into(), origin.clone()));
                     }
@@ -964,6 +972,7 @@ impl AccountClient {
                     Method::Get => HttpMethod::Get,
                     Method::Post => HttpMethod::Post,
                     Method::Put => HttpMethod::Put,
+                    Method::Patch => HttpMethod::Patch,
                 },
                 path_and_query,
                 headers,

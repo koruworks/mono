@@ -5,6 +5,7 @@
 //! This crate has no HTTP client or server. The eventual API adapter and typed
 //! client fold from [`ROUTES`] so a route and its schema have one owner.
 
+pub mod app_connections;
 mod catalog;
 pub mod cloud_sync;
 mod openapi;

@@ -78,7 +78,11 @@ pub fn extend_openapi(document: &mut serde_json::Value) {
                     operation["requestBody"] = serde_json::json!({"required": true, "content": {"application/json": {"schema": request}}})
                 }
                 RequestLocation::Query => {
-                    operation["parameters"] = if matches!(
+                    operation["parameters"] = if route.id == RouteId::OAuthConsentRead {
+                        serde_json::json!([
+                            {"name": "request", "in": "query", "required": true, "description": "The signed pending authorization request the consent page keeps in its cookie.", "schema": {"type": "string", "maxLength": MAX_QUERY_BYTES}}
+                        ])
+                    } else if matches!(
                         route.id,
                         RouteId::GoogleWebCallback | RouteId::GoogleNativeCallback
                     ) {
@@ -130,7 +134,7 @@ pub fn extend_openapi(document: &mut serde_json::Value) {
                     }));
                 }
             }
-            for name in ["profile_id", "device_id", "workspace_id"] {
+            for name in ["profile_id", "device_id", "workspace_id", "connection_id"] {
                 if route.path.contains(&format!("{{{name}}}")) {
                     parameters.push(serde_json::json!({
                         "name": name,

@@ -6,6 +6,7 @@
 //! and devices retain their existing client-minted identifiers; an account
 //! binds those identifiers without becoming their canonical store.
 
+pub mod app_connections;
 pub mod billing_history;
 pub mod cloud_leases;
 pub mod cloud_selection;

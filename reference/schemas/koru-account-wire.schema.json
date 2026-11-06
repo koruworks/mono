@@ -800,6 +800,375 @@
     "title": "AddGoogleCandidateV1",
     "type": "object"
   },
+  "AppConnectionAccessV1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "Read, or Read & edit.",
+    "enum": [
+      "read",
+      "read_write"
+    ],
+    "title": "AppConnectionAccessV1",
+    "type": "string"
+  },
+  "AppConnectionListResponseV1": {
+    "$defs": {
+      "AccountWireVersion1": {
+        "const": 1,
+        "type": "integer"
+      },
+      "AppConnectionAccessV1": {
+        "description": "Read, or Read & edit.",
+        "enum": [
+          "read",
+          "read_write"
+        ],
+        "type": "string"
+      },
+      "AppConnectionId": {
+        "format": "uuid",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        "type": "string"
+      },
+      "AppConnectionProfileV1": {
+        "additionalProperties": false,
+        "properties": {
+          "profile_access": {
+            "$ref": "#/$defs/ProfileAccessV1"
+          },
+          "profile_id": {
+            "$ref": "#/$defs/ProfileId"
+          }
+        },
+        "required": [
+          "profile_id",
+          "profile_access"
+        ],
+        "type": "object"
+      },
+      "AppConnectionRevokedReasonV1": {
+        "enum": [
+          "person",
+          "refresh_reuse",
+          "account_deleted"
+        ],
+        "type": "string"
+      },
+      "AppConnectionSummaryV1": {
+        "properties": {
+          "access": {
+            "$ref": "#/$defs/AppConnectionAccessV1"
+          },
+          "allow_profiles_enabled_later": {
+            "type": "boolean"
+          },
+          "client": {
+            "$ref": "#/$defs/OAuthClientSummaryV1"
+          },
+          "connection_id": {
+            "$ref": "#/$defs/AppConnectionId"
+          },
+          "created_at_millis": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "last_used_at_millis": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "profiles": {
+            "items": {
+              "$ref": "#/$defs/AppConnectionProfileV1"
+            },
+            "type": "array"
+          },
+          "revoked_at_millis": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "revoked_reason": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AppConnectionRevokedReasonV1"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "version": {
+            "$ref": "#/$defs/AccountWireVersion1"
+          }
+        },
+        "required": [
+          "version",
+          "connection_id",
+          "name",
+          "client",
+          "access",
+          "allow_profiles_enabled_later",
+          "profiles",
+          "created_at_millis",
+          "last_used_at_millis"
+        ],
+        "type": "object"
+      },
+      "OAuthClientSummaryV1": {
+        "description": "Who the assistant is, as far as Koru can tell. A metadata-document client\nis `verified` and names its `domain`; a dynamically registered client is\nunverified and has no domain. The name is self-declared either way.",
+        "properties": {
+          "client_id": {
+            "type": "string"
+          },
+          "domain": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "verified": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "client_id",
+          "name",
+          "verified"
+        ],
+        "type": "object"
+      },
+      "ProfileAccessV1": {
+        "description": "The person's choice for one Profile.",
+        "enum": [
+          "allowed",
+          "not_allowed"
+        ],
+        "type": "string"
+      },
+      "ProfileId": {
+        "description": "ProfileId — a client-minted v4 UUID, hyphenated and lowercase. Immutable, and never derived from a name or a path.",
+        "format": "uuid",
+        "type": "string"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+      "connections": {
+        "items": {
+          "$ref": "#/$defs/AppConnectionSummaryV1"
+        },
+        "type": "array"
+      },
+      "version": {
+        "$ref": "#/$defs/AccountWireVersion1"
+      }
+    },
+    "required": [
+      "version",
+      "connections"
+    ],
+    "title": "AppConnectionListResponseV1",
+    "type": "object"
+  },
+  "AppConnectionProfileV1": {
+    "$defs": {
+      "ProfileAccessV1": {
+        "description": "The person's choice for one Profile.",
+        "enum": [
+          "allowed",
+          "not_allowed"
+        ],
+        "type": "string"
+      },
+      "ProfileId": {
+        "description": "ProfileId — a client-minted v4 UUID, hyphenated and lowercase. Immutable, and never derived from a name or a path.",
+        "format": "uuid",
+        "type": "string"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "profile_access": {
+        "$ref": "#/$defs/ProfileAccessV1"
+      },
+      "profile_id": {
+        "$ref": "#/$defs/ProfileId"
+      }
+    },
+    "required": [
+      "profile_id",
+      "profile_access"
+    ],
+    "title": "AppConnectionProfileV1",
+    "type": "object"
+  },
+  "AppConnectionRevokedReasonV1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "enum": [
+      "person",
+      "refresh_reuse",
+      "account_deleted"
+    ],
+    "title": "AppConnectionRevokedReasonV1",
+    "type": "string"
+  },
+  "AppConnectionSummaryV1": {
+    "$defs": {
+      "AccountWireVersion1": {
+        "const": 1,
+        "type": "integer"
+      },
+      "AppConnectionAccessV1": {
+        "description": "Read, or Read & edit.",
+        "enum": [
+          "read",
+          "read_write"
+        ],
+        "type": "string"
+      },
+      "AppConnectionId": {
+        "format": "uuid",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        "type": "string"
+      },
+      "AppConnectionProfileV1": {
+        "additionalProperties": false,
+        "properties": {
+          "profile_access": {
+            "$ref": "#/$defs/ProfileAccessV1"
+          },
+          "profile_id": {
+            "$ref": "#/$defs/ProfileId"
+          }
+        },
+        "required": [
+          "profile_id",
+          "profile_access"
+        ],
+        "type": "object"
+      },
+      "AppConnectionRevokedReasonV1": {
+        "enum": [
+          "person",
+          "refresh_reuse",
+          "account_deleted"
+        ],
+        "type": "string"
+      },
+      "OAuthClientSummaryV1": {
+        "description": "Who the assistant is, as far as Koru can tell. A metadata-document client\nis `verified` and names its `domain`; a dynamically registered client is\nunverified and has no domain. The name is self-declared either way.",
+        "properties": {
+          "client_id": {
+            "type": "string"
+          },
+          "domain": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "verified": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "client_id",
+          "name",
+          "verified"
+        ],
+        "type": "object"
+      },
+      "ProfileAccessV1": {
+        "description": "The person's choice for one Profile.",
+        "enum": [
+          "allowed",
+          "not_allowed"
+        ],
+        "type": "string"
+      },
+      "ProfileId": {
+        "description": "ProfileId — a client-minted v4 UUID, hyphenated and lowercase. Immutable, and never derived from a name or a path.",
+        "format": "uuid",
+        "type": "string"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+      "access": {
+        "$ref": "#/$defs/AppConnectionAccessV1"
+      },
+      "allow_profiles_enabled_later": {
+        "type": "boolean"
+      },
+      "client": {
+        "$ref": "#/$defs/OAuthClientSummaryV1"
+      },
+      "connection_id": {
+        "$ref": "#/$defs/AppConnectionId"
+      },
+      "created_at_millis": {
+        "format": "int64",
+        "type": "integer"
+      },
+      "last_used_at_millis": {
+        "format": "int64",
+        "type": "integer"
+      },
+      "name": {
+        "type": "string"
+      },
+      "profiles": {
+        "items": {
+          "$ref": "#/$defs/AppConnectionProfileV1"
+        },
+        "type": "array"
+      },
+      "revoked_at_millis": {
+        "format": "int64",
+        "type": [
+          "integer",
+          "null"
+        ]
+      },
+      "revoked_reason": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/AppConnectionRevokedReasonV1"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "version": {
+        "$ref": "#/$defs/AccountWireVersion1"
+      }
+    },
+    "required": [
+      "version",
+      "connection_id",
+      "name",
+      "client",
+      "access",
+      "allow_profiles_enabled_later",
+      "profiles",
+      "created_at_millis",
+      "last_used_at_millis"
+    ],
+    "title": "AppConnectionSummaryV1",
+    "type": "object"
+  },
   "AppleCallbackRequestV1": {
     "$defs": {
       "AccountWireVersion1": {
@@ -993,6 +1362,86 @@
     "title": "AuthorizationCode",
     "type": "string"
   },
+  "AuthorizationServerMetadata": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "RFC 8414 metadata, as `/.well-known/oauth-authorization-server` serves it.",
+    "properties": {
+      "authorization_endpoint": {
+        "type": "string"
+      },
+      "authorization_response_iss_parameter_supported": {
+        "type": "boolean"
+      },
+      "client_id_metadata_document_supported": {
+        "type": "boolean"
+      },
+      "code_challenge_methods_supported": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "grant_types_supported": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "issuer": {
+        "type": "string"
+      },
+      "registration_endpoint": {
+        "type": "string"
+      },
+      "response_types_supported": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "revocation_endpoint": {
+        "type": "string"
+      },
+      "revocation_endpoint_auth_methods_supported": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "scopes_supported": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "token_endpoint": {
+        "type": "string"
+      },
+      "token_endpoint_auth_methods_supported": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      }
+    },
+    "required": [
+      "issuer",
+      "authorization_endpoint",
+      "token_endpoint",
+      "registration_endpoint",
+      "revocation_endpoint",
+      "response_types_supported",
+      "grant_types_supported",
+      "code_challenge_methods_supported",
+      "token_endpoint_auth_methods_supported",
+      "revocation_endpoint_auth_methods_supported",
+      "scopes_supported",
+      "client_id_metadata_document_supported",
+      "authorization_response_iss_parameter_supported"
+    ],
+    "title": "AuthorizationServerMetadata",
+    "type": "object"
+  },
   "BeginWorkspaceCloudActivationRequestV1": {
     "$defs": {
       "AccountWireVersion1": {
@@ -1118,6 +1567,134 @@
     "title": "CancelAddGoogleStatusV1",
     "type": "string"
   },
+  "ClientMetadataDocument": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "A Client ID Metadata Document, as far as Koru reads it. Other members are\nignored; a logo is never shown.",
+    "properties": {
+      "client_id": {
+        "type": "string"
+      },
+      "client_name": {
+        "type": "string"
+      },
+      "redirect_uris": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "token_endpoint_auth_method": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "client_id",
+      "client_name",
+      "redirect_uris"
+    ],
+    "title": "ClientMetadataDocument",
+    "type": "object"
+  },
+  "ClientRegistrationRequest": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "RFC 7591's request, as far as Koru reads it. Unknown members are ignored,\nas the RFC requires; a confidential auth method or a grant Koru does not\noffer is refused.",
+    "properties": {
+      "client_name": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "grant_types": {
+        "default": null,
+        "items": {
+          "type": "string"
+        },
+        "type": [
+          "array",
+          "null"
+        ]
+      },
+      "redirect_uris": {
+        "default": [],
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "response_types": {
+        "default": null,
+        "items": {
+          "type": "string"
+        },
+        "type": [
+          "array",
+          "null"
+        ]
+      },
+      "token_endpoint_auth_method": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "title": "ClientRegistrationRequest",
+    "type": "object"
+  },
+  "ClientRegistrationResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+      "client_id": {
+        "type": "string"
+      },
+      "client_id_issued_at": {
+        "format": "int64",
+        "type": "integer"
+      },
+      "client_name": {
+        "type": "string"
+      },
+      "grant_types": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "redirect_uris": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "response_types": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "token_endpoint_auth_method": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "client_id",
+      "client_id_issued_at",
+      "client_name",
+      "redirect_uris",
+      "grant_types",
+      "response_types",
+      "token_endpoint_auth_method"
+    ],
+    "title": "ClientRegistrationResponse",
+    "type": "object"
+  },
   "CloudProfileSelectionRequestV1": {
     "$defs": {
       "AccountWireVersion1": {
@@ -1191,6 +1768,15 @@
       }
     ],
     "title": "CloudProfileSelectionStateV1"
+  },
+  "CloudSubscriptionStateV1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "enum": [
+      "active",
+      "none"
+    ],
+    "title": "CloudSubscriptionStateV1",
+    "type": "string"
   },
   "CloudSyncRouteV1": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -5027,11 +5613,383 @@
     "title": "NativeSessionInspectRequestV1",
     "type": "object"
   },
+  "OAuthClientSummaryV1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "Who the assistant is, as far as Koru can tell. A metadata-document client\nis `verified` and names its `domain`; a dynamically registered client is\nunverified and has no domain. The name is self-declared either way.",
+    "properties": {
+      "client_id": {
+        "type": "string"
+      },
+      "domain": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "name": {
+        "type": "string"
+      },
+      "verified": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "client_id",
+      "name",
+      "verified"
+    ],
+    "title": "OAuthClientSummaryV1",
+    "type": "object"
+  },
+  "OAuthConsentDecisionRequestV1": {
+    "$defs": {
+      "AccountWireVersion1": {
+        "const": 1,
+        "type": "integer"
+      },
+      "AppConnectionAccessV1": {
+        "description": "Read, or Read & edit.",
+        "enum": [
+          "read",
+          "read_write"
+        ],
+        "type": "string"
+      },
+      "AppConnectionProfileV1": {
+        "additionalProperties": false,
+        "properties": {
+          "profile_access": {
+            "$ref": "#/$defs/ProfileAccessV1"
+          },
+          "profile_id": {
+            "$ref": "#/$defs/ProfileId"
+          }
+        },
+        "required": [
+          "profile_id",
+          "profile_access"
+        ],
+        "type": "object"
+      },
+      "OAuthConsentDecisionV1": {
+        "enum": [
+          "approve",
+          "deny"
+        ],
+        "type": "string"
+      },
+      "ProfileAccessV1": {
+        "description": "The person's choice for one Profile.",
+        "enum": [
+          "allowed",
+          "not_allowed"
+        ],
+        "type": "string"
+      },
+      "ProfileId": {
+        "description": "ProfileId — a client-minted v4 UUID, hyphenated and lowercase. Immutable, and never derived from a name or a path.",
+        "format": "uuid",
+        "type": "string"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "description": "`POST /v1/oauth/consent`. Approving needs `name` and `access`, and a\ndecision for every Cloud-syncing Profile. Denying needs neither.",
+    "properties": {
+      "access": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/AppConnectionAccessV1"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "allow_profiles_enabled_later": {
+        "default": false,
+        "type": "boolean"
+      },
+      "decision": {
+        "$ref": "#/$defs/OAuthConsentDecisionV1"
+      },
+      "name": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "profiles": {
+        "default": [],
+        "items": {
+          "$ref": "#/$defs/AppConnectionProfileV1"
+        },
+        "type": "array"
+      },
+      "request": {
+        "description": "The signed pending request, from the consent cookie.",
+        "type": "string"
+      },
+      "version": {
+        "$ref": "#/$defs/AccountWireVersion1"
+      }
+    },
+    "required": [
+      "version",
+      "request",
+      "decision"
+    ],
+    "title": "OAuthConsentDecisionRequestV1",
+    "type": "object"
+  },
+  "OAuthConsentDecisionResponseV1": {
+    "$defs": {
+      "AccountWireVersion1": {
+        "const": 1,
+        "type": "integer"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "Where the browser goes next: the client's redirect URI with `code`,\n`state` and `iss`, or with `error=access_denied`.",
+    "properties": {
+      "redirect_to": {
+        "type": "string"
+      },
+      "version": {
+        "$ref": "#/$defs/AccountWireVersion1"
+      }
+    },
+    "required": [
+      "version",
+      "redirect_to"
+    ],
+    "title": "OAuthConsentDecisionResponseV1",
+    "type": "object"
+  },
+  "OAuthConsentDecisionV1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "enum": [
+      "approve",
+      "deny"
+    ],
+    "title": "OAuthConsentDecisionV1",
+    "type": "string"
+  },
+  "OAuthConsentProfileV1": {
+    "$defs": {
+      "ProfileId": {
+        "description": "ProfileId — a client-minted v4 UUID, hyphenated and lowercase. Immutable, and never derived from a name or a path.",
+        "format": "uuid",
+        "type": "string"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+      "cloud_syncing": {
+        "type": "boolean"
+      },
+      "name_snapshot": {
+        "description": "The account's discovery snapshot; absent shows \"Unnamed Profile\".",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "profile_id": {
+        "$ref": "#/$defs/ProfileId"
+      }
+    },
+    "required": [
+      "profile_id",
+      "cloud_syncing"
+    ],
+    "title": "OAuthConsentProfileV1",
+    "type": "object"
+  },
+  "OAuthConsentQueryV1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "description": "`GET /v1/oauth/consent?request=`: the one query parameter.",
+    "properties": {
+      "request": {
+        "description": "The signed pending request, from the consent cookie.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "request"
+    ],
+    "title": "OAuthConsentQueryV1",
+    "type": "object"
+  },
+  "OAuthConsentViewV1": {
+    "$defs": {
+      "AccountWireVersion1": {
+        "const": 1,
+        "type": "integer"
+      },
+      "AppConnectionAccessV1": {
+        "description": "Read, or Read & edit.",
+        "enum": [
+          "read",
+          "read_write"
+        ],
+        "type": "string"
+      },
+      "CloudSubscriptionStateV1": {
+        "enum": [
+          "active",
+          "none"
+        ],
+        "type": "string"
+      },
+      "OAuthClientSummaryV1": {
+        "description": "Who the assistant is, as far as Koru can tell. A metadata-document client\nis `verified` and names its `domain`; a dynamically registered client is\nunverified and has no domain. The name is self-declared either way.",
+        "properties": {
+          "client_id": {
+            "type": "string"
+          },
+          "domain": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "verified": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "client_id",
+          "name",
+          "verified"
+        ],
+        "type": "object"
+      },
+      "OAuthConsentProfileV1": {
+        "properties": {
+          "cloud_syncing": {
+            "type": "boolean"
+          },
+          "name_snapshot": {
+            "description": "The account's discovery snapshot; absent shows \"Unnamed Profile\".",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "profile_id": {
+            "$ref": "#/$defs/ProfileId"
+          }
+        },
+        "required": [
+          "profile_id",
+          "cloud_syncing"
+        ],
+        "type": "object"
+      },
+      "ProfileId": {
+        "description": "ProfileId — a client-minted v4 UUID, hyphenated and lowercase. Immutable, and never derived from a name or a path.",
+        "format": "uuid",
+        "type": "string"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "`GET /v1/oauth/consent?request=`: what the consent page shows.",
+    "properties": {
+      "client": {
+        "$ref": "#/$defs/OAuthClientSummaryV1"
+      },
+      "profiles": {
+        "description": "Every active Profile. Only the Cloud-syncing ones are offered; none\nsyncing is case (c).",
+        "items": {
+          "$ref": "#/$defs/OAuthConsentProfileV1"
+        },
+        "type": "array"
+      },
+      "requested_access": {
+        "$ref": "#/$defs/AppConnectionAccessV1",
+        "description": "What the assistant asked for. Read & edit is preselected only when it\nasked for it."
+      },
+      "subscription": {
+        "$ref": "#/$defs/CloudSubscriptionStateV1",
+        "description": "Case (b) of C15 when `none`."
+      },
+      "version": {
+        "$ref": "#/$defs/AccountWireVersion1"
+      }
+    },
+    "required": [
+      "version",
+      "client",
+      "requested_access",
+      "subscription",
+      "profiles"
+    ],
+    "title": "OAuthConsentViewV1",
+    "type": "object"
+  },
+  "OAuthErrorResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "RFC 6749 §5.2 and RFC 7591 §3.2.2.",
+    "properties": {
+      "error": {
+        "type": "string"
+      },
+      "error_description": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "error"
+    ],
+    "title": "OAuthErrorResponse",
+    "type": "object"
+  },
   "OAuthState": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "description": "OAuth correlation state.",
     "title": "OAuthState",
     "type": "string"
+  },
+  "OAuthTokenResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "RFC 6749 §5.1.",
+    "properties": {
+      "access_token": {
+        "type": "string"
+      },
+      "expires_in": {
+        "format": "int64",
+        "type": "integer"
+      },
+      "refresh_token": {
+        "type": "string"
+      },
+      "scope": {
+        "type": "string"
+      },
+      "token_type": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "access_token",
+      "token_type",
+      "expires_in",
+      "refresh_token",
+      "scope"
+    ],
+    "title": "OAuthTokenResponse",
+    "type": "object"
   },
   "OneUseGrant": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -5104,6 +6062,16 @@
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "description": "Client PKCE verifier.",
     "title": "PkceVerifier",
+    "type": "string"
+  },
+  "ProfileAccessV1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "The person's choice for one Profile.",
+    "enum": [
+      "allowed",
+      "not_allowed"
+    ],
+    "title": "ProfileAccessV1",
     "type": "string"
   },
   "ProfileLifecycleResponseV1": {
@@ -6258,6 +7226,96 @@
       "refresh_absolute_expires_at_millis"
     ],
     "title": "TokenPairV1",
+    "type": "object"
+  },
+  "UpdateAppConnectionRequestV1": {
+    "$defs": {
+      "AccountWireVersion1": {
+        "const": 1,
+        "type": "integer"
+      },
+      "AppConnectionAccessV1": {
+        "description": "Read, or Read & edit.",
+        "enum": [
+          "read",
+          "read_write"
+        ],
+        "type": "string"
+      },
+      "AppConnectionProfileV1": {
+        "additionalProperties": false,
+        "properties": {
+          "profile_access": {
+            "$ref": "#/$defs/ProfileAccessV1"
+          },
+          "profile_id": {
+            "$ref": "#/$defs/ProfileId"
+          }
+        },
+        "required": [
+          "profile_id",
+          "profile_access"
+        ],
+        "type": "object"
+      },
+      "ProfileAccessV1": {
+        "description": "The person's choice for one Profile.",
+        "enum": [
+          "allowed",
+          "not_allowed"
+        ],
+        "type": "string"
+      },
+      "ProfileId": {
+        "description": "ProfileId — a client-minted v4 UUID, hyphenated and lowercase. Immutable, and never derived from a name or a path.",
+        "format": "uuid",
+        "type": "string"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "description": "`PATCH /v1/account/connections/{connection_id}`. At least one change.\nWidening to Read & edit reaches the assistant when it next connects; the\ntokens it holds keep the ceiling it was approved with.",
+    "properties": {
+      "access": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/AppConnectionAccessV1"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "allow_profiles_enabled_later": {
+        "default": null,
+        "type": [
+          "boolean",
+          "null"
+        ]
+      },
+      "name": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "profiles": {
+        "default": [],
+        "items": {
+          "$ref": "#/$defs/AppConnectionProfileV1"
+        },
+        "type": "array"
+      },
+      "version": {
+        "$ref": "#/$defs/AccountWireVersion1"
+      }
+    },
+    "required": [
+      "version"
+    ],
+    "title": "UpdateAppConnectionRequestV1",
     "type": "object"
   },
   "Version1": {

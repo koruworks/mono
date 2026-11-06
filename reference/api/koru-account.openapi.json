@@ -203,6 +203,127 @@
         ],
         "type": "object"
       },
+      "AppConnectionAccessV1": {
+        "description": "Read, or Read & edit.",
+        "enum": [
+          "read",
+          "read_write"
+        ],
+        "type": "string"
+      },
+      "AppConnectionId": {
+        "format": "uuid",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        "type": "string"
+      },
+      "AppConnectionListResponseV1": {
+        "properties": {
+          "connections": {
+            "items": {
+              "$ref": "#/components/schemas/AppConnectionSummaryV1"
+            },
+            "type": "array"
+          },
+          "version": {
+            "$ref": "#/components/schemas/AccountWireVersion1"
+          }
+        },
+        "required": [
+          "version",
+          "connections"
+        ],
+        "type": "object"
+      },
+      "AppConnectionProfileV1": {
+        "additionalProperties": false,
+        "properties": {
+          "profile_access": {
+            "$ref": "#/components/schemas/ProfileAccessV1"
+          },
+          "profile_id": {
+            "$ref": "#/components/schemas/ProfileId"
+          }
+        },
+        "required": [
+          "profile_id",
+          "profile_access"
+        ],
+        "type": "object"
+      },
+      "AppConnectionRevokedReasonV1": {
+        "enum": [
+          "person",
+          "refresh_reuse",
+          "account_deleted"
+        ],
+        "type": "string"
+      },
+      "AppConnectionSummaryV1": {
+        "properties": {
+          "access": {
+            "$ref": "#/components/schemas/AppConnectionAccessV1"
+          },
+          "allow_profiles_enabled_later": {
+            "type": "boolean"
+          },
+          "client": {
+            "$ref": "#/components/schemas/OAuthClientSummaryV1"
+          },
+          "connection_id": {
+            "$ref": "#/components/schemas/AppConnectionId"
+          },
+          "created_at_millis": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "last_used_at_millis": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "profiles": {
+            "items": {
+              "$ref": "#/components/schemas/AppConnectionProfileV1"
+            },
+            "type": "array"
+          },
+          "revoked_at_millis": {
+            "format": "int64",
+            "nullable": true,
+            "type": "integer"
+          },
+          "revoked_reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AppConnectionRevokedReasonV1"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "version": {
+            "$ref": "#/components/schemas/AccountWireVersion1"
+          }
+        },
+        "required": [
+          "version",
+          "connection_id",
+          "name",
+          "client",
+          "access",
+          "allow_profiles_enabled_later",
+          "profiles",
+          "created_at_millis",
+          "last_used_at_millis"
+        ],
+        "type": "object"
+      },
       "AppleCallbackRequestV1": {
         "description": "Apple's `form_post` callback. The same correlation fields as Google's,\nplus `user`: the JSON Apple sends, unsigned and only on a person's first\nauthorization, carrying the name they chose to share. It is a display-name\nseed and nothing else.",
         "properties": {
@@ -456,6 +577,13 @@
             "type": "string"
           }
         ]
+      },
+      "CloudSubscriptionStateV1": {
+        "enum": [
+          "active",
+          "none"
+        ],
+        "type": "string"
       },
       "CloudSyncRouteV1": {
         "additionalProperties": false,
@@ -2646,6 +2774,181 @@
         ],
         "type": "object"
       },
+      "OAuthClientSummaryV1": {
+        "description": "Who the assistant is, as far as Koru can tell. A metadata-document client\nis `verified` and names its `domain`; a dynamically registered client is\nunverified and has no domain. The name is self-declared either way.",
+        "properties": {
+          "client_id": {
+            "type": "string"
+          },
+          "domain": {
+            "nullable": true,
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "verified": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "client_id",
+          "name",
+          "verified"
+        ],
+        "type": "object"
+      },
+      "OAuthConsentDecisionRequestV1": {
+        "additionalProperties": false,
+        "description": "`POST /v1/oauth/consent`. Approving needs `name` and `access`, and a\ndecision for every Cloud-syncing Profile. Denying needs neither.",
+        "properties": {
+          "access": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AppConnectionAccessV1"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "default": null
+          },
+          "allow_profiles_enabled_later": {
+            "default": false,
+            "type": "boolean"
+          },
+          "decision": {
+            "$ref": "#/components/schemas/OAuthConsentDecisionV1"
+          },
+          "name": {
+            "default": null,
+            "nullable": true,
+            "type": "string"
+          },
+          "profiles": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AppConnectionProfileV1"
+            },
+            "type": "array"
+          },
+          "request": {
+            "description": "The signed pending request, from the consent cookie.",
+            "type": "string"
+          },
+          "version": {
+            "$ref": "#/components/schemas/AccountWireVersion1"
+          }
+        },
+        "required": [
+          "version",
+          "request",
+          "decision"
+        ],
+        "type": "object"
+      },
+      "OAuthConsentDecisionResponseV1": {
+        "description": "Where the browser goes next: the client's redirect URI with `code`,\n`state` and `iss`, or with `error=access_denied`.",
+        "properties": {
+          "redirect_to": {
+            "type": "string"
+          },
+          "version": {
+            "$ref": "#/components/schemas/AccountWireVersion1"
+          }
+        },
+        "required": [
+          "version",
+          "redirect_to"
+        ],
+        "type": "object"
+      },
+      "OAuthConsentDecisionV1": {
+        "enum": [
+          "approve",
+          "deny"
+        ],
+        "type": "string"
+      },
+      "OAuthConsentProfileV1": {
+        "properties": {
+          "cloud_syncing": {
+            "type": "boolean"
+          },
+          "name_snapshot": {
+            "description": "The account's discovery snapshot; absent shows \"Unnamed Profile\".",
+            "nullable": true,
+            "type": "string"
+          },
+          "profile_id": {
+            "$ref": "#/components/schemas/ProfileId"
+          }
+        },
+        "required": [
+          "profile_id",
+          "cloud_syncing"
+        ],
+        "type": "object"
+      },
+      "OAuthConsentQueryV1": {
+        "additionalProperties": false,
+        "description": "`GET /v1/oauth/consent?request=`: the one query parameter.",
+        "properties": {
+          "request": {
+            "description": "The signed pending request, from the consent cookie.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request"
+        ],
+        "type": "object"
+      },
+      "OAuthConsentViewV1": {
+        "description": "`GET /v1/oauth/consent?request=`: what the consent page shows.",
+        "properties": {
+          "client": {
+            "$ref": "#/components/schemas/OAuthClientSummaryV1"
+          },
+          "profiles": {
+            "description": "Every active Profile. Only the Cloud-syncing ones are offered; none\nsyncing is case (c).",
+            "items": {
+              "$ref": "#/components/schemas/OAuthConsentProfileV1"
+            },
+            "type": "array"
+          },
+          "requested_access": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AppConnectionAccessV1"
+              }
+            ],
+            "description": "What the assistant asked for. Read & edit is preselected only when it\nasked for it."
+          },
+          "subscription": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CloudSubscriptionStateV1"
+              }
+            ],
+            "description": "Case (b) of C15 when `none`."
+          },
+          "version": {
+            "$ref": "#/components/schemas/AccountWireVersion1"
+          }
+        },
+        "required": [
+          "version",
+          "client",
+          "requested_access",
+          "subscription",
+          "profiles"
+        ],
+        "type": "object"
+      },
       "OAuthState": {
         "description": "OAuth correlation state.",
         "type": "string"
@@ -2721,6 +3024,14 @@
       },
       "PkceVerifier": {
         "description": "Client PKCE verifier.",
+        "type": "string"
+      },
+      "ProfileAccessV1": {
+        "description": "The person's choice for one Profile.",
+        "enum": [
+          "allowed",
+          "not_allowed"
+        ],
         "type": "string"
       },
       "ProfileAuthorizationRemovalResponseV1": {
@@ -3620,6 +3931,50 @@
         ],
         "type": "object"
       },
+      "UpdateAppConnectionRequestV1": {
+        "additionalProperties": false,
+        "description": "`PATCH /v1/account/connections/{connection_id}`. At least one change.\nWidening to Read & edit reaches the assistant when it next connects; the\ntokens it holds keep the ceiling it was approved with.",
+        "properties": {
+          "access": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AppConnectionAccessV1"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "default": null
+          },
+          "allow_profiles_enabled_later": {
+            "default": null,
+            "nullable": true,
+            "type": "boolean"
+          },
+          "name": {
+            "default": null,
+            "nullable": true,
+            "type": "string"
+          },
+          "profiles": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AppConnectionProfileV1"
+            },
+            "type": "array"
+          },
+          "version": {
+            "$ref": "#/components/schemas/AccountWireVersion1"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "type": "object"
+      },
       "WebExchangeRequestV1": {
         "properties": {
           "grant": {
@@ -3962,6 +4317,178 @@
           }
         ],
         "summary": "List one bounded page of currently authorized Cloud Workspace eligibility pairs"
+      }
+    },
+    "/v1/account/connections": {
+      "get": {
+        "operationId": "account.app_connections_list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppConnectionListResponseV1"
+                }
+              }
+            },
+            "description": "List the account's connected assistants, live and revoked"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeveloperErrorV1"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeveloperErrorV1"
+                }
+              }
+            },
+            "description": "Account capability unavailable"
+          }
+        },
+        "security": [
+          {
+            "accountBearer": []
+          },
+          {
+            "accountWebSession": []
+          }
+        ],
+        "summary": "List the account's connected assistants, live and revoked"
+      }
+    },
+    "/v1/account/connections/{connection_id}": {
+      "delete": {
+        "operationId": "account.app_connection_revoke",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppConnectionSummaryV1"
+                }
+              }
+            },
+            "description": "Revoke a connection"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeveloperErrorV1"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeveloperErrorV1"
+                }
+              }
+            },
+            "description": "Account capability unavailable"
+          }
+        },
+        "security": [
+          {
+            "accountBearer": []
+          },
+          {
+            "accountWebSession": []
+          }
+        ],
+        "summary": "Revoke a connection"
+      },
+      "patch": {
+        "operationId": "account.app_connection_update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateAppConnectionRequestV1"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppConnectionSummaryV1"
+                }
+              }
+            },
+            "description": "Rename a connection or change its Profiles, later-Profiles flag or access"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeveloperErrorV1"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeveloperErrorV1"
+                }
+              }
+            },
+            "description": "Account capability unavailable"
+          }
+        },
+        "security": [
+          {
+            "accountBearer": []
+          },
+          {
+            "accountWebSession": []
+          }
+        ],
+        "summary": "Rename a connection or change its Profiles, later-Profiles flag or access"
       }
     },
     "/v1/account/devices": {
@@ -5653,6 +6180,118 @@
         },
         "security": [],
         "summary": "Start Sign in with Apple for the website"
+      }
+    },
+    "/v1/oauth/consent": {
+      "get": {
+        "operationId": "account.oauth_consent_read",
+        "parameters": [
+          {
+            "description": "The signed pending authorization request the consent page keeps in its cookie.",
+            "in": "query",
+            "name": "request",
+            "required": true,
+            "schema": {
+              "maxLength": 8192,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthConsentViewV1"
+                }
+              }
+            },
+            "description": "Read what the consent page shows for a pending authorization request"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeveloperErrorV1"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeveloperErrorV1"
+                }
+              }
+            },
+            "description": "Account capability unavailable"
+          }
+        },
+        "security": [
+          {
+            "accountBearer": []
+          },
+          {
+            "accountWebSession": []
+          }
+        ],
+        "summary": "Read what the consent page shows for a pending authorization request"
+      },
+      "post": {
+        "operationId": "account.oauth_consent_decide",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OAuthConsentDecisionRequestV1"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthConsentDecisionResponseV1"
+                }
+              }
+            },
+            "description": "Approve or deny a pending authorization request"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeveloperErrorV1"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeveloperErrorV1"
+                }
+              }
+            },
+            "description": "Account capability unavailable"
+          }
+        },
+        "security": [
+          {
+            "accountBearer": []
+          },
+          {
+            "accountWebSession": []
+          }
+        ],
+        "summary": "Approve or deny a pending authorization request"
       }
     },
     "/v1/oauth/email/complete": {

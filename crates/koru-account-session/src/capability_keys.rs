@@ -5,7 +5,7 @@
 //! Relay issuance is outside this rung.
 use crate::{Ed25519KeyRing, TokenCapabilityVerifier};
 use ed25519_dalek::{SigningKey, VerifyingKey};
-use koru_account_core::{CryptoError, TokenSigner, workspace_authorization::Region};
+use koru_account_core::{CryptoError, SignedToken, TokenSigner, workspace_authorization::Region};
 use std::collections::BTreeMap;
 
 #[derive(Clone)]
@@ -52,6 +52,25 @@ impl TokenCapabilityKeyRing {
         Ok(crate::cloud::issuance::SignedSyncCredential::new(
             token, claims.exp,
         ))
+    }
+
+    /// Sign an MCP access token (`at+jwt`, `koru:mcp:access:v1`). The caller
+    /// has already checked the code or refresh token, the connection's live
+    /// state and the entitlement, and narrowed the scope to the ceiling
+    /// intersected with the connection's current access.
+    pub fn sign_mcp_access_token(
+        &self,
+        issuer: &str,
+        claims: &crate::oauth::McpAccessTokenClaimsV1,
+    ) -> Result<SignedToken, CryptoError> {
+        crate::oauth::validate_access_claims(self.region, issuer, claims)?;
+        let token = self
+            .ring
+            .sign_compact(crate::oauth::MCP_ACCESS_TYPE, claims)?;
+        if token.compact.expose_secret().len() > crate::cloud::MAX_COMPACT_BYTES {
+            return Err(CryptoError::InvalidInput);
+        }
+        Ok(token)
     }
 
     /// Mint one object capability for the blob byte routes. The same rule as
