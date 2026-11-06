@@ -395,6 +395,10 @@ pub struct TasksView {
     pub(super) body: Option<PageBody>,
     /// *Try again* was pressed on a note that failed; drained by the container.
     wants_retry: bool,
+    /// Where the conflict band's *Keep deleted* and *Recover* were drawn
+    /// this frame, and the person's answer once they press one.
+    conflict_actions: Option<(Rect, Rect)>,
+    wants_decision: Option<koru_workspace::pages::PageDecision>,
     /// Where the band's notice and its *Try again* were drawn this frame.
     pub(super) notice: Option<(Rect, Rect)>,
     /// The band's height this frame — what the rows move down by.
@@ -446,6 +450,8 @@ impl TasksView {
             page: None,
             body: None,
             wants_retry: false,
+            conflict_actions: None,
+            wants_decision: None,
             notice: None,
             band_h: 0.0,
             pointer: (-1.0, -1.0),
@@ -3450,6 +3456,16 @@ impl View for TasksView {
             self.wants_retry = true;
             return true;
         }
+        if let Some((keep, recover)) = self.conflict_actions {
+            if keep.contains(x, y) {
+                self.wants_decision = Some(koru_workspace::pages::PageDecision::Keep);
+                return true;
+            }
+            if recover.contains(x, y) {
+                self.wants_decision = Some(koru_workspace::pages::PageDecision::Recover);
+                return true;
+            }
+        }
         // The note's open picker is above everything on the page: the press
         // is its to answer wherever it lands.
         if let Some(body) = &mut self.body
@@ -3805,11 +3821,28 @@ impl TasksView {
             self.band_h = 0.0;
         }
         self.notice = None;
+        self.conflict_actions = None;
         true
     }
 
     pub fn take_wants_retry(&mut self) -> bool {
         std::mem::take(&mut self.wants_retry)
+    }
+
+    /// Whether this page's note is in a deletion conflict — the band with
+    /// *Keep deleted* / *Recover* (plan §6.2).
+    fn in_conflict(&self) -> bool {
+        self.page.as_ref().is_some_and(|page| page.conflict)
+    }
+
+    pub fn take_wants_decision(&mut self) -> Option<koru_workspace::pages::PageDecision> {
+        self.wants_decision.take()
+    }
+
+    /// The conflict band's (Keep, Recover) rects, for a test to press.
+    #[cfg(test)]
+    pub(super) fn conflict_actions_for_test(&self) -> Option<(Rect, Rect)> {
+        self.conflict_actions
     }
 
     /// The note's leaf, while the note has the keyboard and `ws` is its
@@ -3938,11 +3971,14 @@ impl TasksView {
     }
 
     fn notice_h(&self) -> f32 {
-        if self.failure().is_some() {
-            self.row_h()
-        } else {
-            0.0
+        let mut h = 0.0;
+        if self.in_conflict() {
+            h += self.row_h();
         }
+        if self.failure().is_some() {
+            h += self.row_h();
+        }
+        h
     }
 
     /// Where the rows start: under the heading, the note's band and its
@@ -3969,10 +4005,59 @@ impl TasksView {
     /// *Try again* beside it (plan Q8).
     pub(super) fn paint_notice(&mut self, scene: &mut Scene, root: Affine) {
         self.notice = None;
+        self.conflict_actions = None;
+        let lang = crate::format::lang();
+        let p = theme::p();
+        let mut top = self.header_h + self.band_h;
+        // The deletion conflict first: its own row, with two answers.
+        if self.in_conflict() {
+            let message = t(lang, koru_i18n::Key::PageDeletedElsewhere);
+            let keep = t(lang, koru_i18n::Key::PageKeepDeleted);
+            let recover = t(lang, koru_i18n::Key::PageRecover);
+            let line = Rect::new(
+                PAD,
+                top,
+                (self.viewport.0 - 2.0 * PAD).max(0.0),
+                self.row_h(),
+            );
+            let layout = self.engine.simple_layout(message, theme::role::row());
+            let y = koru_draw::scene::centre_y_in(&layout, line);
+            koru_draw::scene::draw_layout_first_line(
+                scene,
+                root,
+                &layout,
+                PAD,
+                y,
+                Some(p.text_dim),
+            );
+            let mut x = PAD + layout.width() + CONTROL_GAP * 2.0;
+            let recover_layout = self.engine.simple_layout(recover, theme::role::row());
+            koru_draw::scene::draw_layout_first_line(
+                scene,
+                root,
+                &recover_layout,
+                x,
+                y,
+                Some(p.accent),
+            );
+            let recover_rect = Rect::new(x, top, recover_layout.width(), self.row_h());
+            x += recover_layout.width() + CONTROL_GAP * 2.0;
+            let keep_layout = self.engine.simple_layout(keep, theme::role::row());
+            koru_draw::scene::draw_layout_first_line(
+                scene,
+                root,
+                &keep_layout,
+                x,
+                y,
+                Some(p.text_dim),
+            );
+            let keep_rect = Rect::new(x, top, keep_layout.width(), self.row_h());
+            self.conflict_actions = Some((keep_rect, recover_rect));
+            top += self.row_h();
+        }
         let Some(opening) = self.failure() else {
             return;
         };
-        let lang = crate::format::lang();
         let text = t(
             lang,
             if opening {
@@ -3982,8 +4067,6 @@ impl TasksView {
             },
         );
         let retry = t(lang, koru_i18n::Key::TryAgain);
-        let p = theme::p();
-        let top = self.header_h + self.band_h;
         let line = Rect::new(
             PAD,
             top,

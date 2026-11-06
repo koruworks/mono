@@ -6392,6 +6392,22 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 pane.window.request_redraw();
             }
         }
+        // A note's deletion conflict answered: Keep deleted or Recover.
+        let decisions: Vec<(koru_core::ids::PageKey, koru_workspace::pages::PageDecision)> = self
+            .panes
+            .iter_mut()
+            .flat_map(|(_, pane)| pane.view.take_wants_page_decisions())
+            .collect();
+        for (page, decision) in decisions {
+            match decision {
+                koru_workspace::pages::PageDecision::Keep => {
+                    self.runtime.workspace.keep_page_deleted(page);
+                }
+                koru_workspace::pages::PageDecision::Recover => {
+                    self.runtime.workspace.recover_page(page);
+                }
+            }
+        }
         // The Tasks surface's ticks, removals and captures. Collected first for
         // the borrow, then served one at a time — `crate::tasks::serve` owns the
         // ordering and the activity attempt, so this stays a sweep rather than a

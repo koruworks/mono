@@ -2915,13 +2915,19 @@ pub enum Key {
     PageRenameTitle,
     /// Its field's placeholder.
     PageRenamePlaceholder,
+    /// The deletion-conflict band's message.
+    PageDeletedElsewhere,
+    /// Its *Keep deleted* action.
+    PageKeepDeleted,
+    /// Its *Recover* action.
+    PageRecover,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2035] = [
+    pub const ALL: [Key; 2038] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4957,6 +4963,9 @@ impl Key {
         Key::PageOpenFailed,
         Key::PageRenameTitle,
         Key::PageRenamePlaceholder,
+        Key::PageDeletedElsewhere,
+        Key::PageKeepDeleted,
+        Key::PageRecover,
     ];
 }
 
@@ -15905,5 +15914,38 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
         ar: "الاسم",
         zh_hans: "名称",
         ja: "名前",
+    },
+    Row {
+        key: Key::PageDeletedElsewhere,
+        en: "This note was deleted on another device.",
+        es: "Esta nota se eliminó en otro dispositivo.",
+        pt_br: "Esta nota foi excluída em outro dispositivo.",
+        de: "Diese Notiz wurde auf einem anderen Gerät gelöscht.",
+        fr: "Cette note a été supprimée sur un autre appareil.",
+        ar: "حُذفت هذه الملاحظة على جهاز آخر.",
+        zh_hans: "此笔记已在其他设备上删除。",
+        ja: "このメモは別のデバイスで削除されました。",
+    },
+    Row {
+        key: Key::PageKeepDeleted,
+        en: "Keep deleted",
+        es: "Mantener eliminada",
+        pt_br: "Manter excluída",
+        de: "Gelöscht lassen",
+        fr: "Garder supprimée",
+        ar: "إبقاؤها محذوفة",
+        zh_hans: "保持删除",
+        ja: "削除のままにする",
+    },
+    Row {
+        key: Key::PageRecover,
+        en: "Recover",
+        es: "Recuperar",
+        pt_br: "Recuperar",
+        de: "Wiederherstellen",
+        fr: "Récupérer",
+        ar: "استرجاع",
+        zh_hans: "恢复",
+        ja: "復元",
     },
 ];

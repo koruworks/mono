@@ -1541,6 +1541,14 @@ pub trait View {
         Vec::new()
     }
 
+    /// **A deletion-conflict answer the person gave on a Tasks page** — Keep
+    /// deleted or Recover, per page (plan §6.3).
+    fn take_wants_page_decisions(
+        &mut self,
+    ) -> Vec<(koru_core::ids::PageKey, koru_workspace::pages::PageDecision)> {
+        Vec::new()
+    }
+
     /// **Documents the view wants to know the page of** — a note opened in a
     /// tab of its own takes its list's default list only once the shell says
     /// which list it is the note of.

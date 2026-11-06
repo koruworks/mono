@@ -4247,7 +4247,42 @@ mod note {
             document,
             generation: 0,
             phase,
+            conflict: false,
         }
+    }
+
+    fn conflict_state(page: PageKey, document: DocumentId) -> PageState {
+        PageState {
+            page,
+            document,
+            generation: 0,
+            phase: PagePhase::Empty,
+            conflict: true,
+        }
+    }
+
+    /// §6.2: a note in a deletion conflict shows the band with *Keep
+    /// deleted* and *Recover*, and a press on each routes the person's
+    /// answer out.
+    #[test]
+    fn a_conflicted_note_offers_keep_deleted_and_recover() {
+        use koru_workspace::pages::PageDecision;
+        let (target, page, document, mut doc) = page();
+        let mut view = TasksView::new(target);
+        view.set_viewport(900.0, 600.0);
+        assert!(view.set_page_state(&conflict_state(page, document)));
+        view.catch_up(&doc);
+        assert!(view.rows_top() > view.header_h, "the band takes a row");
+        let mut scene = vello::Scene::new();
+        view.layout_band();
+        view.paint_notice(&mut scene, Affine::IDENTITY);
+        let (keep, recover) = view.conflict_actions_for_test().expect("drawn");
+        assert!(view.take_wants_decision().is_none());
+        assert!(view.mouse_down(&mut doc, recover.x + 1.0, recover.y + 1.0, false));
+        assert_eq!(view.take_wants_decision(), Some(PageDecision::Recover));
+        assert!(view.mouse_down(&mut doc, keep.x + 1.0, keep.y + 1.0, false));
+        assert_eq!(view.take_wants_decision(), Some(PageDecision::Keep));
+        assert!(view.take_wants_decision().is_none(), "drained");
     }
 
     /// A page's state names the document the tab edits (D7), and an open

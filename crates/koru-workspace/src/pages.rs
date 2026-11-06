@@ -74,6 +74,19 @@ pub struct PageState {
     pub document: DocumentId,
     pub generation: u64,
     pub phase: PagePhase,
+    /// Whether a superseded or current generation of this page is in
+    /// conflict — deleted on one device, written on another (plan §6.2).
+    /// The Tasks page shows the *Keep deleted* / *Recover* band when set.
+    pub conflict: bool,
+}
+
+/// The person's answer to a page document's deletion conflict (plan §6.3).
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum PageDecision {
+    /// Keep it deleted — close the conflict, the body stays retained.
+    Keep,
+    /// Bring it back under the same id.
+    Recover,
 }
 
 /// What the registration thread hands back: the room joined, and the
@@ -162,6 +175,7 @@ impl PageEntry {
             document: self.document,
             generation: self.generation,
             phase: self.phase.clone(),
+            conflict: false,
         }
     }
 

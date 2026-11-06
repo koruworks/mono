@@ -13870,6 +13870,22 @@ impl View for MainView {
         pages
     }
 
+    fn take_wants_page_decisions(
+        &mut self,
+    ) -> Vec<(koru_core::ids::PageKey, koru_workspace::pages::PageDecision)> {
+        let mut out = Vec::new();
+        self.each_tab_mut(|tab| {
+            if let TabView::Tasks(t) = &mut tab.view
+                && let Some(decision) = t.take_wants_decision()
+                && let Some(page) = t.page_key()
+            {
+                out.push((page, decision));
+            }
+            false
+        });
+        out
+    }
+
     /// The Tasks tab's ticks, removals and captures, on their way to the
     /// workspace. The list request's contract exactly, one layer along.
     fn take_wants_run_pills(&mut self) -> Vec<koru_workspace_host::runpill::RunPill> {

@@ -204,6 +204,15 @@ impl Workspace {
     /// keystroke lands in the real document. A listed page is opened
     /// off-thread. Nothing is registered until something is written.
     pub fn ensure_page(&mut self, page: PageKey) -> Option<PageState> {
+        let mut state = self.ensure_page_inner(page)?;
+        state.conflict = matches!(
+            self.page_resolution(page),
+            koru_core::pages::deletion::Resolution::Conflict(_)
+        );
+        Some(state)
+    }
+
+    fn ensure_page_inner(&mut self, page: PageKey) -> Option<PageState> {
         let workspace = self.current?;
         let (document, generation) = self.page_document(page)?;
         if let Some(entry) = self.pages.entries.get_mut(&document) {
@@ -228,6 +237,7 @@ impl Workspace {
                 document,
                 generation,
                 phase: PagePhase::Ready,
+                conflict: false,
             });
         }
         let title = self.page_title(page);
