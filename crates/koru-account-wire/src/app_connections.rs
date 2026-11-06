@@ -200,6 +200,8 @@ pub struct OAuthConsentViewV1 {
     pub profiles: Vec<OAuthConsentProfileV1>,
 }
 
+/// One active Profile of the account, as the consent view and the
+/// connections list carry it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct OAuthConsentProfileV1 {
     pub profile_id: ProfileId,
@@ -275,10 +277,15 @@ pub struct AppConnectionSummaryV1 {
     pub revoked_reason: Option<AppConnectionRevokedReasonV1>,
 }
 
+/// `GET /v1/account/connections`: every connection, live and revoked, and the
+/// account's active Profiles, so a list can name each connection's Profiles
+/// and offer the ones it has no decision for.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct AppConnectionListResponseV1 {
     pub version: Version1,
     pub connections: Vec<AppConnectionSummaryV1>,
+    /// Every active Profile of the account, read as consent reads them.
+    pub profiles: Vec<OAuthConsentProfileV1>,
 }
 
 /// `PATCH /v1/account/connections/{connection_id}`. At least one change.

@@ -945,6 +945,29 @@
         ],
         "type": "object"
       },
+      "OAuthConsentProfileV1": {
+        "description": "One active Profile of the account, as the consent view and the\nconnections list carry it.",
+        "properties": {
+          "cloud_syncing": {
+            "type": "boolean"
+          },
+          "name_snapshot": {
+            "description": "The account's discovery snapshot; absent shows \"Unnamed Profile\".",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "profile_id": {
+            "$ref": "#/$defs/ProfileId"
+          }
+        },
+        "required": [
+          "profile_id",
+          "cloud_syncing"
+        ],
+        "type": "object"
+      },
       "ProfileAccessV1": {
         "description": "The person's choice for one Profile.",
         "enum": [
@@ -960,10 +983,18 @@
       }
     },
     "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "`GET /v1/account/connections`: every connection, live and revoked, and the\naccount's active Profiles, so a list can name each connection's Profiles\nand offer the ones it has no decision for.",
     "properties": {
       "connections": {
         "items": {
           "$ref": "#/$defs/AppConnectionSummaryV1"
+        },
+        "type": "array"
+      },
+      "profiles": {
+        "description": "Every active Profile of the account, read as consent reads them.",
+        "items": {
+          "$ref": "#/$defs/OAuthConsentProfileV1"
         },
         "type": "array"
       },
@@ -973,7 +1004,8 @@
     },
     "required": [
       "version",
-      "connections"
+      "connections",
+      "profiles"
     ],
     "title": "AppConnectionListResponseV1",
     "type": "object"
@@ -5789,6 +5821,7 @@
       }
     },
     "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "One active Profile of the account, as the consent view and the\nconnections list carry it.",
     "properties": {
       "cloud_syncing": {
         "type": "boolean"
@@ -5875,6 +5908,7 @@
         "type": "object"
       },
       "OAuthConsentProfileV1": {
+        "description": "One active Profile of the account, as the consent view and the\nconnections list carry it.",
         "properties": {
           "cloud_syncing": {
             "type": "boolean"

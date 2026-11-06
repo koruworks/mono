@@ -217,10 +217,18 @@
         "type": "string"
       },
       "AppConnectionListResponseV1": {
+        "description": "`GET /v1/account/connections`: every connection, live and revoked, and the\naccount's active Profiles, so a list can name each connection's Profiles\nand offer the ones it has no decision for.",
         "properties": {
           "connections": {
             "items": {
               "$ref": "#/components/schemas/AppConnectionSummaryV1"
+            },
+            "type": "array"
+          },
+          "profiles": {
+            "description": "Every active Profile of the account, read as consent reads them.",
+            "items": {
+              "$ref": "#/components/schemas/OAuthConsentProfileV1"
             },
             "type": "array"
           },
@@ -230,7 +238,8 @@
         },
         "required": [
           "version",
-          "connections"
+          "connections",
+          "profiles"
         ],
         "type": "object"
       },
@@ -2874,6 +2883,7 @@
         "type": "string"
       },
       "OAuthConsentProfileV1": {
+        "description": "One active Profile of the account, as the consent view and the\nconnections list carry it.",
         "properties": {
           "cloud_syncing": {
             "type": "boolean"

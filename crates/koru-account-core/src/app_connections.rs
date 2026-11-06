@@ -167,8 +167,9 @@ pub fn resolve_workspaces(
         .collect()
 }
 
-/// A Profile as the consent page lists it, before any replica exists: the
-/// account's `name_snapshot` (C17) and whether it syncs with Cloud now.
+/// A Profile as the consent page and the connections list show it, before
+/// any replica exists: the account's `name_snapshot` (C17) and whether it
+/// syncs with Cloud now.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConsentProfile {
     pub profile_id: ProfileId,
@@ -301,7 +302,8 @@ pub trait AppConnectionRepository: Send + Sync {
         client: OAuthClientRecord,
     ) -> PortFuture<'a, Result<(), AppConnectionError>>;
 
-    /// Every active Profile of the account, for the consent page.
+    /// Every active Profile of the account, for the consent page and the
+    /// connections list.
     fn consent_profiles<'a>(
         &'a self,
         koru_identity_id: KoruIdentityId,
