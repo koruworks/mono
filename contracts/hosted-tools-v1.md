@@ -1,7 +1,8 @@
 # Hosted tools v1 — effects, outcomes and the hosted catalog
 
 **Status: draft contract, approved to proceed on 2026-11-06; the maintainer's
-review of this text is still owed.** Nothing implements it yet. It fixes what
+review of this text is still owed.** Implemented by `koru-mcp-server` (Cloud MCP
+Plan 2.1) and the hosted MCP server (Plan 2.3). It fixes what
 `koru-mcp-server`'s mutating tools answer when a save cannot be confirmed,
 and what the tool catalog adds when Koru's hosted MCP server
 (`mcp.koru.do`) serves it. The local catalog (`koru-mcp serve --stdio`) keeps
@@ -39,8 +40,8 @@ of their own.
 | `not_saved` | **Proven** to have no effect in Cloud. It was refused before submission (admission, a claim, validation, the replica's generation fence), or the Cloud worker refused it with one of the two refusals defined to leave the unit's head unmoved: `sync_unit_exists` and `sync_document_claimed`. |
 | `unknown` | Submitted, then not acknowledged within 15 seconds, or the session dropped after submission. Any refusal other than the two above, after submission, is also `unknown`: there is no general "no durable effect" guarantee. |
 
-`not_saved` is a statement about Cloud. A local host never reports `unknown`:
-its Store answers every persist.
+`not_saved` is a statement about Cloud. A local host reports `unknown` only
+when its Store did not acknowledge within its wait (Cloud MCP Q2.1-2).
 
 An effect is reported as:
 
