@@ -6373,7 +6373,7 @@ impl KoruMcp {
 
     #[tool(
         title = "Search Koru documents",
-        description = "Search titles, blocks and attribute values in workspace_ids (empty: all). tags are tag names and a parent matches its children; a #tag in query becomes a tag filter. An attributes filter names a key, an op (is, one_of, before, after, between, exists, missing) and every kind it covers (date, datetime_floating, datetime_zoned, number, bool, ref, url, text, select): a window over date alone misses a timed datetime_zoned deadline, so give numeric_values in epoch ms beside values. page_size is at most 200; pass next_offset back as offset. Read koru://docs/model before building a filter.",
+        description = "Search titles, blocks and attribute values in workspace_ids (empty: all). On hosted Cloud MCP, titles cover listed documents, while content covers only documents opened through MCP; search_coverage reports the counts. tags are tag names and a parent matches its children; a #tag in query becomes a tag filter. An attributes filter names a key, an op (is, one_of, before, after, between, exists, missing) and every kind it covers (date, datetime_floating, datetime_zoned, number, bool, ref, url, text, select): a window over date alone misses a timed datetime_zoned deadline, so give numeric_values in epoch ms beside values. page_size is at most 200; pass next_offset back as offset. Read koru://docs/model before building a filter.",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
     fn search_documents(
@@ -6400,7 +6400,7 @@ impl KoruMcp {
     }
     #[tool(
         title = "List Koru tasks",
-        description = "List tasks (nodes with the task marker or a deadline) in workspace_ids (empty: all) from the store's read model: open by default, soonest due first. A row carries its task: reference, the workspace_id, document_id and node_id to edit it by, title, breadcrumb, lifecycle, due, priority and list. due filters per temporal type: dates {after, before} for days and wall clocks, instants {after_ms, before_ms} for zoned deadlines; naming one leaves the other out. min_priority orders low < medium < high < urgent; list is a list id; limit is at most 500. Page with cursor = next_after; restarted means the cursor's row stopped matching and this is page one again; updating_workspaces may be behind. Change a task with update_task.",
+        description = "List tasks (nodes with the task marker or a deadline) in workspace_ids (empty: all) from the store's read model: open by default, soonest due first. On hosted Cloud MCP, unopened document bodies cause task_index_incomplete rather than a partial task list. A row carries its task: reference, the workspace_id, document_id and node_id to edit it by, title, breadcrumb, lifecycle, due, priority and list. due filters per temporal type: dates {after, before} for days and wall clocks, instants {after_ms, before_ms} for zoned deadlines; naming one leaves the other out. min_priority orders low < medium < high < urgent; list is a list id; limit is at most 500. Page with cursor = next_after; restarted means the cursor's row stopped matching and this is page one again; updating_workspaces may be behind. Change a task with update_task.",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
     fn list_tasks(&self, Parameters(a): Parameters<ListTasksRequest>) -> CallToolResult {

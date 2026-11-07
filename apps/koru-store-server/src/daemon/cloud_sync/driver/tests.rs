@@ -120,6 +120,7 @@ fn parts<J: StoreJobs>(
         permission: accept,
         progress: |_| {},
         uploads: None,
+        interest: None,
     }
 }
 
@@ -628,6 +629,7 @@ async fn confirmed_versions_and_session_ends_are_reported() {
             deferrals: Arc::default(),
             permission: accept,
             uploads: None,
+            interest: None,
         },
     );
     passes(&driver, 1).await;
