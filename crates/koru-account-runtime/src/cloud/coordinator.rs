@@ -628,12 +628,13 @@ impl<A: Api, H: Host> Coordinator<A, H> {
             ),
         };
 
-        // Profile-first bootstrap, before any permit for a Workspace this
-        // device does not hold (HOST-CONTROL §3.1 bootstrap order, R1).
+        // Local content does not prove active Profile presence: removal keeps
+        // retained identity data. Check every admission, including an origin.
+        self.host
+            .ensure_profile_presence(profile, authority.owner.account)
+            .map_err(bootstrap_failure)?;
+        // Profile-first bootstrap for a Workspace this device does not hold.
         if let Identity::Hosted(descriptor) = &identity {
-            self.host
-                .ensure_profile_presence(profile, authority.owner.account)
-                .map_err(bootstrap_failure)?;
             self.host
                 .ensure_workspace_presence(descriptor)
                 .map_err(bootstrap_failure)?;

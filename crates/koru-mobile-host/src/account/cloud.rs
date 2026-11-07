@@ -247,13 +247,16 @@ impl Host for MobileCloudHost {
         let present = host
             .store()
             .with_store(move |store| -> Result<bool, &'static str> {
-                match store.profile(profile) {
-                    Ok(stored) => Ok(stored.account.as_deref() == Some(binding.as_str())),
-                    Err(error) if error.code == koru_store_core::errors::Code::ProfileNotFound => {
-                        Ok(false)
-                    }
-                    Err(_) => Err("store_unavailable"),
-                }
+                store
+                    .profile_lifecycle_inventory()
+                    .map(|inventory| {
+                        inventory.profiles.iter().any(|stored| {
+                            stored.profile_id == profile
+                                && stored.account_binding == binding
+                                && stored.removed_at_millis.is_none()
+                        })
+                    })
+                    .map_err(|_| "store_unavailable")
             })
             .map_err(|_| Failure::Unavailable)?
             .map_err(|_| Failure::Unavailable)?;
