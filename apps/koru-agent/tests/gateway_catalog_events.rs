@@ -133,8 +133,8 @@ fn a_second_client_is_invalidated_by_the_first_clients_mutation() {
     // **The removals are not here any more, and their absence is the point.**
     // Since SP-8a, archiving, soft-deleting and restoring take
     // `workspace.destroy`, which is granted only to a caller the Agent vouched
-    // for at admission — and a test binary can never be one, because the Agent
-    // did not launch it. That is not a gap in the coverage; it is the
+    // for at admission — and a test binary can never be one, because it is not
+    // the `koru` beside the Agent. That is not a gap in the coverage; it is the
     // mechanism working. Their facts and their ordering are asserted in
     // process, where a vouched token can be minted, by
     // `every_committed_catalog_mutation_publishes_its_fact_once`.

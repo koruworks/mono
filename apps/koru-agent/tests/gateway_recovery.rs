@@ -59,8 +59,8 @@
 //!   whatever the composition offered before the kill, it offers after it.
 //! - **Workspace *migration*, and the archive/soft-delete half of removal.**
 //!   Both routes take a vouched scope, and a grant is minted only for a process
-//!   the Agent launched, so no test process can ever hold one — that mechanism
-//!   is itself asserted, in `lifecycle.rs::a_caller_the_agent_did_not_launch_is_refused_a_first_party_grant`.
+//!   running the `koru` beside the Agent, so no test process can ever hold one —
+//!   that mechanism is itself asserted, in `lifecycle.rs::a_caller_that_is_not_the_koru_app_is_refused_a_first_party_grant`.
 //!   The five-step operation is pinned against the router with a minted vouched
 //!   admission in `gateway_lifecycle.rs`, which builds `GatewayState` in
 //!   process and is host-independent by construction. What *is* driven through
@@ -1093,9 +1093,9 @@ fn a_workspace_removal_in_flight_lands_once_and_is_never_replayed_worker() {
 ///   after it. **The replacement re-resolves the Agent endpoint**, which is the
 ///   half a rehost could break: a supervised child that came back without an
 ///   Agent to ask would make every caller ordinary and nothing else would say
-///   so. The grant path's own contract — that a process the Agent did not
-///   launch is refused a grant at all — is
-///   `lifecycle.rs::a_caller_the_agent_did_not_launch_is_refused_a_first_party_grant`.
+///   so. The grant path's own contract — that a process that is not the Koru
+///   app is refused a grant at all — is
+///   `lifecycle.rs::a_caller_that_is_not_the_koru_app_is_refused_a_first_party_grant`.
 #[test]
 fn the_tasks_port_and_the_vouched_boundary_answer_the_same_on_a_replacement_worker() {
     let mut host = Host::start();

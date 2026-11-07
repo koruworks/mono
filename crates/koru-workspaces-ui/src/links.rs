@@ -15,10 +15,10 @@
 //! up by the next command.
 //!
 //! **The grant is asked for here, from this process.** The Agent vouches for a
-//! connection whose transport-read pid is one it launched, so the request must
-//! come from the window that wants the scope — which this thread is part of. It
-//! is not something the host can fetch and hand over, and it is not something a
-//! host *has* to do: the surface asks, once, at connect.
+//! connection whose transport-read pid is running the `koru` beside it, so the
+//! request must come from the window that wants the scope — which this thread
+//! is part of. It is not something the host can fetch and hand over, and it is
+//! not something a host *has* to do: the surface asks, once, at connect.
 
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};

@@ -11,8 +11,8 @@
 //!
 //! **The token is minted rather than obtained**, and that is not a shortcut
 //! being taken — it is the mechanism working. A grant is minted only for a
-//! process the Agent launched, and the Agent did not launch this test binary,
-//! so no test can ever hold one. What a test can do is arrange the state that
+//! process running the `koru` beside the Agent, and this test binary is not
+//! that, so no test can ever hold one. What a test can do is arrange the state that
 //! *follows* a successful admission, which is what `Admission::Vouched` is.
 //!
 //! **The session host is `koru-agent.exe --worker sessions`.** This file spawns
