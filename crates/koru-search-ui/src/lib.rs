@@ -32,16 +32,20 @@ mod catalog;
 mod due_picker;
 mod entity_search;
 mod filters;
+mod modal;
 mod reader;
+mod result_layout;
 mod scope;
 mod state;
 mod store;
 
 use catalog::Catalog;
 pub use entity_search::{EntityDocument, EntitySearch, EntitySearchUpdate, EntityWorkspace};
+pub use modal::SearchModal;
 #[cfg(test)]
 use reader::SearchReadResponse;
 use reader::{SearchReadKind, SearchReadResult, SearchReader};
+use result_layout::ResultContent;
 use scope::SearchScope;
 pub use state::persist_choices_in;
 use state::{
@@ -693,11 +697,12 @@ impl SearchSurface {
     }
 
     fn density_row_height() -> f32 {
-        match theme::density() {
+        let preferred = match theme::density() {
             theme::Density::Compact => 60.0,
             theme::Density::Normal => ROW_H,
             theme::Density::Comfortable => 78.0,
-        }
+        };
+        preferred.max(ResultContent::minimum_row_height())
     }
 
     fn filter_rect(&self) -> Rect {
@@ -4285,6 +4290,7 @@ impl SearchSurface {
                 );
             }
             let title_match = Self::is_title_match(&hit);
+            let content = ResultContent::new(self.list.row_height, title_match);
             let glyph = if self.ai_targets.contains_key(&hit_key(&hit)) {
                 icons::SPARKLE
             } else if hit.kind == "workspace" {
@@ -4295,7 +4301,14 @@ impl SearchSurface {
                 icons::DOCUMENT
             };
             let icon = self.engine.icon_layout(glyph, 16.0);
-            scene::draw_layout_first_line(canvas, root, &icon, PAD, y + 10.0, Some(p.text_dim));
+            scene::draw_layout_first_line(
+                canvas,
+                root,
+                &icon,
+                PAD,
+                y + content.title,
+                Some(p.text_dim),
+            );
             let content_x = PAD + 26.0;
             let content_width = (text_width - 26.0).max(0.0);
             if title_match {
@@ -4309,7 +4322,7 @@ impl SearchSurface {
                         end: span.end,
                     }),
                     content_x,
-                    y + 17.0,
+                    y + content.title,
                     content_width,
                     theme::role::row(),
                     p.text,
@@ -4326,7 +4339,7 @@ impl SearchSurface {
                     root,
                     &title,
                     content_x,
-                    y + 9.0,
+                    y + content.title,
                     Some(p.text),
                 );
             }
@@ -4339,7 +4352,7 @@ impl SearchSurface {
                 context_offset = prefix.len();
                 context = format!("{prefix}{context}");
             }
-            let context_y = if title_match { y + 41.0 } else { y + 31.0 };
+            let context_y = y + content.context;
             draw_highlighted_line(
                 canvas,
                 root,
@@ -4368,7 +4381,7 @@ impl SearchSurface {
                         end: span.end,
                     }),
                     content_x,
-                    y + 51.0,
+                    y + content.snippet,
                     content_width,
                     theme::role::meta(),
                     p.text_dim,

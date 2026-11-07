@@ -694,7 +694,10 @@ the one place Koru's Ctrl does not become Cmd. The global shortcut opens a dedic
 search window. Drag the small rail above the query to reposition it; Koru
 remembers that location on this computer. Drag its top or bottom edge to
 increase its height; Koru remembers that height too. The in-app entries remain a fixed
-620-by-400 modal over your current window. Clicking outside either search closes
+640-by-400 modal over your current window, shrinking to fit smaller windows.
+The modal lists matching results without New task or New document actions.
+Each result's selection box includes its title, location and matching excerpt.
+Clicking outside either search closes
 it. If Koru is waiting in the notification area, the shortcut opens only search;
 workspace windows stay hidden until you choose a result. On Windows, a left
 click on the tray icon brings back the workspace window you used last, and
