@@ -54,6 +54,8 @@ mod availability;
 pub use availability::*;
 mod replacement;
 pub use replacement::*;
+mod pins;
+pub use pins::*;
 mod profile_removal;
 pub use profile_removal::*;
 pub mod bundle;

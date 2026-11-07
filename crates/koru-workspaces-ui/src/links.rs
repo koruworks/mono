@@ -98,6 +98,8 @@ enum Command {
         archived: bool,
     },
     Reorder(ProfileId, Vec<WorkspaceId>),
+    Pin(WorkspaceId, bool),
+    ReconcileListing(WorkspaceId),
 }
 
 /// How the surface reaches the gateway, or the fact that it does not.
@@ -354,6 +356,20 @@ impl WorkspaceLinks {
         self.send(Command::Keyed(id, Box::new(Command::Reorder(owner, order))));
     }
 
+    pub(crate) fn pin(&self, id: crate::CommandId, workspace: WorkspaceId, pinned: bool) {
+        self.send(Command::Keyed(
+            id,
+            Box::new(Command::Pin(workspace, pinned)),
+        ));
+    }
+
+    pub(crate) fn reconcile_listing(&self, id: crate::CommandId, workspace: WorkspaceId) {
+        self.send(Command::Keyed(
+            id,
+            Box::new(Command::ReconcileListing(workspace)),
+        ));
+    }
+
     pub(crate) fn create_profile(
         &self,
         id: crate::CommandId,
@@ -482,6 +498,12 @@ fn connect(segment: &str, root: Option<&std::path::Path>) -> Option<Client> {
 fn run(client: &Client, command: Command) -> Answer {
     match command {
         Command::Keyed(id, command) => Answer::Settled(id, Box::new(run(client, *command))),
+        Command::Pin(workspace, pinned) => {
+            Answer::Pinned(client.store().set_workspace_pinned(workspace, pinned))
+        }
+        Command::ReconcileListing(workspace) => {
+            Answer::ListingReconciled(client.store().reconcile_workspace_listing(workspace))
+        }
         Command::CreateProfile(request) => {
             Answer::ProfileCreated(client.store().create_profile_with_workspace(&request))
         }

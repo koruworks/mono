@@ -15,6 +15,8 @@ Generated from the route catalog. Do not edit.
 - POST `/v1/profiles/with-workspace` — Create a Profile and its first workspace atomically; retry with the same Profile id (Public)
 - POST `/v1/profiles/{owner}/workspaces/ensure-live` — Resolve verified live content or prepare a workspace after confirming none is available (Public)
 - GET `/v1/profiles/{owner}/workspaces/authority` — Inspect committed workspace lifecycle without creating, migrating or repairing storage (Public)
+- PUT `/v1/workspaces/{workspace}/pinned` — Commit only the synced workspace pin and project its listing (Public)
+- POST `/v1/workspaces/{workspace}/reconcile-listing` — Repair the listing from verified durable workspace authority (Public)
 - PUT `/v1/profiles/{id}/account` — Atomically bind a Profile to an exact hosted Koru Identity (Public)
 - DELETE `/v1/profiles/{id}/account` — Atomically detach a hosted-deleted Profile for offline-only use (Public)
 - DELETE `/v1/profiles/{id}/local` — Mark an empty profile removed in this installation's Store catalog (Public)

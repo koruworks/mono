@@ -2794,7 +2794,6 @@ pub enum PaneRequest {
     /// raised when the manager opens rather than on any clock.
     RefreshWorkspaceStats,
     /// Sort it to the top of the switcher, or stop.
-    PinWorkspace(WorkspaceId, bool),
     /// Persist the complete profile workspace order after a manager drag.
     ReorderWorkspaces(Vec<WorkspaceId>),
     /// Keep it out of the switcher, or put it back.
@@ -2949,7 +2948,6 @@ impl PaneRequest {
             // expensive one and therefore the one worth naming.
             Self::FinishWorkspaceImport(..) => "request.finish_workspace_import",
             Self::RefreshWorkspaceStats => "request.workspace_stats",
-            Self::PinWorkspace { .. } => "request.pin_workspace",
             Self::ArchiveWorkspace { .. } => "request.archive_workspace",
             Self::RevealPath(..) => "request.reveal_path",
             Self::Relaunch => "request.relaunch",

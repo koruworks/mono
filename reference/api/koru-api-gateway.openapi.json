@@ -8792,6 +8792,21 @@
         ],
         "type": "object"
       },
+      "PinnedWorkspace": {
+        "properties": {
+          "listing": {
+            "$ref": "#/components/schemas/ListingState"
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/Workspace"
+          }
+        },
+        "required": [
+          "workspace",
+          "listing"
+        ],
+        "type": "object"
+      },
       "PopoutCloseChoice": {
         "description": "`popout_close=`. Note `RestoreTab` persists as `restore`.",
         "enum": [
@@ -17603,6 +17618,18 @@
         },
         "required": [
           "workspaces"
+        ],
+        "type": "object"
+      },
+      "WorkspacePin": {
+        "description": "`PUT /v1/workspaces/{id}/pinned` changes only the existing synced pin key.",
+        "properties": {
+          "pinned": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "pinned"
         ],
         "type": "object"
       },
@@ -35637,6 +35664,126 @@
           }
         ],
         "summary": "The checksum-verified CRDT snapshot a document version id names"
+      }
+    },
+    "/v1/workspaces/{workspace}/pinned": {
+      "put": {
+        "description": "committed workspace with applied or pending listing",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspacePin"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PinnedWorkspace"
+                }
+              }
+            },
+            "description": "committed workspace with applied or pending listing"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "no bearer token, or one that is not recognised"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "the credential does not hold the required scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "manage_workspaces"
+            ]
+          }
+        ],
+        "summary": "Commit only the synced workspace pin and project its listing"
+      }
+    },
+    "/v1/workspaces/{workspace}/reconcile-listing": {
+      "post": {
+        "description": "reconciled workspace; uncertainty refuses repair",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workspace"
+                }
+              }
+            },
+            "description": "reconciled workspace; uncertainty refuses repair"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "no bearer token, or one that is not recognised"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "the credential does not hold the required scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "manage_workspaces"
+            ]
+          }
+        ],
+        "summary": "Repair the listing from verified durable workspace authority"
       }
     },
     "/v2/runs": {

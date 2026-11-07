@@ -70,8 +70,26 @@ impl ExploreView {
                 dimmed: false,
             })
             .collect();
+        let mut workspaces = vec![current];
+        workspaces.extend(
+            self.rail_workspace_ids()
+                .into_iter()
+                .filter(|id| Some(*id) != self.current)
+                .filter_map(|id| self.workspaces.iter().find(|w| w.id == id))
+                .map(|w| Item {
+                    hit: apps_rail::Hit::Workspace(w.id),
+                    name: fill(t(lang, Key::RailSwitchWorkspace), &[&w.name]),
+                    contents: Contents::Tile {
+                        name: w.name.clone(),
+                        icon: w.icon.clone(),
+                        color: w.color.clone(),
+                    },
+                    selected: false,
+                    dimmed: false,
+                }),
+        );
         Rail {
-            workspaces: vec![current],
+            workspaces,
             views,
             foot: vec![
                 glyph(apps_rail::Hit::Help, t(lang, Key::Help), icons::QUESTION),
@@ -98,7 +116,7 @@ impl ExploreView {
     }
 
     pub(crate) fn with_rail_frame<R>(&self, at: Rect, read: impl FnOnce(&Rail, &Frame) -> R) -> R {
-        let rail = self.rail_model();
+        let rail = self.rail_model_at(at.h);
         let layout = crate::input_engine::with(|engine| {
             rail.layout(
                 engine,
@@ -137,6 +155,7 @@ impl ExploreView {
                     .unwrap_or(0),
             ),
             apps_rail::Hit::Settings => ExploreChromeFocus::RailSettings,
+            apps_rail::Hit::Overflow => ExploreChromeFocus::RailOverflow,
             apps_rail::Hit::Help => ExploreChromeFocus::RailHelp,
             apps_rail::Hit::Profile => ExploreChromeFocus::RailProfile,
         }
@@ -149,7 +168,7 @@ impl ExploreView {
         engine: &mut TextEngine,
         at: Rect,
     ) {
-        let rail = self.rail_model();
+        let rail = self.rail_model_at(at.h);
         let focus = match self.chrome_focus {
             Some(ExploreChromeFocus::Workspace(id)) => {
                 Some(id.map_or(apps_rail::Hit::WaitingWorkspace, apps_rail::Hit::Workspace))
@@ -158,6 +177,7 @@ impl ExploreView {
                 self.rail_modes().get(i).copied().map(apps_rail::Hit::App)
             }
             Some(ExploreChromeFocus::RailSettings) => Some(apps_rail::Hit::Settings),
+            Some(ExploreChromeFocus::RailOverflow) => Some(apps_rail::Hit::Overflow),
             Some(ExploreChromeFocus::RailHelp) => Some(apps_rail::Hit::Help),
             Some(ExploreChromeFocus::RailProfile) => Some(apps_rail::Hit::Profile),
             _ => None,
@@ -169,13 +189,22 @@ impl ExploreView {
         };
         let layout = rail.layout(engine, &mut self.rail_layout.borrow_mut(), at, interaction);
         let rects = rail.rectangles(&layout.frame, at);
-        let carried = self.rail_carried(&rects).map(|(index, rect)| {
-            (
-                rail_elements::key(apps_rail::Hit::App(rects.apps[index].0)),
-                rect,
-            )
-        });
-        let offsets: Vec<_> = rects
+        let carried = self
+            .rail_carried(&rects)
+            .map(|(index, rect)| {
+                (
+                    rail_elements::key(apps_rail::Hit::App(rects.apps[index].0)),
+                    rect,
+                )
+            })
+            .or_else(|| {
+                self.workspace_carried(&rects).and_then(|(index, rect)| {
+                    rects.workspaces[index]
+                        .0
+                        .map(|id| (rail_elements::key(apps_rail::Hit::Workspace(id)), rect))
+                })
+            });
+        let mut offsets: Vec<_> = rects
             .apps
             .iter()
             .enumerate()
@@ -186,6 +215,20 @@ impl ExploreView {
                 )
             })
             .collect();
+        offsets.extend(
+            rects
+                .workspaces
+                .iter()
+                .enumerate()
+                .filter_map(|(i, (id, _))| {
+                    id.map(|id| {
+                        (
+                            rail_elements::key(apps_rail::Hit::Workspace(id)),
+                            self.workspace_slides.offset(i),
+                        )
+                    })
+                }),
+        );
         layout.paint(&rail, scene, root, engine, &offsets, carried);
     }
 }

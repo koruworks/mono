@@ -70,9 +70,11 @@ pub use availability::{
     EnsuredWorkspace, VerifiedWorkspaceManifest, WorkspaceAuthority, WorkspaceAuthorityState,
     WorkspaceAvailabilityIssue, WorkspaceManifestInspection,
 };
+mod pins;
 mod preparation;
 mod removal;
 mod replacement;
+pub use pins::PinnedWorkspace;
 pub use replacement::{ListingState, MovedWorkspace, RemovedWorkspace, Replacement};
 mod profile_projection;
 pub use preparation::{CreateProfileWithWorkspace, CreatedProfile, FirstWorkspace};

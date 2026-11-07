@@ -86,6 +86,7 @@ pub(crate) mod parts {
     /// The rail's foot: Help, Settings and the profile square.
     pub const RAIL_SETTINGS: ControlPart = ControlPart::new("rail-settings");
     pub const RAIL_HELP: ControlPart = ControlPart::new("rail-help");
+    pub const RAIL_OVERFLOW: ControlPart = ControlPart::new("rail-overflow");
     pub const RAIL_PROFILE: ControlPart = ControlPart::new("rail-profile");
     /// The open popover, and the rows of it that name no object.
     pub const POPOVER: ControlPart = ControlPart::new("popover");
@@ -229,6 +230,7 @@ impl ExploreView {
                 rev.u64(popover.hover.map_or(u64::MAX, |i| i as u64));
                 // Right onto a gear moves the focus without moving the row.
                 rev.bool(self.popover_part == Some(super::PopoverPart::Gear));
+                rev.bool(self.popover_part == Some(super::PopoverPart::Pin));
                 for row in self.popover_rows() {
                     rev.str(&self.popover_row_label(row, Lang::En));
                 }
@@ -236,6 +238,10 @@ impl ExploreView {
                 rev.opt_uuid(self.current_profile.map(|id| id.as_uuid()));
                 for workspace in &self.workspaces {
                     rev.uuid(workspace.id.as_uuid());
+                    let (pinned, pending, reason) = self.workspace_pin_state(workspace.id);
+                    rev.bool(pinned)
+                        .bool(pending)
+                        .str(reason.as_deref().unwrap_or(""));
                 }
                 for profile in &self.profiles {
                     rev.uuid(profile.id.as_uuid());
@@ -259,6 +265,17 @@ impl ExploreView {
             let rows = self.popover_rows();
             let hovered = popover.hover.and_then(|i| rows.get(i).copied());
             return Some(match hovered {
+                Some(PopoverRow::Workspace(i))
+                    if self.popover_part == Some(super::PopoverPart::Pin) =>
+                {
+                    match self.workspaces.get(i) {
+                        Some(w) => cx.model(
+                            w.id.as_uuid(),
+                            ControlPart::new(super::popover_elements::PIN),
+                        ),
+                        None => cx.surface(POPOVER, parts::POPOVER),
+                    }
+                }
                 // The keyboard on a workspace's or Profile's gear is on the
                 // gear (ELEMENTS.final D2): its node, not the row's.
                 Some(PopoverRow::Workspace(i))
@@ -545,6 +562,7 @@ impl ExploreView {
             }
             ExploreChromeFocus::RailSettings => cx.surface(EXPLORE, parts::RAIL_SETTINGS),
             ExploreChromeFocus::RailHelp => cx.surface(EXPLORE, parts::RAIL_HELP),
+            ExploreChromeFocus::RailOverflow => cx.surface(EXPLORE, parts::RAIL_OVERFLOW),
             ExploreChromeFocus::RailProfile => cx.surface(EXPLORE, parts::RAIL_PROFILE),
         })
     }
@@ -688,21 +706,28 @@ impl ExploreView {
         // **A request for the gear acts on the gear** (ELEMENTS.final D2):
         // Focus lights it without choosing anything, Click opens Manage on
         // that row, whatever the keyboard was on.
-        if target.part == parts::MANAGE
+        if (target.part == parts::MANAGE
             && matches!(
                 rows[index],
                 PopoverRow::Workspace(_) | PopoverRow::Profile(_)
-            )
+            ))
+            || (target.part.name() == super::popover_elements::PIN
+                && matches!(rows[index], PopoverRow::Workspace(_)))
         {
+            let part = if target.part == parts::MANAGE {
+                super::PopoverPart::Gear
+            } else {
+                super::PopoverPart::Pin
+            };
             return match action {
                 Action::Focus => {
                     self.popover.as_mut()?.hover = Some(index);
-                    self.popover_part = Some(super::PopoverPart::Gear);
+                    self.popover_part = Some(part);
                     Some(Outcome::Consumed)
                 }
                 Action::Click => {
                     self.popover.as_mut()?.hover = Some(index);
-                    Some(self.press(rows[index], super::PopoverPart::Gear))
+                    Some(self.press(rows[index], part))
                 }
                 _ => None,
             };
@@ -812,6 +837,10 @@ impl ExploreView {
             EXPLORE => match target.part {
                 p if p == parts::RAIL_SETTINGS => Some(Outcome::OpenSettings),
                 p if p == parts::RAIL_HELP => Some(Outcome::OpenHelp),
+                p if p == parts::RAIL_OVERFLOW => {
+                    (!self.view_projection(self.rail_of(area).h).folded.is_empty())
+                        .then_some(Outcome::OpenRailOverflow)
+                }
                 p if p == parts::RAIL_PROFILE => {
                     self.toggle_profile_popover();
                     Some(Outcome::Consumed)
@@ -854,8 +883,29 @@ impl ExploreView {
         frame
             .semantics()
             .iter()
-            .map(|node| element_node(cx, node))
+            .map(|node| {
+                let mut node = element_node(cx, node);
+                self.describe_workspace_pins(&mut node);
+                node
+            })
             .collect()
+    }
+
+    fn describe_workspace_pins(&self, node: &mut SemanticNode) {
+        if node.occurrence.part.name() == super::popover_elements::PIN {
+            if let Some(workspace) = self
+                .workspaces
+                .iter()
+                .find(|w| node.occurrence.object == object_of(w.id.as_uuid()))
+            {
+                let (_, pending, reason) = self.workspace_pin_state(workspace.id);
+                node.description = reason;
+                node.busy = pending;
+            }
+        }
+        for child in &mut node.children {
+            self.describe_workspace_pins(child);
+        }
     }
 }
 
@@ -868,6 +918,7 @@ fn element_occurrence(cx: &Context, key: koru_draw::el::Key) -> Occurrence {
         match key.part {
             "views" => return cx.surface(EXPLORE, parts::MODES),
             "help" => return cx.surface(EXPLORE, parts::RAIL_HELP),
+            "overflow" => return cx.surface(EXPLORE, parts::RAIL_OVERFLOW),
             "settings" => return cx.surface(EXPLORE, parts::RAIL_SETTINGS),
             "profile" => return cx.surface(EXPLORE, parts::RAIL_PROFILE),
             part if NavigatorMode::parse(part).is_some() => {

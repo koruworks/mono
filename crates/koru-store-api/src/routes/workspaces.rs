@@ -51,6 +51,7 @@ use crate::auth::Caller;
 use crate::error::{ApiError, ApiResult};
 use crate::state::AppState;
 
+pub mod pins;
 pub(crate) mod profile_removal;
 mod replacement;
 pub use replacement::{archive_replacing, delete_replacing, move_replacing};

@@ -6498,18 +6498,18 @@ fn the_workspace_popover_owns_the_resize_grip_under_its_rows() {
         .find(|(row, _)| matches!(row, crate::panes::explore::PopoverRow::Workspace(0)))
         .expect("the workspace row");
     let grip = v.sidebar_grip();
-    // Where the row's gear and the grip overlap. Since ELEMENTS P4 a
+    // Where the row's pin and the grip overlap. Since ELEMENTS P4 a
     // target owns its start edge and not its end edge, so the point is the
-    // middle of the overlap, not the gear's last line.
-    let gear = v
+    // middle of the overlap, not the pin's last line.
+    let pin = v
         .explore
         .workspace_row_parts(crate::panes::explore::PopoverRow::Workspace(0), rect)
-        .trailing;
-    let left = gear.x.max(grip.x);
-    let right = (gear.x + gear.w).min(grip.x + grip.w);
+        .pin;
+    let left = pin.x.max(grip.x);
+    let right = (pin.x + pin.w).min(grip.x + grip.w);
     assert!(
         left < right,
-        "this test point is where the gear and the grip overlap"
+        "this test point is where the pin and the grip overlap"
     );
     let x = (left + right) * 0.5;
     let y = rect.centre().1;
@@ -6521,12 +6521,8 @@ fn the_workspace_popover_owns_the_resize_grip_under_its_rows() {
         v.sidebar_drag.is_none(),
         "the underlying grip did not start"
     );
-    // The press is the row's — its trailing end, where the grip overlaps,
-    // is the gear, so the Manage tab opens on the workspace.
-    assert!(
-        matches!(v.tabs().active_tab().view, TabView::Manage(_)),
-        "the gear under the grip opened Manage"
-    );
+    assert!(v.explore.popover_open(), "pinning keeps the menu open");
+    assert!(!matches!(v.tabs().active_tab().view, TabView::Manage(_)));
     let _ = workspace_id;
 }
 

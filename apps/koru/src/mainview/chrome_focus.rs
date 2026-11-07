@@ -129,6 +129,12 @@ impl MainView {
                 moved = true;
             }
         }
+        super::chrome_debug::chrome_debug!(
+            "focus rotation {:?} -> {:?}; chrome={:?}",
+            was,
+            next,
+            self.chrome_focus
+        );
         moved || was != Some(next)
     }
 
@@ -148,6 +154,25 @@ impl MainView {
         // until it shuts; the stop takes over again after.
         if self.explore.popover_open() {
             return false;
+        }
+        if let ChromeStop::Apps(i) = stop
+            && let ExploreChromeFocus::Workspace(Some(workspace)) = self.rail_focus(i)
+            && let Some(up) = move_chord(key, text, mods)
+        {
+            if let Some(outcome) = self.explore.nudge_workspace(workspace, up) {
+                self.apply(ws, outcome);
+                if let Some(index) = self
+                    .explore
+                    .rail_controls(self.rail_area())
+                    .iter()
+                    .position(|hit| {
+                        *hit == crate::panes::sidebar::apps_rail::Hit::Workspace(workspace)
+                    })
+                {
+                    self.chrome_focus = Some(ChromeStop::Apps(index));
+                }
+            }
+            return true;
         }
         if let ChromeStop::Apps(i) = stop
             && let ExploreChromeFocus::App(app) = self.rail_focus(i)
@@ -251,6 +276,9 @@ impl MainView {
             // it, so Enter on Help did nothing and on the profile square
             // opened Help (found in D96).
             ChromeStop::Apps(i) => match self.rail_focus(i) {
+                ExploreChromeFocus::Workspace(Some(id)) if Some(id) != self.current_workspace() => {
+                    self.open_workspace(id);
+                }
                 ExploreChromeFocus::Workspace(_) => {
                     self.open_workspaces_popover();
                 }
@@ -261,6 +289,9 @@ impl MainView {
                 }
                 ExploreChromeFocus::RailHelp => {
                     self.open_help_beside();
+                }
+                ExploreChromeFocus::RailOverflow => {
+                    self.open_rail_overflow();
                 }
                 ExploreChromeFocus::RailSettings => {
                     self.explore.close_popover();

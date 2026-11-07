@@ -482,6 +482,7 @@ pub enum PopoverPart {
     Row,
     /// The gear at a workspace's or profile's trailing end: the Manage tab.
     Gear,
+    Pin,
     /// One of a head row's buttons.
     Button(HeadButton),
 }
@@ -587,6 +588,7 @@ struct RowDrag {
 /// the keyboard is; the column only paints it.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum ExploreChromeFocus {
+    RailOverflow,
     Workspace(Option<WorkspaceId>),
     App(usize),
     RailSettings,
@@ -604,9 +606,10 @@ pub struct WorkspaceRowParts {
     pub chip: Rect,
     /// What is left for the name, before the trailing lane.
     pub name: Rect,
-    /// Where a pinned workspace's pin mark sits. A mark, not a control: pin
-    /// and unpin live in the workspace manager.
+    /// The workspace's Manage gear, before the pin control.
     pub trailing: Rect,
+    /// The separate pin/unpin control at the right edge.
+    pub pin: Rect,
 }
 
 /// A row pinned to the floor of the column, below the library.
@@ -675,6 +678,8 @@ pub struct ExploreView {
     rail_order: RailOrder,
     /// A view's square held by the pointer.
     rail_drag: Option<apps_rail_drag::RailDrag>,
+    workspace_drag: Option<apps_rail_drag::workspaces::WorkspaceDrag>,
+    workspace_slides: TabSlides,
     /// The slide the rail's views ride when the order changes under them —
     /// the tab strip's own.
     rail_slides: TabSlides,
@@ -820,6 +825,7 @@ pub struct ExploreView {
     /// **Never asked per frame** — see where it is set.
     trash_count: usize,
     workspace_notice: Option<String>,
+    workspace_controller: Option<crate::manage::SharedWorkspaces>,
     workspace_waiting: Option<String>,
     /// Which row's `…` menu is open, so the button stays visible while it is.
     menu_row: Option<NodeId>,
@@ -3098,6 +3104,15 @@ impl ExploreView {
         workspaces: Vec<WorkspaceEntry>,
         current: impl Into<Option<WorkspaceId>>,
     ) -> bool {
+        let previous_hover = self.live().and_then(|popover| popover.hover);
+        let focused_workspace = self
+            .live()
+            .and_then(|p| p.hover)
+            .and_then(|index| self.popover_rows().get(index).copied())
+            .and_then(|row| match row {
+                PopoverRow::Workspace(i) => self.workspaces.get(i).map(|w| w.id),
+                _ => None,
+            });
         let current = current.into();
         let changed = self.profiles != profiles
             || self.current_profile != Some(current_profile)
@@ -3107,7 +3122,63 @@ impl ExploreView {
         self.current_profile = Some(current_profile);
         self.workspaces = workspaces;
         self.current = current;
+        self.check_workspace_drag_membership();
+        if let Some(id) = focused_workspace {
+            let rows = self.popover_rows();
+            if rows
+                .iter()
+                .any(|row| matches!(row, PopoverRow::Workspace(i) if self.workspaces[*i].id == id))
+            {
+                self.highlight_popover_workspace(id);
+            } else {
+                let workspace_rows: Vec<_> = rows
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, row)| matches!(row, PopoverRow::Workspace(_)).then_some(i))
+                    .collect();
+                let next = workspace_rows
+                    .iter()
+                    .copied()
+                    .find(|i| *i >= previous_hover.unwrap_or(0))
+                    .or_else(|| workspace_rows.last().copied());
+                if let Some(popover) = self.popover.as_mut() {
+                    popover.hover = next.or_else(|| {
+                        rows.iter()
+                            .position(|row| *row == PopoverRow::WorkspacesHeading)
+                    });
+                }
+                if next.is_none() {
+                    self.popover_part = Some(PopoverPart::Gear);
+                }
+            }
+        }
         changed
+    }
+
+    pub(crate) fn set_workspace_controller(&mut self, controller: crate::manage::SharedWorkspaces) {
+        self.workspace_controller = Some(controller);
+    }
+
+    pub(crate) fn workspace_pin_state(&self, id: WorkspaceId) -> (bool, bool, Option<String>) {
+        if let Some(controller) = &self.workspace_controller {
+            let controller = controller.borrow();
+            let wid = crate::manage::workspaces::catalog_workspace(id);
+            if let Some(row) = controller.row(wid) {
+                return (
+                    controller.effective_pinned(row),
+                    controller.pending_pin(wid).is_some(),
+                    controller.reason_for(&koru_workspaces_ui::Action::TogglePinned(wid), row),
+                );
+            }
+        }
+        (
+            self.workspaces
+                .iter()
+                .find(|w| w.id == id)
+                .is_some_and(|w| w.pinned),
+            false,
+            None,
+        )
     }
 
     /// Every Profile's workspaces, so the switcher can list one that is not
@@ -3447,6 +3518,11 @@ impl ExploreView {
                 if self.workspace_waiting.is_some() || self.workspace_notice.is_some() {
                     out.push(PopoverRow::WorkspaceNotice);
                 }
+                if self.workspace_retryable() {
+                    out.push(PopoverRow::WorkspaceAction(
+                        workspace_menu_elements::MenuAction::Retry,
+                    ));
+                }
                 // The chip's page ends with its workspaces: sync, settings
                 // and help are the rail's now (the review's note).
                 out
@@ -3713,12 +3789,14 @@ impl ExploreView {
                 chip: empty,
                 name: empty,
                 trailing: empty,
+                pin: empty,
             };
         };
         self.workspace_parts_in(i, r).unwrap_or(WorkspaceRowParts {
             chip: empty,
             name: empty,
             trailing: empty,
+            pin: empty,
         })
     }
 
@@ -3854,6 +3932,7 @@ impl ExploreView {
     /// heading words also retain the page; navigation closes it.
     fn stays_open(row: PopoverRow, part: PopoverPart) -> bool {
         match row {
+            PopoverRow::Workspace(_) if part == PopoverPart::Pin => true,
             PopoverRow::WorkspaceAction(action) => {
                 action == workspace_menu_elements::MenuAction::Import
             }
@@ -3883,6 +3962,9 @@ impl ExploreView {
     /// keyboard has moved onto a workspace's gear, else the row itself.
     fn keyboard_part(&self, row: PopoverRow) -> PopoverPart {
         match row {
+            PopoverRow::Workspace(_) if self.popover_part == Some(PopoverPart::Pin) => {
+                PopoverPart::Pin
+            }
             PopoverRow::WorkspacesHeading => PopoverPart::Gear,
             PopoverRow::ProfilesFooter => PopoverPart::Button(HeadButton::New),
             PopoverRow::Workspace(_) | PopoverRow::Profile(_)
@@ -3903,7 +3985,13 @@ impl ExploreView {
                 let Some(id) = self.workspaces.get(i).map(|w| w.id) else {
                     return Outcome::Consumed;
                 };
-                if part == PopoverPart::Gear {
+                if part == PopoverPart::Pin {
+                    if self.workspace_pin_state(id).2.is_some() {
+                        Outcome::Consumed
+                    } else {
+                        Outcome::ToggleWorkspacePin(id)
+                    }
+                } else if part == PopoverPart::Gear {
                     Outcome::ManageWorkspace(id)
                 } else {
                     Outcome::SwitchWorkspace(id)
@@ -4012,10 +4100,24 @@ impl ExploreView {
             // — the foot included, one stop as it has always been — they
             // mean nothing here and fall through.
             Key::Named(NamedKey::ArrowRight)
+                if matches!(hovered, Some(PopoverRow::Workspace(_)))
+                    && self.popover_part == Some(PopoverPart::Gear) =>
+            {
+                self.popover_part = Some(PopoverPart::Pin);
+                Some(Outcome::Consumed)
+            }
+            Key::Named(NamedKey::ArrowLeft)
+                if matches!(hovered, Some(PopoverRow::Workspace(_)))
+                    && self.popover_part == Some(PopoverPart::Pin) =>
+            {
+                self.popover_part = Some(PopoverPart::Gear);
+                Some(Outcome::Consumed)
+            }
+            Key::Named(NamedKey::ArrowRight)
                 if matches!(
                     hovered,
                     Some(PopoverRow::Workspace(_) | PopoverRow::Profile(_))
-                ) && self.popover_part != Some(PopoverPart::Gear) =>
+                ) && self.popover_part.is_none() =>
             {
                 self.popover_part = Some(PopoverPart::Gear);
                 Some(Outcome::Consumed)
@@ -4032,7 +4134,7 @@ impl ExploreView {
             // Enter chooses the lit part — the gear, a head's `+` when a head
             // is lit, else the row — and shuts the popover when that choice
             // is the end of it.
-            Key::Named(NamedKey::Enter) => Some(match hovered {
+            Key::Named(NamedKey::Enter | NamedKey::Space) => Some(match hovered {
                 Some(row) => self.press(row, self.keyboard_part(row)),
                 None => {
                     self.close_popover();
@@ -4192,14 +4294,17 @@ impl ExploreView {
         match self.rail_hit(rail, x, y) {
             Some(apps_rail::Hit::Workspace(id)) if self.current != Some(id) => {
                 self.close_popover();
-                Outcome::SwitchWorkspace(id)
+                self.begin_workspace_drag(id, &rects, y);
+                Outcome::Consumed
             }
             Some(apps_rail::Hit::Workspace(_)) | Some(apps_rail::Hit::WaitingWorkspace) => {
                 self.toggle_popover(PopoverKind::Summary);
                 Outcome::Consumed
             }
             Some(apps_rail::Hit::App(mode)) => {
-                if let Some((_, square)) = rects.apps.iter().find(|(m, _)| *m == mode) {
+                if self.view_projection(rail.h).promoted != Some(mode)
+                    && let Some((_, square)) = rects.apps.iter().find(|(m, _)| *m == mode)
+                {
                     self.begin_rail_drag(mode, *square, y);
                 }
                 self.set_navigator_mode(mode);
@@ -4213,6 +4318,7 @@ impl ExploreView {
                 self.close_popover();
                 Outcome::OpenSettings
             }
+            Some(apps_rail::Hit::Overflow) => Outcome::OpenRailOverflow,
             Some(apps_rail::Hit::Help) => Outcome::OpenHelp,
             Some(apps_rail::Hit::Profile) => {
                 self.toggle_profile_popover();
@@ -4254,7 +4360,7 @@ impl ExploreView {
     /// The glyph the mode switcher draws for each mode. Its own function so
     /// drawing and the test agree on one answer: the Agents mark is a robot
     /// (Q-E7 P7), the per-row session icons are the products' own marks (P6).
-    fn navigator_mode_icon(mode: NavigatorMode) -> char {
+    pub(crate) fn navigator_mode_icon(mode: NavigatorMode) -> char {
         match mode {
             // Two sheets, a folder, an offset check (the review's notes, E69):
             // marks that read as places rather than as one page each.
@@ -5587,6 +5693,7 @@ impl ExploreView {
             || self.hold_reveal_pending()
             || self.rail.animating()
             || self.rail_slides.animating()
+            || self.workspace_slides.animating()
             || self.runs_turning()
     }
 
@@ -5637,8 +5744,10 @@ impl ExploreView {
     /// whether anything moved. Called from the container's `advance` pass so
     /// every motion in the window runs off one `Instant`.
     pub fn advance_drag(&mut self, ws: &WorkspaceDoc, now: Instant) -> bool {
-        let mut moved =
-            self.slides.advance(now) | self.rail.advance(now) | self.rail_slides.advance(now);
+        let mut moved = self.slides.advance(now)
+            | self.rail.advance(now)
+            | self.rail_slides.advance(now)
+            | self.workspace_slides.advance(now);
         if !self.drag_armed() {
             self.drag_tick = Some(now);
             return moved;
@@ -8009,6 +8118,7 @@ mod canvases;
 mod heading_elements;
 pub mod home_nav;
 pub mod rail;
+mod rail_overflow;
 mod slides;
 pub(crate) mod workspace_menu_elements;
 

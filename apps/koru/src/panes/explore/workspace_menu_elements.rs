@@ -14,6 +14,7 @@ pub enum MenuAction {
     New,
     Import,
     Trash,
+    Retry,
 }
 
 impl MenuAction {
@@ -25,6 +26,7 @@ impl MenuAction {
                 Self::New => "new-workspace",
                 Self::Import => "workspace-import",
                 Self::Trash => "workspace-trash",
+                Self::Retry => "workspace-retry",
             },
         )
     }
@@ -35,6 +37,7 @@ impl MenuAction {
             Self::New => Words::TerminalNewWorkspace,
             Self::Import => Words::WorkspacesImport,
             Self::Trash => Words::WorkspacesTrash,
+            Self::Retry => Words::TryAgain,
         }
     }
 
@@ -44,13 +47,20 @@ impl MenuAction {
             Self::New => Outcome::NewWorkspace,
             Self::Import => Outcome::ImportContent,
             Self::Trash => Outcome::OpenTrash,
+            Self::Retry => Outcome::RetryWorkspaceOperation,
         }
     }
 
     pub(crate) fn from_key(key: Key) -> Option<Self> {
-        [Self::Sync, Self::New, Self::Import, Self::Trash]
-            .into_iter()
-            .find(|action| action.key() == key)
+        [
+            Self::Sync,
+            Self::New,
+            Self::Import,
+            Self::Trash,
+            Self::Retry,
+        ]
+        .into_iter()
+        .find(|action| action.key() == key)
     }
 }
 
@@ -263,6 +273,7 @@ impl ExploreView {
             MenuAction::Import => koru_draw::icons::IMPORT,
             MenuAction::Trash => koru_draw::icons::TRASH,
             MenuAction::Sync => koru_draw::icons::ARROWS_CLOCKWISE,
+            MenuAction::Retry => koru_draw::icons::ARROWS_CLOCKWISE,
         };
         let mut item = row("Workspace menu action")
             .id(action.key())
@@ -319,7 +330,22 @@ impl ExploreView {
                     .wrap(),
             );
         }
+        if self.workspace_retryable() {
+            foot = foot.child(self.workspace_menu_action(MenuAction::Retry));
+        }
         foot
+    }
+
+    pub(crate) fn workspace_retryable(&self) -> bool {
+        self.workspace_controller
+            .as_ref()
+            .is_some_and(|controller| {
+                let controller = controller.borrow();
+                self.current_profile
+                    .and_then(|id| koru_store_core::ids::ProfileId::parse(&id.to_storage()))
+                    .and_then(|id| controller.notice_for(id))
+                    .is_some_and(|notice| notice.is_retryable())
+            })
     }
 }
 

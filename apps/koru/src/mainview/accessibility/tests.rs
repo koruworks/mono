@@ -38,6 +38,36 @@ fn seated() -> (MainView, Workspace) {
     (v, w)
 }
 
+#[test]
+fn f6_and_rail_arrow_focus_moves_invalidate_the_native_projection() {
+    koru_features::testing::with(koru_features::Features::ALL_OFF, || {
+        let (mut view, mut workspace) = seated();
+        let before = view.semantics_revision();
+        assert!(view.focus_chrome());
+        let lane = view.semantics_revision();
+        assert_ne!(before, lane);
+        let lane_focus = view.accessibility_focus(VIEW);
+        assert!(view.focus_chrome());
+        let rail = view.semantics_revision();
+        assert_ne!(lane, rail);
+        let rail_focus = view.accessibility_focus(VIEW);
+        assert_ne!(lane_focus, rail_focus);
+        assert!(view.chrome_focus_key(
+            &mut workspace.ws,
+            &Key::Named(NamedKey::ArrowDown),
+            None,
+            winit::keyboard::ModifiersState::empty()
+        ));
+        assert_ne!(view.semantics_revision(), rail);
+        assert_ne!(view.accessibility_focus(VIEW), rail_focus);
+        assert!(
+            nodes(&view)
+                .iter()
+                .any(|node| Some(node.occurrence.clone()) == view.accessibility_focus(VIEW))
+        );
+    });
+}
+
 /// The tree this window would publish right now, flattened for searching.
 fn nodes(v: &MainView) -> Vec<SemanticNode> {
     let mut out = Vec::new();

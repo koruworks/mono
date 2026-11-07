@@ -229,8 +229,8 @@ fn the_semantic_tree_puts_the_gear_beside_its_row() {
     assert_eq!(menu.label.as_deref(), Some("Workspaces"));
     assert_eq!(
         menu.size_of_set,
-        Some(11),
-        "three primaries, three gears and five fixed actions"
+        Some(14),
+        "three primaries, three pins, three gears and five fixed actions"
     );
     let roles: Vec<_> = menu.children.iter().map(|c| c.role).collect();
     assert_eq!(roles[1], AkRole::Heading);
@@ -241,8 +241,23 @@ fn the_semantic_tree_puts_the_gear_beside_its_row() {
             .all(|(i, r)| i == 1 || *r == AkRole::MenuItem)
     );
     for (i, w) in v.workspaces.iter().enumerate() {
-        let primary = &menu.children[3 + i * 2];
-        let gear = &menu.children[4 + i * 2];
+        let primary = &menu.children[3 + i * 3];
+        let gear = &menu.children[4 + i * 3];
+        let pin = &menu.children[5 + i * 3];
+        assert_eq!(
+            pin.occurrence,
+            Occurrence::model(
+                WindowSlot::from_raw(1),
+                ViewSlot::from_raw(1),
+                w.id.as_uuid(),
+                ControlPart::new(PIN)
+            )
+        );
+        assert_eq!(
+            pin.label.as_deref(),
+            Some(format!("Pin {} to the rail", w.name).as_str())
+        );
+        assert_eq!(pin.actions, [AkAction::Click, AkAction::Focus]);
         // The locator and name each row has always had: the workspace's
         // own id and root part, and its title.
         assert_eq!(
@@ -256,7 +271,7 @@ fn the_semantic_tree_puts_the_gear_beside_its_row() {
             "today's locator"
         );
         assert_eq!(primary.label.as_deref(), Some(w.name.as_str()));
-        assert_eq!(primary.position, Some(2 + i * 2));
+        assert_eq!(primary.position, Some(2 + i * 3));
         assert_eq!(primary.selected, Some(v.current == Some(w.id)));
         assert_eq!(
             gear.occurrence,
@@ -721,6 +736,73 @@ fn right_reaches_the_gear_and_enter_opens_manage() {
         Some(Outcome::ManageWorkspace(id))
     );
     assert!(v.live().is_none(), "Manage is the end of the page");
+}
+
+#[test]
+fn catalog_refresh_keeps_the_same_workspace_and_pin_part_even_when_its_index_is_unchanged() {
+    let mut view = opened(workspaces(3));
+    let id = view.workspaces[1].id;
+    view.highlight_popover_workspace(id);
+    view.popover_part = Some(PopoverPart::Pin);
+    let cx = cx(area(dtheme::SIDEBAR_MIN_W), Lang::En);
+    let focus = view.accessible_focus(&cx);
+    let profile = view.current_profile.unwrap();
+    view.set_context(
+        view.profiles.clone(),
+        profile,
+        view.workspaces.clone(),
+        view.current,
+    );
+    assert_eq!(view.accessible_focus(&cx), focus);
+    let mut changed = view.workspaces.clone();
+    changed[2].pinned = true;
+    changed[1].name = "Renamed remotely".into();
+    view.set_context(view.profiles.clone(), profile, changed, view.current);
+    assert_eq!(view.accessible_focus(&cx), focus);
+    assert_eq!(view.popover_part, Some(PopoverPart::Pin));
+}
+
+#[test]
+fn space_toggles_the_pin_and_a_vanished_row_moves_focus_to_its_neighbor() {
+    use winit::keyboard::{Key as WKey, NamedKey};
+    let mut view = opened(workspaces(3));
+    let id = view.workspaces[1].id;
+    let next = view.workspaces[2].id;
+    view.highlight_popover_workspace(id);
+    view.popover_key(&WKey::Named(NamedKey::ArrowRight));
+    assert_eq!(view.popover_part, Some(PopoverPart::Gear));
+    view.popover_key(&WKey::Named(NamedKey::ArrowRight));
+    assert_eq!(view.popover_part, Some(PopoverPart::Pin));
+    assert_eq!(
+        view.popover_key(&WKey::Named(NamedKey::Space)),
+        Some(Outcome::ToggleWorkspacePin(id))
+    );
+    assert!(view.popover_open());
+    let remaining: Vec<_> = view
+        .workspaces
+        .iter()
+        .filter(|row| row.id != id)
+        .cloned()
+        .collect();
+    let profile = view.current_profile.unwrap();
+    view.set_context(view.profiles.clone(), profile, remaining, view.current);
+    let cx = cx(area(dtheme::SIDEBAR_MIN_W), Lang::En);
+    assert_eq!(
+        view.accessible_focus(&cx),
+        Some(Occurrence::model(
+            WindowSlot::from_raw(1),
+            ViewSlot::from_raw(1),
+            next.as_uuid(),
+            ControlPart::new(PIN)
+        ))
+    );
+    assert_eq!(view.popover_part, Some(PopoverPart::Pin));
+    view.set_context(view.profiles.clone(), profile, vec![], None);
+    assert_eq!(
+        view.popover_hover().map(|i| view.popover_rows()[i]),
+        Some(PopoverRow::WorkspacesHeading)
+    );
+    assert_eq!(view.popover_part, Some(PopoverPart::Gear));
 }
 
 // ------------------------------------------------------ the Profiles page (P5)

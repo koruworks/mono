@@ -9313,9 +9313,6 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 }
             }
             PaneRequest::DownloadFile(id) => self.download_file(id),
-            PaneRequest::PinWorkspace(id, on) => {
-                self.set_workspace_flag(id, WorkspaceFlag::Pinned(on));
-            }
             PaneRequest::ReorderWorkspaces(ids) => self.reorder_workspaces(&ids),
             PaneRequest::ArchiveWorkspace(id, on) => {
                 self.archive_workspace(id, on);
@@ -19100,7 +19097,7 @@ fn queue_agent_snooze(queue: &mut Vec<PaneRequest>, intent: crate::ReminderSnooz
     queue.insert(0, PaneRequest::ReminderSnooze(intent));
 }
 
-/// One change to a workspace's switcher appearance — the three verbs that
+/// One change to a workspace's switcher appearance — the two verbs that
 /// share `set_workspace_flag`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum WorkspaceFlag {
@@ -19108,7 +19105,6 @@ enum WorkspaceFlag {
         icon: Option<String>,
         color: Option<String>,
     },
-    Pinned(bool),
     Archived(bool),
 }
 
@@ -19136,7 +19132,6 @@ impl WorkspaceFlag {
                 profile.set_workspace_icon(id, icon.as_deref())?;
                 profile.set_workspace_color(id, color.as_deref())
             }
-            Self::Pinned(on) => profile.set_workspace_pinned(id, *on),
             Self::Archived(on) => profile.set_workspace_archived(id, *on),
         }
     }
@@ -19157,7 +19152,6 @@ impl WorkspaceFlag {
                 values.icon = icon.clone();
                 values.color = color.clone();
             }
-            Self::Pinned(on) => values.pinned = *on,
             Self::Archived(on) => values.archived = *on,
         }
         values
@@ -19326,13 +19320,6 @@ mod tests {
             }
         );
         assert_eq!(
-            WorkspaceFlag::Pinned(false).applied_to(&workspace),
-            WorkspaceAppearance {
-                pinned: false,
-                ..base.clone()
-            }
-        );
-        assert_eq!(
             WorkspaceFlag::Archived(true).applied_to(&workspace),
             WorkspaceAppearance {
                 archived: true,
@@ -19355,13 +19342,12 @@ mod tests {
         }
         .apply(&mut profile, id)
         .unwrap();
-        WorkspaceFlag::Pinned(true).apply(&mut profile, id).unwrap();
         let entry = profile.workspace(id).unwrap();
         assert_eq!(entry.icon.as_deref(), Some("📚"));
         assert_eq!(entry.color.as_deref(), Some("blue"));
-        assert!(entry.pinned);
+        assert!(!entry.pinned);
         assert!(
-            WorkspaceFlag::Pinned(true)
+            WorkspaceFlag::Archived(true)
                 .apply(&mut profile, WorkspaceId::new())
                 .is_err(),
             "an id the profile does not hold is still an error on this path"

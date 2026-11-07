@@ -336,7 +336,17 @@ fn arrange(case: &Case) -> ExploreView {
             v.mouse_move(area, VIEW, r.x + r.w * 0.4, r.y + r.h * 0.5);
         }
         State::HoverGear => {
-            let lane = trailing_lane(list_row(2));
+            let (row, rect) = rects
+                .iter()
+                .filter(|(row, _)| matches!(row, PopoverRow::Workspace(_) | PopoverRow::Profile(_)))
+                .nth(2)
+                .copied()
+                .expect("the third row");
+            let lane = if matches!(row, PopoverRow::Workspace(_)) {
+                v.workspace_row_parts(row, rect).trailing
+            } else {
+                trailing_lane(rect)
+            };
             v.mouse_move(area, VIEW, lane.x + lane.w * 0.5, lane.y + lane.h * 0.5);
         }
         State::Keyboard => {
@@ -1041,7 +1051,11 @@ fn the_gears_hit_region_is_the_whole_trailing_lane() {
                 if !matches!(row, PopoverRow::Workspace(_) | PopoverRow::Profile(_)) {
                     continue;
                 }
-                let lane = trailing_lane(r);
+                let lane = if matches!(row, PopoverRow::Workspace(_)) {
+                    v.workspace_row_parts(row, r).trailing
+                } else {
+                    trailing_lane(r)
+                };
                 let inset = 0.5;
                 for (x, y) in [
                     (lane.x + inset, lane.y + inset),

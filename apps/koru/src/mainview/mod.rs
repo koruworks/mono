@@ -96,6 +96,7 @@ pub mod panes;
 mod place_chooser;
 mod profile_probe;
 mod profile_wait;
+mod rail_overflow;
 mod recording;
 mod reminder_creation;
 mod reminder_management;
@@ -1136,6 +1137,7 @@ pub struct MainView {
     /// Where `F6` has put the keyboard on the sidebar's chrome, if anywhere
     /// (`chrome_focus.rs`).
     chrome_focus: Option<chrome_focus::ChromeStop>,
+    folded_rail_focus: Option<crate::panes::explore::NavigatorMode>,
     /// The sidebar's fold in flight: when it began and whether it is
     /// opening. `None` at rest. The slide itself is the panel's; this is the
     /// clock the fade and the riding chain read (`theme::motion::pane_fold`).
@@ -1954,6 +1956,7 @@ impl MainView {
             nested: None,
             toggle_tip_muted: false,
             chrome_focus: None,
+            folded_rail_focus: None,
             fold: None,
             reduced_motion: koru_workspace_host::environment::reduced_motion().unwrap_or(false),
             chats_looking: std::collections::HashSet::new(),
@@ -4174,6 +4177,8 @@ impl MainView {
 
     fn item_is_enabled(&self, menu: &ContextMenu, action: MenuAction) -> bool {
         match &menu.subject {
+            MenuSubject::RailOverflow => matches!(action, MenuAction::RailView { mode, .. }
+                if self.explore.view_projection(self.rail_area().h).folded.contains(&mode)),
             MenuSubject::NewTab => match action {
                 // A profile row reflects the off-thread presence probe: a
                 // shell whose executable is not on this machine is dimmed
@@ -4559,6 +4564,18 @@ impl MainView {
             return false;
         }
         match subject {
+            MenuSubject::RailOverflow => match action {
+                MenuAction::RailView { mode, .. }
+                    if self
+                        .explore
+                        .view_projection(self.rail_area().h)
+                        .folded
+                        .contains(&mode) =>
+                {
+                    self.show_navigator(mode)
+                }
+                _ => false,
+            },
             MenuSubject::NewTab => match action {
                 MenuAction::NewDocument => self.new_tab(),
                 MenuAction::NewCanvas => self.new_canvas(),
@@ -7757,6 +7774,7 @@ impl MainView {
             Outcome::NewChildDocument(parent) => self.prompt_new_child_document(parent),
             Outcome::Search => self.open_search(),
             Outcome::OpenHelp => self.open_help_beside(),
+            Outcome::OpenRailOverflow => self.open_rail_overflow(),
             Outcome::OpenNode(id)
                 if self.explore.navigator_mode() == crate::panes::explore::NavigatorMode::Files =>
             {
@@ -7844,7 +7862,37 @@ impl MainView {
             // Swapping the open document, picking a folder and starting a
             // process are all the shell's; a view has neither the data
             // directory nor a `Window`. So each is recorded and drained.
-            Outcome::SwitchWorkspace(id) => self.switch_workspace_here(id),
+            Outcome::SwitchWorkspace(id) => self.open_workspace(id),
+            Outcome::ToggleWorkspacePin(id) => {
+                let handled = self
+                    .act_on_listed(id, |controller, workspace| {
+                        controller.perform(koru_workspaces_ui::Action::TogglePinned(workspace));
+                    })
+                    .is_some();
+                self.arm_workspaces_poll();
+                handled
+            }
+            Outcome::RetryWorkspaceOperation => {
+                if let Some(owner) = self.current_profile_id() {
+                    self.workspace_controller
+                        .borrow_mut()
+                        .retry_for(crate::manage::workspaces::catalog_profile(owner));
+                }
+                self.arm_workspaces_poll();
+                true
+            }
+            Outcome::ReorderWorkspace { workspace, before } => {
+                let handled = self
+                    .act_on_listed(workspace, |controller, workspace| {
+                        controller.reorder_before(
+                            workspace,
+                            before.map(crate::manage::workspaces::catalog_workspace),
+                        )
+                    })
+                    .unwrap_or(false);
+                self.arm_workspaces_poll();
+                handled
+            }
             // The popover stays open on its main page, and lists the new
             // Profile's workspaces once the switch has happened (the review's
             // artboard). The window lands on the workspace that Profile
@@ -10167,6 +10215,9 @@ impl MainView {
         }
         // A rail view drops into its slot wherever the pointer let go; its
         // order reaches the session file at the next capture.
+        if let Some(outcome) = self.explore.release_workspace_drag(self.rail_area()) {
+            return self.apply(ws, outcome);
+        }
         if self.explore.rail_dragging() {
             return self.explore.rail_drag_release(self.rail_area());
         }
@@ -11257,6 +11308,10 @@ impl View for MainView {
     }
 
     fn set_viewport(&mut self, w: f32, h: f32) {
+        let rail_focus = self.focused_rail_identity();
+        if self.viewport != (w, h) {
+            self.explore.cancel_rail_drag(self.rail_area());
+        }
         self.viewport = (w, h);
         let bounds = self.search_bounds();
         if let Some(search) = self.search.as_mut() {
@@ -11264,6 +11319,7 @@ impl View for MainView {
         }
         // Only the tab being looked at lays out; see `relayout`.
         self.relayout();
+        self.retain_rail_focus(rail_focus);
         let bell = self.reminder_bell_rect();
         self.reminder_shell.maintain_geometry(self.viewport, bell);
     }
@@ -16825,6 +16881,7 @@ impl MainView {
     /// Show one of the explore column's views, opening the column when it is
     /// closed — the view was asked for by name.
     pub(super) fn show_navigator(&mut self, mode: crate::panes::explore::NavigatorMode) -> bool {
+        let rail_focus = self.focused_rail_identity();
         chrome_debug::chrome_debug!("app switch by chord to {}", mode.token());
         if !self.sidebar.is_open() {
             self.toggle_sidebar();
@@ -16851,6 +16908,7 @@ impl MainView {
                 self.explore.focus_tree(self.explore_area());
             }
         }
+        self.retain_rail_focus(rail_focus);
         self.explore_stale = true;
         true
     }
@@ -17125,7 +17183,12 @@ impl MainView {
             self.hover = Some(Hit::Sidebar);
             let area = self.explore_popover_area();
             let moved = self.explore.mouse_move(area, self.viewport, x, y);
-            return moved || left_content || reminder_moved;
+            let tip = self
+                .explore
+                .pin_tooltip(area, self.viewport, x, y)
+                .map(|(rect, text)| TooltipContent::new(38, rect, text));
+            let tip_changed = self.tooltip.set_hover(tip, Instant::now());
+            return moved || left_content || reminder_moved || tip_changed;
         }
 
         let hit = self.hit_at(x, y);
@@ -17289,6 +17352,12 @@ impl MainView {
                         koru_keys::Section::Tooltip,
                     )),
                 )
+            } else if on(rail.overflow) {
+                Some(TooltipContent::new(
+                    39,
+                    rail.overflow,
+                    koru_i18n::t(lang, koru_i18n::Key::RailMoreViews),
+                ))
             } else if on(rail.help) {
                 Some(TooltipContent::new(
                     6,

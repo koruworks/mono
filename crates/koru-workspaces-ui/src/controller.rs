@@ -39,6 +39,7 @@ use crate::{
     REFUSAL_MOVE_NOT_PERMITTED, REFUSAL_MOVE_PARTIAL, REFUSAL_NOT_PERMITTED, REFUSAL_PARTIAL,
 };
 
+mod pins;
 #[cfg(test)]
 mod tests;
 
@@ -107,6 +108,7 @@ pub struct WorkspacesController {
     requests: Vec<Request>,
     next_command: u64,
     pending: std::collections::BTreeMap<CommandId, Pending>,
+    pin_repairs: std::collections::BTreeMap<WorkspaceId, pins::PinRepair>,
 }
 
 impl WorkspacesController {
@@ -140,6 +142,7 @@ impl WorkspacesController {
             requests: Vec::new(),
             next_command: 0,
             pending: std::collections::BTreeMap::new(),
+            pin_repairs: std::collections::BTreeMap::new(),
         };
         // **Both, at construction.** The catalog is what it presents and the
         // authorization is what it may offer, and a controller that asked for
@@ -163,6 +166,9 @@ impl WorkspacesController {
     /// reasons and the confirmation's text.
     pub fn set_lang(&mut self, lang: Lang) {
         self.lang = lang;
+        for repair in self.pin_repairs.values_mut() {
+            repair.notice.text = t(lang, Key::WorkspacePinListingPending).into();
+        }
     }
 
     pub fn lang(&self) -> Lang {
@@ -182,6 +188,10 @@ impl WorkspacesController {
 
     pub fn has_pending(&self) -> bool {
         !self.pending.is_empty()
+            || self
+                .pin_repairs
+                .values()
+                .any(|repair| repair.has_automatic_attempt())
     }
 
     pub fn keep_profile(
@@ -233,13 +243,16 @@ impl WorkspacesController {
     }
 
     pub fn pending_pin(&self, workspace: WorkspaceId) -> Option<bool> {
-        self.pending.values().find_map(|pending| match pending {
-            Pending::Pin {
-                workspace: id,
-                pinned,
-            } if *id == workspace => Some(*pinned),
-            _ => None,
-        })
+        self.pending
+            .values()
+            .find_map(|pending| match pending {
+                Pending::Pin {
+                    workspace: id,
+                    pinned,
+                } if *id == workspace => Some(*pinned),
+                _ => None,
+            })
+            .or_else(|| self.pin_repairs.get(&workspace).map(|repair| repair.pinned))
     }
 
     pub fn pending_order(&self, owner: ProfileId) -> Option<&[WorkspaceId]> {
@@ -252,7 +265,10 @@ impl WorkspacesController {
     fn start_command(&mut self, pending: Pending) -> CommandId {
         // Availability may start after a committed retirement. Its read must
         // not erase the lifecycle retry that still owes publication.
-        if !matches!(pending, Pending::EnsureLive { .. }) {
+        if !matches!(
+            pending,
+            Pending::EnsureLive { .. } | Pending::ReconcileListing(_)
+        ) {
             self.notice = None;
             self.notice_owner = None;
         }
@@ -272,6 +288,7 @@ impl WorkspacesController {
             !self.catalog_received || self.rows != rows || self.availability != Availability::Live;
         self.catalog_received = true;
         self.rows = rows.to_vec();
+        self.adopt_pin_repairs();
         self.availability = Availability::Live;
         // A selection that has left the list is dropped rather than moved: the
         // detail panel would otherwise describe a workspace that is not there.
@@ -333,6 +350,22 @@ impl WorkspacesController {
         (self.notice_owner == Some(owner))
             .then_some(self.notice.as_ref())
             .flatten()
+            .or_else(|| {
+                self.pin_repairs.iter().find_map(|(id, repair)| {
+                    (!repair.awaiting_catalog
+                        && self.row(*id).is_some_and(|row| row.owner == owner))
+                    .then_some(&repair.notice)
+                })
+            })
+    }
+
+    /// Retry the notice actually displayed in this Profile's menu.
+    pub fn retry_for(&mut self, owner: ProfileId) {
+        if let Some(notice) = self.notice_for(owner).cloned() {
+            self.notice = Some(notice);
+            self.notice_owner = Some(owner);
+            self.perform(Action::Retry);
+        }
     }
 
     /// Which workspace the details apply to.
@@ -503,6 +536,7 @@ impl WorkspacesController {
         while let Some(answer) = self.links.take() {
             moved |= self.receive(answer);
         }
+        moved |= self.poll_pin_repairs_at(std::time::Instant::now());
         // Invalidate-on-event, fetch-on-poll. A committed fact from any window
         // — including this one's own operation — lands here, and two windows
         // converge because both are reading the same journal.
@@ -523,6 +557,16 @@ impl WorkspacesController {
                 let Some(pending) = self.pending.remove(&id) else {
                     return false;
                 };
+                if let Pending::Pin { workspace, .. } = &pending {
+                    if let Answer::Pinned(result) = *answer {
+                        self.pin_settled(*workspace, result, std::time::Instant::now());
+                        return true;
+                    }
+                }
+                if let Pending::ReconcileListing(workspace) = pending {
+                    self.pin_repair_settled(workspace, *answer);
+                    return true;
+                }
                 if let Pending::KeepProfile(owner) = pending {
                     if !matches!(*answer, Answer::ProfileKept(Ok(()))) {
                         self.accept_notice(Notice {
@@ -600,6 +644,8 @@ impl WorkspacesController {
                 self.adopt_rows(&rows) | changed
             }
             Answer::ProfileCreated(_)
+            | Answer::Pinned(_)
+            | Answer::ListingReconciled(_)
             | Answer::ProfileKept(_)
             | Answer::WorkspaceEnsured { .. } => false,
             Answer::Profiles(profiles) => self.adopt_profiles(&profiles),
@@ -947,7 +993,7 @@ impl WorkspacesController {
         let mut rows: Vec<_> = self
             .rows
             .iter()
-            .map(|row| (row.group(), row))
+            .map(|row| (self.display_group(row), row))
             .filter(|(group, _)| match group {
                 Group::Archived => self.show_archived,
                 Group::Deleted => self.show_trash,
@@ -957,7 +1003,10 @@ impl WorkspacesController {
         rows.sort_by(|(left_group, left), (right_group, right)| {
             left_group
                 .cmp(right_group)
-                .then(left.position.cmp(&right.position))
+                .then(
+                    self.display_position(left)
+                        .cmp(&self.display_position(right)),
+                )
                 .then(left.name.cmp(&right.name))
         });
         rows
@@ -992,6 +1041,71 @@ impl WorkspacesController {
     /// nothing.
     pub fn can_step(&self, workspace: WorkspaceId, step: isize) -> bool {
         self.reordered_owner_ids(workspace, step).is_some()
+    }
+
+    fn display_position(&self, row: &Row) -> i64 {
+        self.pending_order(row.owner)
+            .and_then(|ids| ids.iter().position(|id| *id == row.id))
+            .map_or(row.position, |position| position as i64)
+    }
+
+    fn display_group(&self, row: &Row) -> Group {
+        if row.archived || row.deleted {
+            row.group()
+        } else if self.effective_pinned(row) {
+            Group::Pinned
+        } else {
+            Group::Active
+        }
+    }
+
+    /// Move a pin within the complete local permutation, retaining hidden rows.
+    /// `None` means immediately after the last other saved pin.
+    pub fn reorder_before(&mut self, workspace: WorkspaceId, before: Option<WorkspaceId>) -> bool {
+        let Some(row) = self.row(workspace) else {
+            return false;
+        };
+        let owner = row.owner;
+        if !row.verified_live()
+            || !self.effective_pinned(row)
+            || self.pending_order(owner).is_some()
+            || self.availability.is_down()
+            || self.removals.contains_key(&owner)
+        {
+            return false;
+        }
+        if before == Some(workspace) {
+            return false;
+        }
+        if let Some(before) = before {
+            if self.row(before).is_none_or(|row| {
+                row.owner != owner || !row.verified_live() || !self.effective_pinned(row)
+            }) {
+                return false;
+            }
+        }
+        let mut rows: Vec<_> = self.rows.iter().filter(|row| row.owner == owner).collect();
+        rows.sort_by_key(|row| (row.position, row.id));
+        let old: Vec<_> = rows.iter().map(|row| row.id).collect();
+        rows.retain(|row| row.id != workspace);
+        let at = match before {
+            Some(before) => rows.iter().position(|row| row.id == before).unwrap(),
+            None => rows
+                .iter()
+                .rposition(|row| row.verified_live() && self.effective_pinned(row))
+                .map_or(rows.len(), |i| i + 1),
+        };
+        let mut ids: Vec<_> = rows.iter().map(|row| row.id).collect();
+        ids.insert(at, workspace);
+        if ids == old {
+            return false;
+        }
+        let command = self.start_command(Pending::Order {
+            owner,
+            ids: ids.clone(),
+        });
+        self.links.reorder(command, owner, ids);
+        true
     }
 
     // --------------------------------------------------------------- reasons
@@ -1057,13 +1171,12 @@ impl WorkspacesController {
                         .then(|| t(lang, Key::WorkspaceArchivedUnavailable).to_owned())
                 })
                 .or_else(|| row.authority_reason(lang)),
-            Action::Rename(_)
-            | Action::Appearance(_)
-            | Action::TogglePinned(_)
-            | Action::MoveUp(_)
-            | Action::MoveDown(_) => unavailable
-                .or_else(trashed)
-                .or_else(|| row.authority_reason(lang)),
+            Action::Rename(_) | Action::Appearance(_) | Action::MoveUp(_) | Action::MoveDown(_) => {
+                unavailable
+                    .or_else(trashed)
+                    .or_else(|| row.authority_reason(lang))
+            }
+            Action::TogglePinned(_) => unavailable.or_else(|| self.pin_reason(row)),
             Action::Create | Action::Import | Action::Export(_) => unavailable,
             Action::CopyId(_) => None,
             Action::Migrate(_) => unavailable
@@ -1139,14 +1252,16 @@ impl WorkspacesController {
             }
             Action::TogglePinned(id) => {
                 if let Some(row) = self.row(id).cloned() {
+                    if self.reason_for(&action, &row).is_some() {
+                        return;
+                    }
                     let pinned = !row.pinned;
                     if self.pending_pin(row.id).is_none() {
                         let command = self.start_command(Pending::Pin {
                             workspace: row.id,
                             pinned,
                         });
-                        self.links
-                            .set_appearance(command, &row, pinned, row.archived);
+                        self.links.pin(command, row.id, pinned);
                     }
                 }
             }
@@ -1179,6 +1294,7 @@ impl WorkspacesController {
             Action::ShowArchived => self.show_archived = !self.show_archived,
             Action::ShowTrash => self.show_trash = !self.show_trash,
             Action::Retry => match self.notice.take().and_then(|notice| notice.retry) {
+                Some(Retry::PinListing(workspace)) => self.retry_pin_listing(workspace),
                 // **A fresh confirmation, deliberately.** The first token
                 // was spent, and the consequence it named is a workspace
                 // whose terminals are already closed — asking again is what
@@ -1231,7 +1347,9 @@ impl WorkspacesController {
         workspace: WorkspaceId,
         step: isize,
     ) -> Option<(ProfileId, Vec<WorkspaceId>)> {
-        let (owner, group) = self.row(workspace).map(|row| (row.owner, row.group()))?;
+        let (owner, group) = self
+            .row(workspace)
+            .map(|row| (row.owner, self.display_group(row)))?;
         let visible_order: Vec<WorkspaceId> = self
             .rows_of(owner)
             .into_iter()

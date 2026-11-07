@@ -74,6 +74,18 @@ Inspect committed workspace lifecycle without creating, migrating or repairing s
 
 Returns: retained rows with read or unreadable authority and listing differences
 
+## PUT `/v1/workspaces/{workspace}/pinned`
+
+Commit only the synced workspace pin and project its listing
+
+Returns: committed workspace with applied or pending listing
+
+## POST `/v1/workspaces/{workspace}/reconcile-listing`
+
+Repair the listing from verified durable workspace authority
+
+Returns: reconciled workspace; uncertainty refuses repair
+
 ## PUT `/v1/profiles/{id}/account`
 
 Atomically bind a Profile to an exact hosted Koru Identity

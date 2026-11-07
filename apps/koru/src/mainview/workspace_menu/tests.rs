@@ -608,7 +608,8 @@ fn manage_borrows_the_window_controller_and_no_idle_poll_is_armed() {
     let mut f = fixture();
     let controller = f.v.workspace_controller.clone();
     f.v.open_manage(Page::Profile(f.personal.id));
-    assert_eq!(std::rc::Rc::strong_count(&controller), 3);
+    // The window, Explore menu, Manage tab and this assertion share one controller.
+    assert_eq!(std::rc::Rc::strong_count(&controller), 4);
     let current = row(f.current, &f.personal, "Current", 0);
     f.manage_view()
         .with_workspaces(|c| c.adopt_rows(&[current]));

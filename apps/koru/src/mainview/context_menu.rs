@@ -56,6 +56,7 @@ pub(crate) use koru_ui::menu::EDGE_MARGIN;
 /// because the list it lives in is a cache of a document two processes write to.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum MenuSubject {
+    RailOverflow,
     /// The caption `+` button: create or import rather than acting on a tab.
     NewTab,
     /// **Several task rows** selected on the Tasks page — Ctrl/Shift+click —
@@ -230,6 +231,10 @@ pub const GITHUB_URL: &str = "https://github.com/koruworks/mono";
 /// What a menu item does. Resolved by the container, not here.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum MenuAction {
+    RailView {
+        mode: crate::panes::explore::NavigatorMode,
+        slot: usize,
+    },
     /// A horizontal rule. An item like any other as far as indices go — so the
     /// `enabled` slice a caller passes lines up without it having to know which
     /// rows are real — but never hovered, never chosen, and shorter.
@@ -1071,6 +1076,9 @@ impl MenuAction {
 
     pub fn label(self) -> Cow<'static, str> {
         match self {
+            MenuAction::RailView { mode, .. } => {
+                return Cow::Borrowed(mode.label_in(crate::format::lang()));
+            }
             MenuAction::SelectionHeader(count) => {
                 return Cow::Owned(if count == 1 {
                     "1 Document".into()
@@ -1313,8 +1321,18 @@ impl MenuAction {
                 ));
             }
             MenuAction::ChangeIconAndColor => "Change Icon & Color…",
-            MenuAction::Pin => "Pin to Top",
-            MenuAction::Unpin => "Unpin",
+            MenuAction::Pin => {
+                return Cow::Borrowed(koru_i18n::t(
+                    crate::format::lang(),
+                    koru_i18n::Key::PinToRail,
+                ));
+            }
+            MenuAction::Unpin => {
+                return Cow::Borrowed(koru_i18n::t(
+                    crate::format::lang(),
+                    koru_i18n::Key::UnpinFromRail,
+                ));
+            }
             MenuAction::Export => "Export Backup…",
             MenuAction::Archive => "Archive Workspace",
             MenuAction::Unarchive => "Unarchive Workspace",
@@ -1476,6 +1494,7 @@ impl MenuAction {
     pub fn shortcut_id(self) -> Option<koru_keys::ShortcutId> {
         use koru_keys::ShortcutId;
         Some(match self {
+            MenuAction::RailView { slot, .. } => return koru_keys::rail_slot(slot),
             MenuAction::NewDocument => ShortcutId::NewTab,
             MenuAction::Close => ShortcutId::CloseTab,
             MenuAction::Rename | MenuAction::ScheduleRename => ShortcutId::RenameDocument,
@@ -1503,6 +1522,9 @@ impl MenuAction {
     /// Stateful window rows carry one so the current pin state remains visible.
     pub fn icon(self) -> Option<char> {
         match self {
+            MenuAction::RailView { mode, .. } => Some(
+                crate::panes::explore::ExploreView::navigator_mode_icon(mode),
+            ),
             MenuAction::Documents | MenuAction::NewDocument => Some(koru_draw::icons::DOCUMENT),
             MenuAction::Canvases | MenuAction::NewCanvas => Some(koru_draw::icons::CANVAS),
             MenuAction::NewShell => Some(koru_draw::icons::TERMINAL),

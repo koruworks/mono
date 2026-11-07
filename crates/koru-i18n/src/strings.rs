@@ -2704,6 +2704,14 @@ pub enum Key {
     FloorChipAction,
     RailCurrentWorkspace,
     RailSwitchWorkspace,
+    PinToRail,
+    UnpinFromRail,
+    PinNamedToRail,
+    UnpinNamedFromRail,
+    WorkspacePinLimit,
+    WorkspacePinSaving,
+    WorkspacePinListingPending,
+    RailMoreViews,
     /// The lane's toggle, both ways.
     HideSidebar,
     ShowSidebar,
@@ -2955,7 +2963,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2067] = [
+    pub const ALL: [Key; 2075] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4863,6 +4871,14 @@ impl Key {
         Key::FloorChipAction,
         Key::RailCurrentWorkspace,
         Key::RailSwitchWorkspace,
+        Key::PinToRail,
+        Key::UnpinFromRail,
+        Key::PinNamedToRail,
+        Key::UnpinNamedFromRail,
+        Key::WorkspacePinLimit,
+        Key::WorkspacePinSaving,
+        Key::WorkspacePinListingPending,
+        Key::RailMoreViews,
         Key::HideSidebar,
         Key::ShowSidebar,
         Key::SearchOrTypeACommand,
@@ -15550,6 +15566,14 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::FloorChipAction, en: "Open account and workspace menu", es: "Abrir el menú de cuenta y espacio de trabajo", pt_br: "Abrir o menu de conta e espaço de trabalho", de: "Konto- und Arbeitsbereichsmenü öffnen", fr: "Ouvrir le menu du compte et de l'espace de travail", ar: "فتح قائمة الحساب ومساحة العمل", zh_hans: "打开账户和工作区菜单", ja: "アカウントとワークスペースのメニューを開く" },
     Row { key: Key::RailCurrentWorkspace, en: "Workspace: {}. Open workspace menu", es: "Espacio de trabajo: {}. Abrir el menú", pt_br: "Espaço de trabalho: {}. Abrir o menu", de: "Arbeitsbereich: {}. Arbeitsbereichsmenü öffnen", fr: "Espace de travail : {}. Ouvrir le menu", ar: "مساحة العمل: {}. فتح قائمة مساحة العمل", zh_hans: "工作区：{}。打开工作区菜单", ja: "ワークスペース：{}。ワークスペースメニューを開く" },
     Row { key: Key::RailSwitchWorkspace, en: "Switch to {}", es: "Cambiar a {}", pt_br: "Alternar para {}", de: "Zu {} wechseln", fr: "Passer à {}", ar: "التبديل إلى {}", zh_hans: "切换到 {}", ja: "{} に切り替える" },
+    Row { key: Key::PinToRail, en: "Pin to rail", es: "Fijar en la barra", pt_br: "Fixar na barra", de: "An der Leiste anheften", fr: "Épingler à la barre", ar: "تثبيت في الشريط", zh_hans: "固定到侧栏", ja: "レールに固定" },
+    Row { key: Key::UnpinFromRail, en: "Unpin from rail", es: "Desfijar de la barra", pt_br: "Desafixar da barra", de: "Von der Leiste lösen", fr: "Détacher de la barre", ar: "إلغاء التثبيت من الشريط", zh_hans: "从侧栏取消固定", ja: "レールから固定を解除" },
+    Row { key: Key::PinNamedToRail, en: "Pin {} to the rail", es: "Fijar {} en la barra", pt_br: "Fixar {} na barra", de: "{} an der Leiste anheften", fr: "Épingler {} à la barre", ar: "تثبيت {} في الشريط", zh_hans: "将 {} 固定到侧栏", ja: "{} をレールに固定" },
+    Row { key: Key::UnpinNamedFromRail, en: "Unpin {} from the rail", es: "Desfijar {} de la barra", pt_br: "Desafixar {} da barra", de: "{} von der Leiste lösen", fr: "Détacher {} de la barre", ar: "إلغاء تثبيت {} من الشريط", zh_hans: "将 {} 从侧栏取消固定", ja: "{} の固定をレールから解除" },
+    Row { key: Key::WorkspacePinLimit, en: "Unpin a workspace to pin another. The rail holds three saved pins.", es: "Desfija un espacio para fijar otro. La barra admite tres espacios fijados.", pt_br: "Desafixe um espaço para fixar outro. A barra comporta três espaços fixados.", de: "Löse einen Arbeitsbereich, um einen anderen anzuheften. Die Leiste zeigt drei gespeicherte Pins.", fr: "Détachez un espace pour en épingler un autre. La barre accueille trois espaces épinglés.", ar: "ألغِ تثبيت مساحة لتثبيت أخرى. يتسع الشريط لثلاث مساحات مثبتة.", zh_hans: "请先取消固定一个工作区。侧栏最多显示三个已保存的固定项。", ja: "別のワークスペースを固定するには、固定を解除してください。保存できる固定表示は3件です。" },
+    Row { key: Key::WorkspacePinSaving, en: "Saving this pin…", es: "Guardando este anclaje…", pt_br: "Salvando esta fixação…", de: "Anheftung wird gespeichert…", fr: "Enregistrement de l’épingle…", ar: "جارٍ حفظ التثبيت…", zh_hans: "正在保存固定状态…", ja: "固定状態を保存しています…" },
+    Row { key: Key::WorkspacePinListingPending, en: "The pin is saved, but the workspace list needs repair.", es: "El anclaje está guardado, pero la lista de espacios necesita reparación.", pt_br: "A fixação foi salva, mas a lista de espaços precisa de reparo.", de: "Die Anheftung ist gespeichert, aber die Arbeitsbereichsliste muss repariert werden.", fr: "L’épingle est enregistrée, mais la liste des espaces doit être réparée.", ar: "تم حفظ التثبيت، لكن قائمة مساحات العمل تحتاج إلى إصلاح.", zh_hans: "固定状态已保存，但工作区列表需要修复。", ja: "固定状態は保存されましたが、ワークスペース一覧の修復が必要です。" },
+    Row { key: Key::RailMoreViews, en: "More views", es: "Más vistas", pt_br: "Mais visualizações", de: "Weitere Ansichten", fr: "Autres vues", ar: "المزيد من طرق العرض", zh_hans: "更多视图", ja: "その他のビュー" },
     Row { key: Key::HideSidebar, en: "Hide sidebar", es: "Ocultar la barra lateral", pt_br: "Ocultar a barra lateral", de: "Seitenleiste ausblenden", fr: "Masquer la barre latérale", ar: "إخفاء الشريط الجانبي", zh_hans: "隐藏侧边栏", ja: "サイドバーを隠す" },
     Row { key: Key::ShowSidebar, en: "Show sidebar", es: "Mostrar la barra lateral", pt_br: "Mostrar a barra lateral", de: "Seitenleiste einblenden", fr: "Afficher la barre latérale", ar: "إظهار الشريط الجانبي", zh_hans: "显示侧边栏", ja: "サイドバーを表示" },
     Row { key: Key::SearchOrTypeACommand, en: "Search or type a command", es: "Buscar o escribir un comando", pt_br: "Pesquisar ou digitar um comando", de: "Suchen oder einen Befehl eingeben", fr: "Rechercher ou saisir une commande", ar: "ابحث أو اكتب أمرًا", zh_hans: "搜索或输入命令", ja: "検索またはコマンドを入力" },

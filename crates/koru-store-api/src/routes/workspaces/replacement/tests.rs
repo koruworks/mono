@@ -112,6 +112,61 @@ async fn ordinary_management_cannot_remove_or_trigger_replacement() {
     }
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn competing_removals_publish_one_replacement_for_the_owner() {
+    for (route, scope) in [
+        ("archive", Scope::DestroyWorkspaces),
+        ("delete", Scope::DestroyWorkspaces),
+        ("move", Scope::MigrateWorkspaces),
+    ] {
+        let (state, first, target) = fixture();
+        let second = state
+            .store
+            .lock()
+            .unwrap()
+            .create_workspace(first.owner, "Second", now())
+            .unwrap();
+        let ready = Arc::new(tokio::sync::Barrier::new(3));
+        let mut requests = Vec::new();
+        for source in [first.id, second.id] {
+            let state = state.clone();
+            let ready = ready.clone();
+            requests.push(tokio::spawn(async move {
+                ready.wait().await;
+                call(
+                    &state,
+                    source,
+                    route,
+                    serde_json::json!({"name":"Replacement", "owner":target.id}),
+                    vec![scope],
+                )
+                .await
+            }));
+        }
+        ready.wait().await;
+        let mut created = 0;
+        for request in requests {
+            let (status, body) = request.await.unwrap();
+            assert_eq!(status, StatusCode::OK, "{route}: {body}");
+            created += usize::from(body["replacement"]["state"] == "created");
+        }
+        assert_eq!(
+            created, 1,
+            "{route}: one operation prepares the replacement"
+        );
+        let mut store = state.store.lock().unwrap();
+        let rows = store.workspaces_including_deleted().unwrap();
+        let remaining: Vec<_> = rows
+            .iter()
+            .filter(|row| row.owner == first.owner && !row.archived && row.deleted_at.is_none())
+            .collect();
+        assert_eq!(remaining.len(), 1, "{route}: the owner stays usable");
+        assert_ne!(remaining[0].id, first.id);
+        assert_ne!(remaining[0].id, second.id);
+        assert!(store.manifest_id(remaining[0].id).is_ok());
+    }
+}
+
 #[tokio::test]
 async fn delete_force_closes_rooms_and_retry_can_read_retained_trash() {
     let (state, source, _) = fixture();

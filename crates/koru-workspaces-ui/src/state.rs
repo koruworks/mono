@@ -222,6 +222,7 @@ pub struct MoveConsequence {
 /// retry that guessed would be a retry of something the person did not ask for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Retry {
+    PinListing(WorkspaceId),
     Lifecycle(WorkspaceId, WorkspaceLifecycleAction),
     Migration(WorkspaceId, ProfileId),
 }
@@ -260,6 +261,8 @@ impl Notice {
 /// What came back from a management call, in the surface's own vocabulary.
 #[derive(Debug)]
 pub(crate) enum Answer {
+    Pinned(koru_store_core::errors::Result<koru_store_core::service::PinnedWorkspace>),
+    ListingReconciled(koru_store_core::errors::Result<koru_store_core::Workspace>),
     /// Only this command's terminal answer may remove its pending projection.
     Settled(crate::CommandId, Box<Answer>),
     ProfileCreated(koru_store_core::errors::Result<koru_api_client::CreatedProfile>),

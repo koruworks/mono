@@ -1627,6 +1627,37 @@ impl Client {
         self.decode(response)
     }
 
+    /// Commit only the pin flag, without overwriting appearance or lifecycle.
+    pub fn set_workspace_pinned(
+        &self,
+        id: WorkspaceId,
+        pinned: bool,
+    ) -> Result<koru_store_wire::PinnedWorkspace> {
+        let response = self.send_with_retry(|discovery| {
+            self.http
+                .put(format!(
+                    "{}/v1/workspaces/{id}/pinned",
+                    discovery.base_url()
+                ))
+                .bearer_auth(&discovery.token)
+                .json(&koru_store_wire::WorkspacePin { pinned })
+        })?;
+        self.decode(response)
+    }
+
+    /// Explicitly repair a derived listing; ordinary reads never do this.
+    pub fn reconcile_workspace_listing(&self, id: WorkspaceId) -> Result<Workspace> {
+        let response = self.send_with_retry(|discovery| {
+            self.http
+                .post(format!(
+                    "{}/v1/workspaces/{id}/reconcile-listing",
+                    discovery.base_url()
+                ))
+                .bearer_auth(&discovery.token)
+        })?;
+        self.decode(response)
+    }
+
     /// Store bytes, and get back the hash they are filed under.
     ///
     /// **The caller does not choose the hash and does not compute one.** The

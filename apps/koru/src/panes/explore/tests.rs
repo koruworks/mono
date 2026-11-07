@@ -1364,11 +1364,18 @@ fn every_popover_part_hit_tests_back_to_itself() {
             .1
     };
     let r = find(&v, PopoverRow::Workspace(0));
-    let (x, y) = super::trailing_lane(r).centre();
+    let parts = v.workspace_row_parts(PopoverRow::Workspace(0), r);
+    let (x, y) = parts.trailing.centre();
     assert_eq!(
         v.popover_part_at(a, VIEW, x, y)
             .map(|(_, row, part)| (row, part)),
         Some((PopoverRow::Workspace(0), PopoverPart::Gear))
+    );
+    let (x, y) = parts.pin.centre();
+    assert_eq!(
+        v.popover_part_at(a, VIEW, x, y)
+            .map(|(_, row, part)| (row, part)),
+        Some((PopoverRow::Workspace(0), PopoverPart::Pin))
     );
     let (x, y) = v
         .workspace_row_parts(PopoverRow::Workspace(0), r)
@@ -1444,7 +1451,9 @@ fn workspace_rows_keep_the_shared_trailing_lane_and_use_the_approved_tile() {
     assert_eq!(workspace.chip.centre().1, row.centre().1);
     assert!(workspace.name.x >= workspace.chip.x + workspace.chip.w);
     assert!(workspace.name.x + workspace.name.w <= workspace.trailing.x);
-    assert_eq!(picker.trailing, workspace.trailing);
+    assert_eq!(picker.trailing, workspace.pin);
+    assert_eq!(workspace.trailing.w, workspace.pin.w);
+    assert!(workspace.trailing.x + workspace.trailing.w <= workspace.pin.x);
     assert_eq!(koru_ui::profile_picker::ROW_H, theme::ROW_H);
 }
 
@@ -1854,12 +1863,19 @@ fn left_and_right_fall_through_where_they_mean_nothing() {
         Some(gear),
         "the gear is revealed and lit"
     );
-    // Right again is the end of the row.
+    assert_eq!(
+        v.popover_key(&Key::Named(NamedKey::ArrowRight)),
+        Some(Outcome::Consumed)
+    );
+    assert_eq!(v.popover_part, Some(PopoverPart::Pin));
+    // The pin is the end of the row.
     assert_eq!(v.popover_key(&Key::Named(NamedKey::ArrowRight)), None);
     assert_eq!(
         v.popover_key(&Key::Named(NamedKey::ArrowLeft)),
         Some(Outcome::Consumed)
     );
+    assert_eq!(v.popover_part, Some(PopoverPart::Gear));
+    v.popover_key(&Key::Named(NamedKey::ArrowLeft));
     assert_eq!(v.popover_part, None, "back on the row");
     assert!(v.popover_open());
     v.popover_key(&Key::Named(NamedKey::ArrowRight));

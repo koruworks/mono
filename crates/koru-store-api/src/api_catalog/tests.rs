@@ -331,8 +331,9 @@ fn every_row_builds_and_the_paths_are_grouped() {
     paths.sort_unstable();
     paths.dedup();
     // The combined account/lifecycle, task/reminder, document-version and
-    // Cloud catalog has 106 rows over 84 paths, including combined Profile
-    // creation, workspace availability/authority and replacing lifecycle.
+    // Cloud catalog has 108 rows over 86 paths, including combined Profile
+    // creation, workspace availability/authority, replacing lifecycle and
+    // pin-only mutation with explicit listing repair.
     // Account binding and local
     // removal/restoration share method-paired paths; lifecycle inventory
     // and enrolled Profile provisioning are internal, and so are the blob
@@ -340,8 +341,8 @@ fn every_row_builds_and_the_paths_are_grouped() {
     // waiting on another device and one document's own Cloud coverage
     // (D256, D258, rung 2's space reclaim), as is the Welcome page's
     // installation-local progress (a query path and a per-row path).
-    assert_eq!(ROUTES.len(), 106, "a row was added or removed");
-    assert_eq!(paths.len(), 84, "a path was added or removed");
+    assert_eq!(ROUTES.len(), 108, "a row was added or removed");
+    assert_eq!(paths.len(), 86, "a path was added or removed");
 }
 
 #[test]

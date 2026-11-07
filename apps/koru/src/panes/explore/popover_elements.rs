@@ -57,6 +57,7 @@ pub(crate) const SURFACE: &str = "explore-popover";
 pub(crate) const PRIMARY: &str = "root";
 /// A row's gear.
 pub(crate) const MANAGE: &str = "manage";
+pub(crate) const PIN: &str = "pin";
 
 pub(crate) const PAGE: Key = Key::surface(SURFACE, "popover");
 pub(crate) const HEADING: Key = Key::surface(SURFACE, "heading");
@@ -67,6 +68,62 @@ pub(crate) fn primary(id: WorkspaceId) -> Key {
 
 pub(crate) fn manage(id: WorkspaceId) -> Key {
     Key::model(id.as_uuid().as_u128(), MANAGE)
+}
+
+pub(crate) fn pin(id: WorkspaceId) -> Key {
+    Key::model(id.as_uuid().as_u128(), PIN)
+}
+
+struct PinLane {
+    pinned: bool,
+    pending: bool,
+    disabled: bool,
+}
+
+impl Leaf for PinLane {
+    fn measure(&self, _: Option<f32>) -> (f32, f32) {
+        (metrics::TRAILING_LANE_W.value, 0.0)
+    }
+
+    fn paint(
+        &self,
+        scene: &mut Scene,
+        root: Affine,
+        engine: &mut TextEngine,
+        at: Rect,
+        cx: &FrameCx,
+        state: ElState,
+    ) {
+        if !self.pinned && !self.pending && !state.hovered && !state.focused && !state.pressed {
+            return;
+        }
+        let glyph = if self.pending {
+            koru_draw::icons::CLOCK
+        } else {
+            koru_draw::icons::PUSH_PIN
+        };
+        let size = koru_draw::theme::IconSize::L.px(koru_draw::theme::Profile::Desktop);
+        let shaped = if self.pinned && !self.pending {
+            engine.icon_layout_filled(glyph, size)
+        } else {
+            engine.icon_layout(glyph, size)
+        };
+        let ink = if self.disabled {
+            Ink::Hint
+        } else if self.pinned {
+            Ink::Primary
+        } else {
+            Ink::Secondary
+        };
+        koru_draw::scene::draw_layout(
+            scene,
+            root,
+            &shaped,
+            at.x + (at.w - shaped.width()) * 0.5,
+            at.y + (at.h - shaped.height()) * 0.5,
+            Some(ink.of(cx.palette())),
+        );
+    }
 }
 
 /// The workspace row's states, extracted from `draw_page`: the lit plate is
@@ -162,6 +219,37 @@ impl Leaf for TrailingAdapter {
 }
 
 impl ExploreView {
+    pub(crate) fn pin_tooltip(
+        &self,
+        area: Rect,
+        viewport: (f32, f32),
+        x: f32,
+        y: f32,
+    ) -> Option<(Rect, String)> {
+        self.with_page(area, viewport, |frame| {
+            self.workspaces.iter().find_map(|workspace| {
+                let rect = frame.node(pin(workspace.id))?.rect;
+                if !rect.contains(x, y) {
+                    return None;
+                }
+                let (pinned, _, reason) = self.workspace_pin_state(workspace.id);
+                let words = reason.unwrap_or_else(|| {
+                    koru_i18n::t(
+                        crate::format::lang(),
+                        if pinned {
+                            koru_i18n::Key::UnpinFromRail
+                        } else {
+                            koru_i18n::Key::PinToRail
+                        },
+                    )
+                    .to_owned()
+                });
+                Some((rect, words))
+            })
+        })
+        .flatten()
+    }
+
     pub(crate) fn element_page_height(&self, kind: PopoverKind) -> Option<f32> {
         let tree = self.page_tree(kind, 0.0, None)?;
         let frame = with_input_engine(|engine| {
@@ -187,6 +275,25 @@ impl ExploreView {
     /// lists them.
     pub(crate) fn workspaces_page(&self, scroll: f32) -> El {
         let rows = self.rows_for(PopoverKind::Summary);
+        let mut list = Vec::new();
+        let mut previous_pin = false;
+        for row in rows {
+            if let PopoverRow::Workspace(i) = row {
+                if let Some(w) = self.workspaces.get(i) {
+                    if previous_pin && !w.pinned {
+                        list.push(super::workspace_menu_elements::rule());
+                    }
+                    list.push(self.workspace_row(
+                        w.id,
+                        &w.name,
+                        w.icon.clone(),
+                        w.color.clone(),
+                        self.current == Some(w.id),
+                    ));
+                    previous_pin = w.pinned;
+                }
+            }
+        }
         col("Workspaces page")
             .id(PAGE)
             .semantics(Role::Menu)
@@ -200,18 +307,7 @@ impl ExploreView {
                     .fill()
                     .min_h(metrics::ROW_MIN)
                     .offset(scroll)
-                    .children(rows.into_iter().filter_map(|row| match row {
-                        PopoverRow::Workspace(i) => self.workspaces.get(i).map(|w| {
-                            self.workspace_row(
-                                w.id,
-                                &w.name,
-                                w.icon.clone(),
-                                w.color.clone(),
-                                self.current == Some(w.id),
-                            )
-                        }),
-                        _ => None,
-                    })),
+                    .children(list),
             )
             .child(self.workspace_menu_footer())
     }
@@ -229,6 +325,19 @@ impl ExploreView {
     ) -> El {
         let primary = primary(id);
         let gear = manage(id);
+        let pin = pin(id);
+        let (pinned, pending, reason) = self.workspace_pin_state(id);
+        let pin_name = koru_i18n::fill(
+            koru_i18n::t(
+                crate::format::lang(),
+                if pinned {
+                    koru_i18n::Key::UnpinNamedFromRail
+                } else {
+                    koru_i18n::Key::PinNamedToRail
+                },
+            ),
+            &[name],
+        );
         row(ROW)
             .min_h(metrics::ROW_MIN)
             .pad_x(alias::ROW_PLATE_INSET)
@@ -240,7 +349,7 @@ impl ExploreView {
                     .gap(Space::S1)
                     .radius(Radius::Metric(metrics::WORKSPACE_GEAR_RADIUS))
                     .states(&WORKSPACE_ROW_STATES)
-                    .activity([primary, gear])
+                    .activity([primary, pin, gear])
                     .child(
                         row("Workspace primary action")
                             .fill()
@@ -284,13 +393,34 @@ impl ExploreView {
                             .semantic()
                             .w(metrics::TRAILING_LANE_W)
                             .id(gear)
-                            .activity([primary])
+                            .activity([primary, pin])
                             .hit()
                             .focusable()
                             .action(Action::Click)
                             .action(Action::Focus)
                             .semantics(Role::MenuItem)
                             .name(koru_i18n::Key::ManageWorkspace),
+                    )
+                    .child(
+                        leaf(
+                            "Workspace pin",
+                            PinLane {
+                                pinned,
+                                pending,
+                                disabled: reason.is_some(),
+                            },
+                        )
+                        .semantic()
+                        .w(metrics::TRAILING_LANE_W)
+                        .id(pin)
+                        .activity([primary, gear])
+                        .hit()
+                        .focusable()
+                        .action(Action::Click)
+                        .action(Action::Focus)
+                        .semantics(Role::MenuItem)
+                        .name_text(pin_name)
+                        .disabled(reason.is_some()),
                     ),
             )
     }
@@ -301,10 +431,15 @@ impl ExploreView {
         let rows = self.popover_rows();
         let on_gear = self.popover_part == Some(PopoverPart::Gear);
         match hover.and_then(|i| rows.get(i).copied())? {
-            PopoverRow::Workspace(i) => self
-                .workspaces
-                .get(i)
-                .map(|w| if on_gear { manage(w.id) } else { primary(w.id) }),
+            PopoverRow::Workspace(i) => self.workspaces.get(i).map(|w| {
+                if on_gear {
+                    manage(w.id)
+                } else if self.popover_part == Some(PopoverPart::Pin) {
+                    pin(w.id)
+                } else {
+                    primary(w.id)
+                }
+            }),
             PopoverRow::Profile(i) => self.profiles.get(i).map(|profile| {
                 if on_gear {
                     profiles::manage(profile.id)
@@ -522,6 +657,7 @@ impl ExploreView {
             chip: frame.rect_of(TILE)?,
             name: frame.rect_of(NAME)?,
             trailing: frame.rect_of(GEAR)?,
+            pin: frame.rect_of("Workspace pin")?,
         })
     }
 }
@@ -566,6 +702,7 @@ pub(crate) fn row_part_of(view: &ExploreView, key: Key) -> Option<(PopoverRow, P
     };
     let part = match key.part {
         MANAGE => PopoverPart::Gear,
+        PIN => PopoverPart::Pin,
         PRIMARY => PopoverPart::Row,
         _ => return None,
     };

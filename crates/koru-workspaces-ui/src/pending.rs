@@ -18,6 +18,7 @@ pub(crate) enum Pending {
         ids: Vec<WorkspaceId>,
     },
     Appearance,
+    ReconcileListing(WorkspaceId),
     KeepProfile(ProfileId),
     EnsureLive {
         owner: ProfileId,

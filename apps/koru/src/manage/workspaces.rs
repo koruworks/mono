@@ -679,7 +679,7 @@ impl ManageView {
         });
         // Tags, right to left before the trailing control.
         let mut tag_names = Vec::new();
-        if kind == ListKind::Active && catalog.pinned {
+        if kind == ListKind::Active && self.w.borrow().effective_pinned(catalog) {
             tag_names.push(PINNED_TAG);
         }
         if kind == ListKind::Active

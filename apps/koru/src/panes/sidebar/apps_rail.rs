@@ -22,6 +22,7 @@ pub struct Rects {
     /// Nothing under the last: the *Manage apps* `+` is out until the
     /// manager lands (the review's note, E68).
     pub apps: Vec<(NavigatorMode, Rect)>,
+    pub overflow: Rect,
     pub settings: Rect,
     pub help: Rect,
     /// The profile square at the foot.
@@ -34,6 +35,7 @@ pub enum Hit {
     Workspace(koru_core::WorkspaceId),
     WaitingWorkspace,
     App(NavigatorMode),
+    Overflow,
     Settings,
     Help,
     Profile,

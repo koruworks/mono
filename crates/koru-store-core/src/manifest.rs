@@ -331,6 +331,17 @@ impl Manifest {
         Ok(())
     }
 
+    /// Change the synced pin without rewriting independent appearance fields.
+    pub fn set_pinned(&self, pinned: bool) -> Result<()> {
+        self.writable()?;
+        self.doc
+            .get_map(C_META)
+            .insert(K_PINNED, pinned)
+            .map_err(loro_failed)?;
+        self.doc.commit();
+        Ok(())
+    }
+
     /// Change lifecycle without rewriting independent appearance fields.
     pub fn set_archived(&self, archived: bool) -> Result<()> {
         self.writable()?;

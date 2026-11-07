@@ -49,10 +49,13 @@ impl MainView {
     /// Catalog furniture is available even when no navigator content has
     /// been drawn. Opening a rail menu must not depend on a document rebuild.
     pub(super) fn refresh_explore_context(&mut self) {
+        self.explore
+            .set_workspace_controller(self.workspace_controller.clone());
         if self.context_stale
             && let Some((profiles, mut current_profile, mut workspaces, mut current)) =
                 self.pane_context.clone()
         {
+            let rail_focus = self.focused_rail_identity();
             if let Some(wait) = &self.profile_wait.waiting {
                 if wait.attempt.profile != current_profile {
                     workspaces.clear();
@@ -60,11 +63,12 @@ impl MainView {
                 current_profile = wait.attempt.profile;
                 current = None;
             }
-            if let Some(rows) = self.workspace_controller.borrow().catalog_rows() {
+            let controller = self.workspace_controller.borrow();
+            if let Some(rows) = controller.catalog_rows() {
                 let mut projected: Vec<_> = rows
                     .iter()
                     .filter(|row| {
-                        row.owner == catalog_profile(current_profile) && row.navigation_ready()
+                        row.owner == catalog_profile(current_profile) && row.verified_live()
                     })
                     .map(|row| {
                         let id = crate::manage::workspaces::app_workspace(row.id);
@@ -76,10 +80,13 @@ impl MainView {
                         entry.name = row.name.clone();
                         entry.icon = row.icon.clone();
                         entry.color = row.color.clone();
-                        entry.pinned = row.pinned;
+                        entry.pinned = controller.effective_pinned(row);
                         entry.archived = row.archived;
                         entry.deleted_at = None;
-                        entry.order = row.position;
+                        entry.order = controller
+                            .pending_order(row.owner)
+                            .and_then(|ids| ids.iter().position(|id| *id == row.id))
+                            .map_or(row.position, |position| position as i64);
                         entry
                     })
                     .collect();
@@ -89,6 +96,8 @@ impl MainView {
             self.context_stale = false;
             self.explore
                 .set_context(profiles, current_profile, workspaces, current);
+            drop(controller);
+            self.retain_rail_focus(rail_focus);
         }
     }
 
@@ -116,7 +125,7 @@ impl MainView {
 
     /// Run `call` on the window controller for a workspace it lists.
     /// `None` when the catalog has not heard of `id`.
-    fn act_on_listed<R>(
+    pub(super) fn act_on_listed<R>(
         &mut self,
         id: WorkspaceId,
         call: impl FnOnce(&mut WorkspacesController, koru_store_core::ids::WorkspaceId) -> R,

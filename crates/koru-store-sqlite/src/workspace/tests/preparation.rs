@@ -11,6 +11,7 @@ use std::{
     rc::Rc,
 };
 
+mod pins;
 mod replacement;
 
 struct BackendState {

@@ -20,6 +20,7 @@ pub(crate) fn key(hit: Hit) -> Key {
         Hit::Workspace(id) => Key::model(id.as_uuid().as_u128(), "rail"),
         Hit::WaitingWorkspace => Key::surface(SURFACE, "waiting-workspace"),
         Hit::App(mode) => Key::surface(SURFACE, mode.token()),
+        Hit::Overflow => Key::surface(SURFACE, "overflow"),
         Hit::Settings => Key::surface(SURFACE, "settings"),
         Hit::Help => Key::surface(SURFACE, "help"),
         Hit::Profile => Key::surface(SURFACE, "profile"),
@@ -169,6 +170,25 @@ pub(crate) struct Rail {
 }
 
 impl Rail {
+    /// Capacity from the same tokens as the element tree, reserving the
+    /// workspace run, divider and every fixed foot control.
+    pub fn view_capacity(&self, height: f32) -> usize {
+        let gap = Space::S1.px(koru_draw::theme::Profile::Desktop);
+        let square = metrics::RAIL_SQUARE.value;
+        let run = |count: usize| count as f32 * (square + gap) - gap;
+        let workspace = if self.workspaces.is_empty() {
+            0.0
+        } else {
+            run(self.workspaces.len()) + 2.0 * gap + 1.0 + 2.0 * gap
+        };
+        let fixed = Space::S2_5.px(koru_draw::theme::Profile::Desktop)
+            + Space::S1_5.px(koru_draw::theme::Profile::Desktop)
+            + workspace
+            + run(self.foot.len()).max(0.0)
+            + 2.0 * gap;
+        ((height - fixed + gap) / (square + gap)).floor().max(2.0) as usize
+    }
+
     pub fn tree(&self) -> El {
         let mut tree = col("Rail")
             .items_center()
@@ -253,6 +273,7 @@ impl Rail {
         let mut rects = Rects {
             band,
             apps: Vec::new(),
+            overflow: Rect::new(band.x, band.y, 0.0, 0.0),
             workspaces: Vec::new(),
             settings: Rect::new(band.x, band.y, 0.0, 0.0),
             help: Rect::new(band.x, band.y, 0.0, 0.0),
@@ -271,6 +292,7 @@ impl Rail {
                 Hit::Workspace(id) => rects.workspaces.push((Some(id), r)),
                 Hit::WaitingWorkspace => rects.workspaces.push((None, r)),
                 Hit::App(mode) => rects.apps.push((mode, r)),
+                Hit::Overflow => rects.overflow = r,
                 Hit::Settings => rects.settings = r,
                 Hit::Help => rects.help = r,
                 Hit::Profile => rects.profile = r,

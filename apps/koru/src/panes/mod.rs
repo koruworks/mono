@@ -77,6 +77,7 @@ pub enum Outcome {
     Search,
     /// The rail's `?`: the container opens the help popover beside the rail.
     OpenHelp,
+    OpenRailOverflow,
 
     // ---------------------------------------------------------------- panels
     /// A row in the explore tree, or a recent on the welcome screen.
@@ -296,6 +297,12 @@ pub enum Outcome {
     // and where a profile's folder lives are all the container's business.
     /// Show this workspace in **this** window, replacing what is open.
     SwitchWorkspace(WorkspaceId),
+    ToggleWorkspacePin(WorkspaceId),
+    RetryWorkspaceOperation,
+    ReorderWorkspace {
+        workspace: WorkspaceId,
+        before: Option<WorkspaceId>,
+    },
     /// A Profile row on the who/where popover's Profiles page: switch this
     /// window to that Profile, landing on the workspace it last had open.
     SwitchProfile(ProfileId),

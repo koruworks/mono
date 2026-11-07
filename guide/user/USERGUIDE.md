@@ -974,6 +974,22 @@ Hide the sidebar and the lane's buttons fold into the title bar's left end;
 the arrows move within
 each, Enter presses, Escape returns to the page.
 
+Use a workspace row's **Pin to rail** control to keep it one click away.
+The rail shows your current workspace first and up to three saved pins,
+without repeating the current workspace. New pins are capped at three;
+additional saved pins received from another device or restored from Archive
+remain saved and available in the workspace menu. Unpinning is always available.
+Pin choices sync; their order stays on this computer. Drag a pinned square,
+or focus it with F6 and press `Ctrl+Shift+↑`/`↓`, to change that order.
+The current square stays first. Escape cancels a drag. A pending pin has a
+progress mark; if its listing needs repair, **Try again** remains in the menu.
+
+In a short window, **More views** (`⋯`) opens the apps that no longer fit on
+the rail. The active app remains visible, and `Alt+1`…`Alt+8` still count the
+saved order, including folded apps. An active app temporarily shown out of
+its saved position cannot be dragged; `Ctrl+Shift+↑` moves it into the visible
+part of the saved order. Workspace controls, Help and your Profile stay visible.
+
 A new Profile is created together with its first workspace. Opening a Profile
 uses a healthy workspace already on this device when one is available. If
 content is still arriving, Koru shows a waiting page with **Cancel** instead
