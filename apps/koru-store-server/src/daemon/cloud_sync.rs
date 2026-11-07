@@ -979,7 +979,15 @@ where
     W: AsyncWrite + Unpin + Send + 'a,
     F: FnMut(Progress),
 {
-    sync.start(unit)?;
+    sync.start(unit).map_err(|error| {
+        tracing::warn!(
+            ?unit,
+            code = error.code(),
+            status = ?sync.status(),
+            "cloud session: unit admission ended the pass"
+        );
+        error
+    })?;
     progress(Progress::Started(unit));
     // Named on the way out, because the carrier cannot carry it: which unit
     // ended a pass is a fact the worker will never see, and a pass that ends
