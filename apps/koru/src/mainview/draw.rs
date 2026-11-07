@@ -117,13 +117,7 @@ impl MainView {
             self.global_search_chord = chord.clone();
             crate::taskbar::set_shortcut(chord);
         }
-        // The release-notes headlines, once their read lands.
-        if let Some(rx) = self.help_headlines_rx.as_ref()
-            && let Ok(answer) = rx.try_recv()
-        {
-            self.help_headlines = answer;
-            self.help_headlines_rx = None;
-        }
+        self.refresh_help();
         // Advanced here rather than on a clock of its own: the shell asked for
         // this frame *because* `animating` said so, so the frame is the tick.
         self.advance_panels(&workspace.ws);

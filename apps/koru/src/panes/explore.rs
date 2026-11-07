@@ -332,6 +332,7 @@ impl NavigatorMode {
 /// The single open rail menu or the library heading action menu.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum PopoverKind {
+    Help,
     /// The current workspace menu, also opened by `Ctrl+Alt+W`.
     Summary,
     /// Profiles on this computer, also opened by `Ctrl+Alt+P`.
@@ -385,6 +386,7 @@ struct Popover {
 /// Where the who/where popover hangs.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum PopoverAnchor {
+    HelpRail,
     /// Beside the library heading action.
     Heading,
     /// Beside the rail's profile square, its foot level with the square's.
@@ -412,6 +414,7 @@ fn page_of(kind: PopoverKind) -> f32 {
 /// One row of an open popover, in the order it is listed.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum PopoverRow {
+    Help(help::Action),
     WorkspaceAction(workspace_menu_elements::MenuAction),
     WorkspaceNotice,
     /// Workspace heading with a separate Manage workspaces target.
@@ -851,6 +854,7 @@ pub struct ExploreView {
     /// The Workspaces page's own text engine and shaping cache, for the
     /// frame that answers input and the accessibility tree.
     page_layout: RefCell<popover_elements::PageLayout>,
+    help: help::Model,
     rail_layout: RefCell<koru_draw::el::TextCache>,
     heading_layout: RefCell<koru_draw::el::TextCache>,
     /// Carets part-way through their quarter turn, by node.
@@ -3238,6 +3242,10 @@ impl ExploreView {
         self.live().is_some()
     }
 
+    pub(crate) fn popover_is(&self, kind: PopoverKind) -> bool {
+        self.live().is_some_and(|p| p.kind == kind)
+    }
+
     /// Which row of the open popover is highlighted, if any.
     ///
     /// Public because a row's **remove** box only draws while its row is hot, so
@@ -3413,6 +3421,11 @@ impl ExploreView {
             PopoverKind::Profiles => {
                 self.hover_current_profile();
             }
+            PopoverKind::Help => {
+                if let Some(p) = &mut self.popover {
+                    p.hover = Some(0);
+                }
+            }
             PopoverKind::LibraryActions => {}
         }
         true
@@ -3424,6 +3437,7 @@ impl ExploreView {
     /// between them (the review's note: no views inside the popover).
     fn toggle_popover(&mut self, kind: PopoverKind) {
         let anchor = match kind {
+            PopoverKind::Help => PopoverAnchor::HelpRail,
             PopoverKind::Profiles => PopoverAnchor::Rail,
             PopoverKind::Summary => PopoverAnchor::WorkspaceRail,
             PopoverKind::LibraryActions => PopoverAnchor::Heading,
@@ -3489,6 +3503,13 @@ impl ExploreView {
     /// both are drawn.
     fn rows_for(&self, kind: PopoverKind) -> Vec<PopoverRow> {
         match kind {
+            PopoverKind::Help => help::Action::ALL
+                .into_iter()
+                .filter(|action| {
+                    *action != help::Action::Offer || self.help.projection().action.is_some()
+                })
+                .map(PopoverRow::Help)
+                .collect(),
             PopoverKind::Summary => {
                 let list = &self.workspaces;
                 let mut out = Vec::with_capacity(list.len() + 1);
@@ -3598,7 +3619,11 @@ impl ExploreView {
             return None;
         }
         let available_h = (viewport.1 - POPOVER_EDGE * 2.0).max(0.0);
-        let mut h = if p.kind == PopoverKind::LibraryActions {
+        let mut h = if p.kind == PopoverKind::Help {
+            self.page_natural_h(p.kind)
+                .min(SWITCHER_MAX_H)
+                .min(available_h)
+        } else if p.kind == PopoverKind::LibraryActions {
             self.page_natural_h(p.kind).min(available_h)
         } else {
             let cap = |kind| {
@@ -3630,10 +3655,12 @@ impl ExploreView {
             )
         };
         let x = match p.kind {
-            PopoverKind::Summary | PopoverKind::Profiles if beside_rail => {
+            PopoverKind::Summary | PopoverKind::Profiles | PopoverKind::Help if beside_rail => {
                 rail.x + rail.w + POPOVER_GAP
             }
-            PopoverKind::Summary | PopoverKind::Profiles => rail.x + rail.w + POPOVER_GAP,
+            PopoverKind::Summary | PopoverKind::Profiles | PopoverKind::Help => {
+                rail.x + rail.w + POPOVER_GAP
+            }
             // Under its button and off to the right (the review's note), the
             // way the floor's menu and the Profiles page open beside what
             // raised them.
@@ -3658,8 +3685,13 @@ impl ExploreView {
                 (anchor.y + anchor.h + POPOVER_GAP)
                     .min((viewport.1 - h - POPOVER_EDGE).max(anchor.y))
             }
-            PopoverKind::Profiles => {
-                let square = self.apps_rail_rects(rail).profile;
+            PopoverKind::Profiles | PopoverKind::Help => {
+                let rects = self.apps_rail_rects(rail);
+                let square = if p.kind == PopoverKind::Help {
+                    rects.help
+                } else {
+                    rects.profile
+                };
                 let foot = (square.y + square.h).min(viewport.1 - POPOVER_EDGE);
                 h = h.min((foot - POPOVER_EDGE).max(POPOVER_ROW_H));
                 (foot - h).max(POPOVER_EDGE)
@@ -3725,7 +3757,7 @@ impl ExploreView {
     pub fn scroll_popover(&mut self, area: Rect, viewport: (f32, f32), dy: f32) -> bool {
         if !matches!(
             self.live().map(|p| p.kind),
-            Some(PopoverKind::Summary | PopoverKind::Profiles)
+            Some(PopoverKind::Summary | PopoverKind::Profiles | PopoverKind::Help)
         ) {
             return false;
         }
@@ -3927,7 +3959,7 @@ impl ExploreView {
             PopoverRow::ProfilesHeading => part != PopoverPart::Gear,
             // The foot's words do nothing; each button is a destination —
             // Settings, the Manage tab, the website, a creator.
-            PopoverRow::ProfileAction(_) => false,
+            PopoverRow::ProfileAction(_) | PopoverRow::Help(_) => false,
             PopoverRow::Profile(_) | PopoverRow::Workspace(_) | PopoverRow::LibraryAction(_) => {
                 false
             }
@@ -4005,6 +4037,7 @@ impl ExploreView {
                 .map(Outcome::ManageProfile)
                 .unwrap_or(Outcome::Consumed),
             PopoverRow::ProfilesHeading => Outcome::Consumed,
+            PopoverRow::Help(action) => Outcome::Help(action),
             PopoverRow::ProfileAction(action) => action.outcome(),
             PopoverRow::LibraryAction(action) => self.choose_library_action(action),
         }
@@ -8093,6 +8126,7 @@ pub(crate) mod workspace_menu_elements;
 
 use slides::RowSlides;
 
+pub(crate) mod help;
 #[cfg(test)]
 mod popover_baseline;
 pub(crate) mod popover_elements;

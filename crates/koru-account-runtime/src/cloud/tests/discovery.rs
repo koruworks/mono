@@ -96,6 +96,7 @@ fn pass_start_publishes_stale_and_abort_keeps_the_previous_receipt_stale() {
     );
     c.dispatch(clock.as_ref(), true);
     let prior = c.snapshot().discovery.unwrap();
+    assert!(prior.exhausted, "the previous pass completed enumeration");
     let observed = Arc::new(Mutex::new(Vec::new()));
     let collected = observed.clone();
     c.observe(move |snapshot| {
@@ -108,6 +109,10 @@ fn pass_start_publishes_stale_and_abort_keeps_the_previous_receipt_stale() {
     let receipt = c.snapshot().discovery.unwrap();
     assert!(receipt.stale);
     assert_eq!(receipt.pass, prior.pass);
+    assert!(
+        receipt.exhausted,
+        "stale exhaustion still belongs to the previous pass"
+    );
     assert!(
         observed
             .lock()
@@ -131,4 +136,80 @@ fn terminal_failure_retains_nonautomatic_recovery() {
     assert_eq!(receipt.failure_code.as_deref(), Some(SESSION_EXPIRED));
     assert!(!receipt.automatic_retry);
     assert!(receipt.retry_at_millis.is_none());
+}
+
+#[test]
+fn access_revocation_publishes_a_failure_receipt_without_automatic_retry() {
+    let world = one_hosted_pair();
+    lock(&world).discover_access_failures = 1;
+    let receipt = run(world);
+    assert_eq!(receipt.failure_code, Some("cloud_access_revoked"));
+    assert!(!receipt.stale);
+    assert!(
+        !receipt.exhausted,
+        "failed enumeration is not an empty completed catalog"
+    );
+    assert!(!receipt.automatic_retry);
+    assert!(receipt.retry_at_millis.is_none());
+    let projected = receipt.for_profile(profile(1));
+    assert_eq!(
+        projected.failure_code.as_deref(),
+        Some("cloud_access_revoked")
+    );
+    assert!(!projected.automatic_retry);
+    assert!(projected.retry_at_millis.is_none());
+}
+
+#[test]
+fn cancelling_fresh_enumeration_never_publishes_an_exhausted_receipt() {
+    // Cancel during the first non-final page, or during the final page's
+    // return. Neither can publish completion for a fresh, aborted pass.
+    for cancel_page in [0, 1] {
+        let world = one_hosted_pair();
+        let cancel = Cancel::default();
+        {
+            let mut world = lock(&world);
+            world.pages = vec![
+                page(vec![candidate(1)], Some(&candidate(1))),
+                page(vec![], None),
+            ];
+            world.cancel_discovery_page = Some((cancel_page, cancel.clone()));
+        }
+        let clock = PauseClock::new();
+        let mut c = coordinator(world.clone(), cancel.clone());
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let collected = observed.clone();
+        c.observe(move |snapshot| collected.lock().unwrap().push(snapshot));
+        c.apply(
+            Command::Activate(Some(authority("1")), Some(7)),
+            clock.as_ref(),
+        );
+        assert!(
+            c.snapshot().discovery.is_none(),
+            "there is no previous receipt to preserve"
+        );
+        c.dispatch(clock.as_ref(), true);
+        assert!(
+            cancel.cancelled(),
+            "the cancellation happened inside discovery"
+        );
+        assert_eq!(
+            lock(&world)
+                .log
+                .iter()
+                .filter(|entry| entry.starts_with("discover"))
+                .count(),
+            cancel_page + 1
+        );
+        assert!(
+            c.snapshot().discovery.is_none(),
+            "an aborted fresh pass publishes no receipt, not exhausted=true"
+        );
+        let observed = observed.lock().unwrap();
+        assert!(!observed.is_empty(), "the observer saw the active pass");
+        assert!(
+            observed.iter().all(|snapshot| snapshot.discovery.is_none()),
+            "no intermediate notification advertised completion"
+        );
+    }
 }

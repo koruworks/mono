@@ -311,7 +311,7 @@ fn the_move_chords_leave_the_rail_alone_without_the_keyboard_on_it() {
 /// opened Help (found in D96).
 #[test]
 fn enter_on_the_rails_foot_activates_the_control_the_ring_is_on() {
-    use crate::mainview::context_menu::MenuSubject;
+    use crate::panes::explore::PopoverKind;
     koru_features::testing::with(koru_features::Features::ALL_OFF, || {
         let (mut v, mut workspace) = container();
         assert!(v.key(
@@ -341,12 +341,13 @@ fn enter_on_the_rails_foot_activates_the_control_the_ring_is_on() {
             "the ring is on Help"
         );
         assert!(press(&mut v, &mut workspace.ws, NamedKey::Enter));
-        assert_eq!(
-            v.menu.as_ref().map(|m| m.subject.clone()),
-            Some(MenuSubject::Help),
+        assert!(
+            v.explore.popover_is(PopoverKind::Help),
             "Enter on Help opens the help popover"
         );
-        v.menu = None;
+        v.explore.close_popover();
+        v.explore
+            .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
 
         onto(&mut v, &mut workspace.ws, 1);
         assert_eq!(
@@ -360,6 +361,11 @@ fn enter_on_the_rails_foot_activates_the_control_the_ring_is_on() {
             v.explore.popover_open(),
             "Enter on the profile square opens its page"
         );
-        assert!(v.menu.is_none(), "and not the help popover");
+        assert!(v.explore.popover_is(PopoverKind::Profiles));
+        assert!(
+            !v.explore.popover_is(PopoverKind::Help),
+            "and not the help popover"
+        );
+        v.explore.close_popover();
     });
 }

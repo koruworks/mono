@@ -471,6 +471,7 @@ impl ExploreView {
                 }
             }),
             PopoverRow::ProfileAction(action) => Some(action.key()),
+            PopoverRow::Help(action) => Some(action.key()),
             PopoverRow::ProfilesHeading => Some(profiles::MANAGE_PROFILES),
             PopoverRow::WorkspaceAction(action) => Some(action.key()),
             PopoverRow::WorkspacesHeading => Some(super::workspace_menu_elements::MANAGE),
@@ -531,6 +532,7 @@ impl ExploreView {
         match kind {
             PopoverKind::Summary => Some(self.workspaces_page(scroll)),
             PopoverKind::Profiles => Some(self.profiles_page(scroll, avatar)),
+            PopoverKind::Help => Some(self.help_page(scroll)),
             PopoverKind::LibraryActions => None,
         }
     }
@@ -626,6 +628,7 @@ impl ExploreView {
                 PopoverRow::ProfileAction(action) => {
                     frame.node(action.key()).map(|n| (row, n.rect))
                 }
+                PopoverRow::Help(action) => frame.node(action.key()).map(|n| (row, n.rect)),
                 _ => None,
             })
             .collect()
@@ -688,7 +691,8 @@ pub(crate) fn list_of(frame: &Frame) -> Option<(Rect, f32, f32)> {
     let list = frame
         .named(LIST)
         .next()
-        .or_else(|| frame.named(profiles::LIST).next())?;
+        .or_else(|| frame.named(profiles::LIST).next())
+        .or_else(|| frame.named(super::help::LIST).next())?;
     let (content, offset) = list.scroll?;
     Some((list.rect, content, offset))
 }
@@ -708,6 +712,9 @@ pub(crate) const GEAR: &str = "Manage gear";
 /// The popover row and part an element key stands for: what a press or an
 /// accessibility request on that key chooses.
 pub(crate) fn row_part_of(view: &ExploreView, key: Key) -> Option<(PopoverRow, PopoverPart)> {
+    if let Some(action) = super::help::Action::from_key(key) {
+        return Some((PopoverRow::Help(action), PopoverPart::Row));
+    }
     if key == super::workspace_menu_elements::MANAGE {
         return Some((PopoverRow::WorkspacesHeading, PopoverPart::Gear));
     }

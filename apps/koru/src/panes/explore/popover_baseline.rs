@@ -422,6 +422,7 @@ fn painted(name: &str) -> bool {
 
 fn row_key(v: &ExploreView, row: PopoverRow) -> String {
     match row {
+        PopoverRow::Help(action) => format!("help:{}", action.key().part),
         PopoverRow::WorkspaceAction(action) => format!("workspace-action:{}", action.key().part),
         PopoverRow::WorkspaceNotice => "workspace-notice".into(),
         PopoverRow::Workspace(i) => format!("ws:{}", key(v.workspaces[i].id.as_uuid())),

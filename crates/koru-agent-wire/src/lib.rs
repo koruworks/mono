@@ -2023,7 +2023,7 @@ pub enum UpdateStage {
 /// That is a product rule, and a rule only a drawing convention enforces is one
 /// somebody removes by drawing a different banner — so the agent checks the
 /// stage before it acts: [`Self::Download`] is refused unless the stage is
-/// [`UpdateStage::Available`], and [`Self::Install`] unless it is
+/// [`UpdateStage::Available`] or [`UpdateStage::Deferred`], and [`Self::Install`] unless it is
 /// [`UpdateStage::Ready`]. A shell cannot skip a step even by sending the
 /// message for the step it wants, which is what makes the two steps a property
 /// of the system rather than of one banner's code.
@@ -2046,7 +2046,7 @@ pub enum UpdateStage {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum UpdateChoice {
-    /// Yes, fetch it. The first consent.
+    /// Yes, fetch the available or deferred offer. The first consent.
     Download,
     /// Yes, install it and restart. The second.
     Install { session_generation: u64 },

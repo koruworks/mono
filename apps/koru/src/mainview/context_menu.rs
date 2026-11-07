@@ -609,31 +609,12 @@ pub enum MenuAction {
     HeaderShortcuts,
     HeaderMobile,
     // ------------------------------------------------------------ help
-    /// The *WHAT'S NEW* heading over the release card. It wears a dot while
-    /// a build is on offer.
-    HelpWhatsNewHeading,
-    /// The release card (the review's artboard): the build on offer when the
-    /// Agent has one, else the build that is running — badge, date, title,
-    /// a line under it, and the Download button at its foot, which is
-    /// [`HelpDownload`](Self::HelpDownload). Chosen as a whole (its `›`), it
-    /// opens the What's new tab.
-    HelpRelease,
-    /// The card's button. **Not a row**: reached only through the card's
-    /// control, like the zoom stepper's three, so nothing lists it.
-    HelpDownload,
-    /// The releases page on koru.do, in the browser.
-    HelpFullChangelog,
     /// The Feedback tab. **The only feedback row** (the review's note): *Report
     /// a problem* was a second door to the same tab and went.
     HelpSendFeedback,
     /// Koru's repository on GitHub, in the browser, to star it.
     HelpStarOnGitHub,
-    /// The strip at the popover's foot: the website and the socials, each a
-    /// control of this one row. **Not a row that is chosen**: its controls
-    /// are, and what each does is [`HelpWebsite`](Self::HelpWebsite) or a
-    /// [`HelpSocial`](Self::HelpSocial), which nothing lists either.
-    HelpSocials,
-    HelpWebsite,
+    /// One of Koru's social accounts, in the browser.
     HelpSocial(Social),
     /// The internal session recorder: opens the setup modal
     /// (the internal session-recorder design). Only ever *built* behind the
@@ -1401,27 +1382,12 @@ impl MenuAction {
             MenuAction::HeaderFeedback => "Feedback",
             MenuAction::HeaderShortcuts => "Keyboard shortcuts",
             MenuAction::HeaderMobile => "Get the mobile app",
-            // A heading, so in caps — the pane's *WORKSPACES · n* rule.
-            MenuAction::HelpWhatsNewHeading => {
-                return Cow::Owned(
-                    koru_i18n::t(crate::format::lang(), koru_i18n::Key::WhatsNew).to_uppercase(),
-                );
-            }
-            MenuAction::HelpRelease => return Cow::Owned(help_card().title),
-            MenuAction::HelpDownload => {
-                koru_i18n::t(crate::format::lang(), koru_i18n::Key::Download)
-            }
-            MenuAction::HelpFullChangelog => {
-                koru_i18n::t(crate::format::lang(), koru_i18n::Key::FullChangelog)
-            }
             MenuAction::HelpSendFeedback => {
                 koru_i18n::t(crate::format::lang(), koru_i18n::Key::SendFeedback)
             }
             MenuAction::HelpStarOnGitHub => {
                 koru_i18n::t(crate::format::lang(), koru_i18n::Key::StarOnGitHub)
             }
-            MenuAction::HelpSocials => "",
-            MenuAction::HelpWebsite => "koru.do",
             MenuAction::HelpSocial(social) => social.name(),
             MenuAction::HeaderStartRecording => {
                 koru_i18n::t(crate::format::lang(), koru_i18n::Key::RecordingMenuStart)
@@ -1555,12 +1521,9 @@ impl MenuAction {
             MenuAction::Chats => Some(koru_draw::icons::CHATS_CIRCLE),
             MenuAction::HeaderFeedback => Some(koru_draw::icons::USER_SOUND),
             MenuAction::HeaderSupport => Some(koru_draw::icons::HEADSET),
-            // The help popover's rows, as the artboard draws them.
-            MenuAction::HelpDownload => Some(koru_draw::icons::IMPORT),
-            MenuAction::HelpFullChangelog => Some(koru_draw::icons::LIST),
+            // Destinations shared with the help popover.
             MenuAction::HelpSendFeedback => Some(koru_draw::icons::CHAT_CIRCLE),
             MenuAction::HelpStarOnGitHub => Some(koru_draw::icons::GITHUB),
-            MenuAction::HelpWebsite => Some(koru_draw::icons::GLOBE),
             MenuAction::HelpSocial(social) => Some(social.glyph()),
             MenuAction::PopOut | MenuAction::SessionMoveToNewWindow => {
                 Some(koru_draw::icons::POP_OUT)
@@ -1635,11 +1598,7 @@ impl MenuAction {
     pub fn selectable(self) -> bool {
         !matches!(
             self,
-            MenuAction::Divider
-                | MenuAction::SelectionHeader(_)
-                | MenuAction::HeaderZoom
-                | MenuAction::HelpWhatsNewHeading
-                | MenuAction::HelpSocials
+            MenuAction::Divider | MenuAction::SelectionHeader(_) | MenuAction::HeaderZoom
         )
     }
 
@@ -1708,9 +1667,7 @@ impl koru_ui::MenuItem for MenuAction {
     fn height(&self) -> f32 {
         match self {
             // A touch shorter than a real row so the caption sits as a heading.
-            MenuAction::SelectionHeader(_) | MenuAction::HelpWhatsNewHeading => theme::ROW_H - 4.0,
-            // A touch taller than a row, so six logos have air around them.
-            MenuAction::HelpSocials => theme::ROW_H + 8.0,
+            MenuAction::SelectionHeader(_) => theme::ROW_H - 4.0,
             MenuAction::Divider => 8.0,
             _ => theme::ROW_H,
         }
@@ -1732,21 +1689,16 @@ impl koru_ui::MenuItem for MenuAction {
     }
 
     fn card(&self) -> Option<koru_ui::MenuCard> {
-        matches!(self, MenuAction::HelpRelease).then(|| help_card().menu_card())
+        None
     }
 
-    /// The changelog and the repository leave the app: an `↗` where their
-    /// chord would be.
+    /// The repository leaves the app: an `↗` where its chord would be.
     fn trailing_icon(&self) -> Option<char> {
-        matches!(
-            self,
-            MenuAction::HelpFullChangelog | MenuAction::HelpStarOnGitHub
-        )
-        .then_some(koru_draw::icons::POP_OUT)
+        matches!(self, MenuAction::HelpStarOnGitHub).then_some(koru_draw::icons::POP_OUT)
     }
 
     fn unread(&self) -> bool {
-        matches!(self, MenuAction::HelpWhatsNewHeading) && help_card().unread
+        false
     }
 
     /// A dimmed row that does not explain itself is a dead end; the rows that
@@ -2520,72 +2472,6 @@ pub fn window_items(pinned: bool, _maximized: bool, recording: bool) -> Vec<Menu
     items
 }
 
-/// What the help popover's release card says. Built by the window when the
-/// popover opens (`MainView::help_card`) and read through the thread-local
-/// below, the same arrangement the `+` menu's recent titles use: a row's
-/// label, card and controls are read from the action alone.
-#[derive(Clone, PartialEq, Eq, Debug, Default)]
-pub struct HelpCard {
-    /// `STABLE · 1.0.1` — the channel in caps and the version.
-    pub badge: String,
-    /// The release date, the reader's way; empty for a build never released.
-    pub date: String,
-    pub title: String,
-    pub body: String,
-    /// The Download button: `Some(true)` while a build waits for the first
-    /// consent, `Some(false)` drawn dim when there is nothing to fetch,
-    /// `None` for no button.
-    pub download: Option<bool>,
-    /// Whether the heading wears its dot: a build is on offer.
-    pub unread: bool,
-}
-
-impl HelpCard {
-    fn menu_card(&self) -> koru_ui::MenuCard {
-        koru_ui::MenuCard {
-            badge: self.badge.clone(),
-            date: self.date.clone(),
-            title: self.title.clone(),
-            body: self.body.clone(),
-            button: self.download.map(|on| {
-                (
-                    koru_i18n::t(crate::format::lang(), koru_i18n::Key::Download).to_owned(),
-                    on,
-                )
-            }),
-        }
-    }
-}
-
-thread_local! {
-    /// This window's release card, set when the help popover opens.
-    static HELP_CARD: RefCell<HelpCard> = RefCell::new(HelpCard::default());
-}
-
-fn help_card() -> HelpCard {
-    HELP_CARD.with(|c| c.borrow().clone())
-}
-
-/// The help popover's rows (the review's artboard, QUESTIONS.md E33): *WHAT'S
-/// NEW* over the release card, then *Full changelog*, then *Send feedback*
-/// and *Star us on GitHub*, and the strip of the website and the socials at
-/// the foot. Support is not a row: it stays reachable through the Agent's own
-/// asks, and the review hid it here.
-pub fn help_items(card: HelpCard) -> Vec<MenuAction> {
-    HELP_CARD.with(|c| *c.borrow_mut() = card);
-    vec![
-        MenuAction::HelpWhatsNewHeading,
-        MenuAction::HelpRelease,
-        MenuAction::Divider,
-        MenuAction::HelpFullChangelog,
-        MenuAction::Divider,
-        MenuAction::HelpSendFeedback,
-        MenuAction::HelpStarOnGitHub,
-        MenuAction::Divider,
-        MenuAction::HelpSocials,
-    ]
-}
-
 /// **Hidden for now: Feedback is the overflow's only destination.** Support,
 /// Keyboard shortcuts, Get the mobile app, Updates and the session recorder's
 /// row are left out of [`window_items`]. Each is still built and handled, so
@@ -2678,38 +2564,6 @@ pub fn control_tooltip(row: MenuAction, control: usize) -> Option<(String, Optio
 fn row_controls(row: MenuAction) -> Vec<(Control, Option<MenuAction>)> {
     match row {
         MenuAction::HeaderZoom => zoom_controls(theme::zoom()),
-        // The card's one control: its Download button, live only while a
-        // build waits for the first consent.
-        MenuAction::HelpRelease => help_card()
-            .download
-            .map(|enabled| {
-                vec![(
-                    Control::Button {
-                        glyph: koru_draw::icons::IMPORT,
-                        enabled,
-                    },
-                    Some(MenuAction::HelpDownload),
-                )]
-            })
-            .unwrap_or_default(),
-        // The strip: the website's globe, then the socials in their order.
-        MenuAction::HelpSocials => std::iter::once((
-            Control::Button {
-                glyph: koru_draw::icons::GLOBE,
-                enabled: true,
-            },
-            Some(MenuAction::HelpWebsite),
-        ))
-        .chain(Social::ALL.into_iter().map(|social| {
-            (
-                Control::Button {
-                    glyph: social.glyph(),
-                    enabled: true,
-                },
-                Some(MenuAction::HelpSocial(social)),
-            )
-        }))
-        .collect(),
         _ => Vec::new(),
     }
 }

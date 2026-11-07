@@ -71,6 +71,23 @@ fn local_is_not_applicable_while_absent_unavailable_or_mismatched_accounts_are_u
 }
 
 #[test]
+fn default_account_with_empty_arrays_keeps_local_delivery_not_applicable() {
+    let state = AccountState::default();
+    assert!(state.cloud_profiles.is_empty());
+    assert!(state.enrollments.is_empty());
+    assert!(state.active_account_id.is_none());
+    let local = ProfileDelivery::read(profile(), None, Some(&state));
+    assert_eq!(local, ProfileDelivery::NotApplicable);
+    assert!(local.may_ensure_live());
+    let bound = read(&state);
+    assert_eq!(bound, ProfileDelivery::Unknown);
+    assert!(
+        !bound.may_ensure_live(),
+        "default account state cannot authorize Cloud-bound creation"
+    );
+}
+
+#[test]
 fn enrollment_failure_and_work_precede_absent_choice_or_completed_discovery() {
     let mut state = state();
     for discovery in [None, Some(receipt())] {

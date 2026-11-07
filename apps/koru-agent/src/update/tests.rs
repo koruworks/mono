@@ -232,6 +232,116 @@ fn progress_and_failure_reach_the_banner() {
     assert_eq!(failed.detail.as_deref(), Some("connection reset"));
 }
 
+#[test]
+fn an_offer_keeps_its_metadata_through_progress_deferral_and_failure() {
+    let offer = manifest();
+    for status in [
+        UpdateStatus::Downloading {
+            received: 1_024,
+            total: 4_096,
+        },
+        UpdateStatus::Verifying,
+        UpdateStatus::Installing,
+        UpdateStatus::Deferred(16),
+        UpdateStatus::Failed(UpdateFailure::new(
+            "Download failed.",
+            "connection reset",
+            true,
+        )),
+    ] {
+        let mut actual = report_for(&status, false, false, "nightly");
+        actual.active_session_count = 3;
+        actual.session_generation = 42;
+        let expected = UpdateReport {
+            version: "0.0.4-nightly.20260815+abc1234".into(),
+            build_number: 16,
+            title: "Everyday editing, tidied up".into(),
+            summary: vec!["Documents open faster.".into(), "Fewer stalls.".into()],
+            notes_url: Some("https://updates.koru.do/releases/0.0.4/index.html".into()),
+            download_url: Some(
+                "https://updates.koru.do/releases/0.0.4/koru-windows-x86_64.zip".into(),
+            ),
+            ..actual.clone()
+        };
+
+        retain_offer(&mut actual, Some(&offer));
+
+        assert_eq!(
+            actual, expected,
+            "{status:?}: preserve progress, failure and consent/session facts while retaining the offer"
+        );
+    }
+}
+
+#[test]
+fn cached_offer_metadata_does_not_leak_into_states_without_an_offer() {
+    let cached = manifest();
+    for status in [
+        UpdateStatus::Idle,
+        UpdateStatus::Checking,
+        UpdateStatus::UpToDate,
+        UpdateStatus::InstalledBuildNewer { available: 12 },
+    ] {
+        let mut actual = report(&status);
+        let before = actual.clone();
+
+        retain_offer(&mut actual, Some(&cached));
+
+        assert_eq!(
+            actual, before,
+            "a stale manifest must not change {status:?}"
+        );
+    }
+}
+
+#[test]
+fn a_deferred_report_does_not_name_a_different_cached_release() {
+    let cached = manifest();
+    for deferred_build in [15, 17] {
+        let mut actual = report(&UpdateStatus::Deferred(deferred_build));
+        let before = actual.clone();
+
+        retain_offer(&mut actual, Some(&cached));
+
+        assert_eq!(
+            actual, before,
+            "keep the deferred build without borrowed notes"
+        );
+    }
+}
+
+#[test]
+fn a_missing_offer_leaves_progress_and_failure_reports_unchanged() {
+    for status in [
+        UpdateStatus::Downloading {
+            received: 1,
+            total: 2,
+        },
+        UpdateStatus::Verifying,
+        UpdateStatus::Installing,
+        UpdateStatus::Deferred(16),
+        UpdateStatus::Failed(UpdateFailure::new("Check failed.", "no manifest", true)),
+    ] {
+        let mut actual = report(&status);
+        let before = actual.clone();
+
+        retain_offer(&mut actual, None);
+
+        assert_eq!(actual, before, "no offer was received for {status:?}");
+    }
+}
+
+#[test]
+fn a_deferred_offer_can_be_downloaded_but_cannot_skip_install_consent() {
+    assert!(allows(UpdateStage::Deferred, UpdateChoice::Download));
+    assert!(!allows(
+        UpdateStage::Deferred,
+        UpdateChoice::Install {
+            session_generation: 42,
+        }
+    ));
+}
+
 /// The app is *told* whether the swap is possible rather than probing for it —
 /// so this has to survive the trip, including when the answer is no.
 #[test]

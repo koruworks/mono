@@ -49,6 +49,7 @@ pub(crate) enum Contents {
         color: Option<String>,
     },
     Glyph(char),
+    NotifiedGlyph(char),
 }
 
 #[derive(Clone)]
@@ -108,7 +109,7 @@ impl Leaf for SquareContents {
                     );
                 }
             }
-            Contents::Glyph(glyph) => {
+            Contents::Glyph(glyph) | Contents::NotifiedGlyph(glyph) => {
                 let shaped = if state.selected {
                     engine.icon_layout_filled(*glyph, metrics::RAIL_GLYPH.value)
                 } else {
@@ -129,6 +130,19 @@ impl Leaf for SquareContents {
                     at.y + (at.h - shaped.height()) * 0.5,
                     Some(ink.of(cx.palette())),
                 );
+                if matches!(self.contents, Contents::NotifiedGlyph(_)) {
+                    let inset = Space::S2.px(koru_draw::theme::Profile::Desktop);
+                    let radius = Space::S1.px(koru_draw::theme::Profile::Desktop) * 0.5;
+                    koru_draw::scene::fill(
+                        scene,
+                        root,
+                        Ink::Accent.of(cx.palette()),
+                        &vello::kurbo::Circle::new(
+                            ((at.x + at.w - inset) as f64, (at.y + inset) as f64),
+                            radius as f64,
+                        ),
+                    );
+                }
             }
         }
     }

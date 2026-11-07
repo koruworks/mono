@@ -5641,9 +5641,9 @@ of the header slides to the other page; pressing the half whose page is showing,
 On the **Workspaces** page, pointing at a workspace shows its **Manage**
 control at the row's end; it opens the **Manage** tab on that workspace. From
 the keyboard, `↓` and `↑` move between workspaces, `→` moves onto the lit
-workspace's Manage control and `←` back to the workspace, and `Enter` opens
-what is lit: the workspace, or Manage on it. A screen reader announces the
-control as *Manage workspace*.
+workspace's Manage control and again to its pin control; `←` moves back.
+`Enter` or `Space` activates what is lit. A screen reader announces the gear
+as *Manage workspace* and names the pin action or its refusal reason.
 
 In a workspace window, click the **Profile tile** at the bottom of the rail,
 or press **`Ctrl+Alt+P`**, to open the Profile menu. The shortcut works with
@@ -5664,7 +5664,24 @@ Global sync opens the same Sync settings tab as the workspace menu's header;
 its glyphs show configured device and Cloud channels, independently of their
 health. App settings opens Settings and carries its shortcut in the tooltip.
 Each row is its own keyboard stop and closes the menu when activated.
-Linked devices remain available in Manage. The account chooser —
+Linked devices remain available in Manage.
+
+The rail's **Help (`?`)** opens **What's new** with a release timeline. The
+current version opens its shipped release notes; a build without notes says
+*Not shipped with this build*. An offered update appears above it with its
+current stage and one available action: **Download**, **Download manually**,
+**Restart**, or **Try again**. Downloading, verifying and installing show
+progress without another action. Restart retains the existing separate install
+consent and terminal-session warning.
+
+Choosing **Later** in the update banner keeps the offer in Help and clears
+that offer's dot. Unread release notes can keep the dot lit; opening Help does
+not read them. Opening What's new clears the notes' contribution for this
+window, while an active update offer still contributes its own dot. **View all
+releases**, **Help & docs**, **Send feedback**, **Star us on GitHub** and
+**Follow on X** are the remaining Help rows.
+
+The account chooser —
 **Accounts…** on Manage's **Koru Cloud** page — switches between held accounts; **Add Account** starts
 sign-in or returns to an unfinished account choice. Switching keeps your open
 Workspace and tabs, local content, and established device sync. It shows the

@@ -220,6 +220,7 @@ impl ExploreView {
                 rev.str(match popover.kind {
                     PopoverKind::Summary => "summary",
                     PopoverKind::Profiles => "profiles",
+                    PopoverKind::Help => "help",
                     PopoverKind::LibraryActions => "library",
                 });
                 rev.u64(popover.hover.map_or(u64::MAX, |i| i as u64));
@@ -243,6 +244,10 @@ impl ExploreView {
                     rev.str(&self.profile_description(profile));
                 }
                 rev.str(&self.sync_control_name());
+                rev.str(&self.help.stage_label())
+                    .str(&self.help.current_label());
+                rev.str(self.help.report.as_ref().map_or("", |r| r.version.as_str()));
+                rev.bool(self.help.projection().dot);
             }
             None => {
                 rev.byte(0);
@@ -638,6 +643,7 @@ impl ExploreView {
                 element_occurrence(cx, super::popover_elements::profiles::MANAGE_PROFILES)
             }
             PopoverRow::ProfileAction(action) => element_occurrence(cx, action.key()),
+            PopoverRow::Help(action) => element_occurrence(cx, action.key()),
             PopoverRow::LibraryAction(action) => {
                 cx.surface(POPOVER, ControlPart::new(super::actions::token(action)))
             }
@@ -665,6 +671,7 @@ impl ExploreView {
             PopoverRow::WorkspacesHeading => t(lang, Key::ManageWorkspaces).to_string(),
             PopoverRow::ProfilesHeading => t(lang, Key::ProfileManageProfiles).to_string(),
             PopoverRow::ProfileAction(action) => t(lang, action.words()).to_string(),
+            PopoverRow::Help(action) => self.help.action_label(action),
             PopoverRow::LibraryAction(action) => {
                 super::actions::label(action, self.mode).to_string()
             }
@@ -755,6 +762,7 @@ impl ExploreView {
                 target.part.name() == super::popover_elements::profiles::MANAGE_PROFILES.part
             }
             PopoverRow::ProfileAction(action) => target.part.name() == action.key().part,
+            PopoverRow::Help(action) => target.part.name() == action.key().part,
             PopoverRow::LibraryAction(action) => {
                 target.part.name() == super::actions::token(action)
             }

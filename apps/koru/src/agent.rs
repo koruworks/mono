@@ -204,6 +204,7 @@ pub struct ReminderSnoozeAsk {
 /// noticed on the next keystroke would sit on a finished download.
 #[derive(Clone)]
 pub struct UpdateFeed {
+    offered: Arc<AtomicBool>,
     last: Arc<Mutex<Option<UpdateReport>>>,
     /// The same queue every other write uses. `None` when there is no agent, and
     /// then every choice is dropped — see [`Self::absent`].
@@ -300,13 +301,41 @@ impl AgentCliFeed {
     }
 }
 
+fn offered_report(report: &UpdateReport) -> bool {
+    !report.version.trim().is_empty()
+        && matches!(
+            report.stage,
+            UpdateStage::Available
+                | UpdateStage::Downloading
+                | UpdateStage::Verifying
+                | UpdateStage::Ready
+                | UpdateStage::Installing
+                | UpdateStage::Deferred
+        )
+}
+
 impl UpdateFeed {
+    /// Recorded on receipt, including offers superseded before any window paints.
+    pub fn was_offered(&self) -> bool {
+        self.offered.load(Ordering::Acquire)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn replace_report(&self, report: UpdateReport) {
+        if offered_report(&report) {
+            self.offered.store(true, Ordering::Release);
+        }
+        *self.last.lock().unwrap_or_else(|e| e.into_inner()) = Some(report);
+        self.dirty.store(true, Ordering::Release);
+    }
+
     /// No agent, so no reports and nowhere to send a choice. What every test
     /// gets, and what a window that could not reach an agent runs on: the
     /// Welcome screen draws the buttons disabled and says nothing is wrong,
     /// because nothing is — see the module note on a missing agent.
     pub fn absent() -> Self {
         Self {
+            offered: Arc::new(AtomicBool::new(false)),
             last: Arc::new(Mutex::new(None)),
             writer: None,
             live: None,
@@ -409,6 +438,7 @@ impl UpdateFeed {
         let (tx, rx) = std::sync::mpsc::channel();
         (
             Self {
+                offered: Arc::new(AtomicBool::new(offered_report(&report))),
                 last: Arc::new(Mutex::new(Some(report))),
                 writer: Some(Arc::new(Mutex::new(Some(tx)))),
                 live: None,
@@ -490,6 +520,7 @@ pub struct AgentLink {
     /// held as state rather than queued into `inbox`.
     update: Arc<Mutex<Option<UpdateReport>>>,
     update_dirty: Arc<AtomicBool>,
+    update_offered: Arc<AtomicBool>,
     /// Whole privacy-safe account state. Account UI arrives in Plan 3.6; this
     /// feed makes the Plan 3.5 transport usable without inventing that UI.
     account: Arc<Mutex<koru_agent_wire::AccountState>>,
@@ -583,6 +614,7 @@ impl AgentLink {
             notification_area: Arc::new(AtomicBool::new(false)),
             update: Arc::new(Mutex::new(None)),
             update_dirty: Arc::new(AtomicBool::new(false)),
+            update_offered: Arc::new(AtomicBool::new(false)),
             account: Arc::new(Mutex::new(koru_agent_wire::AccountState::default())),
             account_dirty: Arc::new(AtomicBool::new(false)),
             account_results: Arc::new(Mutex::new(VecDeque::new())),
@@ -649,6 +681,7 @@ impl AgentLink {
     /// container's copy are one shared report and one shared queue.
     pub fn update_feed(&self) -> UpdateFeed {
         UpdateFeed {
+            offered: Arc::clone(&self.update_offered),
             last: Arc::clone(&self.update),
             writer: Some(Arc::clone(&self.writer)),
             live: Some(Arc::clone(&self.live)),
@@ -1622,6 +1655,7 @@ impl AgentLink {
         let wake = Arc::clone(&self.wake);
         let update = Arc::clone(&self.update);
         let update_dirty = Arc::clone(&self.update_dirty);
+        let update_offered = Arc::clone(&self.update_offered);
         let account = Arc::clone(&self.account);
         let account_dirty = Arc::clone(&self.account_dirty);
         let account_results = Arc::clone(&self.account_results);
@@ -1886,6 +1920,9 @@ impl AgentLink {
                             body: Push::Update { report },
                         } => {
                             let stage = report.stage;
+                            if offered_report(&report) {
+                                update_offered.store(true, Ordering::Release);
+                            }
                             *update.lock().unwrap_or_else(|e| e.into_inner()) = Some(*report);
                             update_dirty.store(true, Ordering::Release);
                             let close_asked = stage == UpdateStage::Installing;

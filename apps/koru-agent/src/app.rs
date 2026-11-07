@@ -2707,13 +2707,14 @@ impl Agent {
 
     fn update_report(&self) -> Option<koru_agent_wire::UpdateReport> {
         let controller = self.updates.as_ref()?;
-        let status = controller.status();
+        let (status, offer) = controller.status_with_offer();
         let mut report = crate::update::report_for(
             &status,
             self.install_writable,
             controller.automatic_checks(),
             controller.channel().as_str(),
         );
+        crate::update::retain_offer(&mut report, offer.as_ref());
         // **The handoff is what makes the stage `Installing`, not the
         // controller.** `take_pending_install` is the call that moves the
         // controller's own status, and it happens *last* — after every window
@@ -3101,6 +3102,16 @@ impl Agent {
         match choice {
             UpdateChoice::Download => match status {
                 koru_update::UpdateStatus::Available(manifest) => controller.download(manifest),
+                koru_update::UpdateStatus::Deferred(build) => {
+                    let (_, offer) = controller.status_with_offer();
+                    let manifest = offer.filter(|m| m.build_number == build).ok_or_else(|| {
+                        (
+                            crate::update::NO_UPDATE.into(),
+                            "the deferred offer is no longer available".into(),
+                        )
+                    })?;
+                    controller.download(manifest);
+                }
                 _ => {
                     return Err((
                         crate::update::NO_UPDATE.into(),

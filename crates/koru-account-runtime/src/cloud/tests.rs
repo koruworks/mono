@@ -212,6 +212,9 @@ struct World {
     profile_route_available: bool,
     discover_failures: usize,
     discover_auth_failures: usize,
+    discover_access_failures: usize,
+    /// Request cancellation while the selected discovery page is in flight.
+    cancel_discovery_page: Option<(usize, Cancel)>,
     local: HashMap<WorkspaceId, LocalBootstrap>,
     contexts: Vec<(u64, u64, Vec<CloudPermitV1>)>,
     fenced: Vec<Vec<Uuid>>,
@@ -270,6 +273,10 @@ impl Api for FakeApi {
             world.discover_auth_failures -= 1;
             return Err(Failure::SessionExpired);
         }
+        if world.discover_access_failures > 0 {
+            world.discover_access_failures -= 1;
+            return Err(Failure::AccessRevoked);
+        }
         let index = match after {
             None => 0,
             Some(cursor) => world
@@ -279,7 +286,20 @@ impl Api for FakeApi {
                 .map(|position| position + 1)
                 .ok_or(Failure::Unavailable)?,
         };
-        world.pages.get(index).cloned().ok_or(Failure::Unavailable)
+        let page = world
+            .pages
+            .get(index)
+            .cloned()
+            .ok_or(Failure::Unavailable)?;
+        if world
+            .cancel_discovery_page
+            .as_ref()
+            .is_some_and(|(at, _)| *at == index)
+        {
+            let (_, cancel) = world.cancel_discovery_page.take().unwrap();
+            cancel.request();
+        }
+        Ok(page)
     }
 
     fn select(

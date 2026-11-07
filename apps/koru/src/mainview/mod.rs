@@ -80,6 +80,7 @@ pub(crate) mod dictation;
 pub(crate) mod draw;
 mod error_dialog;
 mod font_picker;
+mod help_menu;
 mod history;
 mod icon_action;
 mod import_dialog;
@@ -1219,6 +1220,7 @@ pub struct MainView {
     /// help popover. `None` until the read lands or when no notes shipped.
     help_headlines: Option<Vec<String>>,
     help_headlines_rx: Option<std::sync::mpsc::Receiver<Option<Vec<String>>>>,
+    help_notes_read: bool,
     /// The global-search chord the agent registered (`Ctrl+Shift+K`), once it
     /// has said so; `None` before that, without an agent, or with no chord.
     /// The Search tooltip teaches it beside this window's own.
@@ -1966,6 +1968,7 @@ impl MainView {
             relayouts: 0,
             help_headlines: None,
             help_headlines_rx: Some(crate::whatsnew::read_headlines_async()),
+            help_notes_read: false,
             global_search_chord: None,
             tooltip: Tooltip::default(),
             recents: Vec::new(),
@@ -4499,12 +4502,8 @@ impl MainView {
             // is a control, gated by its own `enabled` rather than here.
             MenuSubject::Help => matches!(
                 action,
-                MenuAction::HelpRelease
-                    | MenuAction::HelpDownload
-                    | MenuAction::HelpFullChangelog
-                    | MenuAction::HelpSendFeedback
+                MenuAction::HelpSendFeedback
                     | MenuAction::HelpStarOnGitHub
-                    | MenuAction::HelpWebsite
                     | MenuAction::HelpSocial(_)
             ),
             // Every window action is always available — the rows were built from
@@ -5059,19 +5058,9 @@ impl MainView {
             // changelog, the website and the socials open in the browser
             // through the shell's URI port, never from the view.
             MenuSubject::Help => match action {
-                MenuAction::HelpRelease => self.open_whats_new(env!("CARGO_PKG_VERSION")),
-                MenuAction::HelpDownload => self.help_download(),
-                MenuAction::HelpFullChangelog => {
-                    self.ask_pane(PaneRequest::OpenUri(crate::whatsnew::RELEASES_URL));
-                    true
-                }
                 MenuAction::HelpSendFeedback => self.open_send_feedback_tab(),
                 MenuAction::HelpStarOnGitHub => {
                     self.ask_pane(PaneRequest::OpenUri(context_menu::GITHUB_URL));
-                    true
-                }
-                MenuAction::HelpWebsite => {
-                    self.ask_pane(PaneRequest::OpenUri(context_menu::WEBSITE_URL));
                     true
                 }
                 MenuAction::HelpSocial(social) => {
@@ -5175,94 +5164,6 @@ impl MainView {
         let enabled = self.enabled_items(&m);
         m.step(&enabled, 1);
         self.menu = Some(m);
-        true
-    }
-
-    /// The help popover's release card: the build the Agent is offering when
-    /// it has one — its title and summary straight from the manifest, Download
-    /// live while it waits for the first consent — else the build that is
-    /// running: channel and version, the day it was released, the shipped
-    /// notes' first sections for a title and a line, and Download drawn dim
-    /// since there is nothing to fetch (the review's artboard). A build without
-    /// notes says so in the card rather than inventing a headline.
-    fn help_card(&self) -> context_menu::HelpCard {
-        use koru_agent_wire::UpdateStage;
-        let lang = crate::format::lang();
-        let info = koru_channel::build_info();
-        let report = self.updates.report();
-        let offered = report.as_ref().filter(|r| {
-            !r.version.is_empty()
-                && matches!(
-                    r.stage,
-                    UpdateStage::Available
-                        | UpdateStage::Downloading
-                        | UpdateStage::Verifying
-                        | UpdateStage::Ready
-                        | UpdateStage::Installing
-                        | UpdateStage::Deferred
-                )
-        });
-        if let Some(r) = offered {
-            let channel = if r.channel.is_empty() {
-                info.channel
-            } else {
-                r.channel.as_str()
-            };
-            return context_menu::HelpCard {
-                badge: format!("{} · {}", channel.to_uppercase(), r.version),
-                date: String::new(),
-                title: r.title.clone(),
-                body: r
-                    .summary
-                    .iter()
-                    .take(2)
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join(" "),
-                download: Some(matches!(
-                    r.stage,
-                    UpdateStage::Available | UpdateStage::Deferred
-                )),
-                unread: true,
-            };
-        }
-        let date = chrono::DateTime::parse_from_rfc3339(info.released_at)
-            .ok()
-            .and_then(|t| crate::format::local_parts(t.timestamp_millis()))
-            .map(|parts| koru_i18n::time::absolute_date(lang, parts, false))
-            .unwrap_or_default();
-        let headlines = self.help_headlines.as_deref().unwrap_or(&[]);
-        let (title, body) = match headlines.split_first() {
-            Some((first, rest)) => (
-                first.clone(),
-                rest.iter().take(2).cloned().collect::<Vec<_>>().join(" · "),
-            ),
-            None => (
-                format!("Koru {}", info.version),
-                koru_i18n::t(lang, koru_i18n::Key::NotShippedWithThisBuild).to_owned(),
-            ),
-        };
-        context_menu::HelpCard {
-            badge: format!("{} · {}", info.channel.to_uppercase(), info.version),
-            date,
-            title,
-            body,
-            download: Some(false),
-            unread: false,
-        }
-    }
-
-    /// The card's Download: the update's first consent, the one the banner's
-    /// own button sends. Refused unless a build is waiting for it.
-    fn help_download(&mut self) -> bool {
-        use koru_agent_wire::{UpdateChoice, UpdateStage};
-        let Some(report) = self.updates.report() else {
-            return false;
-        };
-        if !matches!(report.stage, UpdateStage::Available | UpdateStage::Deferred) {
-            return false;
-        }
-        self.update_consent(UpdateChoice::Download, report.stage);
         true
     }
 
@@ -6490,6 +6391,8 @@ impl MainView {
                 .is_some_and(|n| n.page == tab::PrivatePage::WhatsNew)
         });
         if let Some(i) = existing {
+            self.help_notes_read = true;
+            self.refresh_help();
             self.select(i);
             return true;
         }
@@ -6500,6 +6403,8 @@ impl MainView {
         let Some(tab) = Tab::whats_new(version, notes.as_deref()) else {
             return false;
         };
+        self.help_notes_read = true;
+        self.refresh_help();
         self.tabs_mut().push(tab);
         // Pushing changes every tab's *width*. A slide left mid-flight would
         // finish at the old pitch and overshoot, so the animation is dropped
@@ -7572,31 +7477,17 @@ impl MainView {
     /// The help popover beside the rail's `?`, its foot level with the
     /// control's.
     fn open_help_beside(&mut self) -> bool {
-        let rail = self.rail_area();
-        let help = self.explore.apps_rail_rects(rail).help;
-        if help.w <= 0.0 {
+        use crate::panes::explore::PopoverKind;
+        if self.support_only || self.rail_area().w <= 0.0 {
             return false;
         }
-        let edge = rail.x + rail.w;
-        if self.support_only {
-            return false;
+        self.refresh_help();
+        self.menu = None;
+        if self.explore.popover_is(PopoverKind::Help) {
+            self.explore.close_popover()
+        } else {
+            self.explore.open_popover(PopoverKind::Help)
         }
-        chrome_debug::chrome_debug!("help popover opened beside its ?");
-        let items = context_menu::help_items(self.help_card());
-        let x = edge + koru_app_shell::popover::GAP;
-        let mut m = ContextMenu::aligned(
-            &mut self.engine,
-            MenuSubject::Help,
-            (x, help.y),
-            items,
-            MenuAnchor::Cursor,
-        );
-        let height = m.height();
-        m.set_anchor((x, (help.y + help.h - height).max(0.0)));
-        let enabled = self.enabled_items(&m);
-        m.step(&enabled, 1);
-        self.menu = Some(m);
-        true
     }
 
     /// The Sync settings tab: a singleton page that, for now, says only its
@@ -7776,6 +7667,7 @@ impl MainView {
             Outcome::NewChildDocument(parent) => self.prompt_new_child_document(parent),
             Outcome::Search => self.open_search(),
             Outcome::OpenHelp => self.open_help_beside(),
+            Outcome::Help(action) => self.help_action(action),
             Outcome::OpenRailOverflow => self.open_rail_overflow(),
             Outcome::OpenNode(id)
                 if self.explore.navigator_mode() == crate::panes::explore::NavigatorMode::Files =>
@@ -14344,6 +14236,7 @@ impl View for MainView {
     }
 
     fn maintain(&mut self, ws: &mut WorkspaceDoc, now: Instant) -> bool {
+        self.refresh_help();
         if self.support.is_some() || self.fab.is_some() {
             // Serviced by the background pass, which runs in both loop paths.
             return false;

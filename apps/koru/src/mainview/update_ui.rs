@@ -420,7 +420,7 @@ impl MainView {
     /// the report moved past it, and when it has waited longer than an agent
     /// round-trip plausibly takes - the answer is not coming, so the buttons
     /// re-arm rather than staying deaf until a restart.
-    fn update_action_in_flight(&mut self, stage: UpdateStage) -> bool {
+    pub(super) fn update_action_in_flight(&mut self, stage: UpdateStage) -> bool {
         match self.update_action_pending {
             Some((pending, at)) => {
                 if pending != stage {
@@ -591,15 +591,6 @@ impl MainView {
             return;
         };
         let _ = self.update_action_in_flight(report.stage);
-        if matches!(
-            report.stage,
-            UpdateStage::Available
-                | UpdateStage::Downloading
-                | UpdateStage::Verifying
-                | UpdateStage::Ready
-        ) {
-            self.update_was_offered = true;
-        }
         let p = theme::p();
         let banner = self.banner_rect(&report);
         scene::fill(

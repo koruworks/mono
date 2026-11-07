@@ -2806,6 +2806,19 @@ pub enum Key {
     /// brand name and stays as it is in every language.
     StarOnGitHub,
     Download,
+    UpdateDownloadManually,
+    UpdateRestart,
+    UpdateRowAvailable,
+    UpdateRowDownloading,
+    UpdateRowVerifying,
+    UpdateRowReady,
+    UpdateRowInstalling,
+    UpdateRowDeferred,
+    UpdateRowNoRoute,
+    HelpCurrentRelease,
+    HelpViewAllReleases,
+    HelpAndDocs,
+    HelpFollowOnX,
     /// The Chats view's *Delete chat* over a selection: the menu row, and
     /// the confirmation's sentence (the review's note).
     ChatsDeleteMany,
@@ -2967,7 +2980,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2079] = [
+    pub const ALL: [Key; 2092] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4955,6 +4968,19 @@ impl Key {
         Key::SendFeedback,
         Key::StarOnGitHub,
         Key::Download,
+        Key::UpdateDownloadManually,
+        Key::UpdateRestart,
+        Key::UpdateRowAvailable,
+        Key::UpdateRowDownloading,
+        Key::UpdateRowVerifying,
+        Key::UpdateRowReady,
+        Key::UpdateRowInstalling,
+        Key::UpdateRowDeferred,
+        Key::UpdateRowNoRoute,
+        Key::HelpCurrentRelease,
+        Key::HelpViewAllReleases,
+        Key::HelpAndDocs,
+        Key::HelpFollowOnX,
         Key::ChatsDeleteMany,
         Key::ChatsDeleteManyBody,
         Key::ChatsNameNeeded,
@@ -15654,6 +15680,19 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::SendFeedback, en: "Send feedback", es: "Enviar comentarios", pt_br: "Enviar feedback", de: "Feedback senden", fr: "Envoyer un commentaire", ar: "إرسال ملاحظات", zh_hans: "发送反馈", ja: "フィードバックを送信" },
     Row { key: Key::StarOnGitHub, en: "Star us on GitHub", es: "Danos una estrella en GitHub", pt_br: "Dê uma estrela no GitHub", de: "Geben Sie uns einen Stern auf GitHub", fr: "Donnez-nous une étoile sur GitHub", ar: "امنحنا نجمة على GitHub", zh_hans: "在 GitHub 上为我们加星", ja: "GitHub でスターを付ける" },
     Row { key: Key::Download, en: "Download", es: "Descargar", pt_br: "Baixar", de: "Herunterladen", fr: "Télécharger", ar: "تنزيل", zh_hans: "下载", ja: "ダウンロード" },
+    Row { key: Key::UpdateDownloadManually, en: "Download manually", es: "Descargar manualmente", pt_br: "Baixar manualmente", de: "Manuell herunterladen", fr: "Télécharger manuellement", ar: "تنزيل يدويًا", zh_hans: "手动下载", ja: "手動でダウンロード" },
+    Row { key: Key::UpdateRestart, en: "Restart", es: "Reiniciar", pt_br: "Reiniciar", de: "Neu starten", fr: "Redémarrer", ar: "إعادة التشغيل", zh_hans: "重启", ja: "再起動" },
+    Row { key: Key::UpdateRowAvailable, en: "Available", es: "Disponible", pt_br: "Disponível", de: "Verfügbar", fr: "Disponible", ar: "متاح", zh_hans: "可用", ja: "利用可能" },
+    Row { key: Key::UpdateRowDownloading, en: "Downloading · {}%", es: "Descargando · {}%", pt_br: "Baixando · {}%", de: "Wird heruntergeladen · {}%", fr: "Téléchargement · {}%", ar: "جارٍ التنزيل · {}%", zh_hans: "正在下载 · {}%", ja: "ダウンロード中 · {}%" },
+    Row { key: Key::UpdateRowVerifying, en: "Verifying", es: "Verificando", pt_br: "Verificando", de: "Wird überprüft", fr: "Vérification", ar: "جارٍ التحقق", zh_hans: "正在验证", ja: "検証中" },
+    Row { key: Key::UpdateRowReady, en: "Ready to install", es: "Listo para instalar", pt_br: "Pronto para instalar", de: "Bereit zur Installation", fr: "Prêt à installer", ar: "جاهز للتثبيت", zh_hans: "可以安装", ja: "インストールの準備完了" },
+    Row { key: Key::UpdateRowInstalling, en: "Installing", es: "Instalando", pt_br: "Instalando", de: "Wird installiert", fr: "Installation", ar: "جارٍ التثبيت", zh_hans: "正在安装", ja: "インストール中" },
+    Row { key: Key::UpdateRowDeferred, en: "Later", es: "Más tarde", pt_br: "Mais tarde", de: "Später", fr: "Plus tard", ar: "لاحقًا", zh_hans: "稍后", ja: "後で" },
+    Row { key: Key::UpdateRowNoRoute, en: "Can't be installed from here", es: "No se puede instalar desde aquí", pt_br: "Não é possível instalar por aqui", de: "Kann von hier aus nicht installiert werden", fr: "Impossible d’installer depuis ici", ar: "لا يمكن التثبيت من هنا", zh_hans: "无法从此处安装", ja: "ここからはインストールできません" },
+    Row { key: Key::HelpCurrentRelease, en: "Current · {}", es: "Actual · {}", pt_br: "Atual · {}", de: "Aktuell · {}", fr: "Version actuelle · {}", ar: "الحالي · {}", zh_hans: "当前版本 · {}", ja: "現在のバージョン · {}" },
+    Row { key: Key::HelpViewAllReleases, en: "View all releases", es: "Ver todas las versiones", pt_br: "Ver todas as versões", de: "Alle Versionen anzeigen", fr: "Voir toutes les versions", ar: "عرض جميع الإصدارات", zh_hans: "查看所有版本", ja: "すべてのリリースを表示" },
+    Row { key: Key::HelpAndDocs, en: "Help & docs", es: "Ayuda y documentación", pt_br: "Ajuda e documentação", de: "Hilfe und Dokumentation", fr: "Aide et documentation", ar: "المساعدة والتوثيق", zh_hans: "帮助与文档", ja: "ヘルプとドキュメント" },
+    Row { key: Key::HelpFollowOnX, en: "Follow on X", es: "Seguir en X", pt_br: "Seguir no X", de: "Auf X folgen", fr: "Suivre sur X", ar: "تابعنا على X", zh_hans: "在 X 上关注", ja: "Xでフォロー" },
     Row { key: Key::ChatsDeleteMany, en: "Delete {} chats", es: "Eliminar {} chats", pt_br: "Excluir {} chats", de: "{} Chats löschen", fr: "Supprimer {} discussions", ar: "حذف {} محادثات", zh_hans: "删除 {} 个聊天", ja: "{} 件のチャットを削除" },
     Row {
         key: Key::ChatsDeleteManyBody,

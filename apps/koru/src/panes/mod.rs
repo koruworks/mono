@@ -77,6 +77,7 @@ pub enum Outcome {
     Search,
     /// The rail's `?`: the container opens the help popover beside the rail.
     OpenHelp,
+    Help(explore::help::Action),
     OpenRailOverflow,
 
     // ---------------------------------------------------------------- panels

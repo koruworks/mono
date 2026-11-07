@@ -92,7 +92,20 @@ impl ExploreView {
             workspaces,
             views,
             foot: vec![
-                glyph(apps_rail::Hit::Help, t(lang, Key::Help), icons::QUESTION),
+                Item {
+                    contents: if self.help.projection().dot {
+                        Contents::NotifiedGlyph(icons::QUESTION)
+                    } else {
+                        Contents::Glyph(icons::QUESTION)
+                    },
+                    selected: self.popover_is(PopoverKind::Help),
+                    name: if self.help.projection().dot {
+                        format!("{} · {}", t(lang, Key::Help), t(lang, Key::WhatsNew))
+                    } else {
+                        t(lang, Key::Help).to_owned()
+                    },
+                    ..glyph(apps_rail::Hit::Help, t(lang, Key::Help), icons::QUESTION)
+                },
                 Item {
                     hit: apps_rail::Hit::Profile,
                     name: profile
