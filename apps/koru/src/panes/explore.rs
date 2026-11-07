@@ -419,15 +419,9 @@ pub enum PopoverRow {
     /// An index into the open Profile's workspace list. The row switches; the
     /// gear that shows on hover opens the Manage tab on it.
     Workspace(usize),
-    /// *PROFILES · n* over every Profile, the way *WORKSPACES · n* heads
-    /// the chip's page (the review's note, E78: your card and *SWITCH TO*
-    /// are gone; the Profile you are in is a row with a tick). Furniture:
-    /// the keyboard skips it.
+    /// The Profile heading's Manage profiles control.
     ProfilesHeading,
-    /// The page's foot: the sync state (or the offer to subscribe to Koru
-    /// Cloud when there is none), the linked devices with their count, and
-    /// the `+` (New profile).
-    ProfilesFooter,
+    ProfileAction(popover_elements::profiles::MenuAction),
     /// An index into the profile list — **every** profile the machine knows.
     /// The row switches to it; the gear that shows on hover opens the Manage
     /// tab on it.
@@ -441,34 +435,8 @@ impl PopoverRow {
     /// is furniture: *WORKSPACES · n* and *PROFILES · n* are skipped; the
     /// foot (its `+`) is a stop.
     fn selectable(self) -> bool {
-        !matches!(self, Self::ProfilesHeading | Self::WorkspaceNotice)
+        !matches!(self, Self::WorkspaceNotice)
     }
-
-    /// The buttons a fixed row carries, leading to trailing. The tests'
-    /// statement of the foot's order; the foot itself is laid out by
-    /// `popover_elements::profiles`.
-    #[cfg(test)]
-    fn head_buttons(self) -> &'static [HeadButton] {
-        match self {
-            Self::ProfilesFooter => &[HeadButton::Status, HeadButton::Devices, HeadButton::New],
-            _ => &[],
-        }
-    }
-}
-
-/// A button on the Profiles page's foot (the review's artboard): the status,
-/// the devices and the `+`. The WORKSPACES heading's `+` and import button
-/// went to the floor's `…` menu (E60); your card's sliders went with the
-/// card (E78).
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum HeadButton {
-    /// New profile, at the foot's trailing end.
-    New,
-    /// The linked devices, with their count: the Manage tab on the Profile.
-    Devices,
-    /// The sync state's words at the foot's leading end — or, with no cloud
-    /// set up, the offer to subscribe to Koru Cloud (the review's note).
-    Status,
 }
 
 /// Which part of a popover row a point is on.
@@ -483,8 +451,6 @@ pub enum PopoverPart {
     /// The gear at a workspace's or profile's trailing end: the Manage tab.
     Gear,
     Pin,
-    /// One of a head row's buttons.
-    Button(HeadButton),
 }
 
 /// What the sync icon says, from the Agent's account state for the open
@@ -591,7 +557,6 @@ pub enum ExploreChromeFocus {
     RailOverflow,
     Workspace(Option<WorkspaceId>),
     App(usize),
-    RailSettings,
     RailHelp,
     RailProfile,
 }
@@ -3105,6 +3070,12 @@ impl ExploreView {
         current: impl Into<Option<WorkspaceId>>,
     ) -> bool {
         let previous_hover = self.live().and_then(|popover| popover.hover);
+        let focused_profile = previous_hover
+            .and_then(|index| self.popover_rows().get(index).copied())
+            .and_then(|row| match row {
+                PopoverRow::Profile(i) => self.profiles.get(i).map(|profile| profile.id),
+                _ => None,
+            });
         let focused_workspace = self
             .live()
             .and_then(|p| p.hover)
@@ -3150,6 +3121,39 @@ impl ExploreView {
                 if next.is_none() {
                     self.popover_part = Some(PopoverPart::Gear);
                 }
+            }
+        }
+        if let Some(id) = focused_profile {
+            let rows = self.popover_rows();
+            let profile_rows: Vec<_> = rows
+                .iter()
+                .enumerate()
+                .filter_map(|(index, row)| {
+                    if let PopoverRow::Profile(i) = row {
+                        Some((index, self.profiles[*i].id))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            let next = profile_rows
+                .iter()
+                .find(|(_, candidate)| *candidate == id)
+                .or_else(|| {
+                    profile_rows
+                        .iter()
+                        .find(|(index, _)| *index >= previous_hover.unwrap_or(0))
+                })
+                .or_else(|| profile_rows.last())
+                .map(|(index, _)| *index);
+            if let Some(popover) = self.popover.as_mut() {
+                popover.hover = next.or_else(|| {
+                    rows.iter()
+                        .position(|row| *row == PopoverRow::ProfilesHeading)
+                });
+            }
+            if next.is_none() {
+                self.popover_part = Some(PopoverPart::Gear);
             }
         }
         changed
@@ -3531,9 +3535,13 @@ impl ExploreView {
             // its tick, as the chip's page lists workspaces — and the foot
             // (the review's note, E78).
             PopoverKind::Profiles => {
+                use popover_elements::profiles::MenuAction;
                 let mut out = vec![PopoverRow::ProfilesHeading];
                 out.extend((0..self.profiles.len()).map(PopoverRow::Profile));
-                out.push(PopoverRow::ProfilesFooter);
+                out.extend(
+                    [MenuAction::New, MenuAction::Sync, MenuAction::Settings]
+                        .map(PopoverRow::ProfileAction),
+                );
                 out
             }
             PopoverKind::LibraryActions => actions::available(self.mode)
@@ -3546,12 +3554,8 @@ impl ExploreView {
 
     /// A row's height for the panel's own size: the minimum the page's
     /// element gives it, from the same tokens.
-    fn popover_row_h(row: PopoverRow) -> f32 {
-        match row {
-            PopoverRow::Profile(_) => theme::metrics::PROFILE_ROW_MIN.value,
-            PopoverRow::ProfilesFooter => theme::metrics::PROFILE_FOOT_MIN.value,
-            _ => POPOVER_ROW_H,
-        }
+    fn popover_row_h(_row: PopoverRow) -> f32 {
+        POPOVER_ROW_H
     }
 
     fn page_natural_h(&self, kind: PopoverKind) -> f32 {
@@ -3681,24 +3685,6 @@ impl ExploreView {
                 .unwrap_or_default();
         }
         self.page_rects(p.kind, panel)
-    }
-
-    /// Where one of the open page's fixed-row buttons is: your card's
-    /// sliders, the foot's status, devices and `+`.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub fn popover_head_button_rect(
-        &self,
-        area: Rect,
-        viewport: (f32, f32),
-        button: HeadButton,
-    ) -> Option<Rect> {
-        self.live()?;
-        self.with_page(area, viewport, |frame| {
-            frame
-                .node(popover_elements::profiles::key_of(button))
-                .map(|node| node.rect)
-        })
-        .flatten()
     }
 
     /// The library's menu rows in `panel`, top to bottom. The switcher's
@@ -3838,10 +3824,10 @@ impl ExploreView {
                 matches!(row, PopoverRow::Profile(i)
                     if self.profiles.get(i).is_some_and(|profile| profile.id == id))
             })?;
-        // The row's height, across the width its two lines have.
+        // The single-line name's width, with the row's hit height.
         self.with_page(area, viewport, |frame| {
             let r = frame.named(popover_elements::profiles::ROW).nth(k)?.rect;
-            let lines = frame.named(popover_elements::profiles::LINES).nth(k)?.rect;
+            let lines = frame.named(popover_elements::profiles::NAME).nth(k)?.rect;
             (r.y >= band.y && r.y + r.h <= band.y + band.h)
                 .then(|| Rect::new(lines.x, r.y, lines.w, r.h))
         })
@@ -3938,10 +3924,10 @@ impl ExploreView {
             }
             PopoverRow::WorkspaceNotice => true,
             PopoverRow::WorkspacesHeading => part != PopoverPart::Gear,
-            PopoverRow::ProfilesHeading => true,
+            PopoverRow::ProfilesHeading => part != PopoverPart::Gear,
             // The foot's words do nothing; each button is a destination —
             // Settings, the Manage tab, the website, a creator.
-            PopoverRow::ProfilesFooter => part == PopoverPart::Row,
+            PopoverRow::ProfileAction(_) => false,
             PopoverRow::Profile(_) | PopoverRow::Workspace(_) | PopoverRow::LibraryAction(_) => {
                 false
             }
@@ -3965,8 +3951,7 @@ impl ExploreView {
             PopoverRow::Workspace(_) if self.popover_part == Some(PopoverPart::Pin) => {
                 PopoverPart::Pin
             }
-            PopoverRow::WorkspacesHeading => PopoverPart::Gear,
-            PopoverRow::ProfilesFooter => PopoverPart::Button(HeadButton::New),
+            PopoverRow::WorkspacesHeading | PopoverRow::ProfilesHeading => PopoverPart::Gear,
             PopoverRow::Workspace(_) | PopoverRow::Profile(_)
                 if self.popover_part == Some(PopoverPart::Gear) =>
             {
@@ -4015,24 +4000,12 @@ impl ExploreView {
             // A heading's words do nothing.
             PopoverRow::WorkspacesHeading if part == PopoverPart::Gear => Outcome::ManageWorkspaces,
             PopoverRow::WorkspacesHeading => Outcome::Consumed,
+            PopoverRow::ProfilesHeading if part == PopoverPart::Gear => self
+                .current_profile
+                .map(Outcome::ManageProfile)
+                .unwrap_or(Outcome::Consumed),
             PopoverRow::ProfilesHeading => Outcome::Consumed,
-            PopoverRow::ProfilesFooter => match part {
-                PopoverPart::Button(HeadButton::New) => Outcome::NewProfile,
-                // With no cloud set up the words are the offer (the review's
-                // note: the option to subscribe, re-enabled); otherwise
-                // they lead to Settings, where the sync state is explained.
-                PopoverPart::Button(HeadButton::Status) => {
-                    if self.sync_status() == SyncStatus::NotSetUp {
-                        Outcome::SubscribeCloud
-                    } else {
-                        Outcome::OpenSettings
-                    }
-                }
-                // The Manage tab on *Linked devices* (the review's note), not
-                // on the Profile.
-                PopoverPart::Button(HeadButton::Devices) => Outcome::ManageDevices,
-                _ => Outcome::Consumed,
-            },
+            PopoverRow::ProfileAction(action) => action.outcome(),
             PopoverRow::LibraryAction(action) => self.choose_library_action(action),
         }
     }
@@ -4313,10 +4286,6 @@ impl ExploreView {
                 } else {
                     Outcome::Consumed
                 }
-            }
-            Some(apps_rail::Hit::Settings) => {
-                self.close_popover();
-                Outcome::OpenSettings
             }
             Some(apps_rail::Hit::Overflow) => Outcome::OpenRailOverflow,
             Some(apps_rail::Hit::Help) => Outcome::OpenHelp,
@@ -8127,5 +8096,7 @@ use slides::RowSlides;
 #[cfg(test)]
 mod popover_baseline;
 pub(crate) mod popover_elements;
+#[cfg(test)]
+mod profile_menu_tests;
 #[cfg(test)]
 mod tests;

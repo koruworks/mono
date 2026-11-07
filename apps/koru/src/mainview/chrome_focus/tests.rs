@@ -81,9 +81,9 @@ fn arrows_move_within_a_stop_enter_activates_and_escape_leaves() {
             shown[documents + 1],
             "Enter shows the app"
         );
-        // Past the last app are Help, Settings and the profile square, then
+        // Past the last app are Help and the profile square, then
         // it wraps. ↓ walks the rail as → does.
-        for _ in 0..shown.len() + 3 {
+        for _ in 0..shown.len() + 2 {
             press(&mut v, &mut workspace.ws, NamedKey::ArrowDown);
         }
         assert_eq!(
@@ -303,8 +303,8 @@ fn the_move_chords_leave_the_rail_alone_without_the_keyboard_on_it() {
 }
 
 /// **Enter on the rail's foot does what a press on it does**, on each of the
-/// three, and on the control the ring is drawn on: Help opens the help
-/// popover beside its `?`, Settings the Settings tab, the profile square its
+/// two, and on the control the ring is drawn on: Help opens the help
+/// popover beside its `?`, the profile square its
 /// Profiles page. Enter and the ring read the foot from one place
 /// (`rail_focus`); Enter used to read a copy that still counted *Manage
 /// apps* first, so Enter on Help did nothing and on the profile square
@@ -312,7 +312,6 @@ fn the_move_chords_leave_the_rail_alone_without_the_keyboard_on_it() {
 #[test]
 fn enter_on_the_rails_foot_activates_the_control_the_ring_is_on() {
     use crate::mainview::context_menu::MenuSubject;
-    use crate::mainview::tab::TabView;
     koru_features::testing::with(koru_features::Features::ALL_OFF, || {
         let (mut v, mut workspace) = container();
         assert!(v.key(
@@ -326,7 +325,7 @@ fn enter_on_the_rails_foot_activates_the_control_the_ring_is_on() {
         press(&mut v, &mut workspace.ws, NamedKey::F6);
         let apps = v.explore.rail_modes().len() + 1;
         let onto = |v: &mut MainView, ws: &mut WorkspaceDoc, foot: usize| {
-            for _ in 0..apps + 3 {
+            for _ in 0..apps + 2 {
                 if v.chrome_focus == Some(ChromeStop::Apps(apps + foot)) {
                     return;
                 }
@@ -350,19 +349,6 @@ fn enter_on_the_rails_foot_activates_the_control_the_ring_is_on() {
         v.menu = None;
 
         onto(&mut v, &mut workspace.ws, 1);
-        assert_eq!(
-            v.explore_chrome_focus(),
-            Some(ExploreChromeFocus::RailSettings),
-            "the ring is on Settings"
-        );
-        assert!(press(&mut v, &mut workspace.ws, NamedKey::Enter));
-        assert!(
-            matches!(v.tabs().active_tab().view, TabView::Settings(_)),
-            "Enter on Settings opens the Settings tab"
-        );
-        assert!(v.menu.is_none(), "and not the help popover");
-
-        onto(&mut v, &mut workspace.ws, 2);
         assert_eq!(
             v.explore_chrome_focus(),
             Some(ExploreChromeFocus::RailProfile),

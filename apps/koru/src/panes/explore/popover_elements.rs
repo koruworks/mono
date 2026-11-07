@@ -219,14 +219,37 @@ impl Leaf for TrailingAdapter {
 }
 
 impl ExploreView {
-    pub(crate) fn pin_tooltip(
+    pub(crate) fn menu_tooltip(
         &self,
         area: Rect,
         viewport: (f32, f32),
         x: f32,
         y: f32,
-    ) -> Option<(Rect, String)> {
+    ) -> Option<(Rect, String, Option<koru_keys::ShortcutId>)> {
         self.with_page(area, viewport, |frame| {
+            if let Some(node) = frame
+                .node(profiles::MenuAction::Settings.key())
+                .filter(|node| node.rect.contains(x, y))
+            {
+                return Some((
+                    node.rect,
+                    koru_i18n::t(crate::format::lang(), koru_i18n::Key::ProfileAppSettings).into(),
+                    Some(koru_keys::ShortcutId::Settings),
+                ));
+            }
+            if let Some(node) = frame
+                .node(profiles::MenuAction::Sync.key())
+                .filter(|node| node.rect.contains(x, y))
+            {
+                return Some((node.rect, self.sync_control_name(), None));
+            }
+            if let Some((rect, description)) = self.profiles.iter().find_map(|profile| {
+                let rect = frame.node(profiles::primary(profile.id))?.rect;
+                rect.contains(x, y)
+                    .then(|| (rect, self.profile_description(profile)))
+            }) {
+                return Some((rect, description, None));
+            }
             self.workspaces.iter().find_map(|workspace| {
                 let rect = frame.node(pin(workspace.id))?.rect;
                 if !rect.contains(x, y) {
@@ -244,7 +267,7 @@ impl ExploreView {
                     )
                     .to_owned()
                 });
-                Some((rect, words))
+                Some((rect, words, None))
             })
         })
         .flatten()
@@ -447,7 +470,8 @@ impl ExploreView {
                     profiles::primary(profile.id)
                 }
             }),
-            PopoverRow::ProfilesFooter => self.lit_foot_key(),
+            PopoverRow::ProfileAction(action) => Some(action.key()),
+            PopoverRow::ProfilesHeading => Some(profiles::MANAGE_PROFILES),
             PopoverRow::WorkspaceAction(action) => Some(action.key()),
             PopoverRow::WorkspacesHeading => Some(super::workspace_menu_elements::MANAGE),
             _ => None,
@@ -599,7 +623,9 @@ impl ExploreView {
                 PopoverRow::Profile(i) if self.profiles.get(i).is_some() => {
                     profiles.next().map(|r| (row, r))
                 }
-                PopoverRow::ProfilesFooter => frame.rect_of(profiles::FOOT).map(|r| (row, r)),
+                PopoverRow::ProfileAction(action) => {
+                    frame.node(action.key()).map(|n| (row, n.rect))
+                }
                 _ => None,
             })
             .collect()
@@ -623,12 +649,6 @@ impl ExploreView {
         let (row, part) = match frame.hit_at(x, y) {
             Some(key) => row_part_of(self, key)?,
             None if frame.node(HEADING)?.rect.contains(x, y) => (heading, PopoverPart::Row),
-            None if frame
-                .rect_of(profiles::FOOT)
-                .is_some_and(|r| r.contains(x, y)) =>
-            {
-                (PopoverRow::ProfilesFooter, PopoverPart::Row)
-            }
             None => return None,
         };
         let index = rows.iter().position(|r| *r == row)?;
@@ -694,8 +714,11 @@ pub(crate) fn row_part_of(view: &ExploreView, key: Key) -> Option<(PopoverRow, P
     if let Some(action) = super::workspace_menu_elements::MenuAction::from_key(key) {
         return Some((PopoverRow::WorkspaceAction(action), PopoverPart::Row));
     }
-    if let Some(button) = profiles::button_of(key) {
-        return Some((PopoverRow::ProfilesFooter, PopoverPart::Button(button)));
+    if key == profiles::MANAGE_PROFILES {
+        return Some((PopoverRow::ProfilesHeading, PopoverPart::Gear));
+    }
+    if let Some(action) = profiles::MenuAction::from_key(key) {
+        return Some((PopoverRow::ProfileAction(action), PopoverPart::Row));
     }
     let el::Object::Model(id) = key.object else {
         return None;

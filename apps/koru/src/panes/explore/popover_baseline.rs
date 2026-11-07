@@ -33,6 +33,7 @@ use koru_workspace_host::accessibility::{SemanticNode, ViewSlot, WindowSlot};
 use vello::kurbo::Affine;
 
 use super::accessibility::Context;
+use super::popover_elements::profiles::MenuAction;
 use super::*;
 
 /// Logical units. A difference smaller than this is the arithmetic's, not
@@ -207,8 +208,8 @@ enum State {
     Keyboard,
     /// The list scrolled to its end.
     ScrolledToEnd,
-    /// The pointer on one of the foot's three items.
-    Foot(HeadButton),
+    /// The pointer on one of the three fixed Profile menu rows.
+    ProfileAction(MenuAction),
     /// The open Profile syncing to Koru Cloud, two other devices holding it.
     Synced,
 }
@@ -221,7 +222,9 @@ impl State {
             Self::HoverGear => "hover-gear".into(),
             Self::Keyboard => "keyboard".into(),
             Self::ScrolledToEnd => "scrolled-to-end".into(),
-            Self::Foot(button) => format!("foot-{}", format!("{button:?}").to_lowercase()),
+            Self::ProfileAction(action) => {
+                format!("profile-action-{}", format!("{action:?}").to_lowercase())
+            }
             Self::Synced => "synced".into(),
         }
     }
@@ -288,9 +291,9 @@ fn cases(page: Page) -> Vec<Case> {
     let mut states = vec![State::HoverRow, State::HoverGear, State::Keyboard];
     if page == Page::Profiles {
         states.extend([
-            State::Foot(HeadButton::Status),
-            State::Foot(HeadButton::Devices),
-            State::Foot(HeadButton::New),
+            State::ProfileAction(MenuAction::New),
+            State::ProfileAction(MenuAction::Sync),
+            State::ProfileAction(MenuAction::Settings),
             State::Synced,
         ]);
     }
@@ -356,10 +359,11 @@ fn arrange(case: &Case) -> ExploreView {
             }
         }
         State::ScrolledToEnd => while v.scroll_popover(area, VIEW, -40.0) {},
-        State::Foot(button) => {
-            let b = v
-                .popover_head_button_rect(area, VIEW, button)
-                .expect("the foot's item");
+        State::ProfileAction(action) => {
+            let (_, b) = rects
+                .iter()
+                .find(|(row, _)| *row == PopoverRow::ProfileAction(action))
+                .expect("the fixed Profile action");
             v.mouse_move(area, VIEW, b.x + b.w * 0.5, b.y + b.h * 0.5);
         }
         State::Synced => {
@@ -424,7 +428,7 @@ fn row_key(v: &ExploreView, row: PopoverRow) -> String {
         PopoverRow::Profile(i) => format!("profile:{}", key(v.profiles[i].id.as_uuid())),
         PopoverRow::WorkspacesHeading => "heading".into(),
         PopoverRow::ProfilesHeading => "heading".into(),
-        PopoverRow::ProfilesFooter => "foot".into(),
+        PopoverRow::ProfileAction(action) => format!("profile-action:{}", action.key().part),
         PopoverRow::LibraryAction(action) => format!("action:{}", actions::token(action)),
     }
 }
@@ -591,14 +595,19 @@ fn record(case: &Case) -> String {
                 PopoverRow::Profile(_) => {
                     let _ = writeln!(out, "part {row_key} lane {}", rect(trailing_lane(r)));
                 }
-                PopoverRow::ProfilesFooter => {
-                    for button in [HeadButton::Status, HeadButton::Devices, HeadButton::New] {
-                        let b = v
-                            .popover_head_button_rect(area, VIEW, button)
-                            .expect("the foot's item");
-                        let name = format!("{button:?}").to_lowercase();
-                        let _ = writeln!(out, "part {row_key} {name} {}", rect(b));
-                    }
+                PopoverRow::ProfilesHeading => {
+                    let manage = v
+                        .with_page(area, VIEW, |frame| {
+                            frame
+                                .node(popover_elements::profiles::MANAGE_PROFILES)
+                                .unwrap()
+                                .rect
+                        })
+                        .expect("Manage profiles");
+                    let _ = writeln!(out, "part {row_key} manage-profiles {}", rect(manage));
+                }
+                PopoverRow::ProfileAction(action) => {
+                    let _ = writeln!(out, "part {row_key} {} {}", action.key().part, rect(r));
                 }
                 _ => {}
             }
@@ -708,15 +717,15 @@ fn painted_view(record: &str) -> String {
                 || element(&["Workspaces_heading", "Profiles_heading"])
             {
                 owner = Some(("heading", depth));
-            } else if row("row=ProfilesFooter") || element(&["Profiles_foot"]) {
-                owner = Some(("foot", depth));
+            } else if element(&["Profile_menu_action"]) {
+                owner = Some(("profile-action", depth));
             }
             if kind == Some("element") || (name == Some("Row") && kind == Some("part")) {
                 continue;
             }
             out.push_str(match owner {
                 Some(("heading", _)) => "paint heading ",
-                Some(("foot", _)) => "paint foot ",
+                Some(("profile-action", _)) => "paint profile-action ",
                 _ => "paint ",
             });
             out.push_str(&tokens.join(" "));
@@ -747,23 +756,21 @@ fn approved_line(page: Page, section: &str, line: &str, band: Option<(f64, f64)>
         Page::Profiles => {
             line.starts_with("sem ")
                 || (line.starts_with("focus ") && section.ends_with("state=hover-gear"))
-                // P5: the devices badge is painted with its own item, before
-                // `+`, not after it; nothing overlaps, so only the order of
-                // the foot's paint moves, and only where there is a badge.
-                || (section.ends_with("state=synced") && line.starts_with("paint foot "))
+                // Global sync's channel glyphs retain their state-dependent paint.
+                || (section.ends_with("state=synced") && line.starts_with("paint profile-action "))
                 // E7: a Profile's name is elided like a workspace's, so a
                 // long one ends in `…` where P0 cut it at a word. The name is
                 // the list's only 18-unit line.
                 || (line.starts_with("paint ")
                     && !line.starts_with("paint heading ")
-                    && !line.starts_with("paint foot ")
+                    && !line.starts_with("paint profile-action ")
                     && (line.contains(" line_height=18 ") || line.contains(" font_size=13 ")))
                 // P5: a row's line wholly outside the visible list was
                 // painted and clipped away; the frame does not paint what
                 // cannot be seen (P4's frame-time rule). Nothing visible.
                 || (line.starts_with("paint ")
                     && !line.starts_with("paint heading ")
-                    && !line.starts_with("paint foot ")
+                    && !line.starts_with("paint profile-action ")
                     && paint_span(line)
                         .zip(band)
                         .is_some_and(|((top, bottom), (band_top, band_bottom))| {
@@ -776,7 +783,7 @@ fn approved_line(page: Page, section: &str, line: &str, band: Option<(f64, f64)>
 /// A paint line's top and bottom edges, when written in numbers.
 fn paint_span(line: &str) -> Option<(f64, f64)> {
     let tokens: Vec<&str> = line.split_whitespace().collect();
-    let at = if matches!(tokens.get(1), Some(&"heading" | &"foot")) {
+    let at = if matches!(tokens.get(1), Some(&"heading" | &"profile-action")) {
         5
     } else {
         4
@@ -987,17 +994,9 @@ fn the_lit_row_is_one_index_shared_by_pointer_and_arrows() {
         let mut v = arrange(&case);
         let area = case.area();
         let cx = context(area, Lang::En);
-        // The published node at the lit row's rectangle: what a client is
-        // told the keyboard is on. The foot publishes its three items, not
-        // itself, and the one it reports is the `+` Enter presses there.
+        // The published primary node at the lit row's rectangle.
         let node_at = |v: &ExploreView, index: usize| {
-            let (row, r) = v.popover_rects(area, VIEW)[index];
-            let r = match row {
-                PopoverRow::ProfilesFooter => v
-                    .popover_head_button_rect(area, VIEW, HeadButton::New)
-                    .expect("the foot's +"),
-                _ => r,
-            };
+            let (_, r) = v.popover_rects(area, VIEW)[index];
             // The row's node: its whole rectangle, or since P4 the first
             // node inside it — the workspace's primary, before its gear.
             let inside = |b: Rect| {

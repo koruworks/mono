@@ -323,9 +323,6 @@ pub enum Outcome {
     OpenSyncSettings,
     /// The gear on a Profile row: the Manage tab on that Profile's page.
     ManageProfile(ProfileId),
-    /// The Profiles page's devices button (the review's note): the Manage tab
-    /// on *Linked devices*.
-    ManageDevices,
     /// Home's Today row: the Home tab, a singleton.
     OpenHome,
     /// A recent document, from Home's nav.

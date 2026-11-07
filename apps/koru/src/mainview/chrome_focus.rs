@@ -293,10 +293,6 @@ impl MainView {
                 ExploreChromeFocus::RailOverflow => {
                     self.open_rail_overflow();
                 }
-                ExploreChromeFocus::RailSettings => {
-                    self.explore.close_popover();
-                    self.open_settings_tab();
-                }
                 ExploreChromeFocus::RailProfile => self.explore.toggle_profile_popover(),
             },
         }

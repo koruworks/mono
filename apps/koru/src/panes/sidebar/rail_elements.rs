@@ -21,7 +21,6 @@ pub(crate) fn key(hit: Hit) -> Key {
         Hit::WaitingWorkspace => Key::surface(SURFACE, "waiting-workspace"),
         Hit::App(mode) => Key::surface(SURFACE, mode.token()),
         Hit::Overflow => Key::surface(SURFACE, "overflow"),
-        Hit::Settings => Key::surface(SURFACE, "settings"),
         Hit::Help => Key::surface(SURFACE, "help"),
         Hit::Profile => Key::surface(SURFACE, "profile"),
     }
@@ -275,7 +274,6 @@ impl Rail {
             apps: Vec::new(),
             overflow: Rect::new(band.x, band.y, 0.0, 0.0),
             workspaces: Vec::new(),
-            settings: Rect::new(band.x, band.y, 0.0, 0.0),
             help: Rect::new(band.x, band.y, 0.0, 0.0),
             profile: Rect::new(band.x, band.y, 0.0, 0.0),
         };
@@ -293,7 +291,6 @@ impl Rail {
                 Hit::WaitingWorkspace => rects.workspaces.push((None, r)),
                 Hit::App(mode) => rects.apps.push((mode, r)),
                 Hit::Overflow => rects.overflow = r,
-                Hit::Settings => rects.settings = r,
                 Hit::Help => rects.help = r,
                 Hit::Profile => rects.profile = r,
             }

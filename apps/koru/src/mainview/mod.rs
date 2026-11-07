@@ -54,6 +54,8 @@
 
 #[cfg(test)]
 mod harness;
+#[cfg(test)]
+mod profile_menu_tests;
 
 /// What this window offers a screen reader, and what a request to one of its
 /// controls means. A focused module rather than another subsystem grown
@@ -7922,7 +7924,6 @@ impl MainView {
             Outcome::ManageProfile(profile) => {
                 self.open_manage(crate::manage::Page::Profile(profile))
             }
-            Outcome::ManageDevices => self.open_manage(crate::manage::Page::Devices),
             Outcome::WorkspaceMenu { workspace, at } => {
                 self.open_workspace_menu(workspace, at, false)
             }
@@ -17183,10 +17184,14 @@ impl MainView {
             self.hover = Some(Hit::Sidebar);
             let area = self.explore_popover_area();
             let moved = self.explore.mouse_move(area, self.viewport, x, y);
-            let tip = self
-                .explore
-                .pin_tooltip(area, self.viewport, x, y)
-                .map(|(rect, text)| TooltipContent::new(38, rect, text));
+            let tip = self.explore.menu_tooltip(area, self.viewport, x, y).map(
+                |(rect, text, shortcut)| {
+                    TooltipContent::new(38, rect, text).with_optional_shortcut(
+                        shortcut
+                            .and_then(|id| koru_keys::show_hint(id, koru_keys::Section::Tooltip)),
+                    )
+                },
+            );
             let tip_changed = self.tooltip.set_hover(tip, Instant::now());
             return moved || left_content || reminder_moved || tip_changed;
         }
@@ -17336,21 +17341,6 @@ impl MainView {
                             koru_keys::Section::Tooltip,
                         ),
                     ),
-                )
-            } else if on(rail.settings) {
-                // The chord rides the tooltip (the review's note), the way the
-                // lane's controls carry theirs; the Settings page's own
-                // search box no longer prints it.
-                Some(
-                    TooltipContent::new(
-                        9,
-                        rail.settings,
-                        koru_i18n::t(lang, koru_i18n::Key::SettingsTab),
-                    )
-                    .with_optional_shortcut(koru_keys::show_hint(
-                        koru_keys::ShortcutId::Settings,
-                        koru_keys::Section::Tooltip,
-                    )),
                 )
             } else if on(rail.overflow) {
                 Some(TooltipContent::new(

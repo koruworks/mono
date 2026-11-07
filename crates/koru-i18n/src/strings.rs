@@ -2793,6 +2793,10 @@ pub enum Key {
     ManageWorkspaces,
     /// A Profile row's gear: the Manage tab on that Profile.
     ManageProfile,
+    ProfileManageProfiles,
+    ProfileAddNew,
+    ProfileGlobalSync,
+    ProfileAppSettings,
     /// The switcher's Workspaces page heading, uppercased with its count
     /// beside it like the Profiles page's (ELEMENTS-PLAN S1).
     Workspaces,
@@ -2963,7 +2967,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2075] = [
+    pub const ALL: [Key; 2079] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4943,6 +4947,10 @@ impl Key {
         Key::ManageWorkspace,
         Key::ManageWorkspaces,
         Key::ManageProfile,
+        Key::ProfileManageProfiles,
+        Key::ProfileAddNew,
+        Key::ProfileGlobalSync,
+        Key::ProfileAppSettings,
         Key::Workspaces,
         Key::SendFeedback,
         Key::StarOnGitHub,
@@ -15638,6 +15646,10 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::ManageWorkspace, en: "Manage workspace", es: "Gestionar espacio", pt_br: "Gerenciar espaço", de: "Arbeitsbereich verwalten", fr: "Gérer l'espace", ar: "إدارة مساحة العمل", zh_hans: "管理工作区", ja: "ワークスペースを管理" },
     Row { key: Key::ManageWorkspaces, en: "Manage workspaces", es: "Gestionar espacios de trabajo", pt_br: "Gerenciar espaços de trabalho", de: "Arbeitsbereiche verwalten", fr: "Gérer les espaces de travail", ar: "إدارة مساحات العمل", zh_hans: "管理工作区", ja: "ワークスペースを管理" },
     Row { key: Key::ManageProfile, en: "Manage profile", es: "Gestionar perfil", pt_br: "Gerenciar perfil", de: "Profil verwalten", fr: "Gérer le profil", ar: "إدارة ملف التعريف", zh_hans: "管理配置文件", ja: "プロファイルを管理" },
+    Row { key: Key::ProfileManageProfiles, en: "Manage profiles", es: "Gestionar perfiles", pt_br: "Gerenciar perfis", de: "Profile verwalten", fr: "Gérer les profils", ar: "إدارة ملفات التعريف", zh_hans: "管理配置文件", ja: "プロファイルを管理" },
+    Row { key: Key::ProfileAddNew, en: "Add new profile", es: "Añadir un perfil nuevo", pt_br: "Adicionar novo perfil", de: "Neues Profil hinzufügen", fr: "Ajouter un profil", ar: "إضافة ملف تعريف جديد", zh_hans: "添加新配置文件", ja: "新しいプロファイルを追加" },
+    Row { key: Key::ProfileGlobalSync, en: "Global sync", es: "Sincronización global", pt_br: "Sincronização global", de: "Globale Synchronisierung", fr: "Synchronisation globale", ar: "المزامنة العامة", zh_hans: "全局同步", ja: "全体の同期" },
+    Row { key: Key::ProfileAppSettings, en: "App settings", es: "Ajustes de la aplicación", pt_br: "Configurações do aplicativo", de: "App-Einstellungen", fr: "Paramètres de l’application", ar: "إعدادات التطبيق", zh_hans: "应用设置", ja: "アプリの設定" },
     Row { key: Key::Workspaces, en: "Workspaces", es: "Espacios de trabajo", pt_br: "Espaços de trabalho", de: "Arbeitsbereiche", fr: "Espaces de travail", ar: "مساحات العمل", zh_hans: "工作区", ja: "ワークスペース" },
     Row { key: Key::SendFeedback, en: "Send feedback", es: "Enviar comentarios", pt_br: "Enviar feedback", de: "Feedback senden", fr: "Envoyer un commentaire", ar: "إرسال ملاحظات", zh_hans: "发送反馈", ja: "フィードバックを送信" },
     Row { key: Key::StarOnGitHub, en: "Star us on GitHub", es: "Danos una estrella en GitHub", pt_br: "Dê uma estrela no GitHub", de: "Geben Sie uns einen Stern auf GitHub", fr: "Donnez-nous une étoile sur GitHub", ar: "امنحنا نجمة على GitHub", zh_hans: "在 GitHub 上为我们加星", ja: "GitHub でスターを付ける" },

@@ -93,11 +93,6 @@ impl ExploreView {
             views,
             foot: vec![
                 glyph(apps_rail::Hit::Help, t(lang, Key::Help), icons::QUESTION),
-                glyph(
-                    apps_rail::Hit::Settings,
-                    t(lang, Key::TerminalSettings),
-                    icons::FADERS,
-                ),
                 Item {
                     hit: apps_rail::Hit::Profile,
                     name: profile
@@ -154,7 +149,6 @@ impl ExploreView {
                     .position(|m| *m == mode)
                     .unwrap_or(0),
             ),
-            apps_rail::Hit::Settings => ExploreChromeFocus::RailSettings,
             apps_rail::Hit::Overflow => ExploreChromeFocus::RailOverflow,
             apps_rail::Hit::Help => ExploreChromeFocus::RailHelp,
             apps_rail::Hit::Profile => ExploreChromeFocus::RailProfile,
@@ -176,7 +170,6 @@ impl ExploreView {
             Some(ExploreChromeFocus::App(i)) => {
                 self.rail_modes().get(i).copied().map(apps_rail::Hit::App)
             }
-            Some(ExploreChromeFocus::RailSettings) => Some(apps_rail::Hit::Settings),
             Some(ExploreChromeFocus::RailOverflow) => Some(apps_rail::Hit::Overflow),
             Some(ExploreChromeFocus::RailHelp) => Some(apps_rail::Hit::Help),
             Some(ExploreChromeFocus::RailProfile) => Some(apps_rail::Hit::Profile),

@@ -5645,20 +5645,26 @@ workspace's Manage control and `←` back to the workspace, and `Enter` opens
 what is lit: the workspace, or Manage on it. A screen reader announces the
 control as *Manage workspace*.
 
-Click the **avatar** — or press **`Ctrl+Alt+P`** — to open the Profiles page.
-It is the same profile choice global search shows at its bottom left. The
-shortcut opens whichever profile control is in front of you and leaves Explore
-open or closed as you set it.
+In a workspace window, click the **Profile tile** at the bottom of the rail,
+or press **`Ctrl+Alt+P`**, to open the Profile menu. The shortcut works with
+Explore folded and leaves it open or closed as you set it. Each Profile is
+one line; hover its name to see its email, or *On this computer*. Screen
+readers receive the same description. Selecting a different Profile closes
+the menu and opens its usable workspace, or its waiting/recovery screen.
 
 Each profile's **Manage** control works as a workspace's does: point at the
 row to show it, or press `→` on the lit profile to move onto it and `←` to
-come back; `Enter` on it opens the **Manage** tab on that profile. A screen
-reader announces it as *Manage profile*. The page's foot is one keyboard
-stop: `Enter` there makes a new profile.
+come back; `Enter` or `Space` opens the **Manage** tab on that Profile. A
+screen reader announces it as *Manage profile*. **Manage profiles** in the
+heading opens Manage on the current Profile.
 
-Under the profiles sit **New profile**, then **Manage profiles…** and **Link a
-device…**. *New profile* opens the **Manage** tab on its create form, and *Manage
-profiles…* opens it on the open profile's page. The account chooser —
+The fixed rows below the Profiles are **Add new profile**, **Global sync**
+and **App settings**. Add opens the combined Profile/workspace creation form.
+Global sync opens the same Sync settings tab as the workspace menu's header;
+its glyphs show configured device and Cloud channels, independently of their
+health. App settings opens Settings and carries its shortcut in the tooltip.
+Each row is its own keyboard stop and closes the menu when activated.
+Linked devices remain available in Manage. The account chooser —
 **Accounts…** on Manage's **Koru Cloud** page — switches between held accounts; **Add Account** starts
 sign-in or returns to an unfinished account choice. Switching keeps your open
 Workspace and tabs, local content, and established device sync. It shows the

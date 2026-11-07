@@ -74,7 +74,6 @@ pub(crate) mod parts {
     /// The strip of projection buttons.
     pub const MODES: ControlPart = ControlPart::new("modes");
     /// The heading band's title: the app's name.
-    pub const HEADING: ControlPart = ControlPart::new("heading");
     /// The library heading's `…` and magnifier.
     pub const ACTIONS: ControlPart = ControlPart::new("actions");
     /// The tree of rows, and what stands in its place when there are none.
@@ -84,16 +83,12 @@ pub(crate) mod parts {
     /// The pinned floor row.
     pub const TRASH: ControlPart = ControlPart::new("trash");
     /// The rail's foot: Help, Settings and the profile square.
-    pub const RAIL_SETTINGS: ControlPart = ControlPart::new("rail-settings");
     pub const RAIL_HELP: ControlPart = ControlPart::new("rail-help");
     pub const RAIL_OVERFLOW: ControlPart = ControlPart::new("rail-overflow");
     pub const RAIL_PROFILE: ControlPart = ControlPart::new("rail-profile");
     /// The open popover, and the rows of it that name no object.
     pub const POPOVER: ControlPart = ControlPart::new("popover");
     /// The Profiles page's foot: its `+`, its devices and its sync state.
-    pub const NEW_PROFILE: ControlPart = ControlPart::new("new-profile");
-    pub const PROFILE_DEVICES: ControlPart = ControlPart::new("profile-devices");
-    pub const PROFILE_STATUS: ControlPart = ControlPart::new("profile-status");
     /// A workspace's or Profile's gear: the Manage tab on it
     /// (ELEMENTS.final D2). The row's own part stays `root`.
     pub const MANAGE: ControlPart = ControlPart::new("manage");
@@ -245,6 +240,7 @@ impl ExploreView {
                 }
                 for profile in &self.profiles {
                     rev.uuid(profile.id.as_uuid());
+                    rev.str(&self.profile_description(profile));
                 }
                 rev.str(&self.sync_control_name());
             }
@@ -560,7 +556,6 @@ impl ExploreView {
                 let mode = *self.rail_modes().get(i)?;
                 cx.surface(MODE, ControlPart::new(mode.token()))
             }
-            ExploreChromeFocus::RailSettings => cx.surface(EXPLORE, parts::RAIL_SETTINGS),
             ExploreChromeFocus::RailHelp => cx.surface(EXPLORE, parts::RAIL_HELP),
             ExploreChromeFocus::RailOverflow => cx.surface(EXPLORE, parts::RAIL_OVERFLOW),
             ExploreChromeFocus::RailProfile => cx.surface(EXPLORE, parts::RAIL_PROFILE),
@@ -639,24 +634,13 @@ impl ExploreView {
             PopoverRow::WorkspacesHeading => {
                 element_occurrence(cx, super::workspace_menu_elements::MANAGE)
             }
-            PopoverRow::ProfilesHeading => cx.surface(POPOVER, parts::POPOVER),
-            PopoverRow::ProfilesFooter => cx.surface(POPOVER, parts::NEW_PROFILE),
+            PopoverRow::ProfilesHeading => {
+                element_occurrence(cx, super::popover_elements::profiles::MANAGE_PROFILES)
+            }
+            PopoverRow::ProfileAction(action) => element_occurrence(cx, action.key()),
             PopoverRow::LibraryAction(action) => {
                 cx.surface(POPOVER, ControlPart::new(super::actions::token(action)))
             }
-        }
-    }
-
-    /// Which of a fixed row's buttons an accessibility target names.
-    fn head_button_of(part: ControlPart) -> Option<super::HeadButton> {
-        if part == parts::NEW_PROFILE {
-            Some(super::HeadButton::New)
-        } else if part == parts::PROFILE_DEVICES {
-            Some(super::HeadButton::Devices)
-        } else if part == parts::PROFILE_STATUS {
-            Some(super::HeadButton::Status)
-        } else {
-            None
         }
     }
 
@@ -679,8 +663,8 @@ impl ExploreView {
                 .map(|p| p.name.clone())
                 .unwrap_or_default(),
             PopoverRow::WorkspacesHeading => t(lang, Key::ManageWorkspaces).to_string(),
-            PopoverRow::ProfilesHeading => t(lang, Key::WorkspacesProfiles).to_string(),
-            PopoverRow::ProfilesFooter => t(lang, Key::NewProfile).to_string(),
+            PopoverRow::ProfilesHeading => t(lang, Key::ProfileManageProfiles).to_string(),
+            PopoverRow::ProfileAction(action) => t(lang, action.words()).to_string(),
             PopoverRow::LibraryAction(action) => {
                 super::actions::label(action, self.mode).to_string()
             }
@@ -746,11 +730,6 @@ impl ExploreView {
             // Enter presses there: each is pressed as itself.
             Action::Click => {
                 popover.hover = Some(index);
-                if let Some(button) = Self::head_button_of(target.part)
-                    && matches!(rows[index], PopoverRow::ProfilesFooter)
-                {
-                    return Some(self.press(rows[index], super::PopoverPart::Button(button)));
-                }
                 self.popover_key(&WKey::Named(NamedKey::Enter))
             }
             _ => None,
@@ -772,12 +751,10 @@ impl ExploreView {
             PopoverRow::WorkspacesHeading => {
                 target.part.name() == super::workspace_menu_elements::MANAGE.part
             }
-            PopoverRow::ProfilesHeading => false,
-            PopoverRow::ProfilesFooter => {
-                target.part == parts::NEW_PROFILE
-                    || target.part == parts::PROFILE_DEVICES
-                    || target.part == parts::PROFILE_STATUS
+            PopoverRow::ProfilesHeading => {
+                target.part.name() == super::popover_elements::profiles::MANAGE_PROFILES.part
             }
+            PopoverRow::ProfileAction(action) => target.part.name() == action.key().part,
             PopoverRow::LibraryAction(action) => {
                 target.part.name() == super::actions::token(action)
             }
@@ -835,7 +812,6 @@ impl ExploreView {
                 })
             }
             EXPLORE => match target.part {
-                p if p == parts::RAIL_SETTINGS => Some(Outcome::OpenSettings),
                 p if p == parts::RAIL_HELP => Some(Outcome::OpenHelp),
                 p if p == parts::RAIL_OVERFLOW => {
                     (!self.view_projection(self.rail_of(area).h).folded.is_empty())
@@ -885,13 +861,28 @@ impl ExploreView {
             .iter()
             .map(|node| {
                 let mut node = element_node(cx, node);
-                self.describe_workspace_pins(&mut node);
+                self.describe_menu_items(&mut node);
                 node
             })
             .collect()
     }
 
-    fn describe_workspace_pins(&self, node: &mut SemanticNode) {
+    fn describe_menu_items(&self, node: &mut SemanticNode) {
+        if node.occurrence.part == ControlPart::ROOT {
+            if let Some(profile) = self
+                .profiles
+                .iter()
+                .find(|p| node.occurrence.object == object_of(p.id.as_uuid()))
+            {
+                node.description = Some(self.profile_description(profile));
+            }
+        } else if node.occurrence.part.name()
+            == super::popover_elements::profiles::MenuAction::Sync
+                .key()
+                .part
+        {
+            node.description = Some(self.sync_control_name());
+        }
         if node.occurrence.part.name() == super::popover_elements::PIN {
             if let Some(workspace) = self
                 .workspaces
@@ -904,7 +895,7 @@ impl ExploreView {
             }
         }
         for child in &mut node.children {
-            self.describe_workspace_pins(child);
+            self.describe_menu_items(child);
         }
     }
 }
@@ -919,7 +910,6 @@ fn element_occurrence(cx: &Context, key: koru_draw::el::Key) -> Occurrence {
             "views" => return cx.surface(EXPLORE, parts::MODES),
             "help" => return cx.surface(EXPLORE, parts::RAIL_HELP),
             "overflow" => return cx.surface(EXPLORE, parts::RAIL_OVERFLOW),
-            "settings" => return cx.surface(EXPLORE, parts::RAIL_SETTINGS),
             "profile" => return cx.surface(EXPLORE, parts::RAIL_PROFILE),
             part if NavigatorMode::parse(part).is_some() => {
                 return cx.surface(MODE, ControlPart::new(part));

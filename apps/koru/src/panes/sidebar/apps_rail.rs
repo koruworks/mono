@@ -23,7 +23,6 @@ pub struct Rects {
     /// manager lands (the review's note, E68).
     pub apps: Vec<(NavigatorMode, Rect)>,
     pub overflow: Rect,
-    pub settings: Rect,
     pub help: Rect,
     /// The profile square at the foot.
     pub profile: Rect,
@@ -36,7 +35,6 @@ pub enum Hit {
     WaitingWorkspace,
     App(NavigatorMode),
     Overflow,
-    Settings,
     Help,
     Profile,
 }
