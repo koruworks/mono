@@ -199,6 +199,43 @@ fn an_active_pass_does_not_borrow_completion_from_an_old_coverage_sample() {
 }
 
 #[test]
+fn routine_rechecks_keep_confirmed_counts_and_workspace_completion() {
+    use koru_store_wire::internal::CloudDocumentProgress;
+    let mut status = partial();
+    let pass = status.pass.as_mut().unwrap();
+    pass.documents_required = Some(49);
+    pass.documents_synced = 10;
+    pass.confirmed_documents = Some(CloudDocumentProgress {
+        required: 49,
+        synced: 44,
+        complete: false,
+    });
+    assert_eq!(
+        row_detail(EN, Some(&status), CONNECTING),
+        "44 of 49 documents"
+    );
+    let pass = status.pass.as_mut().unwrap();
+    pass.documents_required = None;
+    pass.documents_synced = 0;
+    pass.confirmed_documents = Some(CloudDocumentProgress {
+        required: 49,
+        synced: 49,
+        complete: true,
+    });
+    assert_eq!(row_detail(EN, Some(&status), CONNECTING), "Synced");
+    assert_eq!(
+        summary(EN, &[row("Notes", status.clone())]),
+        "1 of 1 workspaces synced"
+    );
+    status.pass.as_mut().unwrap().documents_changed = true;
+    assert_ne!(row_detail(EN, Some(&status), CONNECTING), "Synced");
+    assert_eq!(
+        summary(EN, &[row("Notes", status)]),
+        "0 of 1 workspaces synced"
+    );
+}
+
+#[test]
 fn a_blank_workspace_name_has_a_visible_fallback() {
     let mut c = controller_with(true);
     let work = c.profiles[0].id;

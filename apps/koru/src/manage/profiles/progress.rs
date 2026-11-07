@@ -406,6 +406,11 @@ fn log_sync_presence(
 /// `(on Cloud, required)`, or `None` when no claim may be read.
 fn documents(status: &CloudSyncStatus) -> Option<(u32, u32)> {
     if let Some(pass) = &status.pass {
+        if !pass.documents_changed {
+            if let Some(confirmed) = &pass.confirmed_documents {
+                return Some((confirmed.synced.min(confirmed.required), confirmed.required));
+            }
+        }
         // An active pass supersedes the previous coverage sample, including
         // the interval before its manifest inventory is known.
         return pass
@@ -436,6 +441,17 @@ fn documents_synced(status: &CloudSyncStatus) -> bool {
         return false;
     }
     if let Some(pass) = &status.pass {
+        if pass.refusal_code.is_none()
+            && !pass.documents_changed
+            && !pass.remote_hint
+            && pass.deferred == 0
+            && pass
+                .confirmed_documents
+                .as_ref()
+                .is_some_and(|progress| progress.complete)
+        {
+            return true;
+        }
         return pass.finished_at.is_some()
             && pass.refusal_code.is_none()
             && !pass.documents_changed
