@@ -352,6 +352,24 @@ fn a_partially_synced_workspace_shows_document_progress() {
 }
 
 #[test]
+fn files_missing_from_cloud_can_be_expanded_without_a_download_attempt() {
+    let mut status = synced();
+    let coverage = status.blobs.as_mut().unwrap().coverage.as_mut().unwrap();
+    coverage.blobs_missing = 1;
+    assert!(openable(Some(&status)));
+    assert_eq!(row_detail(EN, Some(&status), CONNECTING), "Synced");
+    status
+        .blobs
+        .as_mut()
+        .unwrap()
+        .coverage
+        .as_mut()
+        .unwrap()
+        .state = "superseded".into();
+    assert!(!openable(Some(&status)));
+}
+
+#[test]
 fn a_held_workspace_gives_the_context_panes_reason() {
     assert_eq!(
         row_detail(EN, Some(&held("cloud_access_unavailable")), CONNECTING),

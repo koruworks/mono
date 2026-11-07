@@ -347,7 +347,12 @@ pub(super) fn openable(status: Option<&CloudSyncStatus>) -> bool {
             .as_ref()
             .is_some_and(|sync| sync.error_code.is_some())
             || status.blobs.as_ref().is_some_and(|blobs| {
-                blobs.paused || blobs.pending_reason.is_some() || blobs.missing > 0
+                blobs.paused
+                    || blobs.pending_reason.is_some()
+                    || blobs.missing > 0
+                    || blobs.coverage.as_ref().is_some_and(|coverage| {
+                        coverage.state != "superseded" && coverage.blobs_missing > 0
+                    })
             })
     })
 }
