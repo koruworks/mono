@@ -2518,6 +2518,7 @@ impl SearchSurface {
                 // This surface asks for no outline. An entity picker does, and
                 // it drains its own reader.
                 SearchReadResult::Outline { .. } => {}
+                SearchReadResult::DocumentFaces(_) => {}
                 // Handled above, before the `seq` match, for the same reason
                 // the catalog is: it answers no query.
                 SearchReadResult::ScopeTables { .. } => {}

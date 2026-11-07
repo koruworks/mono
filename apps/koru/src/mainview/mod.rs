@@ -1286,6 +1286,10 @@ pub struct MainView {
     entity_workspaces: Vec<koru_editor::components::entity_picker::WorkspaceChoice>,
     /// Manifest/search title cache keyed by stable document id.
     entity_titles: std::collections::HashMap<String, String>,
+    /// Kind from search hits or Store metadata, for linked chips outside the
+    /// active workspace's listing.
+    entity_file_kinds: std::collections::HashMap<koru_core::DocumentId, bool>,
+    entity_faces_requested: std::collections::HashSet<koru_core::DocumentId>,
     /// Documents known to be in Trash. Metadata is retained across workspace
     /// switches so returning to a backlink can immediately show it.
     entity_trashed: std::collections::HashSet<String>,
@@ -1999,6 +2003,8 @@ impl MainView {
             entity_search: koru_search_ui::EntitySearch::new_at(crate::search::gateway_root()),
             entity_workspaces: Vec::new(),
             entity_titles: std::collections::HashMap::new(),
+            entity_file_kinds: std::collections::HashMap::new(),
+            entity_faces_requested: std::collections::HashSet::new(),
             entity_trashed: std::collections::HashSet::new(),
             entity_headings: std::collections::HashMap::new(),
             deep_link_documents: std::collections::HashSet::new(),
@@ -3140,19 +3146,19 @@ impl MainView {
         }
     }
 
-    /// Whether a reference on a page's lane is a file, from the listing — a
-    /// document otherwise. One the listing has not caught up with is taken
-    /// for a file, the common case, until it does.
+    /// Whether a reference on a page's lane is a file, from the current
+    /// listing or the metadata resolved for another workspace.
     pub(super) fn linked_is_file(&self, id: koru_core::DocumentId) -> bool {
         self.entries
             .as_ref()
             .and_then(|entries| entries.iter().find(|entry| entry.id == id))
-            .is_none_or(|entry| entry.kind == koru_core::explore::KIND_FILE)
+            .map(|entry| entry.kind == koru_core::explore::KIND_FILE)
+            .or_else(|| self.entity_file_kinds.get(&id).copied())
+            .unwrap_or(true)
     }
 
-    /// A page's attachments as the lane shows them: each one's name and kind
-    /// from the listing, or a neutral word for one the listing has not
-    /// caught up with yet.
+    /// A page's attachments as the lane shows them, including linked entries
+    /// from other workspaces once their metadata has arrived.
     fn attachment_faces(
         &self,
         files: &[koru_core::DocumentId],
@@ -3166,6 +3172,7 @@ impl MainView {
                     .and_then(|entries| entries.iter().find(|entry| entry.id == *file))
                     .map(|entry| entry.title.clone())
                     .filter(|title| !title.is_empty())
+                    .or_else(|| self.entity_titles.get(&file.to_storage()).cloned())
                     .unwrap_or_else(|| "File".to_owned());
                 crate::tasks_view::LaneItem {
                     id: *file,
@@ -9749,7 +9756,7 @@ impl MainView {
         let active_document = self.active_document;
         let naming = self.naming;
         // Each listed entry's name and whether it is a file, for the lanes.
-        let titles: std::collections::HashMap<koru_core::DocumentId, (String, bool)> = self
+        let mut titles: std::collections::HashMap<koru_core::DocumentId, (String, bool)> = self
             .entries
             .as_ref()
             .map(|entries| {
@@ -9768,6 +9775,13 @@ impl MainView {
                     .collect()
             })
             .unwrap_or_default();
+        for (id, is_file) in &self.entity_file_kinds {
+            if !titles.contains_key(id)
+                && let Some(title) = self.entity_titles.get(&id.to_storage())
+            {
+                titles.insert(*id, (title.clone(), *is_file));
+            }
+        }
         let page_names: Vec<(koru_core::DocumentId, String)> = self
             .page_of
             .iter()
@@ -13994,6 +14008,23 @@ impl View for MainView {
     /// same request selecting it would make.
     fn set_page_state(&mut self, state: &koru_workspace::pages::PageState) -> bool {
         let mut changed = false;
+        let unresolved: Vec<_> = state
+            .attachments
+            .iter()
+            .copied()
+            .filter(|id| {
+                !self.entity_file_kinds.contains_key(id)
+                    && !self
+                        .entries
+                        .as_ref()
+                        .is_some_and(|entries| entries.iter().any(|entry| entry.id == *id))
+                    && self.entity_faces_requested.insert(*id)
+            })
+            .map(|id| koru_store_core::ids::DocumentId::from_uuid(id.as_uuid()))
+            .collect();
+        if !unresolved.is_empty() {
+            self.entity_search.request_document_faces(unresolved);
+        }
         let faces = self.attachment_faces(&state.attachments);
         self.each_tab_mut(|tab| {
             if let TabView::Tasks(t) = &mut tab.view {
@@ -14842,6 +14873,7 @@ impl View for MainView {
             .is_some_and(|search| search.maintain(ws, now));
         // Move to… and the @ entity picker share EntitySearch; only one is
         // open at a time, and both must not drain the same poll.
+        let faces_changed = self.poll_entity_faces(ws);
         let entity_changed = if self.move_to.is_some() {
             self.poll_move_to_search()
         } else {
@@ -14851,6 +14883,7 @@ impl View for MainView {
             let headings = self.poll_entity_headings();
             self.poll_entity_picker() || headings
         };
+        let entity_changed = entity_changed || faces_changed;
         let history_target = self.history_target();
         let history_visible =
             self.context.is_open() && self.context_view.section() == Section::History;
@@ -16973,6 +17006,21 @@ impl MainView {
         changed
     }
 
+    /// Apply metadata for saved links after the store has resolved their ids.
+    fn poll_entity_faces(&mut self, ws: &WorkspaceDoc) -> bool {
+        let faces = self.entity_search.poll_document_faces();
+        if faces.is_empty() {
+            return false;
+        }
+        for face in faces {
+            let id = koru_core::DocumentId::from_uuid(face.document.as_uuid());
+            self.entity_titles.insert(id.to_storage(), face.title);
+            self.entity_file_kinds.insert(id, face.is_file);
+        }
+        self.refresh_labels(ws);
+        true
+    }
+
     /// Apply the newest versioned entity-search answer to the active picker.
     fn poll_entity_picker(&mut self) -> bool {
         let Some(update) = self.entity_search.poll() else {
@@ -16994,6 +17042,10 @@ impl MainView {
             let key = document.document.to_storage();
             self.entity_titles
                 .insert(key.clone(), document.title.clone());
+            self.entity_file_kinds.insert(
+                koru_core::DocumentId::from_uuid(document.document.as_uuid()),
+                document.kind == "file" || document.kind == koru_core::explore::KIND_FILE,
+            );
             self.entity_trashed.remove(&key);
         }
         // The Tasks page's *Add existing* picker asked: it takes the answer,
@@ -17017,6 +17069,14 @@ impl MainView {
                 .collect();
             if let TabView::Tasks(t) = self.active_view() {
                 t.set_link_results(hits, update.unavailable);
+            }
+            let ids = match &self.tabs().active_tab().view {
+                TabView::Tasks(page) => page.attachment_ids(),
+                _ => Vec::new(),
+            };
+            let faces = self.attachment_faces(&ids);
+            if let TabView::Tasks(page) = self.active_view() {
+                page.set_attachment_faces(faces);
             }
             self.sync_link_picker();
             return true;

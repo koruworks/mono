@@ -2830,6 +2830,7 @@ pub enum Key {
     TerminalRecoveredResumeHint,
     TerminalRecoverResume,
     TerminalRecoverStartNew,
+    TerminalResumeFailed,
 
     // ------------------------------------------ the document's context menu
     // The two rows a code block's menu shares with every other block. The
@@ -2927,7 +2928,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2038] = [
+    pub const ALL: [Key; 2039] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4915,6 +4916,7 @@ impl Key {
         Key::TerminalRecoveredResumeHint,
         Key::TerminalRecoverResume,
         Key::TerminalRecoverStartNew,
+        Key::TerminalResumeFailed,
         Key::MenuCopy,
         Key::MenuDelete,
         Key::MenuSaveAs,
@@ -15583,6 +15585,7 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::TerminalRecoveredResumeHint, en: "Resume continues the most recent conversation in this folder.", es: "Reanudar continúa la conversación más reciente de esta carpeta.", pt_br: "Retomar continua a conversa mais recente nesta pasta.", de: "Fortsetzen setzt die letzte Unterhaltung in diesem Ordner fort.", fr: "Reprendre poursuit la conversation la plus récente de ce dossier.", ar: "تتابع «استئناف» أحدث محادثة في هذا المجلد.", zh_hans: "“继续”会接上此文件夹中最近的一次对话。", ja: "「再開」は、このフォルダーの直近の会話を続けます。" },
     Row { key: Key::TerminalRecoverResume, en: "Resume", es: "Reanudar", pt_br: "Retomar", de: "Fortsetzen", fr: "Reprendre", ar: "استئناف", zh_hans: "继续", ja: "再開" },
     Row { key: Key::TerminalRecoverStartNew, en: "Start new", es: "Empezar de nuevo", pt_br: "Começar novo", de: "Neu starten", fr: "Nouvelle session", ar: "بدء جديد", zh_hans: "新建会话", ja: "新しく始める" },
+    Row { key: Key::TerminalResumeFailed, en: "Session couldn't be restored, starting a new one", es: "No se pudo restaurar la sesión, iniciando una nueva", pt_br: "Não foi possível restaurar a sessão, iniciando uma nova", de: "Sitzung konnte nicht wiederhergestellt werden. Eine neue wird gestartet", fr: "La session n’a pas pu être restaurée, démarrage d’une nouvelle session", ar: "تعذّرت استعادة الجلسة، جارٍ بدء جلسة جديدة", zh_hans: "无法恢复会话，正在启动新会话", ja: "セッションを復元できませんでした。新しいセッションを開始します" },
     // ------------------------------------------ the document's context menu
     Row { key: Key::MenuCopy, en: "Copy", es: "Copiar", pt_br: "Copiar", de: "Kopieren", fr: "Copier", ar: "نسخ", zh_hans: "复制", ja: "コピー" },
     Row { key: Key::MenuDelete, en: "Delete", es: "Eliminar", pt_br: "Excluir", de: "Löschen", fr: "Supprimer", ar: "حذف", zh_hans: "删除", ja: "削除" },

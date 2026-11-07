@@ -14743,6 +14743,30 @@ fn a_lane_reference_opens_and_menus_as_its_kind() {
     assert_eq!(items.last(), Some(&MenuAction::DetachFromPage));
 }
 
+#[test]
+fn links_outside_the_current_workspace_use_resolved_titles_and_kinds() {
+    let (mut v, _w) = on_tasks();
+    let document = koru_core::DocumentId::new();
+    let file = koru_core::DocumentId::new();
+    v.entity_titles
+        .insert(document.to_storage(), "Project plan".into());
+    v.entity_titles
+        .insert(file.to_storage(), "reference.pdf".into());
+    v.entity_file_kinds.insert(document, false);
+    v.entity_file_kinds.insert(file, true);
+
+    let faces = v.attachment_faces(&[document, file]);
+    assert_eq!(
+        faces
+            .iter()
+            .map(|face| (face.name.as_str(), face.is_file))
+            .collect::<Vec<_>>(),
+        vec![("Project plan", false), ("reference.pdf", true)]
+    );
+    assert!(!v.linked_is_file(document));
+    assert!(v.linked_is_file(file));
+}
+
 /// A pick from the page's picker leaves as the same edit an attached file
 /// does, so the page holds it and the lane shows it.
 #[test]

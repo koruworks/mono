@@ -135,8 +135,7 @@ pub struct EntityPicker {
     /// document** — a Tasks page's *Add existing…*. It has its own query
     /// field (there is no body to type `@…` into) and no *Add new document*
     /// row (nothing is being written), `#` is ordinary text (a page links
-    /// to a document, not into one), and the scope is the workspace the
-    /// page is in, whose listing names what it picks.
+    /// to a document, not into one), and the scope is the page's profile.
     pub link_mode: bool,
     /// The commit that just happened was Ctrl+Enter or Shift+Enter: perform
     /// the move but stay here — no tab for the new page, no navigation. Read
@@ -373,14 +372,20 @@ impl EntityPicker {
         current: WorkspaceId,
         mut workspaces: Vec<WorkspaceChoice>,
     ) -> bool {
-        // A page's link stays in the page's workspace: the lane that shows
-        // it names it from that workspace's listing.
-        if self.link_mode {
-            workspaces.retain(|workspace| workspace.id == current);
+        // A page may link to another workspace in its profile. Keep the
+        // profile boundary while allowing its documents and files together.
+        if self.link_mode
+            && let Some(profile) = workspaces
+                .iter()
+                .find(|workspace| workspace.id == current)
+                .map(|workspace| workspace.profile)
+        {
+            workspaces.retain(|workspace| workspace.profile == profile);
         }
         // A move never crosses a profile — the shell refuses it at commit, so
         // offering another profile's documents is offering a dialog. The
-        // mention picker keeps the whole catalog: a *link* may point anywhere.
+        // mention picker keeps the whole catalog: an inline mention may point
+        // to a document in another profile.
         if self.move_mode
             && let Some(profile) = workspaces
                 .iter()
@@ -961,28 +966,34 @@ mod tests {
         assert_eq!(request.workspaces, vec![current]);
     }
 
-    /// The scope is the page's own workspace — the lane names what it holds
-    /// from that listing — however many the catalog has.
+    /// The link picker searches all workspaces in the page's profile.
     #[test]
-    fn the_link_picker_stays_in_the_pages_workspace() {
+    fn the_link_picker_searches_the_pages_profile() {
         let mut engine = koru_draw::text::TextEngine::new();
         let mut picker = EntityPicker::for_link(&mut engine);
         let current = WorkspaceId::new();
+        let profile = ProfileId::new();
         let ours = WorkspaceChoice {
-            profile: ProfileId::new(),
+            profile,
             profile_name: "Work".into(),
             id: current,
             name: "Current".into(),
         };
         let other = WorkspaceChoice {
-            profile: ProfileId::new(),
-            profile_name: "Personal".into(),
+            profile,
+            profile_name: "Work".into(),
             id: WorkspaceId::new(),
             name: "Elsewhere".into(),
         };
-        picker.set_context(current, vec![ours.clone(), other]);
-        assert_eq!(picker.workspaces, vec![ours]);
-        assert_eq!(picker.selected_workspaces, vec![current]);
+        let another_profile = WorkspaceChoice {
+            profile: ProfileId::new(),
+            profile_name: "Personal".into(),
+            id: WorkspaceId::new(),
+            name: "Elsewhere again".into(),
+        };
+        picker.set_context(current, vec![ours.clone(), other.clone(), another_profile]);
+        assert_eq!(picker.workspaces, vec![ours, other.clone()]);
+        assert_eq!(picker.selected_workspaces, vec![current, other.id]);
     }
 
     /// With nothing typed the list is the window's recents, as the move

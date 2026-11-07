@@ -2952,6 +2952,12 @@ which takes it off Tasks. Filed in a list, the toast names the list and
 
 Press **Alt+3** to open the Tasks sidebar and focus its queues. Up/Down browse Today, Next, Upcoming, Later and Completed; Home/End reach the first or last queue. Enter or Space opens the focused queue, and Escape or Tab returns the keyboard to the page. From a Tasks page, **Ctrl+Shift+E** returns focus to the queues; press it again to close the sidebar. On a task in a document, that chord still reveals the task on its Tasks page. On Windows, assistive technology can also read and activate these five queues, including which one is selected. List creation and editing are separate controls and are not covered by this route.
 
+To link an existing document or file to a Tasks page, press **+** above the
+task list and choose **Add existing document or file…**. Search by title across
+the workspaces in your current profile; `doc:` and `file:` narrow the results.
+The link shows the item's title and opens the original. You can remove the link
+without deleting the document or file.
+
 Each row carries:
 
 | | |
@@ -3687,7 +3693,10 @@ running. If it was stopped — a restart of the computer, a crash, or **Quit**
 from the tray — the tab is still there, in the same place and the same folder.
 A shell starts again by itself. An agent shows **Resume**, which continues its
 most recent conversation in that folder where the agent can, and **Start new**;
-nothing starts until you choose. What was on the screen is not brought back. The Koru Agent's tray menu has the same **Agents** list, so you
+nothing starts until you choose. If the resume launch fails, Koru tries a fresh
+session once in the same tab and folder and shows a toast: “Session couldn't be
+restored, starting a new one”. If that launch also fails, the error stays visible.
+What was on the screen is not brought back. The Koru Agent's tray menu has the same **Agents** list, so you
 can jump to a session from there too. The composer (for sending a message to a
 managed agent) is hidden until you need it — **Ctrl+Shift+U** shows it. A message you send to Codex while it is working is added to the turn in progress instead of being refused.
 

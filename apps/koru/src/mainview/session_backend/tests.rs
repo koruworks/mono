@@ -634,6 +634,10 @@ fn resume_sends_a_continuation_in_the_saved_folder_and_start_new_a_fresh_launch(
     for expect_resume in [true, false] {
         let (mut back, commands, _session) = restored_with("claude", recovery(true));
         back.handle_session_event(BackendEvent::Connected(Vec::new()));
+        // The recovery prompt waits on screen through ordinary event-loop
+        // passes before the person chooses. Those passes settle this tab.
+        let _ = back.maintain_sessions();
+        let _ = back.maintain_sessions();
         let _ = drained(&commands);
 
         {
@@ -686,6 +690,139 @@ fn resume_sends_a_continuation_in_the_saved_folder_and_start_new_a_fresh_launch(
         assert!(
             matches!(launches[0].2, koru_session_profiles::LaunchIntent::Raw),
             "a recovered terminal comes back as a terminal"
+        );
+    }
+}
+
+fn failed_launch(code: koru_session_protocol::ErrorCode) -> BackendEvent {
+    BackendEvent::OperationFailure {
+        operation: "launch",
+        session_id: None,
+        failure: koru_session_protocol::SessionFailure {
+            code,
+            message: "launch failed".into(),
+        },
+    }
+}
+
+fn resume_attempt() -> (MainView, Receiver<BackendCommand>) {
+    let mut saved = recovery(true).unwrap();
+    saved.project = Some(koru_session_protocol::ProjectId::mint());
+    let (mut back, commands, _) = restored_with("claude", Some(saved));
+    back.handle_session_event(BackendEvent::Connected(Vec::new()));
+    back.maintain_sessions();
+    session_tab(&mut back)
+        .1
+        .offer
+        .as_mut()
+        .unwrap()
+        .force_choice_for_test(crate::session_offer::Choice::Resume);
+    back.maintain_sessions();
+    (back, commands)
+}
+
+#[test]
+fn a_failed_resume_launch_starts_fresh_once_in_the_same_tab_with_a_toast() {
+    use koru_session_protocol::ErrorCode;
+    let (mut back, commands) = resume_attempt();
+    let tab = session_tab(&mut back).0;
+    let (profile, project) = drained(&commands)
+        .into_iter()
+        .find_map(|command| match command {
+            BackendCommand::Launch {
+                profile,
+                project_id,
+                resume: true,
+                ..
+            } => Some((profile.id, project_id)),
+            _ => None,
+        })
+        .expect("the requested resume launched");
+
+    assert!(back.handle_session_event(failed_launch(ErrorCode::CapabilityNotNegotiated)));
+    back.maintain_sessions();
+    let launches: Vec<_> = drained(&commands)
+        .into_iter()
+        .filter(|command| matches!(command, BackendCommand::Launch { .. }))
+        .collect();
+    assert_eq!(launches.len(), 1, "one fresh attempt");
+    match &launches[0] {
+        BackendCommand::Launch {
+            profile: fresh,
+            project_id,
+            resume,
+            working_directory,
+            intent,
+            ..
+        } => {
+            assert_eq!(fresh.id, profile);
+            assert_eq!(*project_id, project);
+            assert!(!resume);
+            assert_eq!(
+                working_directory.as_deref(),
+                Some(std::path::Path::new(&folder()))
+            );
+            assert!(matches!(intent, koru_session_profiles::LaunchIntent::Raw));
+        }
+        _ => unreachable!(),
+    }
+    assert_eq!(session_tab(&mut back).0, tab);
+    assert_eq!(
+        session_tab(&mut back).1.surface.status,
+        PaneStatus::Starting
+    );
+    assert_eq!(
+        back.toast.as_ref().unwrap().0.message(),
+        koru_i18n::t(crate::format::lang(), koru_i18n::Key::TerminalResumeFailed)
+    );
+
+    // The fresh launch can fail too. It must show that failure, not loop.
+    assert!(back.handle_session_event(failed_launch(ErrorCode::SpawnFailed)));
+    back.maintain_sessions();
+    assert!(
+        drained(&commands)
+            .iter()
+            .all(|c| !matches!(c, BackendCommand::Launch { .. }))
+    );
+    assert_eq!(session_tab(&mut back).1.surface.status, PaneStatus::Failed);
+    assert!(session_tab(&mut back).1.surface.notice.is_some());
+}
+
+#[test]
+fn an_attached_resume_never_restarts_when_it_later_ends() {
+    let (mut back, commands) = resume_attempt();
+    drained(&commands);
+    let session = SessionId::mint();
+    back.handle_session_event(BackendEvent::Attached {
+        session_id: session,
+        mode: SessionMode::RawPty,
+        epoch: 1,
+    });
+    assert!(session_tab(&mut back).1.resume_fallback.is_none());
+    back.handle_session_event(BackendEvent::Sessions(vec![]));
+    back.maintain_sessions();
+    assert_eq!(session_tab_count(&back), 0);
+    assert!(back.toast.is_none());
+    assert!(
+        drained(&commands)
+            .iter()
+            .all(|c| !matches!(c, BackendCommand::Launch { .. }))
+    );
+}
+
+#[test]
+fn resume_does_not_start_fresh_for_an_unavailable_host_or_controller_conflict() {
+    use koru_session_protocol::ErrorCode;
+    for code in [ErrorCode::HostUnavailable, ErrorCode::ControllerConflict] {
+        let (mut back, commands) = resume_attempt();
+        drained(&commands);
+        back.handle_session_event(failed_launch(code));
+        back.maintain_sessions();
+        assert!(back.toast.is_none());
+        assert!(
+            drained(&commands)
+                .iter()
+                .all(|c| !matches!(c, BackendCommand::Launch { .. }))
         );
     }
 }
