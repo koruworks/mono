@@ -834,10 +834,13 @@ jobs:
       # default to; the code is the build time in minutes since 2026
       # (mobile.rs). The signing properties reach Gradle as
       # ORG_GRADLE_PROJECT_* — empty, and Gradle treats them as absent and
-      # builds the APK unsigned. Cloud-enabled builds inherit the environment's
-      # public API settings through Gradle into the Rust build. A signed
-      # nightly also gets the feed it checks for its next build and the key
-      # that build must verify against; Gradle ignores both outside the
+      # builds the APK unsigned. A Cloud build passes the same public API
+      # settings the desktop bakes in, as the Gradle account properties the
+      # app already reads (scripts/release/android-account-config.py). Without
+      # Cloud the properties stay unset: sign-in stays unavailable and Cloud
+      # sync stays detached, which is the local and android-check build. A
+      # signed nightly also gets the feed it checks for its next build and the
+      # key that build must verify against; Gradle ignores both outside the
       # nightly app, which is the only one that offers updates (D21).
       - name: Build the APK
         id: apk
@@ -845,6 +848,8 @@ jobs:
           KORU_PUBLIC_API_ORIGIN: ${{ inputs.with-cloud && vars.KORU_PUBLIC_API_ORIGIN || '' }}
           KORU_PUBLIC_API_ISSUER: ${{ inputs.with-cloud && vars.KORU_PUBLIC_API_ISSUER || '' }}
           KORU_PUBLIC_API_CREDENTIAL_ROLLOUT: ${{ inputs.with-cloud && vars.KORU_PUBLIC_API_CREDENTIAL_ROLLOUT || '' }}
+          KORU_PUBLIC_API_GOOGLE_CLIENT_ID: ${{ inputs.with-cloud && vars.KORU_PUBLIC_API_GOOGLE_CLIENT_ID || '' }}
+          WITH_CLOUD: ${{ inputs.with-cloud }}
           CHANNEL: ${{ inputs.channel }}
           VERSION: ${{ inputs.version }}
           BUILD: ${{ inputs.build }}
@@ -860,7 +865,10 @@ jobs:
           test -n "$VERSION" || { echo "::error::an APK names its release version: the caller passes it"; exit 1; }
           code="$(cargo run --locked -q -p koru-release -- android-version-code --build "$BUILD" | tail -n 1)"
           echo "versionCode $code, versionName $VERSION"
+          mapfile -t account_args < <(python3 scripts/release/android-account-config.py release-args \
+            --channel "$CHANNEL" --with-cloud "$WITH_CLOUD")
           (cd apps/android && ./gradlew --no-daemon --console=plain :app:assembleRelease \
+            "${account_args[@]}" \
             "-PkoruNightly=$NIGHTLY" "-PkoruVersionCode=$code" "-PkoruVersionName=$VERSION")
           echo "code=$code" >> "$GITHUB_OUTPUT"
       - name: Delete the release key
