@@ -11438,7 +11438,8 @@ mod tests {
                     json_type(value)
                 ));
             }
-            return;
+            // Sibling constraints still apply when a type union is spelled
+            // with anyOf rather than an array-valued type.
         }
         if let Some(declared) = schema.get("type") {
             let allowed: Vec<&str> = match declared {
@@ -11480,6 +11481,25 @@ mod tests {
             for (index, item) in items.iter().enumerate() {
                 violations(schema_for_items, item, &format!("{path}/{index}"), out);
             }
+        }
+    }
+
+    #[test]
+    fn schema_validation_checks_constraints_beside_a_type_union() {
+        let schema = json!({
+            "anyOf": [{"type": "object"}, {"type": "null"}],
+            "properties": {"value": {"type": "string"}},
+            "required": ["value"]
+        });
+        for (value, valid) in [
+            (Value::Null, true),
+            (json!({"value": "text"}), true),
+            (json!({}), false),
+            (json!({"value": 3}), false),
+        ] {
+            let mut errors = Vec::new();
+            violations(&schema, &value, "$", &mut errors);
+            assert_eq!(errors.is_empty(), valid, "{value}: {errors:?}");
         }
     }
 

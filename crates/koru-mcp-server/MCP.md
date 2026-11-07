@@ -235,6 +235,12 @@ This file is the long form; the reply points here.
   `insert(parent_id, kind, text, node_id?, after_node_id?)`. Which fields a
   given op takes is enforced by the server, which rejects an unknown or
   misplaced field with an error rather than ignoring it.
+- **One type per branch.** Unions such as string-or-null are published as
+  `anyOf: [{"type":"string"}, {"type":"null"}]` rather than a `type` array.
+  This improves portability to clients that only accept a single type name.
+  Explicit null remains distinct from omission; required fields, numeric
+  bounds, enums and object constraints retain their meaning. The same rule
+  applies recursively to local and hosted tool catalogs.
 - **Kept:** every property name, type, enum value and `required`, `minimum` and
   `maximum`, a string `format` (`uuid`), and a default that names a value
   (`"open"`, `"relevance"`). `compaction_keeps_every_parameter_name_and_value`
