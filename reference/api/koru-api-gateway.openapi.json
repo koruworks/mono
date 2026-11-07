@@ -8247,6 +8247,30 @@
         ],
         "type": "object"
       },
+      "PathReference": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/PathReferenceKind"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "path"
+        ],
+        "type": "object"
+      },
+      "PathReferenceKind": {
+        "description": "A path hint names one file or folder, without copying its contents.",
+        "enum": [
+          "file",
+          "folder"
+        ],
+        "type": "string"
+      },
       "PauseReason": {
         "enum": [
           "rule_paused",
@@ -12412,6 +12436,12 @@
           },
           "idempotency_key": {
             "$ref": "#/components/schemas/IdempotencyKey"
+          },
+          "references": {
+            "items": {
+              "$ref": "#/components/schemas/PathReference"
+            },
+            "type": "array"
           },
           "text": {
             "type": "string"

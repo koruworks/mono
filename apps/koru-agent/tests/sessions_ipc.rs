@@ -444,6 +444,7 @@ fn pending_input_uses_the_host_rooted_path_once() {
         #[cfg(unix)]
         text: "printf '%s\\n'".into(),
         attachment_ids: vec![attachment_id],
+        references: Vec::new(),
         mode: None,
         fast: None,
         reasoning: None,
@@ -639,6 +640,7 @@ fn managed_codex_crosses_real_ipc_for_image_events_approval_cancel_and_reattach(
                 idempotency_key: IdempotencyKey::mint(),
                 text: "inspect the fixture image".into(),
                 attachment_ids: vec![attachment_id],
+                references: Vec::new(),
                 mode: None,
                 fast: None,
                 reasoning: None,
@@ -846,6 +848,7 @@ fn attachment_commands_require_protocol_four_and_the_negotiated_capability() {
                 idempotency_key: IdempotencyKey::mint(),
                 text: "echo legacy".into(),
                 attachment_ids: Vec::new(),
+                references: Vec::new(),
                 mode: None,
                 fast: None,
                 reasoning: None,

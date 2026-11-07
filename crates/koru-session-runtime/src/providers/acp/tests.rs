@@ -111,6 +111,7 @@ fn input(turn_id: AgentTurnId) -> AgentInput {
         turn_id,
         text: "<prompt>".into(),
         attachments: Vec::new(),
+        references: Vec::new(),
         mode: None,
         fast: None,
         reasoning: None,
@@ -821,6 +822,38 @@ fn ten_one_mebibyte_pictures_fit_the_prompt_frame_while_reads_stay_bounded() {
             media_type: "image/png".into(),
         });
     }
+    assert_eq!(
+        h.control.prompt(&input).unwrap_err().code,
+        ErrorCode::InputTooLarge
+    );
+}
+
+#[test]
+fn reference_only_prompt_is_a_bounded_text_line_with_unicode_path() {
+    let mut h = harness(FakeAcpConfig::default(), None, None);
+    start(&mut h.control);
+    let mut input = input(AgentTurnId::mint());
+    input.text.clear();
+    input.references.push(koru_session_protocol::PathReference {
+        kind: koru_session_protocol::PathReferenceKind::Folder,
+        path: std::env::temp_dir()
+            .join("folder with spaces 文書")
+            .display()
+            .to_string(),
+    });
+    let prompt = h.control.prompt(&input).unwrap();
+    assert_eq!(prompt.len(), 1);
+    assert_eq!(prompt[0]["type"], "text");
+    assert!(
+        prompt[0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("folder with spaces 文書")
+    );
+    let original_fingerprint = input::fingerprint(&input);
+    input.references[0].kind = koru_session_protocol::PathReferenceKind::File;
+    assert_ne!(input::fingerprint(&input), original_fingerprint);
+    h.control.config.maximum_prompt_frame_bytes = 10;
     assert_eq!(
         h.control.prompt(&input).unwrap_err().code,
         ErrorCode::InputTooLarge

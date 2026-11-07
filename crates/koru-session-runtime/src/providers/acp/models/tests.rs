@@ -230,6 +230,7 @@ fn model_is_applied_before_prompt_and_never_claimed_as_reported() {
             turn_id: AgentTurnId::mint(),
             text: "private-prompt-sentinel".into(),
             attachments: vec![],
+            references: Vec::new(),
             mode: None,
             fast: None,
             reasoning: None,

@@ -442,6 +442,10 @@ impl CodexControl {
         if !input.text.is_empty() {
             provider_input.push(json!({ "type": "text", "text": input.text }));
         }
+        for reference in &input.references {
+            provider_input
+                .push(json!({"type": "text", "text": super::contract::reference_line(reference)}));
+        }
         // Each picked skill beside the text that says `$name` for it.
         provider_input.extend(skill_items);
         for attachment in &input.attachments {
@@ -981,6 +985,15 @@ fn input_fingerprint(input: &AgentInput) -> blake3::Hash {
         }]);
         hasher.update(&(attachment.media_type.len() as u64).to_le_bytes());
         hasher.update(attachment.media_type.as_bytes());
+    }
+    for reference in &input.references {
+        hasher.update(b"reference\0");
+        hasher.update(&[match reference.kind {
+            koru_session_protocol::PathReferenceKind::File => 1,
+            koru_session_protocol::PathReferenceKind::Folder => 2,
+        }]);
+        hasher.update(&(reference.path.len() as u64).to_le_bytes());
+        hasher.update(reference.path.as_bytes());
     }
     // The skills a turn names are part of what it asks (koru-ai D121).
     for skill in &input.skills {

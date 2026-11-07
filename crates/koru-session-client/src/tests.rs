@@ -241,6 +241,7 @@ fn answers_as_the_next_message_need_managed_questions() {
             idempotency_key: IdempotencyKey::mint(),
             text: String::new(),
             attachment_ids: Vec::new(),
+            references: Vec::new(),
             mode: None,
             fast: None,
             reasoning: None,
@@ -277,6 +278,7 @@ fn skills_need_agent_commands() {
             idempotency_key: IdempotencyKey::mint(),
             text: "Use $review".into(),
             attachment_ids: Vec::new(),
+            references: Vec::new(),
             mode: None,
             fast: None,
             reasoning: None,
@@ -312,6 +314,7 @@ fn a_turns_level_is_sent_only_to_a_v20_host() {
         idempotency_key: IdempotencyKey::mint(),
         text: "go on".into(),
         attachment_ids: Vec::new(),
+        references: Vec::new(),
         mode: None,
         fast: None,
         reasoning: Some(koru_session_protocol::LaunchReasoning::High),
@@ -348,6 +351,7 @@ fn a_turns_model_is_sent_only_to_a_v22_host() {
         idempotency_key: IdempotencyKey::mint(),
         text: "go on".into(),
         attachment_ids: Vec::new(),
+        references: Vec::new(),
         mode: None,
         fast: None,
         reasoning: None,
@@ -377,4 +381,32 @@ fn a_turns_model_is_sent_only_to_a_v22_host() {
     let bytes = bytes.lock().unwrap();
     let body = std::str::from_utf8(&bytes[koru_ipc::frame::HEADER_LEN..]).unwrap();
     assert!(body.contains("\"model\":\"sonnet\""), "{body}");
+}
+
+#[test]
+fn path_references_are_refused_before_a_v23_wire() {
+    let input = || PendingInput {
+        model: None,
+        idempotency_key: IdempotencyKey::mint(),
+        text: String::new(),
+        attachment_ids: Vec::new(),
+        references: vec![koru_session_protocol::PathReference {
+            kind: koru_session_protocol::PathReferenceKind::Folder,
+            path: "C:\\work folder\\文書".into(),
+        }],
+        mode: None,
+        fast: None,
+        reasoning: None,
+        skills: Vec::new(),
+    };
+    let (older, bytes) = approval_client(22, true, true);
+    assert!(!older.supports_path_references());
+    assert!(matches!(
+        older.send_pending_input(SessionId::mint(), ControllerLeaseToken::mint(), input()),
+        Err(ClientError::Session(SessionFailure {
+            code: ErrorCode::CapabilityNotNegotiated,
+            ..
+        }))
+    ));
+    assert!(bytes.lock().unwrap().is_empty(), "refused before the wire");
 }

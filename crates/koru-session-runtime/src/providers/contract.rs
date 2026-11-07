@@ -281,6 +281,7 @@ pub struct AgentInput {
     pub turn_id: AgentTurnId,
     pub text: String,
     pub attachments: Vec<AgentAttachment>,
+    pub references: Vec<koru_session_protocol::PathReference>,
     /// The approval mode the turn runs in (koru-ai D7): an adapter moves
     /// the session to it before the prompt and refuses the turn when it
     /// cannot. `None` leaves the session's mode as it is — except Codex's,
@@ -311,9 +312,11 @@ pub struct AgentInput {
 
 impl AgentInput {
     pub fn validate(&self, maximum_text_bytes: usize) -> Result<(), ProviderFailure> {
-        if (self.text.is_empty() && self.attachments.is_empty())
+        if (self.text.is_empty() && self.attachments.is_empty() && self.references.is_empty())
             || self.text.len() > maximum_text_bytes
             || !koru_session_protocol::valid_input_skills(&self.skills)
+            || self.attachments.len() + self.references.len() > 10
+            || self.references.iter().any(|reference| !reference.valid())
         {
             return Err(ProviderFailure::new(
                 ErrorCode::InvalidRequest,
@@ -333,6 +336,14 @@ impl AgentInput {
     }
 }
 
+pub(crate) fn reference_line(reference: &koru_session_protocol::PathReference) -> String {
+    let kind = match reference.kind {
+        koru_session_protocol::PathReferenceKind::File => "File",
+        koru_session_protocol::PathReferenceKind::Folder => "Folder",
+    };
+    format!("Local {kind} path: {}", reference.path)
+}
+
 impl fmt::Debug for AgentInput {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -340,6 +351,7 @@ impl fmt::Debug for AgentInput {
             .field("turn_id", &self.turn_id)
             .field("text_bytes", &self.text.len())
             .field("attachment_count", &self.attachments.len())
+            .field("reference_count", &self.references.len())
             .field("mode", &self.mode)
             .field("fast", &self.fast)
             .field("reasoning", &self.reasoning)

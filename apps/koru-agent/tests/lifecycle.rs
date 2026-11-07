@@ -1841,6 +1841,7 @@ fn public_sessions_client_streams_raw_output_and_delivers_an_image_path() {
                 controller_lease: lease.token,
                 text: "echo PUBLIC_CLIENT_IMAGE".into(),
                 attachment_ids: vec![attachment.id],
+                references: Vec::new(),
             },
         )
         .unwrap();
@@ -1950,6 +1951,7 @@ fn public_client_attaches_an_image_to_a_managed_codex_prompt() {
                 controller_lease: lease.token,
                 text: "PUBLIC_MANAGED_PROMPT_SENTINEL".into(),
                 attachment_ids: vec![attachment.id],
+                references: Vec::new(),
             },
         )
         .unwrap();

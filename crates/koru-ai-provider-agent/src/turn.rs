@@ -133,6 +133,53 @@ pub(crate) fn start(
 
     let client = SessionClient::connect(&provider.endpoint, PRODUCT, offer())
         .map_err(|error| session_error("connect", error))?;
+    let references: Vec<koru_session_protocol::PathReference> = if answering.is_some() {
+        Vec::new()
+    } else {
+        request
+            .messages
+            .last()
+            .into_iter()
+            .flat_map(|message| &message.attachments)
+            .filter_map(|attachment| {
+                attachment
+                    .reference
+                    .as_ref()
+                    .map(|path| koru_session_protocol::PathReference {
+                        kind: if attachment.kind == koru_ai_core::AttachmentKind::Folder {
+                            koru_session_protocol::PathReferenceKind::Folder
+                        } else {
+                            koru_session_protocol::PathReferenceKind::File
+                        },
+                        path: path.clone(),
+                    })
+            })
+            .collect()
+    };
+    if !references.is_empty() && !client.supports_path_references() {
+        return Err(AiError::new(
+            AiErrorClass::Configuration,
+            "This Koru Agent is older than the app; restart Koru.",
+            false,
+        ));
+    }
+    let copied_attachment_count = request.messages.last().map_or(0, |message| {
+        message
+            .attachments
+            .iter()
+            .filter(|attachment| attachment.reference.is_none())
+            .count()
+    });
+    if references.len() + copied_attachment_count
+        > koru_ai_core::attachments::MAX_ATTACHMENTS_PER_MESSAGE
+        || references.iter().any(|reference| !reference.valid())
+    {
+        return Err(AiError::new(
+            AiErrorClass::Configuration,
+            "A local file or folder path is invalid.",
+            false,
+        ));
+    }
     let (lease, render) = client
         .attach_live(
             ensured.session,
@@ -248,6 +295,7 @@ pub(crate) fn start(
             idempotency_key: IdempotencyKey::mint(),
             text: text.clone(),
             attachment_ids,
+            references: references.clone(),
             mode: mode.clone(),
             fast,
             reasoning: turn_reasoning,
@@ -668,13 +716,19 @@ pub(crate) fn compose_prompt(request: &AiRequest, fresh: bool) -> String {
     }
     if let Some(last) = last {
         text.push_str(&last.markdown);
-        if !last.attachments.is_empty() {
+        let copied: Vec<_> = last
+            .attachments
+            .iter()
+            .filter(|attachment| attachment.reference.is_none())
+            .cloned()
+            .collect();
+        if !copied.is_empty() {
             if !last.markdown.trim().is_empty() {
                 text.push_str("\n\n");
             }
             text.push_str(&attachment_block(
                 "Attached to this message (stored on this computer; read a file from disk if you need it):",
-                &last.attachments,
+                &copied,
             ));
         }
     }
@@ -881,6 +935,7 @@ impl TurnStream {
                     idempotency_key: steer.key,
                     text: steer.text,
                     attachment_ids: Vec::new(),
+                    references: Vec::new(),
                     mode: None,
                     fast: None,
                     reasoning: None,

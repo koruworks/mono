@@ -377,6 +377,7 @@ pub(crate) fn offer() -> ProtocolOffer {
         // The composer offers an agent's skills under `$`, and a message
         // names the ones picked (koru-ai D121).
         capability::AGENT_COMMANDS,
+        capability::PATH_REFERENCES,
         // A turn is `SendPendingInput`, which the host answers only to a peer
         // that negotiated attachments (protocol v4); the first live turn
         // failed for its absence here.
