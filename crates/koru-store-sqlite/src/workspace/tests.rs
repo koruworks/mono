@@ -3,9 +3,12 @@
 use super::*;
 use koru_store_core::fixtures::{BIDI_LINE, SAMPLES, UNICODE_FILENAME};
 
+mod availability;
 mod client_receive;
 mod cloud_origin;
 mod commit_retry;
+mod inspection;
+mod preparation;
 
 fn at() -> Timestamp {
     Timestamp::from_millis(1_770_000_000_000)

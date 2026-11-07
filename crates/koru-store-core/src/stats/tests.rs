@@ -36,7 +36,11 @@ fn every_measurement_is_named_once() {
     let before = seen.len();
     seen.dedup();
     assert_eq!(seen.len(), before, "two measurements share a name");
-    assert_eq!(names::ALL.len(), 9, "the plan names nine measurements");
+    assert_eq!(
+        names::ALL.len(),
+        10,
+        "including durable authority inspection"
+    );
 }
 
 #[test]

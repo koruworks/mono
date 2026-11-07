@@ -1,0 +1,365 @@
+// SPDX-License-Identifier: MPL-2.0
+
+use super::*;
+use crate::{SqliteBackend, SqliteCatalog};
+use koru_store_core::{
+    Locale, ProfileId, WorkspaceId,
+    ids::RemovalAttemptId,
+    profile_removal::{RemovalKind, RemovalMark, removal_key},
+    service::{
+        Backend, EnsuredWorkspace, Store, WorkspaceAuthorityState, WorkspaceManifestInspection,
+    },
+};
+use std::rc::Rc;
+
+#[derive(Clone)]
+struct Memory(Rc<SqliteBackend>);
+impl Backend for Memory {
+    type Workspace = SqliteWorkspace;
+    type Blobs = crate::SqliteBlobs;
+    fn open_workspace(&self, id: WorkspaceId) -> Result<Self::Workspace> {
+        self.0.open_workspace(id)
+    }
+    fn create_workspace(&self, id: WorkspaceId) -> Result<Self::Workspace> {
+        self.0.create_workspace(id)
+    }
+    fn inspect_workspace_manifest(&self, id: WorkspaceId) -> WorkspaceManifestInspection {
+        self.0.inspect_workspace_manifest(id)
+    }
+    fn delete_workspace(&self, id: WorkspaceId) -> Result<()> {
+        self.0.delete_workspace(id)
+    }
+    fn objects(&self) -> Result<Self::Blobs> {
+        Backend::objects(self.0.as_ref())
+    }
+}
+
+struct Fixture {
+    store: Store<SqliteCatalog, Memory>,
+    backend: Memory,
+    catalog: koru_sqlite::MemoryName,
+    control: Connection,
+    owner: ProfileId,
+}
+impl Fixture {
+    fn new() -> Self {
+        let backend = Memory(Rc::new(SqliteBackend::in_memory()));
+        let catalog = koru_sqlite::MemoryName::fresh("availability");
+        let control = koru_sqlite::open_memory(&catalog).unwrap();
+        let mut store = Store::open(
+            SqliteCatalog::in_named_memory(&catalog).unwrap(),
+            backend.clone(),
+        )
+        .unwrap();
+        let owner = store
+            .create_profile("Owner", None, None, Locale::default(), at())
+            .unwrap()
+            .id;
+        Self {
+            store,
+            backend,
+            catalog,
+            control,
+            owner,
+        }
+    }
+    fn create(&mut self) -> WorkspaceId {
+        self.store
+            .create_workspace(self.owner, "Existing", at())
+            .unwrap()
+            .id
+    }
+    fn select(&mut self) -> EnsuredWorkspace {
+        self.store
+            .ensure_live_workspace(self.owner, "Default", at())
+            .unwrap()
+    }
+    fn reopen(&mut self) {
+        self.store = Store::open(
+            SqliteCatalog::in_named_memory(&self.catalog).unwrap(),
+            self.backend.clone(),
+        )
+        .unwrap();
+    }
+    fn listed(&self) -> usize {
+        self.store.workspaces_including_deleted().unwrap().len()
+    }
+}
+
+#[test]
+fn serialized_selectors_create_one_default_and_reopen_selects_it() {
+    let mut f = Fixture::new();
+    let EnsuredWorkspace::Created { workspace } = f.select() else {
+        panic!("empty Profile needs a workspace")
+    };
+    assert!(
+        matches!(f.select(), EnsuredWorkspace::Active { workspace: found, .. } if found.id == workspace.id)
+    );
+    f.reopen();
+    assert!(
+        matches!(f.select(), EnsuredWorkspace::Active { workspace: found, .. } if found.id == workspace.id)
+    );
+    assert_eq!(f.listed(), 1);
+}
+
+#[test]
+fn healthy_content_wins_over_an_unreadable_neighbor_but_uncertainty_alone_never_creates() {
+    let mut f = Fixture::new();
+    let damaged = f.create();
+    f.backend.delete_workspace(damaged).unwrap();
+    for cold in [false, true] {
+        if cold {
+            f.reopen();
+        }
+        assert!(
+            matches!(f.select(), EnsuredWorkspace::Uncertain { issues } if issues[0].workspace == damaged)
+        );
+        assert_eq!(f.listed(), 1);
+    }
+    let healthy = f.create();
+    let EnsuredWorkspace::Active { workspace, issues } = f.select() else {
+        panic!("healthy workspace must remain usable")
+    };
+    assert_eq!(workspace.id, healthy);
+    assert_eq!(issues[0].workspace, damaged);
+    assert_eq!(f.listed(), 2);
+}
+
+#[test]
+fn unapplied_and_recovered_rows_are_never_empty_profiles() {
+    let mut f = Fixture::new();
+    let workspace = f.create();
+    let repo = f.backend.open_workspace(workspace).unwrap();
+    repo.connection
+        .execute("DELETE FROM loro_updates", [])
+        .unwrap();
+    assert!(
+        matches!(f.select(), EnsuredWorkspace::Pending { workspaces } if workspaces == vec![workspace])
+    );
+    assert_eq!(f.listed(), 1);
+    drop(repo);
+    let mut g = Fixture::new();
+    let recovered = g.create();
+    let repo = g.backend.open_workspace(recovered).unwrap();
+    repo.connection
+        .execute("UPDATE loro_updates SET update_bytes = X'00'", [])
+        .unwrap();
+    let EnsuredWorkspace::Uncertain { issues } = g.select() else {
+        panic!("recovery must stay visible")
+    };
+    assert!(issues[0].recovery.is_some());
+    assert_eq!(g.listed(), 1);
+}
+
+#[test]
+fn ordinary_trash_needs_no_location_and_stale_live_locations_are_repaired() {
+    let mut f = Fixture::new();
+    let trashed = f.create();
+    f.store.delete_workspace(trashed, at()).unwrap();
+    let authority = f.store.workspace_authority(f.owner).unwrap();
+    assert!(!authority[0].listing_differs);
+    assert!(matches!(
+        authority[0].authority,
+        WorkspaceAuthorityState::Read {
+            deleted_at: Some(_),
+            applied: true,
+            ..
+        }
+    ));
+    let EnsuredWorkspace::Created { workspace } = f.select() else {
+        panic!("verified Trash does not block a default")
+    };
+    f.control
+        .execute("DELETE FROM document_locations", [])
+        .unwrap();
+    assert!(
+        f.store
+            .workspace_authority(f.owner)
+            .unwrap()
+            .iter()
+            .any(|w| w.workspace.id == workspace.id && w.listing_differs)
+    );
+    // A pure authority read has left the missing live route missing.
+    let locations: i64 = f
+        .control
+        .query_row("SELECT COUNT(*) FROM document_locations", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(locations, 0);
+    assert!(
+        matches!(f.select(), EnsuredWorkspace::Active { workspace: found, .. } if found.id == workspace.id)
+    );
+    assert!(
+        f.store
+            .workspace_authority(f.owner)
+            .unwrap()
+            .iter()
+            .all(|w| !w.listing_differs)
+    );
+    assert_eq!(f.listed(), 2);
+}
+
+#[test]
+fn failed_live_routing_repair_is_listing_pending_and_rolls_back_projection() {
+    let mut f = Fixture::new();
+    let workspace = f.create();
+    f.control
+        .execute("DELETE FROM document_locations", [])
+        .unwrap();
+    f.control
+        .execute("UPDATE workspaces SET name = 'Stale'", [])
+        .unwrap();
+    f.control.execute_batch("CREATE TRIGGER deny BEFORE INSERT ON document_locations BEGIN SELECT RAISE(ABORT, 'routing denied'); END;").unwrap();
+    for cold in [false, true] {
+        if cold {
+            f.reopen();
+        }
+        assert!(
+            matches!(f.select(), EnsuredWorkspace::ListingPending { issues } if issues[0].workspace == workspace)
+        );
+        assert_eq!(f.store.workspace(workspace).unwrap().name, "Stale");
+        assert_eq!(f.listed(), 1);
+    }
+    f.control.execute_batch("DROP TRIGGER deny").unwrap();
+    assert!(
+        matches!(f.select(), EnsuredWorkspace::Active { workspace: found, .. } if found.name == "Existing")
+    );
+}
+
+#[test]
+fn removal_mark_wins_over_live_pending_and_unreadable_content_even_after_expiry() {
+    let mut f = Fixture::new();
+    f.create();
+    let missing = f.create();
+    f.backend.delete_workspace(missing).unwrap();
+    let mark = RemovalMark {
+        attempt: RemovalAttemptId::new(),
+        kind: RemovalKind::Local,
+        started_at: Timestamp::from_millis(0),
+        last_step_at: Timestamp::from_millis(0),
+        stopped: false,
+    };
+    f.control
+        .execute(
+            "INSERT INTO store_state(key, value) VALUES (?1, ?2)",
+            params![removal_key(f.owner), serde_json::to_string(&mark).unwrap()],
+        )
+        .unwrap();
+    assert!(!mark.lease_live(at()));
+    assert!(matches!(f.select(), EnsuredWorkspace::Removing { mark: found } if found == mark));
+    f.reopen();
+    assert!(matches!(f.select(), EnsuredWorkspace::Removing { mark: found } if found == mark));
+    assert_eq!(f.listed(), 2);
+}
+
+#[test]
+fn prerequisite_flush_failure_refuses_selection_without_replacement_or_projection() {
+    let mut f = Fixture::new();
+    let workspace = f.create();
+    let document = f.store.manifest_id(workspace).unwrap();
+    let manifest =
+        koru_store_core::Manifest::from_snapshot(&f.store.snapshot(workspace, document).unwrap())
+            .unwrap();
+    let version = manifest.version();
+    manifest.set_name("Incoming").unwrap();
+    f.store
+        .apply_update(
+            workspace,
+            document,
+            manifest.export_updates_since(&version).unwrap(),
+            at(),
+            UpdateOrigin::Store,
+        )
+        .unwrap();
+    let repo = f.backend.open_workspace(workspace).unwrap();
+    repo.connection.execute_batch("CREATE TRIGGER deny BEFORE INSERT ON loro_updates BEGIN SELECT RAISE(ABORT, 'flush denied'); END;").unwrap();
+    assert!(
+        f.store
+            .ensure_live_workspace(f.owner, "Default", at())
+            .is_err()
+    );
+    assert_eq!(f.store.workspace(workspace).unwrap().name, "Existing");
+    assert_eq!(f.listed(), 1);
+    repo.connection.execute_batch("DROP TRIGGER deny").unwrap();
+    assert!(
+        matches!(f.select(), EnsuredWorkspace::Active { workspace, .. } if workspace.name == "Incoming")
+    );
+}
+
+#[test]
+fn verified_live_authority_repairs_stale_trash_and_archive_without_a_default() {
+    let mut f = Fixture::new();
+    let workspace = f.create();
+    f.control
+        .execute("UPDATE workspaces SET deleted_at = 1, archived = 1", [])
+        .unwrap();
+    f.control
+        .execute("DELETE FROM document_locations", [])
+        .unwrap();
+    f.reopen();
+    let overlay = f.store.workspace_authority(f.owner).unwrap();
+    assert!(overlay[0].listing_differs);
+    assert!(matches!(
+        overlay[0].authority,
+        WorkspaceAuthorityState::Read {
+            applied: true,
+            archived: false,
+            deleted_at: None,
+            ..
+        }
+    ));
+    let EnsuredWorkspace::Active {
+        workspace: found, ..
+    } = f.select()
+    else {
+        panic!("durable live authority is restored")
+    };
+    assert_eq!(found.id, workspace);
+    assert!(!found.archived);
+    assert!(found.deleted_at.is_none());
+    assert_eq!(f.listed(), 1);
+    assert!(!f.store.workspace_authority(f.owner).unwrap()[0].listing_differs);
+}
+
+#[test]
+fn manifest_flush_may_evict_a_deleted_workspace_before_selection_continues() {
+    let mut f = Fixture::new();
+    let workspace = f.create();
+    let document = f.store.manifest_id(workspace).unwrap();
+    let manifest =
+        koru_store_core::Manifest::from_snapshot(&f.store.snapshot(workspace, document).unwrap())
+            .unwrap();
+    let version = manifest.version();
+    manifest.set_workspace_deleted_at(Some(at())).unwrap();
+    f.store
+        .apply_update(
+            workspace,
+            document,
+            manifest.export_updates_since(&version).unwrap(),
+            at(),
+            UpdateOrigin::Store,
+        )
+        .unwrap();
+    let before = f.store.workspace_authority(f.owner).unwrap();
+    assert!(
+        matches!(
+            before[0].authority,
+            WorkspaceAuthorityState::Read {
+                applied: true,
+                deleted_at: None,
+                ..
+            }
+        ),
+        "queued deletion is not durable authority"
+    );
+    assert!(
+        matches!(f.select(), EnsuredWorkspace::Created { workspace: replacement } if replacement.id != workspace)
+    );
+    assert!(
+        f.store
+            .workspace_including_deleted(workspace)
+            .unwrap()
+            .deleted_at
+            .is_some()
+    );
+    assert_eq!(f.listed(), 2);
+}

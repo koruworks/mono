@@ -53,7 +53,10 @@ fn local_profile(profile: ProfileId, identity: &str) -> ProfileSummary {
 }
 
 fn form(c: &mut ProfilesController) -> &mut OnboardingView {
-    c.profile_creation.as_mut().expect("creation flow")
+    c.profile_creation
+        .as_mut()
+        .map(std::cell::RefCell::get_mut)
+        .expect("creation flow")
 }
 
 #[test]
@@ -669,6 +672,7 @@ fn a_creation_draft_leaves_with_its_owner_scope() {
     c.set_account(scoped_account(4));
     c.take_request();
     c.profile_creation_request = Some(ConnectedProfileDraft {
+        id: koru_core::ProfileId::new(),
         owner_display_name: "Steven".into(),
         profile_name: "Work".into(),
         workspace_name: "Notes".into(),

@@ -50,8 +50,8 @@ use super::fold;
 use super::{DropTarget, DropZone};
 use koru_shell_chrome::tabs::draw_icon;
 
+use crate::panes::sidebar::apps_rail;
 use crate::panes::sidebar::rail_order::RailOrder;
-use crate::panes::sidebar::{apps_rail, floor};
 use koru_app_shell::tabslide::TabSlides;
 use koru_shell_chrome::title_icon::{PAGE_ICON_SLOT, draw_page_emoji, split_leading_emoji};
 
@@ -329,21 +329,12 @@ impl NavigatorMode {
     }
 }
 
-/// Which page of the who/where popover is showing, or the library's action
-/// menu.
-///
-/// **One popover, two pages.** The main page is the floor chip's: you as a
-/// card, then WORKSPACES · *n* with its ⋯ menu and the workspace rows, then
-/// the sync · settings · help toolbar. Your card slides the Profiles page in
-/// from the right, and its back row slides out again (the review's artboard,
-/// QUESTIONS.md E30).
+/// The single open rail menu or the library heading action menu.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum PopoverKind {
-    /// The main page: your card, the workspaces, the toolbar. What the floor
-    /// chip and `Ctrl+Alt+W` open.
+    /// The current workspace menu, also opened by `Ctrl+Alt+W`.
     Summary,
-    /// Every profile on this machine, one slide to the right. What your
-    /// card and `Ctrl+Alt+P` open.
+    /// Profiles on this computer, also opened by `Ctrl+Alt+P`.
     Profiles,
     /// The compact action menu at the right end of the library heading.
     LibraryActions,
@@ -387,18 +378,19 @@ struct Popover {
     /// When the current slide began and the page it began from. `None` at rest,
     /// for the same reason `fade` is.
     slide: Option<(Instant, f32)>,
-    /// What the panel hangs off: the floor chip (above it) or the rail's
-    /// profile square (beside it).
+    /// The control whose element allocation anchors this panel.
     anchor: PopoverAnchor,
 }
 
 /// Where the who/where popover hangs.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum PopoverAnchor {
-    /// Above the pane's floor chip.
-    Chip,
+    /// Beside the library heading action.
+    Heading,
     /// Beside the rail's profile square, its foot level with the square's.
     Rail,
+    /// Beside the current workspace square, aligned to its top.
+    WorkspaceRail,
 }
 
 impl Popover {
@@ -420,8 +412,9 @@ fn page_of(kind: PopoverKind) -> f32 {
 /// One row of an open popover, in the order it is listed.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum PopoverRow {
-    /// *WORKSPACES · n*. Its `+` and import button moved into the floor's
-    /// `…` menu (the review's artboard, E60); a press on it does nothing.
+    WorkspaceAction(workspace_menu_elements::MenuAction),
+    WorkspaceNotice,
+    /// Workspace heading with a separate Manage workspaces target.
     WorkspacesHeading,
     /// An index into the open Profile's workspace list. The row switches; the
     /// gear that shows on hover opens the Manage tab on it.
@@ -448,7 +441,7 @@ impl PopoverRow {
     /// is furniture: *WORKSPACES · n* and *PROFILES · n* are skipped; the
     /// foot (its `+`) is a stop.
     fn selectable(self) -> bool {
-        !matches!(self, Self::WorkspacesHeading | Self::ProfilesHeading)
+        !matches!(self, Self::ProfilesHeading | Self::WorkspaceNotice)
     }
 
     /// The buttons a fixed row carries, leading to trailing. The tests'
@@ -594,11 +587,11 @@ struct RowDrag {
 /// the keyboard is; the column only paints it.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum ExploreChromeFocus {
+    Workspace(Option<WorkspaceId>),
     App(usize),
     RailSettings,
     RailHelp,
     RailProfile,
-    FloorChip,
 }
 
 /// Every rect in a workspace row of the switcher, derived from the row alone.
@@ -685,8 +678,6 @@ pub struct ExploreView {
     /// The slide the rail's views ride when the order changes under them —
     /// the tab strip's own.
     rail_slides: TabSlides,
-    /// Which floor control the pointer is on, if any.
-    floor_hover: Option<floor::Hit>,
     /// Which part of the hovered popover row the pointer is on — the gear,
     /// the ⋯, a toolbar control — so the draw lights the control a press
     /// would hit. `None` while the pointer is off the popover.
@@ -828,6 +819,8 @@ pub struct ExploreView {
     /// How many items are in the Trash, as of the last [`rebuild`](Self::rebuild).
     /// **Never asked per frame** — see where it is set.
     trash_count: usize,
+    workspace_notice: Option<String>,
+    workspace_waiting: Option<String>,
     /// Which row's `…` menu is open, so the button stays visible while it is.
     menu_row: Option<NodeId>,
     /// Nodes whose children are hidden. Collapsed is the *exception* so that a
@@ -887,6 +880,8 @@ pub struct ExploreView {
     /// The Workspaces page's own text engine and shaping cache, for the
     /// frame that answers input and the accessibility tree.
     page_layout: RefCell<popover_elements::PageLayout>,
+    rail_layout: RefCell<koru_draw::el::TextCache>,
+    heading_layout: RefCell<koru_draw::el::TextCache>,
     /// Carets part-way through their quarter turn, by node.
     ///
     /// **Only the ones actually moving.** A settled caret is not in here at all
@@ -3355,7 +3350,8 @@ impl ExploreView {
     fn toggle_popover(&mut self, kind: PopoverKind) {
         let anchor = match kind {
             PopoverKind::Profiles => PopoverAnchor::Rail,
-            PopoverKind::Summary | PopoverKind::LibraryActions => PopoverAnchor::Chip,
+            PopoverKind::Summary => PopoverAnchor::WorkspaceRail,
+            PopoverKind::LibraryActions => PopoverAnchor::Heading,
         };
         self.toggle_popover_from(kind, anchor);
     }
@@ -3377,7 +3373,8 @@ impl ExploreView {
                 p.anchor = anchor;
                 p.hover = None;
                 p.scroll = 0.0;
-                p.slide = Some((now, p.page));
+                p.page = page_of(kind);
+                p.slide = None;
             }
             Some(p) => {
                 p.kind = kind;
@@ -3420,6 +3417,9 @@ impl ExploreView {
             PopoverKind::Summary => {
                 let list = &self.workspaces;
                 let mut out = Vec::with_capacity(list.len() + 1);
+                out.push(PopoverRow::WorkspaceAction(
+                    workspace_menu_elements::MenuAction::Sync,
+                ));
                 out.push(PopoverRow::WorkspacesHeading);
                 // **Pinned first, archived not at all — except the one you are
                 // in — and deleted never.** A workspace can be archived while
@@ -3439,6 +3439,14 @@ impl ExploreView {
                     .collect();
                 shown.sort_by_key(|&i| !list[i].pinned);
                 out.extend(shown.into_iter().map(PopoverRow::Workspace));
+                out.extend([
+                    PopoverRow::WorkspaceAction(workspace_menu_elements::MenuAction::New),
+                    PopoverRow::WorkspaceAction(workspace_menu_elements::MenuAction::Import),
+                    PopoverRow::WorkspaceAction(workspace_menu_elements::MenuAction::Trash),
+                ]);
+                if self.workspace_waiting.is_some() || self.workspace_notice.is_some() {
+                    out.push(PopoverRow::WorkspaceNotice);
+                }
                 // The chip's page ends with its workspaces: sync, settings
                 // and help are the rail's now (the review's note).
                 out
@@ -3471,6 +3479,9 @@ impl ExploreView {
     }
 
     fn page_natural_h(&self, kind: PopoverKind) -> f32 {
+        if let Some(height) = self.element_page_height(kind) {
+            return height;
+        }
         self.rows_for(kind)
             .into_iter()
             .map(Self::popover_row_h)
@@ -3503,7 +3514,7 @@ impl ExploreView {
 
     fn panel_at(&self, area: Rect, viewport: (f32, f32), page: f32) -> Option<Rect> {
         let p = self.popover.as_ref()?;
-        if area.w <= 0.0 {
+        if area.w <= 0.0 && p.anchor == PopoverAnchor::Heading {
             return None;
         }
         let available_h = (viewport.1 - POPOVER_EDGE * 2.0).max(0.0);
@@ -3519,7 +3530,8 @@ impl ExploreView {
             let profiles = cap(PopoverKind::Profiles);
             main + (profiles - main) * page
         };
-        let beside_rail = p.kind != PopoverKind::LibraryActions && p.anchor == PopoverAnchor::Rail;
+        let beside_rail =
+            p.kind != PopoverKind::LibraryActions && p.anchor != PopoverAnchor::Heading;
         let w = if p.kind == PopoverKind::LibraryActions {
             ACTIONS_POPOVER_W
         } else if beside_rail {
@@ -3527,13 +3539,21 @@ impl ExploreView {
         } else {
             POPOVER_W.max(area.w - theme::NAV_PAD * 2.0)
         };
-        let chip = floor::solve(area).chip;
-        let rail = self.rail_of(area);
+        let rail = if area.w > 0.0 {
+            self.rail_of(area)
+        } else {
+            Rect::new(
+                area.x.max(0.0),
+                area.y + theme::CAPTION_H,
+                theme::RAIL_W,
+                (area.h - theme::CAPTION_H).max(0.0),
+            )
+        };
         let x = match p.kind {
             PopoverKind::Summary | PopoverKind::Profiles if beside_rail => {
                 rail.x + rail.w + POPOVER_GAP
             }
-            PopoverKind::Summary | PopoverKind::Profiles => chip.x,
+            PopoverKind::Summary | PopoverKind::Profiles => rail.x + rail.w + POPOVER_GAP,
             // Under its button and off to the right (the review's note), the
             // way the floor's menu and the Profiles page open beside what
             // raised them.
@@ -3541,29 +3561,28 @@ impl ExploreView {
         };
         let x = x.min((viewport.0 - w - POPOVER_EDGE).max(POPOVER_EDGE));
         let y = match p.kind {
+            PopoverKind::Summary => {
+                let square = self
+                    .apps_rail_rects(rail)
+                    .workspaces
+                    .first()
+                    .map(|(_, r)| *r)
+                    .unwrap_or(rail);
+                square
+                    .y
+                    .min((viewport.1 - h - POPOVER_EDGE).max(POPOVER_EDGE))
+            }
             // The library's menu hangs under its button, as it always has.
             PopoverKind::LibraryActions => {
                 let anchor = self.actions_button(area);
                 (anchor.y + anchor.h + POPOVER_GAP)
                     .min((viewport.1 - h - POPOVER_EDGE).max(anchor.y))
             }
-            // **Beside the rail's profile square**, its foot level with the
-            // square's foot, capped to the window above it.
-            PopoverKind::Summary | PopoverKind::Profiles if beside_rail => {
+            PopoverKind::Profiles => {
                 let square = self.apps_rail_rects(rail).profile;
                 let foot = (square.y + square.h).min(viewport.1 - POPOVER_EDGE);
                 h = h.min((foot - POPOVER_EDGE).max(POPOVER_ROW_H));
                 (foot - h).max(POPOVER_EDGE)
-            }
-            // **The switcher rises from the floor chip.** Below would always
-            // overflow, so it is anchored above and capped to the room there;
-            // in a window too short for even that it keeps the top edge and
-            // the chip is covered rather than the panel leaving the window.
-            PopoverKind::Summary | PopoverKind::Profiles => {
-                let foot = chip.y.min(viewport.1);
-                let room = (foot - POPOVER_GAP - POPOVER_EDGE).max(0.0);
-                h = h.min(room.max(POPOVER_ROW_H));
-                (foot - POPOVER_GAP - h).max(POPOVER_EDGE)
             }
         };
         Some(Rect::new(x.max(0.0), y.max(0.0), w, h))
@@ -3831,20 +3850,22 @@ impl ExploreView {
             .map(|(i, (row, _))| (i, row, PopoverPart::Row))
     }
 
-    /// Whether choosing `row`'s `part` keeps the popover open. A Profile row
-    /// switches and the list stays, with the tick moved; a head's import
-    /// button opens a menu *beside* the page (the review's note, QUESTIONS.md
-    /// E29) and a press on a head's words does nothing, so both leave it; a
-    /// head's `+` opens a creator, which is the end of the interaction;
-    /// everything else is a destination.
+    /// Import retains its parent while the format flyout is open. Inert
+    /// heading words also retain the page; navigation closes it.
     fn stays_open(row: PopoverRow, part: PopoverPart) -> bool {
         match row {
-            PopoverRow::WorkspacesHeading | PopoverRow::ProfilesHeading => true,
+            PopoverRow::WorkspaceAction(action) => {
+                action == workspace_menu_elements::MenuAction::Import
+            }
+            PopoverRow::WorkspaceNotice => true,
+            PopoverRow::WorkspacesHeading => part != PopoverPart::Gear,
+            PopoverRow::ProfilesHeading => true,
             // The foot's words do nothing; each button is a destination —
             // Settings, the Manage tab, the website, a creator.
             PopoverRow::ProfilesFooter => part == PopoverPart::Row,
-            PopoverRow::Profile(_) => part == PopoverPart::Row,
-            PopoverRow::Workspace(_) | PopoverRow::LibraryAction(_) => false,
+            PopoverRow::Profile(_) | PopoverRow::Workspace(_) | PopoverRow::LibraryAction(_) => {
+                false
+            }
         }
     }
 
@@ -3862,6 +3883,7 @@ impl ExploreView {
     /// keyboard has moved onto a workspace's gear, else the row itself.
     fn keyboard_part(&self, row: PopoverRow) -> PopoverPart {
         match row {
+            PopoverRow::WorkspacesHeading => PopoverPart::Gear,
             PopoverRow::ProfilesFooter => PopoverPart::Button(HeadButton::New),
             PopoverRow::Workspace(_) | PopoverRow::Profile(_)
                 if self.popover_part == Some(PopoverPart::Gear) =>
@@ -3875,6 +3897,8 @@ impl ExploreView {
     /// What the container should do about a popover row's part being chosen.
     fn choose(&mut self, row: PopoverRow, part: PopoverPart) -> Outcome {
         match row {
+            PopoverRow::WorkspaceAction(action) => action.outcome(),
+            PopoverRow::WorkspaceNotice => Outcome::Consumed,
             PopoverRow::Workspace(i) => {
                 let Some(id) = self.workspaces.get(i).map(|w| w.id) else {
                     return Outcome::Consumed;
@@ -3885,10 +3909,8 @@ impl ExploreView {
                     Outcome::SwitchWorkspace(id)
                 }
             }
-            // **A Profile row switches to it** (the review's artboard): the
-            // window lands on the workspace that Profile last had open, and
-            // the list stays up with its tick moved. Its gear opens the
-            // Manage tab on it instead.
+            // The host resolves the Profile's usable remembered workspace.
+            // Its gear opens Manage on that Profile instead.
             PopoverRow::Profile(i) => {
                 let Some(id) = self.profiles.get(i).map(|p| p.id) else {
                     return Outcome::Consumed;
@@ -3903,7 +3925,9 @@ impl ExploreView {
                 }
             }
             // A heading's words do nothing.
-            PopoverRow::WorkspacesHeading | PopoverRow::ProfilesHeading => Outcome::Consumed,
+            PopoverRow::WorkspacesHeading if part == PopoverPart::Gear => Outcome::ManageWorkspaces,
+            PopoverRow::WorkspacesHeading => Outcome::Consumed,
+            PopoverRow::ProfilesHeading => Outcome::Consumed,
             PopoverRow::ProfilesFooter => match part {
                 PopoverPart::Button(HeadButton::New) => Outcome::NewProfile,
                 // With no cloud set up the words are the offer (the review's
@@ -4087,7 +4111,7 @@ impl ExploreView {
     /// accessibility tree. Zero-width squares in a collapsed column. The
     /// views in the person's order ([`rail_modes`](Self::rail_modes)).
     pub fn apps_rail_rects(&self, rail: Rect) -> apps_rail::Rects {
-        apps_rail::solve(rail, &self.rail_modes())
+        self.with_rail_frame(rail, |model, frame| model.rectangles(frame, rail))
     }
 
     /// Where `F6` has the keyboard, for the ring. The window owns the focus;
@@ -4098,16 +4122,6 @@ impl ExploreView {
         }
         self.chrome_focus = focus;
         true
-    }
-
-    /// The floor's `…` was pressed: the workspace's menu, beside the button
-    /// to its right (the review's note), level with its top; at the window's
-    /// foot the menu lifts itself to stay on screen.
-    pub fn floor_menu(&self, area: Rect) -> Outcome {
-        let r = floor::solve(area);
-        Outcome::FloorMenu {
-            at: (r.dots.x + r.dots.w + POPOVER_GAP, r.dots.y),
-        }
     }
 
     /// The band the library's heading and its `…` sit in: under the lane
@@ -4135,12 +4149,6 @@ impl ExploreView {
     /// each wrote `NAV_PAD + HEADER_H * 2.0 + 2.0` from the same premise, and
     /// adding a third icon to a two-icon sum in three places is how a `…`
     /// starts overlapping a button.
-    fn modes_right(&self, area: Rect) -> f32 {
-        // The modes left the heading band for the apps row above it; the
-        // heading's actions now start at the band's left pad.
-        area.x + theme::NAV_PAD
-    }
-
     /// Where the band's title sits: the app's name (*Home*, *Documents*,
     /// *Files*, *Tasks*, *Chats*…) at the band's left pad, out to the `…`,
     /// in `role::pane_title` — 22 px, level with the rail's Home square
@@ -4149,15 +4157,7 @@ impl ExploreView {
     /// a row the eye has to work out (the review's note). Zero-sized when the
     /// band is.
     pub fn heading_title_rect(&self, area: Rect) -> Rect {
-        let band = self.heading_band(area);
-        if band.w <= 0.0 {
-            return band;
-        }
-        // Where the rows' glyphs start, not the band's pad: the title and
-        // the icons under it share a left edge (the review's note, E76).
-        let x = leading_x(area.x);
-        let right = self.actions_button(area).x - theme::NAV_PAD;
-        Rect::new(x, band.y, (right - x).max(0.0), band.h)
+        self.heading_part_rect(area, heading_elements::TITLE)
     }
 
     /// The heading's trailing button: the library's compact `…` in a mode
@@ -4165,14 +4165,7 @@ impl ExploreView {
     /// yields instead of overlapping the title while a narrow pane is
     /// animating.
     fn actions_button(&self, area: Rect) -> Rect {
-        let band = self.heading_band(area);
-        // A mode with no actions has no button — a zero-width rect, the same
-        // idiom a collapsed column and a hidden context toggle both use, so the
-        // search icon takes the room back with no second code path.
-        if actions::available(self.mode).is_empty() && self.mode != NavigatorMode::Chats {
-            return Rect::new(band.x + band.w, band.y, 0.0, band.h);
-        }
-        actions::button(band, self.modes_right(area))
+        self.heading_part_rect(area, heading_elements::ACTIONS)
     }
 
     fn actions_at(&self, area: Rect, x: f32, y: f32) -> bool {
@@ -4196,7 +4189,15 @@ impl ExploreView {
     /// tab both selects it and picks it up (`apps_rail_drag`).
     pub fn apps_rail_mouse_down(&mut self, rail: Rect, x: f32, y: f32) -> Outcome {
         let rects = self.apps_rail_rects(rail);
-        match apps_rail::hit(&rects, x, y) {
+        match self.rail_hit(rail, x, y) {
+            Some(apps_rail::Hit::Workspace(id)) if self.current != Some(id) => {
+                self.close_popover();
+                Outcome::SwitchWorkspace(id)
+            }
+            Some(apps_rail::Hit::Workspace(_)) | Some(apps_rail::Hit::WaitingWorkspace) => {
+                self.toggle_popover(PopoverKind::Summary);
+                Outcome::Consumed
+            }
             Some(apps_rail::Hit::App(mode)) => {
                 if let Some((_, square)) = rects.apps.iter().find(|(m, _)| *m == mode) {
                     self.begin_rail_drag(mode, *square, y);
@@ -4223,7 +4224,7 @@ impl ExploreView {
 
     /// The pointer over the rail. Answers whether the hover changed.
     pub fn apps_rail_mouse_move(&mut self, rail: Rect, x: f32, y: f32) -> bool {
-        let hit = apps_rail::hit(&self.apps_rail_rects(rail), x, y);
+        let hit = self.rail_hit(rail, x, y);
         let changed = hit != self.rail_hover;
         self.rail_hover = hit;
         changed
@@ -4323,125 +4324,7 @@ impl ExploreView {
             p.panel_border,
             &scene::rect(r.band.x + r.band.w - 1.0, r.band.y, 1.0, r.band.h),
         );
-        // A held square is drawn on the pointer and **last**, over the views
-        // it passes; every other one eases from where it was into the slot
-        // it now has (`apps_rail_drag`).
-        let carried = self.rail_carried(&r);
-        let mut squares: Vec<(usize, NavigatorMode, Rect)> = r
-            .apps
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| carried.is_none_or(|(held, _)| held != *i))
-            .map(|(i, (mode, square))| {
-                let dy = self.rail_slides.offset(i);
-                (
-                    i,
-                    *mode,
-                    Rect::new(square.x, square.y + dy, square.w, square.h),
-                )
-            })
-            .collect();
-        if let Some((held, square)) = carried {
-            squares.push((held, r.apps[held].0, square));
-        }
-        for (i, mode, square) in &squares {
-            let (i, mode, square) = (*i, mode, square);
-            let active = *mode == self.mode;
-            if active {
-                // The app you are in: a shade of the ground, as the active
-                // tab is — both sit on it — rather than a white card.
-                scene::fill(
-                    scene,
-                    root,
-                    p.tab_chosen,
-                    &scene::rrect(square.x, square.y, square.w, square.h, 8.0),
-                );
-            } else if self.rail_hover == Some(apps_rail::Hit::App(*mode)) {
-                scene::fill(
-                    scene,
-                    root,
-                    p.hover_tint,
-                    &scene::rrect(square.x, square.y, square.w, square.h, 8.0),
-                );
-            }
-            // The app you are in wears the Fill weight (the review's note):
-            // the fill is the signal, on top of the grey.
-            draw_rail_glyph(
-                scene,
-                root,
-                engine,
-                Self::navigator_mode_icon(*mode),
-                *square,
-                if active { p.text } else { p.text_dim },
-                active,
-            );
-            if self.chrome_focus == Some(ExploreChromeFocus::App(i)) {
-                draw_focus_ring(scene, root, *square, p);
-            }
-        }
-        for (square, glyph, hit, focus) in [
-            (
-                r.settings,
-                icons::FADERS,
-                apps_rail::Hit::Settings,
-                ExploreChromeFocus::RailSettings,
-            ),
-            (
-                r.help,
-                icons::QUESTION,
-                apps_rail::Hit::Help,
-                ExploreChromeFocus::RailHelp,
-            ),
-        ] {
-            if self.rail_hover == Some(hit) {
-                scene::fill(
-                    scene,
-                    root,
-                    p.hover_tint,
-                    &scene::rrect(square.x, square.y, square.w, square.h, 8.0),
-                );
-            }
-            draw_rail_glyph(scene, root, engine, glyph, square, p.text_dim, false);
-            if self.chrome_focus == Some(focus) {
-                draw_focus_ring(scene, root, square, p);
-            }
-        }
-        // The profile square: the picture or the initials, a card while its
-        // popover is up, and the sync dot at its corner.
-        let square = r.profile;
-        let open = self.popover.as_ref().is_some_and(|x| {
-            x.kind != PopoverKind::LibraryActions && x.anchor == PopoverAnchor::Rail
-        });
-        if self.rail_hover == Some(apps_rail::Hit::Profile) || open {
-            scene::fill(
-                scene,
-                root,
-                p.hover_tint,
-                &scene::rrect(square.x, square.y, square.w, square.h, 8.0),
-            );
-        }
-        let tile = Rect::new(
-            square.x + (square.w - apps_rail::PROFILE_TILE) * 0.5,
-            square.y + (square.h - apps_rail::PROFILE_TILE) * 0.5,
-            apps_rail::PROFILE_TILE,
-            apps_rail::PROFILE_TILE,
-        );
-        // The Profile's own tile — its colour and emoji, or its initial —
-        // the way the Profiles page draws it (the review's note).
-        let profile = self.profile();
-        koru_draw::tile::Tile {
-            icon: profile.and_then(|p| p.icon.as_deref()),
-            color: profile.and_then(|p| p.color.as_deref()),
-            name: profile.map_or("", |p| p.name.as_str()),
-        }
-        .draw(scene, root, engine, tile);
-        // No sync dot at the tile's corner (the review's note): there is no
-        // status to show yet, and a red dot with nothing behind it is a
-        // false alarm. The floor chip's second line still names the sync
-        // state in words when there is one.
-        if self.chrome_focus == Some(ExploreChromeFocus::RailProfile) {
-            draw_focus_ring(scene, root, square, p);
-        }
+        self.paint_rail_elements(scene, root, engine, rail);
     }
 
     /// Where row `i` sits — scrolled or not, on screen or not.
@@ -4599,7 +4482,7 @@ impl ExploreView {
         let mut out = Vec::with_capacity(rows.len());
         // Above the floor band (QUESTIONS.md Q-P): the pinned rows keep
         // their place at the nav's foot, and the floor is the window's.
-        let mut y = area.y + area.h - floor::H - FOOTER_PAD;
+        let mut y = area.y + area.h - FOOTER_PAD;
         for row in rows.iter().rev() {
             y -= theme::NAV_ROW_H;
             out.push((*row, Rect::new(area.x, y, area.w, theme::NAV_ROW_H)));
@@ -4641,12 +4524,7 @@ impl ExploreView {
         self.footer_rects(area)
             .first()
             .map(|(_, r)| r.y)
-            .unwrap_or(area.y + area.h - if area.w > 0.0 { floor::H } else { 0.0 })
-    }
-
-    /// The floor's rects, from the pane's rect — the chip and the `?`.
-    pub fn floor_rects(&self, area: Rect) -> floor::Rects {
-        floor::solve(area)
+            .unwrap_or(area.y + area.h)
     }
 
     /// What a pinned row shows: its glyph and its label.
@@ -4786,20 +4664,6 @@ impl ExploreView {
             if let Some((_, row, part)) = self.popover_part_at(area, viewport, x, y) {
                 return self.press(row, part);
             }
-            // The floor chip shuts the switcher it opened — whichever page is
-            // showing; falling through would reopen it on the same press.
-            // The `…` beside it shuts it too, and opens its own menu.
-            match floor::hit(area, x, y) {
-                Some(floor::Hit::Chip) => {
-                    self.close_popover();
-                    return Outcome::Consumed;
-                }
-                Some(floor::Hit::Dots) => {
-                    self.close_popover();
-                    return self.floor_menu(area);
-                }
-                None => {}
-            }
             // Anywhere else shuts it.
             self.close_popover();
             return Outcome::Consumed;
@@ -4816,30 +4680,6 @@ impl ExploreView {
                 let band = (g.track_bottom - g.track_top).max(0.0);
                 self.scroll += if y < g.thumb_top { -band } else { band };
                 self.clamp_scroll(area);
-            }
-            return Outcome::Consumed;
-        }
-
-        // The floor, **before any mode's own surface**: the chip opens the
-        // who/where switcher in place, telling the container nothing (the
-        // header's precedent); the `?` asks the container for the help
-        // popover, which is the window's. Tasks, Home, Artifacts, Chats and
-        // Socials each claim every press below the heading, and the floor
-        // asked after them was unreachable in those modes — the chip and
-        // the `?` worked on Files and did nothing on Home.
-        if floor::hit(area, x, y) == Some(floor::Hit::Dots) {
-            return self.floor_menu(area);
-        }
-        if floor::hit(area, x, y) == Some(floor::Hit::Chip) {
-            // One control, one popover: a press while it shows any page
-            // shuts it (QUESTIONS.md E2); otherwise the main page opens.
-            if self
-                .live()
-                .is_some_and(|p| p.kind != PopoverKind::LibraryActions)
-            {
-                self.close_popover();
-            } else {
-                self.toggle_popover(PopoverKind::Summary);
             }
             return Outcome::Consumed;
         }
@@ -5304,17 +5144,11 @@ impl ExploreView {
     /// Opening a menu is the container's job; this updates the pane's selection
     /// and reports the nodes the menu is about.
     pub fn context_menu(&mut self, area: Rect, x: f32, y: f32) -> Outcome {
-        // The floor chip is the open workspace's tile: a right-click on it
-        // asks for that workspace's menu, the one its row's right-click
-        // opens (the review's note, E42). Before any mode's own surface, for
-        // the reason the floor comes first in `mouse_down`.
-        if floor::hit(area, x, y) == Some(floor::Hit::Chip) {
-            return match self.current {
-                Some(workspace) => Outcome::WorkspaceMenu {
-                    workspace,
-                    at: (x, y),
-                },
-                None => Outcome::Consumed,
+        if let Some(apps_rail::Hit::Workspace(workspace)) = self.rail_hit(self.rail_of(area), x, y)
+        {
+            return Outcome::WorkspaceMenu {
+                workspace,
+                at: (x, y),
             };
         }
         // The rail owns everything below the heading in tasks mode, on this
@@ -5502,7 +5336,7 @@ impl ExploreView {
         // The header and the popover acted on the first click. Without this,
         // the second click of a double-click would re-toggle the popover and it
         // would appear to ignore every other press.
-        if floor::hit(area, x, y).is_some() || self.popover_at(area, viewport, x, y).is_some() {
+        if self.popover_at(area, viewport, x, y).is_some() {
             return Outcome::Consumed;
         }
         let Some(i) = self.row_at(area, x, y) else {
@@ -5566,11 +5400,6 @@ impl ExploreView {
         let on_popover = self.popover_part_at(area, viewport, x, y);
         let popover = on_popover.map(|(i, _, _)| i);
         let popover_part = on_popover.map(|(_, _, part)| part);
-        let header = if popover.is_none() {
-            floor::hit(area, x, y)
-        } else {
-            None
-        };
         let actions = popover.is_none() && self.actions_at(area, x, y);
         let on_footer = if popover.is_some() {
             None
@@ -5582,20 +5411,18 @@ impl ExploreView {
             popover.is_none() && self.empty_subscribe.is_some_and(|c| c.contains(x, y));
         let scrollbar =
             popover.is_none() && self.scrollbar_geom(area).is_some_and(|g| g.in_gutter(x, y));
-        let hover =
-            if header.is_some() || popover.is_some() || actions || on_footer.is_some() || scrollbar
-            {
-                None
-            } else {
-                self.row_at(area, x, y)
-            };
+        let hover = if popover.is_some() || actions || on_footer.is_some() || scrollbar {
+            None
+        } else {
+            self.row_at(area, x, y)
+        };
 
         // The rail's own rows, tracked on the same pass and under the same
         // exclusions — the heading, the mode buttons and an open popover all
         // outrank it.
         let artifacts_moved = if self.mode == NavigatorMode::Artifacts {
             let top = self.rows_top(area);
-            if header.is_some() || popover.is_some() || actions {
+            if popover.is_some() || actions {
                 self.artifacts.clear_hover()
             } else {
                 self.artifacts.mouse_move(area, top, x, y)
@@ -5605,7 +5432,7 @@ impl ExploreView {
         };
         let chats_moved = if self.mode == NavigatorMode::Chats {
             let top = self.rows_top(area);
-            if header.is_some() || popover.is_some() || actions {
+            if popover.is_some() || actions {
                 self.chats.clear_hover()
             } else {
                 self.chats.mouse_move(area, top, x, y)
@@ -5615,7 +5442,7 @@ impl ExploreView {
         };
         let home_moved = if self.mode == NavigatorMode::Home {
             let top = self.rows_top(area);
-            if header.is_some() || popover.is_some() || actions {
+            if popover.is_some() || actions {
                 self.home_nav.clear_hover()
             } else {
                 self.home_nav.mouse_move(area, top, x, y)
@@ -5628,7 +5455,7 @@ impl ExploreView {
                 let top = self.rows_top(area);
                 // A live drag follows the pointer wherever it went, including over
                 // the header — the same rule the library's own drag keeps.
-                if !self.rail.dragging() && (header.is_some() || popover.is_some() || actions) {
+                if !self.rail.dragging() && (popover.is_some() || actions) {
                     self.rail.clear_hover()
                 } else {
                     self.rail.mouse_move(area, top, x, y)
@@ -5638,7 +5465,7 @@ impl ExploreView {
             };
         let socials_moved = self.showing_socials()
             && self.socials.as_ref().is_some_and(|surface| {
-                let blocked = header.is_some() || popover.is_some() || actions;
+                let blocked = popover.is_some() || actions;
                 surface.borrow_mut().navigation_mouse_move(
                     if blocked { -1. } else { x },
                     if blocked { -1. } else { y },
@@ -5650,7 +5477,6 @@ impl ExploreView {
             || chats_moved
             || hover != self.hover
             || popover_part != self.popover_part
-            || header != self.floor_hover
             || actions != self.actions_hover
             || on_footer != self.footer_hover
             || on_cta != self.cta_hover
@@ -5658,7 +5484,6 @@ impl ExploreView {
             || scrollbar != self.scrollbar_hover;
         self.hover = hover;
         self.popover_part = popover_part;
-        self.floor_hover = header;
         self.actions_hover = actions;
         self.footer_hover = on_footer;
         self.cta_hover = on_cta;
@@ -6535,7 +6360,6 @@ impl ExploreView {
     pub fn clear_hover(&mut self) -> bool {
         let had = self.rail.clear_hover()
             || self.hover.is_some()
-            || self.floor_hover.is_some()
             || self.rail_hover.is_some()
             || self.actions_hover
             || self.footer_hover.is_some()
@@ -6543,7 +6367,6 @@ impl ExploreView {
             || self.subscribe_hover
             || self.scrollbar_hover;
         self.hover = None;
-        self.floor_hover = None;
         self.rail_hover = None;
         self.actions_hover = false;
         self.footer_hover = None;
@@ -6649,7 +6472,6 @@ impl ExploreView {
         // still has to be right — the row's own hover background is what says
         // it can be pressed.
         if self.hover.is_some()
-            || self.floor_hover.is_some()
             || self.actions_hover
             || self.cta_hover
             || self.subscribe_hover
@@ -6697,6 +6519,9 @@ impl ExploreView {
     /// must lead through workspace creation rather than promise a destination
     /// that does not exist.
     fn empty_state(&self) -> (&'static str, &'static str, Outcome) {
+        if self.workspace_waiting.is_some() {
+            return ("", "", Outcome::Consumed);
+        }
         if matches!(
             self.mode,
             NavigatorMode::Home
@@ -6758,7 +6583,7 @@ impl ExploreView {
         }
     }
 
-    /// The column at rest: the apps row, the mode's rows and the floor. The
+    /// The column at rest: its heading and the current mode's rows. The
     /// popover over it is drawn by `draw_popover`, which is where the
     /// person's picture goes.
     pub fn draw(&mut self, scene: &mut Scene, root: Affine, engine: &mut TextEngine, area: Rect) {
@@ -6830,42 +6655,7 @@ impl ExploreView {
                 scene::rect(band.x, band.y, band.w, band.h),
                 |_| {},
             );
-            // The app's name, the pane's title, elided before it reaches
-            // the `…`. See `heading_title_rect`.
-            let title = self.heading_title_rect(area);
-            if title.w > 0.0 {
-                let style = theme::role::pane_title();
-                let fitted = engine.elided(self.mode.label(), style, title.w);
-                // The rows' ink and weight (the review's note, E77): the
-                // name is the column's, not a heading over it.
-                draw_middle(scene, root, engine, &fitted, title, style, p.text_dim);
-            }
-            if self.mode == NavigatorMode::Chats {
-                // *New chat*, a compose mark where the library's `…` sits.
-                let button = self.actions_button(area);
-                if button.w > 0.0 {
-                    draw_icon(
-                        scene,
-                        root,
-                        engine,
-                        icons::NOTE_PENCIL,
-                        button,
-                        if self.actions_hover {
-                            p.text
-                        } else {
-                            p.text_dim
-                        },
-                    );
-                }
-            } else {
-                actions::draw_button(
-                    scene,
-                    root,
-                    engine,
-                    self.actions_button(area),
-                    self.actions_hover,
-                );
-            }
+            self.paint_heading_elements(scene, root, engine, area);
         }
         if area.w > 0.0 {
             let top = self.rows_top(area);
@@ -6884,136 +6674,6 @@ impl ExploreView {
         let footer = self.draw_nodes(scene, root, engine, area, p);
         if footer {
             self.draw_footer_rows(scene, root, engine, area, p);
-        }
-        if area.w > 0.0 {
-            self.draw_floor(scene, root, engine, area, p);
-        }
-    }
-
-    /// The floor: a hairline and the who/where chip.
-    ///
-    /// The chip wears `hover_tint` while the pointer is on it and while the
-    /// popover it opens is on screen (DESIGN.md: a chip whose popover is
-    /// open keeps a persistent tinted background). It says where first — the
-    /// workspace's tile and name — and under that who, with the sync state
-    /// after a dot when there is one (the review's artboard).
-    fn draw_floor(
-        &self,
-        scene: &mut Scene,
-        root: Affine,
-        engine: &mut TextEngine,
-        area: Rect,
-        p: &theme::Palette,
-    ) {
-        let r = floor::solve(area);
-        let _section = koru_draw::inspect::scope(
-            "KoruFloor",
-            "container",
-            root,
-            scene::rect(r.band.x, r.band.y, r.band.w, r.band.h),
-            |rec| {
-                rec.property("height", floor::H, "floor band");
-            },
-        );
-        // The band's own fill, the column's colour, under the hairline: the
-        // surfaces that own their mode's rows (Chats, Tasks, Home…) draw to
-        // the pane's bottom and are not cut at `rows_bottom` the way the
-        // library's rows are, so the chip was sitting on top of them (the
-        // review's note). The floor is drawn last; this is what makes it a floor.
-        // One column short of the band's right edge: that column is the
-        // pane's own hairline, drawn before the modes, and the first build
-        // of this fill painted it out beside the chip (the review's note).
-        scene::fill(
-            scene,
-            root,
-            pane_fill(),
-            &scene::rect(r.band.x, r.band.y, (r.band.w - 1.0).max(0.0), r.band.h),
-        );
-        scene::fill(
-            scene,
-            root,
-            p.panel_border,
-            &scene::rect(r.band.x, r.band.y, r.band.w, 1.0),
-        );
-        let open = self
-            .popover
-            .as_ref()
-            .is_some_and(|x| x.kind != PopoverKind::LibraryActions);
-        if self.floor_hover == Some(floor::Hit::Chip) || open {
-            scene::fill(
-                scene,
-                root,
-                p.hover_tint,
-                &scene::rrect(r.chip.x, r.chip.y, r.chip.w, r.chip.h, 7.0),
-            );
-        }
-        let entry = self
-            .current
-            .and_then(|id| self.workspaces.iter().find(|w| w.id == id));
-        if r.avatar.w > 0.0 {
-            // The workspace's tile, not the person's picture: the chip says
-            // where you are first (the review's call, QUESTIONS.md E26).
-            koru_draw::tile::Tile {
-                icon: entry.and_then(|w| w.icon.as_deref()),
-                color: entry.and_then(|w| w.color.as_deref()),
-                name: entry.map_or("Workspace", |w| w.name.as_str()),
-            }
-            .draw(scene, root, engine, r.avatar);
-        }
-        if r.text.w > 0.0 {
-            // The workspace's name alone (the review's artboard 11): who you are
-            // is the rail's profile square now, and the sync state its dot.
-            let workspace = entry.map_or("Workspace", |w| w.name.as_str());
-            draw_middle(
-                scene,
-                root,
-                engine,
-                &label_fit(workspace),
-                r.text,
-                theme::role::row().with_weight(theme::FontWeight::SemiBold),
-                p.text,
-            );
-        }
-        if r.chevron.w > 0.0 {
-            // The chevron turns over as the switcher rises and back as it
-            // goes (the review's note): a half turn about its own centre, off
-            // the popover's eased `progress`, so the two move as one.
-            let turn = self
-                .popover
-                .as_ref()
-                .filter(|x| {
-                    x.kind != PopoverKind::LibraryActions && x.anchor == PopoverAnchor::Chip
-                })
-                .map_or(0.0, |x| x.progress);
-            let (cx, cy) = r.chevron.centre();
-            let turned = root
-                * Affine::rotate_about(
-                    f64::from(turn) * std::f64::consts::PI,
-                    vello::kurbo::Point::new(f64::from(cx), f64::from(cy)),
-                );
-            draw_icon(
-                scene,
-                turned,
-                engine,
-                icons::CARET_DOWN,
-                r.chevron,
-                if self.floor_hover == Some(floor::Hit::Chip) || open {
-                    p.text
-                } else {
-                    p.text_dim
-                },
-            );
-        }
-        if r.dots.w > 0.0 {
-            // The workspace's menu, right of the chip (the review's artboard):
-            // the heading's `…`, one row down.
-            // The shared icon button: its own hover chip, `KoruIconButton`
-            // in the inspector (the review's note, E76).
-            let hot = self.floor_hover == Some(floor::Hit::Dots);
-            actions::draw_dots(scene, root, engine, r.dots, hot);
-        }
-        if self.chrome_focus == Some(ExploreChromeFocus::FloorChip) && r.chip.w > 0.0 {
-            draw_focus_ring(scene, root, r.chip, p);
         }
     }
 
@@ -7098,6 +6758,17 @@ impl ExploreView {
 
         if self.rows.is_empty() {
             let x = area.x + theme::NAV_PAD * 2.0;
+            if let Some(waiting) = &self.workspace_waiting {
+                self.empty_cta = None;
+                self.empty_subscribe = None;
+                let hint = engine.simple_layout_wrapped(
+                    waiting,
+                    theme::role::meta(),
+                    (area.w - theme::NAV_PAD * 4.0).max(1.0),
+                );
+                scene::draw_layout(scene, root, &hint, x, top, Some(p.text_dim));
+                return true;
+            }
             let (hint_text, cta_label, _) = self.empty_state();
             let hint = engine.simple_layout_wrapped(
                 hint_text,
@@ -7966,15 +7637,6 @@ fn draw_trailing(
 /// The keyboard's ring around a chrome control: `focus_ring`, two borders
 /// wide, one pixel outside the control — the bell's ring, so every stop of
 /// `F6`'s rotation wears the same one.
-fn draw_focus_ring(scene: &mut Scene, root: Affine, r: Rect, p: &theme::Palette) {
-    scene::stroke(
-        scene,
-        root,
-        p.focus_ring,
-        theme::BORDER_W * 2.0,
-        &scene::rrect(r.x - 1.0, r.y - 1.0, r.w + 2.0, r.h + 2.0, 7.0),
-    );
-}
 
 /// Vertically centre one line of text in `at`, truncated to its width.
 fn draw_middle(
@@ -8007,37 +7669,6 @@ fn label_fit(name: &str) -> String {
     } else {
         trimmed.to_string()
     }
-}
-
-/// A rail square's glyph, at `apps_rail::GLYPH` and centred in the square —
-/// larger than a command's icon, because the rail is read from across the
-/// window.
-fn draw_rail_glyph(
-    scene: &mut Scene,
-    root: Affine,
-    engine: &mut TextEngine,
-    glyph: char,
-    at: Rect,
-    colour: peniko::Color,
-    filled: bool,
-) {
-    if at.w <= 0.0 {
-        return;
-    }
-    let layout = if filled {
-        engine.icon_layout_filled(glyph, apps_rail::GLYPH)
-    } else {
-        engine.icon_layout(glyph, apps_rail::GLYPH)
-    };
-    let (w, h) = (layout.width(), layout.height());
-    scene::draw_layout(
-        scene,
-        root,
-        &layout,
-        at.x + (at.w - w) * 0.5,
-        at.y + (at.h - h) * 0.5,
-        Some(colour),
-    );
 }
 
 /// A tree row's disclosure caret, centred in `at` and drawn under `root` —
@@ -8373,10 +8004,13 @@ fn icon_for(kind: Kind) -> char {
 pub(crate) mod accessibility;
 pub mod actions;
 mod apps_rail_drag;
+mod apps_rail_elements;
 mod canvases;
+mod heading_elements;
 pub mod home_nav;
 pub mod rail;
 mod slides;
+pub(crate) mod workspace_menu_elements;
 
 use slides::RowSlides;
 

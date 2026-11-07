@@ -382,6 +382,8 @@ pub enum Request {
     /// explicit recovery; the caller still owns Profile-keyed settings cleanup.
     RemoveLocalProfile {
         profile_id: String,
+        #[serde(default)]
+        attempt: Option<String>,
     },
     /// Atomically bind this local Profile to an exact Koru identity. The
     /// expected identity makes erased rebinds explicit; a mismatch never writes.
@@ -1461,6 +1463,26 @@ pub struct AccountProfileEnrollment {
 pub struct AccountProfileCloud {
     pub profile_id: String,
     pub stage: CloudConnectionStage,
+    /// Discovery/admission evidence is independent of transport health and
+    /// never claims that the admitted content has applied locally.
+    #[serde(default)]
+    pub discovery: Option<CloudDiscovery>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CloudDiscovery {
+    pub account_id: String,
+    pub pass: u64,
+    pub stale: bool,
+    pub exhausted: bool,
+    pub discovered: u32,
+    pub admitted: u32,
+    pub deferred: u32,
+    pub deferred_code: Option<String>,
+    pub carried: u32,
+    pub failure_code: Option<String>,
+    pub retry_at_millis: Option<i64>,
+    pub automatic_retry: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

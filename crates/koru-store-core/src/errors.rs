@@ -61,6 +61,11 @@ pub enum Code {
     ProfileNotEmpty,
     /// The Profile exists but was removed from this installation's catalog.
     ProfileRemoved,
+    ProfileBeingRemoved,
+    RemovalInProgress,
+    RemovalAttemptStale,
+    RemovalNotBegun,
+    RemovalKindHosted,
     /// The persisted binding differed from the caller's compare-and-set expectation.
     ProfileAccountConflict,
     ProfileUnitRequired,
@@ -171,6 +176,11 @@ impl Code {
             Self::WorkspaceInUse => "workspace_in_use",
             Self::ProfileNotEmpty => "profile_not_empty",
             Self::ProfileRemoved => "profile_removed",
+            Self::ProfileBeingRemoved => "profile_being_removed",
+            Self::RemovalInProgress => "removal_in_progress",
+            Self::RemovalAttemptStale => "removal_attempt_stale",
+            Self::RemovalNotBegun => "removal_not_begun",
+            Self::RemovalKindHosted => "removal_kind_hosted",
             Self::ProfileAccountConflict => "profile_account_conflict",
             Self::ProfileUnitRequired => "profile_unit_required",
             Self::ProfileUnitScopeMismatch => "profile_unit_scope_mismatch",
@@ -224,6 +234,11 @@ impl Code {
         Self::WorkspaceInUse,
         Self::ProfileNotEmpty,
         Self::ProfileRemoved,
+        Self::ProfileBeingRemoved,
+        Self::RemovalInProgress,
+        Self::RemovalAttemptStale,
+        Self::RemovalNotBegun,
+        Self::RemovalKindHosted,
         Self::ProfileAccountConflict,
         Self::ProfileUnitRequired,
         Self::ProfileUnitScopeMismatch,
@@ -281,6 +296,11 @@ impl Code {
             | Self::WorkspaceInUse
             | Self::ProfileNotEmpty
             | Self::ProfileRemoved
+            | Self::ProfileBeingRemoved
+            | Self::RemovalInProgress
+            | Self::RemovalAttemptStale
+            | Self::RemovalNotBegun
+            | Self::RemovalKindHosted
             | Self::ProfileAccountConflict
             | Self::ProfileIdentityConflict
             | Self::ProfileUnitRequired

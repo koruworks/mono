@@ -109,12 +109,15 @@ pub const CONTROL_SCOPE: &str = "gateway.control";
 pub const EVENTS_READ_SCOPE: &str = "events.read";
 
 pub use koru_store_client::{
-    Ack, Connection, Created, Discovery, DocumentOutline, Event, Failure, ImportQuery,
-    LocalProfileRemoval, LocalProfileRestoration, ManifestRef, Navigation, NewDocument, NewProfile,
-    NewWorkspace, OutlineHeading, ProfileAccountBindingOutcome, ProfileAccountClearOutcome,
-    ProfileAppearance, ProfileLifecycleInventory, ProfileLifecycleInventoryItem,
-    ProvisionAccountProfile, RecentQuery, RenameProfile, RenameWorkspace, SearchFacets, SearchHit,
-    SearchPage, SearchQuery, SearchRequest, SearchResponse, Status, Stopping, WorkspaceAppearance,
+    Ack, Connection, CreateProfileWithWorkspace, Created, CreatedProfile, Discovery,
+    DocumentOutline, EnsureLiveWorkspace, EnsuredWorkspace, Event, Failure, FirstWorkspace,
+    ImportQuery, LocalProfileRemoval, LocalProfileRestoration, ManifestRef, Navigation,
+    NewDocument, NewProfile, NewWorkspace, OutlineHeading, ProfileAccountBindingOutcome,
+    ProfileAccountClearOutcome, ProfileAppearance, ProfileLifecycleInventory,
+    ProfileLifecycleInventoryItem, ProvisionAccountProfile, RecentQuery, RenameProfile,
+    RenameWorkspace, SearchFacets, SearchHit, SearchPage, SearchQuery, SearchRequest,
+    SearchResponse, Status, Stopping, WorkspaceAppearance, WorkspaceAuthority,
+    WorkspaceAuthorityState, WorkspaceAvailabilityIssue,
 };
 pub use koru_store_client::{debug, store_session_debug, sync, sync_debug};
 

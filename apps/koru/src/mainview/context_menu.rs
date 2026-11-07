@@ -156,9 +156,6 @@ pub enum MenuSubject {
     List(ListId),
     /// The Trash tab's own `…`. One row, and it empties the bin.
     Trash,
-    /// The floor's `…` (E60): New workspace, Import… and its formats, Invite
-    /// people, Trash.
-    Floor,
     /// The window itself — what the caption's overflow button opens. Window
     /// destinations live here; minimize, maximize and close remain direct
     /// caption controls.
@@ -263,14 +260,6 @@ pub enum MenuAction {
     /// The label comes from the format's descriptor — the registry decides
     /// what can be imported, this menu only displays it.
     ImportFormat(&'static str),
-    /// The floor menu's rows (the review's artboard, E60): a workspace's own
-    /// verbs, where the popover's WORKSPACES heading used to carry a `+`
-    /// and an import button.
-    NewWorkspace,
-    /// Dimmed until there is an invite flow to open.
-    InvitePeople,
-    /// The Trash tab, with the count of what is in it at the row's end.
-    OpenTrash,
 
     // ------------------------------------------------------------------ tabs
     /// Pop the tab out into its own window.
@@ -708,7 +697,6 @@ thread_local! {
     /// The same for *Delete chat*: how many chats the menu is about.
     static CHAT_DELETE_COUNT: RefCell<usize> = const { RefCell::new(1) };
     /// What the floor menu's *Trash* row counts.
-    static TRASH_COUNT: RefCell<usize> = const { RefCell::new(0) };
     /// What the run whose pill was right-clicked has produced — one title per
     /// row, snapshotted when the menu opens for `SESSION_PROJECT_NAMES`'
     /// reason and one more: a run that is still working registers results
@@ -960,22 +948,6 @@ pub fn set_session_project_names(names: Vec<(ProjectId, String)>) {
 /// Snapshot why *Delete run* is refused for the runs the menu is about.
 pub fn set_run_delete_refusal(reason: Option<&'static str>) {
     RUN_DELETE_REFUSAL.with(|cell| *cell.borrow_mut() = reason);
-}
-
-/// Snapshot what is in the Trash, so the floor menu's row can count it.
-pub fn set_trash_count(count: usize) {
-    TRASH_COUNT.with(|cell| *cell.borrow_mut() = count);
-}
-
-/// The floor's `…` menu (the review's artboard, E60).
-pub fn floor_items() -> Vec<MenuAction> {
-    vec![
-        MenuAction::NewWorkspace,
-        MenuAction::ImportAs,
-        MenuAction::Divider,
-        MenuAction::InvitePeople,
-        MenuAction::OpenTrash,
-    ]
 }
 
 /// Snapshot how many chats *Delete chat* is about, so the row can count them.
@@ -1282,24 +1254,6 @@ impl MenuAction {
                     koru_i18n::Key::TerminalTerminate,
                 ));
             }
-            MenuAction::NewWorkspace => {
-                return Cow::Borrowed(koru_i18n::t(
-                    crate::format::lang(),
-                    koru_i18n::Key::TerminalNewWorkspace,
-                ));
-            }
-            MenuAction::InvitePeople => {
-                return Cow::Borrowed(koru_i18n::t(
-                    crate::format::lang(),
-                    koru_i18n::Key::InvitePeople,
-                ));
-            }
-            MenuAction::OpenTrash => {
-                return Cow::Borrowed(koru_i18n::t(
-                    crate::format::lang(),
-                    koru_i18n::Key::WorkspacesTrash,
-                ));
-            }
             MenuAction::ClearRecents => "Clear recents",
             MenuAction::ImportAs => "Import\u{2026}",
             MenuAction::ImportFiles => "Import files\u{2026}",
@@ -1500,12 +1454,6 @@ impl MenuAction {
             // **Windows' own window-management chords**, which exist only there:
             // the rows carrying them are `#[cfg(windows)]` for the same reason
             // (`snap::place` is a no-op elsewhere).
-            // Not a chord: the count of what is in the Trash, at the row's
-            // end where a chord would sit (the review's artboard).
-            MenuAction::OpenTrash => {
-                let count = TRASH_COUNT.with(|cell| *cell.borrow());
-                (count > 0).then(|| koru_i18n::number::decimal(crate::format::lang(), count as u64))
-            }
             MenuAction::WindowSnapLeft => cfg!(windows).then(|| "Win+Left".to_string()),
             MenuAction::WindowSnapRight => cfg!(windows).then(|| "Win+Right".to_string()),
             _ => self.shortcut_id().map(koru_keys::label_of),
@@ -1577,9 +1525,6 @@ impl MenuAction {
             }
             MenuAction::NewTaskIn(_) => Some(koru_draw::icons::LIST),
             MenuAction::ImportAs | MenuAction::ImportFiles => Some(koru_draw::icons::IMPORT),
-            MenuAction::NewWorkspace => Some(koru_draw::icons::PLUS),
-            MenuAction::InvitePeople => Some(koru_draw::icons::USER_PLUS),
-            MenuAction::OpenTrash => Some(koru_draw::icons::TRASH),
             // The Agents identity glyph, the same one the slash row and
             // the document's row wear: four gestures, one mark.
             MenuAction::TaskDelegate => Some(koru_draw::icons::ROBOT),

@@ -6,8 +6,8 @@
 //! Every call this surface makes is blocking — the catalog is an HTTP round
 //! trip, and the lifecycle operation closes terminals and reaches a Store — so
 //! none of them may happen inside a frame. A command goes down, an [`Answer`]
-//! comes back, and the surface polls for answers on whatever cadence it already
-//! has.
+//! comes back, and the worker wakes the owning window after enqueueing it.
+//! The window drains the inbox during maintenance.
 //!
 //! **Connecting is the worker's first job, not the constructor's.** Opening a
 //! surface must not wait on a gateway; a window that could not connect draws
@@ -20,6 +20,8 @@
 //! is part of. It is not something the host can fetch and hand over, and it is
 //! not something a host *has* to do: the surface asks, once, at connect.
 
+use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 
@@ -31,8 +33,12 @@ use crate::state::{
     Answer, Authorization, Consequence, MoveConsequence, Notice, ProfileRow, Retry, Row,
 };
 
+#[cfg(any(test, feature = "fixtures"))]
+mod fixtures;
 #[cfg(test)]
 mod tests;
+#[cfg(any(test, feature = "fixtures"))]
+pub use fixtures::WorkspaceFixture;
 
 /// The scopes a management window asks for.
 ///
@@ -58,10 +64,18 @@ pub const MANAGER_SCOPES: &[&str] = &[
 
 /// What the surface asks the worker to do.
 enum Command {
+    Keyed(crate::CommandId, Box<Command>),
     /// Read the including-deleted catalog.
     Catalog,
     /// Read the profiles, which is where a move can send a workspace.
     Profiles,
+    CreateProfile(koru_api_client::CreateProfileWithWorkspace),
+    KeepProfile(ProfileId, koru_store_core::ids::RemovalAttemptId),
+    EnsureLive {
+        owner: ProfileId,
+        name: String,
+        attempt: u64,
+    },
     /// Ask whether this session may remove a workspace at all.
     Probe,
     /// The same question about moving one. Two probes, because a window can
@@ -70,11 +84,11 @@ enum Command {
     /// Compute what an action would do, and issue the token for it.
     Consequence(WorkspaceId, WorkspaceLifecycleAction),
     /// Perform it, with the token that was accepted.
-    Lifecycle(WorkspaceId, WorkspaceLifecycleAction, String),
+    Lifecycle(WorkspaceId, WorkspaceLifecycleAction, String, String),
     /// Compute what moving it to a profile would close, and issue the token.
     MoveConsequence(WorkspaceId, ProfileId, String),
     /// Perform the move, with the token that was accepted.
-    Migrate(WorkspaceId, ProfileId, String),
+    Migrate(WorkspaceId, ProfileId, String, String),
     /// The whole appearance set, which is how the route takes it.
     Appearance {
         workspace: WorkspaceId,
@@ -112,6 +126,10 @@ struct Live {
     /// draws. Sticky until taken, so a fact is never missed because nobody was
     /// looking (the `CatalogFlags` contract).
     flags: Arc<CatalogFlags>,
+    /// Transport receipts still owed, including if the worker exits early.
+    awaiting: RefCell<VecDeque<crate::CommandId>>,
+    _inert_orders: Option<Receiver<Command>>,
+    _inert_answers: Option<Sender<Answer>>,
 }
 
 impl WorkspaceLinks {
@@ -136,14 +154,15 @@ impl WorkspaceLinks {
         // *dead* rather than *quiet*, which is a different state with different
         // behaviour — and the one a host's suite must not be arranging by
         // accident.
-        std::mem::forget(sunk);
-        std::mem::forget(never);
         Self {
             live: Some(Live {
                 commands,
                 answers,
                 ended: std::cell::Cell::new(false),
                 flags: Arc::new(CatalogFlags::default()),
+                awaiting: RefCell::default(),
+                _inert_orders: Some(sunk),
+                _inert_answers: Some(never),
             }),
         }
     }
@@ -153,7 +172,11 @@ impl WorkspaceLinks {
     /// `segment` is the release channel's segment; `root` is an alternate
     /// installation root. Both are the client's own arguments — nothing here
     /// resolves a path.
-    pub fn open(segment: &str, root: Option<std::path::PathBuf>) -> Self {
+    pub fn open(
+        segment: &str,
+        root: Option<std::path::PathBuf>,
+        wake: Arc<dyn Fn() + Send + Sync>,
+    ) -> Self {
         let (commands, orders) = channel();
         let (answers_out, answers) = channel();
         let flags = Arc::new(CatalogFlags::default());
@@ -161,21 +184,24 @@ impl WorkspaceLinks {
         let segment = segment.to_owned();
         let _ = std::thread::Builder::new()
             .name("koru-workspaces-link".into())
-            .spawn(move || serve(&segment, root, &orders, &answers_out, &theirs));
+            .spawn(move || serve(&segment, root, &orders, &answers_out, &theirs, wake));
         Self {
             live: Some(Live {
                 commands,
                 answers,
                 ended: std::cell::Cell::new(false),
                 flags,
+                awaiting: RefCell::default(),
+                _inert_orders: None,
+                _inert_answers: None,
             }),
         }
     }
 
     /// **The arrangement every shipping host uses**: this channel's gateway,
     /// asking the Agent to vouch for this window.
-    pub fn first_party(segment: &str) -> Self {
-        Self::open(segment, None)
+    pub fn first_party(segment: &str, wake: Arc<dyn Fn() + Send + Sync>) -> Self {
+        Self::open(segment, None, wake)
     }
 
     /// A link whose worker has already gone — the state [`Self::open`] reaches
@@ -185,13 +211,15 @@ impl WorkspaceLinks {
     fn open_ended() -> Self {
         let (commands, sunk) = channel();
         let (_gone, answers) = channel::<Answer>();
-        std::mem::forget(sunk);
         Self {
             live: Some(Live {
                 commands,
                 answers,
                 ended: std::cell::Cell::new(false),
                 flags: Arc::new(CatalogFlags::default()),
+                awaiting: RefCell::default(),
+                _inert_orders: Some(sunk),
+                _inert_answers: None,
             }),
         }
     }
@@ -214,14 +242,24 @@ impl WorkspaceLinks {
     pub(crate) fn take(&self) -> Option<Answer> {
         let live = self.live.as_ref()?;
         match live.answers.try_recv() {
-            Ok(answer) => Some(answer),
+            Ok(answer) => {
+                if let Answer::Settled(id, _) = &answer {
+                    live.awaiting.borrow_mut().retain(|awaiting| awaiting != id);
+                }
+                Some(answer)
+            }
             Err(TryRecvError::Empty) => None,
             // The worker is gone, which is the one failure this cannot recover
             // from by asking again — so it is said once.
-            Err(TryRecvError::Disconnected) => match live.ended.replace(true) {
-                true => None,
-                false => Some(Answer::Unavailable),
-            },
+            Err(TryRecvError::Disconnected) => {
+                if let Some(id) = live.awaiting.borrow_mut().pop_front() {
+                    return Some(Answer::Settled(id, Box::new(Answer::Unavailable)));
+                }
+                match live.ended.replace(true) {
+                    true => None,
+                    false => Some(Answer::Unavailable),
+                }
+            }
         }
     }
 
@@ -233,6 +271,12 @@ impl WorkspaceLinks {
         self.live
             .as_ref()
             .is_some_and(|live| live.flags.take(CatalogChange::Workspaces))
+    }
+
+    pub(crate) fn take_profiles_stale(&self) -> bool {
+        self.live
+            .as_ref()
+            .is_some_and(|live| live.flags.take(CatalogChange::Profiles))
     }
 
     /// Mark the catalog stale without waiting for the round trip — what a
@@ -265,11 +309,12 @@ impl WorkspaceLinks {
         self.send(Command::MoveConsequence(workspace, to, to_name));
     }
 
-    pub(crate) fn perform_move(&self, consequence: &MoveConsequence) {
+    pub(crate) fn perform_move(&self, consequence: &MoveConsequence, name: &str) {
         self.send(Command::Migrate(
             consequence.workspace,
             consequence.to,
             consequence.confirmation.clone(),
+            name.to_owned(),
         ));
     }
 
@@ -277,30 +322,83 @@ impl WorkspaceLinks {
         self.send(Command::Consequence(workspace, action));
     }
 
-    pub(crate) fn perform(&self, consequence: &Consequence) {
+    pub(crate) fn perform(&self, consequence: &Consequence, name: &str) {
         self.send(Command::Lifecycle(
             consequence.workspace,
             consequence.action,
             consequence.confirmation.clone(),
+            name.to_owned(),
         ));
     }
 
-    pub(crate) fn set_appearance(&self, row: &Row, pinned: bool, archived: bool) {
-        self.send(Command::Appearance {
-            workspace: row.id,
-            icon: row.icon.clone(),
-            color: row.color.clone(),
-            pinned,
-            archived,
-        });
+    pub(crate) fn set_appearance(
+        &self,
+        id: crate::CommandId,
+        row: &Row,
+        pinned: bool,
+        archived: bool,
+    ) {
+        self.send(Command::Keyed(
+            id,
+            Box::new(Command::Appearance {
+                workspace: row.id,
+                icon: row.icon.clone(),
+                color: row.color.clone(),
+                pinned,
+                archived,
+            }),
+        ));
     }
 
-    pub(crate) fn reorder(&self, owner: ProfileId, order: Vec<WorkspaceId>) {
-        self.send(Command::Reorder(owner, order));
+    pub(crate) fn reorder(&self, id: crate::CommandId, owner: ProfileId, order: Vec<WorkspaceId>) {
+        self.send(Command::Keyed(id, Box::new(Command::Reorder(owner, order))));
+    }
+
+    pub(crate) fn create_profile(
+        &self,
+        id: crate::CommandId,
+        request: koru_api_client::CreateProfileWithWorkspace,
+    ) {
+        self.send(Command::Keyed(
+            id,
+            Box::new(Command::CreateProfile(request)),
+        ));
+    }
+
+    pub(crate) fn ensure_live(
+        &self,
+        id: crate::CommandId,
+        owner: ProfileId,
+        name: String,
+        attempt: u64,
+    ) {
+        self.send(Command::Keyed(
+            id,
+            Box::new(Command::EnsureLive {
+                owner,
+                name,
+                attempt,
+            }),
+        ));
+    }
+
+    pub(crate) fn keep_profile(
+        &self,
+        id: crate::CommandId,
+        owner: ProfileId,
+        attempt: koru_store_core::ids::RemovalAttemptId,
+    ) {
+        self.send(Command::Keyed(
+            id,
+            Box::new(Command::KeepProfile(owner, attempt)),
+        ));
     }
 
     fn send(&self, command: Command) {
         if let Some(live) = &self.live {
+            if let Command::Keyed(id, _) = &command {
+                live.awaiting.borrow_mut().push_back(*id);
+            }
             // A dead worker is reported by the answer channel, which the
             // surface is already polling. Failing here as well would be two
             // places to notice the same thing.
@@ -326,11 +424,12 @@ fn serve(
     orders: &Receiver<Command>,
     answers: &Sender<Answer>,
     flags: &Arc<CatalogFlags>,
+    wake: Arc<dyn Fn() + Send + Sync>,
 ) {
     let client = match connect(segment, root.as_deref()) {
         Some(client) => client,
         None => {
-            let _ = answers.send(Answer::Unavailable);
+            publish_answer(answers, &*wake, Answer::Unavailable);
             return;
         }
     };
@@ -339,17 +438,31 @@ fn serve(
     // leave a window in which a workspace was removed, the fetch answered with
     // it still present, and nothing ever said otherwise.
     let stale = Arc::clone(flags);
+    let catalog_wake = Arc::clone(&wake);
     let _watch = client
         .events()
-        .watch_catalog(move |change| stale.invalidate(change))
+        .watch_catalog(move |change| {
+            invalidate_and_wake(&stale, &*catalog_wake, change);
+        })
         .ok();
 
     while let Ok(command) = orders.recv() {
         let answer = run(&client, command);
-        if answers.send(answer).is_err() {
+        if !publish_answer(answers, &*wake, answer) {
             return; // the surface is gone
         }
     }
+}
+
+fn publish_answer(answers: &Sender<Answer>, wake: &dyn Fn(), answer: Answer) -> bool {
+    let delivered = answers.send(answer).is_ok();
+    wake();
+    delivered
+}
+
+fn invalidate_and_wake(flags: &CatalogFlags, wake: &dyn Fn(), change: CatalogChange) {
+    flags.invalidate(change);
+    wake();
 }
 
 /// **Ask the supervisor, then connect.**
@@ -368,10 +481,22 @@ fn connect(segment: &str, root: Option<&std::path::Path>) -> Option<Client> {
 
 fn run(client: &Client, command: Command) -> Answer {
     match command {
-        Command::Catalog => match client.catalog().workspaces() {
-            Ok(catalog) => Answer::Catalog(catalog.into_iter().map(row_of).collect()),
-            Err(_) => Answer::Unavailable,
+        Command::Keyed(id, command) => Answer::Settled(id, Box::new(run(client, *command))),
+        Command::CreateProfile(request) => {
+            Answer::ProfileCreated(client.store().create_profile_with_workspace(&request))
+        }
+        Command::EnsureLive {
+            owner,
+            name,
+            attempt,
+        } => Answer::WorkspaceEnsured {
+            attempt,
+            result: client.store().ensure_live_workspace(owner, &name),
         },
+        Command::Catalog => catalog_answer(client),
+        Command::KeepProfile(owner, attempt) => {
+            Answer::ProfileKept(client.catalog().keep_profile(owner, attempt))
+        }
         Command::Profiles => match client.store().profiles() {
             Ok(profiles) => Answer::Profiles(
                 profiles
@@ -417,11 +542,13 @@ fn run(client: &Client, command: Command) -> Answer {
                 Err(error) => Answer::Refused(refusal(workspace, action, &error, false)),
             }
         }
-        Command::Lifecycle(workspace, action, confirmation) => {
-            match client
-                .catalog()
-                .lifecycle(&workspace.to_storage(), action, &confirmation)
-            {
+        Command::Lifecycle(workspace, action, confirmation, name) => {
+            match client.catalog().lifecycle_replacing(
+                &workspace.to_storage(),
+                action,
+                &confirmation,
+                &name,
+            ) {
                 Ok(outcome) => Answer::Completed(outcome),
                 Err(error) => Answer::Refused(refusal(workspace, action, &error, true)),
             }
@@ -445,11 +572,13 @@ fn run(client: &Client, command: Command) -> Answer {
                 Err(error) => Answer::Refused(move_refusal(workspace, to, &error, false)),
             }
         }
-        Command::Migrate(workspace, to, confirmation) => {
-            match client
-                .catalog()
-                .migrate(&workspace.to_storage(), &to.to_storage(), &confirmation)
-            {
+        Command::Migrate(workspace, to, confirmation, name) => {
+            match client.catalog().migrate_replacing(
+                &workspace.to_storage(),
+                &to.to_storage(),
+                &confirmation,
+                &name,
+            ) {
                 Ok(outcome) => Answer::Moved(outcome),
                 Err(error) => Answer::Refused(move_refusal(workspace, to, &error, true)),
             }
@@ -467,29 +596,24 @@ fn run(client: &Client, command: Command) -> Answer {
             pinned,
             archived,
         ) {
-            Ok(_) => Answer::Catalog(catalog_or_empty(client)),
+            Ok(_) => catalog_answer(client),
             Err(_) => Answer::Refused(Notice {
-                text: String::new(),
+                text: crate::REFUSAL_UNAVAILABLE.into(),
                 retry: None,
             }),
         },
         Command::Reorder(owner, order) => match client.store().reorder_workspaces(owner, &order) {
-            Ok(_) => Answer::Catalog(catalog_or_empty(client)),
+            Ok(_) => catalog_answer(client),
             Err(_) => Answer::Refused(Notice {
-                text: String::new(),
+                text: crate::REFUSAL_UNAVAILABLE.into(),
                 retry: None,
             }),
         },
     }
 }
 
-fn catalog_or_empty(client: &Client) -> Vec<Row> {
-    client
-        .catalog()
-        .workspaces()
-        .map(|catalog| catalog.into_iter().map(row_of).collect())
-        .unwrap_or_default()
-}
+mod authority;
+use authority::catalog_answer;
 
 /// **The refusal, in the one vocabulary the surface localizes from.**
 ///
@@ -559,8 +683,12 @@ pub(crate) fn classify(error: &WorkspaceError) -> &'static str {
     if error.documents_connected() {
         return crate::REFUSAL_DOCUMENTS_OPEN;
     }
-    if error.partial_outcome().is_some() {
-        return crate::REFUSAL_PARTIAL;
+    if let Some(outcome) = error.partial_outcome() {
+        return if outcome.authority_committed == Some(true) {
+            crate::REFUSAL_LISTING_PENDING
+        } else {
+            crate::REFUSAL_PARTIAL
+        };
     }
     if error.is_permission_denied() {
         return crate::REFUSAL_NOT_PERMITTED;
@@ -580,5 +708,7 @@ fn row_of(workspace: koru_store_core::model::Workspace) -> Row {
         deleted: workspace.deleted_at.is_some(),
         position: workspace.position,
         last_opened_at: workspace.last_opened_at.map(|at| at.millis()),
+        authority: crate::Authority::Unknown,
+        listing_differs: false,
     }
 }

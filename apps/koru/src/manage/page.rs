@@ -216,7 +216,7 @@ impl ManageView {
                 let name = self.laid.header.name;
                 Rect::new(name.x, y, self.laid.header.text_w.max(1.0), line)
             }
-            Some(Page::NewProfile) => Rect::new(column.x, column.y, column.w, line),
+            Some(Page::NewProfile) => Rect::new(column.x, y, column.w, line),
             None => self.page_area(),
             Some(Page::Devices | Page::Cloud) => Rect::new(column.x, y, column.w, line),
         }
@@ -229,7 +229,10 @@ impl ManageView {
             Some(Page::Profile(_) | Page::Devices | Page::Cloud) => {
                 self.column().y + self.laid.height + PageShell::BOTTOM_PAD
             }
-            // The form scrolls itself.
+            Some(Page::NewProfile) => {
+                let form = self.form_rect();
+                form.y + form.h + PageShell::BOTTOM_PAD
+            }
             _ => 0.0,
         }
     }
@@ -242,7 +245,7 @@ impl ManageView {
         let scrolled = root * Affine::translate((0.0, -(self.page_scroll as f64)));
         match self.page {
             Some(Page::Profile(_)) => self.paint_profile_page(canvas, scrolled),
-            Some(Page::NewProfile) => self.paint_new_profile(canvas, root),
+            Some(Page::NewProfile) => self.paint_new_profile(canvas, scrolled),
             Some(Page::Devices) => self.paint_devices_page(canvas, scrolled),
             Some(Page::Cloud) => self.paint_cloud_page(canvas, scrolled),
             None => {}

@@ -350,7 +350,12 @@ mod tests {
                 let kept = store.create_profile("Kept", None, None, locale(), Timestamp::now())?;
                 let removed =
                     store.create_profile("Removed", None, None, locale(), Timestamp::now())?;
-                store.remove_profile_local(removed.id, Timestamp::now())?;
+                let mark = store.begin_profile_removal(
+                    removed.id,
+                    koru_store_core::profile_removal::RemovalKind::Local,
+                    Timestamp::now(),
+                )?;
+                store.remove_profile_local(removed.id, Some(mark.attempt), Timestamp::now())?;
                 Ok::<_, koru_store_core::Error>((kept.id, removed.id))
             })
             .unwrap()

@@ -726,6 +726,14 @@ pub struct ProfileAppearanceChanged {
     pub profile_id: Uuid,
 }
 
+pub struct ProfileRemovalChanged {
+    pub profile_id: Uuid,
+}
+
+payload!(ProfileRemovalChanged, "profile.removal_changed", |self| {
+    Draft::new(EventName::from_static(Self::NAME)).attr("profile", AttrValue::Id(self.profile_id))
+});
+
 payload!(
     ProfileAppearanceChanged,
     "profile.appearance_changed",

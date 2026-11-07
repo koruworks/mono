@@ -22,6 +22,8 @@ use super::*;
 use crate::identity::AccountOwner;
 use crate::ports::{Clock, Entropy};
 
+mod discovery;
+
 // ----- fixtures -----------------------------------------------------------
 
 struct PauseClock {

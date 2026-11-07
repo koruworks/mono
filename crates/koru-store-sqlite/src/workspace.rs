@@ -292,6 +292,8 @@ pub struct SqliteWorkspace {
     connection: Connection,
 }
 
+mod inspection;
+
 impl SqliteWorkspace {
     pub fn open(path: &std::path::Path) -> Result<Self> {
         Self::from_connection(db::open(path)?)

@@ -168,7 +168,10 @@ fn every_point_presses_what_todays_hit_test_presses() {
                 let today = v.popover_part_at(a, VIEW, x, y).and_then(|(_, row, part)| {
                     matches!(row, PopoverRow::Workspace(_)).then_some((row, part))
                 });
-                let now = frame.hit_at(x, y).and_then(|key| row_part_of(&v, key));
+                let now = frame
+                    .hit_at(x, y)
+                    .and_then(|key| row_part_of(&v, key))
+                    .filter(|(row, _)| matches!(row, PopoverRow::Workspace(_)));
                 assert_eq!(now, today, "{n} rows, scrolled {scroll}: ({x}, {y})");
                 checked += usize::from(today.is_some());
                 x += 1.5;
@@ -223,17 +226,23 @@ fn the_semantic_tree_puts_the_gear_beside_its_row() {
             ControlPart::new("popover")
         )
     );
+    assert_eq!(menu.label.as_deref(), Some("Workspaces"));
     assert_eq!(
-        menu.label.as_deref(),
-        Some("Open account and workspace menu")
+        menu.size_of_set,
+        Some(11),
+        "three primaries, three gears and five fixed actions"
     );
-    assert_eq!(menu.size_of_set, Some(6), "three primaries, three gears");
     let roles: Vec<_> = menu.children.iter().map(|c| c.role).collect();
-    assert_eq!(roles[0], AkRole::Heading);
-    assert!(roles[1..].iter().all(|r| *r == AkRole::MenuItem));
+    assert_eq!(roles[1], AkRole::Heading);
+    assert!(
+        roles
+            .iter()
+            .enumerate()
+            .all(|(i, r)| i == 1 || *r == AkRole::MenuItem)
+    );
     for (i, w) in v.workspaces.iter().enumerate() {
-        let primary = &menu.children[1 + i * 2];
-        let gear = &menu.children[2 + i * 2];
+        let primary = &menu.children[3 + i * 2];
+        let gear = &menu.children[4 + i * 2];
         // The locator and name each row has always had: the workspace's
         // own id and root part, and its title.
         assert_eq!(
@@ -247,7 +256,7 @@ fn the_semantic_tree_puts_the_gear_beside_its_row() {
             "today's locator"
         );
         assert_eq!(primary.label.as_deref(), Some(w.name.as_str()));
-        assert_eq!(primary.position, Some(i * 2));
+        assert_eq!(primary.position, Some(2 + i * 2));
         assert_eq!(primary.selected, Some(v.current == Some(w.id)));
         assert_eq!(
             gear.occurrence,
@@ -565,7 +574,10 @@ fn every_element_record_reads_what_the_contract_lists() {
         assert!(
             record
                 .source
-                .starts_with("apps/koru/src/panes/explore/popover_elements.rs:"),
+                .starts_with("apps/koru/src/panes/explore/popover_elements.rs:")
+                || record
+                    .source
+                    .starts_with("apps/koru/src/panes/explore/workspace_menu_elements.rs:"),
             "{}: sourced where it was written, not where it painted: {}",
             record.name,
             record.source
@@ -645,8 +657,16 @@ fn every_element_record_reads_what_the_contract_lists() {
     assert_eq!(value(name, "text mode"), "single line, elided");
 
     let heading = nth("Workspaces heading", 0);
-    assert!(value(heading, "ink").starts_with("Ink::Hint -> #"));
     assert_eq!(value(heading, "pad_x"), "alias::NAV_PAD = Space::S2 -> 8");
+    let title = elements
+        .iter()
+        .find(|record| {
+            record.properties.iter().any(|property| {
+                property.name == "key" && property.value.ends_with("/workspaces-title")
+            })
+        })
+        .expect("the heading title has its own inspectable element");
+    assert!(value(title, "ink").starts_with("Ink::Hint -> #"));
 
     let list = nth("Workspace list", 0);
     assert!(value(list, "scroll").starts_with("content "));
@@ -668,7 +688,9 @@ fn right_reaches_the_gear_and_enter_opens_manage() {
     let mut v = opened(list);
     let a = area(dtheme::SIDEBAR_MIN_W);
     let cx = cx(a, Lang::En);
-    v.popover_key(&WKey::Named(NamedKey::ArrowDown));
+    for _ in 0..3 {
+        v.popover_key(&WKey::Named(NamedKey::ArrowDown));
+    }
     let row = v.popover_hover().and_then(|i| match v.popover_rows()[i] {
         PopoverRow::Workspace(i) => Some(v.workspaces[i].id),
         _ => None,

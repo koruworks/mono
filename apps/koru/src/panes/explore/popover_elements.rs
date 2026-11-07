@@ -162,39 +162,43 @@ impl Leaf for TrailingAdapter {
 }
 
 impl ExploreView {
+    pub(crate) fn element_page_height(&self, kind: PopoverKind) -> Option<f32> {
+        let tree = self.page_tree(kind, 0.0, None)?;
+        let frame = with_input_engine(|engine| {
+            tree.layout(
+                engine,
+                &mut self.page_layout.borrow_mut().cache,
+                Rect::new(0.0, 0.0, super::POPOVER_W, super::SWITCHER_MAX_H),
+                FrameCx::root(),
+            )
+        });
+        let (list, content, _) = list_of(&frame)?;
+        let allocated: f32 = frame
+            .nodes
+            .iter()
+            .filter(|node| node.parent == Some(0))
+            .map(|node| node.rect.h)
+            .sum();
+        Some(allocated - list.h + content.max(metrics::ROW_MIN.value) + super::POPOVER_PAD * 2.0)
+    }
+
     /// The Workspaces page as an element tree: the heading, then the list
     /// that scrolls under it, a row per workspace in the order the page
     /// lists them.
     pub(crate) fn workspaces_page(&self, scroll: f32) -> El {
         let rows = self.rows_for(PopoverKind::Summary);
-        let count = rows
-            .iter()
-            .filter(|row| matches!(row, PopoverRow::Workspace(_)))
-            .count();
-        // Uppercased with its count, as the Profiles page is headed (S1).
-        let heading = format!(
-            "{} · {count}",
-            koru_i18n::t(crate::format::lang(), koru_i18n::Key::Workspaces).to_uppercase()
-        );
         col("Workspaces page")
             .id(PAGE)
             .semantics(Role::Menu)
-            .name(koru_i18n::Key::FloorChipAction)
+            .name(koru_i18n::Key::Workspaces)
             .pad_y(alias::PANEL_PAD)
-            .child(
-                text(heading.clone())
-                    .named("Workspaces heading")
-                    .id(HEADING)
-                    .semantics(Role::Heading)
-                    .name_text(heading)
-                    .role(roles::POPOVER_HEADING)
-                    .ink(Ink::Hint)
-                    .pad_x(alias::NAV_PAD)
-                    .min_h(metrics::ROW_MIN),
-            )
+            .child(self.workspace_menu_header())
+            .child(super::workspace_menu_elements::rule())
+            .child(self.workspace_menu_heading())
             .child(
                 scroll_y(LIST)
                     .fill()
+                    .min_h(metrics::ROW_MIN)
                     .offset(scroll)
                     .children(rows.into_iter().filter_map(|row| match row {
                         PopoverRow::Workspace(i) => self.workspaces.get(i).map(|w| {
@@ -209,6 +213,7 @@ impl ExploreView {
                         _ => None,
                     })),
             )
+            .child(self.workspace_menu_footer())
     }
 
     /// One workspace row: a neutral row whose whole width presses the
@@ -308,6 +313,8 @@ impl ExploreView {
                 }
             }),
             PopoverRow::ProfilesFooter => self.lit_foot_key(),
+            PopoverRow::WorkspaceAction(action) => Some(action.key()),
+            PopoverRow::WorkspacesHeading => Some(super::workspace_menu_elements::MANAGE),
             _ => None,
         }
     }
@@ -437,6 +444,17 @@ impl ExploreView {
         self.rows_for(kind)
             .into_iter()
             .filter_map(|row| match row {
+                PopoverRow::WorkspaceAction(action) => {
+                    let key = if action == super::workspace_menu_elements::MenuAction::Sync {
+                        super::workspace_menu_elements::HEADER
+                    } else {
+                        action.key()
+                    };
+                    frame.node(key).map(|node| (row, node.rect))
+                }
+                PopoverRow::WorkspaceNotice => frame
+                    .node(super::workspace_menu_elements::NOTICE)
+                    .map(|node| (row, node.rect)),
                 PopoverRow::WorkspacesHeading | PopoverRow::ProfilesHeading => {
                     frame.node(HEADING).map(|n| (row, n.rect))
                 }
@@ -534,6 +552,12 @@ pub(crate) const GEAR: &str = "Manage gear";
 /// The popover row and part an element key stands for: what a press or an
 /// accessibility request on that key chooses.
 pub(crate) fn row_part_of(view: &ExploreView, key: Key) -> Option<(PopoverRow, PopoverPart)> {
+    if key == super::workspace_menu_elements::MANAGE {
+        return Some((PopoverRow::WorkspacesHeading, PopoverPart::Gear));
+    }
+    if let Some(action) = super::workspace_menu_elements::MenuAction::from_key(key) {
+        return Some((PopoverRow::WorkspaceAction(action), PopoverPart::Row));
+    }
     if let Some(button) = profiles::button_of(key) {
         return Some((PopoverRow::ProfilesFooter, PopoverPart::Button(button)));
     }

@@ -11,5 +11,5 @@
 //! are measured at draw and cached, the way the tab strip's are.
 
 pub mod apps_rail;
-pub mod floor;
+pub(crate) mod rail_elements;
 pub mod rail_order;

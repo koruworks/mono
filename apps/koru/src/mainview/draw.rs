@@ -185,110 +185,113 @@ impl MainView {
         );
         scene.push_clip_layer(Fill::NonZero, root, &clip);
         let inspect_content_clip = koru_draw::inspect::clip(root, clip);
-        for (path, rect) in self.panes.leaf_rects(self.content()) {
-            let Some(lane) = self.lane_rect_for(&path) else {
-                continue;
-            };
-            let view_rect = panes::PaneTree::view_rect_in(c, rect);
-            let leaf_root = root * Affine::translate((view_rect.x as f64, view_rect.y as f64));
-            let _inspect_pane = koru_draw::inspect::scope(
-                "Content pane",
-                "container",
-                root,
-                scene::rect(view_rect.x, view_rect.y, view_rect.w, view_rect.h),
-                |r| {
-                    r.property(
-                        "layout",
-                        "active view in split pane",
-                        "MainView::panes; inner arrangement not exposed",
-                    );
-                },
-            );
-            let local = (pointer.0 - view_rect.x, pointer.1 - view_rect.y);
-
-            // A top-row lane is in the title bar — outside the content clip —
-            // and draws in the second pass, over the caption band.
-            if lane.y >= c.y {
-                self.draw_group_strip(scene, root, &path, lane, pointer, &workspace.ws);
-            }
-
-            let group = self.panes.group_mut(&path).unwrap();
-            // A draft draws from its own workspace, which is the whole reason it is
-            // a real editor rather than a picture of one.
-            let (view, ws) = group.active_mut().workspace(workspace);
-            match view {
-                TabView::Welcome(w) => w.draw(scene, ws, images, leaf_root, caret_on, local),
-                TabView::Manage(w) => {
-                    // The already-discovered client, cloned rather than
-                    // opened: the Profile prompt's answer is a local Store
-                    // write, and this is the seam every other panel uses. No
-                    // request happens on the frame thread.
-                    w.set_client(workspace.store_client());
-                    View::draw(w, scene, workspace, images, leaf_root, caret_on, local)
-                }
-                TabView::Trash(t) => {
-                    View::draw(t, scene, workspace, images, leaf_root, caret_on, local)
-                }
-                TabView::Tasks(t) => {
-                    View::draw(t, scene, workspace, images, leaf_root, caret_on, local)
-                }
-                TabView::Home(h) => {
-                    // The Due today panel's client, as the Tasks page's: the
-                    // discovered client cloned, no request on this thread.
-                    h.panel_mut().set_client(workspace.store_client());
-                    View::draw(h, scene, workspace, images, leaf_root, caret_on, local)
-                }
-                TabView::Reminders(r) => {
-                    View::draw(r, scene, workspace, images, leaf_root, caret_on, local)
-                }
-                TabView::Settings(s) => {
-                    View::draw(s, scene, workspace, images, leaf_root, caret_on, local)
-                }
-                TabView::Feedback(f) => {
-                    View::draw(f, scene, workspace, images, leaf_root, caret_on, local)
-                }
-                TabView::Diff(d) => {
-                    View::draw(d, scene, workspace, images, leaf_root, caret_on, local)
-                }
-                TabView::AiChat(a) => {
-                    View::draw(a, scene, workspace, images, leaf_root, caret_on, local)
-                }
-                TabView::Socials(a) => {
-                    View::draw(a, scene, workspace, images, leaf_root, caret_on, local)
-                }
-                TabView::Session(s) => {
-                    View::draw(s, scene, workspace, images, leaf_root, caret_on, local)
-                }
-                TabView::Run(r) => {
-                    View::draw(r, scene, workspace, images, leaf_root, caret_on, local)
-                }
-                TabView::Result(r) => {
-                    View::draw(r, scene, workspace, images, leaf_root, caret_on, local)
-                }
-                TabView::Canvas(c) => {
-                    View::draw(c, scene, workspace, images, leaf_root, caret_on, local)
-                }
-                TabView::Leaf(l) => {
-                    if l.body().rows.is_empty() {
-                        crate::mainview::nav_debug::nav_debug!(
-                            "[koru:nav] draw rows=0 content={}x{}",
-                            view_rect.w as i32,
-                            view_rect.h as i32,
+        if self.profile_wait_visible() {
+            self.draw_profile_wait(scene, root);
+        } else {
+            for (path, rect) in self.panes.leaf_rects(self.content()) {
+                let Some(lane) = self.lane_rect_for(&path) else {
+                    continue;
+                };
+                let view_rect = panes::PaneTree::view_rect_in(c, rect);
+                let leaf_root = root * Affine::translate((view_rect.x as f64, view_rect.y as f64));
+                let _inspect_pane = koru_draw::inspect::scope(
+                    "Content pane",
+                    "container",
+                    root,
+                    scene::rect(view_rect.x, view_rect.y, view_rect.w, view_rect.h),
+                    |r| {
+                        r.property(
+                            "layout",
+                            "active view in split pane",
+                            "MainView::panes; inner arrangement not exposed",
                         );
-                    }
-                    View::draw(l, scene, ws, images, leaf_root, caret_on, local)
+                    },
+                );
+                let local = (pointer.0 - view_rect.x, pointer.1 - view_rect.y);
+
+                // A top-row lane is in the title bar — outside the content clip —
+                // and draws in the second pass, over the caption band.
+                if lane.y >= c.y {
+                    self.draw_group_strip(scene, root, &path, lane, pointer, &workspace.ws);
                 }
-            }
-            // The page's AI button lives in its title row, so it draws
-            // inside the pane's boundary — and, for the inspector, inside
-            // its node too.
-            if &path == self.panes.focused_path()
-                && let Some(button) = self.document_ai_button()
-            {
-                button.draw(scene, root, &mut self.engine);
+
+                let group = self.panes.group_mut(&path).unwrap();
+                // A draft draws from its own workspace, which is the whole reason it is
+                // a real editor rather than a picture of one.
+                let (view, ws) = group.active_mut().workspace(workspace);
+                match view {
+                    TabView::Welcome(w) => w.draw(scene, ws, images, leaf_root, caret_on, local),
+                    TabView::Manage(w) => {
+                        // The already-discovered client, cloned rather than
+                        // opened: the Profile prompt's answer is a local Store
+                        // write, and this is the seam every other panel uses. No
+                        // request happens on the frame thread.
+                        w.set_client(workspace.store_client());
+                        View::draw(w, scene, workspace, images, leaf_root, caret_on, local)
+                    }
+                    TabView::Trash(t) => {
+                        View::draw(t, scene, workspace, images, leaf_root, caret_on, local)
+                    }
+                    TabView::Tasks(t) => {
+                        View::draw(t, scene, workspace, images, leaf_root, caret_on, local)
+                    }
+                    TabView::Home(h) => {
+                        // The Due today panel's client, as the Tasks page's: the
+                        // discovered client cloned, no request on this thread.
+                        h.panel_mut().set_client(workspace.store_client());
+                        View::draw(h, scene, workspace, images, leaf_root, caret_on, local)
+                    }
+                    TabView::Reminders(r) => {
+                        View::draw(r, scene, workspace, images, leaf_root, caret_on, local)
+                    }
+                    TabView::Settings(s) => {
+                        View::draw(s, scene, workspace, images, leaf_root, caret_on, local)
+                    }
+                    TabView::Feedback(f) => {
+                        View::draw(f, scene, workspace, images, leaf_root, caret_on, local)
+                    }
+                    TabView::Diff(d) => {
+                        View::draw(d, scene, workspace, images, leaf_root, caret_on, local)
+                    }
+                    TabView::AiChat(a) => {
+                        View::draw(a, scene, workspace, images, leaf_root, caret_on, local)
+                    }
+                    TabView::Socials(a) => {
+                        View::draw(a, scene, workspace, images, leaf_root, caret_on, local)
+                    }
+                    TabView::Session(s) => {
+                        View::draw(s, scene, workspace, images, leaf_root, caret_on, local)
+                    }
+                    TabView::Run(r) => {
+                        View::draw(r, scene, workspace, images, leaf_root, caret_on, local)
+                    }
+                    TabView::Result(r) => {
+                        View::draw(r, scene, workspace, images, leaf_root, caret_on, local)
+                    }
+                    TabView::Canvas(c) => {
+                        View::draw(c, scene, workspace, images, leaf_root, caret_on, local)
+                    }
+                    TabView::Leaf(l) => {
+                        if l.body().rows.is_empty() {
+                            crate::mainview::nav_debug::nav_debug!(
+                                "[koru:nav] draw rows=0 content={}x{}",
+                                view_rect.w as i32,
+                                view_rect.h as i32,
+                            );
+                        }
+                        View::draw(l, scene, ws, images, leaf_root, caret_on, local)
+                    }
+                }
+                // The page's AI button lives in its title row, so it draws
+                // inside the pane's boundary — and, for the inspector, inside
+                // its node too.
+                if &path == self.panes.focused_path()
+                    && let Some(button) = self.document_ai_button()
+                {
+                    button.draw(scene, root, &mut self.engine);
+                }
             }
         }
-
         // Active split preview: drawn over the target pane inside the content clip.
         if let Some(intent) = self.split_intent.as_ref() {
             if let Some(view_rect) = self.panes.view_rect_for(self.content(), &intent.target) {
@@ -579,6 +582,7 @@ impl MainView {
         // dialog is not, so a dialog must never end up behind one.
         self.draw_toast(scene, root, now);
         self.draw_confirm(scene, root);
+        self.draw_workspace_confirmation(scene, root);
         self.draw_import_dialog(scene, root);
         self.draw_updates_modal(scene, root);
         // Channel-mismatch notice: informational modal, under a hard error.

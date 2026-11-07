@@ -28,7 +28,7 @@ use koru_store_core::model::{
 };
 use koru_store_core::ports::{
     Catalog, LocalProfileRemoval, LocalProfileRestoration, ProfileCatalogState, ProfileCrdtState,
-    ProfileLifecycleInventoryItem, ProfileUnitState, ReminderDue, SyncDocumentDigest,
+    ProfileLifecycleInventoryItem, ProfileUnitState, ReminderDue, Removal, SyncDocumentDigest,
     SyncStateEvent,
 };
 use koru_store_core::profile_units::ProfileUnitRef;
@@ -41,6 +41,8 @@ use koru_store_core::version::CATALOG_SCHEMA_VERSION;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
 use crate::db::{self, Migration, sql_failed};
+
+mod profile_removal;
 
 /// Crate-visible so a fixture elsewhere can stamp a catalog at an **older**
 /// version and then let the ordinary open migrate it — the only honest way to
@@ -377,6 +379,7 @@ impl Catalog for SqliteCatalog {
     fn remove_profile_local(
         &mut self,
         id: ProfileId,
+        attempt: Option<koru_store_core::ids::RemovalAttemptId>,
         at: Timestamp,
     ) -> Result<LocalProfileRemoval> {
         // IMMEDIATE makes the empty check and marker one write-serialized decision.
@@ -385,6 +388,9 @@ impl Catalog for SqliteCatalog {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sql_failed)?;
+        let attempt = attempt.ok_or_else(|| Error::bare(Code::RemovalNotBegun))?;
+        let mark = profile_removal::read(&tx, id)?;
+        koru_store_core::profile_removal::require_attempt(mark.as_ref(), attempt)?;
         let removed_at: Option<Option<i64>> = tx
             .query_row(
                 "SELECT removed_at FROM profiles WHERE id = ?1",
@@ -413,8 +419,17 @@ impl Catalog for SqliteCatalog {
             params![id.to_storage(), at.millis()],
         )
         .map_err(sql_failed)?;
+        profile_removal::clear(&tx, id)?;
         tx.commit().map_err(sql_failed)?;
         Ok(LocalProfileRemoval::Removed)
+    }
+
+    fn update_profile_removal(
+        &mut self,
+        id: ProfileId,
+        update: koru_store_core::profile_removal::RemovalUpdate,
+    ) -> Result<Option<koru_store_core::profile_removal::RemovalMark>> {
+        profile_removal::update(&mut self.connection, id, update)
     }
 
     fn restore_profile_local(&mut self, id: ProfileId) -> Result<LocalProfileRestoration> {
@@ -761,6 +776,133 @@ impl Catalog for SqliteCatalog {
 
     // ------------------------------------------------------------ workspaces
 
+    fn publish_workspace(&mut self, workspace: &Workspace, manifest: DocumentId) -> Result<()> {
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_failed)?;
+        publish_workspace(&tx, workspace, manifest)?;
+        tx.commit().map_err(sql_failed)
+    }
+
+    fn publish_removal(
+        &mut self,
+        removal: Removal<'_>,
+        replacement: Option<(&Workspace, DocumentId)>,
+    ) -> Result<()> {
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_failed)?;
+        let workspace = removal.workspace();
+        let exists: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = ?1)",
+                [workspace.id.to_storage()],
+                |row| row.get(0),
+            )
+            .map_err(sql_failed)?;
+        if !exists {
+            return Err(Error::bare(Code::WorkspaceNotFound));
+        }
+        write_workspace_projection(&tx, workspace)?;
+        if matches!(removal, Removal::Delete(_)) {
+            tx.execute(
+                "DELETE FROM document_locations WHERE workspace_id = ?1",
+                [workspace.id.to_storage()],
+            )
+            .map_err(sql_failed)?;
+        }
+        if let Some((replacement, manifest)) = replacement {
+            publish_workspace(&tx, replacement, manifest)?;
+        }
+        tx.commit().map_err(sql_failed)
+    }
+
+    fn workspace_locations(&self, workspace: WorkspaceId) -> Result<Vec<DocumentId>> {
+        let mut statement = self.connection.prepare("SELECT document_id FROM document_locations WHERE workspace_id = ?1 ORDER BY document_id").map_err(sql_failed)?;
+        let values = statement
+            .query_map([workspace.to_storage()], |row| row.get::<_, String>(0))
+            .map_err(sql_failed)?;
+        values
+            .map(|value| {
+                DocumentId::parse(&value.map_err(sql_failed)?).ok_or_else(|| {
+                    Error::new(Code::CorruptState, "invalid document routing identity")
+                })
+            })
+            .collect()
+    }
+
+    fn reconcile_workspace_listing(
+        &mut self,
+        workspace: &Workspace,
+        documents: &[DocumentId],
+    ) -> Result<()> {
+        let tx = self
+            .connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(sql_failed)?;
+        write_workspace_projection(&tx, workspace)?;
+        tx.execute(
+            "DELETE FROM document_locations WHERE workspace_id = ?1",
+            [workspace.id.to_storage()],
+        )
+        .map_err(sql_failed)?;
+        if workspace.deleted_at.is_none() {
+            for document in documents {
+                tx.execute("INSERT OR REPLACE INTO document_locations (document_id, workspace_id) VALUES (?1, ?2)", params![document.to_storage(), workspace.id.to_storage()]).map_err(sql_failed)?;
+            }
+        }
+        tx.commit().map_err(sql_failed)
+    }
+
+    fn publish_profile_with_workspace(
+        &mut self,
+        profile: &Profile,
+        identity: &[u8],
+        private: &[u8],
+        origin_marker: (&str, &str),
+        workspace: &Workspace,
+        manifest: DocumentId,
+    ) -> Result<()> {
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_failed)?;
+        let exists: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM profiles WHERE id = ?1)
+                OR EXISTS(SELECT 1 FROM profile_identity_crdts WHERE profile_id = ?1)",
+                params![profile.id.to_storage()],
+                |row| row.get(0),
+            )
+            .map_err(sql_failed)?;
+        if exists {
+            return Err(Error::bare(Code::ProfileExists));
+        }
+        if workspace.owner != profile.id || identity.is_empty() || private.is_empty() {
+            return Err(Error::bare(Code::InvalidRequest));
+        }
+        write_identity_projection(&tx, profile)?;
+        tx.execute(
+            "INSERT INTO profile_identity_crdts (profile_id, snapshot) VALUES (?1, ?2)",
+            params![profile.id.to_storage(), identity],
+        )
+        .map_err(sql_failed)?;
+        tx.execute(
+            "INSERT INTO profile_private_crdts (profile_id, snapshot) VALUES (?1, ?2)",
+            params![profile.id.to_storage(), private],
+        )
+        .map_err(sql_failed)?;
+        tx.execute(
+            "INSERT INTO store_state (key, value) VALUES (?1, ?2)",
+            params![origin_marker.0, origin_marker.1],
+        )
+        .map_err(sql_failed)?;
+        publish_workspace(&tx, workspace, manifest)?;
+        tx.commit().map_err(sql_failed)
+    }
+
     fn put_workspace(&mut self, workspace: &Workspace) -> Result<()> {
         // One transaction, because a move changes two rows: the Workspace's
         // owner and the owner projection its mode row carries. Contract 3
@@ -770,83 +912,7 @@ impl Catalog for SqliteCatalog {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sql_failed)?;
-        let changed = tx
-            .execute(
-                "INSERT INTO workspaces                  (id, owner, name, created_at, last_opened_at, icon, color, pinned, archived, deleted_at, position)
-                 SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11
-                 WHERE EXISTS (SELECT 1 FROM profiles WHERE id = ?2 AND removed_at IS NULL)
-                 ON CONFLICT(id) DO UPDATE SET
-                   name = excluded.name, owner = excluded.owner,
-                   icon = excluded.icon, color = excluded.color,
-                   pinned = excluded.pinned, archived = excluded.archived,
-                   deleted_at = excluded.deleted_at, position = excluded.position",
-                params![
-                    workspace.id.to_storage(),
-                    workspace.owner.to_storage(),
-                    workspace.name,
-                    workspace.created_at.millis(),
-                    workspace.last_opened_at.map(|t| t.millis()),
-                    workspace.icon,
-                    workspace.color,
-                    workspace.pinned,
-                    workspace.archived,
-                    workspace.deleted_at.map(|at| at.millis()),
-                    workspace.position,
-                ],
-            )
-            .map_err(|e| match e {
-                rusqlite::Error::SqliteFailure(f, _)
-                    if f.code == rusqlite::ErrorCode::ConstraintViolation =>
-                {
-                    Error::new(Code::ProfileNotFound, "no such owner profile")
-                }
-                other => sql_failed(other),
-            })?;
-        if changed == 0 {
-            return Err(Error::new(
-                Code::ProfileNotFound,
-                "owner profile is absent or locally removed",
-            ));
-        }
-        // **A new Workspace is seeded at its Profile's own choice**, and at
-        // Local-only when nobody has made one. An existing Workspace keeps
-        // its choice and only has its owner projection corrected.
-        //
-        // This is not the evidence path D258 withdrew, and the difference is
-        // the whole of why it is here: the value copied is a *person's*
-        // explicit Profile choice, read downward at the moment they create a
-        // child under it. Seeding Local-only instead would mean a Workspace
-        // made after answering the prompt never moved a byte — hosted
-        // activation already inherits the Profile's switch (D238), so the two
-        // halves would disagree and the symptom would be pictures that never
-        // arrive in a Workspace whose documents do.
-        //
-        // It lands as a **default**, not a choice: the person can still set
-        // this Workspace Local-only, and that choice then outranks everything
-        // for the reason every other rule here exists.
-        //
-        // A move that puts the Workspace above its new Profile's ceiling is
-        // **not** repaired here -- the effective read reports the mismatch and
-        // the affected transport stops, because silently lowering a choice is
-        // the failure contract 3 exists to prevent.
-        tx.execute(
-            "INSERT INTO local_transport_modes
-               (subject_kind, subject_id, owner_profile_id, workspace_id,
-                mode, explicit_choice, revision)
-             SELECT 'workspace', ?1, ?2, ?1,
-                    COALESCE(
-                      (SELECT owner.mode FROM local_transport_modes owner
-                        WHERE owner.subject_kind = 'profile'
-                          AND owner.subject_id = ?2
-                          AND owner.explicit_choice = 1),
-                      'local_only'),
-                    0, 1
-              WHERE 1
-             ON CONFLICT(subject_kind, subject_id)
-               DO UPDATE SET owner_profile_id = excluded.owner_profile_id",
-            params![workspace.id.to_storage(), workspace.owner.to_storage()],
-        )
-        .map_err(sql_failed)?;
+        write_workspace_projection(&tx, workspace)?;
         tx.commit().map_err(sql_failed)
     }
 
@@ -1846,6 +1912,107 @@ pub(crate) fn collect<T>(
         out.push(row.map_err(sql_failed)??);
     }
     Ok(out)
+}
+
+fn publish_workspace(tx: &Connection, workspace: &Workspace, manifest: DocumentId) -> Result<()> {
+    let exists: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = ?1)",
+            params![workspace.id.to_storage()],
+            |row| row.get(0),
+        )
+        .map_err(sql_failed)?;
+    if exists {
+        return Err(Error::bare(Code::WorkspaceExists));
+    }
+    write_workspace_projection(tx, workspace)?;
+    tx.execute(
+        "INSERT INTO document_locations (document_id, workspace_id) VALUES (?1, ?2)",
+        params![manifest.to_storage(), workspace.id.to_storage()],
+    )
+    .map_err(sql_failed)?;
+    Ok(())
+}
+
+fn write_workspace_projection(tx: &Connection, workspace: &Workspace) -> Result<()> {
+    let changed = tx
+            .execute(
+                "INSERT INTO workspaces                  (id, owner, name, created_at, last_opened_at, icon, color, pinned, archived, deleted_at, position)
+                 SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11
+                 WHERE EXISTS (SELECT 1 FROM profiles WHERE id = ?2 AND removed_at IS NULL)
+                 ON CONFLICT(id) DO UPDATE SET
+                   name = excluded.name, owner = excluded.owner,
+                   icon = excluded.icon, color = excluded.color,
+                   pinned = excluded.pinned, archived = excluded.archived,
+                   deleted_at = excluded.deleted_at, position = excluded.position",
+                params![
+                    workspace.id.to_storage(),
+                    workspace.owner.to_storage(),
+                    workspace.name,
+                    workspace.created_at.millis(),
+                    workspace.last_opened_at.map(|t| t.millis()),
+                    workspace.icon,
+                    workspace.color,
+                    workspace.pinned,
+                    workspace.archived,
+                    workspace.deleted_at.map(|at| at.millis()),
+                    workspace.position,
+                ],
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::SqliteFailure(f, _)
+                    if f.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_FOREIGNKEY =>
+                {
+                    Error::new(Code::ProfileNotFound, "no such owner profile")
+                }
+                other => sql_failed(other),
+            })?;
+    if changed == 0 {
+        return Err(Error::new(
+            Code::ProfileNotFound,
+            "owner profile is absent or locally removed",
+        ));
+    }
+    // **A new Workspace is seeded at its Profile's own choice**, and at
+    // Local-only when nobody has made one. An existing Workspace keeps
+    // its choice and only has its owner projection corrected.
+    //
+    // This is not the evidence path D258 withdrew, and the difference is
+    // the whole of why it is here: the value copied is a *person's*
+    // explicit Profile choice, read downward at the moment they create a
+    // child under it. Seeding Local-only instead would mean a Workspace
+    // made after answering the prompt never moved a byte — hosted
+    // activation already inherits the Profile's switch (D238), so the two
+    // halves would disagree and the symptom would be pictures that never
+    // arrive in a Workspace whose documents do.
+    //
+    // It lands as a **default**, not a choice: the person can still set
+    // this Workspace Local-only, and that choice then outranks everything
+    // for the reason every other rule here exists.
+    //
+    // A move that puts the Workspace above its new Profile's ceiling is
+    // **not** repaired here -- the effective read reports the mismatch and
+    // the affected transport stops, because silently lowering a choice is
+    // the failure contract 3 exists to prevent.
+    tx.execute(
+        "INSERT INTO local_transport_modes
+               (subject_kind, subject_id, owner_profile_id, workspace_id,
+                mode, explicit_choice, revision)
+             SELECT 'workspace', ?1, ?2, ?1,
+                    COALESCE(
+                      (SELECT owner.mode FROM local_transport_modes owner
+                        WHERE owner.subject_kind = 'profile'
+                          AND owner.subject_id = ?2
+                          AND owner.explicit_choice = 1),
+                      'local_only'),
+                    0, 1
+              WHERE 1
+             ON CONFLICT(subject_kind, subject_id)
+               DO UPDATE SET owner_profile_id = excluded.owner_profile_id",
+        params![workspace.id.to_storage(), workspace.owner.to_storage()],
+    )
+    .map_err(sql_failed)?;
+    Ok(())
 }
 
 #[cfg(test)]

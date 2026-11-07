@@ -67,6 +67,7 @@ pub mod preferences;
 mod profile_activation;
 mod profile_lifecycle_decision;
 mod profile_runtime;
+pub mod profile_wait;
 pub mod reveal;
 /// Who owns the keyboard, factored so the container and the built-in
 /// document cannot drift apart about it. See the module's own note.
@@ -1222,6 +1223,70 @@ pub trait View {
     fn connected_profile_creation_failed(&mut self, _message: &str) -> bool {
         false
     }
+
+    fn connected_profile_creation_conflict(&mut self) -> bool {
+        false
+    }
+
+    fn show_profile_manager(&mut self, _profile: koru_core::ProfileId) -> bool {
+        false
+    }
+
+    /// Execute a validated embedded Profile draft on the window-owned link.
+    /// The background template worker resumes only after durable publication.
+    fn create_profile_with_workspace(
+        &mut self,
+        _request: koru_api_client::CreateProfileWithWorkspace,
+        reply: std::sync::mpsc::Sender<
+            koru_store_core::errors::Result<koru_api_client::CreatedProfile>,
+        >,
+    ) -> bool {
+        let _ = reply.send(Err(koru_store_core::Error::new(
+            koru_store_core::Code::StorageFailed,
+            "this window does not support Profile creation",
+        )));
+        false
+    }
+    /// Resolve availability on this window's worker. The host alone may land
+    /// the answer, after checking the window, Profile and attempt sequence.
+    fn ensure_live_workspace(
+        &mut self,
+        _owner: koru_store_core::ProfileId,
+        _name: String,
+        _attempt: u64,
+        reply: std::sync::mpsc::Sender<
+            koru_store_core::errors::Result<koru_api_client::EnsuredWorkspace>,
+        >,
+    ) -> bool {
+        let _ = reply.send(Err(koru_store_core::Error::new(
+            koru_store_core::Code::StorageFailed,
+            "this window does not support workspace preparation",
+        )));
+        false
+    }
+
+    /// Cached durable authority only. A failed read must never claim removal.
+    fn workspace_retired(&self, _profile: ProfileId, _workspace: WorkspaceId) -> bool {
+        false
+    }
+
+    /// Applied local live content precedes Cloud delivery. Listing repair may
+    /// still be required; EnsureLive performs it before navigation.
+    fn profile_has_live_content(&self, _profile: ProfileId) -> bool {
+        false
+    }
+
+    fn profile_removal(
+        &self,
+        _profile: ProfileId,
+    ) -> Option<Option<koru_store_core::profile_removal::RemovalMark>> {
+        None
+    }
+
+    fn set_profile_wait(&mut self, _waiting: Option<profile_wait::ProfileWait>) -> bool {
+        false
+    }
+
     fn connected_profile_connection_paused(
         &mut self,
         _owner_scope: u64,
@@ -2233,6 +2298,7 @@ impl Eq for MoveSelectionPayload {}
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ConnectedProfileDraft {
+    pub id: ProfileId,
     pub owner_display_name: String,
     pub profile_name: String,
     pub workspace_name: String,
@@ -2553,6 +2619,14 @@ pub enum PaneRequest {
     PurgeDocuments(Vec<koru_core::DocumentId>),
     /// Switch the requesting window to this Store profile in place.
     SwitchProfile(ProfileId),
+    /// A Store availability receipt may land only in its still-waiting window.
+    LandIn {
+        profile: ProfileId,
+        workspace: WorkspaceId,
+        attempt: profile_wait::WaitAttempt,
+    },
+    CancelProfileWait(profile_wait::WaitAttempt),
+    RetryProfileWait(profile_wait::WaitAttempt),
     /// Switch the requesting window to this Profile **and this workspace in
     /// it**, in place. What the switcher sends when a workspace of another
     /// Profile is chosen; within the open Profile it is a workspace switch.
@@ -2836,6 +2910,9 @@ impl PaneRequest {
             Self::EmptyDocumentTrash => "request.empty_trash",
             Self::PurgeDocuments(..) => "request.purge_documents",
             Self::SwitchProfile(..) => "request.switch_profile",
+            Self::LandIn { .. } => "request.land_in",
+            Self::CancelProfileWait(..) => "request.cancel_profile_wait",
+            Self::RetryProfileWait(..) => "request.retry_profile_wait",
             Self::SwitchToWorkspaceIn(..) => "request.switch_to_workspace_in",
             Self::RenameProfile(..) => "request.rename_profile",
             Self::SetProfileAppearance { .. } => "request.profile_appearance",
@@ -3310,7 +3387,12 @@ pub trait Host {
     fn account_command_deadline(&self) -> Option<std::time::Instant> {
         None
     }
-    fn remove_local_profile(&self, _profile: ProfileId) {}
+    fn remove_local_profile(
+        &self,
+        _profile: ProfileId,
+        _attempt: koru_store_core::ids::RemovalAttemptId,
+    ) {
+    }
 
     fn take_local_profile_removal(
         &self,

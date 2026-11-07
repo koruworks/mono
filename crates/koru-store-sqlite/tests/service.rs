@@ -1357,7 +1357,17 @@ fn profile_account_binding_distinguishes_missing_and_locally_removed() {
         .store
         .create_profile("Removed", None, None, Locale::default(), at(1))
         .unwrap();
-    f.store.remove_profile_local(removed.id, at(2)).unwrap();
+    let mark = f
+        .store
+        .begin_profile_removal(
+            removed.id,
+            koru_store_core::profile_removal::RemovalKind::Local,
+            at(2),
+        )
+        .unwrap();
+    f.store
+        .remove_profile_local(removed.id, Some(mark.attempt), at(2))
+        .unwrap();
     assert_eq!(
         f.store
             .bind_profile_account(removed.id, None, identity)
@@ -1422,7 +1432,7 @@ fn local_removal_refuses_a_legacy_holder_row() {
 
     assert_eq!(
         store
-            .remove_profile_local(holder.id, at(2))
+            .remove_profile_local(holder.id, None, at(2))
             .unwrap_err()
             .code(),
         Code::ProfileReserved
@@ -1440,16 +1450,28 @@ fn removing_an_empty_profile_uses_soft_deletion_and_keeps_its_owned_content() {
         .unwrap()
         .0;
 
+    let mark = f
+        .store
+        .begin_profile_removal(
+            owner,
+            koru_store_core::profile_removal::RemovalKind::Local,
+            at(2),
+        )
+        .unwrap();
     assert_eq!(
         f.store
-            .remove_profile_local(owner, at(2))
+            .remove_profile_local(owner, Some(mark.attempt), at(2))
             .unwrap_err()
             .code(),
         Code::ProfileNotEmpty
     );
-    f.store.delete_workspace(workspace, at(3)).unwrap();
+    f.store
+        .delete_workspace_for_removal(workspace, mark.attempt, at(3))
+        .unwrap();
     assert_eq!(
-        f.store.remove_profile_local(owner, at(4)).unwrap(),
+        f.store
+            .remove_profile_local(owner, Some(mark.attempt), at(4))
+            .unwrap(),
         LocalProfileRemoval::Removed
     );
     assert!(f.store.profiles().unwrap().is_empty());
@@ -1474,8 +1496,11 @@ fn removing_an_empty_profile_uses_soft_deletion_and_keeps_its_owned_content() {
         "local Profile removal must not delete Workspace content"
     );
     assert_eq!(
-        f.store.remove_profile_local(owner, at(5)).unwrap(),
-        LocalProfileRemoval::AlreadyRemoved
+        f.store
+            .remove_profile_local(owner, Some(mark.attempt), at(5))
+            .unwrap_err()
+            .code(),
+        Code::RemovalAttemptStale
     );
 
     assert_eq!(

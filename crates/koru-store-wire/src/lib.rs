@@ -50,7 +50,15 @@
 //! a required field quiet.
 
 pub mod attributes;
+mod availability;
+pub use availability::*;
+mod replacement;
+pub use replacement::*;
+mod profile_removal;
+pub use profile_removal::*;
 pub mod bundle;
+mod creation;
+pub use creation::{CreateProfileWithWorkspace, CreatedProfile, FirstWorkspace};
 pub mod internal;
 pub mod profile_lifecycle;
 pub mod search;

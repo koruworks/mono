@@ -280,7 +280,7 @@ fn reconnect_retirement_completes_account_operations_once() {
     link.connection_generation.store(7, Ordering::Release);
     link.live.store(true, Ordering::Release);
     let profile = ProfileId::parse(P).unwrap();
-    link.remove_local_profile(profile);
+    link.remove_local_profile(profile, koru_store_core::ids::RemovalAttemptId::new());
     link.bind_local_profile_account(profile, None, "account-a".into());
     assert!(matches!(
         receive.recv().unwrap(),
@@ -1259,7 +1259,8 @@ fn account_result_queue_is_bounded_and_keeps_the_newest_completions() {
 fn local_profile_removal_request_is_exact_and_correlated() {
     let (link, requests) = AgentLink::for_test();
     let profile = koru_core::ProfileId::new();
-    link.remove_local_profile(profile);
+    let attempt = koru_store_core::ids::RemovalAttemptId::new();
+    link.remove_local_profile(profile, attempt);
     assert_eq!(
         requests
             .recv_timeout(std::time::Duration::from_secs(1))
@@ -1268,6 +1269,7 @@ fn local_profile_removal_request_is_exact_and_correlated() {
             id: 1,
             body: Request::RemoveLocalProfile {
                 profile_id: profile.to_storage(),
+                attempt: Some(attempt.to_storage()),
             },
         }
     );

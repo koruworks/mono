@@ -809,7 +809,11 @@ impl AgentLink {
             .unwrap_or_else(|e| e.into_inner())
             .deadline()
     }
-    pub fn remove_local_profile(&self, profile: ProfileId) {
+    pub fn remove_local_profile(
+        &self,
+        profile: ProfileId,
+        attempt: koru_store_core::ids::RemovalAttemptId,
+    ) {
         let profile_id = profile.to_storage();
         let Some(writer) = self.current_writer() else {
             self.profile_removal_results
@@ -827,7 +831,10 @@ impl AgentLink {
         if writer
             .send(FromShell::Request {
                 id,
-                body: Request::RemoveLocalProfile { profile_id },
+                body: Request::RemoveLocalProfile {
+                    profile_id,
+                    attempt: Some(attempt.to_storage()),
+                },
             })
             .is_err()
         {

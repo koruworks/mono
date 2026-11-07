@@ -249,6 +249,8 @@ impl MainView {
         let mut out = Vec::new();
         if self.sidebar.is_open() {
             out.push(self.explore.semantics(&self.explore_context(cx)));
+        } else {
+            out.extend(self.explore.popover_semantics(&self.explore_context(cx)));
         }
         out.push(self.tabs_semantics(cx));
         out.extend(self.caption_semantics(cx));
@@ -357,13 +359,16 @@ impl MainView {
         if self.ai_visible() && self.ai_focused {
             return Some(cx.surface(SHELL, parts::AI));
         }
-        if self.sidebar.is_open()
+        if (self.sidebar.is_open() || self.explore.popover_open())
             && let Some(occurrence) = self.explore.accessible_focus(&self.explore_context(&cx))
         {
             return Some(occurrence);
         }
         if let Some(query) = commands::focus(self, &cx) {
             return Some(query);
+        }
+        if let Some(focus) = self.profile_wait_focus(&cx) {
+            return Some(focus);
         }
         // The document itself, when the active tab is one and its editor is
         // what has the keyboard. Read from `ViewState::active` and
@@ -428,10 +433,13 @@ impl MainView {
 
     /// Everything the window publishes **except** the document body.
     fn revise_chrome(&self, rev: &mut Revision) {
+        rev.u64(self.profile_wait.revision);
         rev.bool(self.sidebar.is_open());
         rev.bool(self.ai_visible()).bool(self.ai_focused);
         if self.sidebar.is_open() {
             self.explore.revise(rev);
+        } else {
+            self.explore.revise_popover(rev);
         }
         rev.u64(self.tabs().len() as u64);
         rev.u64(self.tabs().active() as u64);
@@ -444,6 +452,10 @@ impl MainView {
         // keyword rather than `Debug`, because this runs on the loop and a
         // formatted string per pass is an allocation nothing needs.
         rev.str(menus::blocker_keyword(self.blockers()));
+        if let Some(dialog) = self.workspace_controller.borrow().dialog() {
+            rev.str(dialog.title());
+            rev.str(dialog.body());
+        }
         // The media viewer's zoom is spoken, so a zoom is news; its toolbar
         // moves with the window, which is folded in below.
         if let Some(viewer) = self.lifted_viewer_semantics(koru_i18n::Lang::En) {
@@ -520,6 +532,9 @@ impl MainView {
         if blocking && !menus::is_blocker_target(self, target) {
             return false;
         }
+        if self.profile_wait_action(target, action) {
+            return true;
+        }
         if self.media_viewer_action(target, action) {
             return true;
         }
@@ -543,6 +558,9 @@ impl MainView {
         }
         if chrome::action(self, ws, target, action) {
             return true;
+        }
+        if self.profile_wait_visible() {
+            return self.explore_action(ws, target, action);
         }
         // The open document's own paragraphs, before the explore column: both
         // answer a `Model` target, and the document is the one in front of the
@@ -569,7 +587,7 @@ impl MainView {
         }
         // The Manage tab's nav, which answers `Model` targets for its Profile
         // rows — scoped by parts no other surface uses.
-        if self.manage_action(target, action) {
+        if self.manage_action(target, action, data) {
             return true;
         }
         self.explore_action(ws, target, action)
@@ -738,7 +756,12 @@ impl MainView {
     }
 
     /// Do what a client asked of the Manage tab, and drain what it asked for.
-    fn manage_action(&mut self, target: Occurrence, action: Action) -> bool {
+    fn manage_action(
+        &mut self,
+        target: Occurrence,
+        action: Action,
+        data: Option<&ActionData>,
+    ) -> bool {
         // The request names the view it was published in; the tab's frame of
         // reference is the same one its tree was built against.
         let shell = self.shell(target.view);
@@ -748,7 +771,8 @@ impl MainView {
         else {
             return false;
         };
-        let done = page.accessibility_action(&cx, target, action);
+        let done = page.creation_accessibility_action(target, action, data)
+            || page.accessibility_action(&cx, target, action);
         if done {
             self.drain_manage_profiles_request();
         }
@@ -761,7 +785,7 @@ impl MainView {
         target: Occurrence,
         action: Action,
     ) -> bool {
-        if !self.sidebar.is_open() {
+        if !self.sidebar.is_open() && !self.explore.popover_open() {
             return false;
         }
         let area = self.explore_area();
@@ -790,6 +814,10 @@ impl MainView {
     /// manager, the Trash, a session — is still a named region with nothing
     /// inside, and each of those is somebody else's plan.
     fn content_semantics(&self, cx: &Shell, scope: Scope) -> SemanticNode {
+        if let Some(waiting) = self.profile_wait_semantics(cx) {
+            self.bodies.borrow_mut().body_withheld(cx);
+            return waiting;
+        }
         let tab = self.tabs().active_tab();
         let label = if tab.label.is_empty() {
             t(cx.lang, Key::A11yContent).to_string()

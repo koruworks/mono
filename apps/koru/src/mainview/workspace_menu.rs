@@ -3,18 +3,15 @@
 //! **The workspace menu, and what the Manage tab's Workspaces ask of the
 //! window.**
 //!
-//! One menu for a workspace, wherever it is opened — a Profile page's row
-//! `•••`, or a right-click on the row — built by
-//! [`context_menu::workspace_items`] and enabled here. The Manage tab is where it
-//! opens (ADR-449-onemanagetab); the switcher's row menus went with the
-//! drill-in switcher.
+//! One action menu for a workspace, reached from the current-workspace menu,
+//! a Profile page's row or a right-click. It is built by
+//! [`context_menu::workspace_items`] and enabled here; opening Manage is not a
+//! prerequisite for its actions.
 //!
-//! **What a row is, and what may be done to it, is the Manage tab's
-//! controller's** (`koru_workspaces_ui::WorkspacesController`): it holds the
-//! including-deleted catalog of every Profile, this window's two
-//! authorizations and the confirmations. The window adds what only it knows —
-//! which workspace is open here, and which Profile — and keeps a fallback to
-//! its own lists for a workspace the controller has not heard of yet.
+//! The window's `WorkspacesController` holds the including-deleted catalog,
+//! authorizations, requests and confirmations. Manage, the rail and menus
+//! project that same controller. The window adds its current workspace and
+//! Profile, retaining pushed-list facts until the catalog has answered.
 //!
 //! Every verb ends up in one of three places: the controller (pin, reorder,
 //! move, archive, delete, restore — the Gateway calls it is entitled to
@@ -22,6 +19,7 @@
 //! icon and color).
 
 use super::*;
+#[cfg(test)]
 use crate::manage::ManageView;
 use crate::manage::workspaces::{app_profile, catalog_profile, catalog_workspace};
 use koru_workspaces_ui::{Action, WorkspacesController};
@@ -48,14 +46,64 @@ pub(super) struct WorkspaceFacts {
 }
 
 impl MainView {
+    /// Catalog furniture is available even when no navigator content has
+    /// been drawn. Opening a rail menu must not depend on a document rebuild.
+    pub(super) fn refresh_explore_context(&mut self) {
+        if self.context_stale
+            && let Some((profiles, mut current_profile, mut workspaces, mut current)) =
+                self.pane_context.clone()
+        {
+            if let Some(wait) = &self.profile_wait.waiting {
+                if wait.attempt.profile != current_profile {
+                    workspaces.clear();
+                }
+                current_profile = wait.attempt.profile;
+                current = None;
+            }
+            if let Some(rows) = self.workspace_controller.borrow().catalog_rows() {
+                let mut projected: Vec<_> = rows
+                    .iter()
+                    .filter(|row| {
+                        row.owner == catalog_profile(current_profile) && row.navigation_ready()
+                    })
+                    .map(|row| {
+                        let id = crate::manage::workspaces::app_workspace(row.id);
+                        let mut entry = workspaces
+                            .iter()
+                            .find(|entry| entry.id == id)
+                            .cloned()
+                            .unwrap_or_else(|| WorkspaceEntry::new(id, &row.name, 0));
+                        entry.name = row.name.clone();
+                        entry.icon = row.icon.clone();
+                        entry.color = row.color.clone();
+                        entry.pinned = row.pinned;
+                        entry.archived = row.archived;
+                        entry.deleted_at = None;
+                        entry.order = row.position;
+                        entry
+                    })
+                    .collect();
+                projected.sort_by_key(|entry| (entry.order, entry.id));
+                workspaces = projected;
+            }
+            self.context_stale = false;
+            self.explore
+                .set_context(profiles, current_profile, workspaces, current);
+        }
+    }
+
     /// The Profile this window has open.
     pub(super) fn current_profile_id(&self) -> Option<ProfileId> {
+        if let Some(wait) = &self.profile_wait.waiting {
+            return Some(wait.attempt.profile);
+        }
         self.pane_context
             .as_ref()
             .map(|(_, profile, _, _)| *profile)
     }
 
     /// The Manage tab, wherever it is in the window.
+    #[cfg(test)]
     pub(super) fn manage_view(&self) -> Option<&ManageView> {
         self.panes
             .iter_groups()
@@ -66,32 +114,21 @@ impl MainView {
             })
     }
 
-    pub(super) fn manage_view_mut(&mut self) -> Option<&mut ManageView> {
-        self.panes
-            .iter_groups_mut()
-            .flat_map(|(_, group)| group.tabs_mut().iter_mut())
-            .find_map(|tab| match &mut tab.view {
-                TabView::Manage(view) => Some(view),
-                _ => None,
-            })
-    }
-
-    /// The Manage tab's Workspaces controller, when there is a Manage tab.
-    fn manage_workspaces(&self) -> Option<&WorkspacesController> {
-        self.manage_view().map(ManageView::workspaces)
-    }
-
-    /// Run `call` on the Manage tab's controller for a workspace it lists.
-    /// `None` when there is no Manage tab or it has not heard of `id`.
+    /// Run `call` on the window controller for a workspace it lists.
+    /// `None` when the catalog has not heard of `id`.
     fn act_on_listed<R>(
         &mut self,
         id: WorkspaceId,
         call: impl FnOnce(&mut WorkspacesController, koru_store_core::ids::WorkspaceId) -> R,
     ) -> Option<R> {
         let wid = catalog_workspace(id);
-        let view = self.manage_view_mut()?;
-        view.workspaces().row(wid)?;
-        Some(view.with_workspaces(|c| call(c, wid)))
+        let result = {
+            let mut controller = self.workspace_controller.borrow_mut();
+            controller.row(wid)?;
+            call(&mut controller, wid)
+        };
+        self.refresh_manage_workspaces();
+        Some(result)
     }
 
     /// One workspace, by id: the Manage tab's catalog first (every Profile's,
@@ -99,8 +136,9 @@ impl MainView {
     /// switcher's per-Profile catalog.
     pub(super) fn workspace_facts(&self, id: WorkspaceId) -> Option<WorkspaceFacts> {
         if let Some(row) = self
-            .manage_workspaces()
-            .and_then(|c| c.row(catalog_workspace(id)))
+            .workspace_controller
+            .borrow()
+            .row(catalog_workspace(id))
         {
             return Some(WorkspaceFacts {
                 name: row.name.clone(),
@@ -146,9 +184,8 @@ impl MainView {
             .owner
             .is_some_and(|owner| Some(owner) != self.current_profile_id());
         let wid = catalog_workspace(id);
-        let listed = self
-            .manage_workspaces()
-            .and_then(|c| c.row(wid).map(|row| (c, row)));
+        let controller = self.workspace_controller.borrow();
+        let listed = controller.row(wid).map(|row| (&*controller, row));
         let ask = |action: Action| listed.and_then(|(c, row)| c.reason_for(&action, row));
         let unlisted = || listed.is_none().then(String::new);
         match action {
@@ -159,7 +196,7 @@ impl MainView {
             MenuAction::OpenInNewWindow => ask(Action::OpenInNewWindow(wid)),
             MenuAction::Rename => ask(Action::Rename(wid)),
             MenuAction::ChangeIconAndColor => ask(Action::Appearance(wid)),
-            MenuAction::Pin | MenuAction::Unpin => ask(Action::TogglePinned(wid)),
+            MenuAction::Pin | MenuAction::Unpin => ask(Action::TogglePinned(wid)).or_else(unlisted),
             MenuAction::MoveWorkspaceUp => {
                 ask(Action::MoveUp(wid)).or_else(unlisted).or_else(|| {
                     listed
@@ -218,14 +255,12 @@ impl MainView {
         };
         let items = context_menu::workspace_items(facts.pinned, facts.archived, facts.deleted);
         let destinations: Vec<(ProfileId, String)> = self
-            .manage_workspaces()
-            .map(|c| {
-                c.destinations(catalog_workspace(id))
-                    .into_iter()
-                    .map(|profile| (app_profile(profile.id), profile.name))
-                    .collect()
-            })
-            .unwrap_or_default();
+            .workspace_controller
+            .borrow()
+            .destinations(catalog_workspace(id))
+            .into_iter()
+            .map(|profile| (app_profile(profile.id), profile.name))
+            .collect();
         let refusals: Vec<(MenuAction, String)> = items
             .iter()
             .copied()
@@ -304,7 +339,7 @@ impl MainView {
                     }
                 }) {
                     Some(()) => true,
-                    None => self.ask_pane(PaneRequest::PinWorkspace(id, pinned)),
+                    None => false,
                 }
             }
             MenuAction::MoveWorkspaceUp => self
@@ -316,7 +351,7 @@ impl MainView {
             // A flyout's parent acts on nothing itself.
             MenuAction::MoveToProfile => false,
             // The controller asks the gateway what the move would close, then
-            // puts its confirmation up on the Manage tab.
+            // puts its confirmation up over the window.
             MenuAction::MoveWorkspaceTo(profile) => {
                 let moved = self
                     .act_on_listed(id, |c, wid| {
@@ -352,27 +387,17 @@ impl MainView {
         id: WorkspaceId,
         action: MenuAction,
     ) -> bool {
-        if self.manage_view().is_none() {
-            let owner = self
-                .workspace_facts(id)
-                .and_then(|facts| facts.owner)
-                .or(self.current_profile_id());
-            let Some(owner) = owner else {
-                return false;
-            };
-            self.open_manage(crate::manage::Page::Profile(owner));
-        }
         let wid = catalog_workspace(id);
-        let Some(view) = self.manage_view_mut() else {
-            return false;
+        let carried = {
+            let mut c = self.workspace_controller.borrow_mut();
+            match action {
+                MenuAction::Archive => c.archive_workspace(wid, true),
+                MenuAction::Unarchive => c.archive_workspace(wid, false),
+                MenuAction::Delete => c.delete_workspace(wid),
+                MenuAction::RestoreWorkspace => c.restore_workspace(wid),
+                _ => false,
+            }
         };
-        let carried = view.with_workspaces(|c| match action {
-            MenuAction::Archive => c.archive_workspace(wid, true),
-            MenuAction::Unarchive => c.archive_workspace(wid, false),
-            MenuAction::Delete => c.delete_workspace(wid),
-            MenuAction::RestoreWorkspace => c.restore_workspace(wid),
-            _ => false,
-        });
         self.arm_workspaces_poll();
         carried
     }
@@ -380,7 +405,33 @@ impl MainView {
     /// Open a workspace in this window: here when it is the open Profile's,
     /// switching Profile first when it is another's.
     pub(super) fn open_workspace(&mut self, id: WorkspaceId) -> bool {
+        if self.workspace_controller.borrow().catalog_rows().is_some()
+            && self.workspace_controller.borrow().availability()
+                != koru_workspaces_ui::Availability::Live
+        {
+            return false;
+        }
+        if self
+            .workspace_controller
+            .borrow()
+            .catalog_rows()
+            .is_some_and(|rows| {
+                !rows
+                    .iter()
+                    .any(|row| row.id == catalog_workspace(id) && row.navigation_ready())
+            })
+        {
+            return false;
+        }
         let owner = self.workspace_facts(id).and_then(|facts| facts.owner);
+        if owner.is_some_and(|owner| {
+            self.workspace_controller
+                .borrow()
+                .profile_removal(catalog_profile(owner))
+                .is_some()
+        }) {
+            return false;
+        }
         match owner {
             Some(owner) if Some(owner) != self.current_profile_id() => {
                 self.ask_pane(PaneRequest::SwitchToWorkspaceIn(owner, id))
@@ -403,19 +454,55 @@ impl MainView {
         true
     }
 
-    /// Start the Workspaces tick while the Manage tab is in front.
+    /// A bounded fallback while a command is awaiting its keyed answer.
     pub(super) fn arm_workspaces_poll(&mut self) {
-        if matches!(self.tabs().active_tab().view, TabView::Manage(_)) {
-            self.workspaces_poll_due = Some(Instant::now() + WORKSPACES_POLL);
+        self.arm_workspaces_poll_at(Instant::now());
+    }
+
+    pub(super) fn arm_workspaces_poll_at(&mut self, now: Instant) {
+        if self.workspace_controller.borrow().has_pending() {
+            self.workspaces_poll_due
+                .get_or_insert(now + WORKSPACES_POLL);
+        } else {
+            self.workspaces_poll_due = None;
         }
     }
 
-    /// Take what the Manage tab's controller's link answered, while the tab
-    /// is in front.
+    /// Drain answers for this window independently of the selected tab.
     pub(super) fn poll_manage_workspaces(&mut self) -> bool {
-        match &mut self.tabs_mut().active_mut().view {
-            TabView::Manage(view) => view.poll_workspaces(),
-            _ => false,
+        let (changed, notice) = {
+            let mut controller = self.workspace_controller.borrow_mut();
+            controller.set_lang(crate::format::lang());
+            let previous = controller.notice().cloned();
+            let changed = controller.poll();
+            let notice = (controller.notice() != previous.as_ref())
+                .then(|| controller.notice().map(|notice| notice.text().to_owned()))
+                .flatten();
+            (changed, notice)
+        };
+        if let Some(notice) = notice {
+            tracing::info!(target: "koru::workspaces", reason = %notice, "workspace operation needs attention");
+            if self.menu.is_none() && !self.explore.popover_open() {
+                self.show_notice(notice);
+            }
+        }
+        if changed {
+            self.refresh_manage_workspaces();
+        }
+        changed
+    }
+
+    fn refresh_manage_workspaces(&mut self) {
+        self.context_stale = true;
+        self.refresh_explore_context();
+        let notice = self
+            .workspace_controller
+            .borrow()
+            .notice()
+            .map(|notice| notice.text().to_owned());
+        self.explore.set_workspace_notice(notice);
+        if let TabView::Manage(view) = &mut self.tabs_mut().active_mut().view {
+            view.refresh_workspaces();
         }
     }
 

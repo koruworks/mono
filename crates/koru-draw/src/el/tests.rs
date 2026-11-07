@@ -114,12 +114,13 @@ fn workspace_row(name: &str, current: bool) -> El {
     )
 }
 
-/// `workspaces.txt`, "width=256 … names=normal state=rest", row ws:0002:
-/// `row 54 571 258 26`, `tile 62 574 20 20`, `name 90 571 190 26`,
-/// `lane 284 571 20 26`; and at width=600 the panel is 584 wide.
+/// The P0 row fixture with Profile/workspace's approved 24 px workspace tile:
+/// `row 54 571 258 26`, `tile 62 572 24 24`, `name 94 571 186 26`,
+/// `lane 284 571 20 26`; and at width=600 the panel is 584 wide. Increasing
+/// the tile consumes name space, never the independently allocated gear lane.
 #[test]
-fn the_workspace_row_matches_the_p0_baseline_at_both_widths() {
-    for (panel_w, name_w, lane_x) in [(258.0, 190.0, 284.0), (584.0, 516.0, 610.0)] {
+fn the_workspace_row_matches_the_approved_geometry_at_both_widths() {
+    for (panel_w, name_w, lane_x) in [(258.0, 186.0, 284.0), (584.0, 512.0, 610.0)] {
         for cx in contexts() {
             for current in [false, true] {
                 let tree = workspace_row("Client work", current);
@@ -130,11 +131,11 @@ fn the_workspace_row_matches_the_p0_baseline_at_both_widths() {
                     "Workspace row",
                     Rect::new(54.0, 571.0, panel_w, 26.0),
                 );
-                assert_rect(&frame, "Workspace tile", Rect::new(62.0, 574.0, 20.0, 20.0));
+                assert_rect(&frame, "Workspace tile", Rect::new(62.0, 572.0, 24.0, 24.0));
                 assert_rect(
                     &frame,
                     "Workspace name",
-                    Rect::new(90.0, 571.0, name_w, 26.0),
+                    Rect::new(94.0, 571.0, name_w, 26.0),
                 );
                 assert_rect(&frame, "Manage gear", Rect::new(lane_x, 571.0, 20.0, 26.0));
                 // The lit plate is the row inset by 4, as `draw_page` fills it.
@@ -154,7 +155,7 @@ fn the_workspace_row_matches_the_p0_baseline_at_both_widths() {
 }
 
 /// The row is 26 because of its minimum, not because the area said so: in a
-/// hugging column its content (a 20 tile, an 18 line) would be shorter.
+/// hugging column its content (a 24 tile, an 18 line) would be shorter.
 #[test]
 fn the_row_minimum_is_what_makes_it_26() {
     let tree = workspace_row("Example", false);

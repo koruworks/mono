@@ -64,11 +64,13 @@ fn missing_profiles_are_account_scoped_and_exclude_retained_local_content() {
 use koru_workspace_host::account_ui::{CommandAdmission, CommandFailure};
 
 fn key(c: &mut ProfilesController, key: NamedKey) {
-    assert!(c.profile_creation.as_mut().unwrap().key(
-        &Key::Named(key),
-        None,
-        ModifiersState::empty()
-    ));
+    assert!(
+        c.profile_creation
+            .as_mut()
+            .map(std::cell::RefCell::get_mut)
+            .unwrap()
+            .key(&Key::Named(key), None, ModifiersState::empty())
+    );
     c.drain_profile_creation_action();
 }
 
@@ -195,6 +197,7 @@ fn all_selection_crosses_real_manager_dispatch_and_parked_admission_without_touc
         c.profile_creation
             .as_ref()
             .unwrap()
+            .borrow()
             .command_submission(&AccountCommand::SelectProfiles {
                 profile_ids: vec![]
             })

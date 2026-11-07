@@ -175,8 +175,17 @@ fn restoring_a_profile_this_device_was_told_about_refuses_to_mint_from_legacy_by
             &[peers_legacy_document(id)],
         )
         .unwrap();
+    let mark = store
+        .begin_profile_removal(
+            id,
+            koru_store_core::profile_removal::RemovalKind::Local,
+            at(),
+        )
+        .unwrap();
     assert_eq!(
-        store.remove_profile_local(id, at()).unwrap(),
+        store
+            .remove_profile_local(id, Some(mark.attempt), at())
+            .unwrap(),
         LocalProfileRemoval::Removed,
     );
 
@@ -279,8 +288,20 @@ fn a_locally_removed_legacy_profile_is_grandfathered_and_still_restores() {
         catalog
             .commit_profile_crdt(&profile, &legacy.export_snapshot().unwrap())
             .unwrap();
+        let mark = catalog
+            .update_profile_removal(
+                id,
+                koru_store_core::profile_removal::RemovalUpdate::Begin {
+                    kind: koru_store_core::profile_removal::RemovalKind::Local,
+                    at: at(),
+                },
+            )
+            .unwrap()
+            .unwrap();
         assert_eq!(
-            catalog.remove_profile_local(id, at()).unwrap(),
+            catalog
+                .remove_profile_local(id, Some(mark.attempt), at())
+                .unwrap(),
             LocalProfileRemoval::Removed,
         );
     }

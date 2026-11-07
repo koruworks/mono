@@ -99,6 +99,9 @@ pub struct EmojiColorPanel {
     color_index: usize,
     cursor: CursorIcon,
     field_dragging: bool,
+    body_scroll: f32,
+    max_body_scroll: f32,
+    viewport: Option<(f32, f32)>,
 }
 
 impl EmojiColorPanel {
@@ -181,13 +184,16 @@ impl EmojiColorPanel {
             color_index: Self::index_of(&color),
             cursor: CursorIcon::Default,
             field_dragging: false,
+            body_scroll: 0.0,
+            max_body_scroll: 0.0,
+            viewport: None,
         }
     }
 
     fn height(&self) -> f32 {
         PAD + PREVIEW
             + SECTION_GAP
-            + Self::color_row(&Self::colors()).height()
+            + Self::color_height(self.picker.geometry().width)
             + SECTION_GAP
             + HEADING_H
             + self.picker.height()
@@ -207,6 +213,63 @@ impl EmojiColorPanel {
         )
     }
 
+    fn fit(&mut self, engine: &mut TextEngine, viewport: (f32, f32)) {
+        self.viewport = Some(viewport);
+        let width = self.panel(viewport).w - PAD * 2.0;
+        self.picker.set_fill_width(width);
+        let panel = self.panel(viewport);
+        self.max_body_scroll = self.max_scroll(engine, panel);
+        self.body_scroll = self.body_scroll.clamp(0.0, self.max_body_scroll);
+    }
+
+    fn body_rect(&self, engine: &mut TextEngine, panel: Rect) -> Rect {
+        let (clear, cancel, save) = self.buttons(engine, panel);
+        let bottom = clear.y.min(cancel.y).min(save.y) - 14.0;
+        Rect::new(
+            panel.x + PAD,
+            panel.y + PAD,
+            panel.w - PAD * 2.0,
+            (bottom - panel.y - PAD).max(0.0),
+        )
+    }
+
+    fn max_scroll(&self, engine: &mut TextEngine, panel: Rect) -> f32 {
+        let body = self.body_rect(engine, panel);
+        let picker = self.picker_rect(panel);
+        (picker.y + picker.h - body.y - body.h).max(0.0)
+    }
+
+    fn reveal_focus(&mut self, engine: &mut TextEngine) {
+        let Some(viewport) = self.viewport else {
+            return;
+        };
+        let panel = self.panel(viewport);
+        let body = self.body_rect(engine, panel);
+        let picker = self.picker_rect(panel);
+        let local = match self.focus {
+            Focus::Color => self.color_rect(panel),
+            Focus::Search | Focus::Emoji | Focus::Category => {
+                let geometry = self.picker.geometry();
+                let rect = match self.focus {
+                    Focus::Search => geometry.search_rect(),
+                    Focus::Emoji => self
+                        .picker
+                        .cell_rect(self.picker.sel)
+                        .unwrap_or(geometry.grid_rect()),
+                    _ => geometry.category_rect(0).unwrap(),
+                };
+                Rect::new(picker.x + rect.x, picker.y + rect.y, rect.w, rect.h)
+            }
+            _ => return,
+        };
+        if local.y - self.body_scroll < body.y {
+            self.body_scroll = local.y - body.y;
+        } else if local.y + local.h - self.body_scroll > body.y + body.h {
+            self.body_scroll = local.y + local.h - body.y - body.h;
+        }
+        self.body_scroll = self.body_scroll.clamp(0.0, self.max_scroll(engine, panel));
+    }
+
     /// Every colour on offer, "none" first.
     fn colors() -> Vec<Option<vello::peniko::Color>> {
         std::iter::once(None)
@@ -224,12 +287,59 @@ impl EmojiColorPanel {
         koru_ui::ColorPickerRow::new(colors).label("COLOR")
     }
 
+    fn color_columns(width: f32) -> usize {
+        ((width + koru_ui::Swatch::GAP) / (koru_ui::Swatch::SIZE + koru_ui::Swatch::GAP))
+            .floor()
+            .max(1.0) as usize
+    }
+
+    fn color_height(width: f32) -> f32 {
+        let rows = Self::colors().len().div_ceil(Self::color_columns(width));
+        Self::color_row(&Self::colors()).height()
+            + (rows - 1) as f32 * (koru_ui::Swatch::SIZE + koru_ui::Swatch::RING_REACH * 2.0)
+            + koru_ui::Swatch::RING_REACH
+    }
+
+    fn color_rows(&self, panel: Rect) -> Vec<(usize, Rect)> {
+        let bounds = self.color_rect(panel);
+        let columns = Self::color_columns(bounds.w);
+        let first_height = Self::color_row(&Self::colors()).height();
+        (0..Self::colors().len())
+            .step_by(columns)
+            .enumerate()
+            .map(|(row, start)| {
+                let y = if row == 0 {
+                    bounds.y
+                } else {
+                    bounds.y
+                        + first_height
+                        + koru_ui::Swatch::RING_REACH * 2.0
+                        + (row - 1) as f32
+                            * (koru_ui::Swatch::SIZE + koru_ui::Swatch::RING_REACH * 2.0)
+                };
+                (
+                    start,
+                    Rect::new(
+                        bounds.x,
+                        y,
+                        bounds.w,
+                        if row == 0 {
+                            first_height
+                        } else {
+                            koru_ui::Swatch::SIZE
+                        },
+                    ),
+                )
+            })
+            .collect()
+    }
+
     fn color_rect(&self, panel: Rect) -> Rect {
         Rect::new(
             panel.x + PAD,
             panel.y + PAD + PREVIEW + SECTION_GAP,
             panel.w - PAD * 2.0,
-            Self::color_row(&Self::colors()).height(),
+            Self::color_height(panel.w - PAD * 2.0),
         )
     }
 
@@ -237,10 +347,14 @@ impl EmojiColorPanel {
     #[cfg(test)]
     fn swatch_rect(&self, panel: Rect, n: usize) -> Option<Rect> {
         let colors = Self::colors();
-        Self::color_row(&colors)
-            .swatches(self.color_rect(panel))
-            .get(n)
-            .copied()
+        let columns = Self::color_columns(panel.w - PAD * 2.0);
+        let (start, rect) = self
+            .color_rows(panel)
+            .into_iter()
+            .find(|(start, _)| n >= *start && n < *start + columns)?;
+        let row = koru_ui::ColorPickerRow::new(&colors[start..(start + columns).min(colors.len())]);
+        let row = if start == 0 { row.label("COLOR") } else { row };
+        row.swatches(rect).get(n - start).copied()
     }
 
     fn picker_rect(&self, panel: Rect) -> Rect {
@@ -261,7 +375,12 @@ impl EmojiColorPanel {
         let clear_w = button_width(engine, "Clear emoji");
         let save = Rect::new(panel.x + panel.w - PAD - save_w, y, save_w, BTN_H);
         let cancel = Rect::new(save.x - BTN_GAP - cancel_w, y, cancel_w, BTN_H);
-        let clear = Rect::new(panel.x + PAD, y, clear_w, BTN_H);
+        let clear_y = if panel.x + PAD + clear_w + BTN_GAP > cancel.x {
+            y - BTN_H - BTN_GAP
+        } else {
+            y
+        };
+        let clear = Rect::new(panel.x + PAD, clear_y, clear_w, BTN_H);
         (clear, cancel, save)
     }
 
@@ -277,10 +396,21 @@ impl EmojiColorPanel {
         if clear.contains(x, y) {
             return Some(Hit::ClearEmoji);
         }
+        if !self.body_rect(engine, panel).contains(x, y) {
+            return None;
+        }
         let colors = Self::colors();
-        Self::color_row(&colors)
-            .hit(self.color_rect(panel), x, y)
-            .map(Hit::Swatch)
+        let columns = Self::color_columns(panel.w - PAD * 2.0);
+        self.color_rows(panel)
+            .into_iter()
+            .find_map(|(start, rect)| {
+                let row = koru_ui::ColorPickerRow::new(
+                    &colors[start..(start + columns).min(colors.len())],
+                );
+                let row = if start == 0 { row.label("COLOR") } else { row };
+                row.hit(rect, x, y + self.body_scroll)
+                    .map(|index| Hit::Swatch(start + index))
+            })
     }
 
     fn color_of(n: usize) -> Option<String> {
@@ -336,6 +466,18 @@ impl EmojiColorPanel {
     }
 
     pub fn key(
+        &mut self,
+        engine: &mut TextEngine,
+        key: &Key,
+        text: Option<&str>,
+        mods: ModifiersState,
+    ) -> Outcome {
+        let outcome = self.key_inner(engine, key, text, mods);
+        self.reveal_focus(engine);
+        outcome
+    }
+
+    fn key_inner(
         &mut self,
         engine: &mut TextEngine,
         key: &Key,
@@ -420,6 +562,7 @@ impl EmojiColorPanel {
         x: f32,
         y: f32,
     ) -> Outcome {
+        self.fit(engine, viewport);
         let panel = self.panel(viewport);
         match self.hit_at(engine, viewport, x, y) {
             Some(Hit::Save) => {
@@ -444,8 +587,9 @@ impl EmojiColorPanel {
         }
 
         let picker = self.picker_rect(panel);
-        if picker.contains(x, y) {
-            let (lx, ly) = (x - picker.x, y - picker.y);
+        if self.body_rect(engine, panel).contains(x, y) && picker.contains(x, y + self.body_scroll)
+        {
+            let (lx, ly) = (x - picker.x, y + self.body_scroll - picker.y);
             self.focus = if self
                 .picker
                 .field_rect()
@@ -484,9 +628,15 @@ impl EmojiColorPanel {
         x: f32,
         y: f32,
     ) -> bool {
+        self.fit(engine, viewport);
         let panel = self.panel(viewport);
         let picker = self.picker_rect(panel);
-        let (lx, ly) = (x - picker.x, y - picker.y);
+        let in_body = self.body_rect(engine, panel).contains(x, y);
+        let (lx, ly) = if in_body || self.field_dragging || self.picker.is_dragging_scrollbar() {
+            (x - picker.x, y + self.body_scroll - picker.y)
+        } else {
+            (-1.0, -1.0)
+        };
         if self.picker.is_dragging_scrollbar() {
             self.picker.drag_scrollbar(ly);
             return true;
@@ -511,7 +661,7 @@ impl EmojiColorPanel {
             .is_some_and(|field| field.contains(lx, ly))
         {
             CursorIcon::Text
-        } else if picker.contains(x, y) {
+        } else if in_body && picker.contains(x, y + self.body_scroll) {
             koru_ui::cursor::PRESS
         } else {
             CursorIcon::Default
@@ -527,6 +677,16 @@ impl EmojiColorPanel {
     }
 
     pub fn scroll_by(&mut self, delta: MouseScrollDelta) {
+        let pixels = match delta {
+            MouseScrollDelta::LineDelta(_, y) => -y * 32.0,
+            MouseScrollDelta::PixelDelta(p) => -p.y as f32,
+        };
+        let next = (self.body_scroll + pixels).clamp(0.0, self.max_body_scroll);
+        if next != self.body_scroll {
+            self.body_scroll = next;
+            self.hover = None;
+            return;
+        }
         let y = match delta {
             MouseScrollDelta::LineDelta(_, y) => y,
             MouseScrollDelta::PixelDelta(p) => p.y as f32,
@@ -549,6 +709,7 @@ impl EmojiColorPanel {
         engine: &mut TextEngine,
         viewport: (f32, f32),
     ) {
+        self.fit(engine, viewport);
         let p = theme::p();
         scene::fill(
             scene,
@@ -579,6 +740,13 @@ impl EmojiColorPanel {
             &scene::Panel::popover(RADIUS),
         );
 
+        let body = self.body_rect(engine, panel);
+        let reach = koru_ui::Swatch::RING_REACH;
+        let clip = scene::rect(body.x - reach, body.y, body.w + reach * 2.0, body.h);
+        scene.push_clip_layer(vello::peniko::Fill::NonZero, root, &clip);
+        let body_clip = inspect::clip(root, clip);
+        let modal_root = root;
+        let root = root * Affine::translate((0.0, -f64::from(self.body_scroll)));
         let tile = Rect::new(panel.x + PAD, panel.y + PAD, PREVIEW, PREVIEW);
         Tile {
             icon: self.icon.as_deref(),
@@ -603,11 +771,25 @@ impl EmojiColorPanel {
             Some(Hit::Swatch(n)) => Some(n),
             _ => None,
         };
-        Self::color_row(&colors)
-            .selected(Some(Self::index_of(&self.color)))
-            .hovered(hovered)
-            .focused((self.focus == Focus::Color).then_some(self.color_index))
-            .draw(scene, root, engine, self.color_rect(panel));
+        let columns = Self::color_columns(panel.w - PAD * 2.0);
+        for (start, rect) in self.color_rows(panel) {
+            let end = (start + columns).min(colors.len());
+            let local = |index: usize| {
+                index
+                    .checked_sub(start)
+                    .filter(|index| *index < end - start)
+            };
+            let row = koru_ui::ColorPickerRow::new(&colors[start..end]);
+            let row = if start == 0 { row.label("COLOR") } else { row };
+            row.selected(local(Self::index_of(&self.color)))
+                .hovered(hovered.and_then(local))
+                .focused(
+                    (self.focus == Focus::Color)
+                        .then(|| local(self.color_index))
+                        .flatten(),
+                )
+                .draw(scene, root, engine, rect);
+        }
 
         let picker = self.picker_rect(panel);
         heading(
@@ -627,6 +809,10 @@ impl EmojiColorPanel {
             picker.y,
             picker.w,
         );
+
+        scene.pop_layer();
+        drop(body_clip);
+        let root = modal_root;
 
         let (clear, cancel, save) = self.buttons(engine, panel);
         button(

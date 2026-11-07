@@ -156,6 +156,75 @@ impl Backend for SqliteBackend {
     type Workspace = SqliteWorkspace;
     type Blobs = crate::blobs::SqliteBlobs;
 
+    fn inspect_workspace_manifest(
+        &self,
+        id: WorkspaceId,
+    ) -> koru_store_core::service::WorkspaceManifestInspection {
+        use koru_store_core::service::WorkspaceManifestInspection;
+        let span =
+            koru_store_core::stats::Span::start(koru_store_core::stats::names::AUTHORITY_READ);
+        let inspected = (|| {
+            let connection = if let Some(memory) = &self.memory {
+                // Hold the keeper until the new connection has joined. Unlike
+                // open(), this never inserts a missing entry in the map.
+                let held = memory.held.lock().unwrap_or_else(|e| e.into_inner());
+                let Some((name, _)) = held.get(&id) else {
+                    return Err(koru_store_core::Error::new(
+                        koru_store_core::Code::StorageFailed,
+                        "workspace storage is missing",
+                    ));
+                };
+                rusqlite::Connection::open_with_flags(
+                    format!("file:{}?mode=memory&cache=shared", name.as_str()),
+                    rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
+                        | rusqlite::OpenFlags::SQLITE_OPEN_URI
+                        | rusqlite::OpenFlags::SQLITE_OPEN_SHARED_CACHE,
+                )
+                .map_err(crate::db::sql_failed)?
+            } else {
+                rusqlite::Connection::open_with_flags(
+                    self.workspace_db(id),
+                    rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+                )
+                .map_err(crate::db::sql_failed)?
+            };
+            SqliteWorkspace::inspect_existing_connection(connection, id)
+        })();
+        span.stop();
+        inspected.unwrap_or_else(WorkspaceManifestInspection::Unavailable)
+    }
+
+    fn create_workspace(&self, id: WorkspaceId) -> Result<Self::Workspace> {
+        if let Some(memory) = &self.memory {
+            return memory.create(id);
+        }
+        use koru_store_core::{Code, Error};
+        let directory = self.workspace_dir(id);
+        std::fs::create_dir_all(self.root.join(WORKSPACES_DIR)).map_err(|e| {
+            Error::new(Code::StorageFailed, format!("create workspace parent: {e}"))
+        })?;
+        std::fs::create_dir(&directory).map_err(|e| {
+            Error::new(
+                if e.kind() == std::io::ErrorKind::AlreadyExists {
+                    Code::WorkspaceExists
+                } else {
+                    Code::StorageFailed
+                },
+                format!("claim workspace {}: {e}", directory.display()),
+            )
+        })?;
+        match self.open_workspace(id) {
+            Ok(repo) => Ok(repo),
+            Err(error) => {
+                if let Err(cleanup) = std::fs::remove_dir_all(&directory) {
+                    tracing::warn!(path = %directory.display(), error = %cleanup,
+                        "could not clean up fresh workspace after failed open");
+                }
+                Err(error)
+            }
+        }
+    }
+
     fn open_workspace(&self, id: WorkspaceId) -> Result<Self::Workspace> {
         if let Some(memory) = &self.memory {
             return memory.open(id);
@@ -188,7 +257,7 @@ impl Backend for SqliteBackend {
         std::fs::remove_dir_all(&directory).map_err(|error| {
             koru_store_core::Error::new(
                 koru_store_core::Code::StorageFailed,
-                format!("remove expired workspace: {error}"),
+                format!("remove workspace {}: {error}", directory.display()),
             )
         })
     }
@@ -219,6 +288,20 @@ impl Backend for SqliteBackend {
 }
 
 impl MemoryWorkspaces {
+    fn create(&self, id: WorkspaceId) -> Result<SqliteWorkspace> {
+        let mut held = self.held.lock().unwrap_or_else(|e| e.into_inner());
+        if held.contains_key(&id) {
+            return Err(koru_store_core::Error::bare(
+                koru_store_core::Code::WorkspaceExists,
+            ));
+        }
+        let name = koru_sqlite::MemoryName::fresh("workspace.db");
+        let keeper = koru_sqlite::open_memory(&name).map_err(crate::db::sql_failed)?;
+        let repo = SqliteWorkspace::in_named_memory(&name)?;
+        held.insert(id, (name, keeper));
+        Ok(repo)
+    }
+
     fn open(&self, id: WorkspaceId) -> Result<SqliteWorkspace> {
         let mut held = self.held.lock().unwrap_or_else(|e| e.into_inner());
         let name = match held.get(&id) {

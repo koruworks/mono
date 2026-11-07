@@ -25,6 +25,141 @@ fn profile(name: &str) -> ProfileSummary {
     }
 }
 
+#[test]
+fn only_verified_retirement_asks_the_host_to_leave_and_pending_rows_stay_out_of_navigation() {
+    let mut f = fixture();
+    let owner = profile("Owner");
+    let current = WorkspaceId::new();
+    let mut entry = row(current, &owner, "Current", 0);
+    for authority in [
+        koru_workspaces_ui::Authority::Unknown,
+        koru_workspaces_ui::Authority::Pending,
+        koru_workspaces_ui::Authority::Uncertain {
+            cause: "storage_failed".into(),
+            recovery: None,
+        },
+    ] {
+        entry.authority = authority;
+        entry.deleted = true;
+        f.v.workspace_controller
+            .borrow_mut()
+            .adopt_rows(&[entry.clone()]);
+        assert!(!View::workspace_retired(&f.v, owner.id, current));
+    }
+    entry.authority = koru_workspaces_ui::Authority::Verified;
+    entry.listing_differs = true;
+    f.v.workspace_controller
+        .borrow_mut()
+        .adopt_rows(&[entry.clone()]);
+    assert!(View::workspace_retired(&f.v, owner.id, current));
+    entry.deleted = false;
+    entry.archived = true;
+    f.v.workspace_controller
+        .borrow_mut()
+        .adopt_rows(&[entry.clone()]);
+    assert!(View::workspace_retired(&f.v, owner.id, current));
+    entry.archived = false;
+    f.v.workspace_controller
+        .borrow_mut()
+        .adopt_rows(&[entry.clone()]);
+    assert!(
+        !View::workspace_retired(&f.v, owner.id, current),
+        "repair alone is not removal"
+    );
+    assert!(
+        View::profile_has_live_content(&f.v, owner.id),
+        "repairable local content precedes Cloud"
+    );
+    entry.authority = koru_workspaces_ui::Authority::Pending;
+    f.v.workspace_controller
+        .borrow_mut()
+        .adopt_rows(&[entry.clone()]);
+    assert!(!View::profile_has_live_content(&f.v, owner.id));
+    entry.authority = koru_workspaces_ui::Authority::Verified;
+    entry.owner = koru_store_core::ProfileId::new();
+    f.v.workspace_controller.borrow_mut().adopt_rows(&[entry]);
+    assert!(View::workspace_retired(&f.v, owner.id, current));
+}
+
+#[test]
+fn availability_runs_on_the_window_link_with_manage_closed() {
+    use std::sync::{Arc, mpsc};
+    let mut f = fixture();
+    let (links, worker) = koru_workspaces_ui::WorkspaceLinks::fixture(Arc::new(|| {}));
+    f.v.workspace_controller = std::rc::Rc::new(std::cell::RefCell::new(
+        WorkspacesController::with_links(links),
+    ));
+    let owner = koru_store_core::ProfileId::new();
+    let (reply, answer) = mpsc::channel();
+    assert!(View::ensure_live_workspace(
+        &mut f.v,
+        owner,
+        "First".into(),
+        7,
+        reply
+    ));
+    assert!(f.v.manage_view().is_none());
+    assert!(f.v.workspaces_poll_due.is_some());
+    assert!(answer.try_recv().is_err());
+    assert_eq!(
+        worker.settle_availability(Ok(koru_api_client::EnsuredWorkspace::Pending {
+            workspaces: vec![],
+        })),
+        (owner, "First".into(), 7)
+    );
+    View::maintain(&mut f.v, &mut f.w.ws, Instant::now());
+    assert!(matches!(
+        answer.try_recv().unwrap().unwrap(),
+        koru_api_client::EnsuredWorkspace::Pending { .. }
+    ));
+    assert!(!f.v.workspace_controller.borrow().has_pending());
+    assert!(f.v.manage_view().is_none());
+}
+
+#[test]
+fn embedded_profile_publication_runs_on_the_window_link_with_manage_closed() {
+    use std::sync::{Arc, mpsc};
+    let mut f = fixture();
+    let (links, worker) = koru_workspaces_ui::WorkspaceLinks::fixture(Arc::new(|| {}));
+    f.v.workspace_controller = std::rc::Rc::new(std::cell::RefCell::new(
+        WorkspacesController::with_links(links),
+    ));
+    let id = koru_store_core::ProfileId::new();
+    let (reply, answer) = mpsc::channel();
+    assert!(View::create_profile_with_workspace(
+        &mut f.v,
+        koru_api_client::CreateProfileWithWorkspace {
+            id,
+            name: "Owner".into(),
+            locale: None,
+            purpose: None,
+            avatar: None,
+            icon: None,
+            color: None,
+            workspace: koru_api_client::FirstWorkspace {
+                name: "First".into(),
+                icon: None,
+                color: None
+            },
+        },
+        reply
+    ));
+    assert!(f.v.manage_view().is_none());
+    assert!(f.v.workspaces_poll_due.is_some());
+    assert!(answer.try_recv().is_err());
+    let sent = worker.settle_profile(Err(koru_store_core::Error::bare(
+        koru_store_core::Code::ProfileExists,
+    )));
+    assert_eq!(sent.id, id);
+    View::maintain(&mut f.v, &mut f.w.ws, Instant::now());
+    assert_eq!(
+        answer.try_recv().unwrap().unwrap_err().code(),
+        koru_store_core::Code::ProfileExists
+    );
+    assert!(!f.v.workspace_controller.borrow().has_pending());
+    assert!(f.v.manage_view().is_none());
+}
+
 /// A window with *Personal* open on `current` and *Work* beside it.
 struct Fixture {
     v: MainView,
@@ -61,6 +196,7 @@ fn row(id: WorkspaceId, owner: &ProfileSummary, name: &str, position: i64) -> Ro
         owner: crate::manage::workspaces::catalog_profile(owner.id),
         name: name.to_owned(),
         position,
+        authority: koru_workspaces_ui::Authority::Verified,
         ..Row::default()
     }
 }
@@ -156,22 +292,32 @@ fn a_saved_workspaces_token_restores_manage_once() {
     assert!(matches!(back.tabs().active_tab().view, TabView::Manage(_)));
 }
 
-/// The Manage tab ticks its controller's link while it is in front, and
-/// stops when it is not — the Workspaces tab's rule, carried over.
+/// A pending command keeps its fallback deadline when Manage is hidden.
 #[test]
-fn the_manage_tabs_tick_runs_only_while_it_is_in_front() {
+fn the_pending_command_deadline_survives_hiding_manage() {
     let mut f = fixture();
     let personal = f.personal.id;
-    f.manage(personal, &[]);
+    let current = row(f.current, &f.personal, "Current", 0);
+    f.manage(personal, &[current]);
     let manage = f.v.tabs().active();
-    let due = f.v.workspaces_poll_due.expect("armed on opening");
+    assert!(f.v.workspaces_poll_due.is_none());
+    f.v.workspace_controller
+        .borrow_mut()
+        .perform(Action::TogglePinned(catalog_workspace(f.current)));
+    f.v.arm_workspaces_poll();
+    let due =
+        f.v.workspaces_poll_due
+            .expect("armed for the pending command");
     View::maintain(&mut f.v, &mut f.w.ws, due);
     let again = f.v.workspaces_poll_due.expect("and armed again");
     assert!(again > due);
 
     assert!(f.v.select(0));
     View::maintain(&mut f.v, &mut f.w.ws, again);
-    assert_eq!(f.v.workspaces_poll_due, None, "stopped behind a document");
+    assert!(
+        f.v.workspaces_poll_due.is_some(),
+        "pending work belongs to the window"
+    );
     assert!(f.v.select(manage));
     assert!(f.v.workspaces_poll_due.is_some(), "and armed on selection");
 }
@@ -356,6 +502,8 @@ fn move_to_profile_flyout_and_its_confirmation_complete_the_move() {
     f.manage_view()
         .with_workspaces(|c| c.fixture_move_consequence(wid, to, "Work", &[]));
     assert!(f.manage_view().workspaces().is_confirming());
+    assert_eq!(f.v.blockers(), Blockers::Modal(ModalKind::Confirm));
+    assert_workspace_confirmation_is_drawn(&mut f.v);
     assert!(f.v.key(
         &mut f.w.ws,
         &Key::Named(NamedKey::Enter),
@@ -400,15 +548,178 @@ fn workspace_menu_delete_carries_its_subject_into_manage() {
     );
 }
 
-/// With no Manage tab, a lifecycle verb opens Manage on the workspace's
-/// Profile to carry it.
+/// With no Manage tab, a lifecycle verb stays on the current page and its
+/// confirmation belongs to the window.
 #[test]
-fn a_lifecycle_verb_with_no_manage_tab_opens_manage_to_carry_it() {
+fn a_lifecycle_verb_with_no_manage_tab_uses_the_window_controller() {
     let mut f = fixture();
     assert!(f.v.manage_view().is_none());
+    let wid = catalog_workspace(f.current);
+    {
+        let mut controller = f.v.workspace_controller.borrow_mut();
+        controller.adopt_rows(&[row(f.current, &f.personal, "Current", 0)]);
+        controller.set_authorization(Authorization::Vouched);
+    }
     assert!(f.v.run_workspace_menu_lifecycle(f.current, MenuAction::Archive));
-    let personal = f.personal.id;
-    assert_eq!(f.manage_view().page(), Some(Page::Profile(personal)));
+    assert!(f.v.manage_view().is_none());
+    f.v.workspace_controller
+        .borrow_mut()
+        .fixture_consequence(Action::Archive(wid, true), &[]);
+    assert_eq!(f.v.blockers(), Blockers::Modal(ModalKind::Confirm));
+    assert_workspace_confirmation_is_drawn(&mut f.v);
+    assert!(View::mouse_down(&mut f.v, &mut f.w.ws, 1.0, 1.0, false));
+    assert!(
+        f.v.workspace_controller.borrow().is_confirming(),
+        "a stray press answers nothing"
+    );
+    assert!(f.v.key(
+        &mut f.w.ws,
+        &Key::Named(NamedKey::Escape),
+        None,
+        ModifiersState::empty()
+    ));
+    assert!(!f.v.workspace_controller.borrow().is_confirming());
+    assert_eq!(
+        f.v.workspace_controller.borrow().confirmation_default(),
+        None
+    );
+    assert!(f.v.manage_view().is_none());
+}
+
+fn assert_workspace_confirmation_is_drawn(view: &mut MainView) {
+    let (w, h) = view.viewport;
+    let frame = koru_draw::inspect::Frame::begin(
+        1,
+        Affine::IDENTITY,
+        koru_draw::scene::rect(0.0, 0.0, w, h),
+    );
+    view.draw_workspace_confirmation(&mut Scene::new(), Affine::IDENTITY);
+    assert!(
+        frame
+            .finish()
+            .records
+            .iter()
+            .any(|record| record.name == "Workspace confirmation")
+    );
+}
+
+#[test]
+fn manage_borrows_the_window_controller_and_no_idle_poll_is_armed() {
+    let mut f = fixture();
+    let controller = f.v.workspace_controller.clone();
+    f.v.open_manage(Page::Profile(f.personal.id));
+    assert_eq!(std::rc::Rc::strong_count(&controller), 3);
+    let current = row(f.current, &f.personal, "Current", 0);
+    f.manage_view()
+        .with_workspaces(|c| c.adopt_rows(&[current]));
+    assert!(
+        controller
+            .borrow()
+            .row(catalog_workspace(f.current))
+            .is_some()
+    );
+    f.v.arm_workspaces_poll();
+    assert!(f.v.workspaces_poll_due.is_none());
+}
+
+#[test]
+fn a_window_without_manage_drains_woken_answers_and_settles_its_deadline() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    let mut f = fixture();
+    let wakes = Arc::new(AtomicUsize::new(0));
+    let count = wakes.clone();
+    let (links, worker) = koru_workspaces_ui::WorkspaceLinks::fixture(Arc::new(move || {
+        count.fetch_add(1, Ordering::SeqCst);
+    }));
+    f.v.workspace_controller = std::rc::Rc::new(std::cell::RefCell::new(
+        WorkspacesController::with_links(links),
+    ));
+    assert_eq!(worker.take_catalog_requests(), 1);
+    let current = row(f.current, &f.personal, "Current", 0);
+    worker.catalog(vec![current.clone()]);
+    assert_eq!(wakes.load(Ordering::SeqCst), 1);
+    assert!(f.v.poll_manage_workspaces());
+    assert!(
+        !f.v.poll_manage_workspaces(),
+        "one answer causes one state change"
+    );
+    assert!(f.v.manage_view().is_none());
+    worker.invalidate();
+    assert_eq!(wakes.load(Ordering::SeqCst), 2);
+    f.v.poll_manage_workspaces();
+    assert_eq!(worker.take_catalog_requests(), 1);
+    f.v.poll_manage_workspaces();
+    assert_eq!(
+        worker.take_catalog_requests(),
+        0,
+        "one invalidation fetches once"
+    );
+    f.v.workspace_controller
+        .borrow_mut()
+        .perform(Action::TogglePinned(current.id));
+    f.v.arm_workspaces_poll();
+    assert!(f.v.workspaces_poll_due.is_some());
+    worker.catalog(vec![current.clone()]);
+    f.v.poll_manage_workspaces();
+    f.v.arm_workspaces_poll();
+    assert!(
+        f.v.workspaces_poll_due.is_some(),
+        "an unrelated catalog is not a receipt"
+    );
+    let mut pinned = current;
+    pinned.pinned = true;
+    worker.settle_catalog(vec![pinned]);
+    assert!(f.v.poll_manage_workspaces());
+    f.v.arm_workspaces_poll();
+    assert!(
+        f.v.workspaces_poll_due.is_none(),
+        "settlement stops the fallback"
+    );
+    assert!(f.v.workspace_facts(f.current).unwrap().pinned);
+    assert!(f.v.manage_view().is_none());
+}
+
+#[test]
+fn rail_and_menu_take_the_window_catalog_even_when_host_context_is_older() {
+    let mut f = fixture();
+    f.v.workspace_controller.borrow_mut().adopt_rows(&[row(
+        f.current,
+        &f.personal,
+        "Renamed in another window",
+        0,
+    )]);
+    f.v.refresh_manage_workspaces();
+    assert!(
+        f.v.explore.rail_model().workspaces[0]
+            .name
+            .contains("Renamed in another window")
+    );
+    f.v.workspace_controller
+        .borrow_mut()
+        .set_availability(koru_workspaces_ui::Availability::Down);
+    View::set_pane_context(
+        &mut f.v,
+        vec![f.personal.clone(), f.work.clone()],
+        f.personal.id,
+        vec![WorkspaceEntry::new(f.current, "Older push", 0)],
+        Some(f.current),
+    );
+    assert!(
+        f.v.explore.rail_model().workspaces[0]
+            .name
+            .contains("Renamed in another window")
+    );
+    assert!(f.v.manage_view().is_none());
+    f.v.workspace_controller.borrow_mut().adopt_rows(&[]);
+    f.v.refresh_manage_workspaces();
+    assert!(
+        !f.v.explore.rail_model().workspaces[0]
+            .name
+            .contains("Older push")
+    );
 }
 
 /// F2 on a Profile page renames the selected row, its field over the row.

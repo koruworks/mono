@@ -95,11 +95,15 @@ pub enum Request {
     Device(DeviceRequest),
 }
 
+/// The window owns the controller; Manage borrows the same state for its page.
+pub(crate) type SharedWorkspaces =
+    std::rc::Rc<std::cell::RefCell<koru_workspaces_ui::WorkspacesController>>;
+
 pub struct ManageView {
     c: ProfilesController,
-    /// The workspaces every Profile page lists, with their lifecycle and move
-    /// confirmations: the shared controller, on its own vouched link.
-    w: koru_workspaces_ui::WorkspacesController,
+    /// The window controller borrowed by this page. Its link, confirmations,
+    /// and completion handling continue independently of this tab.
+    w: SharedWorkspaces,
     /// The workspace this window has open, for its row's *Open* tag.
     current_workspace: Option<koru_core::WorkspaceId>,
     /// The page showing. `None` only until the window has said which Profile
@@ -151,20 +155,15 @@ impl Default for ManageView {
 
 impl ManageView {
     pub fn new() -> Self {
-        // **Under test it dials nothing**, as the Workspaces tab's surface
-        // did: a dependency is never compiled with `cfg(test)`, and this
-        // controller's suite must not ask a running Gateway to archive things.
-        let links = match cfg!(test) {
-            true => koru_workspaces_ui::WorkspaceLinks::inert(),
-            // A second Gateway client inside this Koru process, on the same
-            // explicit channel root as the shell and the Agent.
-            false => koru_workspaces_ui::WorkspaceLinks::open(
-                koru_channel::segment(),
-                koru_workspace_host::cli::root_from_args(),
+        Self::with_workspace_controller(std::rc::Rc::new(std::cell::RefCell::new(
+            koru_workspaces_ui::WorkspacesController::with_links(
+                koru_workspaces_ui::WorkspaceLinks::inert(),
             ),
-        };
-        let mut w = koru_workspaces_ui::WorkspacesController::with_links(links);
-        w.set_lang(crate::format::lang());
+        )))
+    }
+
+    pub(crate) fn with_workspace_controller(w: SharedWorkspaces) -> Self {
+        w.borrow_mut().set_lang(crate::format::lang());
         Self {
             c: ProfilesController::new(),
             w,
@@ -438,7 +437,7 @@ impl ManageView {
     /// that is opening it, as a double-click is.
     fn press_focus(&mut self) {
         if let Some(profile_page::Control::WorkspaceRow(id)) = self.page_focus {
-            self.w.set_selected(Some(id));
+            self.w.borrow_mut().set_selected(Some(id));
             self.open_row(id);
         } else if let Some(control) = self.page_focus {
             self.activate_control(control);
@@ -505,9 +504,6 @@ impl View for ManageView {
         if self.dialog.is_some() {
             return self.dialog_key(key);
         }
-        if let Some(taken) = self.workspace_dialog_key(key) {
-            return taken;
-        }
         if let Some(taken) = self.device_rename_key(key, text, mods) {
             return taken;
         }
@@ -517,6 +513,8 @@ impl View for ManageView {
                 .with_creation_form(|form| form.key(key, text, mods))
                 .unwrap_or(false);
             self.sync();
+            self.size_creation_form();
+            self.reveal_creation_focus();
             return changed;
         }
         if !mods.is_empty() && mods != ModifiersState::SHIFT {
@@ -560,9 +558,6 @@ impl View for ManageView {
         if self.dialog.is_some() {
             return self.dialog_mouse_down(x, y);
         }
-        if let Some(taken) = self.workspace_dialog_mouse_down(x, y) {
-            return taken;
-        }
         if let Some(taken) = self.device_rename_mouse_down(x, y) {
             return taken;
         }
@@ -587,6 +582,8 @@ impl View for ManageView {
                 .with_creation_form(|form| form.mouse_down(fx, fy))
                 .unwrap_or(false);
             self.sync();
+            self.size_creation_form();
+            self.reveal_creation_focus();
             return changed;
         }
         match self.page_hit(x, y) {
@@ -612,9 +609,6 @@ impl View for ManageView {
         }
         if self.dialog.is_some() {
             return self.dialog_mouse_move(x, y);
-        }
-        if let Some(changed) = self.workspace_dialog_mouse_move(x, y) {
-            return changed;
         }
         if self.device_rename_drag(x) {
             return true;
@@ -662,12 +656,14 @@ impl View for ManageView {
     /// Whether the archived list is open is window furniture the Workspaces
     /// tab persisted; this tab keeps it in the same place.
     fn restore(&mut self, _ws: &Workspace, settings: &koru_workspace_host::Settings) {
-        self.w.set_show_archived(settings.show_archived);
+        self.w
+            .borrow_mut()
+            .set_show_archived(settings.show_archived);
         self.relayout();
     }
 
     fn capture(&self, settings: &mut koru_workspace_host::Settings) {
-        settings.show_archived = self.w.show_archived();
+        settings.show_archived = self.w.borrow().show_archived();
     }
 
     fn scroll_by(&mut self, delta: MouseScrollDelta) {
@@ -680,8 +676,9 @@ impl View for ManageView {
             && self.content_page_open()
             && let Some(form) = self.c.creation_form_mut()
         {
-            let _ = form.scroll_by(delta);
-            return;
+            if form.scroll_by(delta) {
+                return;
+            }
         }
         let amount = match delta {
             MouseScrollDelta::LineDelta(_, y) => -y * LINE,
@@ -768,27 +765,6 @@ impl ManageView {
         self.paint_page(canvas, root);
         self.paint_nav(canvas, root);
         self.paint_dialog(canvas, root);
-        if let Some(confirm) = self.w.dialog() {
-            let _prompt = inspect::scope(
-                "Manage workspace prompt",
-                "part",
-                root,
-                scene::rect(0.0, 0.0, vw, vh),
-                |r| {
-                    r.property(
-                        "title",
-                        confirm.title(),
-                        "the workspaces controller's question",
-                    );
-                    r.property(
-                        "terminals",
-                        self.w.confirmation_terminals().len(),
-                        "the gateway's consequence",
-                    );
-                },
-            );
-            confirm.draw(canvas, root, &mut self.engine, self.viewport);
-        }
         for confirm in self.c.prompts() {
             let _prompt = inspect::scope(
                 "Manage prompt",

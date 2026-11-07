@@ -26,6 +26,9 @@ impl Backend for MemoryWorkspace {
     fn open_workspace(&self, _: WorkspaceId) -> Result<SqliteWorkspace> {
         SqliteWorkspace::from_connection(connect(&self.0))
     }
+    fn create_workspace(&self, id: WorkspaceId) -> Result<SqliteWorkspace> {
+        self.open_workspace(id)
+    }
     fn delete_workspace(&self, _: WorkspaceId) -> Result<()> {
         panic!("this test never deletes workspaces");
     }

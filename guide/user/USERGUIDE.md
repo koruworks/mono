@@ -955,22 +955,38 @@ Down the left is the **sidebar** — `Ctrl+Shift+E`, or the sidebar button
 that says *Hide sidebar* / *Show sidebar* when you point at it. It runs the
 full height of the window and pushes everything else to the right. At its
 top is a lane with the Koru mark, **Search** and the sidebar button; under
-it a row of **apps** — Documents, Files, Tasks and the rest the build shows
-— with the one you are in wearing its name (`Alt+1`…`Alt+8` switch them by
+it a vertical rail with the **current workspace** first, then the **apps** —
+Documents, Files, Tasks and the rest the build shows (`Alt+1`…`Alt+8` switch them by
 place: `Alt+1` is the top view, `Alt+2` the next;
 drag an icon up or down to put it where you want it, or with the rail
 focused by F6 press `Ctrl+Shift+↑`/`↓`, and Esc while dragging puts it back;
 the shortcuts go with the place, so moving Chats to the top makes it `Alt+1`;
 the order is remembered on this computer);
-then that app's own navigation; and on the floor one chip that says which
-workspace you are in and who you are, with a **?** beside it. The chip opens
-the workspace and account switcher; the **?** opens help: what is new in
+then that app's own navigation. Press the current workspace square for its
+menu: switch workspace, create or import one, open Trash, or open Manage.
+Right-click a workspace row for its management actions. Help, Settings and
+your Profile stay at the bottom of the rail. The **?** opens help: what is new in
 this build, the full changelog, **Send feedback**, **Star us on GitHub**
 (Koru's repository, in your browser), and Koru's website and socials.
-Hide the sidebar and the lane's buttons fold into the title bar's left end; the chip goes with the pane, and
-`Ctrl+Alt+W` / `Ctrl+Alt+P` still open the switcher. `F6` walks the
-keyboard over the lane, the apps row and the floor; the arrows move within
+Hide the sidebar and the lane's buttons fold into the title bar's left end;
+`Ctrl+Alt+W` still opens the workspace menu and `Ctrl+Alt+P` opens Profiles.
+`F6` walks the keyboard over the visible chrome, including the lane and rail;
+the arrows move within
 each, Enter presses, Escape returns to the page.
+
+A new Profile is created together with its first workspace. Opening a Profile
+uses a healthy workspace already on this device when one is available. If
+content is still arriving, Koru shows a waiting page with **Cancel** instead
+of creating an empty replacement. A damaged or unreadable workspace offers
+recovery; it is not treated as an empty Profile.
+
+Archiving, trashing or moving a Profile's last usable workspace creates its
+replacement before completing the change. Removing the whole Profile is the
+exception: that operation moves its workspaces to Trash without replacing
+them. If a local removal stops, **Resume removal** continues it and **Keep this profile**
+keeps what remains; Keep does not restore workspaces already in Trash. A
+hosted Profile deletion offers **Finish removal** because that Profile has
+already been deleted from Koru Cloud.
 
 ### With a screen reader
 

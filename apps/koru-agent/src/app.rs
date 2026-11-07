@@ -3752,7 +3752,24 @@ impl Agent {
                     );
                 }
             }
-            Request::RemoveLocalProfile { profile_id } => {
+            Request::RemoveLocalProfile {
+                profile_id,
+                attempt,
+            } => {
+                let parsed_attempt = attempt
+                    .as_deref()
+                    .and_then(koru_store_core::ids::RemovalAttemptId::parse);
+                if attempt.is_some() && parsed_attempt.is_none() {
+                    self.reply(
+                        connection,
+                        id,
+                        Response::Failed {
+                            code: "invalid_id".into(),
+                            message: "attempt is not a canonical removal UUID".into(),
+                        },
+                    );
+                    return;
+                }
                 let Some(profile) = koru_store_core::ids::ProfileId::parse(&profile_id) else {
                     self.reply(
                         connection,
@@ -3775,7 +3792,13 @@ impl Agent {
                     );
                     return;
                 };
-                service::remove_local_profile(self.paths.clone(), waker, (connection, id), profile);
+                service::remove_local_profile(
+                    self.paths.clone(),
+                    waker,
+                    (connection, id),
+                    profile,
+                    parsed_attempt,
+                );
             }
             Request::BindLocalProfileAccount {
                 profile_id,

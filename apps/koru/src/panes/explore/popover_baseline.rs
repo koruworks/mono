@@ -357,6 +357,7 @@ fn arrange(case: &Case) -> ExploreView {
             v.set_account_state(&koru_agent_wire::AccountState {
                 stage: koru_agent_wire::AccountStage::SignedIn,
                 cloud_profiles: vec![koru_agent_wire::AccountProfileCloud {
+                    discovery: None,
                     profile_id: open.to_string(),
                     stage: koru_agent_wire::CloudConnectionStage::Syncing,
                 }],
@@ -407,6 +408,8 @@ fn painted(name: &str) -> bool {
 
 fn row_key(v: &ExploreView, row: PopoverRow) -> String {
     match row {
+        PopoverRow::WorkspaceAction(action) => format!("workspace-action:{}", action.key().part),
+        PopoverRow::WorkspaceNotice => "workspace-notice".into(),
         PopoverRow::Workspace(i) => format!("ws:{}", key(v.workspaces[i].id.as_uuid())),
         PopoverRow::Profile(i) => format!("profile:{}", key(v.profiles[i].id.as_uuid())),
         PopoverRow::WorkspacesHeading => "heading".into(),

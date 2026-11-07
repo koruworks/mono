@@ -214,7 +214,9 @@ impl MainView {
             Layer::Import => self.import_dialog.is_some(),
             Layer::Updates => self.updates_modal,
             Layer::UpdateNewer => self.update_newer_modal_open(),
-            Layer::Confirm => self.confirm.is_some(),
+            Layer::Confirm => {
+                self.confirm.is_some() || self.workspace_controller.borrow().is_confirming()
+            }
             Layer::NewDocument => self.new_document.is_some(),
             Layer::Snapshot => self.snapshot_prompt.is_some(),
             Layer::LinkDevice => self.link_device.is_some(),
@@ -275,6 +277,9 @@ impl MainView {
         let blockers = self.blockers();
         if blockers.is_blocking() {
             return blockers.editable();
+        }
+        if self.profile_wait_visible() {
+            return EditableTarget::None;
         }
         // The AI composer, which sits below every chord and above the tab — the
         // same place `MainView::key` routes it.

@@ -909,6 +909,46 @@ fn a_change_a_person_can_see_does_change_the_revision() {
 }
 
 #[test]
+fn folded_workspace_menu_is_published_focused_and_operable() {
+    let (mut v, mut w) = seated();
+    with_rows(&mut v, &["Hidden document"]);
+    let hidden_row = by_role(&v, Role::TreeItem)[0].occurrence;
+    assert!(v.toggle_sidebar());
+    let closed = v.semantics_revision();
+    assert!(v.explore.toggle_workspace_menu());
+    assert_ne!(v.semantics_revision(), closed);
+    let published = nodes(&v);
+    assert!(published.iter().any(|n| n.role == Role::Menu));
+    assert!(!published.iter().any(|n| n.role == Role::TreeItem));
+    assert!(
+        published
+            .iter()
+            .any(|n| Some(n.occurrence) == v.accessibility_focus(VIEW))
+    );
+    assert!(!v.accessibility_action(&mut w.ws, hidden_row, Action::Click, None));
+    let new = published
+        .iter()
+        .find(|n| n.occurrence.part.name() == "new-workspace")
+        .expect("the folded menu offers New workspace")
+        .occurrence;
+    assert!(v.accessibility_action(&mut w.ws, new, Action::Click, None));
+    assert!(!v.explore.popover_open());
+}
+
+#[test]
+fn folded_profile_menu_changes_revision_and_hides_on_close() {
+    let (mut v, _) = seated();
+    assert!(v.toggle_sidebar());
+    let closed = v.semantics_revision();
+    assert!(v.explore.toggle_profile_menu());
+    assert_ne!(v.semantics_revision(), closed);
+    assert!(!by_role(&v, Role::Menu).is_empty());
+    assert!(v.explore.close_popover());
+    assert!(by_role(&v, Role::Menu).is_empty());
+    assert_eq!(v.semantics_revision(), closed);
+}
+
+#[test]
 fn an_inactive_tab_contributes_nothing() {
     let (mut v, mut w) = seated();
     let hidden = a_document(&mut w.ws, "Background");

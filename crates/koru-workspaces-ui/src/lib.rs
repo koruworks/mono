@@ -71,6 +71,7 @@
 pub mod action;
 pub mod controller;
 pub mod links;
+mod pending;
 pub mod state;
 
 #[cfg(test)]
@@ -81,7 +82,8 @@ mod tests;
 pub use action::{Action, Request};
 pub use controller::WorkspacesController;
 pub use links::{MANAGER_SCOPES, WorkspaceLinks};
-pub use state::{Authorization, Availability, Group, Notice, ProfileRow, Row};
+pub use pending::CommandId;
+pub use state::{Authority, Authorization, Availability, Group, Notice, ProfileRow, Row};
 
 /// The classifications [`links`] hands back, worded here.
 ///
@@ -89,6 +91,7 @@ pub use state::{Authorization, Availability, Group, Notice, ProfileRow, Row};
 /// language a window is drawing in and must not: it says which refusal this is
 /// and the surface says it in the person's own words.
 pub(crate) const REFUSAL_PARTIAL: &str = "partial";
+pub(crate) const REFUSAL_LISTING_PENDING: &str = "listing_pending";
 pub(crate) const REFUSAL_DOCUMENTS_OPEN: &str = "documents-open";
 pub(crate) const REFUSAL_NOT_PERMITTED: &str = "not-permitted";
 pub(crate) const REFUSAL_UNAVAILABLE: &str = "unavailable";

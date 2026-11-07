@@ -45,6 +45,21 @@ use crate::transport::{
 
 // ------------------------------------------------------------------ catalog
 
+/// The complete verified projection to publish with a replacement.
+pub enum Removal<'a> {
+    Archive(&'a Workspace),
+    Delete(&'a Workspace),
+    Move(&'a Workspace),
+}
+
+impl Removal<'_> {
+    pub fn workspace(&self) -> &Workspace {
+        match self {
+            Self::Archive(workspace) | Self::Delete(workspace) | Self::Move(workspace) => workspace,
+        }
+    }
+}
+
 /// Result of hiding one Profile from this installation's Store catalog. Its row
 /// and CRDT remain durable so Workspace tombstones keep their owner and recovery
 /// can be explicit; settings outside the Store are deliberately not covered.
@@ -165,8 +180,17 @@ pub trait Catalog {
     fn profile_catalog_state(&self, id: ProfileId) -> Result<Option<ProfileCatalogState>>;
     /// Atomically refuse an active owner or mark an empty Profile removed.
     /// Implementations retain the Profile row, CRDT, and deleted Workspace rows.
-    fn remove_profile_local(&mut self, id: ProfileId, at: Timestamp)
-    -> Result<LocalProfileRemoval>;
+    fn remove_profile_local(
+        &mut self,
+        id: ProfileId,
+        attempt: Option<crate::ids::RemovalAttemptId>,
+        at: Timestamp,
+    ) -> Result<LocalProfileRemoval>;
+    fn update_profile_removal(
+        &mut self,
+        id: ProfileId,
+        update: crate::profile_removal::RemovalUpdate,
+    ) -> Result<Option<crate::profile_removal::RemovalMark>>;
     /// Atomically clear the explicit local-removal marker.
     fn restore_profile_local(&mut self, id: ProfileId) -> Result<LocalProfileRestoration>;
     /// Every retained row whose local-removal marker is at or before
@@ -228,6 +252,35 @@ pub trait Catalog {
     ) -> Result<bool>;
     fn profile_reminder_due(&self, owner: ProfileId) -> Result<Vec<ReminderDue>>;
     fn put_workspace(&mut self, workspace: &Workspace) -> Result<()>;
+    /// Publish a prepared workspace and its manifest routing location together.
+    fn publish_workspace(&mut self, workspace: &Workspace, manifest: DocumentId) -> Result<()>;
+    /// Publish lifecycle projection and its prepared replacement atomically.
+    /// Delete also removes routing; move/archive preserve existing routing.
+    fn publish_removal(
+        &mut self,
+        removal: Removal<'_>,
+        replacement: Option<(&Workspace, DocumentId)>,
+    ) -> Result<()>;
+    /// Atomically project verified durable state and its live routing set.
+    /// The caller has checked competing document ownership under the Store lock.
+    fn reconcile_workspace_listing(
+        &mut self,
+        workspace: &Workspace,
+        documents: &[DocumentId],
+    ) -> Result<()>;
+    fn workspace_locations(&self, workspace: WorkspaceId) -> Result<Vec<DocumentId>>;
+    /// Publish a fresh Profile, both authority units, its local origin, and its
+    /// prepared first workspace in one transaction. Any retained Profile id
+    /// refuses the entire transaction, including a removed/provisioned row.
+    fn publish_profile_with_workspace(
+        &mut self,
+        profile: &Profile,
+        identity: &[u8],
+        private: &[u8],
+        origin_marker: (&str, &str),
+        workspace: &Workspace,
+        manifest: DocumentId,
+    ) -> Result<()>;
     fn workspace(&self, id: WorkspaceId) -> Result<Option<Workspace>>;
     fn workspaces(&self) -> Result<Vec<Workspace>>;
     fn workspaces_including_deleted(&self) -> Result<Vec<Workspace>>;
@@ -983,7 +1036,8 @@ impl<T> Opened<T> {
 }
 
 /// What went wrong, and what was done about it.
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Recovery {
     /// Developer text. Never customer content.
     pub problem: String,

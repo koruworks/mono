@@ -59,11 +59,13 @@ pub use koru_store_wire::tasks::{
     LifecycleFilter, TaskQuery, TaskQueryResponse, TaskRow, TaskSort,
 };
 pub use koru_store_wire::{
-    Created, DocumentOutline, Failure, ImportQuery, LocalProfileRemoval, LocalProfileRestoration,
-    ManifestRef, NewDocument, NewProfile, NewWorkspace, OutlineHeading, PersonalAttributeValue,
-    PersonalAttributesResponse, ProfileAccountBindingOutcome, ProfileAccountClearOutcome,
-    ProfileAppearance, ProfileLifecycleInventory, ProfileLifecycleInventoryItem,
-    ProvisionAccountProfile, RenameProfile, RenameWorkspace, Status, Stopping, WelcomeProgress,
-    WorkspaceAppearance,
+    CreateProfileWithWorkspace, Created, CreatedProfile, DocumentOutline, EnsureLiveWorkspace,
+    EnsuredWorkspace, Failure, FirstWorkspace, ImportQuery, LocalProfileRemoval,
+    LocalProfileRestoration, ManifestRef, NewDocument, NewProfile, NewWorkspace, OutlineHeading,
+    PersonalAttributeValue, PersonalAttributesResponse, ProfileAccountBindingOutcome,
+    ProfileAccountClearOutcome, ProfileAppearance, ProfileLifecycleInventory,
+    ProfileLifecycleInventoryItem, ProvisionAccountProfile, RenameProfile, RenameWorkspace, Status,
+    Stopping, WelcomeProgress, WorkspaceAppearance, WorkspaceAuthority, WorkspaceAuthorityState,
+    WorkspaceAvailabilityIssue,
 };
 pub use sync::{Ack, Connection, Event};

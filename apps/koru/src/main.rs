@@ -103,6 +103,29 @@ struct Manager {
     support: Option<support::Session>,
 }
 
+impl Manager {
+    fn workspace_links(&self) -> koru_workspaces_ui::WorkspaceLinks {
+        #[cfg(test)]
+        {
+            koru_workspaces_ui::WorkspaceLinks::inert()
+        }
+        #[cfg(not(test))]
+        {
+            let proxy = self
+                .wake
+                .clone()
+                .expect("workspace windows require the event-loop wake proxy");
+            koru_workspaces_ui::WorkspaceLinks::open(
+                koru_channel::segment(),
+                koru_workspace_host::cli::root_from_args(),
+                std::sync::Arc::new(move || {
+                    let _ = proxy.send_event(koru_workspace_host::app::Wake::Workspaces);
+                }),
+            )
+        }
+    }
+}
+
 impl Host for Manager {
     fn open_support(&mut self, _ws: &WorkspaceDoc) -> Option<ManagerView> {
         let origin = support::url::origin();
@@ -202,8 +225,12 @@ impl Host for Manager {
     fn account_command_deadline(&self) -> Option<std::time::Instant> {
         self.agent.account_command_deadline()
     }
-    fn remove_local_profile(&self, profile: koru_core::ProfileId) {
-        self.agent.remove_local_profile(profile);
+    fn remove_local_profile(
+        &self,
+        profile: koru_core::ProfileId,
+        attempt: koru_store_core::ids::RemovalAttemptId,
+    ) {
+        self.agent.remove_local_profile(profile, attempt);
     }
 
     fn take_local_profile_removal(
@@ -526,6 +553,7 @@ impl Host for Manager {
             },
             self.agent.clone(),
             self.search_enabled,
+            self.workspace_links(),
         );
         if let Some(proxy) = self.wake.clone() {
             view.install_reminder_wake_proxy(proxy);
@@ -564,6 +592,7 @@ impl Host for Manager {
             },
             self.agent.clone(),
             self.search_enabled,
+            self.workspace_links(),
         );
         if let Some(proxy) = self.wake.clone() {
             view.install_reminder_wake_proxy(proxy);

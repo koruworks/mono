@@ -120,7 +120,7 @@ pub(crate) struct ProfileTileLeaf {
 
 impl Leaf for ProfileTileLeaf {
     fn measure(&self, _width: Option<f32>) -> (f32, f32) {
-        let side = metrics::PROFILE_TILE.value;
+        let side = metrics::WORKSPACE_TILE.value;
         (side, side)
     }
 

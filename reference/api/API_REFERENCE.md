@@ -56,6 +56,24 @@ Create a profile. Requires no account and no network.
 
 Returns: the profile, with its new id
 
+## POST `/v1/profiles/with-workspace`
+
+Create a Profile and its first workspace atomically; retry with the same Profile id
+
+Returns: profile and workspace; ProfileExists on conflicting or retired identity
+
+## POST `/v1/profiles/{owner}/workspaces/ensure-live`
+
+Resolve verified live content or prepare a workspace after confirming none is available
+
+Returns: active, created, pending, listing_pending, uncertain, or removing
+
+## GET `/v1/profiles/{owner}/workspaces/authority`
+
+Inspect committed workspace lifecycle without creating, migrating or repairing storage
+
+Returns: retained rows with read or unreadable authority and listing differences
+
 ## PUT `/v1/profiles/{id}/account`
 
 Atomically bind a Profile to an exact hosted Koru Identity
@@ -72,7 +90,31 @@ Returns: cleared or already_offline; local Profile content is retained
 
 Mark an empty profile removed in this installation's Store catalog
 
-Returns: removed or already_removed; profile and deleted workspace data remain
+Returns: removed after exact attempt check; profile and deleted workspace data remain
+
+## GET `/v1/profiles/{id}/removal`
+
+Read the current Profile removal attempt without changing it
+
+Returns: persisted removal mark or null
+
+## POST `/v1/profiles/{id}/removal`
+
+Begin or supersede a stopped or expired Profile removal attempt
+
+Returns: fresh removal mark; a live attempt refuses competition
+
+## POST `/v1/profiles/{id}/removal/stop`
+
+Stop only the named current Profile removal attempt
+
+Returns: null; a superseded attempt is refused
+
+## DELETE `/v1/profiles/{id}/removal`
+
+Keep a Profile by abandoning its exact local removal attempt
+
+Returns: null; hosted cleanup and superseded attempts are refused
 
 ## PUT `/v1/profiles/{id}/local`
 
@@ -277,6 +319,24 @@ Returns: that profile's workspaces in their saved order
 Soft-delete a workspace; its database and blobs remain recoverable
 
 Returns: the workspace with deleted_at set. Takes destroy_workspaces, which no ordinary token holds: removing a workspace closes its terminals, and the Gateway's lifecycle operation is what does that first
+
+## POST `/v1/workspaces/{id}/archive-replacing`
+
+Archive a workspace, preparing its required replacement first
+
+Returns: authority, listing, and replacement facts; HTTP 409 listing_pending retains committed authority
+
+## POST `/v1/workspaces/{id}/delete-replacing`
+
+Soft-delete a workspace, preparing its required replacement first
+
+Returns: authority, listing, and replacement facts; HTTP 409 listing_pending retains committed authority
+
+## POST `/v1/workspaces/{id}/move-replacing`
+
+Move a workspace and atomically publish its required source replacement
+
+Returns: the moved workspace, previous owner, and replacement facts
 
 ## POST `/v1/workspaces/{id}/restore`
 

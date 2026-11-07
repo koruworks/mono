@@ -114,6 +114,19 @@ impl Group {
     }
 }
 
+/// What committed storage proved about a row. Unknown is never navigable.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum Authority {
+    #[default]
+    Unknown,
+    Verified,
+    Pending,
+    Uncertain {
+        cause: String,
+        recovery: Option<koru_store_core::Recovery>,
+    },
+}
+
 /// One workspace, as this surface draws it.
 ///
 /// **A projection of the catalog row and nothing else.** No `WorkspaceDoc`, no
@@ -139,9 +152,31 @@ pub struct Row {
     /// "last opened" line, a most-recent sort); never for deciding anything
     /// between replicas, which is what version vectors are for.
     pub last_opened_at: Option<i64>,
+    pub authority: Authority,
+    pub listing_differs: bool,
 }
 
 impl Row {
+    pub fn verified_live(&self) -> bool {
+        self.authority == Authority::Verified && !self.archived && !self.deleted
+    }
+
+    pub fn navigation_ready(&self) -> bool {
+        self.verified_live() && !self.listing_differs
+    }
+
+    pub fn authority_reason(&self, lang: koru_i18n::Lang) -> Option<String> {
+        use koru_i18n::{Key, t};
+        let key = match &self.authority {
+            Authority::Unknown => Key::ProfileWaitUnknown,
+            Authority::Pending => Key::ProfileWaitPending,
+            Authority::Uncertain { .. } => Key::ProfileWaitUncertain,
+            Authority::Verified if self.listing_differs => Key::ProfileWaitListing,
+            Authority::Verified => return None,
+        };
+        Some(t(lang, key).into())
+    }
+
     pub(crate) fn group(&self) -> Group {
         Group::of(self)
     }
@@ -225,7 +260,20 @@ impl Notice {
 /// What came back from a management call, in the surface's own vocabulary.
 #[derive(Debug)]
 pub(crate) enum Answer {
+    /// Only this command's terminal answer may remove its pending projection.
+    Settled(crate::CommandId, Box<Answer>),
+    ProfileCreated(koru_store_core::errors::Result<koru_api_client::CreatedProfile>),
+    ProfileKept(koru_api_client::WorkspaceResult<()>),
+    WorkspaceEnsured {
+        attempt: u64,
+        result: koru_store_core::errors::Result<koru_api_client::EnsuredWorkspace>,
+    },
     Catalog(Vec<Row>),
+    CatalogState {
+        rows: Vec<Row>,
+        removals:
+            std::collections::BTreeMap<ProfileId, koru_store_core::profile_removal::RemovalMark>,
+    },
     /// The profiles a workspace could be moved to.
     Profiles(Vec<ProfileRow>),
     /// The authorization probe's answer, for `workspace.destroy`.

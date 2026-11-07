@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! `F6`'s stops over the sidebar's chrome: the lane, the apps row and the
-//! floor (`docs/features/workspace-foundation/TECHNICAL.final.md` §10).
+//! `F6`'s stops over the sidebar's chrome: the lane and the rail.
 //!
 //! The rotation was two stops — a failed reminder pill and the bell — and
 //! [ADR-348](../../../../docs/decisions/ADR-326-350.md) made it a rotation
 //! over what is *standing* rather than a chord per surface: "a stop that is
-//! not there is never a dead press". The three stops here follow that rule:
+//! not there is never a dead press". The stops here follow that rule:
 //! the lane is always there (its toggle is, in the pane or in the caption's
-//! chain), the apps row and the floor only while the pane is open.
+//! chain), and the rail is reachable only while the pane is open.
 //!
-//! **One key contract for the three**, written in
+//! **One key contract**, written in
 //! `docs/features/koruui/CONTRIBUTING.md`: ← and → move between the stop's
 //! controls, Enter or Space activates the focused one, Escape returns the
 //! keyboard to the content, `F6` moves on. The focused control wears the
@@ -33,16 +32,14 @@ use crate::panes::explore::ExploreChromeFocus;
 /// Where the keyboard is, when it is on the sidebar's chrome.
 /// The rail's controls after the apps: Help, Settings, the profile square.
 /// (*Manage apps* is out until the manager lands, E68.)
-const RAIL_FOOT: usize = 3;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum ChromeStop {
     Lane(LaneControl),
-    /// An index down the rail: the shown apps in order, then Help, Settings
+    /// An index down the rail: workspaces, shown apps, then Help, Settings
     /// and the profile square. `MainView::rail_focus` is the one reading of
     /// it, for the ring and for Enter alike.
     Apps(usize),
-    Floor(FloorControl),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -53,24 +50,14 @@ pub(super) enum LaneControl {
     New,
 }
 
-/// The floor's one control. The `?` that was its second moved into the
-/// who/where popover's toolbar (QUESTIONS.md E30), where the popover's own
-/// arrows reach it.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub(super) enum FloorControl {
-    Chip,
-}
-
 /// The rotation's order, as the eye reads the chrome: the reminder pill and
-/// the bell (when reminders are shown), then the lane, the apps row and the
-/// floor (the last two when the pane is open).
+/// the bell (when reminders are shown), then the lane and the visible rail.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum Stop {
     Pill,
     Bell,
     Lane,
     Apps,
-    Floor,
 }
 
 impl MainView {
@@ -85,7 +72,6 @@ impl MainView {
         out.push(Stop::Lane);
         if self.sidebar.is_open() {
             out.push(Stop::Apps);
-            out.push(Stop::Floor);
         }
         out
     }
@@ -100,7 +86,6 @@ impl MainView {
         self.chrome_focus.map(|stop| match stop {
             ChromeStop::Lane(_) => Stop::Lane,
             ChromeStop::Apps(_) => Stop::Apps,
-            ChromeStop::Floor(_) => Stop::Floor,
         })
     }
 
@@ -132,15 +117,15 @@ impl MainView {
                 // Land on the active app, where the eye already is.
                 let i = self
                     .explore
-                    .rail_modes()
+                    .rail_controls(self.rail_area())
                     .iter()
-                    .position(|m| *m == self.explore.navigator_mode())
+                    .position(|hit| {
+                        *hit == crate::panes::sidebar::apps_rail::Hit::App(
+                            self.explore.navigator_mode(),
+                        )
+                    })
                     .unwrap_or(0);
                 self.chrome_focus = Some(ChromeStop::Apps(i));
-                moved = true;
-            }
-            Stop::Floor => {
-                self.chrome_focus = Some(ChromeStop::Floor(FloorControl::Chip));
                 moved = true;
             }
         }
@@ -165,13 +150,16 @@ impl MainView {
             return false;
         }
         if let ChromeStop::Apps(i) = stop
-            && i < self.explore.rail_modes().len()
+            && let ExploreChromeFocus::App(app) = self.rail_focus(i)
             && let Some(up) = move_chord(key, text, mods)
         {
             // Taken at either end too: the view is the keyboard's, and a
             // chord that cannot move it still belongs to it (D41's rule).
-            if let Some(to) = self.explore.nudge_rail_view(self.rail_area(), i, up) {
-                self.chrome_focus = Some(ChromeStop::Apps(to));
+            if let Some(to) = self.explore.nudge_rail_view(self.rail_area(), app, up) {
+                let controls = self.explore.rail_controls(self.rail_area());
+                if let Some(index) = controls.iter().position(|hit| matches!(hit, crate::panes::sidebar::apps_rail::Hit::App(mode) if Some(*mode) == self.explore.rail_mode_at(to))) {
+                    self.chrome_focus = Some(ChromeStop::Apps(index));
+                }
             }
             return true;
         }
@@ -232,14 +220,13 @@ impl MainView {
             ChromeStop::Apps(i) => {
                 // The apps, then the foot: Help, Settings, the profile
                 // square.
-                let n = self.explore.rail_modes().len() + RAIL_FOOT;
+                let n = self.explore.rail_controls(self.rail_area()).len().max(1);
                 ChromeStop::Apps(if forward {
                     (i + 1) % n
                 } else {
                     (i + n - 1) % n
                 })
             }
-            ChromeStop::Floor(FloorControl::Chip) => ChromeStop::Floor(FloorControl::Chip),
         }
     }
 
@@ -264,6 +251,9 @@ impl MainView {
             // it, so Enter on Help did nothing and on the profile square
             // opened Help (found in D96).
             ChromeStop::Apps(i) => match self.rail_focus(i) {
+                ExploreChromeFocus::Workspace(_) => {
+                    self.open_workspaces_popover();
+                }
                 ExploreChromeFocus::App(i) => {
                     if let Some(mode) = self.explore.rail_mode_at(i) {
                         self.show_navigator(mode);
@@ -277,15 +267,7 @@ impl MainView {
                     self.open_settings_tab();
                 }
                 ExploreChromeFocus::RailProfile => self.explore.toggle_profile_popover(),
-                ExploreChromeFocus::FloorChip => {}
             },
-            ChromeStop::Floor(FloorControl::Chip) => {
-                if self.explore.popover_open() {
-                    self.explore.close_popover();
-                } else {
-                    self.open_workspaces_popover();
-                }
-            }
         }
         let _ = ws;
     }
@@ -295,7 +277,6 @@ impl MainView {
     pub(super) fn explore_chrome_focus(&self) -> Option<ExploreChromeFocus> {
         match self.chrome_focus? {
             ChromeStop::Apps(i) => Some(self.rail_focus(i)),
-            ChromeStop::Floor(FloorControl::Chip) => Some(ExploreChromeFocus::FloorChip),
             ChromeStop::Lane(_) => None,
         }
     }
@@ -305,15 +286,7 @@ impl MainView {
     /// `apps_rail::solve` stacks them. **The one reading**, for the ring the
     /// explore column draws and for what Enter does.
     pub(super) fn rail_focus(&self, i: usize) -> ExploreChromeFocus {
-        let apps = self.explore.rail_modes().len();
-        if i < apps {
-            return ExploreChromeFocus::App(i);
-        }
-        match i - apps {
-            0 => ExploreChromeFocus::RailHelp,
-            1 => ExploreChromeFocus::RailSettings,
-            _ => ExploreChromeFocus::RailProfile,
-        }
+        self.explore.rail_focus(self.rail_area(), i)
     }
 
     /// The lane control the keyboard is on, for its ring.

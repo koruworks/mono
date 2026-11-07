@@ -62,6 +62,19 @@ const ITEM: ControlPart = ControlPart::new("item");
 impl MainView {
     /// The blocking surface, alone.
     pub(super) fn blocker_semantics(&self, cx: &Shell, blockers: Blockers) -> SemanticNode {
+        if blockers == Blockers::Modal(koru_workspace_host::routing::ModalKind::Confirm)
+            && let Some(dialog) = self.workspace_controller.borrow().dialog()
+        {
+            return SemanticNode::new(cx.surface(SHELL, blocker_part(blockers)), Role::Dialog)
+                .with_label(format!("{} {}", dialog.title(), dialog.body()))
+                .with_bounds(koru_draw::geometry::Rect::new(
+                    0.0,
+                    0.0,
+                    cx.viewport.0,
+                    cx.viewport.1,
+                ))
+                .modal();
+        }
         if let Some(node) = self.menu_semantics(cx) {
             return node;
         }

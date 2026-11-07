@@ -10,6 +10,19 @@ fn at() -> Timestamp {
     Timestamp::from_millis(1_770_000_000_000)
 }
 
+fn begin_removal(c: &mut SqliteCatalog, id: ProfileId) -> koru_store_core::ids::RemovalAttemptId {
+    c.update_profile_removal(
+        id,
+        koru_store_core::profile_removal::RemovalUpdate::Begin {
+            kind: koru_store_core::profile_removal::RemovalKind::Local,
+            at: at(),
+        },
+    )
+    .unwrap()
+    .unwrap()
+    .attempt
+}
+
 /// Write a Profile row the way a database stamped at an **older** schema holds
 /// it: the projection columns and nothing else.
 ///
@@ -124,10 +137,15 @@ fn local_profile_removal_requires_no_active_workspaces_and_preserves_tombstones(
     let workspace = Workspace::new(owner.id, "Deleted but recoverable", at()).unwrap();
     c.put_workspace(&workspace).unwrap();
 
+    let attempt = begin_removal(&mut c, owner.id);
     assert_eq!(
-        c.remove_profile_local(owner.id, Timestamp::from_millis(at().millis() + 1))
-            .unwrap_err()
-            .code(),
+        c.remove_profile_local(
+            owner.id,
+            Some(attempt),
+            Timestamp::from_millis(at().millis() + 1)
+        )
+        .unwrap_err()
+        .code(),
         Code::ProfileNotEmpty
     );
     c.set_workspace_deleted(
@@ -137,8 +155,12 @@ fn local_profile_removal_requires_no_active_workspaces_and_preserves_tombstones(
     )
     .unwrap();
     assert_eq!(
-        c.remove_profile_local(owner.id, Timestamp::from_millis(at().millis() + 3))
-            .unwrap(),
+        c.remove_profile_local(
+            owner.id,
+            Some(attempt),
+            Timestamp::from_millis(at().millis() + 3)
+        )
+        .unwrap(),
         LocalProfileRemoval::Removed
     );
 
@@ -155,9 +177,14 @@ fn local_profile_removal_requires_no_active_workspaces_and_preserves_tombstones(
     assert_eq!(retained.owner, owner.id);
     assert!(retained.deleted_at.is_some());
     assert_eq!(
-        c.remove_profile_local(owner.id, Timestamp::from_millis(at().millis() + 4))
-            .unwrap(),
-        LocalProfileRemoval::AlreadyRemoved
+        c.remove_profile_local(
+            owner.id,
+            Some(attempt),
+            Timestamp::from_millis(at().millis() + 4)
+        )
+        .unwrap_err()
+        .code(),
+        Code::RemovalAttemptStale
     );
     assert_eq!(
         c.set_workspace_deleted(workspace.id, None, &[])
@@ -195,9 +222,14 @@ fn local_profile_removal_requires_no_active_workspaces_and_preserves_tombstones(
 fn removing_the_final_local_profile_leaves_the_visible_catalog_empty() {
     let mut c = catalog();
     let profile = a_profile(&mut c);
+    let attempt = begin_removal(&mut c, profile.id);
     assert_eq!(
-        c.remove_profile_local(profile.id, Timestamp::from_millis(at().millis() + 1))
-            .unwrap(),
+        c.remove_profile_local(
+            profile.id,
+            Some(attempt),
+            Timestamp::from_millis(at().millis() + 1)
+        )
+        .unwrap(),
         LocalProfileRemoval::Removed
     );
     // Desktop startup maps this exact empty listing to StoreLaunch::NeedsProfile.
@@ -218,7 +250,9 @@ fn lifecycle_inventory_is_content_free_and_includes_removed_bound_profiles() {
     c.put_profile(&removed).unwrap();
     c.put_profile(&unbound).unwrap();
     let removed_at = Timestamp::from_millis(at().millis() + 1);
-    c.remove_profile_local(removed.id, removed_at).unwrap();
+    let attempt = begin_removal(&mut c, removed.id);
+    c.remove_profile_local(removed.id, Some(attempt), removed_at)
+        .unwrap();
 
     let inventory = c.profile_lifecycle_inventory().unwrap();
     assert_eq!(inventory.len(), 2);
@@ -263,8 +297,13 @@ fn lifecycle_inventory_rejects_a_corrupt_stored_account_binding() {
 fn a_removed_profile_cannot_be_used_as_an_implicit_workspace_owner() {
     let mut c = catalog();
     let profile = a_profile(&mut c);
-    c.remove_profile_local(profile.id, Timestamp::from_millis(at().millis() + 1))
-        .unwrap();
+    let attempt = begin_removal(&mut c, profile.id);
+    c.remove_profile_local(
+        profile.id,
+        Some(attempt),
+        Timestamp::from_millis(at().millis() + 1),
+    )
+    .unwrap();
     let workspace = Workspace::new(profile.id, "Must not silently restore", at()).unwrap();
     assert_eq!(
         c.put_workspace(&workspace).unwrap_err().code(),

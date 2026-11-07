@@ -23,6 +23,10 @@ const MIGRATED: &[&str] = &[
     "apps/koru/src/panes/explore/popover_elements.rs",
     // ELEMENTS-PLAN P5: the Profiles page.
     "apps/koru/src/panes/explore/popover_elements/profiles.rs",
+    "apps/koru/src/panes/sidebar/rail_elements.rs",
+    "apps/koru/src/panes/explore/apps_rail_elements.rs",
+    "apps/koru/src/panes/explore/heading_elements.rs",
+    "apps/koru/src/panes/explore/workspace_menu_elements.rs",
     // The chat's model picker (koru-ai D64, QUESTIONS M7): its tree and its
     // paint, every leaf a named adapter; its tokens are defined beside them
     // in `model_picker/tokens.rs`.

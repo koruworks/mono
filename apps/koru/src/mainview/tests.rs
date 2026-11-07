@@ -4027,7 +4027,7 @@ fn with_summary_open() -> (MainView, Workspace, Vec<koru_core::ProfileSummary>) 
         Some(list[0].id),
     );
     // The floor chip opens the switcher; its Profiles page is one page away.
-    let chip = crate::panes::sidebar::floor::solve(v.explore_area()).chip;
+    let chip = v.explore.apps_rail_rects(v.rail_area()).workspaces[0].1;
     let (x, y) = chip.centre();
     v.mouse_down(&mut w.ws, x, y, false);
     assert!(v.explore.popover_open(), "the chip opens the switcher");
@@ -4111,7 +4111,7 @@ fn a_press_on_the_overhang_reaches_the_profile_row() {
         Some(PaneRequest::SwitchProfile(profiles[1].id)),
         "choosing a Profile switches to it"
     );
-    assert!(v.explore.popover_open(), "the list stays up");
+    assert!(!v.explore.popover_open(), "switching closes the list");
     assert_eq!(
         v.explore.popover_rects(sb, vp).first().map(|(row, _)| *row),
         Some(crate::panes::explore::PopoverRow::ProfilesHeading),
@@ -4133,7 +4133,9 @@ fn the_chip_and_the_square_open_their_own_pages_and_shut_them() {
     let first = |v: &MainView| v.explore.popover_rects(sb, vp).first().map(|(row, _)| *row);
     assert_eq!(
         first(&v),
-        Some(PopoverRow::WorkspacesHeading),
+        Some(PopoverRow::WorkspaceAction(
+            crate::panes::explore::workspace_menu_elements::MenuAction::Sync
+        )),
         "the chip's page lists the workspaces only"
     );
     // The rail's profile square: the Profiles page.
@@ -4151,11 +4153,16 @@ fn the_chip_and_the_square_open_their_own_pages_and_shut_them() {
     assert!(!v.explore.popover_open(), "the square shuts it");
     v.explore
         .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
-    let chip = crate::panes::sidebar::floor::solve(sb).chip;
+    let chip = v.explore.apps_rail_rects(v.rail_area()).workspaces[0].1;
     let (cx, cy) = chip.centre();
     v.mouse_down(&mut w.ws, cx, cy, false);
     assert!(v.explore.popover_open(), "and the chip opens its page");
-    assert_eq!(first(&v), Some(PopoverRow::WorkspacesHeading));
+    assert_eq!(
+        first(&v),
+        Some(PopoverRow::WorkspaceAction(
+            crate::panes::explore::workspace_menu_elements::MenuAction::Sync
+        ))
+    );
 }
 
 /// **The floor answers in every app.** Tasks, Home, Artifacts, Chats and
@@ -4176,8 +4183,8 @@ fn the_chip_and_the_help_open_whichever_app_is_showing() {
         v.show_navigator(mode);
         // Read after the switch: a mode that opens a tab can relay out the
         // pane, and the floor moves with it.
-        let floor = crate::panes::sidebar::floor::solve(v.explore_area());
-        let (cx, cy) = floor.chip.centre();
+        let square = v.explore.apps_rail_rects(v.rail_area()).workspaces[0].1;
+        let (cx, cy) = square.centre();
         v.mouse_down(&mut w.ws, cx, cy, false);
         assert!(
             v.explore.popover_open(),
@@ -4389,14 +4396,13 @@ fn selecting_the_tab_you_are_already_in_asks_for_nothing() {
     assert_eq!(View::take_pane_request(&mut v), None);
 }
 
-/// **Selecting Manage arms its Workspaces poll and asks the shell for
-/// nothing.** The controller answers on its own thread, so what selection
-/// arms is the pass that takes what arrived. The tick's re-arming is
-/// `workspace_menu/tests.rs`'s.
+/// Selecting Manage uses the window controller and does not create an idle tick.
 #[test]
-fn selecting_manage_arms_its_poll_and_asks_the_shell_for_nothing() {
+fn selecting_manage_asks_the_shell_for_nothing_and_does_not_arm_an_idle_poll() {
     let (mut v, _workspace) = container();
-    v.tabs_mut().push(tab::Tab::manage());
+    let controller = v.workspace_controller.clone();
+    v.tabs_mut()
+        .push(tab::Tab::manage_with_controller(controller));
     let manage = v.tabs().len() - 1;
     assert!(v.select(0));
     let _ = View::take_pane_request(&mut v);
@@ -4404,7 +4410,7 @@ fn selecting_manage_arms_its_poll_and_asks_the_shell_for_nothing() {
 
     assert!(v.select(manage));
     assert_eq!(View::take_pane_request(&mut v), None);
-    assert!(v.workspaces_poll_due.is_some(), "the Manage tick is armed");
+    assert!(v.workspaces_poll_due.is_none(), "no command is pending");
 }
 
 #[test]
@@ -6139,7 +6145,7 @@ fn ctrl_alt_w_shows_the_workspaces_without_opening_the_pane() {
 /// that closed it would make the second press of a chord you hold down undo the
 /// first.
 #[test]
-fn ctrl_alt_w_leaves_the_switcher_open() {
+fn ctrl_alt_w_toggles_the_workspace_menu() {
     let (mut v, mut workspace) = on_document();
     v.toggle_sidebar();
     v.adopt(&workspace.ws);
@@ -6147,7 +6153,12 @@ fn ctrl_alt_w_leaves_the_switcher_open() {
     v.key(&mut workspace.ws, &ch("w"), Some("w"), PRIMARY_ALT);
     assert!(v.explore.popover_open());
     v.key(&mut workspace.ws, &ch("w"), Some("w"), PRIMARY_ALT);
-    assert!(v.explore.popover_open(), "still showing");
+    assert!(
+        !v.explore.popover_open(),
+        "the second chord closes the menu"
+    );
+    v.key(&mut workspace.ws, &ch("w"), Some("w"), PRIMARY_ALT);
+    assert!(v.explore.popover_open(), "the next chord reopens it");
 
     // Escape is what shuts it, through the popover's own key handling.
     v.key(
@@ -6259,7 +6270,7 @@ fn a_right_click_on_a_workspace_row_opens_its_menu_over_the_page() {
     v.menu = None;
     v.explore
         .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
-    let chip = crate::panes::sidebar::floor::solve(v.explore_area()).chip;
+    let chip = v.explore.apps_rail_rects(v.rail_area()).workspaces[0].1;
     let (cx, cy) = chip.centre();
     v.mouse_down(&mut w.ws, cx, cy, false);
     assert!(v.explore.popover_open());
@@ -6302,19 +6313,15 @@ fn the_rails_settings_tooltip_carries_its_chord() {
 /// **The profile tile and the chip's tile share a baseline** (the review's
 /// note): the same size, their centres level, side by side at the foot.
 #[test]
-fn the_profile_tile_sits_level_with_the_chips_tile() {
+fn the_workspace_and_profile_squares_keep_their_rail_positions() {
     let (mut v, _w) = container();
     v.toggle_sidebar();
-    let square = v.explore.apps_rail_rects(v.rail_area()).profile;
-    let tile = crate::panes::sidebar::apps_rail::PROFILE_TILE;
-    let profile_centre = square.y + square.h * 0.5;
-    let chip_tile = crate::panes::sidebar::floor::solve(v.explore_area()).avatar;
-    assert_eq!(chip_tile.h, tile, "the same size");
-    assert!(
-        (profile_centre - chip_tile.centre().1).abs() < 0.5,
-        "level: the square's centre {profile_centre} vs the chip tile's {:?}",
-        chip_tile
-    );
+    let rail = v.explore.apps_rail_rects(v.rail_area());
+    let current = rail.workspaces[0].1;
+    assert_eq!(current.w, rail.profile.w);
+    assert_eq!(current.h, rail.profile.h);
+    assert!(current.y < rail.apps[0].1.y);
+    assert!(rail.profile.y > rail.help.y);
 }
 
 /// **The lane has no `+`** (the review's note, E44): search and the toggle
@@ -6353,7 +6360,7 @@ fn rename_from_a_right_click_has_a_row_to_draw_on() {
     // Put the field and the page away, and rename with nothing listing the
     // workspace: the Manage tab opens to carry the field.
     v.workspace_rename = None;
-    let chip = crate::panes::sidebar::floor::solve(v.explore_area()).chip;
+    let chip = v.explore.apps_rail_rects(v.rail_area()).workspaces[0].1;
     let (cx, cy) = chip.centre();
     v.mouse_down(&mut w.ws, cx, cy, false);
     assert!(!v.explore.popover_open());
@@ -6375,7 +6382,7 @@ fn a_right_click_on_the_floor_chip_opens_the_open_workspaces_menu() {
     use crate::mainview::context_menu::MenuSubject;
     let (mut v, mut w, _) = with_summary_open();
     let id = v.workspaces()[0].id;
-    let chip = crate::panes::sidebar::floor::solve(v.explore_area()).chip;
+    let chip = v.explore.apps_rail_rects(v.rail_area()).workspaces[0].1;
     let (cx, cy) = chip.centre();
     // Shut the page the fixture opened; the chip is its door.
     v.mouse_down(&mut w.ws, cx, cy, false);
@@ -6398,47 +6405,33 @@ fn a_right_click_on_the_floor_chip_opens_the_open_workspaces_menu() {
 /// corner and lifts itself to stay on screen at the window's foot; a chosen
 /// format imports, Trash opens the tab, New workspace the name prompt.
 #[test]
-fn the_floor_dots_open_the_workspace_menu() {
+fn the_workspace_menu_actions_reach_import_trash_and_creation() {
     use crate::mainview::context_menu::{MenuAction, MenuSubject};
+    use crate::panes::explore::{
+        PopoverRow, workspace_menu_elements::MenuAction as WorkspaceAction,
+    };
     let (mut v, mut w, _) = with_summary_open();
-    let vp = v.viewport;
-    let dots = crate::panes::sidebar::floor::solve(v.explore_area()).dots;
-    let (x, y) = dots.centre();
-    v.mouse_down(&mut w.ws, x, y, false);
-    assert!(!v.explore.popover_open(), "the page shut under the menu");
-    let menu = v.menu.as_ref().expect("the menu opened");
-    assert_eq!(menu.subject, MenuSubject::Floor);
-    assert_eq!(menu.items(), context_menu::floor_items());
-    let m = menu.panel(vp);
-    assert!(m.y + m.h <= vp.1 + 0.5, "on screen: {m:?} vs {vp:?}");
-    assert!(m.y < dots.y, "lifted above the button: {m:?} vs {dots:?}");
-    assert!(
-        m.x >= dots.x + dots.w - 0.5,
-        "beside the button, to its right (the review's note): {m:?} vs {dots:?}"
-    );
-    let enabled = v.enabled_items(menu);
-    let dimmed: Vec<_> = menu
-        .items()
-        .iter()
-        .zip(enabled)
-        .filter(|(_, on)| !on)
-        .map(|(item, _)| *item)
-        .collect();
+    let import = v
+        .explore
+        .popover_rects(v.explore_area(), v.viewport)
+        .into_iter()
+        .find(|(row, _)| *row == PopoverRow::WorkspaceAction(WorkspaceAction::Import))
+        .unwrap()
+        .1;
+    let (x, y) = import.centre();
+    assert!(v.mouse_down(&mut w.ws, x, y, false));
+    assert!(v.explore.popover_open());
     assert_eq!(
-        dimmed,
-        vec![MenuAction::InvitePeople],
-        "only Invite people waits"
+        v.menu.as_ref().unwrap().items(),
+        context_menu::import_menu_items()
     );
-
     let format = koru_workspace_host::formats::import_menu_formats()[0].id;
-    assert!(v.run_menu_action_for_test(MenuSubject::Floor, MenuAction::ImportFormat(format)));
-    assert!(v.run_menu_action_for_test(MenuSubject::Floor, MenuAction::OpenTrash));
-    assert!(
-        matches!(v.tabs().active_tab().view, TabView::Trash(_)),
-        "Trash opened its tab"
-    );
-    assert!(v.run_menu_action_for_test(MenuSubject::Floor, MenuAction::NewWorkspace));
-    assert!(v.new_document.is_some(), "the name prompt is open");
+    assert!(v.run_menu_action_for_test(MenuSubject::NewTab, MenuAction::ImportFormat(format)));
+    assert!(!v.explore.popover_open());
+    assert!(v.apply(&mut w.ws, crate::panes::Outcome::OpenTrash));
+    assert!(matches!(v.tabs().active_tab().view, TabView::Trash(_)));
+    assert!(v.apply(&mut w.ws, crate::panes::Outcome::NewWorkspace));
+    assert!(v.new_document.is_some());
 }
 
 /// **The toolbar's sync icon opens the Sync settings tab**, once; the

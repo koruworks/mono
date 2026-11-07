@@ -65,7 +65,17 @@ use crate::reminders::{
 };
 use crate::text::Locale;
 
+mod availability;
+pub use availability::{
+    EnsuredWorkspace, VerifiedWorkspaceManifest, WorkspaceAuthority, WorkspaceAuthorityState,
+    WorkspaceAvailabilityIssue, WorkspaceManifestInspection,
+};
+mod preparation;
+mod removal;
+mod replacement;
+pub use replacement::{ListingState, MovedWorkspace, RemovedWorkspace, Replacement};
 mod profile_projection;
+pub use preparation::{CreateProfileWithWorkspace, CreatedProfile, FirstWorkspace};
 mod profile_units;
 mod transport_modes;
 pub use transport_modes::TransportModeChoice;
@@ -85,6 +95,25 @@ pub trait Backend {
 
     /// Open (or create) one workspace's storage.
     fn open_workspace(&self, id: WorkspaceId) -> Result<Self::Workspace>;
+
+    /// Inspect only existing, committed bytes. This must never create storage,
+    /// migrate a schema, or substitute a live document with queued imports.
+    fn inspect_workspace_manifest(&self, _id: WorkspaceId) -> WorkspaceManifestInspection {
+        WorkspaceManifestInspection::Unavailable(Error::new(
+            Code::StorageFailed,
+            "read-only workspace inspection is unsupported",
+        ))
+    }
+
+    /// Claim a new repository exclusively. Existing, even unlisted storage
+    /// must be refused. On failure the backend cleans only its own partial
+    /// creation; after success the caller owns cleanup until publication.
+    fn create_workspace(&self, _id: WorkspaceId) -> Result<Self::Workspace> {
+        Err(Error::new(
+            Code::StorageFailed,
+            "exclusive workspace creation is unsupported",
+        ))
+    }
 
     /// Permanently remove one workspace's repository and blobs.
     fn delete_workspace(&self, id: WorkspaceId) -> Result<()>;
@@ -841,10 +870,11 @@ impl<C: Catalog, B: Backend> Store<C, B> {
     pub fn remove_profile_local(
         &mut self,
         id: ProfileId,
+        attempt: Option<crate::ids::RemovalAttemptId>,
         at: Timestamp,
     ) -> Result<crate::ports::LocalProfileRemoval> {
         self.refuse_holder(id, "removed")?;
-        let result = self.catalog.remove_profile_local(id, at)?;
+        let result = self.catalog.remove_profile_local(id, attempt, at)?;
         if result == crate::ports::LocalProfileRemoval::Removed {
             self.open_profiles.remove(&id);
             self.private_profiles.remove(&id);
@@ -1179,48 +1209,22 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         name: &str,
         at: Timestamp,
     ) -> Result<Workspace> {
+        self.refuse_profile_removal(owner)?;
         // Refuse early rather than leaving a database behind for an owner that
         // does not exist.
         if self.catalog.profile(owner)?.is_none() {
             return Err(Error::bare(Code::ProfileNotFound));
         }
         self.ensure_profile_manifest(owner)?;
-        let mut workspace = Workspace::new(owner, name, at)?;
-        workspace.position = self.next_workspace_position(owner)?;
-        self.catalog.put_workspace(&workspace)?;
-
-        let mut repo = self.backend.open_workspace(workspace.id)?;
-        let manifest_id = DocumentId::new();
-        repo.create_document(manifest_id, DocumentKind::Manifest, at)?;
-
-        let manifest = Manifest::create(workspace.id, name, at)?;
-        manifest.set_peer_id(self.peer_id)?;
-        // The manifest's own creation has to reach the journal, or a reopen
-        // finds a registered document with no history — and a later delta from
-        // a client would name ancestors nobody has.
-        let mut open = Open {
-            repo,
-            manifest,
-            documents: HashMap::new(),
-            windows: HashMap::new(),
-            manifest_id,
-        };
-        let whole = open.manifest.export_all_updates()?;
-        commit_one(
-            &mut open,
-            workspace.id,
-            &mut self.committed,
-            &mut self.sync_dirty,
-            manifest_id,
-            whole,
-            at,
-            crate::ports::UpdateOrigin::Store,
-        )?;
-        open.repo.reindex(&open.manifest.entries())?;
-
-        self.catalog.record_location(manifest_id, workspace.id)?;
-        self.open.insert(workspace.id, open);
-        Ok(workspace)
+        let prepared = self.prepare_workspace(owner, name, None, None, at)?;
+        if let Err(error) = self
+            .catalog
+            .publish_workspace(&prepared.workspace, prepared.open.manifest_id)
+        {
+            self.discard_prepared(prepared);
+            return Err(error);
+        }
+        Ok(self.adopt_prepared(prepared))
     }
 
     /// Provision the identity rows for a workspace being replicated for the
@@ -1584,6 +1588,7 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         pinned: bool,
         archived: bool,
     ) -> Result<Workspace> {
+        self.refuse_profile_removal(self.workspace_including_deleted(id)?.owner)?;
         self.ensure_open(id)?;
         let mut workspace = self
             .catalog
@@ -1733,6 +1738,8 @@ impl<C: Catalog, B: Backend> Store<C, B> {
     /// changes nothing** — not even the position. That is what makes the same
     /// request twice a retry rather than a second move to the end of the list.
     pub fn move_workspace(&mut self, id: WorkspaceId, to: ProfileId) -> Result<Workspace> {
+        self.refuse_profile_removal(self.workspace_including_deleted(id)?.owner)?;
+        self.refuse_profile_removal(to)?;
         // The target first: refusing before the row is touched keeps a move to
         // a profile that does not exist from being distinguishable, by timing
         // or by side effect, from one that does.
@@ -1775,6 +1782,7 @@ impl<C: Catalog, B: Backend> Store<C, B> {
 
     pub fn delete_workspace(&mut self, id: WorkspaceId, at: Timestamp) -> Result<Workspace> {
         let mut workspace = self.workspace_including_deleted(id)?;
+        self.refuse_profile_removal(workspace.owner)?;
         if workspace.deleted_at.is_some() {
             return Ok(workspace);
         }
@@ -1811,6 +1819,7 @@ impl<C: Catalog, B: Backend> Store<C, B> {
 
     pub fn restore_workspace(&mut self, id: WorkspaceId) -> Result<Workspace> {
         let mut workspace = self.workspace_including_deleted(id)?;
+        self.refuse_profile_removal(workspace.owner)?;
         if workspace.deleted_at.is_none() {
             return Ok(workspace);
         }

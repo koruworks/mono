@@ -95,6 +95,7 @@ mod open;
 pub mod panes;
 mod place_chooser;
 mod profile_probe;
+mod profile_wait;
 mod recording;
 mod reminder_creation;
 mod reminder_management;
@@ -117,6 +118,7 @@ mod terminal_look;
 pub(crate) mod trash;
 mod update_ui;
 mod welcome_progress;
+mod workspace_controller;
 mod workspace_icon;
 mod workspace_menu;
 mod workspace_rename;
@@ -958,10 +960,12 @@ pub struct MainView {
     ///
     /// A queue rather than one slot: see [`ask_pane`](Self::ask_pane).
     pane_requests: std::collections::VecDeque<PaneRequest>,
-    /// **The manager's next poll, while that tab is in front.** Dropped the
-    /// moment it is not: a window looking at a document does no work for a
-    /// manager nobody can see.
+    /// Fallback only while a keyed workspace command is pending. Worker
+    /// answers and catalog events wake the window without an idle timer.
     workspaces_poll_due: Option<Instant>,
+    /// One workspace controller for this window, also borrowed by Manage.
+    workspace_controller: crate::manage::SharedWorkspaces,
+    profile_wait: profile_wait::WaitPane,
     /// **The preferences as this container last heard them.** Most of what a
     /// Settings page draws reads a process global, but the pieces it keeps a
     /// field of do not — a tab opened an hour into a session would otherwise
@@ -1770,13 +1774,19 @@ impl MainView {
     }
 
     pub fn new_with(updates: crate::agent::UpdateFeed, search_enabled: bool) -> Self {
-        Self::new_with_agent(updates, crate::agent::AgentLink::absent(), search_enabled)
+        Self::new_with_agent(
+            updates,
+            crate::agent::AgentLink::absent(),
+            search_enabled,
+            koru_workspaces_ui::WorkspaceLinks::inert(),
+        )
     }
 
     pub fn new_with_agent(
         updates: crate::agent::UpdateFeed,
         agent: crate::agent::AgentLink,
         search_enabled: bool,
+        workspace_links: koru_workspaces_ui::WorkspaceLinks,
     ) -> Self {
         Self {
             panes: panes::PaneTree::new(Tab::welcome()),
@@ -1907,6 +1917,10 @@ impl MainView {
             window_request: None,
             pane_requests: std::collections::VecDeque::new(),
             workspaces_poll_due: None,
+            profile_wait: profile_wait::WaitPane::default(),
+            workspace_controller: std::rc::Rc::new(std::cell::RefCell::new(
+                koru_workspaces_ui::WorkspacesController::with_links(workspace_links),
+            )),
             preferences: Settings::default(),
             entries: None,
             store_trouble: None,
@@ -4474,7 +4488,6 @@ impl MainView {
                 matches!(action, MenuAction::EmptyTrash) && self.explore.trash_count() > 0
             }
             // *Invite people* waits for an invite flow (E60); the rest act.
-            MenuSubject::Floor => !matches!(action, MenuAction::InvitePeople),
             // The help popover's rows are always there. The card's Download
             // is a control, gated by its own `enabled` rather than here.
             MenuSubject::Help => matches!(
@@ -5022,21 +5035,6 @@ impl MainView {
                 }
                 _ => false,
             },
-            MenuSubject::Floor => match action {
-                MenuAction::NewWorkspace => self.prompt_new_workspace(),
-                MenuAction::ImportFiles => self.ask_pane(PaneRequest::ImportFiles(
-                    koru_workspace_host::ImportSourceSelection::Picker,
-                )),
-                MenuAction::OpenTrash => self.open_trash_tab(),
-                MenuAction::ImportFormat(format) => {
-                    self.ask_pane(PaneRequest::ImportContent {
-                        format,
-                        source: koru_workspace_host::ImportSourceSelection::Picker,
-                    });
-                    true
-                }
-                _ => false,
-            },
             // The help popover (QUESTIONS.md E33). The card opens the What's
             // new tab; its button sends the update's first consent; the
             // changelog, the website and the socials open in the browser
@@ -5377,6 +5375,7 @@ impl MainView {
         self.error.is_none()
             && self.import_dialog.is_none()
             && self.confirm.is_none()
+            && !self.workspace_controller.borrow().is_confirming()
             && self.new_document.is_none()
             && self.snapshot_prompt.is_none()
             && self.link_device.is_none()
@@ -6643,7 +6642,9 @@ impl MainView {
         if let Some(index) = existing {
             self.select(index);
         } else {
-            self.tabs_mut().push(Tab::manage());
+            let controller = self.workspace_controller.clone();
+            self.tabs_mut()
+                .push(Tab::manage_with_controller(controller));
             self.slides_mut().clear();
             self.relayout();
         }
@@ -7523,10 +7524,14 @@ impl MainView {
     /// entry. It shares the NewTab subject because those are the same import
     /// actions; only the parent menu's New document row is omitted here.
     fn open_import_menu(&mut self) -> bool {
+        let at = self
+            .explore
+            .workspace_import_anchor(self.explore_popover_area(), self.viewport)
+            .unwrap_or(self.pointer);
         let mut menu = ContextMenu::new(
             &mut self.engine,
             MenuSubject::NewTab,
-            self.pointer,
+            at,
             context_menu::import_menu_items(),
         );
         let enabled = self.enabled_items(&menu);
@@ -7544,20 +7549,6 @@ impl MainView {
     /// count. Beside the button to its right (the review's note), level with
     /// its top; the menu lifts itself to stay on screen at the window's
     /// foot.
-    fn open_floor_menu(&mut self, at: (f32, f32)) -> bool {
-        context_menu::set_trash_count(self.explore.trash_count());
-        let mut menu = ContextMenu::aligned(
-            &mut self.engine,
-            MenuSubject::Floor,
-            at,
-            context_menu::floor_items(),
-            MenuAnchor::Cursor,
-        );
-        let enabled = self.enabled_items(&menu);
-        menu.step(&enabled, 1);
-        self.menu = Some(menu);
-        true
-    }
 
     /// The help popover beside the rail's `?`, its foot level with the
     /// control's.
@@ -7869,12 +7860,21 @@ impl MainView {
                 )))
             }
             Outcome::ImportContent => self.open_import_menu(),
-            Outcome::ManageWorkspace(_) => self.open_manage_workspaces(None),
+            Outcome::ManageWorkspace(id) => {
+                let owner = self
+                    .workspace_facts(id)
+                    .and_then(|workspace| workspace.owner);
+                self.workspace_controller
+                    .borrow_mut()
+                    .set_selected(Some(crate::manage::workspaces::catalog_workspace(id)));
+                self.open_manage_workspaces(owner)
+            }
+            Outcome::ManageWorkspaces => self.open_manage_workspaces(None),
+            Outcome::OpenSyncSettings => self.open_sync_settings_tab(),
             Outcome::ManageProfile(profile) => {
                 self.open_manage(crate::manage::Page::Profile(profile))
             }
             Outcome::ManageDevices => self.open_manage(crate::manage::Page::Devices),
-            Outcome::FloorMenu { at } => self.open_floor_menu(at),
             Outcome::WorkspaceMenu { workspace, at } => {
                 self.open_workspace_menu(workspace, at, false)
             }
@@ -8594,14 +8594,7 @@ impl MainView {
         {
             self.explore.rail_mut().set_selected(Some(target));
         }
-        if self.context_stale
-            && let Some((profiles, current_profile, workspaces, current)) =
-                self.pane_context.clone()
-        {
-            self.context_stale = false;
-            self.explore
-                .set_context(profiles, current_profile, workspaces, current);
-        }
+        self.refresh_explore_context();
     }
 
     // ------------------------------------------------------- the tasks rail
@@ -9653,6 +9646,9 @@ impl MainView {
         if self.agent_cli_mouse_down(x, y) {
             return true;
         }
+        if self.workspace_confirmation_mouse_down(x, y) {
+            return true;
+        }
         if let Some((dialog, _)) = self.confirm.as_mut() {
             let out = dialog.mouse_down(&mut self.engine, self.viewport, x, y);
             self.settle_confirm_outcome(out);
@@ -9970,8 +9966,15 @@ impl MainView {
             // first (the review's note: the Profiles list stayed up beside the
             // help popover the `?` opened) — unless the press is the square,
             // the popover's own door, which toggles it.
-            let square = self.explore.apps_rail_rects(self.rail_area()).profile;
-            let shut = !square.contains(x, y) && self.explore.close_popover();
+            let door = matches!(
+                self.explore.rail_hit(self.rail_area(), x, y),
+                Some(
+                    crate::panes::sidebar::apps_rail::Hit::Profile
+                        | crate::panes::sidebar::apps_rail::Hit::Workspace(_)
+                        | crate::panes::sidebar::apps_rail::Hit::WaitingWorkspace
+                )
+            );
+            let shut = !door && self.explore.close_popover();
             let out = self.explore.apps_rail_mouse_down(self.rail_area(), x, y);
             return self.apply(ws, out) || shut;
         }
@@ -10003,6 +10006,9 @@ impl MainView {
             self.focus_pane_at(x, y);
             let out = self.press(hit, x, y, ctrl);
             return self.apply(ws, out) || dismissed;
+        }
+        if self.profile_wait_mouse_down(x, y) {
+            return true;
         }
         // A press in the document area focuses the pane it landed in before the
         // active view sees it. Single-group builds are unaffected; this is the
@@ -10106,7 +10112,7 @@ impl MainView {
         if self.import_dialog.is_some() {
             return true;
         }
-        if self.confirm.is_some() {
+        if self.confirm.is_some() || self.workspace_controller.borrow().is_confirming() {
             return true;
         }
         if self.reminder_creation.is_open() {
@@ -10617,6 +10623,7 @@ impl View for MainView {
         if self.error.is_some()
             || self.import_dialog.is_some()
             || self.confirm.is_some()
+            || self.workspace_controller.borrow().is_confirming()
             || self.new_document.is_some()
             || self.snapshot_prompt.is_some()
             || self.link_device.is_some()
@@ -11103,7 +11110,11 @@ impl View for MainView {
         if self.link_device.is_some() {
             return;
         }
-        if self.confirm.is_some() || self.new_document.is_some() || self.snapshot_prompt.is_some() {
+        if self.confirm.is_some()
+            || self.workspace_controller.borrow().is_confirming()
+            || self.new_document.is_some()
+            || self.snapshot_prompt.is_some()
+        {
             return;
         }
         let bell = self.reminder_bell_rect();
@@ -11327,6 +11338,9 @@ impl View for MainView {
             return dialog.cursor();
         }
         if let Some(dialog) = &self.import_dialog {
+            return dialog.cursor();
+        }
+        if let Some(dialog) = self.workspace_controller.borrow().dialog() {
             return dialog.cursor();
         }
         if let Some((dialog, _)) = &self.confirm {
@@ -11638,6 +11652,9 @@ impl View for MainView {
     /// smooth-scrolling, so the shell's fast wake-up is the exception it is
     /// meant to be. Each must return to `false` on its own (ADR-26).
     fn animating(&self) -> bool {
+        if self.profile_wait_animating() {
+            return true;
+        }
         // **Only while the toast is fading or showing indeterminate progress.**
         // Holding a message or a determinate bar still is not an animation; see
         // `koru_ui::toast`.
@@ -12840,6 +12857,13 @@ impl View for MainView {
         let next = (profiles, current_profile, workspaces, current);
         let changed = self.pane_context.as_ref() != Some(&next);
         if changed {
+            if self
+                .pane_context
+                .as_ref()
+                .is_none_or(|(_, _, rows, _)| *rows != next.2)
+            {
+                self.workspace_controller.borrow().invalidate();
+            }
             // A profile switch in place invalidates the store-terms recents:
             // a recents row from the old profile would offer a destination
             // the shell must refuse (a move never crosses a profile).
@@ -12869,6 +12893,7 @@ impl View for MainView {
             // The explore column keeps its own copy, and `refresh_explore` only
             // hands one over when this says there is a new one to hand.
             self.context_stale = true;
+            self.refresh_explore_context();
             self.push_manage_profiles_context();
         }
         changed
@@ -12930,7 +12955,11 @@ impl View for MainView {
         &mut self,
         workspaces: std::collections::HashMap<ProfileId, Vec<koru_core::WorkspaceEntry>>,
     ) -> bool {
-        self.explore.set_profile_workspaces(workspaces)
+        let changed = self.explore.set_profile_workspaces(workspaces);
+        if changed {
+            self.workspace_controller.borrow().invalidate();
+        }
+        changed
     }
     fn show_first_minutes(&mut self, owner: &str, profile: &str, workspace: &str) -> bool {
         MainView::show_first_minutes(self, owner, profile, workspace)
@@ -13105,6 +13134,101 @@ impl View for MainView {
             }
             _ => false,
         })
+    }
+
+    fn connected_profile_creation_conflict(&mut self) -> bool {
+        self.each_tab_mut(|tab| match &mut tab.view {
+            TabView::Manage(view) => view.delegate(|c| c.connected_profile_creation_conflict()),
+            _ => false,
+        })
+    }
+
+    fn show_profile_manager(&mut self, profile: ProfileId) -> bool {
+        self.open_manage(crate::manage::Page::Profile(profile))
+    }
+
+    fn create_profile_with_workspace(
+        &mut self,
+        request: koru_api_client::CreateProfileWithWorkspace,
+        reply: std::sync::mpsc::Sender<
+            koru_store_core::errors::Result<koru_api_client::CreatedProfile>,
+        >,
+    ) -> bool {
+        self.workspace_controller
+            .borrow_mut()
+            .create_profile(request, reply);
+        self.arm_workspaces_poll();
+        true
+    }
+
+    fn ensure_live_workspace(
+        &mut self,
+        owner: koru_store_core::ProfileId,
+        name: String,
+        attempt: u64,
+        reply: std::sync::mpsc::Sender<
+            koru_store_core::errors::Result<koru_api_client::EnsuredWorkspace>,
+        >,
+    ) -> bool {
+        self.workspace_controller
+            .borrow_mut()
+            .ensure_live(owner, name, attempt, reply);
+        self.arm_workspaces_poll();
+        true
+    }
+
+    fn workspace_retired(&self, profile: ProfileId, workspace: WorkspaceId) -> bool {
+        self.workspace_controller
+            .borrow()
+            .row(crate::manage::workspaces::catalog_workspace(workspace))
+            .is_some_and(|row| {
+                row.authority == koru_workspaces_ui::Authority::Verified
+                    && (row.archived
+                        || row.deleted
+                        || row.owner != crate::manage::workspaces::catalog_profile(profile))
+            })
+    }
+
+    fn profile_has_live_content(&self, profile: ProfileId) -> bool {
+        self.workspace_controller
+            .borrow()
+            .catalog_rows()
+            .is_some_and(|rows| {
+                rows.iter().any(|row| {
+                    row.owner == crate::manage::workspaces::catalog_profile(profile)
+                        && row.verified_live()
+                })
+            })
+    }
+
+    fn profile_removal(
+        &self,
+        profile: ProfileId,
+    ) -> Option<Option<koru_store_core::profile_removal::RemovalMark>> {
+        self.workspace_controller
+            .borrow()
+            .profile_removal_state(crate::manage::workspaces::catalog_profile(profile))
+    }
+
+    fn set_profile_wait(
+        &mut self,
+        waiting: Option<koru_workspace_host::profile_wait::ProfileWait>,
+    ) -> bool {
+        if self.search_only || self.feedback_only || self.support_only || self.fab_only {
+            return false;
+        }
+        if !self.profile_wait.set(waiting) {
+            return false;
+        }
+        let label = self
+            .profile_wait
+            .waiting
+            .as_ref()
+            .map(|wait| profile_wait::message(&wait.reading, crate::format::lang()));
+        self.explore.set_workspace_waiting(label);
+        self.context_stale = true;
+        self.refresh_explore_context();
+        true
     }
 
     fn local_profile_restored(&mut self, profile: ProfileId) -> bool {
@@ -14096,6 +14220,7 @@ impl View for MainView {
 
     fn maintenance_deadline(&self) -> Option<Instant> {
         [
+            self.profile_wait_deadline(),
             self.support.as_ref().and_then(|s| s.maintenance_deadline()),
             self.tooltip.maintenance_deadline(),
             self.entity_search
@@ -14241,20 +14366,15 @@ impl View for MainView {
             self.pending_reminder_cancels.push_back(resolution);
         }
         let reminder_cancelled = self.apply_pending_reminder_cancels(ws);
-        // **The Manage tab's Workspaces tick.** Take what its controller's
-        // link answered, and re-arm while Manage is still the tab in front.
-        // Dropped the moment it is not: a window looking at a document does no
-        // work for a list nobody can see. The 120 ms pass is also the
-        // post-activation settle: a just-finished Store mutation reaches its
-        // indexed usage row within a poll or two, without a second mechanism.
-        let mut refresh_stats = false;
+        // Worker completions and catalog events wake every window. Drain the
+        // owning controller even when Manage is closed or in the background.
+        let refresh_stats = self.poll_manage_workspaces()
+            | self.drain_workspace_requests()
+            | self.maintain_profile_wait(now);
         if self.workspaces_poll_due.is_some_and(|due| now >= due) {
             self.workspaces_poll_due = None;
-            if matches!(self.tabs().active_tab().view, TabView::Manage(_)) {
-                refresh_stats |= self.poll_manage_workspaces();
-                self.workspaces_poll_due = Some(now + WORKSPACES_POLL);
-            }
         }
+        self.arm_workspaces_poll_at(now);
         // A deep-link caption follows a heading nobody here is editing, and
         // nothing announces that. Two seconds is the same tick the pane context
         // already runs on, and the work is one indexed query per linked
@@ -14708,6 +14828,9 @@ impl MainView {
             // Modal, and it swallows everything: a dialog that let keystrokes
             // through would take dictation into the document behind it.
             Blockers::Modal(ModalKind::Confirm) => {
+                if self.workspace_confirmation_key(key) {
+                    return true;
+                }
                 if let Some((dialog, _)) = self.confirm.as_mut() {
                     let out = dialog.key(key);
                     self.settle_confirm_outcome(out);
@@ -14960,6 +15083,9 @@ impl MainView {
             !matches!(chord, Chord::ShowRailSlot(slot)
                 if self.explore.rail_mode_at(*slot).is_none())
         }) {
+            if self.profile_wait_visible() && matches!(chord, Chord::Rename | Chord::SaveSnapshot) {
+                return true;
+            }
             return match chord {
                 Chord::NewTab => self.new_tab(),
                 Chord::New => self.open_launcher(),
@@ -14991,6 +15117,9 @@ impl MainView {
                 Chord::ToggleRecording => self.toggle_recording(),
                 Chord::Reminders => self.open_reminders_here(ws),
             };
+        }
+        if self.profile_wait_key(key, mods) {
+            return true;
         }
         if self.ai_visible() && self.ai_focused {
             inputdebug::write(format_args!("[Koru][input] view key claimed=ai"));
@@ -16756,6 +16885,12 @@ impl MainView {
         if let Some(dialog) = self.import_dialog.as_mut() {
             return dialog.mouse_move(&mut self.engine, self.viewport, x, y);
         }
+        if self.workspace_confirmation_mouse_move(x, y) {
+            return true;
+        }
+        if self.profile_wait_mouse_move(x, y) {
+            return true;
+        }
         if let Some((dialog, _)) = self.confirm.as_mut() {
             // The scrim is modal over the entire window. Update button hover,
             // then claim even its empty area so the editor underneath neither
@@ -17116,19 +17251,29 @@ impl MainView {
         let tooltip = if let Some(content) = self.document_ai_tooltip() {
             Some(content)
         } else if hit == Hit::Sidebar {
-            // The floor's chip, then the rail — icon-only and chip controls,
-            // so each carries its name (`DESIGN.md`: one interaction clock,
-            // flat chip).
-            let floor = self.explore.floor_rects(self.explore_area());
+            // Rail controls share their names with the element projection.
             let rail = self.explore.apps_rail_rects(self.rail_area());
             let lang = crate::format::lang();
             let on = |r: Rect| r.w > 0.0 && r.contains(x, y);
-            if on(floor.chip) {
-                Some(TooltipContent::new(
-                    5,
-                    floor.chip,
-                    koru_i18n::t(lang, koru_i18n::Key::TerminalSwitchWorkspace),
-                ))
+            if let Some((id, square)) = rail.workspaces.iter().find(|(_, rect)| on(*rect)) {
+                use crate::panes::sidebar::apps_rail::Hit as RailHit;
+                let hit = id.map_or(RailHit::WaitingWorkspace, RailHit::Workspace);
+                let name = self
+                    .explore
+                    .rail_model()
+                    .workspaces
+                    .into_iter()
+                    .find(|item| item.hit == hit)
+                    .map(|item| item.name)
+                    .unwrap_or_default();
+                Some(
+                    TooltipContent::new(5, *square, name).with_optional_shortcut(
+                        koru_keys::show_hint(
+                            koru_keys::ShortcutId::SwitchWorkspace,
+                            koru_keys::Section::Tooltip,
+                        ),
+                    ),
+                )
             } else if on(rail.settings) {
                 // The chord rides the tooltip (the review's note), the way the
                 // lane's controls carry theirs; the Settings page's own
@@ -17151,11 +17296,17 @@ impl MainView {
                     koru_i18n::t(lang, koru_i18n::Key::Help),
                 ))
             } else if on(rail.profile) {
-                Some(TooltipContent::new(
-                    10,
-                    rail.profile,
-                    koru_i18n::t(lang, koru_i18n::Key::FloorChipAction),
-                ))
+                Some(
+                    TooltipContent::new(
+                        10,
+                        rail.profile,
+                        koru_i18n::t(lang, koru_i18n::Key::FloorChipAction),
+                    )
+                    .with_optional_shortcut(koru_keys::show_hint(
+                        koru_keys::ShortcutId::SwitchProfile,
+                        koru_keys::Section::Tooltip,
+                    )),
+                )
             } else {
                 self.navigator_mode_tooltip(x, y)
             }
