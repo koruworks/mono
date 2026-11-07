@@ -810,13 +810,13 @@ fn focus_lights_a_profiles_gear_and_click_opens_manage_on_it() {
     );
 }
 
-/// **The foot's items are pressed where they are drawn**, and each does
-/// what it always did: the offer, Linked devices, and `+`.
+/// The foot's items are pressed where they are drawn: Koru Cloud,
+/// Linked devices, and `+`.
 #[test]
-fn each_foot_item_presses_what_it_always_pressed() {
+fn each_foot_item_opens_its_destination() {
     let a = area(dtheme::SIDEBAR_MIN_W);
     for (button, outcome) in [
-        (HeadButton::Status, Outcome::SubscribeCloud),
+        (HeadButton::Status, Outcome::ManageCloud),
         (HeadButton::Devices, Outcome::ManageDevices),
         (HeadButton::New, Outcome::NewProfile),
     ] {
