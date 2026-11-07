@@ -36,6 +36,7 @@ pub mod choice;
 pub mod clipboard;
 pub mod color_picker_row;
 pub mod confirm;
+pub mod context_chip;
 pub mod copy_affordance;
 pub mod cursor;
 pub mod date_grid;

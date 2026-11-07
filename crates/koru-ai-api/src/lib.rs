@@ -211,6 +211,12 @@ pub trait AiServerPort: Send + Sync {
         chat: ChatId,
         request: UpdateChatToolPolicyRequest,
     ) -> Result<ChatToolPolicyResponse>;
+    fn add_chat_workspace_grants(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        request: koru_ai_wire::AddChatWorkspaceGrantsRequest,
+    ) -> Result<ChatToolPolicyResponse>;
     fn usage(&self, context: RequestContext, chat: Option<ChatId>) -> Result<UsageResponse>;
     fn delete_chat(&self, context: RequestContext, chat: ChatId) -> Result<DeleteChatResponse>;
     fn clear_history(&self, context: RequestContext) -> Result<ClearHistoryResponse>;
@@ -293,6 +299,14 @@ pub trait AiServerPort: Send + Sync {
         chat: ChatId,
         attachment: ChatAttachmentId,
         upload: AttachmentUpload,
+    ) -> Result<ChatAttachmentResponse>;
+    /// Copy a sent attachment into a fresh staged row for message recall.
+    fn restage_attachment(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        source: ChatAttachmentId,
+        request: koru_ai_wire::RestageAttachmentRequest,
     ) -> Result<ChatAttachmentResponse>;
     /// Remove a staged attachment; a sent one answers `attachment_sent`.
     fn remove_attachment(

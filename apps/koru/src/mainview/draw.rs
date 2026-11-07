@@ -185,6 +185,16 @@ impl MainView {
         );
         scene.push_clip_layer(Fill::NonZero, root, &clip);
         let inspect_content_clip = koru_draw::inspect::clip(root, clip);
+        let recent_chat_documents: Vec<_> = self
+            .recent_documents()
+            .into_iter()
+            .map(|(title, document)| {
+                (
+                    koru_store_core::ids::DocumentId::from_uuid(document.as_uuid()),
+                    title,
+                )
+            })
+            .collect();
         for (path, rect) in self.panes.leaf_rects(self.content()) {
             let Some(lane) = self.lane_rect_for(&path) else {
                 continue;
@@ -251,6 +261,7 @@ impl MainView {
                     View::draw(d, scene, workspace, images, leaf_root, caret_on, local)
                 }
                 TabView::AiChat(a) => {
+                    a.set_recent_documents(recent_chat_documents.clone());
                     View::draw(a, scene, workspace, images, leaf_root, caret_on, local)
                 }
                 TabView::Socials(a) => {
@@ -472,6 +483,8 @@ impl MainView {
             });
             self.ai_chat.set_context_workspace(current_workspace);
             self.ai_chat.set_context_document(document_context);
+            self.ai_chat
+                .set_recent_documents(recent_chat_documents.clone());
             self.ai_chat.set_viewport(ai);
             self.ai_chat
                 .submit_embedded_when_durable(workspace.owed() == 0);

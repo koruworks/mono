@@ -554,6 +554,67 @@ impl ChatComposer {
         true
     }
 
+    /// Add a recent document at the caret, using the same stored pill as an
+    /// `@` picker choice. The menu supplies only a title and identity; it
+    /// never reads the document on the window thread.
+    pub(crate) fn insert_document(
+        &mut self,
+        document: koru_ai_core::DocumentId,
+        title: &str,
+    ) -> bool {
+        let first = self
+            .ws
+            .children(Parent::Node(self.root))
+            .ok()
+            .and_then(|rows| rows.first().copied());
+        let Some((row, at)) = self
+            .editor
+            .body
+            .focused()
+            .map(|paragraph| (paragraph.id, paragraph.caret()))
+            .or(first.map(|row| (row, 0)))
+        else {
+            return false;
+        };
+        let attr = Attr::labelled(
+            "document",
+            AttrValue::Document(koru_core::DocumentReference {
+                document: koru_core::DocumentId::from_uuid(document.as_uuid()),
+                node: None,
+            }),
+            title.to_owned(),
+        );
+        self.ws.checkpoint();
+        self.ws.begin_group();
+        if self.ws.insert_pill(row, at, &attr).is_err() {
+            self.ws.checkpoint();
+            return false;
+        }
+        let after = at + koru_core::ANCHOR.len_utf8();
+        if !self
+            .ws
+            .read(row)
+            .ok()
+            .and_then(|node| {
+                node.content
+                    .as_text()
+                    .map(|text| text[after..].starts_with(' '))
+            })
+            .unwrap_or(false)
+        {
+            let _ = self.ws.insert_text(row, after, " ");
+        }
+        self.ws.checkpoint();
+        self.editor.view.active = true;
+        self.editor.body.rebuild(&self.ws);
+        self.editor.body.focus_on(row);
+        self.editor.place_caret(after + 1);
+        self.editor.view.desired_x = None;
+        self.editor.settle();
+        self.editor.scroll_to_caret();
+        true
+    }
+
     /// Whether the caret is on the message's first visual line — where Up
     /// leaves the text instead of moving inside it.
     pub(crate) fn caret_on_first_line(&self) -> bool {

@@ -71,6 +71,7 @@ These public HTTP/client operations are catalogued but have no mobile FFI or Pro
 | `ai.tool_search_chats` | `client.ai().tool_search_chats` | POST /v1/ai/tools/chats/search | Chat tools are an MCP and provider-facing surface, not a mobile chat operation |
 | `ai.tool_read_chat` | `client.ai().tool_read_chat` | POST /v1/ai/tools/chats/read | Chat tools are an MCP and provider-facing surface, not a mobile chat operation |
 | `ai.update_chat_tool_policy` | `client.ai().update_chat_tool_policy` | PUT /v1/ai/chats/{chat}/tool-policy | Workspace-tool chat policy is not yet exposed by a mobile chat host |
+| `ai.add_chat_workspace_grants` | `client.ai().add_chat_workspace_grants` | POST /v1/ai/chats/{chat}/tool-policy/grants | Workspace-tool chat policy is not yet exposed by a mobile chat host |
 | `ai.read_chat_tool_policy` | `client.ai().read_chat_tool_policy` | GET /v1/ai/chats/{chat}/tool-policy | Workspace-tool chat policy is not yet exposed by a mobile chat host |
 | `ai.search` | `client.ai().search` | POST /v1/ai/search | Phase 1 ships AI chat search before a mobile chat host |
 | `ai.feedback` | `client.ai().feedback` | PUT /v1/ai/messages/{message}/feedback | Phase 1 ships desktop response actions before a mobile chat host |
@@ -87,6 +88,7 @@ These public HTTP/client operations are catalogued but have no mobile FFI or Pro
 | `ai.delete_chat` | `client.ai().delete_chat` | DELETE /v1/ai/chats/{chat} | Phase 1 ships desktop history management before a mobile chat host |
 | `ai.clear_history` | `client.ai().clear_history` | DELETE /v1/ai/chats | Phase 1 ships desktop history management before a mobile chat host |
 | `ai.put_attachment` | `client.ai().put_attachment` | PUT /v1/ai/chats/{chat}/attachments/{attachment} | Attachments go to local agents, which run on the desktop that installed them |
+| `ai.restage_attachment` | `client.ai().restage_attachment` | POST /v1/ai/chats/{chat}/attachments/{attachment}/restage | Attachments go to local agents, which run on the desktop that installed them |
 | `ai.remove_attachment` | `client.ai().remove_attachment` | DELETE /v1/ai/chats/{chat}/attachments/{attachment} | Attachments go to local agents, which run on the desktop that installed them |
 | `ai.read_attachment` | `client.ai().attachment_bytes` | GET /v1/ai/chats/{chat}/attachments/{attachment} | Attachments go to local agents, which run on the desktop that installed them |
 | `ai.read_attachment_thumbnail` | `client.ai().attachment_thumbnail` | GET /v1/ai/chats/{chat}/attachments/{attachment}/thumbnail | Attachments go to local agents, which run on the desktop that installed them |

@@ -327,6 +327,10 @@ impl AiChatView {
         self.surface.set_context_document(document)
     }
 
+    pub fn set_recent_documents(&mut self, documents: Vec<(DocumentId, String)>) -> bool {
+        self.surface.set_recent_documents(documents)
+    }
+
     pub fn take_openai_credential_request(&mut self) -> Option<OpenAiCredentialRequest> {
         self.surface.take_openai_credential_request()
     }

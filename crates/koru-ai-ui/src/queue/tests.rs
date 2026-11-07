@@ -689,7 +689,15 @@ fn a_taken_steer_is_walked_back_to_and_a_queued_one_is_not() {
     type_into(&mut surface, "queued");
     press(&mut surface, NamedKey::Enter);
     assert!(surface.composer.is_blank());
-    assert_eq!(surface.input_history(), ["first"], "queued is not sent");
+    assert_eq!(
+        surface
+            .input_history()
+            .iter()
+            .map(|entry| entry.markdown.as_str())
+            .collect::<Vec<_>>(),
+        ["first"],
+        "queued is not sent"
+    );
     assert!(surface.queue_action(QueueHit::Steer(0)));
     drain(&commands);
     surface.apply_update(Update::Steered(koru_ai_wire::SteerAttemptResponse {
@@ -697,6 +705,13 @@ fn a_taken_steer_is_walked_back_to_and_a_queued_one_is_not() {
         user_message_id: koru_ai_core::MessageId::new(),
         replayed: false,
     }));
-    assert_eq!(surface.input_history(), ["first", "steered"]);
+    assert_eq!(
+        surface
+            .input_history()
+            .iter()
+            .map(|entry| entry.markdown.as_str())
+            .collect::<Vec<_>>(),
+        ["first", "steered"]
+    );
     assert_eq!(queued_texts(&surface), ["queued"]);
 }

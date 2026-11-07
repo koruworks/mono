@@ -678,8 +678,8 @@ fn an_agent_with_no_modes_is_not_asked_forever() {
 }
 
 /// **The composer's toolbar for a Claude chat** holds, left to right, the
-/// spaces the chat may read, the approval-mode chip naming its mode, the
-/// model chip and the send button — each where it is drawn and hit, none
+/// context button, the approval-mode chip naming its mode, the model chip
+/// and the send button — each where it is drawn and hit, none
 /// over another. No globe: web search is an OpenAI model's.
 #[test]
 fn a_claude_chats_toolbar_holds_spaces_mode_model_and_send() {
@@ -696,12 +696,12 @@ fn a_claude_chats_toolbar_holds_spaces_mode_model_and_send() {
     );
     assert!(surface.web_search_button().is_none());
     let toolbar = surface.composer_toolbar_rect();
-    let spaces = surface.tool_access_button();
+    let plus = surface.plus_button();
     let mode = surface.approval_mode_button().expect("the mode chip");
     let model = surface.chat_model_button();
     let send = surface.send_button();
-    assert_eq!(spaces.x, toolbar.x, "the spaces start the row");
-    for (left, right) in [(spaces, mode), (mode, model), (model, send)] {
+    assert_eq!(plus.x, toolbar.x, "the context button starts the row");
+    for (left, right) in [(plus, mode), (mode, model), (model, send)] {
         assert!(left.w > 0.0 && right.w > 0.0);
         assert!(left.x + left.w <= right.x, "{left:?} runs into {right:?}");
     }

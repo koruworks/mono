@@ -347,6 +347,11 @@ pub enum Key {
     AiChooseModel,
     // The chip composer (AGENTUX I6).
     AiComposerPlaceholder,
+    AiComposerAgentPlaceholder,
+    AiComposerAddContext,
+    AiComposerKoruContext,
+    AiComposerNoRecent,
+    AiComposerPlusHint,
     AiComposerSend,
     AiComposerQueue,
     AiComposerStop,
@@ -2920,7 +2925,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2032] = [
+    pub const ALL: [Key; 2037] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -3159,6 +3164,11 @@ impl Key {
         Key::AiModelFast,
         Key::AiChooseModel,
         Key::AiComposerPlaceholder,
+        Key::AiComposerAgentPlaceholder,
+        Key::AiComposerAddContext,
+        Key::AiComposerKoruContext,
+        Key::AiComposerNoRecent,
+        Key::AiComposerPlusHint,
         Key::AiComposerSend,
         Key::AiComposerQueue,
         Key::AiComposerStop,
@@ -7675,15 +7685,30 @@ pub const ROWS: &[Row] = &[
     // The chip composer (AGENTUX I6).
     Row {
         key: Key::AiComposerPlaceholder,
-        en: "Ask Koru AI… type @ to add a document",
-        es: "Pregunta a Koru AI… escribe @ para añadir un documento",
-        pt_br: "Pergunte ao Koru AI… digite @ para adicionar um documento",
-        de: "Frag Koru AI … tippe @, um ein Dokument hinzuzufügen",
-        fr: "Demandez à Koru AI… tapez @ pour ajouter un document",
-        ar: "اسأل Koru AI… اكتب @ لإضافة مستند",
-        zh_hans: "向 Koru AI 提问… 输入 @ 添加文档",
-        ja: "Koru AI に質問… @ でドキュメントを追加",
+        en: "Start your message… @ context",
+        es: "Empieza tu mensaje… @ contexto",
+        pt_br: "Comece sua mensagem… @ contexto",
+        de: "Nachricht beginnen… @ Kontext",
+        fr: "Commencez votre message… @ contexte",
+        ar: "ابدأ رسالتك… @ للسياق",
+        zh_hans: "开始输入消息… @ 上下文",
+        ja: "メッセージを入力… @ コンテキスト",
     },
+    Row {
+        key: Key::AiComposerAgentPlaceholder,
+        en: "Start your message… @ context, $ skills, / commands",
+        es: "Empieza tu mensaje… @ contexto, $ habilidades, / comandos",
+        pt_br: "Comece sua mensagem… @ contexto, $ habilidades, / comandos",
+        de: "Nachricht beginnen… @ Kontext, $ Fähigkeiten, / Befehle",
+        fr: "Commencez votre message… @ contexte, $ compétences, / commandes",
+        ar: "ابدأ رسالتك… @ للسياق، $ للمهارات، / للأوامر",
+        zh_hans: "开始输入消息… @ 上下文、$ 技能、/ 命令",
+        ja: "メッセージを入力… @ コンテキスト、$ スキル、/ コマンド",
+    },
+    Row { key: Key::AiComposerAddContext, en: "Add context", es: "Añadir contexto", pt_br: "Adicionar contexto", de: "Kontext hinzufügen", fr: "Ajouter du contexte", ar: "إضافة سياق", zh_hans: "添加上下文", ja: "コンテキストを追加" },
+    Row { key: Key::AiComposerKoruContext, en: "Koru context", es: "Contexto de Koru", pt_br: "Contexto do Koru", de: "Koru-Kontext", fr: "Contexte Koru", ar: "سياق Koru", zh_hans: "Koru 上下文", ja: "Koru コンテキスト" },
+    Row { key: Key::AiComposerNoRecent, en: "No recent documents", es: "No hay documentos recientes", pt_br: "Nenhum documento recente", de: "Keine zuletzt geöffneten Dokumente", fr: "Aucun document récent", ar: "لا توجد مستندات حديثة", zh_hans: "没有最近的文档", ja: "最近の文書はありません" },
+    Row { key: Key::AiComposerPlusHint, en: "Or type @ $ / in the message", es: "O escribe @ $ / en el mensaje", pt_br: "Ou digite @ $ / na mensagem", de: "Oder @ $ / in der Nachricht eingeben", fr: "Ou tapez @ $ / dans le message", ar: "أو اكتب @ $ / في الرسالة", zh_hans: "也可以在消息中输入 @ $ /", ja: "またはメッセージに @ $ / を入力" },
     Row {
         key: Key::AiComposerSend,
         en: "Send",

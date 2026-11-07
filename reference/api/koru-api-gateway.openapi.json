@@ -243,6 +243,21 @@
           }
         ]
       },
+      "AddChatWorkspaceGrantsRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "workspace_ids": {
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceId"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "workspace_ids"
+        ],
+        "type": "object"
+      },
       "AdvanceGenerationRequest": {
         "additionalProperties": false,
         "description": "`POST /v1/artifacts/authorities/{run}/generation`: the next attempt.\nStrictly newer than the current one; the grants are re-read from the\nrecord and cannot be sent.",
@@ -10182,6 +10197,19 @@
         ],
         "type": "object"
       },
+      "RestageAttachmentRequest": {
+        "additionalProperties": false,
+        "description": "Copy the bytes of a sent attachment into a new staged attachment of the\nsame chat. The caller mints an id for this recall attempt.",
+        "properties": {
+          "new_id": {
+            "$ref": "#/components/schemas/ChatAttachmentId"
+          }
+        },
+        "required": [
+          "new_id"
+        ],
+        "type": "object"
+      },
       "RestoreRunResponse": {
         "description": "`POST /v1/runs/{run}/restore`: the run is coming back out of the trash,\nwhole. Nothing was deleted, so there is nothing to undo — the decision\nabout its results is forgotten and the document is the caller's to move\nback.",
         "properties": {
@@ -18448,6 +18476,152 @@
         "summary": "Store a picture or file for a local agent chat's next message"
       }
     },
+    "/v1/ai/chats/{chat}/attachments/{attachment}/restage": {
+      "post": {
+        "description": "The new staged attachment. Deleting its id during the copy cancels publication.",
+        "operationId": "ai_restage_attachment",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "chat",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "attachment",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RestageAttachmentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatAttachmentResponse"
+                }
+              }
+            },
+            "description": "The new staged attachment. Deleting its id during the copy cancels publication."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The request body or path identity is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The gateway bearer is absent or invalid"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The bearer lacks the operation's declared AI scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment, or the stored file, is not there"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The operation conflicts with durable chat state"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment is larger than the limit"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment's type is not allowed, or its content is not what its name says"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The AI worker is unavailable or saturated"
+          },
+          "507": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment could not be stored on this computer"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "ai.chat"
+            ]
+          }
+        ],
+        "summary": "Copy a sent attachment into a fresh staged attachment for recall"
+      }
+    },
     "/v1/ai/chats/{chat}/attachments/{attachment}/thumbnail": {
       "get": {
         "description": "A PNG at most 512 pixels on its long edge; attachment_no_preview for anything but a picture.",
@@ -19451,6 +19625,103 @@
           }
         ],
         "summary": "Replace a chat's workspace-tool policy"
+      }
+    },
+    "/v1/ai/chats/{chat}/tool-policy/grants": {
+      "post": {
+        "description": "The durable policy with all existing and newly granted workspaces; the mode is unchanged.",
+        "operationId": "ai_add_chat_workspace_grants",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "chat",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddChatWorkspaceGrantsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatToolPolicyResponse"
+                }
+              }
+            },
+            "description": "The durable policy with all existing and newly granted workspaces; the mode is unchanged."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The request body or path identity is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The gateway bearer is absent or invalid"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The bearer lacks the operation's declared AI scope"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The operation conflicts with durable chat state"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The AI worker is unavailable or saturated"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "ai.chat"
+            ]
+          }
+        ],
+        "summary": "Add workspace grants to a chat atomically"
       }
     },
     "/v1/ai/chats/{chat}/turns": {

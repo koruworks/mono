@@ -38,6 +38,30 @@ fn context() -> RequestContext {
     }
 }
 
+#[test]
+fn grant_targets_must_belong_to_the_chats_profile() {
+    let profile = koru_ai_core::ProfileId::new();
+    let other = koru_ai_core::ProfileId::new();
+    let home = WorkspaceId::new();
+    let office = WorkspaceId::new();
+    let catalog = koru_ai_core::ProfileCatalog {
+        profiles: vec![profile, other],
+        workspace_owners: [(home, profile), (office, other)].into(),
+    };
+    assert!(grant_targets_in_profile(&catalog, profile, &[]));
+    assert!(grant_targets_in_profile(&catalog, profile, &[home, home]));
+    assert!(!grant_targets_in_profile(
+        &catalog,
+        profile,
+        &[home, office]
+    ));
+    assert!(!grant_targets_in_profile(
+        &catalog,
+        profile,
+        &[WorkspaceId::new()]
+    ));
+}
+
 fn provider_context() -> RequestContext {
     RequestContext {
         principal: AiPrincipal {

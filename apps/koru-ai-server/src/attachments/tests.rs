@@ -6,6 +6,72 @@ use image::{ImageBuffer, Rgb, Rgba};
 
 use super::*;
 
+#[test]
+fn a_delete_during_restage_prevents_row_publication() {
+    // The cancellation protocol is in memory; the copy itself is exercised
+    // by the existing folder-copy tests below.
+    let store = AttachmentStore::new(Path::new("unused-restage-test-root"));
+    let source = ChatAttachmentId::new();
+    let new_id = ChatAttachmentId::new();
+    assert_eq!(store.start_restage(new_id, source), RestageStart::Copy);
+    assert!(store.cancel_restage(new_id));
+    let answer = store.finish_restage(new_id, || -> Result<(), Failure> {
+        panic!("a cancelled copy must never publish a row")
+    });
+    assert!(matches!(answer, Ok(None)));
+    assert_eq!(store.start_restage(new_id, source), RestageStart::Copy);
+    store.abandon_restage(new_id);
+}
+
+#[test]
+fn a_delete_while_the_copy_is_held_prevents_publication_after_release() {
+    use std::sync::mpsc::sync_channel;
+
+    let store = AttachmentStore::new(Path::new("unused-restage-test-root"));
+    let source = ChatAttachmentId::new();
+    let new_id = ChatAttachmentId::new();
+    assert_eq!(store.start_restage(new_id, source), RestageStart::Copy);
+    let (copy_started, started) = sync_channel(1);
+    let (release, held) = sync_channel(1);
+    let (published, publication) = sync_channel(1);
+    let copy = store.clone();
+    let worker = std::thread::spawn(move || {
+        copy_started.send(()).unwrap();
+        held.recv().unwrap();
+        copy.finish_restage(new_id, || {
+            published.send(()).unwrap();
+            Ok::<_, Failure>(())
+        })
+    });
+    started.recv().unwrap();
+    assert!(store.cancel_restage(new_id));
+    release.send(()).unwrap();
+    assert!(matches!(worker.join().unwrap(), Ok(None)));
+    assert!(publication.try_recv().is_err());
+}
+
+#[test]
+fn restage_replay_is_keyed_by_new_and_source_id_in_this_process() {
+    let store = AttachmentStore::new(Path::new("unused-restage-test-root"));
+    let source = ChatAttachmentId::new();
+    let new_id = ChatAttachmentId::new();
+    assert_eq!(store.start_restage(new_id, source), RestageStart::Copy);
+    assert_eq!(store.start_restage(new_id, source), RestageStart::Conflict);
+    assert_eq!(
+        store
+            .finish_restage(new_id, || Ok::<_, Failure>(()))
+            .unwrap(),
+        Some(())
+    );
+    assert_eq!(store.start_restage(new_id, source), RestageStart::Existing);
+    assert_eq!(
+        store.start_restage(new_id, ChatAttachmentId::new()),
+        RestageStart::Conflict
+    );
+    assert!(!store.cancel_restage(new_id));
+    assert_eq!(store.start_restage(new_id, source), RestageStart::Copy);
+}
+
 /// A picture whose noisy rows (one in eight) do not compress, so its size
 /// is real without passing the upload limit.
 fn noise_png(width: u32, height: u32) -> Vec<u8> {

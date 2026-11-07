@@ -33,7 +33,6 @@ use koru_draw::icons;
 use koru_draw::scene;
 use koru_draw::theme::{self, role};
 use koru_i18n::{Key, Lang};
-use koru_ui::icon_button::{IconButton, State as IconButtonState, Tone};
 use koru_ui::media_viewer::{
     Action as ViewerAction, ActionSet, MediaViewer, Outcome as ViewerOutcome, Stage, ViewerImage,
     ViewerOptions, ViewerSemantics, WheelAxis, ZoomKey,
@@ -46,8 +45,6 @@ use winit::window::CursorIcon;
 
 use super::{COMPOSER_PAD_TOP, COMPOSER_PAD_X, ChatSurface, LoadedImage, agents};
 
-/// A tile in the composer's strip: square-ish, one row.
-pub(crate) const STRIP_TILE: f32 = 56.0;
 /// A tile on a sent message.
 pub(crate) const CARD_TILE_H: f32 = 112.0;
 pub(crate) const TILE_GAP: f32 = 6.0;
@@ -96,6 +93,22 @@ pub(crate) struct Draft {
 }
 
 impl Draft {
+    /// A fresh staged copy requested from a sent attachment. Its bytes stay
+    /// at the AI service; only metadata and a pending id enter the window.
+    pub(crate) fn restaged(source: &ChatAttachment, id: ChatAttachmentId) -> Self {
+        Self {
+            id,
+            file_name: source.file_name.clone(),
+            source: source.source,
+            kind: source.kind,
+            size: source.dimensions,
+            byte_count: source.byte_count,
+            state: DraftState::Storing,
+            bytes: None,
+            path: None,
+        }
+    }
+
     /// A pasted bitmap, named the way a screenshot file is.
     pub(crate) fn pasted(png: koru_clipboard::PngBitmap, now: std::time::SystemTime) -> Self {
         Self {
@@ -269,28 +282,6 @@ pub(crate) fn card_tiles(tiles: &[Tile], max_w: f32) -> (Vec<Rect>, f32) {
         y + CARD_TILE_H
     };
     (rects, height)
-}
-
-/// The composer's strip: one row of tiles, each its own width.
-pub(crate) fn strip_tiles(drafts: &[Draft], origin_x: f32, y: f32) -> Vec<Rect> {
-    let mut x = origin_x;
-    drafts
-        .iter()
-        .map(|draft| {
-            let w = draft
-                .tile()
-                .width_at(STRIP_TILE, STRIP_TILE, STRIP_TILE * 2.0);
-            let rect = Rect::new(x, y, w, STRIP_TILE);
-            x += w + TILE_GAP;
-            rect
-        })
-        .collect()
-}
-
-/// The × on a strip tile, in its top-right corner.
-pub(crate) fn remove_button(tile: Rect) -> Rect {
-    const SIZE: f32 = 20.0;
-    Rect::new(tile.x + tile.w - SIZE - 2.0, tile.y + 2.0, SIZE, SIZE)
 }
 
 /// `screenshot-YYYY-MM-DD-HHMMSS.png`, in UTC: ASCII, untranslated, a real
@@ -1081,10 +1072,41 @@ impl ChatSurface {
     /// How much taller the composer's box is for its strip: the strip's row
     /// above the text, at the box's own top padding.
     pub(super) fn strip_band(&self) -> f32 {
-        if self.has_strip() {
-            COMPOSER_PAD_TOP + STRIP_TILE
+        if self.chip_band.shown_height > 0.0 {
+            COMPOSER_PAD_TOP + self.chip_band.shown_height + crate::composer_band::GAP
         } else {
             0.0
+        }
+    }
+
+    pub(super) fn attachment_chip_secondary(&self, draft: &Draft) -> String {
+        match draft.state {
+            DraftState::Storing => koru_i18n::t(self.lang, Key::AiAttachmentAddingOne).into(),
+            DraftState::Failed { .. } => koru_i18n::t(self.lang, Key::AiAttachmentFailed).into(),
+            DraftState::Stored if draft.byte_count > 0 => {
+                koru_i18n::number::bytes(self.lang, draft.byte_count)
+            }
+            DraftState::Stored => String::new(),
+        }
+    }
+
+    pub(super) fn attachment_chip_icon(&self, draft: &Draft) -> char {
+        if draft.kind == AttachmentKind::Image {
+            icons::IMAGE
+        } else {
+            koru_ui::file_icon::glyph(None, Some(&draft.file_name))
+        }
+    }
+
+    pub(super) fn attachment_chip_state(
+        &self,
+        draft: &Draft,
+    ) -> koru_ui::context_chip::ContextState {
+        use koru_ui::context_chip::ContextState;
+        match draft.state {
+            DraftState::Storing => ContextState::Pending,
+            DraftState::Failed { .. } => ContextState::Refused,
+            DraftState::Stored => ContextState::Ready,
         }
     }
 
@@ -1258,17 +1280,37 @@ impl ChatSurface {
     /// been stored; a red draft the service could not take for a passing
     /// reason is tried again with the same id.
     pub(super) fn strip_mouse_down(&mut self, x: f32, y: f32) -> Option<bool> {
-        let chat = self.current_chat_id()?;
         let composer = self.composer_hit_rect;
-        let rects = strip_tiles(
-            self.strips.get(chat),
-            composer.x + COMPOSER_PAD_X,
-            composer.y + COMPOSER_PAD_TOP,
-        );
-        let index = rects.iter().position(|rect| rect.contains(x, y))?;
+        let origin_x = composer.x + COMPOSER_PAD_X;
+        let origin_y = composer.y + COMPOSER_PAD_TOP;
+        let available = (composer.w - COMPOSER_PAD_X * 2.0).max(1.0);
+        let index = self.chip_band.hit(x, y, origin_x, origin_y, available)?;
+        let rect = self.chip_band.chip_rect(index, origin_x, origin_y)?;
+        if index == 0 && self.context_document.is_some() {
+            let (_, title) = self.context_document.as_ref()?;
+            let chip = koru_ui::context_chip::ContextChip {
+                label: title,
+                secondary: "Koru",
+                icon: icons::DOCUMENT,
+                state: koru_ui::context_chip::ContextState::Ready,
+            };
+            if chip.remove_rect(rect).contains(x, y) {
+                self.remove_context_document();
+            }
+            return Some(true);
+        }
+        let chat = self.current_chat_id()?;
+        let index = index - usize::from(self.context_document.is_some());
         let draft = &self.strips.get(chat)[index];
         let id = draft.id;
-        if remove_button(rects[index]).contains(x, y) {
+        let secondary = self.attachment_chip_secondary(draft);
+        let chip = koru_ui::context_chip::ContextChip {
+            label: &draft.file_name,
+            secondary: &secondary,
+            icon: self.attachment_chip_icon(draft),
+            state: self.attachment_chip_state(draft),
+        };
+        if chip.remove_rect(rect).contains(x, y) {
             self.strips.remove(chat, id)?;
             self.attachment_work.remove(chat, id);
             self.thumbnails.remove(id);
@@ -1703,56 +1745,67 @@ impl ChatSurface {
 
     /// The strip, inside the composer's box above the text.
     pub(super) fn draw_strip(&mut self, canvas: &mut Scene, root: Affine, composer: Rect) {
-        let Some(chat) = self.current_chat_id() else {
-            return;
-        };
-        let drafts = self.strips.get(chat).to_vec();
-        if drafts.is_empty() {
+        if self.chip_band.rects.is_empty() {
             return;
         }
-        let rects = strip_tiles(
-            &drafts,
-            composer.x + COMPOSER_PAD_X,
-            composer.y + COMPOSER_PAD_TOP,
-        );
+        let drafts = self
+            .current_chat_id()
+            .map_or_else(Vec::new, |chat| self.strips.get(chat).to_vec());
+        let origin_x = composer.x + COMPOSER_PAD_X;
+        let origin_y = composer.y + COMPOSER_PAD_TOP;
+        let available = (composer.w - COMPOSER_PAD_X * 2.0).max(1.0);
+        let band = self.chip_band.band_rect(origin_x, origin_y, available);
         let _strip = koru_draw::inspect::scope(
-            "AttachmentStrip",
+            "ComposerContextBand",
             "part",
             root,
-            scene::rect(
-                composer.x,
-                composer.y + COMPOSER_PAD_TOP,
-                composer.w,
-                STRIP_TILE,
-            ),
-            |r| r.property("tiles", drafts.len() as f32, "drafts of this message"),
+            scene::rect(band.x, band.y, band.w, band.h),
+            |r| {
+                r.property(
+                    "chips",
+                    self.chip_band.rects.len() as f32,
+                    "context and attachments",
+                );
+                r.property(
+                    "max lines",
+                    crate::composer_band::MAX_LINES as f32,
+                    "bounded band",
+                );
+            },
         );
-        for (draft, rect) in drafts.iter().zip(rects) {
-            self.draw_tile(
-                canvas,
-                root,
-                rect,
-                &draft.tile(),
-                draft.state == DraftState::Storing,
-                matches!(draft.state, DraftState::Failed { .. }),
-            );
-            let button = remove_button(rect);
-            let p = theme::p();
-            scene::fill(
-                canvas,
-                root,
-                p.panel_bg,
-                &scene::rrect(button.x, button.y, button.w, button.h, button.w * 0.5),
-            );
-            IconButton::new(icons::WINDOW_CLOSE, button)
-                .tone(Tone::Danger)
-                .with_state(IconButtonState {
-                    hovered: button.contains(self.pointer.0, self.pointer.1),
-                    active: false,
-                    disabled: false,
-                })
-                .draw(canvas, root, &mut self.engine);
+        canvas.push_clip_layer(
+            vello::peniko::Fill::NonZero,
+            root,
+            &scene::rect(band.x, band.y, band.w, band.h),
+        );
+        let mut index = 0;
+        if let Some((_, title)) = &self.context_document {
+            if let Some(rect) = self.chip_band.chip_rect(index, origin_x, origin_y) {
+                koru_ui::context_chip::ContextChip {
+                    label: title,
+                    secondary: "Koru",
+                    icon: icons::DOCUMENT,
+                    state: koru_ui::context_chip::ContextState::Ready,
+                }
+                .draw(canvas, root, &mut self.engine, rect, self.pointer);
+            }
+            index += 1;
         }
+        for draft in &drafts {
+            let Some(rect) = self.chip_band.chip_rect(index, origin_x, origin_y) else {
+                break;
+            };
+            let secondary = self.attachment_chip_secondary(draft);
+            koru_ui::context_chip::ContextChip {
+                label: &draft.file_name,
+                secondary: &secondary,
+                icon: self.attachment_chip_icon(draft),
+                state: self.attachment_chip_state(draft),
+            }
+            .draw(canvas, root, &mut self.engine, rect, self.pointer);
+            index += 1;
+        }
+        canvas.pop_layer();
     }
 
     /// Tiles collected while the conversation was drawn.

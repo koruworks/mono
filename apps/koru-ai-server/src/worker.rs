@@ -729,6 +729,22 @@ impl AiServerPort for AiWorkerClient {
         receive_api(response)
     }
 
+    fn add_chat_workspace_grants(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        request: koru_ai_wire::AddChatWorkspaceGrantsRequest,
+    ) -> ApiResult<ChatToolPolicyResponse> {
+        let (reply, response) = sync_channel(1);
+        self.send(WorkerCommand::AddChatWorkspaceGrants {
+            context,
+            chat,
+            request,
+            reply,
+        })?;
+        receive_api(response)
+    }
+
     fn usage(&self, context: RequestContext, chat: Option<ChatId>) -> ApiResult<UsageResponse> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::Usage {
@@ -954,6 +970,16 @@ impl AiServerPort for AiWorkerClient {
         attachments::put_attachment(self, context, chat, attachment, upload)
     }
 
+    fn restage_attachment(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        source: ChatAttachmentId,
+        request: koru_ai_wire::RestageAttachmentRequest,
+    ) -> ApiResult<koru_ai_wire::ChatAttachmentResponse> {
+        attachments::restage_attachment(self, context, chat, source, request.new_id)
+    }
+
     fn remove_attachment(
         &self,
         context: RequestContext,
@@ -1137,6 +1163,12 @@ enum WorkerCommand {
         request: UpdateChatToolPolicyRequest,
         reply: SyncSender<ApiResult<ChatToolPolicyResponse>>,
     },
+    AddChatWorkspaceGrants {
+        context: RequestContext,
+        chat: ChatId,
+        request: koru_ai_wire::AddChatWorkspaceGrantsRequest,
+        reply: SyncSender<ApiResult<ChatToolPolicyResponse>>,
+    },
     ReadChatToolPolicy {
         context: RequestContext,
         chat: ChatId,
@@ -1286,6 +1318,7 @@ impl WorkerCommand {
             Self::ToolSearchChats { .. } => "tool_search_chats",
             Self::ToolReadChat { .. } => "tool_read_chat",
             Self::UpdateChatToolPolicy { .. } => "update_chat_tool_policy",
+            Self::AddChatWorkspaceGrants { .. } => "add_chat_workspace_grants",
             Self::ReadChatToolPolicy { .. } => "read_chat_tool_policy",
             Self::Usage { .. } => "usage",
             Self::DeleteChat { .. } => "delete_chat",
@@ -1682,6 +1715,16 @@ fn transcript_usage(messages: &[Message], attempts: Vec<InferenceAttempt>) -> Ve
         .collect()
 }
 
+fn grant_targets_in_profile(
+    catalog: &koru_ai_core::ProfileCatalog,
+    profile: koru_ai_core::ProfileId,
+    workspace_ids: &[WorkspaceId],
+) -> bool {
+    workspace_ids
+        .iter()
+        .all(|workspace| catalog.owner(*workspace) == Some(profile))
+}
+
 impl WorkerState {
     fn handle_command(&mut self, command: WorkerCommand) {
         // **A removed profile's chats are hidden**: a command that names
@@ -1844,6 +1887,14 @@ impl WorkerState {
                 reply,
             } => {
                 let _ = reply.send(self.update_chat_tool_policy(context, chat, request));
+            }
+            WorkerCommand::AddChatWorkspaceGrants {
+                context,
+                chat,
+                request,
+                reply,
+            } => {
+                let _ = reply.send(self.add_chat_workspace_grants(context, chat, request));
             }
             WorkerCommand::ReadChatToolPolicy {
                 context,
@@ -2920,6 +2971,39 @@ impl WorkerState {
         let policy = self
             .repository
             .chat_tool_policy(chat_id)
+            .map_err(ai_failure)?
+            .ok_or_else(not_found)?;
+        Ok(ChatToolPolicyResponse { policy })
+    }
+
+    fn add_chat_workspace_grants(
+        &mut self,
+        context: RequestContext,
+        chat_id: ChatId,
+        request: koru_ai_wire::AddChatWorkspaceGrantsRequest,
+    ) -> ApiResult<ChatToolPolicyResponse> {
+        authorize(&context, AiScope::Chat)?;
+        let chat = self
+            .repository
+            .chat(chat_id)
+            .map_err(ai_failure)?
+            .ok_or_else(not_found)?;
+        let profile = chat.profile_id.ok_or_else(not_found)?;
+        let store = self
+            .store
+            .as_ref()
+            .ok_or_else(|| failure("store_unavailable", "The Store is unavailable.", true))?;
+        let catalog = store.profile_catalog().map_err(ai_failure)?;
+        if !grant_targets_in_profile(&catalog, profile, &request.workspace_ids) {
+            return Err(failure(
+                "workspace_not_in_profile",
+                "A workspace is not in this chat's profile.",
+                false,
+            ));
+        }
+        let policy = self
+            .repository
+            .add_chat_workspace_grants(chat_id, &request.workspace_ids, Timestamp::now())
             .map_err(ai_failure)?
             .ok_or_else(not_found)?;
         Ok(ChatToolPolicyResponse { policy })

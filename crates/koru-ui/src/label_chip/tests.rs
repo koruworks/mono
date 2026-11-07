@@ -118,6 +118,21 @@ fn a_regular_chip_is_its_line_plus_air_and_its_mark_is_centred() {
 }
 
 #[test]
+fn a_context_chips_second_line_changes_geometry_without_moving_its_remove_target() {
+    let mut engine = TextEngine::new();
+    let plain = LabelChip::new("Budget")
+        .size(Size::Regular)
+        .trail(Trail::Remove);
+    let context = plain.secondary("Planning workspace");
+    assert!(context.height() > plain.height());
+    assert!(context.width(&mut engine) > plain.width(&mut engine));
+    let rect = Rect::new(0.0, 0.0, context.width(&mut engine), context.height());
+    let lane = context.trail_rect(rect).expect("remove lane");
+    assert_eq!(lane.x + lane.w, rect.w);
+    assert_eq!(lane.h, rect.h);
+}
+
+#[test]
 fn the_tones_are_the_neutral_the_accent_and_the_inverted_pairs() {
     let p = theme::p();
     assert_eq!(Tone::Neutral.colors(&p), (p.chip_bg, p.text_dim));

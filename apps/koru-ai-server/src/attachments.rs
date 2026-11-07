@@ -20,7 +20,7 @@
 //! never leaves half an attachment where a row could name it. Logs carry
 //! no file name, path, hash or content.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io::{self, Cursor, Read, Write};
 use std::path::{Path, PathBuf};
@@ -63,6 +63,25 @@ pub(crate) struct AttachmentStore {
     /// The ids being stored right now, so a second upload of the same id
     /// cannot publish over the first's folder.
     storing: Arc<Mutex<HashSet<ChatAttachmentId>>>,
+    /// The source identity for restages made by this process. A copy in
+    /// progress can be cancelled before its row is published.
+    restaging: Arc<Mutex<HashMap<ChatAttachmentId, RestageState>>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RestageState {
+    Copying {
+        source: ChatAttachmentId,
+        cancelled: bool,
+    },
+    Completed(ChatAttachmentId),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RestageStart {
+    Copy,
+    Existing,
+    Conflict,
 }
 
 /// One id's claim on being stored; released when dropped.
@@ -108,7 +127,96 @@ impl AttachmentStore {
         Self {
             root: Arc::new(ai_root.join(ATTACHMENTS_DIR)),
             storing: Arc::default(),
+            restaging: Arc::default(),
         }
+    }
+
+    pub(crate) fn start_restage(
+        &self,
+        new_id: ChatAttachmentId,
+        source: ChatAttachmentId,
+    ) -> RestageStart {
+        let mut states = self
+            .restaging
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match states.get(&new_id) {
+            Some(RestageState::Completed(existing)) if *existing == source => {
+                RestageStart::Existing
+            }
+            Some(_) => RestageStart::Conflict,
+            None => {
+                states.insert(
+                    new_id,
+                    RestageState::Copying {
+                        source,
+                        cancelled: false,
+                    },
+                );
+                RestageStart::Copy
+            }
+        }
+    }
+
+    /// A delete marks a copy that has not published its row. If publication
+    /// already holds this lock, the caller waits and then removes the row.
+    pub(crate) fn cancel_restage(&self, id: ChatAttachmentId) -> bool {
+        let mut states = self
+            .restaging
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match states.get_mut(&id) {
+            Some(RestageState::Copying { cancelled, .. }) => {
+                *cancelled = true;
+                true
+            }
+            Some(RestageState::Completed(_)) => {
+                states.remove(&id);
+                false
+            }
+            None => false,
+        }
+    }
+
+    /// Serialize the cancellation check with row publication. The closure
+    /// may call the dispatcher; deletion waits for it to complete.
+    pub(crate) fn finish_restage<T>(
+        &self,
+        id: ChatAttachmentId,
+        publish: impl FnOnce() -> Result<T, koru_ai_wire::Failure>,
+    ) -> Result<Option<T>, koru_ai_wire::Failure> {
+        let mut states = self
+            .restaging
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let source = match states.get(&id) {
+            Some(RestageState::Copying {
+                source,
+                cancelled: false,
+            }) => *source,
+            _ => {
+                states.remove(&id);
+                return Ok(None);
+            }
+        };
+        let result = publish();
+        match result {
+            Ok(value) => {
+                states.insert(id, RestageState::Completed(source));
+                Ok(Some(value))
+            }
+            Err(error) => {
+                states.remove(&id);
+                Err(error)
+            }
+        }
+    }
+
+    pub(crate) fn abandon_restage(&self, id: ChatAttachmentId) {
+        self.restaging
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&id);
     }
 
     /// Claim an id for one upload; `None` while another upload of it runs.

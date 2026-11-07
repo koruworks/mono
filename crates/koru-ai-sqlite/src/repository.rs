@@ -352,6 +352,38 @@ impl AiPersistence for Repository {
         Ok(Some(policy))
     }
 
+    fn add_chat_workspace_grants(
+        &mut self,
+        chat: ChatId,
+        workspace_ids: &[WorkspaceId],
+        granted_at: Timestamp,
+    ) -> Result<Option<ChatToolPolicy>, AiError> {
+        let mut workspace_ids = workspace_ids.to_vec();
+        workspace_ids.sort_unstable();
+        workspace_ids.dedup();
+        let transaction = self.connection.transaction().map_err(storage_failed)?;
+        if query_chat_tool_policy(&transaction, chat)?.is_none() {
+            return Ok(None);
+        }
+        for workspace in workspace_ids {
+            transaction
+                .execute(
+                    "INSERT OR IGNORE INTO chat_workspace_grants
+                        (chat_id, workspace_id, granted_at_ms)
+                     VALUES (?1, ?2, ?3)",
+                    params![
+                        chat.to_storage(),
+                        workspace.to_storage(),
+                        granted_at.millis()
+                    ],
+                )
+                .map_err(storage_failed)?;
+        }
+        let policy = query_chat_tool_policy(&transaction, chat)?.ok_or_else(storage_missing)?;
+        transaction.commit().map_err(storage_failed)?;
+        Ok(Some(policy))
+    }
+
     fn chat(&self, id: ChatId) -> Result<Option<Chat>, AiError> {
         query_chat(&self.connection, id)
     }

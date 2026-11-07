@@ -187,6 +187,36 @@ fn chat_tool_policy_defaults_deny_all_and_replaces_the_complete_grant_set() {
 }
 
 #[test]
+fn adding_grants_unions_without_changing_mode_or_existing_grants() {
+    let mut repository = Repository::in_memory().unwrap();
+    let chat_id = ChatId::new();
+    repository.create_chat(&chat(chat_id, 0)).unwrap();
+    let a = WorkspaceId::new();
+    let b = WorkspaceId::new();
+    let c = WorkspaceId::new();
+    repository
+        .replace_chat_tool_policy(chat_id, ToolMode::Auto, &[a], at(1))
+        .unwrap();
+    repository
+        .add_chat_workspace_grants(chat_id, &[b, b], at(2))
+        .unwrap();
+    let policy = repository
+        .add_chat_workspace_grants(chat_id, &[c, a], at(3))
+        .unwrap()
+        .unwrap();
+    let mut expected = vec![a, b, c];
+    expected.sort_unstable();
+    assert_eq!(policy.mode, ToolMode::Auto);
+    assert_eq!(policy.workspace_ids, expected);
+    assert!(
+        repository
+            .add_chat_workspace_grants(ChatId::new(), &[a], at(4))
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
 fn tool_audit_keeps_only_stable_targets_and_public_failure_context() {
     let mut repository = Repository::in_memory().unwrap();
     let chat_id = ChatId::new();

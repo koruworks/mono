@@ -69,6 +69,14 @@ pub trait AiPersistence: Send {
         workspace_ids: &[WorkspaceId],
         granted_at: Timestamp,
     ) -> Result<Option<ChatToolPolicy>, AiError>;
+    /// Atomically add grants without changing the mode or removing grants
+    /// added by another surface.
+    fn add_chat_workspace_grants(
+        &mut self,
+        chat: ChatId,
+        workspace_ids: &[WorkspaceId],
+        granted_at: Timestamp,
+    ) -> Result<Option<ChatToolPolicy>, AiError>;
     fn chat(&self, id: ChatId) -> Result<Option<Chat>, AiError>;
     fn chats(&self) -> Result<Vec<Chat>, AiError>;
     /// Every chat with no profile yet (AI schema 13), with what the store

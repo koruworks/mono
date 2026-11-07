@@ -271,7 +271,6 @@ impl ChatSurface {
             markdown: message.markdown.trim().to_owned(),
             documents: !message.documents.is_empty() || !message.skills.is_empty(),
         };
-        self.pill_strip.clear_tooltip();
         self.forget_input_walk();
         self.queues.push(chat, item);
         true
@@ -480,11 +479,16 @@ impl ChatSurface {
     /// The service took the steer: the message shows under the question,
     /// above the running reply, until the transcript read at its end
     /// carries it there (D99).
-    pub(crate) fn steer_accepted(&mut self) {
+    pub(crate) fn steer_accepted(&mut self, message_id: koru_ai_core::MessageId) {
         if let Some((chat, item)) = self.steering.take() {
             // Sent now, so Up walks back to it (D100), as to any message
             // sent; while it waited in the queue it was not.
-            self.sent_inputs.push((chat, item.markdown.clone()));
+            self.sent_inputs.push(super::LocalInput {
+                chat,
+                message_id: Some(message_id),
+                markdown: item.markdown.clone(),
+                attachments: Vec::new(),
+            });
             self.steered.push((chat, item.markdown));
             self.messages_dirty = true;
         }
@@ -537,15 +541,15 @@ impl ChatSurface {
         }
     }
 
-    /// The pending list, as wide as the composer, above the document pill.
+    /// The pending list, as wide as the composer, above its box.
     pub(crate) fn queue_band_rect(&mut self) -> Option<Rect> {
         let rows = self.queue_rows();
         if rows == 0 {
             return None;
         }
-        let pills = self.pill_band_rect();
+        let composer = self.composer_rect();
         let h = rows as f32 * ROW_H;
-        Some(Rect::new(pills.x, pills.y - GAP - h, pills.w, h))
+        Some(Rect::new(composer.x, composer.y - GAP - h, composer.w, h))
     }
 
     /// Each shown item's row, with its index in the queue.

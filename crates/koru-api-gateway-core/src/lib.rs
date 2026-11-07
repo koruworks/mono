@@ -441,6 +441,12 @@ pub const MOBILE_UNAVAILABLE_OPERATIONS: &[MobileUnavailableOperation] = &[
         reason: "Workspace-tool chat policy is not yet exposed by a mobile chat host",
     },
     MobileUnavailableOperation {
+        id: "ai.add_chat_workspace_grants",
+        client: "client.ai().add_chat_workspace_grants",
+        http: "POST /v1/ai/chats/{chat}/tool-policy/grants",
+        reason: "Workspace-tool chat policy is not yet exposed by a mobile chat host",
+    },
+    MobileUnavailableOperation {
         id: "ai.read_chat_tool_policy",
         client: "client.ai().read_chat_tool_policy",
         http: "GET /v1/ai/chats/{chat}/tool-policy",
@@ -534,6 +540,12 @@ pub const MOBILE_UNAVAILABLE_OPERATIONS: &[MobileUnavailableOperation] = &[
         id: "ai.put_attachment",
         client: "client.ai().put_attachment",
         http: "PUT /v1/ai/chats/{chat}/attachments/{attachment}",
+        reason: "Attachments go to local agents, which run on the desktop that installed them",
+    },
+    MobileUnavailableOperation {
+        id: "ai.restage_attachment",
+        client: "client.ai().restage_attachment",
+        http: "POST /v1/ai/chats/{chat}/attachments/{attachment}/restage",
         reason: "Attachments go to local agents, which run on the desktop that installed them",
     },
     MobileUnavailableOperation {

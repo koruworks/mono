@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! What sits on the chat's text and on top of its composer: the document
-//! pill above the composer, the right-click menu of a reply's selection, and
+//! What sits on the chat's text: the right-click menu of a reply's selection, and
 //! the **Add to chat** pill over that selection (koru-ai D88).
 //!
 //! **A quote is the composer's.** Adding a reply's selection to the chat —
@@ -15,18 +14,13 @@
 //! card shows a sent quote with the bar a reply's blockquote has
 //! ([`quote_bars`]).
 
-use std::borrow::Cow;
-use std::time::Instant;
-
-use koru_ai_core::DocumentId;
 use koru_draw::geometry::Rect;
 use koru_draw::icons;
-use koru_draw::text::TextEngine;
 use koru_draw::{scene, theme, theme::role};
-use koru_ui::tooltip::{Tooltip, TooltipContent};
 use koru_ui::{Anchor, Menu, MenuItem};
 use parley::editing::Cursor;
 use parley::layout::Affinity;
+use std::borrow::Cow;
 use vello::Scene;
 use vello::kurbo::Affine;
 use winit::keyboard::{Key, ModifiersState, NamedKey};
@@ -34,12 +28,6 @@ use winit::window::CursorIcon;
 
 use crate::composer::{Recalled, recalled_rows};
 use crate::{ChatSurface, Focus};
-
-pub(crate) const PILL_H: f32 = 28.0;
-const BAND_GAP: f32 = 8.0;
-const PILL_RADIUS: f32 = 7.0;
-const CLOSE_W: f32 = 18.0;
-const ICON_SIZE: f32 = 14.0;
 
 /// The *Add to chat* pill: its height, its gap to the selected line, the
 /// inset of its caption, and its key cap's height, inset and gap.
@@ -89,28 +77,6 @@ impl MenuItem for ResponseMenuItem {
     }
 }
 
-/// Ephemeral document context staged above the chat composer.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct ContextDocumentPill {
-    pub document_id: DocumentId,
-    pub title: String,
-}
-
-impl ContextDocumentPill {
-    fn label(&self) -> String {
-        elide(&self.title, 32)
-    }
-}
-
-/// The strip disappears from layout completely when it carries no pill.
-pub(crate) fn pill_band_height(context_document: Option<&ContextDocumentPill>) -> f32 {
-    if context_document.is_none() {
-        0.0
-    } else {
-        PILL_H + BAND_GAP
-    }
-}
-
 /// A sent message as the person's own card shows it: each blockquote's
 /// lines behind [`QUOTE_BAR`], and the blank lines that set a quote off from
 /// its comment dropped, so a quote sits right over what was said about it,
@@ -134,167 +100,6 @@ pub(crate) fn quote_bars(markdown: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub(crate) enum PillPart {
-    Body,
-    Close,
-}
-
-#[derive(Clone, Debug)]
-struct LaidOutPill {
-    body: Rect,
-    close: Rect,
-    label: String,
-}
-
-#[derive(Clone, Debug, Default)]
-pub(crate) struct PillStrip {
-    pub(crate) hovered: Option<PillPart>,
-    tooltip: Tooltip,
-}
-
-impl PillStrip {
-    fn layout(
-        engine: &mut TextEngine,
-        context_document: Option<&ContextDocumentPill>,
-        band: Rect,
-    ) -> Option<LaidOutPill> {
-        let doc = context_document?;
-        if band.w <= 0.0 {
-            return None;
-        }
-        let icon_w = engine.icon_layout(icons::DOCUMENT, ICON_SIZE).width();
-        let label = doc.label();
-        let text_w = engine.simple_layout(&label, role::ui()).width();
-        let width = (theme::PILL_PAD_X * 2.0 + icon_w + 6.0 + text_w + CLOSE_W).min(band.w);
-        let body = Rect::new(band.x, band.y, width, PILL_H);
-        Some(LaidOutPill {
-            body,
-            close: Rect::new(body.x + body.w - CLOSE_W, body.y, CLOSE_W, body.h),
-            label,
-        })
-    }
-
-    pub(crate) fn hit(
-        &self,
-        engine: &mut TextEngine,
-        context_document: Option<&ContextDocumentPill>,
-        band: Rect,
-        x: f32,
-        y: f32,
-    ) -> Option<(PillPart, Rect)> {
-        let pill = Self::layout(engine, context_document, band)?;
-        if pill.close.contains(x, y) {
-            Some((PillPart::Close, pill.close))
-        } else {
-            pill.body
-                .contains(x, y)
-                .then_some((PillPart::Body, pill.body))
-        }
-    }
-
-    pub(crate) fn mouse_move(
-        &mut self,
-        engine: &mut TextEngine,
-        context_document: Option<&ContextDocumentPill>,
-        band: Rect,
-        x: f32,
-        y: f32,
-        now: Instant,
-    ) -> bool {
-        let hit = self.hit(engine, context_document, band, x, y);
-        let next = hit.map(|(part, _)| part);
-        let changed = self.hovered != next;
-        self.hovered = next;
-        let content = hit.map(|(part, rect)| {
-            let (key_part, label) = match part {
-                PillPart::Body => (
-                    0,
-                    context_document
-                        .map(|d| d.title.clone())
-                        .unwrap_or_default(),
-                ),
-                PillPart::Close => (1, "Remove document".to_owned()),
-            };
-            TooltipContent::new(10_000 + key_part, rect, label)
-        });
-        self.tooltip.set_hover(content, now) || changed
-    }
-
-    pub(crate) fn maintenance_deadline(&self) -> Option<Instant> {
-        self.tooltip.maintenance_deadline()
-    }
-
-    pub(crate) fn maintain(&mut self, now: Instant) -> bool {
-        self.tooltip.maintain(now)
-    }
-
-    pub(crate) fn animating(&self, now: Instant) -> bool {
-        self.tooltip.animating(now)
-    }
-
-    pub(crate) fn clear_tooltip(&mut self) {
-        self.hovered = None;
-        self.tooltip.clear();
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn draw(
-        &self,
-        canvas: &mut Scene,
-        root: Affine,
-        engine: &mut TextEngine,
-        context_document: Option<&ContextDocumentPill>,
-        band: Rect,
-        viewport: Rect,
-        now: Instant,
-    ) {
-        let p = theme::p();
-        if let Some(pill) = Self::layout(engine, context_document, band) {
-            scene::fill(
-                canvas,
-                root,
-                p.chip_bg,
-                &scene::rrect(
-                    pill.body.x,
-                    pill.body.y,
-                    pill.body.w,
-                    pill.body.h,
-                    PILL_RADIUS,
-                ),
-            );
-            let icon = engine.icon_layout(icons::DOCUMENT, ICON_SIZE);
-            scene::draw_layout_first_line(
-                canvas,
-                root,
-                &icon,
-                pill.body.x + theme::PILL_PAD_X,
-                pill.body.y + (pill.body.h - icon.height()) * 0.5,
-                Some(p.text_dim),
-            );
-            let label = engine.simple_layout(&pill.label, role::ui());
-            scene::draw_layout_first_line(
-                canvas,
-                root,
-                &label,
-                pill.body.x + theme::PILL_PAD_X + icon.width() + 6.0,
-                pill.body.y + (pill.body.h - label.height()) * 0.5,
-                Some(p.text),
-            );
-            let close = engine.simple_layout("\u{00d7}", role::ui());
-            scene::draw_layout_first_line(
-                canvas,
-                root,
-                &close,
-                pill.close.x + (pill.close.w - close.width()) * 0.5,
-                pill.close.y + (pill.close.h - close.height()) * 0.5,
-                Some(p.text_dim),
-            );
-        }
-        self.tooltip.draw(canvas, root, engine, viewport, now);
-    }
 }
 
 /// The **Add to chat** pill over a reply's selection (D88): shown when a
@@ -537,24 +342,6 @@ impl ChatSurface {
         Some(changed || old_cursor != self.cursor_icon())
     }
 
-    /// The document pill's hover and tooltip.
-    pub(crate) fn pill_strip_mouse_move(&mut self, x: f32, y: f32) -> bool {
-        if self.showing_setup() {
-            self.pill_strip.clear_tooltip();
-            return false;
-        }
-        let band = self.pill_band_rect();
-        let context_document = self.context_document_pill();
-        self.pill_strip.mouse_move(
-            &mut self.engine,
-            context_document.as_ref(),
-            band,
-            x,
-            y,
-            Instant::now(),
-        )
-    }
-
     /// A press while the reply's menu is open is the menu's: a row, or a
     /// press outside that closes it.
     pub(crate) fn response_menu_mouse_down(&mut self, x: f32, y: f32) -> Option<bool> {
@@ -565,22 +352,6 @@ impl ChatSurface {
         self.response_menu = None;
         self.response_menu_anchor = None;
         Some(true)
-    }
-
-    pub(crate) fn pill_mouse_down(&mut self, x: f32, y: f32) -> bool {
-        let band = self.pill_band_rect();
-        let context_document = self.context_document_pill();
-        let Some((part, _)) =
-            self.pill_strip
-                .hit(&mut self.engine, context_document.as_ref(), band, x, y)
-        else {
-            return false;
-        };
-        self.pill_strip.clear_tooltip();
-        if part == PillPart::Close {
-            self.remove_context_document();
-        }
-        true
     }
 
     /// The keys of the reply's menu, `Ctrl+L` over a selection, and Escape
@@ -628,13 +399,6 @@ impl ChatSurface {
         Some(false)
     }
 
-    pub(crate) fn pill_band_rect(&mut self) -> Rect {
-        let composer = self.composer_rect();
-        let context_document = self.context_document_pill();
-        let height = pill_band_height(context_document.as_ref());
-        Rect::new(composer.x, composer.y - height, composer.w, height)
-    }
-
     /// Open the shared popover menu only when the press lands in the selected
     /// response text. Hosts call this from their ordinary `View::context_menu`
     /// path, so the context pane and a chat tab behave alike.
@@ -667,17 +431,6 @@ impl ChatSurface {
             }
             _ => false,
         }
-    }
-}
-
-fn elide(value: &str, max_scalars: usize) -> String {
-    let one_line = value.split_whitespace().collect::<Vec<_>>().join(" ");
-    let mut chars = one_line.chars();
-    let head = chars.by_ref().take(max_scalars).collect::<String>();
-    if chars.next().is_some() {
-        format!("{head}\u{2026}")
-    } else {
-        head
     }
 }
 

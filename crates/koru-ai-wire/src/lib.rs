@@ -217,6 +217,14 @@ pub struct ChatAttachmentResponse {
     pub attachment: ChatAttachment,
 }
 
+/// Copy the bytes of a sent attachment into a new staged attachment of the
+/// same chat. The caller mints an id for this recall attempt.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RestageAttachmentRequest {
+    pub new_id: koru_ai_core::ChatAttachmentId,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct RemoveAttachmentResponse {
     /// Whether a staged attachment existed and was removed.
@@ -227,6 +235,12 @@ pub struct RemoveAttachmentResponse {
 #[serde(deny_unknown_fields)]
 pub struct UpdateChatToolPolicyRequest {
     pub mode: ToolMode,
+    pub workspace_ids: Vec<WorkspaceId>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AddChatWorkspaceGrantsRequest {
     pub workspace_ids: Vec<WorkspaceId>,
 }
 

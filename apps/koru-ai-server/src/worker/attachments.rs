@@ -13,7 +13,7 @@ use koru_ai_core::{AttachmentInput, AttachmentRecord, ChatAttachment, ChatAttach
 use koru_ai_sqlite::RemovedAttachment;
 use koru_ai_wire::attachment_codes;
 
-use crate::attachments::{BranchFolder, CleanupJob};
+use crate::attachments::{BranchFolder, CleanupJob, RestageStart};
 
 use super::*;
 
@@ -453,6 +453,7 @@ pub(super) fn remove_attachment(
     chat: ChatId,
     id: ChatAttachmentId,
 ) -> ApiResult<koru_ai_wire::RemoveAttachmentResponse> {
+    let cancelled_copy = client.attachments.cancel_restage(id);
     let (reply, response) = sync_channel(1);
     client.send(WorkerCommand::RemoveStagedAttachment {
         context,
@@ -465,15 +466,120 @@ pub(super) fn remove_attachment(
             client.attachments.remove_attachment(chat, id);
             Ok(koru_ai_wire::RemoveAttachmentResponse { removed: true })
         }
-        RemovedAttachment::NotFound => {
-            Ok(koru_ai_wire::RemoveAttachmentResponse { removed: false })
-        }
+        RemovedAttachment::NotFound => Ok(koru_ai_wire::RemoveAttachmentResponse {
+            removed: cancelled_copy,
+        }),
         RemovedAttachment::Sent => Err(attachment_failure(
             attachment_codes::SENT,
             "A sent attachment stays with its message.",
             false,
             id,
         )),
+    }
+}
+
+/// Copy a sent row and its files into a new staged attachment. The gateway
+/// runs this on a blocking thread; the dispatcher sees only admission and
+/// publication of the row. Deletion during the copy marks it cancelled.
+pub(super) fn restage_attachment(
+    client: &AiWorkerClient,
+    context: RequestContext,
+    chat: ChatId,
+    source: ChatAttachmentId,
+    new_id: ChatAttachmentId,
+) -> ApiResult<koru_ai_wire::ChatAttachmentResponse> {
+    if source == new_id {
+        return Err(conflict(new_id));
+    }
+    let Some(_claim) = client.attachments.claim(new_id) else {
+        return Err(attachment_failure(
+            attachment_codes::CONFLICT,
+            "This attachment is still being stored.",
+            true,
+            new_id,
+        ));
+    };
+    let (reply, response) = sync_channel(1);
+    client.send(WorkerCommand::AttachmentAdmission {
+        context: context.clone(),
+        chat,
+        attachment: source,
+        reply,
+    })?;
+    let record = receive_api(response)?.ok_or_else(|| attachment_not_found(source))?;
+    if record.attachment.message_id.is_none() {
+        return Err(attachment_failure(
+            attachment_codes::SENT,
+            "Only a sent attachment can be recalled.",
+            false,
+            source,
+        ));
+    }
+    let (reply, response) = sync_channel(1);
+    client.send(WorkerCommand::AttachmentAdmission {
+        context: context.clone(),
+        chat,
+        attachment: new_id,
+        reply,
+    })?;
+    let existing = receive_api(response)?;
+    match client.attachments.start_restage(new_id, source) {
+        RestageStart::Existing
+            if existing
+                .as_ref()
+                .is_some_and(|row| row.attachment.message_id.is_none()) =>
+        {
+            return Ok(koru_ai_wire::ChatAttachmentResponse {
+                attachment: existing.expect("checked above").attachment,
+            });
+        }
+        RestageStart::Conflict | RestageStart::Existing => return Err(conflict(new_id)),
+        RestageStart::Copy => {}
+    }
+    if existing.is_some() {
+        client.attachments.abandon_restage(new_id);
+        return Err(conflict(new_id));
+    }
+    let mut copied = record;
+    copied.attachment.id = new_id;
+    copied.attachment.message_id = None;
+    copied.attachment.ordinal = None;
+    copied.attachment.created_at = Timestamp::now();
+    let folder = BranchFolder {
+        from: (chat, source),
+        to: (chat, new_id),
+    };
+    client.attachments.remove_attachment(chat, new_id);
+    if client.attachments.copy_for_branch(&[folder]).is_err() {
+        client.attachments.abandon_restage(new_id);
+        return Err(attachment_missing(source));
+    }
+    let staged = client.attachments.finish_restage(new_id, || {
+        let (reply, response) = sync_channel(1);
+        client.send(WorkerCommand::StageAttachment {
+            context,
+            record: Box::new(copied),
+            reply,
+        })?;
+        receive_api(response)
+    });
+    match staged {
+        Ok(Some(StageAnswer::Stored(attachment) | StageAnswer::Existing(attachment))) => {
+            Ok(koru_ai_wire::ChatAttachmentResponse { attachment })
+        }
+        Ok(None) => {
+            client.attachments.remove_attachment(chat, new_id);
+            Err(attachment_failure(
+                attachment_codes::NOT_FOUND,
+                "This recall was cancelled.",
+                false,
+                new_id,
+            ))
+        }
+        Err(error) => {
+            client.attachments.remove_attachment(chat, new_id);
+            Err(error)
+        }
     }
 }
 

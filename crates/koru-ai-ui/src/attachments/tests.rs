@@ -231,12 +231,23 @@ fn a_failed_draft_is_red_blocks_the_send_and_comes_out_with_its_cross() {
 
     surface.composer_rect();
     let composer = surface.composer_hit_rect;
-    let tile = strip_tiles(
-        surface.strip(),
-        composer.x + crate::COMPOSER_PAD_X,
-        composer.y + crate::COMPOSER_PAD_TOP,
-    )[0];
-    let cross = remove_button(tile);
+    let tile = surface
+        .chip_band
+        .chip_rect(
+            0,
+            composer.x + crate::COMPOSER_PAD_X,
+            composer.y + crate::COMPOSER_PAD_TOP,
+        )
+        .unwrap();
+    let draft = &surface.strip()[0];
+    let secondary = surface.attachment_chip_secondary(draft);
+    let cross = koru_ui::context_chip::ContextChip {
+        label: &draft.file_name,
+        secondary: &secondary,
+        icon: surface.attachment_chip_icon(draft),
+        state: surface.attachment_chip_state(draft),
+    }
+    .remove_rect(tile);
     assert_eq!(
         surface.strip_mouse_down(cross.x + cross.w * 0.5, cross.y + cross.h * 0.5),
         Some(true)
@@ -653,17 +664,27 @@ fn a_draft_picture_opens_from_its_own_bytes() {
     surface.add_draft(chat, draft.clone());
     surface.composer_rect();
     let composer = surface.composer_hit_rect;
-    let rect = strip_tiles(
-        surface.strips.get(chat),
-        composer.x + COMPOSER_PAD_X,
-        composer.y + COMPOSER_PAD_TOP,
-    )[0];
+    let rect = surface
+        .chip_band
+        .chip_rect(
+            0,
+            composer.x + COMPOSER_PAD_X,
+            composer.y + COMPOSER_PAD_TOP,
+        )
+        .unwrap();
     assert_eq!(
         surface.strip_mouse_down(rect.x + 4.0, rect.y + rect.h - 4.0),
         Some(true)
     );
     assert_eq!(surface.attachment_work.viewer_fetched, vec![draft.id]);
-    let cross = remove_button(rect);
+    let secondary = surface.attachment_chip_secondary(&draft);
+    let cross = koru_ui::context_chip::ContextChip {
+        label: &draft.file_name,
+        secondary: &secondary,
+        icon: surface.attachment_chip_icon(&draft),
+        state: surface.attachment_chip_state(&draft),
+    }
+    .remove_rect(rect);
     surface.strip_mouse_down(cross.x + 2.0, cross.y + 2.0);
     assert!(!surface.has_strip());
     assert_eq!(surface.attachment_work.viewer_fetched.len(), 1);
@@ -859,11 +880,14 @@ fn a_file_chip_opens_in_the_systems_app_text_as_text() {
     surface.strips.push(chat, storing);
     surface.composer_rect();
     let composer = surface.composer_hit_rect;
-    let rect = strip_tiles(
-        surface.strips.get(chat),
-        composer.x + COMPOSER_PAD_X,
-        composer.y + COMPOSER_PAD_TOP,
-    )[0];
+    let rect = surface
+        .chip_band
+        .chip_rect(
+            0,
+            composer.x + COMPOSER_PAD_X,
+            composer.y + COMPOSER_PAD_TOP,
+        )
+        .unwrap();
     surface.strip_mouse_down(rect.x + 4.0, rect.y + rect.h - 4.0);
     assert_eq!(surface.attachment_work.opened.len(), 2);
 }
