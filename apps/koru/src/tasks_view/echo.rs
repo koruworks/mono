@@ -58,6 +58,12 @@ pub(super) enum Patch {
     Completed(bool),
     Due(Option<Due>),
     Priority(Option<String>),
+    /// The line's colour token; `None` cleared.
+    Color(Option<String>),
+    /// Its place in the list's dragged order; `None` cleared.
+    Rank(Option<i64>),
+    /// The row's words, renamed on the page.
+    Title(String),
     List(Option<ListId>),
     Removed,
     /// *Create document*: the row is the same task with a home. `from` is the
@@ -112,6 +118,9 @@ pub(super) fn provisional_entry(
         overdue: due.is_some_and(|due| is_overdue(due, today, now_ms)),
         priority: priority.map(|p| p.as_str().to_owned()),
         list,
+        // The capture row sets no colour, and its rank is set by the page.
+        color: None,
+        rank: None,
         completed: false,
         // A row typed into the capture field is not pinned: pinning is a
         // gesture on a task that exists, and the capture row makes one.
@@ -243,6 +252,22 @@ pub(super) fn apply_patch(
             let before = entry_bucket(row, today);
             row.priority = level.clone();
             stays_in_queue(row, before, target, today)
+        }
+        // A colour moves no row: it is not a queue's or a list's question.
+        Patch::Color(color) => {
+            row.color = color.clone();
+            true
+        }
+        // Nor does a rank: it moves the row *within* the page, which the
+        // page's own sort puts right after the echoes are drawn.
+        Patch::Rank(rank) => {
+            row.rank = *rank;
+            true
+        }
+        // Nor do its words: the same row, renamed.
+        Patch::Title(title) => {
+            row.title = title.clone();
+            true
         }
         Patch::List(list) => {
             row.list = *list;
@@ -378,7 +403,10 @@ pub fn delta_of_command(
             }
         }
         // The same task in the same queue: the numbers do not move.
-        TaskCommand::CreateHome { .. } => {}
+        TaskCommand::CreateHome { .. }
+        | TaskCommand::SetColor { .. }
+        | TaskCommand::SetRank { .. }
+        | TaskCommand::Retitle { .. } => {}
         TaskCommand::Remove { .. } => {
             delta.row(row?, -1, today);
         }
@@ -489,6 +517,7 @@ mod tests {
                 due: Some(on("2026-08-31")),
                 list: None,
                 priority: None,
+                rank: None,
             },
             None,
             today(),

@@ -65,6 +65,14 @@ pub const KEY_COLOR: &str = "koru.color";
 pub const KEY_DUE: &str = "koru.due";
 /// How important this is: one of [`Priority`]'s four tokens, unset as absence.
 pub const KEY_PRIORITY: &str = "koru.priority";
+/// **Where the task sits in the order somebody dragged it into**: an integer,
+/// smaller first. One order per task, read by every page ordered by hand — a
+/// list, and Today, Next, Upcoming or Later set to *Manual* — so a task moved
+/// up on one is moved up among the same tasks on the others. Absent on a task
+/// nobody has dragged, which such a page orders after the ranked ones by its
+/// due. Presentation of an order, never meaning, and never drawn as a chip —
+/// the order *is* how it is shown.
+pub const KEY_RANK: &str = "koru.rank";
 /// The pre-registry bare role older documents wrote a due under, before
 /// [`KEY_DUE`] existed. Read everywhere a due is read ([`crate::node::Node::due`]),
 /// which is what makes a legacy due-dated row a task with no migration.
@@ -633,6 +641,17 @@ pub fn system_definitions() -> Vec<AttributeDefinition> {
                 .map(|p| p.as_str().to_owned())
                 .collect(),
             (true, true, true),
+        ),
+        // **Sortable and nothing else**: a rank is an order, and a filter or a
+        // group over one would be a question nobody asks.
+        AttributeDefinition::system(
+            KEY_RANK,
+            "Rank",
+            ValueType::Number,
+            Cardinality::One,
+            AttributeScope::Shared,
+            Vec::new(),
+            (false, true, false),
         ),
         // Neither task key is **sortable**: a creation reason and a two-state
         // lifecycle have no order, and a sort control offering one would be a

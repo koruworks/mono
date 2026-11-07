@@ -41,9 +41,13 @@
 //! star pressed in any chat is stored from here and handed to every other.
 
 use koru_session_profiles::{LaunchProfile, managed_provider};
-use koru_session_protocol::{ExecutableAvailability, ProviderReadiness};
+use koru_session_protocol::{
+    ExecutableAvailability, ProviderDiagnostic, ProviderReadiness, ProviderStage, VersionNeed,
+};
 use koru_settings::AgentPermission;
-use koru_settings_ui::{AgentAttention, AgentDefaults, AgentProviderRow, AgentProviderStatus};
+use koru_settings_ui::{
+    AgentAttention, AgentDefaults, AgentProviderRow, AgentProviderStatus, NeededVersion,
+};
 
 use super::{MainView, TabView, context_menu};
 
@@ -67,6 +71,91 @@ pub(crate) fn setup_guide(key: &str) -> Option<&'static str> {
         "devin" => "https://docs.devin.ai/cli",
         _ => return None,
     })
+}
+
+/// One step of installing an agent, in the vendor's own words.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum InstallStep {
+    /// The vendor's installer script, as its install page gives the command
+    /// for each OS: a POSIX shell's on macOS and Linux, PowerShell's on
+    /// Windows.
+    Script {
+        posix: &'static str,
+        powershell: &'static str,
+    },
+    /// `npm install -g <package>`, at `version` where Koru accepts only one
+    /// release.
+    Npm {
+        package: &'static str,
+        version: Option<&'static str>,
+    },
+}
+
+/// What installs an agent: its CLI, and — for an agent whose chats run
+/// through a program of their own — that program.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Installer {
+    pub(crate) cli: InstallStep,
+    pub(crate) adapter: Option<InstallStep>,
+}
+
+/// **How each agent is installed** — the one table *Install* on *Agent
+/// providers* reads, keyed by agent key. An agent with no entry offers no
+/// *Install*; its *Setup guide ↗* stays.
+///
+/// - **Claude**: Anthropic's native installer (`code.claude.com/docs/en/setup`),
+///   then the chat adapter at the release Claude's managed route accepts
+///   (`koru_session_profiles::CLAUDE_ADAPTER_VERSION`, the same constant the
+///   route's handshake checks).
+/// - **The npm-published CLIs**: the package `koru-cli-updates` already reads
+///   their latest release from, so the CLI installed is the one the update
+///   card later checks.
+/// - **Left out** — Grok (a native binary with no npm package), Antigravity,
+///   Muse and Devin: Koru knows no install command for them it could vouch
+///   for, and a guessed one is worse than the setup guide.
+pub(crate) fn installer(key: &str) -> Option<Installer> {
+    let npm = |id: &str| match koru_cli_updates::catalogue::known(id)?.latest {
+        koru_cli_updates::LatestSource::Npm(package) => Some(InstallStep::Npm {
+            package,
+            version: None,
+        }),
+        koru_cli_updates::LatestSource::GrokCheck => None,
+    };
+    match key {
+        "claude" => Some(Installer {
+            cli: InstallStep::Script {
+                posix: "curl -fsSL https://claude.ai/install.sh | bash",
+                powershell: "irm https://claude.ai/install.ps1 | iex",
+            },
+            adapter: Some(InstallStep::Npm {
+                package: koru_session_profiles::CLAUDE_ADAPTER_PACKAGE,
+                version: Some(koru_session_profiles::CLAUDE_ADAPTER_VERSION),
+            }),
+        }),
+        "codex" | "copilot" | "kimi" | "opencode" | "qwen" => Some(Installer {
+            cli: npm(key)?,
+            adapter: None,
+        }),
+        _ => None,
+    }
+}
+
+/// **What *Install* runs for an agent in `status`**: the CLI — and its chat
+/// adapter, if it has one — when the CLI is missing; the adapter alone when
+/// only that is (`AdapterMissing`). `None` when the row offers no *Install*:
+/// nothing is missing, or Koru knows no command for what is.
+pub(crate) fn install_plan(key: &str, status: &AgentProviderStatus) -> Option<Installer> {
+    let installer = installer(key)?;
+    match status {
+        AgentProviderStatus::NotInstalled { .. } => Some(installer),
+        AgentProviderStatus::NeedsAttention(AgentAttention::AdapterMissing { .. }) => {
+            Some(Installer {
+                cli: installer.adapter?,
+                adapter: None,
+            })
+        }
+        _ => None,
+    }
 }
 
 /// **One agent's status, from what Koru already knows.**
@@ -117,15 +206,45 @@ pub(crate) fn agent_status(
                 sign_in: registration.sign_in_command.map(str::to_owned),
             })
         }
-        ExecutableAvailability::Incompatible { .. } => {
+        ExecutableAvailability::Incompatible { found, needed, .. } => {
             AgentProviderStatus::NeedsAttention(AgentAttention::UnsupportedVersion {
+                found: found.clone(),
+                needed: needed
+                    .as_ref()
+                    .map(|needed| needed_version(needed, found.as_deref())),
                 update: registration.update_command.map(str::to_owned),
                 desktop_app: registration.desktop_app.map(str::to_owned),
+            })
+        }
+        // The version command itself failed: the program does not start
+        // here (`koru_session_runtime`'s `version_print`). Every other
+        // failure is the check's own.
+        ExecutableAvailability::Failed { .. }
+            if row.failure.as_ref().is_some_and(|failure| {
+                failure.stage == ProviderStage::Version
+                    && failure.diagnostic == ProviderDiagnostic::UnexpectedExit
+            }) =>
+        {
+            AgentProviderStatus::NeedsAttention(AgentAttention::WontStart {
+                program: registration.executable.to_owned(),
             })
         }
         ExecutableAvailability::Failed { .. } => {
             AgentProviderStatus::NeedsAttention(AgentAttention::CheckFailed)
         }
+    }
+}
+
+/// What the route needs, as the row says it: a reviewed list that the
+/// version found has outgrown reads *checked up to*, since updating cannot
+/// help there.
+fn needed_version(needed: &VersionNeed, found: Option<&str>) -> NeededVersion {
+    match needed {
+        VersionNeed::AtLeast(floor) => NeededVersion::AtLeast(floor.clone()),
+        VersionNeed::Reviewed(newest) if found.is_some_and(|found| needed.outgrown_by(found)) => {
+            NeededVersion::CheckedUpTo(newest.clone())
+        }
+        VersionNeed::Reviewed(newest) => NeededVersion::Reviewed(newest.clone()),
     }
 }
 
@@ -296,10 +415,12 @@ impl MainView {
             .into_iter()
             .filter_map(|(index, profile)| {
                 let key = profile.label.agent_key()?;
+                let status = agent_status(&profile, self.profile_probe.presence(index), readiness);
                 Some(AgentProviderRow {
                     key: key.to_owned(),
                     name: koru_session_profiles::display_name(&profile, "", "").to_owned(),
-                    status: agent_status(&profile, self.profile_probe.presence(index), readiness),
+                    install: install_plan(key, &status).is_some(),
+                    status,
                     guide: setup_guide(key),
                     on: !disabled.iter().any(|off| off == key),
                 })

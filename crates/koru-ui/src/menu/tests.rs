@@ -130,6 +130,21 @@ fn a_button_anchored_menu_hangs_back_under_the_button() {
     assert_eq!(p.x + p.w, 300.0, "the point is the menu's right edge");
 }
 
+/// A centred menu sits with its middle on the point — what a key opens it
+/// with, in the window's middle.
+#[test]
+fn a_centred_menu_sits_with_its_middle_on_the_point() {
+    let m = Menu::at_width(
+        (640.0, 360.0),
+        vec![Row::Item("one"), Row::Item("two")],
+        Anchor::Centre,
+        200.0,
+    );
+    let p = m.panel((1280.0, 720.0));
+    assert!((p.x + p.w * 0.5 - 640.0).abs() < 0.01);
+    assert!((p.y + p.h * 0.5 - 360.0).abs() < 0.01);
+}
+
 #[test]
 fn item_at_hits_rows_and_misses_dividers_and_padding() {
     let m = menu(vec![Row::Item("one"), Row::Rule, Row::Item("two")]);
@@ -174,14 +189,20 @@ fn step_skips_disabled_rows() {
     assert_eq!(m.hover, Some(2), "the dimmed row is stepped over");
 }
 
-/// A toggle row is still measured with its check column, set or not — the
-/// label must not shift when the state flips under an open menu.
+/// A toggle row reserves its check lane **at the right-hand end**, set or
+/// not — nothing moves when the state flips under an open menu — and leads
+/// with nothing, so its label lines up with every other row's.
 #[test]
-fn a_toggle_row_reserves_its_check_column_either_way() {
+fn a_toggle_row_reserves_its_check_lane_at_the_end_either_way() {
+    let mut engine = TextEngine::new();
     let set = Row::Toggle("Keyboard hints", true);
     let unset = Row::Toggle("Keyboard hints", false);
-    assert_eq!(leading(&set), leading(&unset));
-    assert!(leading(&unset).is_some());
+    assert!(leading(&set).is_none() && leading(&unset).is_none());
+    let lane = check_lane(&mut engine, &unset);
+    assert!(lane > 0.0, "the lane is reserved while unset");
+    assert_eq!(lane, check_lane(&mut engine, &set));
+    assert_eq!(trailing_width(&mut engine, &set), lane);
+    assert_eq!(check_lane(&mut engine, &Row::Item("one")), 0.0);
 }
 
 // --------------------------------------------------------------- the stepper

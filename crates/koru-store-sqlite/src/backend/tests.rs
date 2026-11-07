@@ -118,3 +118,116 @@ fn the_same_workspace_id_under_two_roots_is_two_replicas() {
         "the id is the same on both sides"
     );
 }
+
+#[test]
+fn a_memory_workspace_is_the_same_database_every_time_it_is_opened() {
+    let backend = SqliteBackend::in_memory();
+    let id = WorkspaceId::new();
+    let document = koru_store_core::ids::DocumentId::new();
+    {
+        let mut repo = backend.open_workspace(id).unwrap();
+        repo.create_document(document, DocumentKind::Manifest, at())
+            .unwrap();
+    }
+    let repo = backend.open_workspace(id).unwrap();
+    assert!(repo.document(document).unwrap().is_some());
+    // Another Workspace is another database.
+    let other = backend.open_workspace(WorkspaceId::new()).unwrap();
+    assert!(other.document(document).unwrap().is_none());
+}
+
+#[test]
+fn deleting_a_memory_workspace_takes_its_database_with_it() {
+    let backend = SqliteBackend::in_memory();
+    let id = WorkspaceId::new();
+    let document = koru_store_core::ids::DocumentId::new();
+    backend
+        .open_workspace(id)
+        .unwrap()
+        .create_document(document, DocumentKind::Manifest, at())
+        .unwrap();
+    backend.delete_workspace(id).unwrap();
+    let reopened = backend.open_workspace(id).unwrap();
+    assert!(reopened.document(document).unwrap().is_none());
+}
+
+#[test]
+fn a_memory_backend_keeps_no_file_bytes_and_says_so() {
+    let backend = SqliteBackend::in_memory();
+    let refused = Backend::objects(&backend).err().expect("no blob store");
+    assert_eq!(
+        refused.code(),
+        koru_store_core::Code::BlobTransferUnavailable
+    );
+    assert_eq!(
+        backend.sweep_pending_objects(at()).unwrap(),
+        crate::blobs::PendingSweep::default()
+    );
+    assert!(matches!(
+        backend
+            .promote_legacy_object(
+                WorkspaceId::new(),
+                &BlobHash::from_digest("b3", &"a".repeat(64)).unwrap()
+            )
+            .unwrap(),
+        LegacyPromotion::NoCandidate
+    ));
+}
+
+/// A whole Store over the in-memory catalog and backend: a Workspace, a
+/// document, an edit, a second open of the Workspace, and nothing written
+/// anywhere but memory.
+#[test]
+fn a_store_in_memory_creates_edits_and_reads_back() {
+    use koru_store_core::service::Store;
+    let catalog =
+        crate::SqliteCatalog::in_named_memory(&koru_sqlite::MemoryName::fresh("catalog.db"))
+            .unwrap();
+    let mut store = Store::open(catalog, SqliteBackend::in_memory()).unwrap();
+    let profile = store
+        .create_profile(
+            "Person",
+            None,
+            None,
+            koru_store_core::Locale::parse("en").unwrap(),
+            at(),
+        )
+        .unwrap();
+    let workspace = store.create_workspace(profile.id, "Work", at()).unwrap();
+    let (document, _) = store
+        .create_document(workspace.id, "Plan", "page", None, None, at())
+        .unwrap();
+    let doc = loro::LoroDoc::new();
+    doc.import(&store.snapshot(workspace.id, document).unwrap())
+        .unwrap();
+    doc.get_map("probe").insert("k", "v").unwrap();
+    doc.commit();
+    store
+        .apply_update(
+            workspace.id,
+            document,
+            doc.export(loro::ExportMode::all_updates()).unwrap(),
+            at(),
+            koru_store_core::ports::UpdateOrigin::Store,
+        )
+        .unwrap();
+    store.flush(workspace.id, document, at()).unwrap();
+    let titles: Vec<_> = store
+        .documents(workspace.id)
+        .unwrap()
+        .into_iter()
+        .map(|entry| entry.title)
+        .collect();
+    assert!(titles.contains(&"Plan".to_owned()), "{titles:?}");
+    let back = loro::LoroDoc::new();
+    back.import(&store.snapshot(workspace.id, document).unwrap())
+        .unwrap();
+    assert_eq!(
+        back.get_map("probe")
+            .get("k")
+            .unwrap()
+            .into_value()
+            .unwrap(),
+        loro::LoroValue::from("v")
+    );
+}

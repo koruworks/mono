@@ -14391,11 +14391,12 @@
         "type": "object"
       },
       "TaskSort": {
-        "description": "What orders the page.\n\n`Due` is the default because a task list is asked *what should I do next*.\n`Due` and `Priority` sort set values first and unset last; `Modified` is the\nsource document's stamp.",
+        "description": "What orders the page.\n\n`Due` is the default because a task list is asked *what should I do next*.\n`Due` and `Priority` sort set values first and unset last; `Modified` is the\nsource document's stamp. `Manual` is the order somebody dragged the tasks\ninto (`koru.rank`, smaller first); a task never ranked follows the ranked\nones by its due, and an undated one of those comes last.",
         "enum": [
           "due",
           "priority",
-          "modified"
+          "modified",
+          "manual"
         ],
         "type": "string"
       },

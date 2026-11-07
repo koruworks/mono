@@ -120,7 +120,7 @@ pub(super) fn glyph(action: Action) -> char {
 /// The stable keyword this action is *identified* by — never its label.
 ///
 /// Read by the accessibility projection, which puts it on a locator an external
-/// client can search for. *Import content…* is renamed and translated;
+/// client can search for. *Import…* is renamed and translated;
 /// `import` is neither. The same argument and the same shape as
 /// [`NavigatorMode::token`](super::NavigatorMode::token).
 pub(super) fn token(action: Action) -> &'static str {
@@ -131,21 +131,12 @@ pub(super) fn token(action: Action) -> &'static str {
     }
 }
 
-pub(super) fn label(action: Action, mode: NavigatorMode) -> &'static str {
-    match (action, mode) {
-        (Action::Import, NavigatorMode::Documents) => "Import content…",
-        (Action::Import, NavigatorMode::Files) => "Import files…",
-        // Unreachable through `available`, which offers Tasks nothing and
-        // Agents no Import; named rather than left to a `_` so a future task
-        // action has to pick a word.
-        (Action::Import, NavigatorMode::Tasks) => "Import content…",
-        (Action::Import, NavigatorMode::Agents) => "Import files…",
-        (Action::Import, NavigatorMode::Artifacts) => "Import files…",
-        (Action::Import, NavigatorMode::Chats) => "Import files…",
-        (Action::Import, NavigatorMode::Canvases) => "Import content…",
-        (Action::Import, NavigatorMode::Socials) => "Import files…",
-        (Action::Import, NavigatorMode::Home) => "Import content…",
-        (Action::CollapseAll, _) => "Collapse all",
-        (Action::ExpandAll, _) => "Expand all",
+pub(super) fn label(action: Action, _mode: NavigatorMode) -> &'static str {
+    match action {
+        // One word in every mode: the row opens the one Import list
+        // (`context_menu::import_menu_items`), files and content both.
+        Action::Import => "Import…",
+        Action::CollapseAll => "Collapse all",
+        Action::ExpandAll => "Expand all",
     }
 }

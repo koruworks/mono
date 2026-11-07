@@ -93,6 +93,39 @@ fn a_removed_profiles_page_falls_back_to_the_open_one() {
     assert_eq!(view.page(), Some(Page::Profile(personal.id)));
 }
 
+/// A removed Profile's page settling on the open one is not somebody choosing
+/// it, so the notice saying what happened is still there when it lands — and a
+/// click on another Profile in the nav takes it away, rather than leaving it
+/// under a Profile it is not about.
+#[test]
+fn the_removal_notice_survives_the_fallback_and_not_the_next_click() {
+    let mut view = ManageView::new();
+    let (gone, first, open) = (profile("Gone"), profile("First"), profile("Open"));
+    view.delegate(|c| {
+        c.take_request();
+        c.set_profiles(
+            vec![gone.clone(), first.clone(), open.clone()],
+            open.id,
+            &[],
+        )
+    });
+    View::set_viewport(&mut view, 1000.0, 700.0);
+    view.show(Page::Profile(gone.id));
+
+    view.delegate(|c| c.local_profile_removed(gone.id));
+    view.delegate(|c| c.set_profiles(vec![first.clone(), open.clone()], open.id, &[]));
+    let removed = koru_i18n::t(
+        crate::format::lang(),
+        koru_i18n::Key::ProfilesRemovedFromDevice,
+    );
+    assert_eq!(view.page(), Some(Page::Profile(open.id)));
+    assert_eq!(view.controller().notice(), Some(removed));
+
+    assert!(click(&mut view, nav::Entry::Profile(first.id)));
+    assert_eq!(view.page(), Some(Page::Profile(first.id)));
+    assert_eq!(view.controller().notice(), None);
+}
+
 // ------------------------------------------------------------- the nav
 
 #[test]

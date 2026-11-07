@@ -114,6 +114,9 @@ fn exec(target: Target, args: &[String]) -> Result<String, String> {
         return Err("the command line cannot be passed safely".into());
     };
     let mut command = std::process::Command::new(&argv[0]);
+    // The `PATH` the agent was found on: an npm-installed agent is a script
+    // that needs `node`, which a Finder-launched Koru's own `PATH` lacks.
+    koru_session_profiles::with_effective_path(&mut command);
     command
         .args(&argv[1..])
         .stdin(std::process::Stdio::null())

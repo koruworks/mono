@@ -219,8 +219,15 @@ impl ProfilesController {
                 }
             }
             Intent::Select(profile) => {
-                self.selected = Some(profile);
-                self.confirm_offline = false;
+                // The notice is drawn under the selected Profile's header, so
+                // one left over from the last Profile reads as news about this
+                // one — "Profile removed from this device" under a Profile
+                // that was not. Only a change clears it: re-selecting the same
+                // row is not a reason to lose what it was just told.
+                if self.selected != Some(profile) {
+                    self.notice = None;
+                }
+                self.follow_page(profile);
             }
             Intent::SwitchTo(profile) => {
                 if self.profiles.iter().any(|row| row.id == profile) {

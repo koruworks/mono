@@ -265,6 +265,10 @@ pub enum SymbolicReturnTarget {
     Releases,
     DownloadWindows,
     DownloadMacos,
+    // The website's app connection consent page (Cloud MCP TECHNICAL.final
+    // §7.3, §9). A plain comment, not a doc comment: a described variant
+    // would split the generated schema's flat `enum` into a `oneOf`.
+    ConnectionAuthorize,
 }
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

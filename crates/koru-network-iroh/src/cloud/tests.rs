@@ -26,7 +26,7 @@ struct Provider {
 impl Authority for Provider {
     fn current(
         &self,
-        _: &SyncCredentialClaimsV1,
+        _: &koru_replication::cloud::SessionClaims,
         _: koru_device::cloud::CloudReplicaPrincipalV1,
     ) -> Result<CurrentAuthority, Refusal> {
         Ok(self.facts.clone())

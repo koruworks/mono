@@ -73,7 +73,8 @@ pub use catalog::{
 /// The scope that gates archive, soft-delete and restore.
 ///
 /// **In neither the default nor the allowed set.** Naming it is not enough; a
-/// caller must also be vouched for by the Agent that launched it — see
+/// caller must also be vouched for by the Agent, which vouches only for the
+/// Koru app of its own installation — see
 /// [`Client::connect_first_party`]. Spelled again in `koru-api-gateway-core`,
 /// which this crate deliberately does not link;
 /// `the_destructive_scope_literals_agree` pins the two copies together.
@@ -314,7 +315,7 @@ impl Client {
         )
     }
 
-    /// **Connect as a window the Agent launched, carrying a grant.**
+    /// **Connect as a Koru window the Agent vouches for, carrying a grant.**
     ///
     /// The one constructor that can come back holding
     /// [`WORKSPACE_DESTROY_SCOPE`]. Three things happen in order, and the order
@@ -322,8 +323,9 @@ impl Client {
     ///
     /// 1. this process asks the Agent to vouch for it ([`grants::request`]).
     ///    The Agent answers only for a connection whose **transport-read** pid
-    ///    is one it launched, so a caller cannot ask on somebody else's behalf
-    ///    and this call has to be made from the process that wants the scope;
+    ///    is running the `koru` beside it, so a caller cannot ask on somebody
+    ///    else's behalf and this call has to be made from the process that
+    ///    wants the scope;
     /// 2. the grant travels in this session's hello and is spent by being
     ///    validated, so a token that leaks afterwards is worthless;
     /// 3. the gateway asks the Agent about it only because the hello also names
@@ -331,9 +333,10 @@ impl Client {
     ///    as it was.
     ///
     /// **No Agent is an answer, not a failure.** A grant is meaningful only
-    /// from a running supervisor that launched this process, so when there is
-    /// none — a standalone run, a rooted rehearsal, a developer's `cargo run` —
-    /// this connects without one and comes back holding the ordinary scopes.
+    /// from a running Agent of this installation, so when there is none, or it
+    /// refuses — a standalone run, a `koru` from another installation than the
+    /// Agent's — this connects without one and comes back holding the ordinary
+    /// scopes.
     /// The caller finds out by asking what it got: the surface renders its
     /// destructive rows disabled with a reason rather than pretending they will
     /// work. Failing the whole connection would mean a window that cannot be
@@ -349,7 +352,7 @@ impl Client {
 
     /// [`Self::connect_first_party`] against a rooted installation.
     ///
-    /// A rooted product must reach the rooted Agent that launched it, or a
+    /// A rooted product must reach its own rooted Agent, or a
     /// rehearsal would be asking somebody's real installation to vouch for it.
     pub fn connect_at_first_party(
         segment: &str,

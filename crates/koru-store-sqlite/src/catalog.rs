@@ -225,6 +225,13 @@ impl SqliteCatalog {
         Self::from_connection(db::open_in_memory()?)
     }
 
+    /// `catalog.db` in this process's memory, with no file behind it — its
+    /// journal and temporary storage included. What an in-memory Store
+    /// composition opens; [`Self::in_memory`] stays the tests' open.
+    pub fn in_named_memory(name: &koru_sqlite::MemoryName) -> Result<Self> {
+        Self::from_connection(db::open_named_memory(name)?)
+    }
+
     /// One named in-memory database that several catalogs can open in turn —
     /// how a test restarts a `Store` over the bytes the last one wrote. See
     /// [`db::open_shared_in_memory`] for why the ordinary in-memory open

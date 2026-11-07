@@ -214,10 +214,7 @@ pub(super) fn action(
             return true;
         }
         p if p == parts::SEARCH => Outcome::Search,
-        p if p == parts::NEW => {
-            let square = view.settled_lane_controls().new;
-            return view.open_new_tab_menu_at(square);
-        }
+        p if p == parts::NEW => return view.open_launcher(),
         p if p == parts::WINDOW_MENU => {
             let Some(button) = view.window_menu_button() else {
                 return false;

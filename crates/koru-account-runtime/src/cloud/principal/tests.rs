@@ -222,6 +222,10 @@ fn stages_map_one_to_one_and_unknown_codes_collapse_to_one_static() {
         static_code("cloud_unit_unavailable"),
         "cloud_unit_unavailable"
     );
+    // An app connection's creation refusal keeps its word (Cloud MCP Plan
+    // 2.3): the hosted server reads it as the creation refusal, not as a
+    // generic failure.
+    assert_eq!(static_code("sync_unit_exists"), "sync_unit_exists");
     assert_eq!(static_code("something_new"), "cloud_session_failed");
     let _ = ReplicationEndpointSecret::generate();
 }

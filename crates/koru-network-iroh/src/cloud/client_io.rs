@@ -10,7 +10,7 @@ use koru_replication::cloud::{
     client_store::Receipt,
     transfer::{
         self, Admission, Completed, Control, Decision, Error, MemoryBudget, Record, Reservation,
-        Scope, Start, Stream, StreamStatus, Unit,
+        Scope, Start, Stream, StreamStatus, Unit, UploadContext,
         metadata::{self, Metadata},
     },
 };
@@ -351,6 +351,20 @@ where
         bytes: Vec<u8>,
         retained: T,
     ) -> Result<(), Error> {
+        self.upload_with(unit, bytes, retained, UploadContext::default())
+    }
+
+    /// [`Client::upload`] with what the Store said about it: the start carries
+    /// `context.claim` (TECHNICAL §5.4 item 4). Only an app connection's
+    /// session may send one; on any other the upload is refused as
+    /// `sync_transfer_invalid` before anything is written.
+    pub fn upload_with<T: Send + Sync + 'a>(
+        &mut self,
+        unit: Unit,
+        bytes: Vec<u8>,
+        retained: T,
+        context: UploadContext,
+    ) -> Result<(), Error> {
         self.check()?;
         if !self.available_writer() || self.upload.is_some() {
             return Err(Error::Unavailable);
@@ -360,7 +374,7 @@ where
         let batch = self.batch.to_be_bytes();
         let (start, admission) =
             self.stream
-                .begin_outgoing(unit, batch, bytes, now, now, &mut self.authorize)?;
+                .begin_upload(unit, batch, bytes, context, now, now, &mut self.authorize)?;
         self.upload = Some(Upload {
             unit,
             batch,

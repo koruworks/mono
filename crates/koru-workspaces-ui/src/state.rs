@@ -40,9 +40,11 @@ impl Availability {
 /// **Whether this window may remove a workspace.**
 ///
 /// `workspace.destroy` is in neither the default nor the allowed scope set: a
-/// caller must name it *and* be vouched for by the Agent that launched it
-/// (ADR-267). A window that was not — a developer's `cargo run`, a build the
-/// Agent did not start, a rooted rehearsal — gets a session without it.
+/// caller must name it *and* be vouched for by the Agent (ADR-267), which
+/// vouches for a process running the `koru` beside it, however it was started.
+/// A window that is not — a `koru` from another installation or build tree, or
+/// one whose executable the operating system would not report — gets a
+/// session without it.
 ///
 /// **The rows are still drawn.** See `lib.rs` for why disabled beats hidden.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

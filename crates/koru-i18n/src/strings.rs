@@ -740,7 +740,8 @@ pub enum Key {
     /// Takes the number of terminals. Empty is a different sentence, below.
     WorkspacesTerminalsWillClose,
     WorkspacesNoTerminals,
-    /// Not vouched for: this window may not remove a workspace at all.
+    /// Not vouched for: the Agent could not confirm this window is the Koru
+    /// app beside it (ADR-267), so it may not remove a workspace at all.
     WorkspacesNotPermitted,
     /// The Store refuses while the workspace's documents are open, and this
     /// says what would release it. Surfaced rather than worked around — see
@@ -2139,7 +2140,21 @@ pub enum Key {
     /// The three panels the page opens over a row.
     A11yTaskDuePicker,
     A11yTaskPriorityPicker,
+    A11yTaskColorPicker,
     A11yTaskListPicker,
+    // ---------------------------------------------------- the New… launcher
+    //
+    // The `+` button's dialog: its name, the button's tooltip, and the two
+    // words the session kinds do not already have (`TerminalKindAgent`,
+    // `TerminalKindShell` name the other two tiles).
+    LauncherTitle,
+    LauncherTooltip,
+    LauncherDocument,
+    LauncherTask,
+    LauncherChat,
+    LauncherImport,
+    /// The launcher's footer: what Alt and Shift add to a choice.
+    LauncherHint,
     // ---------------------------------------------------- reminders (Plan 2.2)
     //
     // **Almost everything this surface says already had a row.** `Reminder`,
@@ -2379,6 +2394,12 @@ pub enum Key {
     ImageHeldByCloudOff,
     ImageHeldTooLarge,
     ImageHeldUnknown,
+    // Attaching a picture runs off the event loop: the placeholder's name for
+    // a screen reader while it loads, and the report when it cannot be added.
+    ImageLoading,
+    ImageAddFailed,
+    ImageAddFailedBody,
+    ImageAddPartlyFailedBody,
     // Manage Profiles: how far a Profile's Cloud sync has got, across every
     // Workspace. The per-row state reuses the CloudTab* words above so this
     // surface and the context pane never describe one hold two ways.
@@ -2617,8 +2638,22 @@ pub enum Key {
     SettingsAgentSignedOutRun,
     SettingsAgentUnsupportedVersionUpdateDesktopApp,
     SettingsAgentCheckFailed,
+    SettingsAgentWontStart,
+    SettingsAgentVersionFoundNeedsAtLeast,
+    SettingsAgentVersionNeedsAtLeast,
+    SettingsAgentVersionFoundNewerThanChecked,
+    SettingsAgentVersionFoundUnchecked,
+    SettingsAgentVersionNewestSupported,
+    SettingsAgentRunToUpdate,
+    SettingsAgentDesktopAppUpdates,
+    SettingsAgentSentences,
     SettingsAgentStatusDetail,
     SettingsAgentSetupGuide,
+    SettingsAgentInstall,
+    SettingsAgentInstallTab,
+    SettingsAgentInstallNeedsNode,
+    SettingsAgentInstallAdapterNeedsNode,
+    SettingsAgentInstallClose,
     MenuManageAgents,
     AiPickerManageAgents,
     AiPickerFavorites,
@@ -2867,13 +2902,25 @@ pub enum Key {
     PlaceSplitLeft,
     /// Its middle: a new tab in the current pane, no split.
     PlaceNewTab,
+    // ---- removing a Profile from this device (Profiles page notices)
+    /// Done: the Profile is gone from this device, and the hosted listing is
+    /// what brings it back.
+    ProfilesRemovedFromDevice,
+    /// The Workspace cascade stopped part-way. Retrying continues from where
+    /// it got to, which is why this one says to try again.
+    ProfilesRemoveCascadeIncomplete,
+    /// The cascade was refused before it touched anything: this window holds
+    /// no first-party grant (ADR-267). Retrying cannot change that, so unlike
+    /// the sentence above it does not suggest it. Worded as
+    /// `WorkspacesNotPermitted` is, because it is the same refusal.
+    ProfilesRemoveNotPermitted,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2003] = [
+    pub const ALL: [Key; 2032] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4350,7 +4397,15 @@ impl Key {
         Key::A11yTaskBucketCompleted,
         Key::A11yTaskDuePicker,
         Key::A11yTaskPriorityPicker,
+        Key::A11yTaskColorPicker,
         Key::A11yTaskListPicker,
+        Key::LauncherTitle,
+        Key::LauncherTooltip,
+        Key::LauncherDocument,
+        Key::LauncherTask,
+        Key::LauncherChat,
+        Key::LauncherImport,
+        Key::LauncherHint,
         Key::A11yReminderOnThisItem,
         Key::A11yReminderUnconfirmed,
         Key::A11yReminderNewsSaved,
@@ -4508,6 +4563,10 @@ impl Key {
         Key::ImageHeldByCloudOff,
         Key::ImageHeldTooLarge,
         Key::ImageHeldUnknown,
+        Key::ImageLoading,
+        Key::ImageAddFailed,
+        Key::ImageAddFailedBody,
+        Key::ImageAddPartlyFailedBody,
         Key::CloudProgressWorkspaces,
         Key::CloudProgressDocuments,
         Key::CloudProgressFiles,
@@ -4707,8 +4766,22 @@ impl Key {
         Key::SettingsAgentSignedOutRun,
         Key::SettingsAgentUnsupportedVersionUpdateDesktopApp,
         Key::SettingsAgentCheckFailed,
+        Key::SettingsAgentWontStart,
+        Key::SettingsAgentVersionFoundNeedsAtLeast,
+        Key::SettingsAgentVersionNeedsAtLeast,
+        Key::SettingsAgentVersionFoundNewerThanChecked,
+        Key::SettingsAgentVersionFoundUnchecked,
+        Key::SettingsAgentVersionNewestSupported,
+        Key::SettingsAgentRunToUpdate,
+        Key::SettingsAgentDesktopAppUpdates,
+        Key::SettingsAgentSentences,
         Key::SettingsAgentStatusDetail,
         Key::SettingsAgentSetupGuide,
+        Key::SettingsAgentInstall,
+        Key::SettingsAgentInstallTab,
+        Key::SettingsAgentInstallNeedsNode,
+        Key::SettingsAgentInstallAdapterNeedsNode,
+        Key::SettingsAgentInstallClose,
         Key::MenuManageAgents,
         Key::AiPickerManageAgents,
         Key::AiPickerFavorites,
@@ -4877,6 +4950,9 @@ impl Key {
         Key::PlaceSplitDown,
         Key::PlaceSplitLeft,
         Key::PlaceNewTab,
+        Key::ProfilesRemovedFromDevice,
+        Key::ProfilesRemoveCascadeIncomplete,
+        Key::ProfilesRemoveNotPermitted,
     ];
 }
 
@@ -9604,13 +9680,13 @@ pub const ROWS: &[Row] = &[
     Row { key: Key::WorkspacesDeleteBody, en: "It stays in the trash and can be restored from there. Nothing is erased.", es: "Permanecerá en la papelera y podrás restaurarlo desde allí. No se borra nada.", pt_br: "Ele fica na lixeira e pode ser restaurado de lá. Nada é apagado.", de: "Er bleibt im Papierkorb und lässt sich von dort wiederherstellen. Nichts wird gelöscht.", fr: "Il reste dans la corbeille et peut être restauré de là. Rien n'est effacé.", ar: "ستبقى في المهملات ويمكن استعادتها من هناك. لا يُمحى شيء.", zh_hans: "它会留在回收站，可从那里还原。不会抹除任何内容。", ja: "ゴミ箱に残り、そこから復元できます。消去はされません。" },
     Row { key: Key::WorkspacesTerminalsWillClose, en: "{} open terminal(s) will be closed first.", es: "Primero se cerrarán {} terminal(es) abiertas.", pt_br: "Primeiro serão fechados {} terminal(is) aberto(s).", de: "Zuerst werden {} geöffnete Terminal(s) geschlossen.", fr: "{} terminal(aux) ouvert(s) seront fermés d'abord.", ar: "ستُغلق أولاً {} طرفية مفتوحة.", zh_hans: "将先关闭 {} 个打开的终端。", ja: "先に開いているターミナル {} 個を閉じます。" },
     Row { key: Key::WorkspacesNoTerminals, en: "No terminals are open in it.", es: "No hay terminales abiertas en él.", pt_br: "Nenhum terminal está aberto nele.", de: "Darin ist kein Terminal geöffnet.", fr: "Aucun terminal n'y est ouvert.", ar: "لا توجد طرفيات مفتوحة فيها.", zh_hans: "其中没有打开的终端。", ja: "開いているターミナルはありません。" },
-    Row { key: Key::WorkspacesNotPermitted, en: "This window was not started by Koru, so it cannot archive or remove workspaces.", es: "Koru no inició esta ventana, por lo que no puede archivar ni eliminar espacios de trabajo.", pt_br: "Esta janela não foi iniciada pelo Koru, portanto não pode arquivar nem remover espaços de trabalho.", de: "Dieses Fenster wurde nicht von Koru gestartet und kann daher keine Arbeitsbereiche archivieren oder entfernen.", fr: "Cette fenêtre n'a pas été lancée par Koru : elle ne peut ni archiver ni supprimer d'espace de travail.", ar: "لم يشغّل Koru هذه النافذة، لذا لا يمكنها أرشفة مساحات العمل أو إزالتها.", zh_hans: "此窗口不是由 Koru 启动的，因此无法归档或删除工作区。", ja: "このウィンドウは Koru が起動したものではないため、ワークスペースをアーカイブや削除できません。" },
+    Row { key: Key::WorkspacesNotPermitted, en: "Koru could not confirm that this window is part of this Koru installation, so it cannot archive or remove workspaces.", es: "Koru no pudo confirmar que esta ventana forma parte de esta instalación de Koru, por lo que no puede archivar ni eliminar espacios de trabajo.", pt_br: "O Koru não conseguiu confirmar que esta janela faz parte desta instalação do Koru, portanto ela não pode arquivar nem remover espaços de trabalho.", de: "Koru konnte nicht bestätigen, dass dieses Fenster zu dieser Koru-Installation gehört. Daher kann es keine Arbeitsbereiche archivieren oder entfernen.", fr: "Koru n'a pas pu confirmer que cette fenêtre fait partie de cette installation de Koru : elle ne peut ni archiver ni supprimer d'espace de travail.", ar: "تعذّر على Koru التأكد من أن هذه النافذة جزء من تثبيت Koru هذا، لذا لا يمكنها أرشفة مساحات العمل أو إزالتها.", zh_hans: "Koru 无法确认此窗口属于此 Koru 安装，因此无法归档或删除工作区。", ja: "Koru はこのウィンドウがこのインストールの一部であることを確認できなかったため、ワークスペースをアーカイブや削除できません。" },
     Row { key: Key::WorkspacesDocumentsOpen, en: "This workspace still has open documents. Close them, then try again.", es: "Este espacio aún tiene documentos abiertos. Ciérralos y vuelve a intentarlo.", pt_br: "Este espaço ainda tem documentos abertos. Feche-os e tente novamente.", de: "In diesem Arbeitsbereich sind noch Dokumente geöffnet. Schließen Sie sie und versuchen Sie es erneut.", fr: "Cet espace a encore des documents ouverts. Fermez-les, puis réessayez.", ar: "لا تزال هناك مستندات مفتوحة في مساحة العمل هذه. أغلقها ثم أعد المحاولة.", zh_hans: "该工作区仍有打开的文档。请先关闭它们，然后重试。", ja: "このワークスペースにはまだ開いているドキュメントがあります。閉じてからやり直してください。" },
     Row { key: Key::WorkspacesPartialFailure, en: "Its terminals were closed, but the change did not save. The workspace is where it was.", es: "Sus terminales se cerraron, pero el cambio no se guardó. El espacio sigue donde estaba.", pt_br: "Os terminais foram fechados, mas a alteração não foi salva. O espaço continua onde estava.", de: "Die Terminals wurden geschlossen, die Änderung wurde aber nicht gespeichert. Der Arbeitsbereich ist unverändert.", fr: "Ses terminaux ont été fermés, mais la modification n'a pas été enregistrée. L'espace est resté où il était.", ar: "أُغلقت طرفياتها، لكن التغيير لم يُحفظ. مساحة العمل كما كانت.", zh_hans: "它的终端已关闭，但更改未保存。工作区仍在原处。", ja: "ターミナルは閉じられましたが、変更は保存されませんでした。ワークスペースは元のままです。" },
     Row { key: Key::WorkspacesMoveNoProfiles, en: "There is no other profile to move it to.", es: "No hay otro perfil al que moverlo.", pt_br: "Não há outro perfil para onde movê-lo.", de: "Es gibt kein anderes Profil, in das er verschoben werden könnte.", fr: "Il n'y a aucun autre profil vers lequel le déplacer.", ar: "لا يوجد ملف تعريف آخر لنقلها إليه.", zh_hans: "没有其他配置文件可供移动。", ja: "移動先となる別のプロファイルがありません。" },
     Row { key: Key::WorkspacesMoveTitle, en: "Move {} to {}?", es: "¿Mover {} a {}?", pt_br: "Mover {} para {}?", de: "{} nach {} verschieben?", fr: "Déplacer {} vers {} ?", ar: "نقل {} إلى {}؟", zh_hans: "将 {} 移动到 {}？", ja: "{} を {} に移しますか？" },
     Row { key: Key::WorkspacesMoveBody, en: "Its documents and its history are unchanged, and you can move it back.", es: "Sus documentos y su historial no cambian, y puedes devolverlo.", pt_br: "Seus documentos e seu histórico não mudam, e você pode movê-lo de volta.", de: "Seine Dokumente und sein Verlauf bleiben unverändert, und du kannst ihn zurück verschieben.", fr: "Ses documents et son historique ne changent pas, et vous pouvez le ramener.", ar: "لا تتغير مستنداتها ولا سجلّها، ويمكنك إعادتها.", zh_hans: "其中的文档和历史不会改变，你可以再移回来。", ja: "ドキュメントと履歴はそのままで、元に戻すこともできます。" },
-    Row { key: Key::WorkspacesMoveNotPermitted, en: "This window was not started by Koru, so it cannot move workspaces between profiles.", es: "Koru no inició esta ventana, así que no puede mover espacios entre perfiles.", pt_br: "Esta janela não foi iniciada pelo Koru, então não pode mover espaços entre perfis.", de: "Dieses Fenster wurde nicht von Koru gestartet und kann daher keine Arbeitsbereiche zwischen Profilen verschieben.", fr: "Cette fenêtre n'a pas été lancée par Koru : elle ne peut pas déplacer d'espaces entre profils.", ar: "لم يبدأ Koru هذه النافذة، لذا لا يمكنها نقل مساحات العمل بين ملفات التعريف.", zh_hans: "此窗口不是由 Koru 启动的，因此无法在配置文件之间移动工作区。", ja: "このウィンドウは Koru が起動したものではないため、ワークスペースをプロファイル間で移せません。" },
+    Row { key: Key::WorkspacesMoveNotPermitted, en: "Koru could not confirm that this window is part of this Koru installation, so it cannot move workspaces between profiles.", es: "Koru no pudo confirmar que esta ventana forma parte de esta instalación de Koru, así que no puede mover espacios entre perfiles.", pt_br: "O Koru não conseguiu confirmar que esta janela faz parte desta instalação do Koru, então ela não pode mover espaços entre perfis.", de: "Koru konnte nicht bestätigen, dass dieses Fenster zu dieser Koru-Installation gehört. Daher kann es keine Arbeitsbereiche zwischen Profilen verschieben.", fr: "Koru n'a pas pu confirmer que cette fenêtre fait partie de cette installation de Koru : elle ne peut pas déplacer d'espaces entre profils.", ar: "تعذّر على Koru التأكد من أن هذه النافذة جزء من تثبيت Koru هذا، لذا لا يمكنها نقل مساحات العمل بين ملفات التعريف.", zh_hans: "Koru 无法确认此窗口属于此 Koru 安装，因此无法在配置文件之间移动工作区。", ja: "Koru はこのウィンドウがこのインストールの一部であることを確認できなかったため、ワークスペースをプロファイル間で移せません。" },
     Row { key: Key::WorkspacesMoveNoSuchProfile, en: "That profile is no longer there. Choose another one.", es: "Ese perfil ya no está. Elige otro.", pt_br: "Esse perfil não existe mais. Escolha outro.", de: "Dieses Profil gibt es nicht mehr. Wähle ein anderes.", fr: "Ce profil n'existe plus. Choisissez-en un autre.", ar: "لم يعد ذلك الملف موجودًا. اختر ملفًا آخر.", zh_hans: "该配置文件已不存在。请另选一个。", ja: "そのプロファイルはもうありません。別のものを選んでください。" },
     Row { key: Key::WorkspacesMovePartialFailure, en: "Its terminals were closed, but it did not move. The workspace is where it was.", es: "Sus terminales se cerraron, pero no se movió. El espacio sigue donde estaba.", pt_br: "Os terminais foram fechados, mas ele não foi movido. O espaço continua onde estava.", de: "Die Terminals wurden geschlossen, verschoben wurde er aber nicht. Der Arbeitsbereich ist unverändert.", fr: "Ses terminaux ont été fermés, mais il n'a pas été déplacé. L'espace est resté où il était.", ar: "أُغلقت طرفياتها، لكنها لم تُنقل. مساحة العمل كما كانت.", zh_hans: "它的终端已关闭，但并未移动。工作区仍在原处。", ja: "ターミナルは閉じられましたが、移動はされませんでした。ワークスペースは元のままです。" },
     Row { key: Key::WorkspacesMoveProjectsPending, en: "It moved, but its terminal projects have not caught up yet. Move it again to repair them.", es: "Se movió, pero sus proyectos de terminal aún no se han puesto al día. Muévelo otra vez para repararlos.", pt_br: "Ele foi movido, mas seus projetos de terminal ainda não acompanharam. Mova-o de novo para repará-los.", de: "Er wurde verschoben, aber seine Terminal-Projekte sind noch nicht nachgezogen. Verschiebe ihn erneut, um sie zu reparieren.", fr: "Il a été déplacé, mais ses projets de terminal n'ont pas encore suivi. Déplacez-le à nouveau pour les réparer.", ar: "تم نقلها، لكن مشاريع الطرفية الخاصة بها لم تلحق بها بعد. انقلها مرة أخرى لإصلاحها.", zh_hans: "它已移动，但终端项目还没跟上。再移动一次即可修复。", ja: "移動は完了しましたが、ターミナルのプロジェクトがまだ追いついていません。もう一度移すと修復されます。" },
@@ -14926,7 +15002,15 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::A11yTaskBucketCompleted, en: "Completed", es: "Completadas", pt_br: "Concluídas", de: "Abgeschlossen", fr: "Terminées", ar: "مكتملة", zh_hans: "已完成", ja: "完了" },
     Row { key: Key::A11yTaskDuePicker, en: "Due date", es: "Fecha de vencimiento", pt_br: "Data de entrega", de: "Fälligkeitsdatum", fr: "Échéance", ar: "تاريخ الاستحقاق", zh_hans: "截止日期", ja: "期限" },
     Row { key: Key::A11yTaskPriorityPicker, en: "Priority", es: "Prioridad", pt_br: "Prioridade", de: "Priorität", fr: "Priorité", ar: "الأولوية", zh_hans: "优先级", ja: "優先度" },
+    Row { key: Key::A11yTaskColorPicker, en: "Color", es: "Color", pt_br: "Cor", de: "Farbe", fr: "Couleur", ar: "اللون", zh_hans: "颜色", ja: "色" },
     Row { key: Key::A11yTaskListPicker, en: "List", es: "Lista", pt_br: "Lista", de: "Liste", fr: "Liste", ar: "قائمة", zh_hans: "列表", ja: "リスト" },
+    Row { key: Key::LauncherTitle, en: "New", es: "Nuevo", pt_br: "Novo", de: "Neu", fr: "Nouveau", ar: "جديد", zh_hans: "新建", ja: "新規" },
+    Row { key: Key::LauncherTooltip, en: "New…", es: "Nuevo…", pt_br: "Novo…", de: "Neu…", fr: "Nouveau…", ar: "جديد…", zh_hans: "新建…", ja: "新規…" },
+    Row { key: Key::LauncherDocument, en: "Document", es: "Documento", pt_br: "Documento", de: "Dokument", fr: "Document", ar: "مستند", zh_hans: "文档", ja: "ドキュメント" },
+    Row { key: Key::LauncherTask, en: "Task", es: "Tarea", pt_br: "Tarefa", de: "Aufgabe", fr: "Tâche", ar: "مهمة", zh_hans: "任务", ja: "タスク" },
+    Row { key: Key::LauncherChat, en: "Chat", es: "Chat", pt_br: "Chat", de: "Chat", fr: "Discussion", ar: "محادثة", zh_hans: "聊天", ja: "チャット" },
+    Row { key: Key::LauncherImport, en: "Import", es: "Importar", pt_br: "Importar", de: "Importieren", fr: "Importer", ar: "استيراد", zh_hans: "导入", ja: "インポート" },
+    Row { key: Key::LauncherHint, en: "Hold Alt to choose where it opens, Shift to pick a list or profile", es: "Mantén Alt para elegir dónde se abre, Mayús para elegir una lista o un perfil", pt_br: "Segure Alt para escolher onde abre, Shift para escolher uma lista ou um perfil", de: "Alt halten, um den Ort zu wählen, Umschalt für eine Liste oder ein Profil", fr: "Maintenez Alt pour choisir où l’ouvrir, Maj pour choisir une liste ou un profil", ar: "اضغط Alt مطولًا لاختيار مكان الفتح، وShift لاختيار قائمة أو ملف تعريف", zh_hans: "按住 Alt 选择打开位置，按住 Shift 选择列表或配置", ja: "Alt を押したままで開く場所を、Shift でリストまたはプロファイルを選択" },
     Row { key: Key::A11yReminderOnThisItem, en: "Reminders on this item", es: "Recordatorios de este elemento", pt_br: "Lembretes deste item", de: "Erinnerungen zu diesem Eintrag", fr: "Rappels sur cet élément", ar: "التذكيرات على هذا العنصر", zh_hans: "此条目的提醒", ja: "この項目のリマインダー" },
     Row { key: Key::A11yReminderUnconfirmed, en: "Not confirmed by storage yet", es: "Aún no confirmado por el almacenamiento", pt_br: "Ainda não confirmado pelo armazenamento", de: "Vom Speicher noch nicht bestätigt", fr: "Pas encore confirmé par le stockage", ar: "لم يؤكِّده التخزين بعد", zh_hans: "存储尚未确认", ja: "ストレージがまだ確認していません" },
     Row { key: Key::A11yReminderNewsSaved, en: "Reminder saved.", es: "Recordatorio guardado.", pt_br: "Lembrete salvo.", de: "Erinnerung gespeichert.", fr: "Rappel enregistré.", ar: "تم حفظ التذكير.", zh_hans: "提醒已保存。", ja: "リマインダーを保存しました。" },
@@ -15120,6 +15204,10 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::ImageHeldByCloudOff, en: "Cloud sync is off for this Profile.", es: "La sincronización en la nube está desactivada para este perfil.", pt_br: "A sincronização na nuvem está desativada para este perfil.", de: "Cloud-Sync ist für dieses Profil aus.", fr: "La synchronisation cloud est désactivée pour ce profil.", ar: "مزامنة السحابة موقوفة لهذا الملف الشخصي.", zh_hans: "此配置文件的云同步已关闭。", ja: "このプロファイルのクラウド同期はオフです。" },
     Row { key: Key::ImageHeldTooLarge, en: "This file is too large to sync today.", es: "Este archivo es demasiado grande para sincronizarse por ahora.", pt_br: "Este arquivo é grande demais para sincronizar por enquanto.", de: "Diese Datei ist derzeit zu groß zum Synchronisieren.", fr: "Ce fichier est pour l’instant trop volumineux pour être synchronisé.", ar: "هذا الملف أكبر من أن تتم مزامنته حاليًا.", zh_hans: "此文件目前太大，无法同步。", ja: "このファイルは現在同期するには大きすぎます。" },
     Row { key: Key::ImageHeldUnknown, en: "Not here yet: {}", es: "Todavía no está aquí: {}", pt_br: "Ainda não está aqui: {}", de: "Noch nicht hier: {}", fr: "Pas encore ici : {}", ar: "ليست هنا بعد: {}", zh_hans: "尚未到达：{}", ja: "まだここにありません: {}" },
+    Row { key: Key::ImageLoading, en: "Loading image", es: "Cargando imagen", pt_br: "Carregando imagem", de: "Bild wird geladen", fr: "Chargement de l’image", ar: "جارٍ تحميل الصورة", zh_hans: "正在加载图片", ja: "画像を読み込み中" },
+    Row { key: Key::ImageAddFailed, en: "Couldn’t add that image", es: "No se pudo añadir esa imagen", pt_br: "Não foi possível adicionar essa imagem", de: "Das Bild konnte nicht hinzugefügt werden", fr: "Impossible d’ajouter cette image", ar: "تعذّرت إضافة هذه الصورة", zh_hans: "无法添加该图片", ja: "その画像を追加できませんでした" },
+    Row { key: Key::ImageAddFailedBody, en: "It could not be read or stored as a picture. The document was not changed.", es: "No se pudo leer ni guardar como imagen. El documento no se modificó.", pt_br: "Não foi possível lê-la ou armazená-la como imagem. O documento não foi alterado.", de: "Es konnte nicht als Bild gelesen oder gespeichert werden. Das Dokument wurde nicht geändert.", fr: "Elle n’a pas pu être lue ni enregistrée comme image. Le document n’a pas été modifié.", ar: "تعذّرت قراءتها أو حفظها كصورة. لم يتغيّر المستند.", zh_hans: "无法将其读取或存储为图片。文档未被更改。", ja: "画像として読み込むことも保存することもできませんでした。ドキュメントは変更されていません。" },
+    Row { key: Key::ImageAddPartlyFailedBody, en: "The other images were added. This one could not be read or stored as a picture.", es: "Las demás imágenes se añadieron. Esta no se pudo leer ni guardar como imagen.", pt_br: "As outras imagens foram adicionadas. Esta não pôde ser lida nem armazenada como imagem.", de: "Die anderen Bilder wurden hinzugefügt. Dieses konnte nicht als Bild gelesen oder gespeichert werden.", fr: "Les autres images ont été ajoutées. Celle-ci n’a pas pu être lue ni enregistrée comme image.", ar: "أُضيفت الصور الأخرى. تعذّرت قراءة هذه الصورة أو حفظها.", zh_hans: "其他图片已添加。这张图片无法读取或存储。", ja: "ほかの画像は追加されました。この画像は読み込むことも保存することもできませんでした。" },
     // ---------------- Manage Profiles: a Profile's Cloud sync progress
     Row { key: Key::CloudProgressWorkspaces, en: "{} of {} workspaces synced", es: "{} de {} espacios de trabajo sincronizados", pt_br: "{} de {} espaços de trabalho sincronizados", de: "{} von {} Arbeitsbereichen synchronisiert", fr: "{} espaces de travail sur {} synchronisés", ar: "تمت مزامنة {} من {} مساحات عمل", zh_hans: "已同步 {} / {} 个工作区", ja: "{} / {} 件のワークスペースを同期済み" },
     Row { key: Key::CloudProgressDocuments, en: "{} of {} documents", es: "{} de {} documentos", pt_br: "{} de {} documentos", de: "{} von {} Dokumenten", fr: "{} documents sur {}", ar: "{} من {} مستندات", zh_hans: "{} / {} 个文档", ja: "{} / {} 件のドキュメント" },
@@ -15326,8 +15414,23 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::SettingsAgentSignedOutRun, en: "Signed out. Run `{}` to sign in.", es: "Sesión cerrada. Ejecuta `{}` para iniciar sesión.", pt_br: "Desconectado. Execute `{}` para fazer login.", de: "Abgemeldet. Führe `{}` aus, um dich anzumelden.", fr: "Déconnecté. Exécutez `{}` pour vous connecter.", ar: "غير مسجّل الدخول. شغّل `{}` لتسجيل الدخول.", zh_hans: "未登录。运行 `{}` 进行登录。", ja: "サインアウトしています。`{}` を実行してサインインしてください。" },
     Row { key: Key::SettingsAgentUnsupportedVersionUpdateDesktopApp, en: "This version isn't one Koru supports yet. Run `{}` to update it. If you use the {} desktop app, its copy updates with the app.", es: "Koru aún no admite esta versión. Ejecuta `{}` para actualizarla. Si usas la aplicación de escritorio de {}, su copia se actualiza con la aplicación.", pt_br: "O Koru ainda não oferece suporte a esta versão. Execute `{}` para atualizá-la. Se você usa o aplicativo para desktop do {}, a cópia dele é atualizada com o aplicativo.", de: "Koru unterstützt diese Version noch nicht. Führe `{}` aus, um sie zu aktualisieren. Wenn du die Desktop-App von {} verwendest, wird ihre Kopie mit der App aktualisiert.", fr: "Koru ne prend pas encore en charge cette version. Exécutez `{}` pour la mettre à jour. Si vous utilisez l'application de bureau {}, sa copie se met à jour avec l'application.", ar: "لا يدعم Koru هذا الإصدار بعد. شغّل `{}` لتحديثه. إذا كنت تستخدم تطبيق {} لسطح المكتب، فإن نسخته تتحدّث مع التطبيق.", zh_hans: "Koru 尚不支持此版本。运行 `{}` 进行更新。如果你使用 {} 桌面应用，它自带的副本会随应用一起更新。", ja: "このバージョンにはまだ Koru が対応していません。`{}` を実行して更新してください。{} のデスクトップアプリを使っている場合、そのコピーはアプリと一緒に更新されます。" },
     Row { key: Key::SettingsAgentCheckFailed, en: "Koru couldn't check it.", es: "Koru no pudo comprobarlo.", pt_br: "O Koru não conseguiu verificá-lo.", de: "Koru konnte es nicht prüfen.", fr: "Koru n'a pas pu le vérifier.", ar: "تعذّر على Koru التحقق منه.", zh_hans: "Koru 无法检查它。", ja: "Koru が確認できませんでした。" },
+    Row { key: Key::SettingsAgentWontStart, en: "`{} --version` failed, so the agent can't start on this computer. Run it in a terminal to see why.", es: "`{} --version` falló, así que el agente no puede iniciarse en este equipo. Ejecútalo en una terminal para ver por qué.", pt_br: "`{} --version` falhou, então o agente não consegue iniciar neste computador. Execute-o em um terminal para ver o motivo.", de: "`{} --version` ist fehlgeschlagen, daher kann der Agent auf diesem Computer nicht starten. Führe den Befehl in einem Terminal aus, um den Grund zu sehen.", fr: "`{} --version` a échoué : l'agent ne peut pas démarrer sur cet ordinateur. Exécutez la commande dans un terminal pour savoir pourquoi.", ar: "فشل `{} --version`، لذا لا يمكن للوكيل أن يبدأ على هذا الكمبيوتر. شغّله في الطرفية لمعرفة السبب.", zh_hans: "`{} --version` 运行失败，因此该智能体无法在这台电脑上启动。请在终端中运行它查看原因。", ja: "`{} --version` が失敗したため、このコンピューターではエージェントを起動できません。ターミナルで実行して原因を確認してください。" },
+    Row { key: Key::SettingsAgentVersionFoundNeedsAtLeast, en: "Found {}; Koru needs {} or newer.", es: "Se encontró {}; Koru necesita {} o posterior.", pt_br: "Foi encontrada a versão {}; o Koru precisa da {} ou mais recente.", de: "Gefunden: {}; Koru benötigt {} oder neuer.", fr: "Version trouvée : {} ; Koru nécessite {} ou une version plus récente.", ar: "عُثر على {}؛ يحتاج Koru إلى {} أو أحدث.", zh_hans: "找到的版本为 {}；Koru 需要 {} 或更新版本。", ja: "見つかったバージョンは {} です。Koru には {} 以降が必要です。" },
+    Row { key: Key::SettingsAgentVersionNeedsAtLeast, en: "Koru needs {} or newer.", es: "Koru necesita {} o posterior.", pt_br: "O Koru precisa da versão {} ou mais recente.", de: "Koru benötigt {} oder neuer.", fr: "Koru nécessite {} ou une version plus récente.", ar: "يحتاج Koru إلى {} أو أحدث.", zh_hans: "Koru 需要 {} 或更新版本。", ja: "Koru には {} 以降が必要です。" },
+    Row { key: Key::SettingsAgentVersionFoundNewerThanChecked, en: "Found {}; Koru has only checked up to {} so far.", es: "Se encontró {}; por ahora Koru solo ha comprobado hasta la {}.", pt_br: "Foi encontrada a versão {}; por enquanto o Koru só verificou até a {}.", de: "Gefunden: {}; Koru hat bisher nur Versionen bis {} geprüft.", fr: "Version trouvée : {} ; pour l'instant, Koru n'a vérifié que jusqu'à la {}.", ar: "عُثر على {}؛ لم يتحقق Koru حتى الآن إلا من الإصدارات حتى {}.", zh_hans: "找到的版本为 {}；Koru 目前只检查到 {}。", ja: "見つかったバージョンは {} です。Koru が確認済みなのは今のところ {} までです。" },
+    Row { key: Key::SettingsAgentVersionFoundUnchecked, en: "Found {}, which Koru hasn't checked; the newest it supports is {}.", es: "Se encontró {}, que Koru no ha comprobado; la más reciente que admite es {}.", pt_br: "Foi encontrada a versão {}, que o Koru não verificou; a mais recente compatível é a {}.", de: "Gefunden: {}, diese Version hat Koru nicht geprüft; die neueste unterstützte ist {}.", fr: "Version trouvée : {}, que Koru n'a pas vérifiée ; la plus récente prise en charge est la {}.", ar: "عُثر على {}، ولم يتحقق Koru منه؛ أحدث إصدار يدعمه هو {}.", zh_hans: "找到的版本为 {}，Koru 尚未检查过它；支持的最新版本是 {}。", ja: "見つかったバージョン {} は Koru が確認していません。対応している最新バージョンは {} です。" },
+    Row { key: Key::SettingsAgentVersionNewestSupported, en: "The newest version Koru supports is {}.", es: "La versión más reciente que admite Koru es {}.", pt_br: "A versão mais recente compatível com o Koru é a {}.", de: "Die neueste Version, die Koru unterstützt, ist {}.", fr: "La version la plus récente prise en charge par Koru est la {}.", ar: "أحدث إصدار يدعمه Koru هو {}.", zh_hans: "Koru 支持的最新版本是 {}。", ja: "Koru が対応している最新バージョンは {} です。" },
+    Row { key: Key::SettingsAgentRunToUpdate, en: "Run `{}` to update it.", es: "Ejecuta `{}` para actualizarla.", pt_br: "Execute `{}` para atualizá-la.", de: "Führe `{}` aus, um sie zu aktualisieren.", fr: "Exécutez `{}` pour la mettre à jour.", ar: "شغّل `{}` لتحديثه.", zh_hans: "运行 `{}` 进行更新。", ja: "`{}` を実行して更新してください。" },
+    Row { key: Key::SettingsAgentDesktopAppUpdates, en: "If you use the {} desktop app, its copy updates with the app.", es: "Si usas la aplicación de escritorio de {}, su copia se actualiza con la aplicación.", pt_br: "Se você usa o aplicativo para desktop do {}, a cópia dele é atualizada com o aplicativo.", de: "Wenn du die Desktop-App von {} verwendest, wird ihre Kopie mit der App aktualisiert.", fr: "Si vous utilisez l'application de bureau {}, sa copie se met à jour avec l'application.", ar: "إذا كنت تستخدم تطبيق {} لسطح المكتب، فإن نسخته تتحدّث مع التطبيق.", zh_hans: "如果你使用 {} 桌面应用，它自带的副本会随应用一起更新。", ja: "{} のデスクトップアプリを使っている場合、そのコピーはアプリと一緒に更新されます。" },
+    Row { key: Key::SettingsAgentSentences, en: "{} {}", es: "{} {}", pt_br: "{} {}", de: "{} {}", fr: "{} {}", ar: "{} {}", zh_hans: "{}{}", ja: "{}{}" },
     Row { key: Key::SettingsAgentStatusDetail, en: "{} — {}", es: "{} — {}", pt_br: "{} — {}", de: "{} — {}", fr: "{} — {}", ar: "{} — {}", zh_hans: "{} — {}", ja: "{} — {}" },
     Row { key: Key::SettingsAgentSetupGuide, en: "Setup guide ↗", es: "Guía de instalación ↗", pt_br: "Guia de instalação ↗", de: "Einrichtungsanleitung ↗", fr: "Guide d'installation ↗", ar: "دليل الإعداد ↗", zh_hans: "设置指南 ↗", ja: "セットアップガイド ↗" },
+    // Agent providers: *Install*, and the lines its terminal tab prints.
+    Row { key: Key::SettingsAgentInstall, en: "Install", es: "Instalar", pt_br: "Instalar", de: "Installieren", fr: "Installer", ar: "تثبيت", zh_hans: "安装", ja: "インストール" },
+    Row { key: Key::SettingsAgentInstallTab, en: "Install {}", es: "Instalar {}", pt_br: "Instalar {}", de: "{} installieren", fr: "Installer {}", ar: "تثبيت {}", zh_hans: "安装 {}", ja: "{} をインストール" },
+    Row { key: Key::SettingsAgentInstallNeedsNode, en: "Installing {} needs Node.js and npm, and npm isn't on this computer. Install Node.js from https://nodejs.org, then press Install again.", es: "Para instalar {} se necesitan Node.js y npm, y npm no está en este equipo. Instala Node.js desde https://nodejs.org y vuelve a pulsar Instalar.", pt_br: "Para instalar o {} é preciso ter Node.js e npm, e o npm não está neste computador. Instale o Node.js em https://nodejs.org e clique em Instalar de novo.", de: "Für die Installation von {} werden Node.js und npm benötigt, und npm ist auf diesem Computer nicht vorhanden. Installiere Node.js von https://nodejs.org und klicke dann erneut auf Installieren.", fr: "L'installation de {} nécessite Node.js et npm, et npm n'est pas présent sur cet ordinateur. Installez Node.js depuis https://nodejs.org, puis appuyez de nouveau sur Installer.", ar: "يتطلب تثبيت {} وجود Node.js وnpm، وnpm غير موجود على هذا الكمبيوتر. ثبّت Node.js من https://nodejs.org، ثم اضغط تثبيت مرة أخرى.", zh_hans: "安装 {} 需要 Node.js 和 npm，但这台电脑上没有 npm。请从 https://nodejs.org 安装 Node.js，然后再次点击“安装”。", ja: "{} のインストールには Node.js と npm が必要ですが、このコンピューターには npm がありません。https://nodejs.org から Node.js をインストールしてから、もう一度「インストール」を押してください。" },
+    Row { key: Key::SettingsAgentInstallAdapterNeedsNode, en: "Chats with {} in Koru need Node.js and npm, and npm isn't on this computer. Install Node.js from https://nodejs.org, then press Install again.", es: "Los chats con {} en Koru necesitan Node.js y npm, y npm no está en este equipo. Instala Node.js desde https://nodejs.org y vuelve a pulsar Instalar.", pt_br: "Os chats com o {} no Koru precisam de Node.js e npm, e o npm não está neste computador. Instale o Node.js em https://nodejs.org e clique em Instalar de novo.", de: "Chats mit {} in Koru benötigen Node.js und npm, und npm ist auf diesem Computer nicht vorhanden. Installiere Node.js von https://nodejs.org und klicke dann erneut auf Installieren.", fr: "Les discussions avec {} dans Koru nécessitent Node.js et npm, et npm n'est pas présent sur cet ordinateur. Installez Node.js depuis https://nodejs.org, puis appuyez de nouveau sur Installer.", ar: "تتطلب المحادثات مع {} في Koru وجود Node.js وnpm، وnpm غير موجود على هذا الكمبيوتر. ثبّت Node.js من https://nodejs.org، ثم اضغط تثبيت مرة أخرى.", zh_hans: "在 Koru 中与 {} 聊天需要 Node.js 和 npm，但这台电脑上没有 npm。请从 https://nodejs.org 安装 Node.js，然后再次点击“安装”。", ja: "Koru で {} とチャットするには Node.js と npm が必要ですが、このコンピューターには npm がありません。https://nodejs.org から Node.js をインストールしてから、もう一度「インストール」を押してください。" },
+    Row { key: Key::SettingsAgentInstallClose, en: "Press Enter to close this tab. Koru then checks {} again.", es: "Pulsa Intro para cerrar esta pestaña. Después, Koru volverá a comprobar {}.", pt_br: "Pressione Enter para fechar esta aba. Depois, o Koru verifica o {} de novo.", de: "Drücke die Eingabetaste, um diesen Tab zu schließen. Koru prüft {} dann erneut.", fr: "Appuyez sur Entrée pour fermer cet onglet. Koru vérifiera ensuite {} à nouveau.", ar: "اضغط Enter لإغلاق علامة التبويب هذه. سيتحقق Koru بعدها من {} مرة أخرى.", zh_hans: "按 Enter 关闭此标签页。随后 Koru 会重新检查 {}。", ja: "Enter キーを押すとこのタブが閉じ、Koru が {} をもう一度確認します。" },
     Row { key: Key::MenuManageAgents, en: "Manage…", es: "Administrar…", pt_br: "Gerenciar…", de: "Verwalten…", fr: "Gérer…", ar: "إدارة…", zh_hans: "管理…", ja: "管理…" },
     Row { key: Key::AiPickerManageAgents, en: "Manage agent providers", es: "Administrar proveedores de agentes", pt_br: "Gerenciar provedores de agentes", de: "Agent-Anbieter verwalten", fr: "Gérer les fournisseurs d'agents", ar: "إدارة موفري الوكلاء", zh_hans: "管理智能体提供方", ja: "エージェントの提供元を管理" },
     Row { key: Key::AiPickerFavorites, en: "Favorites", es: "Favoritos", pt_br: "Favoritos", de: "Favoriten", fr: "Favoris", ar: "المفضلة", zh_hans: "收藏", ja: "お気に入り" },
@@ -15731,5 +15834,38 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
         ar: "علامة تبويب جديدة",
         zh_hans: "新建标签页",
         ja: "新しいタブ",
+    },
+    Row {
+        key: Key::ProfilesRemovedFromDevice,
+        en: "Profile removed from this device. Its hosted recovery listing remains available after sign-in.",
+        es: "Perfil eliminado de este dispositivo. Su registro de recuperación alojado sigue disponible después de iniciar sesión.",
+        pt_br: "Perfil removido deste dispositivo. O registro de recuperação hospedado continua disponível depois de entrar.",
+        de: "Profil von diesem Gerät entfernt. Sein gehosteter Wiederherstellungseintrag bleibt nach der Anmeldung verfügbar.",
+        fr: "Profil supprimé de cet appareil. Sa fiche de récupération hébergée reste disponible après connexion.",
+        ar: "تمت إزالة الملف الشخصي من هذا الجهاز. يظل سجل الاسترداد المستضاف الخاص به متاحًا بعد تسجيل الدخول.",
+        zh_hans: "已从此设备移除配置。登录后仍可使用其托管的恢复记录。",
+        ja: "このデバイスからプロフィールを削除しました。ホストされた復元用の一覧は、サインイン後も引き続き利用できます。",
+    },
+    Row {
+        key: Key::ProfilesRemoveCascadeIncomplete,
+        en: "Some Workspaces may already be in Trash. The Profile remains on this device. Try again to continue from the current Store state.",
+        es: "Es posible que algunos espacios de trabajo ya estén en la Papelera. El perfil sigue en este dispositivo. Vuelve a intentarlo para continuar desde el estado actual del almacén.",
+        pt_br: "Alguns espaços de trabalho podem já estar na Lixeira. O perfil continua neste dispositivo. Tente novamente para continuar a partir do estado atual do armazenamento.",
+        de: "Einige Arbeitsbereiche befinden sich möglicherweise bereits im Papierkorb. Das Profil bleibt auf diesem Gerät. Versuche es erneut, um vom aktuellen Stand des Speichers aus fortzufahren.",
+        fr: "Certains espaces de travail sont peut-être déjà dans la corbeille. Le profil reste sur cet appareil. Réessayez pour reprendre à partir de l'état actuel du stockage.",
+        ar: "قد تكون بعض مساحات العمل في سلة المهملات بالفعل. يظل الملف الشخصي على هذا الجهاز. أعد المحاولة للمتابعة من الحالة الحالية للمخزن.",
+        zh_hans: "部分工作区可能已在回收站中。该配置仍保留在此设备上。请重试，以便从存储的当前状态继续。",
+        ja: "一部のワークスペースはすでにゴミ箱に移動している可能性があります。プロフィールはこのデバイスに残っています。もう一度試すと、ストアの現在の状態から続行します。",
+    },
+    Row {
+        key: Key::ProfilesRemoveNotPermitted,
+        en: "Koru could not confirm that this window is part of this Koru installation, so it cannot remove this Profile's Workspaces. Nothing was deleted, and the Profile remains on this device.",
+        es: "Koru no pudo confirmar que esta ventana forma parte de esta instalación de Koru, por lo que no puede eliminar los espacios de trabajo de este perfil. No se eliminó nada y el perfil sigue en este dispositivo.",
+        pt_br: "O Koru não conseguiu confirmar que esta janela faz parte desta instalação do Koru, portanto ela não pode remover os espaços de trabalho deste perfil. Nada foi excluído, e o perfil continua neste dispositivo.",
+        de: "Koru konnte nicht bestätigen, dass dieses Fenster zu dieser Koru-Installation gehört. Daher kann es die Arbeitsbereiche dieses Profils nicht entfernen. Es wurde nichts gelöscht, und das Profil bleibt auf diesem Gerät.",
+        fr: "Koru n'a pas pu confirmer que cette fenêtre fait partie de cette installation de Koru : elle ne peut pas supprimer les espaces de travail de ce profil. Rien n'a été supprimé et le profil reste sur cet appareil.",
+        ar: "تعذّر على Koru التأكد من أن هذه النافذة جزء من تثبيت Koru هذا، لذا لا يمكنها إزالة مساحات العمل الخاصة بهذا الملف الشخصي. لم يُحذف أي شيء، ويظل الملف الشخصي على هذا الجهاز.",
+        zh_hans: "Koru 无法确认此窗口属于此 Koru 安装，因此无法删除此配置的工作区。没有删除任何内容，该配置仍保留在此设备上。",
+        ja: "Koru はこのウィンドウがこのインストールの一部であることを確認できなかったため、このプロフィールのワークスペースを削除できません。何も削除されておらず、プロフィールはこのデバイスに残っています。",
     },
 ];

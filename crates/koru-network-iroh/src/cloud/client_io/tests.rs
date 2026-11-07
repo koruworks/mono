@@ -11,6 +11,8 @@ use tokio::io::{AsyncWriteExt, DuplexStream, ReadHalf, WriteHalf};
 
 type TestClient = Client<'static, ReadHalf<DuplexStream>, WriteHalf<DuplexStream>>;
 
+mod claims;
+
 fn config(limit: usize, budget: MemoryBudget) -> Config {
     let profile_id = CloudId::from_bytes(koru_store_core::ProfileId::new().as_uuid().into_bytes());
     let principal = CloudReplicaPrincipalV1::Profile {
@@ -29,6 +31,7 @@ fn config(limit: usize, budget: MemoryBudget) -> Config {
                 generation: 1,
                 expires_at_seconds: 600,
             },
+            claim_references: koru_replication::cloud::transfer::ClaimReferences::None,
         },
         scope: Scope {
             principal,
@@ -75,8 +78,27 @@ pub(super) async fn pair_with_workspace(
     Scope,
     MemoryBudget,
 ) {
+    use koru_replication::cloud::transfer::ClaimReferences;
+    pair_with_claims(workspace, ClaimReferences::None, ClaimReferences::None).await
+}
+
+/// [`pair_with_workspace`] whose client and worker ends were admitted with
+/// `client` and `worker`: which way a claim reference may cross each.
+pub(super) async fn pair_with_claims(
+    workspace: bool,
+    client: koru_replication::cloud::transfer::ClaimReferences,
+    worker: koru_replication::cloud::transfer::ClaimReferences,
+) -> (
+    TestClient,
+    ReadHalf<DuplexStream>,
+    WriteHalf<DuplexStream>,
+    Stream,
+    Scope,
+    MemoryBudget,
+) {
     let budget = MemoryBudget::new(128 * 1024 * 1024);
     let mut config = config(transfer::RESTRICTED_LIMIT, budget.clone());
+    config.accepted.claim_references = client;
     if workspace {
         let principal = CloudReplicaPrincipalV1::Workspace {
             workspace_id: CloudId::from_bytes(
@@ -89,8 +111,13 @@ pub(super) async fn pair_with_workspace(
         config.accepted.principal = principal;
     }
     let scope = config.scope;
+    let worker_end = PreparedSession {
+        accepted: config.accepted.accepted.clone(),
+        claim_references: worker,
+        ..config.accepted
+    };
     let mut stream = Stream::new(
-        &config.accepted,
+        &worker_end,
         scope,
         0,
         0,

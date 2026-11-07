@@ -46,9 +46,9 @@ use crate::settings::{
 
 use crate::startup;
 use crate::{
-    ErrorAction, ErrorReport, Host, MoveSelectionPayload, PaneRequest, PasteTarget, PastedImage,
-    ReminderStartupRequest, ReminderStartupRequestId, ReminderStartupResult, RichBlock,
-    SearchTargetDisposition, View, ZoomIntent,
+    ErrorAction, ErrorReport, Host, ImagePlace, ImageTicket, MoveSelectionPayload, PaneRequest,
+    PasteTarget, PastedImage, ReminderStartupRequest, ReminderStartupRequestId,
+    ReminderStartupResult, RichBlock, SearchTargetDisposition, View, ZoomIntent,
 };
 use crate::{SyncState, WorkspaceStat, export, reveal};
 use koru_core::node::BlobHash;
@@ -867,6 +867,20 @@ fn document_count(kinds: &std::collections::BTreeMap<String, u64>, canvas: bool)
         .sum()
 }
 
+/// The name of the workspace made for a document that had nowhere to go
+/// (`App::ensure_live_workspace`). Renamable like any other.
+const DEFAULT_WORKSPACE_NAME: &str = "Workspace";
+
+/// The refusal a creation reports when even a default workspace could not be
+/// made — shaped as the store's own error so it settles through the same
+/// door as every other failed creation.
+fn no_workspace_error(details: String) -> koru_store_core::errors::Error {
+    koru_store_core::errors::Error::new(
+        koru_store_core::errors::Code::InvalidRequest,
+        format!("there is no workspace to put it in: {details}"),
+    )
+}
+
 /// How often the periodic geometry capture runs. See its call site in
 /// `about_to_wait`.
 const PERSIST_EVERY: Duration = Duration::from_secs(1);
@@ -959,6 +973,10 @@ pub enum Wake {
     ProfileBindings,
     /// The shared clipboard worker normalized a bitmap or captured a file list.
     Clipboard,
+    /// The image-import worker read an image's size, or finished reading,
+    /// decoding and storing one (`crate::image_import`). The answer is on its
+    /// channel; the image service drains it and makes the document edit.
+    Image,
     /// The Koru Agent queued a restore or search target for this process.
     Agent,
     /// The taskbar activation listener set a verb flag (new / open / search)
@@ -1165,8 +1183,25 @@ enum ImportMessage {
 }
 
 struct ClipboardImageResult {
-    targets: Vec<(WindowId, PasteTarget)>,
+    targets: Vec<(WindowId, PasteTarget, ImageTicket)>,
     result: Result<koru_clipboard::ImagePayload, koru_clipboard::Error>,
+}
+
+/// One image attachment between its gesture and its insertion.
+///
+/// The images are inserted only while `document` is the one in front, because
+/// the document edit goes through the active `WorkspaceDoc`: a result that
+/// arrives after a tab switch waits here — its placeholder still drawn in the
+/// tab that asked — until that document is in front again.
+struct ImageImport {
+    window: WindowId,
+    document: Option<koru_core::DocumentId>,
+    recorded: crate::image_import::RecordedPlace,
+    /// The worker's answer, once it has given one.
+    done: Option<(
+        Vec<crate::image_import::Prepared>,
+        Vec<crate::image_import::Failure>,
+    )>,
 }
 
 /// One cross-workspace move handed to the single transfer worker.
@@ -2428,7 +2463,13 @@ struct App<H: Host> {
     clipboard_image_tx: mpsc::Sender<ClipboardImageResult>,
     clipboard_image_rx: mpsc::Receiver<ClipboardImageResult>,
     clipboard_image_busy: bool,
-    pending_clipboard_image_pastes: VecDeque<Vec<(WindowId, PasteTarget)>>,
+    pending_clipboard_image_pastes: VecDeque<Vec<(WindowId, PasteTarget, ImageTicket)>>,
+    /// Images being read, decoded and stored off the loop
+    /// (`crate::image_import`), and every attachment between its gesture and
+    /// its insertion, by ticket.
+    image_importer: crate::image_import::ImageImporter,
+    image_imports: std::collections::BTreeMap<ImageTicket, ImageImport>,
+    next_image_ticket: u64,
     import_busy: bool,
     import_source: Option<WindowId>,
     /// The running content import's format token, for the completion event —
@@ -5293,6 +5334,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
             println!("[Koru][share] could not create the share inbox: {error}");
         }
         let image_loader = crate::images::ImageLoader::spawn(&wake_proxy);
+        let image_importer = crate::image_import::ImageImporter::spawn(&wake_proxy);
         crate::spelling::spawn(&wake_proxy, cli::root_from_args());
         crate::diagram::spawn(&wake_proxy);
         let (clipboard_image_tx, clipboard_image_rx) = mpsc::channel();
@@ -5456,6 +5498,9 @@ Nothing was written. The store starts on demand, so this usually means it could 
             clipboard_image_rx,
             clipboard_image_busy: false,
             pending_clipboard_image_pastes: VecDeque::new(),
+            image_importer,
+            image_imports: std::collections::BTreeMap::new(),
+            next_image_ticket: 0,
             import_busy: false,
             import_source: None,
             import_format: None,
@@ -5778,43 +5823,185 @@ Nothing was written. The store starts on demand, so this usually means it could 
         }
     }
 
-    /// Read, decode, store and hand an image file to the view. `convert` is the
-    /// node a `/image` command should turn into a picture; `None` means a file
-    /// dropped on the window, which becomes a brand-new image row.
-    fn import_image(&mut self, id: WindowId, convert: Option<NodeId>, path: PathBuf) -> bool {
-        let Some(img) = self.store_image_file(&path) else {
-            return false;
+    /// Attach an image file: `convert` is the node a `/image` command should
+    /// turn into a picture; `None` means a file dropped on the window, which
+    /// becomes a brand-new image row. Returns at once — the read, decode and
+    /// store run on the import worker, and the view shows a placeholder until
+    /// [`apply_image_import`](Self::apply_image_import) lands the node.
+    fn import_image(&mut self, id: WindowId, convert: Option<NodeId>, path: PathBuf) {
+        let place = match convert {
+            Some(node) => ImagePlace::Convert(node),
+            None => ImagePlace::Append,
         };
-        let ws = &mut self.runtime.workspace.ws;
-        let before = ws.version();
-        if let Some(pane) = self.panes.get_mut(&id) {
-            match convert {
-                Some(node) => pane
-                    .view
-                    .insert_image(ws, node, &img.hash, &img.mime, img.width, img.height),
-                None => pane
-                    .view
-                    .append_image(ws, &img.hash, &img.mime, img.width, img.height),
-            }
-        }
-        let changed = ws.version() != before;
-        self.request_redraw(id);
-        changed
+        let ticket = self.begin_image_import(id, place);
+        self.submit_image_import(ticket, vec![crate::image_import::ImageSource::File(path)]);
     }
 
-    /// Read, decode and store one image file, returning the paste-ready block a
-    /// view builds a row from. `None` if the file is not a recognised image, or
-    /// there is no store (an in-memory workspace) to keep its bytes.
-    fn store_image_file(&mut self, path: &std::path::Path) -> Option<PastedImage> {
-        let bytes = std::fs::read(path).ok()?;
-        let mut img = self.store_image_bytes(&bytes)?;
-        // Name it after the file stem (e.g. "photo.png" → "photo") so the
-        // explore column shows a real name, not "Image 1".
-        img.name = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .map(|s| s.to_string());
-        Some(img)
+    /// Record an attachment and show its placeholder. Nothing is read here and
+    /// the document is not touched.
+    fn begin_image_import(&mut self, id: WindowId, place: ImagePlace) -> ImageTicket {
+        self.next_image_ticket += 1;
+        let ticket = ImageTicket(self.next_image_ticket);
+        let ws = &self.runtime.workspace.ws;
+        if let Some(pane) = self.panes.get_mut(&id) {
+            pane.view.begin_image_import(ws, ticket, &place);
+        }
+        self.image_imports.insert(
+            ticket,
+            ImageImport {
+                window: id,
+                document: self.runtime.workspace.active(),
+                recorded: crate::image_import::RecordedPlace::record(ws, place),
+                done: None,
+            },
+        );
+        self.request_redraw(id);
+        ticket
+    }
+
+    /// Hand an attachment's sources to the worker, with the store of the
+    /// document in front *now* — the one the gesture was made in.
+    fn submit_image_import(
+        &mut self,
+        ticket: ImageTicket,
+        sources: Vec<crate::image_import::ImageSource>,
+    ) {
+        let Some(window) = self.image_imports.get(&ticket).map(|import| import.window) else {
+            return;
+        };
+        let refuse = |this: &mut Self, why: &str| {
+            if let Some(import) = this.image_imports.get_mut(&ticket) {
+                import.done = Some((Vec::new(), vec![crate::image_import::Failure(why.into())]));
+            }
+        };
+        // Without a store there is nowhere to keep the bytes — an in-memory
+        // workspace, or a store that is not answering. Said, not swallowed:
+        // the person just watched a placeholder appear.
+        let Some(blobs) = self.runtime.workspace.active_blobs() else {
+            clip_dbg("image_import: the active document has no blob store");
+            refuse(self, "the document has no store to keep images in");
+            return;
+        };
+        let mip_side = self
+            .panes
+            .get(&window)
+            .and_then(|pane| pane.view.image_mip_side());
+        let job = crate::image_import::ImageJob {
+            ticket,
+            sources,
+            blobs: Box::new(blobs),
+            mip_side,
+        };
+        if self.image_importer.submit(job).is_err() {
+            refuse(self, "the image worker is not running");
+        }
+    }
+
+    /// Take the worker's answers, and land every attachment whose document is
+    /// in front. Returns whether a view has something new to draw.
+    fn drain_image_imports(&mut self) -> bool {
+        let mut redraw = false;
+        for event in self.image_importer.drain() {
+            match event {
+                crate::image_import::ImportEvent::Sized { ticket, sizes } => {
+                    let Some(window) = self.image_imports.get(&ticket).map(|i| i.window) else {
+                        continue;
+                    };
+                    if let Some(pane) = self.panes.get_mut(&window) {
+                        pane.view.size_image_import(ticket, &sizes);
+                        self.request_redraw(window);
+                        redraw = true;
+                    }
+                }
+                crate::image_import::ImportEvent::Done {
+                    ticket,
+                    images,
+                    failures,
+                } => {
+                    if let Some(import) = self.image_imports.get_mut(&ticket) {
+                        import.done = Some((images, failures));
+                    }
+                }
+            }
+        }
+        let active = self.runtime.workspace.active();
+        let ready: Vec<ImageTicket> = self
+            .image_imports
+            .iter()
+            .filter(|(_, import)| import.done.is_some() && import.document == active)
+            .map(|(ticket, _)| *ticket)
+            .collect();
+        for ticket in ready {
+            redraw |= self.apply_image_import(ticket);
+        }
+        redraw
+    }
+
+    /// Land one finished attachment: the pixels into the cache, the node into
+    /// the document at its re-mapped place, the placeholder away — and a
+    /// report for whatever could not be added. Always runs with the
+    /// attachment's own document in front.
+    fn apply_image_import(&mut self, ticket: ImageTicket) -> bool {
+        let Some(import) = self.image_imports.remove(&ticket) else {
+            return false;
+        };
+        let (prepared, failures) = import.done.unwrap_or_default();
+        let scope = self.image_scope_id();
+        let mut images = Vec::with_capacity(prepared.len());
+        for one in prepared {
+            self.images.insert(scope, &one.image.hash, one.brush);
+            if let Some((size, mip)) = one.mip {
+                self.images.insert_mip(&one.image.hash, size, mip);
+            }
+            images.push(one.image);
+        }
+        if !images.is_empty() {
+            // The brushes are in the cache already; what this is for is the
+            // node about to reference them, which a later scan has to see —
+            // the same reason `store_image_bytes` sets it.
+            self.images_dirty = true;
+            let place =
+                crate::image_import::map_place(&self.runtime.workspace.ws, &import.recorded);
+            let ws = &mut self.runtime.workspace.ws;
+            if let Some(pane) = self.panes.get_mut(&import.window) {
+                // One undo step of its own: whatever was typed while the image
+                // loaded closes before it, and the next keystroke opens after.
+                ws.checkpoint();
+                pane.view.finish_image_import(ws, ticket, place, &images);
+                ws.checkpoint();
+            } else {
+                clip_dbg("image_import: the window that asked has closed");
+            }
+        }
+        for pane in self.panes.values_mut() {
+            if pane.view.end_image_import(ticket) {
+                pane.needs_frame.set(true);
+                pane.window.request_redraw();
+            }
+        }
+        self.request_redraw(import.window);
+        if !failures.is_empty() {
+            self.report_image_failures(import.window, !images.is_empty(), &failures);
+        }
+        true
+    }
+
+    /// Say that a picture could not be added, in the window that asked.
+    fn report_image_failures(
+        &mut self,
+        window: WindowId,
+        some_landed: bool,
+        failures: &[crate::image_import::Failure],
+    ) {
+        let error =
+            crate::image_import::failure_report(koru_i18n::current(), some_landed, failures);
+        if let Some(pane) = self.panes.get_mut(&window)
+            && pane.view.report_error(error.clone())
+        {
+            pane.window.request_redraw();
+            return;
+        }
+        self.report(error);
     }
 
     /// Decode, store and cache one image's raw bytes: the shared work of
@@ -5866,13 +6053,16 @@ Nothing was written. The store starts on demand, so this usually means it could 
         })
     }
 
-    /// Turn a worker's typed clipboard acquisition into document image blocks.
-    /// Platform reads and RGBA→PNG normalization have already finished; only
-    /// document-owned blob insertion and rich-format interpretation happen here.
-    fn store_clipboard_images(
+    /// Turn a worker's typed clipboard acquisition into the images to attach.
+    /// Platform reads and RGBA→PNG normalization have already finished on the
+    /// clipboard worker; reading files, decoding and storing happen on the
+    /// image-import worker. Only the HTML fallback's clipboard read and parse
+    /// stay here, as they always have.
+    fn clipboard_image_sources(
         &mut self,
         acquired: Result<koru_clipboard::ImagePayload, koru_clipboard::Error>,
-    ) -> Vec<PastedImage> {
+    ) -> Vec<crate::image_import::ImageSource> {
+        use crate::image_import::ImageSource;
         let mut out = Vec::new();
         match acquired {
             Ok(koru_clipboard::ImagePayload::Files(paths)) => {
@@ -5880,27 +6070,29 @@ Nothing was written. The store starts on demand, so this usually means it could 
                     "read_clipboard_images: file_list_paths={}",
                     paths.len()
                 ));
-                for path in paths {
-                    if let Some(image) = self.store_image_file(&path) {
-                        out.push(image);
-                    }
-                }
-                if !out.is_empty() {
-                    clip_dbg(format!(
-                        "read_clipboard_images: {} from file list",
-                        out.len()
-                    ));
-                    return out;
-                }
+                // Only the ones named like pictures — the name is all that can
+                // be read here without touching the disk. A copied PDF is not
+                // an image that failed; it falls through to the other readings
+                // below, as it always did. A picture that will not decode is
+                // reported by the worker.
+                out.extend(
+                    paths
+                        .into_iter()
+                        .filter(|path| dropped_image(path))
+                        .map(ImageSource::File),
+                );
             }
             Ok(koru_clipboard::ImagePayload::Bitmap(bitmap)) => {
-                if let Some(image) = self.store_image_bytes(&bitmap.bytes) {
-                    clip_dbg(format!(
-                        "read_clipboard_images: bitmap={}x{}",
-                        bitmap.width, bitmap.height
-                    ));
-                    out.push(image);
-                }
+                clip_dbg(format!(
+                    "read_clipboard_images: bitmap={}x{}",
+                    bitmap.width, bitmap.height
+                ));
+                out.push(ImageSource::Bytes {
+                    bytes: bitmap.bytes,
+                    width: None,
+                    height: None,
+                    name: None,
+                });
             }
             Ok(koru_clipboard::ImagePayload::Empty) => {
                 clip_dbg("read_clipboard_images: no file list or bitmap")
@@ -5910,41 +6102,31 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 error.code
             )),
         }
-        // 3. CF_HTML data: images (Google Docs standalone image — no CF_DIB, only
+        // CF_HTML data: images (Google Docs standalone image — no CF_DIB, only
         // a data: URI in HTML Format). This is the `Nothing` path (image-only
         // clipboard), so only pictures are taken, not text.
-        if out.is_empty() {
-            if let Some(html) = crate::clipboard_html::html_bytes() {
+        if out.is_empty()
+            && let Some(html) = crate::clipboard_html::html_bytes()
+        {
+            clip_dbg(format!(
+                "read_clipboard_images: {} bytes of HTML Format (fallback)",
+                html.len()
+            ));
+            if let Ok(html) = std::str::from_utf8(&html)
+                && let Some(raw) = crate::clipboard_html::extract(html)
+            {
                 clip_dbg(format!(
-                    "read_clipboard_images: {} bytes of HTML Format (fallback)",
-                    html.len()
+                    "read_clipboard_images: CF_HTML fallback found {} block(s)",
+                    raw.len()
                 ));
-                if let Ok(html) = std::str::from_utf8(&html) {
-                    if let Some(raw) = crate::clipboard_html::extract(html) {
-                        clip_dbg(format!(
-                            "read_clipboard_images: CF_HTML fallback found {} block(s)",
-                            raw.len()
-                        ));
-                        for block in raw {
-                            if let crate::clipboard_rtf::RawBlock::Picture(p) = block {
-                                match self.store_image_bytes(&p.bytes) {
-                                    Some(mut img) => {
-                                        if let Some(w) = p.width {
-                                            img.width = Some(w);
-                                        }
-                                        if let Some(h) = p.height {
-                                            img.height = Some(h);
-                                        }
-                                        img.name = p.name.clone();
-                                        out.push(img);
-                                    }
-                                    None => clip_dbg(format!(
-                                        "read_clipboard_images: CF_HTML image decode failed ({} bytes)",
-                                        p.bytes.len()
-                                    )),
-                                }
-                            }
-                        }
+                for block in raw {
+                    if let crate::clipboard_rtf::RawBlock::Picture(p) = block {
+                        out.push(ImageSource::Bytes {
+                            bytes: p.bytes,
+                            width: p.width,
+                            height: p.height,
+                            name: p.name,
+                        });
                     }
                 }
             }
@@ -5961,6 +6143,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
         let Some(targets) = self.pending_clipboard_image_pastes.pop_front() else {
             return;
         };
+        let tickets: Vec<ImageTicket> = targets.iter().map(|(_, _, ticket)| *ticket).collect();
         let tx = self.clipboard_image_tx.clone();
         let proxy = self.wake_proxy.clone();
         self.clipboard_image_busy = true;
@@ -5976,51 +6159,61 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 "clipboard image worker could not start kind={:?}",
                 error.kind()
             ));
+            // The gesture's placeholders were already up; with no read coming
+            // there is nothing for them to wait for.
+            for ticket in tickets {
+                self.image_imports.remove(&ticket);
+                for pane in self.panes.values_mut() {
+                    pane.view.end_image_import(ticket);
+                }
+            }
         }
     }
 
-    /// Apply completed acquisitions on the event thread. The result contains no
-    /// borrowed OS storage and no raw RGBA, so this path never waits for PNG
-    /// encoding or the clipboard owner.
+    /// Hand completed acquisitions to the image-import worker. The result
+    /// contains no borrowed OS storage and no raw RGBA, and nothing here
+    /// decodes or stores: each gesture's placeholder has been up since the
+    /// paste, and stays until its images land.
     fn drain_clipboard_image_reads(&mut self) -> bool {
         let completed: Vec<_> = self.clipboard_image_rx.try_iter().collect();
         let mut pasted = false;
         for completed in completed {
             self.clipboard_image_busy = false;
-            let images = self.store_clipboard_images(completed.result);
-            for (id, target) in completed.targets {
+            let sources = self.clipboard_image_sources(completed.result);
+            for (id, target, ticket) in completed.targets {
                 clip_dbg(format!(
                     "image_paste: anchor={:?} replacing={}",
                     target.anchor,
                     target.replacing.len()
                 ));
-                if images.is_empty() {
-                    // Explicit Markdown and image-only HTML do not necessarily
-                    // publish a bitmap. Their interpretation remains document
-                    // policy and is the existing fallback.
-                    let blocks = self.read_rich_blocks("");
-                    if blocks.is_empty() {
-                        clip_dbg("non_text_paste: no images or rich text found");
-                        continue;
-                    }
-                    let ws = &mut self.runtime.workspace.ws;
-                    if let Some(pane) = self.panes.get_mut(&id) {
-                        pane.view.paste_rich(ws, Some(target), &blocks);
-                        clip_dbg(format!(
-                            "non_text_paste: paste_rich {} block(s)",
-                            blocks.len()
-                        ));
-                        pasted = true;
-                    }
+                if !sources.is_empty() {
+                    self.submit_image_import(ticket, sources.clone());
+                    clip_dbg(format!(
+                        "image_paste: {} image(s) to the worker",
+                        sources.len()
+                    ));
+                    continue;
+                }
+                // Nothing that is a picture: no placeholder to keep.
+                self.image_imports.remove(&ticket);
+                for pane in self.panes.values_mut() {
+                    pane.view.end_image_import(ticket);
+                }
+                // Explicit Markdown and image-only HTML do not necessarily
+                // publish a bitmap. Their interpretation remains document
+                // policy and is the existing fallback.
+                let blocks = self.read_rich_blocks("");
+                if blocks.is_empty() {
+                    clip_dbg("non_text_paste: no images or rich text found");
                     self.request_redraw(id);
                     continue;
                 }
                 let ws = &mut self.runtime.workspace.ws;
                 if let Some(pane) = self.panes.get_mut(&id) {
-                    pane.view.paste_images(ws, Some(target), &images);
+                    pane.view.paste_rich(ws, Some(target), &blocks);
                     clip_dbg(format!(
-                        "image_paste: paste_images {} image(s)",
-                        images.len()
+                        "non_text_paste: paste_rich {} block(s)",
+                        blocks.len()
                     ));
                     pasted = true;
                 }
@@ -6266,6 +6459,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
         // future image mutation cannot become local-only by omitting that call.
         let document_before = self.runtime.workspace.ws.version();
         let mut pasted = self.drain_clipboard_image_reads();
+        pasted |= self.drain_image_imports();
         // Attachment pill activations (open / reveal / save).
         let file_actions: Vec<(WindowId, koru_core::DocumentId, crate::FileAction)> = self
             .panes
@@ -6446,6 +6640,17 @@ Nothing was written. The store starts on demand, so this usually means it could 
             ));
         }
         if !pastes.is_empty() {
+            // The placeholder goes up now, before the clipboard is even read:
+            // that read is a worker's too, and for a large bitmap it is the
+            // first of the waits.
+            let pastes = pastes
+                .into_iter()
+                .map(|(id, target)| {
+                    let ticket =
+                        self.begin_image_import(id, ImagePlace::Paste(Some(target.clone())));
+                    (id, target, ticket)
+                })
+                .collect();
             self.pending_clipboard_image_pastes.push_back(pastes);
             self.start_clipboard_image_read();
         }
@@ -6813,8 +7018,14 @@ Nothing was written. The store starts on demand, so this usually means it could 
         // ways, and one attribute fixes all of them: no traffic lights, square
         // corners where every other app is rounded, no resize border (winit
         // does not implement `drag_resize_window` there — see `resize`), and no
-        // native drag. AppKit owns a ~28 px strip above our caption, which is
-        // exactly the bar a Mac user expects to find them in.
+        // native drag.
+        //
+        // **But the titlebar is transparent, with a full-size content view**,
+        // so the scene runs to the top edge and there is no 28 px strip of
+        // AppKit's above the caption. The lights sit in the lane instead, in
+        // the slot the Koru mark takes on Windows and Linux, and
+        // `traffic_lights::place` centres them there — after creation, and
+        // again after each event that follows an AppKit titlebar layout.
         //
         // The title is hidden rather than shown: the tab strip below already
         // says what is open, and a second copy centred above it is noise. The
@@ -6833,12 +7044,16 @@ Nothing was written. The store starts on demand, so this usually means it could 
         #[cfg(target_os = "macos")]
         {
             use winit::platform::macos::WindowAttributesExtMacOS;
-            attrs = attrs
-                .with_titlebar_transparent(false)
-                .with_title_hidden(true);
-            if global_search {
-                attrs = attrs.with_titlebar_buttons_hidden(true);
-            }
+            attrs = attrs.with_title_hidden(true);
+            attrs = if global_search {
+                attrs
+                    .with_titlebar_transparent(false)
+                    .with_titlebar_buttons_hidden(true)
+            } else {
+                attrs
+                    .with_titlebar_transparent(true)
+                    .with_fullsize_content_view(true)
+            };
         }
         #[cfg(not(target_os = "macos"))]
         {
@@ -6944,6 +7159,12 @@ Nothing was written. The store starts on demand, so this usually means it could 
         // follows maximised only so a snap keeps its drop shadow.
         let flush = hairline::edges(&window);
         frame::apply(&window, theme::p().panel_border, window.is_maximized());
+        koru_window::traffic_lights::place(&window, f64::from(theme::CAPTION_H));
+        // The tab strip now sits where AppKit's titlebar was; a tab drag must
+        // not also move the window (`traffic_lights::shell_owns_drag`).
+        if !global_search {
+            koru_window::traffic_lights::shell_owns_drag(&window);
+        }
         let size = window.inner_size();
 
         let span = timing::Span::start("gpu surface");
@@ -11398,6 +11619,10 @@ Nothing was written. The store starts on demand, so this usually means it could 
     /// listing is pushed before the document is announced, so the container
     /// already knows the new document is a canvas when it builds its tab.
     fn create_document(&mut self, source: WindowId, title: &str, canvas: bool) {
+        if let Err(e) = self.ensure_live_workspace() {
+            self.settle_created_document(source, Err(no_workspace_error(e)), canvas);
+            return;
+        }
         let created = if canvas {
             self.runtime.workspace.create_canvas(title)
         } else {
@@ -11471,6 +11696,18 @@ Nothing was written. The store starts on demand, so this usually means it could 
     /// Create from the entity picker, replace its `@query` with the real routed
     /// pill in the source document, then finish on the newly created page.
     fn create_linked_document(&mut self, source: WindowId, title: &str) {
+        // A linked page is made from inside a document, so a workspace is
+        // normally open; the guard is for the one that is not.
+        if let Err(e) = self.ensure_live_workspace() {
+            self.report(
+                ErrorReport::new(
+                    "Couldn't create that document",
+                    "The @ text was left alone.",
+                )
+                .with_details(e),
+            );
+            return;
+        }
         let origin = self.runtime.workspace.active();
         let profile = self.runtime.profile.id();
         let workspace = self.runtime.current;
@@ -12522,11 +12759,6 @@ Nothing was written. The store starts on demand, so this usually means it could 
     }
 
     fn new_workspace(&mut self, name: &str) {
-        // **The store, not the profile folder.** `open::create_workspace`
-        // registers a workspace in a `ProfileDoc`, which since the cutover is a
-        // view rebuilt from the store every launch — so the workspace existed
-        // only in this window. It showed in the switcher and every later call
-        // naming it answered 404, because the store had never heard of it.
         let Some(owner) = self.runtime.profile.id() else {
             self.report(ErrorReport::new(
                 "Couldn't create a workspace",
@@ -12534,34 +12766,82 @@ Nothing was written. The store starts on demand, so this usually means it could 
             ));
             return;
         };
-        match koru_workspace::fromstore::create_workspace(
-            koru_workspace::fromstore::segment(),
-            self.gateway_root.as_deref(),
-            owner,
-            name,
-        )
-        .map_err(|e| e.to_string())
-        .and_then(|id| {
-            // Keep the view in step so the switcher lists it before the next
-            // launch rebuilds the view from the store.
-            self.runtime
-                .profile
-                .ensure_workspace(id, &name, koru_workspace::open::now_ms())
-                .map(|_| id)
-                .map_err(|e| e.to_string())
-        }) {
-            Ok(id) => {
-                crate::events_host::workspace_created(
-                    id.as_uuid(),
-                    crate::events_host::WorkspaceSource::Manual,
-                );
-                self.switch_workspace(id)
-            }
+        match self.create_workspace_in_open_profile(owner, name) {
+            Ok(id) => self.switch_workspace(id),
             Err(e) => startup::fatal(&format!(
                 "Koru could not create a workspace:
 
 {e}"
             )),
+        }
+    }
+
+    /// Register a workspace in the store under the open Profile, without
+    /// switching to it.
+    ///
+    /// **The store, not the profile folder.** `open::create_workspace`
+    /// registers a workspace in a `ProfileDoc`, which since the cutover is a
+    /// view rebuilt from the store every launch — so the workspace existed
+    /// only in this window. It showed in the switcher and every later call
+    /// naming it answered 404, because the store had never heard of it.
+    fn create_workspace_in_open_profile(
+        &mut self,
+        owner: koru_core::ProfileId,
+        name: &str,
+    ) -> Result<koru_core::WorkspaceId, String> {
+        let id = koru_workspace::fromstore::create_workspace(
+            koru_workspace::fromstore::segment(),
+            self.gateway_root.as_deref(),
+            owner,
+            name,
+        )
+        .map_err(|e| e.to_string())?;
+        // Keep the view in step so the switcher lists it before the next
+        // launch rebuilds the view from the store.
+        self.runtime
+            .profile
+            .ensure_workspace(id, name, koru_workspace::open::now_ms())
+            .map_err(|e| e.to_string())?;
+        crate::events_host::workspace_created(
+            id.as_uuid(),
+            crate::events_host::WorkspaceSource::Manual,
+        );
+        Ok(id)
+    }
+
+    /// Make sure a document has somewhere to go: when the open Profile has no
+    /// workspace on the store, create one named [`DEFAULT_WORKSPACE_NAME`] and
+    /// switch to it. True when a live workspace is open afterwards.
+    ///
+    /// **Why a document asks for a workspace and not the person.** A Profile
+    /// can open with no workspace at all — provisioned by an account before
+    /// any content existed, restored from one, or left by an onboarding that
+    /// stopped between the Profile and its first workspace — and onboarding
+    /// only runs when there is no Profile. The window then sits on an
+    /// in-memory placeholder that no document can be registered in, and
+    /// every way of making a page (a draft's first keystroke, the command
+    /// bar, the `@` picker, a canvas) failed with "this workspace is not open
+    /// on a store", once per keystroke for a draft. Someone who asked for a
+    /// document asked for a place to put it; naming that place can wait.
+    ///
+    /// The store calls are blocking and `switch_workspace` keeps draft tabs,
+    /// so the creation that follows in the same request lands in the new
+    /// workspace with nothing to wait for.
+    fn ensure_live_workspace(&mut self) -> Result<(), String> {
+        if self.runtime.live_workspace {
+            return Ok(());
+        }
+        let owner = self
+            .runtime
+            .profile
+            .id()
+            .ok_or_else(|| "This profile has no identity.".to_owned())?;
+        let id = self.create_workspace_in_open_profile(owner, DEFAULT_WORKSPACE_NAME)?;
+        self.switch_workspace(id);
+        if self.runtime.live_workspace {
+            Ok(())
+        } else {
+            Err("The new workspace could not be opened.".to_owned())
         }
     }
 
@@ -16462,6 +16742,10 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
 
             WindowEvent::Focused(focused) => {
                 self.host.window_focus_changed(focused);
+                // A change of key window is another titlebar layout.
+                if let Some(pane) = self.panes.get(&id) {
+                    koru_window::traffic_lights::place(&pane.window, f64::from(theme::CAPTION_H));
+                }
                 let was_shown = AppearanceShown::now();
                 crate::search_debug!(
                     "[Koru][search-open][pid={}] focus event: pane={id:?} focused={focused} in_tray={} global_search={}",
@@ -16569,6 +16853,12 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                     }
                 }
                 self.sync_viewport(id);
+                // AppKit lays its titlebar out again on every resize and on
+                // entering or leaving full screen, putting the lights back
+                // where it wants them; seat them in the lane again.
+                if let Some(pane) = self.panes.get(&id) {
+                    koru_window::traffic_lights::place(&pane.window, f64::from(theme::CAPTION_H));
+                }
                 // Maximising and restoring arrive as resizes and nothing else,
                 // so this is where the caption's restore button and the corner
                 // style find out. The drawn hairline follows flush edges, which
@@ -16806,36 +17096,6 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                     self.wake(id);
                     return;
                 }
-                // Ctrl+N opens another window on the same workspace. Two views
-                // of one document, which is the whole point of the seam: type
-                // in either and both follow.
-                //
-                // **Alt has to be excluded, not just Shift.** `Ctrl+Alt+N` is a
-                // document's Narrow layout, and without this it opened a second
-                // window instead — the shell claiming a chord it does not own,
-                // three modifiers deep, which is exactly why `keys::resolve`
-                // checks all three.
-                if koru_keys::primary_only(mods)
-                    && ctrl_letter(&logical_key, event.text.as_deref()) == Some('n')
-                {
-                    inputdebug::write(format_args!(
-                        "[Koru][input][pid={}] shell claimed=new-window",
-                        std::process::id()
-                    ));
-                    let view = self.host.duplicate(&self.runtime.workspace.ws);
-                    let title = self.app_window_title();
-                    let new_id = self.open_pane(event_loop, view, &title);
-                    self.reveal_pane(new_id);
-                    // The first `set_visible(true)` on a hidden window is
-                    // `SW_SHOWNOACTIVATE`, so the activation that creation-time
-                    // visibility used to provide has to be asked for.
-                    if let Some(pane) = self.panes.get(&new_id) {
-                        pane.window.focus_window();
-                    }
-                    self.request_redraw(new_id);
-                    return;
-                }
-
                 // Ctrl+Tab cycles tabs, and it can only be resolved here.
                 //
                 // On Windows Ctrl+I arrives as `NamedKey::Tab`, and the key map
@@ -17587,10 +17847,9 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                 if let Some(format) = format {
                     queue_content_drop(&mut self.pending_content_drops, id, format, path);
                 } else if dropped_image(&path) {
-                    if self.import_image(id, None, path) {
-                        self.runtime.workspace.touched();
-                        self.adopt_others(id);
-                    }
+                    // Lands later, through the image service, which marks
+                    // the document touched and adopts it everywhere.
+                    self.import_image(id, None, path);
                 } else {
                     queue_content_drop(&mut self.pending_content_drops, id, "files", path);
                 }
@@ -17646,6 +17905,17 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
         // event.
         let now = Instant::now();
         if self.settle_window_moves(now) {
+            // **Unless the shell is the one moving the window.** On macOS a
+            // window drag is ours, polled (`WindowDrag`), and each step it
+            // takes arrives back here as a `Moved` — so this early return used
+            // to swallow the very poll that produced it, and the drag advanced
+            // once per `WINDOW_MOVE_SETTLE` (~13 Hz) instead of every tick.
+            // Driving it here keeps the rest of the deferral intact: still no
+            // Store or view maintenance while the window is in motion.
+            if self.drive_window_drags() {
+                event_loop.set_control_flow(ControlFlow::Poll);
+                return;
+            }
             let deadline = self
                 .panes
                 .values()

@@ -60,6 +60,26 @@ pub struct Start {
     pub total_length: usize,
     pub fragment_count: usize,
     pub sha256: Bytes<32>,
+    /// The upload's claim reference (`cloud-sync-admission`, the app
+    /// connection amendment; TECHNICAL §5.4 item 6): `SHA-256` of the claim
+    /// handle the call that made this upload presented. Written only when
+    /// present, and last; `null` is refused, because absence is the only way
+    /// to say none. Only an app connection's client sends one, and only the
+    /// worker that admitted that connection receives one ([`Stream`] refuses
+    /// it on every other session), so a device's start is byte-identical to
+    /// before. Never logged: `Debug` omits it.
+    ///
+    /// [`Stream`]: super::Stream
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    pub claim: Option<Bytes<32>>,
+}
+/// `claim` when the property is there: a value, never `null`.
+fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Bytes<32>>, D::Error> {
+    Bytes::deserialize(d).map(Some)
 }
 impl Start {
     pub fn validate(&self) -> Result<(), Error> {

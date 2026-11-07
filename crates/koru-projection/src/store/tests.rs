@@ -2737,6 +2737,75 @@ fn undated_tasks_sort_last_and_still_paginate() {
     assert_eq!(rest, ["undated-a", "undated-b"]);
 }
 
+/// **The dragged order**: ranked tasks by rank (a negative rank, a task typed
+/// on top, included), then the never-ranked by due, then the undated — and the
+/// keyset cursor pages it one row at a time without skipping or repeating.
+#[test]
+fn the_manual_sort_is_rank_then_due_then_undated_and_pages_by_cursor() {
+    let mut p = Projections::in_memory().unwrap();
+    let (ws, doc) = (WorkspaceId::new(), DocumentId::new());
+    let ranked = |id: &str, rank: &str, due: Option<&str>| {
+        let mut node = a_marked_task(id, id);
+        node.attrs
+            .push(an_attr(&format!("{id}-rank"), "koru.rank", "number", rank));
+        if let Some(due) = due {
+            node.attrs
+                .push(an_attr(&format!("{id}-due"), "koru.due", "date", due));
+        }
+        node
+    };
+    seeded(
+        &mut p,
+        ws,
+        doc,
+        vec![
+            a_marked_task("undated-a", "someday"),
+            ranked("second", "2097152", Some("2026-08-01")),
+            attributed(
+                "late",
+                "late",
+                vec![an_attr("d1", "koru.due", "date", "2026-10-01")],
+            ),
+            ranked("first", "-1048576", None),
+            attributed(
+                "early",
+                "early",
+                vec![an_attr("d2", "koru.due", "date", "2026-09-01")],
+            ),
+            a_marked_task("undated-b", "someday too"),
+        ],
+    );
+    let manual = || TaskRowQuery {
+        sort: TaskSort::Manual,
+        ..tasks()
+    };
+    let whole = task_nodes(&p.task_rows(&manual()).unwrap());
+    assert_eq!(&whole[..4], ["first", "second", "early", "late"]);
+    let mut tail = whole[4..].to_vec();
+    tail.sort();
+    assert_eq!(tail, ["undated-a", "undated-b"]);
+
+    let mut paged = Vec::new();
+    let mut after: Option<String> = None;
+    loop {
+        let page = p
+            .task_rows(&TaskRowQuery {
+                limit: 1,
+                after: after.clone(),
+                ..manual()
+            })
+            .unwrap();
+        assert!(!page.restarted);
+        let Some(row) = page.rows.first() else { break };
+        paged.push(row.node.clone());
+        after = Some(row.task.clone());
+    }
+    assert_eq!(
+        paged, whole,
+        "one row a page, the same order, nothing twice"
+    );
+}
+
 /// A cursor the filter no longer matches is **not an error**: the answer comes
 /// from the top with `restarted` set, so a client can tell a fresh list from a
 /// continuation instead of silently drawing page one twice.

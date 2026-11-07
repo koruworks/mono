@@ -9,8 +9,8 @@ use koru_core::{Heading, Mark, MarkSet, WorkspaceId};
 use koru_draw::theme::ViewMode;
 use koru_window::snap;
 use koru_workspace_host::{
-    DocViewPrefs, PasteTarget, PastedImage, RichBlock, RichListSpec, RichTableBlock, RichTextBlock,
-    RichTextKind, RichTextLink, RichTextRun, Settings, View,
+    DocViewPrefs, ImageTicket, PasteTarget, PastedImage, RichBlock, RichListSpec, RichTableBlock,
+    RichTextBlock, RichTextKind, RichTextLink, RichTextRun, Settings, View,
 };
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::CursorIcon;
@@ -5642,4 +5642,169 @@ fn the_menu_opens_the_viewer_and_copies_the_image() {
     assert!(!view.diagram_viewer_open());
     view.wants_copy_diagram = view.drawn_diagram(context.node);
     assert!(View::take_wants_copy_diagram(&mut view).is_some());
+}
+
+// ------------------------------------------------- an image on its way in
+
+/// The block target a paste below `anchor` records.
+fn below(anchor: NodeId) -> koru_workspace_host::ImagePlace {
+    koru_workspace_host::ImagePlace::Paste(Some(PasteTarget {
+        anchor,
+        replacing: Vec::new(),
+    }))
+}
+
+fn png_block() -> PastedImage {
+    PastedImage {
+        hash: "loaded".into(),
+        mime: "image/png".into(),
+        width: Some(300),
+        height: Some(150),
+        name: None,
+    }
+}
+
+/// Put the caret at the end of `id`'s text and lay the body out.
+fn caret_at_end(view: &mut BuiltInDocument, id: NodeId) {
+    view.editor.body.focus_on(id);
+    view.editor.view.active = true;
+    if let Some(row) = view.editor.body.focused_mut() {
+        let end = row.text.len();
+        row.place_caret(end);
+    }
+    view.reflow();
+}
+
+fn body_rows(view: &BuiltInDocument) -> Vec<(Kind, String)> {
+    view.editor.body.rows[view.editor.body.first_body_row()..]
+        .iter()
+        .map(|row| (row.kind, row.text.clone()))
+        .collect()
+}
+
+/// The moment of the paste: a placeholder where the picture will land, and
+/// the document exactly as it was — nothing is synced until there is a blob.
+#[test]
+fn an_image_on_its_way_is_a_placeholder_and_not_an_edit() {
+    let (ws, mut view) = laid_out();
+    let one = view.editor.body.rows[view.editor.body.first_body_row()].id;
+    let version = ws.version();
+    View::begin_image_import(&mut view, &ws, ImageTicket(1), &below(one));
+    // Whatever this machine's Reduce Motion says, the pulse is under test.
+    view.editor.view.reduced_motion = false;
+    view.reflow();
+    assert_eq!(ws.version(), version, "the document is untouched");
+    assert_eq!(view.editor.body.rows.len(), 3, "no row was made for it");
+    let band = &view.editor.body.reserved()[0];
+    assert_eq!(band.before_row, view.editor.body.index_of(one).unwrap() + 1);
+    assert!(
+        View::animating(&view),
+        "the skeleton breathes while it loads"
+    );
+
+    // The header arrives: the block takes the picture's shape.
+    View::size_image_import(&mut view, ImageTicket(1), &[(300, 150)]);
+    view.reflow();
+    let block = view.editor.body.reserved()[0].blocks().next().unwrap();
+    assert_eq!((block.w, block.h), (300.0, 150.0));
+}
+
+/// Somebody types on while the picture loads — a new line above the anchor
+/// and more words on it. Nothing they typed is lost, the picture lands below
+/// the anchor it was pasted under, the caret stays theirs, and one undo takes
+/// the picture away and nothing else.
+#[test]
+fn typing_while_an_image_loads_is_kept_and_the_image_lands_below_its_anchor() {
+    let (mut ws, mut view) = laid_out();
+    ws.enable_undo();
+    let first = view.editor.body.first_body_row();
+    let (one, two) = (
+        view.editor.body.rows[first].id,
+        view.editor.body.rows[first + 1].id,
+    );
+    caret_at_end(&mut view, two);
+    View::begin_image_import(&mut view, &ws, ImageTicket(1), &below(two));
+
+    // A peer — or this person, in a line above — adds a row before the anchor.
+    ws.insert_after(one, Node::paragraph("added meanwhile").unwrap())
+        .unwrap();
+    view.editor.body.rebuild(&ws);
+    caret_at_end(&mut view, two);
+    for letter in [" ", "a", "n", "d"] {
+        assert!(view.key(&mut ws, &ch(letter), Some(letter), ModifiersState::empty()));
+    }
+
+    ws.checkpoint();
+    View::finish_image_import(
+        &mut view,
+        &mut ws,
+        ImageTicket(1),
+        below(two),
+        &[png_block()],
+    );
+    ws.checkpoint();
+
+    assert_eq!(
+        body_rows(&view),
+        vec![
+            (Kind::Paragraph, "one".into()),
+            (Kind::Paragraph, "added meanwhile".into()),
+            (Kind::Paragraph, "two and".into()),
+            (Kind::Image, String::new()),
+        ]
+    );
+    assert!(view.editor.view.pending_images.is_empty());
+    let focused = view.editor.body.focused().expect("a caret");
+    assert_eq!(focused.id, two, "the caret stayed on the line being typed");
+    assert_eq!(focused.caret(), "two and".len());
+
+    assert!(view.key(&mut ws, &ch("z"), Some("z"), koru_keys::PRIMARY));
+    assert_eq!(
+        body_rows(&view),
+        vec![
+            (Kind::Paragraph, "one".into()),
+            (Kind::Paragraph, "added meanwhile".into()),
+            (Kind::Paragraph, "two and".into()),
+        ],
+        "one undo removes the image and only the image"
+    );
+}
+
+/// Nobody moved: the image takes the caret, the way a paste that lands at
+/// once always has.
+#[test]
+fn an_untouched_caret_moves_onto_the_image_that_lands() {
+    let (mut ws, mut view) = laid_out();
+    let one = view.editor.body.rows[view.editor.body.first_body_row()].id;
+    caret_at_end(&mut view, one);
+    View::begin_image_import(&mut view, &ws, ImageTicket(4), &below(one));
+    View::finish_image_import(
+        &mut view,
+        &mut ws,
+        ImageTicket(4),
+        below(one),
+        &[png_block()],
+    );
+    let focused = view.editor.body.focused().expect("a caret");
+    assert_eq!(focused.kind, Kind::Image);
+}
+
+/// A failure takes the placeholder away and leaves the document as it was;
+/// the shell reports it (`image_import::failure_report`).
+#[test]
+fn a_failed_image_leaves_nothing_behind() {
+    let (ws, mut view) = laid_out();
+    let one = view.editor.body.rows[view.editor.body.first_body_row()].id;
+    let version = ws.version();
+    View::begin_image_import(&mut view, &ws, ImageTicket(2), &below(one));
+    view.reflow();
+    assert!(View::end_image_import(&mut view, ImageTicket(2)));
+    view.reflow();
+    assert!(view.editor.body.reserved().is_empty());
+    assert!(!View::animating(&view));
+    assert_eq!(ws.version(), version);
+    assert!(
+        !View::end_image_import(&mut view, ImageTicket(2)),
+        "a ticket this tab never drew is not its business"
+    );
 }

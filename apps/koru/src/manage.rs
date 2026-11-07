@@ -339,10 +339,12 @@ impl ManageView {
         {
             self.page = Some(page);
             self.page_scroll = 0.0;
+            // Not `Intent::Select`: nobody chose this Profile, and the notice
+            // that explains why the page moved has to survive the move.
             if let Page::Profile(profile) = page
                 && self.c.selected() != Some(profile)
             {
-                self.c.perform(Intent::Select(profile));
+                self.c.follow_page(profile);
                 let _ = self.c.take_hints();
             }
         }

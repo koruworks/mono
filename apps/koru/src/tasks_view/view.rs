@@ -18,8 +18,9 @@ use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
 use koru_draw::theme;
 use koru_editor::utils::when::{self, Parsed, Reference};
-use koru_store_wire::tasks::{LifecycleFilter, TaskSort};
+use koru_store_wire::tasks::TaskSort;
 use koru_ui::date_grid::DateGrid;
+use koru_ui::label_chip::LabelChip;
 use koru_ui::menu::{Anchor, Menu};
 use koru_ui::table::{Band, Metrics, Table};
 use koru_workspace_host::{Settings, View};
@@ -31,9 +32,11 @@ use winit::window::CursorIcon;
 
 use super::capture::{Capture, SlashRow, Typed};
 use super::echo::{self, Echo, Patch};
+use super::menu::ColorPick;
 use super::menu::{ListPick, OverflowItem, OverflowRow};
 use super::pickers::{
-    Choice, DuePick, ListPicker, Picked, Picker, PriorityPick, Target, due_seeds, priority_rows,
+    Choice, ColorPicker, DuePick, ListPicker, Picked, Picker, PriorityPick, Target, due_seeds,
+    priority_rows,
 };
 use super::query::{Due, DueWindow, Filters, TaskEntry, TaskListPanel};
 use super::states::{self, Empty};
@@ -44,7 +47,8 @@ use super::states::{self, Empty};
 pub(super) const PAD: f32 = 40.0;
 /// Between the title and the row area.
 pub(super) const HEADER_GAP: f32 = 22.0;
-/// The complete control's square, at the head of every row.
+/// The complete control's square, at the head of every row: the press
+/// target. The box drawn in it is smaller (`RowParts::checkbox`).
 pub(super) const CONTROL_W: f32 = 18.0;
 /// Between the control and the text column.
 pub(super) const CONTROL_GAP: f32 = 10.0;
@@ -68,15 +72,10 @@ const FLASH: std::time::Duration = std::time::Duration::from_millis(1200);
 /// nav row, and it is the same shape for the same reason: a list is a bucket,
 /// and the round swatch already means *this node's colour*.
 pub(super) const HEADER_SWATCH: f32 = 11.0;
-/// Between that square and the name.
+/// Between that square and the name — `heading::SWATCH_STEP` now; kept as
+/// the number the suite holds the step to.
+#[cfg(test)]
 pub(super) const SWATCH_GAP: f32 = 10.0;
-/// Between the heading's baseline block and the chips row under it.
-pub(super) const CHIPS_TOP_GAP: f32 = 14.0;
-/// Air either side of a filter chip's label — **the component's**, so the
-/// empty state's action lines up with the chips over it.
-pub(super) const FILTER_PAD_X: f32 = koru_ui::filter_chip::PAD_X;
-/// Between one filter chip and the next.
-pub(super) const FILTER_GAP: f32 = 8.0;
 /// The most trailing words the capture row will try to read as a date.
 ///
 /// Three, because the longest phrase the grammar accepts in this position is
@@ -101,8 +100,6 @@ pub(super) enum Line {
 /// What a press landed on.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum Hit {
-    /// A filter chip, by its index in [`TasksView::chips`].
-    Chip(usize),
     /// The `…` at the head of the page, which opens the overflow menu.
     HeaderDots,
     Capture,
@@ -113,15 +110,44 @@ pub(super) enum Hit {
     /// The row itself — **a whole-row click opens the node**, which is the
     /// design's one rule about this surface: everything else lives in the menu.
     Row(usize),
-    /// **Add a task**, at the right end of an empty bucket's row. The one
-    /// control any of the four empty states carries; what it does is put the
-    /// caret in the capture row that is already there, rather than opening
-    /// anything of its own.
-    EmptyAction,
     /// **The list chip on a row**, which is the one chip that is a control:
     /// pressing it opens the list's own page. Resolved ahead of the row it
     /// sits in, as the tick and the `…` are.
     ListChip(usize),
+    /// **A value chip on a row** — its due, its priority or its colour —
+    /// which opens that value's picker at the pointer. The row and the kind.
+    ValueChip(usize, ChipKind),
+}
+
+/// A drag of rows, from the press on a row of a list ordered by hand to the
+/// release. A press that never moves past the threshold is a click.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct RowDrag {
+    /// What is moving, by identity and in page order: the pressed row, or
+    /// the whole selection when the pressed row is part of it.
+    pub moving: Vec<(DocumentId, NodeId)>,
+    start_y: f32,
+    /// The pressed row, when the press landed inside a selection of
+    /// several: kept whole so it can be dragged, and narrowed to this row
+    /// on a release that never became a drag — what a click there means.
+    narrow_to: Option<usize>,
+    /// Over a list in the sidebar rather than over the table: the rows
+    /// would join that list, so no gap is offered here.
+    pub outside: bool,
+    /// Past the few pixels that tell a drag from a press.
+    pub active: bool,
+    /// The gap the rows would land in: before row `gap`, in the page as it
+    /// stands (`rows.len()` is the end).
+    pub gap: Option<usize>,
+}
+
+/// A row's words being renamed in place.
+pub(super) struct Rename {
+    pub document: DocumentId,
+    pub node: NodeId,
+    /// The words as they were, so an unchanged Enter asks for nothing.
+    pub before: String,
+    pub input: koru_editor::components::text_input::TextInput,
 }
 
 /// What the view wants the container to do.
@@ -183,6 +209,8 @@ pub enum Request {
     /// to, already resolved into a stored temporal; `list` is the membership a
     /// task typed into a list carries (SPEC §8).
     Capture {
+        /// Its place in a list ordered by hand: the top. `None` elsewhere.
+        rank: Option<i64>,
         title: String,
         due: Option<koru_core::time::Temporal>,
         list: Option<ListId>,
@@ -215,6 +243,44 @@ pub enum Request {
         node: NodeId,
         priority: Option<Priority>,
     },
+    /// A colour, or Clear, on the row's colour picker.
+    SetColor {
+        document: DocumentId,
+        node: NodeId,
+        color: Option<String>,
+    },
+    /// A row's new place in its list's dragged order. A drop of several
+    /// rows is a [`Many`](Self::Many) of these.
+    SetRank {
+        document: DocumentId,
+        node: NodeId,
+        rank: Option<i64>,
+    },
+    /// The row's words, renamed in place (a double click, or F2).
+    Retitle {
+        document: DocumentId,
+        node: NodeId,
+        title: String,
+    },
+    /// **One gesture over a selection**: the same edit for each selected row
+    /// — a due, a priority or a list picked once for all of them. The
+    /// container takes them in order, each through its own one door, so a
+    /// batch is a run of ordinary edits and nothing else.
+    Many(Vec<Request>),
+    /// The `…` or a right-click on a row that is part of a selection of
+    /// several: the selection's menu. `native` are the selected tasks typed
+    /// into this page — the ones *Add document* can give a home to.
+    RowsMenu {
+        tasks: Vec<(DocumentId, NodeId)>,
+        native: Vec<(DocumentId, NodeId)>,
+        /// Every selected task is completed, which offers *Reopen* rather
+        /// than *Complete*.
+        completed: bool,
+        at: (f32, f32),
+    },
+    /// Delete on the selection: take these tasks off Tasks, which the
+    /// container asks about once for the set.
+    RemoveTasks { tasks: Vec<(DocumentId, NodeId)> },
 }
 
 /// One list, as the header and the membership chip need it. Pushed by the
@@ -225,48 +291,6 @@ pub struct ListFace {
     pub id: ListId,
     pub name: String,
     pub color: Option<String>,
-}
-
-/// Which dimension a chip is a value of. **Three dimensions, four chips** — the
-/// due window has two, because *Overdue* and *This week* are two answers to one
-/// question and pressing either clears the other.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub(super) enum ChipPress {
-    MinHigh,
-    Lifecycle,
-    /// The list page's one due chip: a selector over the dimension, so it steps
-    /// to the next value rather than toggling one of them. There is no
-    /// per-value press any more — the two value chips were withdrawn from the
-    /// queues, which were the only pages that drew them.
-    WindowNext,
-}
-
-/// One chip of the filter row, as both drawing and hit-testing see it.
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub(super) struct FilterChip {
-    pub label: String,
-    /// **This dimension is set**, which is what inverts the chip.
-    pub active: bool,
-    /// A selector: its label is its current value, and it wears a caret.
-    pub caret: bool,
-    /// It can be switched off again, and wears the `×` that says so.
-    pub clear: bool,
-    pub press: ChipPress,
-}
-
-impl FilterChip {
-    /// What this chip's trailing mark says — **the component's vocabulary**,
-    /// so measuring and drawing ask one question rather than two booleans.
-    pub(super) fn mark(&self) -> koru_ui::filter_chip::Mark {
-        use koru_ui::filter_chip::Mark;
-        if self.caret {
-            Mark::Caret
-        } else if self.clear {
-            Mark::Clear
-        } else {
-            Mark::None
-        }
-    }
 }
 
 pub struct TasksView {
@@ -288,10 +312,20 @@ pub struct TasksView {
     pub(super) today: NaiveDate,
     pub(super) now_ms: i64,
     pub(super) hover: Option<Hit>,
+    /// A drag of rows, while the button is down.
+    pub(super) drag: Option<RowDrag>,
+    /// **A row's words being renamed in place** (a double click, or F2):
+    /// the task, and the field standing where its title was.
+    pub(super) rename: Option<Rename>,
     /// The row the keyboard is on, **by identity rather than by index**: the
     /// page refreshes underneath it every half minute, and an index would move
     /// the selection onto whichever task had slid into that position.
     pub(super) selected: Option<(DocumentId, NodeId)>,
+    /// **The rest of a selection** — the rows Ctrl+click or Shift+click added
+    /// beside [`selected`](Self::selected), which stays the focused row the
+    /// keyboard walks from and a Shift+click ranges from. Empty for a
+    /// selection of one, which is every selection but those two gestures make.
+    pub(super) also: Vec<(DocumentId, NodeId)>,
     /// A row somebody was sent to — *View task*, *View in Tasks* — lit for a
     /// moment so the eye finds it, as the document flashes a search hit.
     /// The deadline is what drives the frames; it clears itself.
@@ -299,23 +333,20 @@ pub struct TasksView {
     /// The *Add a task…* row while it has the caret — the words, the date
     /// word, and what `/due`, `/priority` and `/task_list` picked.
     pub(super) capture: Option<Capture>,
+    /// **The idle capture row's field** — never focused, never typed into —
+    /// which draws the row's placeholder while nobody is typing. The field
+    /// that takes the typing draws the same placeholder through the same
+    /// code, so the words cannot move when the row is pressed: the field
+    /// places them by its own text's baseline, and a placeholder drawn any
+    /// other way sat a few pixels away from it.
+    pub(super) idle_input: koru_editor::components::text_input::TextInput,
     /// What the chips row and the overflow menu are set to. **The query's own
     /// fields and nothing else** — see [`Filters`].
     pub(super) filters: Filters,
-    /// The chips' widths, in [`chips`](TasksView::chips) order, measured when
-    /// the row was last built. Kept beside the chips for the reason a menu's
-    /// width is fixed at open time: measuring during a hit test would need a
-    /// `&mut TextEngine` nobody there has, and re-measuring per frame would let
-    /// a chip move under the pointer because the density changed.
-    pub(super) chip_ws: Vec<f32>,
-    /// Each row's chips, measured, parallel to [`rows`](Self::rows) — kept
-    /// for the same reason `chip_ws` is: a press on a chip is resolved from
-    /// the widths, and a hit test never needs an engine.
+    /// Each row's chips, measured, parallel to [`rows`](Self::rows): a press
+    /// on a chip is resolved from the widths, and a hit test holds no
+    /// `&mut TextEngine` to measure with.
     pub(super) row_chip_ws: Vec<Vec<f32>>,
-    /// The width of the **Add a task** action, measured with the chips and for
-    /// their reason: a hit test holds no `&mut TextEngine`, and re-measuring per
-    /// frame would let the control move under the pointer when the density did.
-    pub(super) action_w: f32,
     /// The overflow menu while it is open. **The view's own**, because every row
     /// of it changes this page's query and nothing else — and because it is a
     /// *setting* menu, which stays open when a row is chosen.
@@ -356,9 +387,13 @@ pub struct TasksView {
 impl TasksView {
     pub fn new(target: RailTarget) -> Self {
         let today = chrono::Local::now().date_naive();
+        let mut engine = TextEngine::new();
+        let idle_input =
+            koru_editor::components::text_input::TextInput::new(&mut engine, theme::role::row());
         Self {
             viewport: (900.0, 600.0),
-            engine: TextEngine::new(),
+            engine,
+            idle_input,
             panel: TaskListPanel::default(),
             target,
             rows: Vec::new(),
@@ -368,13 +403,14 @@ impl TasksView {
             today,
             now_ms: chrono::Utc::now().timestamp_millis(),
             hover: None,
+            drag: None,
+            rename: None,
             selected: None,
+            also: Vec::new(),
             flash: None,
             capture: None,
             filters: Filters::default(),
-            chip_ws: Vec::new(),
             row_chip_ws: Vec::new(),
-            action_w: 0.0,
             overflow: None,
             picker: None,
             panel_instance: 0,
@@ -402,7 +438,7 @@ impl TasksView {
         // The selection belongs to the page it was made on. Another bucket is
         // another page, and a row carried across would be a keyboard sitting on
         // something this page is not showing.
-        self.selected = None;
+        self.clear_selection();
         self.end_capture();
         // **The menu belongs to the page it was opened over.** Another bucket is
         // another page, and a panel left standing over it would be describing
@@ -425,9 +461,6 @@ impl TasksView {
             self.filters.window = DueWindow::Any;
             self.panel.set_filters(self.filters);
         }
-        // The chip row is not the same row on the new page: a queue names its
-        // own lifecycle and a list does not, so one chip comes and goes.
-        self.remeasure_chips();
         self.stale = true;
         true
     }
@@ -453,7 +486,6 @@ impl TasksView {
         self.scroll = 0.0;
         self.rows.clear();
         self.relayout();
-        self.remeasure_chips();
         self.stale = true;
         true
     }
@@ -497,6 +529,7 @@ impl TasksView {
             return false;
         }
         self.selected = Some((document, node));
+        self.also.clear();
         true
     }
 
@@ -536,12 +569,19 @@ impl TasksView {
     }
 
     fn record_echo(&mut self, request: &Request) {
+        if let Request::Many(requests) = request {
+            for request in requests {
+                self.record_echo(request);
+            }
+            return;
+        }
         let (document, node, patch) = match request {
             Request::Capture {
                 title,
                 due,
                 list,
                 priority,
+                rank,
             } => {
                 // The workspace only matters for opening the row, which the
                 // real ids replace on the receipt; a placeholder serves.
@@ -561,6 +601,7 @@ impl TasksView {
                     self.today,
                     self.now_ms,
                 );
+                let row = TaskEntry { rank: *rank, ..row };
                 (row.document, row.node, Patch::Created(row))
             }
             Request::Complete {
@@ -587,10 +628,39 @@ impl TasksView {
                 node,
                 list,
             } => (*document, *node, Patch::List(*list)),
+            Request::SetColor {
+                document,
+                node,
+                color,
+            } => (*document, *node, Patch::Color(color.clone())),
+            Request::SetRank {
+                document,
+                node,
+                rank,
+            } => (*document, *node, Patch::Rank(*rank)),
+            Request::Retitle {
+                document,
+                node,
+                title,
+            } => (
+                *document,
+                *node,
+                // Without its emoji, as the store's row is: the page draws
+                // the emoji apart from the words.
+                Patch::Title(
+                    koru_shell_chrome::split_leading_emoji(title)
+                        .1
+                        .trim_start()
+                        .to_owned(),
+                ),
+            ),
             Request::Open { .. }
             | Request::ChoosePlace { .. }
             | Request::RowMenu { .. }
+            | Request::RowsMenu { .. }
+            | Request::RemoveTasks { .. }
             | Request::OpenList { .. } => return,
+            Request::Many(_) => unreachable!("taken apart above"),
         };
         crate::tasks::debug_line(format_args!(
             "page: echo pushed by this page ({} standing)",
@@ -773,6 +843,14 @@ impl TasksView {
                 self.rows.remove(i);
             }
         }
+        // **A list ordered by hand is drawn in its order now**, not when the
+        // store answers: the store's manual sort is the ranked by rank, then
+        // the rest as it sent them, and a stable sort on the same key keeps
+        // the store's own order wherever no echo moved a rank.
+        if self.manual_order() {
+            self.rows
+                .sort_by_key(|row| (row.rank.is_none(), row.rank.unwrap_or(0)));
+        }
     }
 
     /// Back-date every standing echo, so a test can reach the ceiling without
@@ -863,7 +941,7 @@ impl TasksView {
                 kind: ChipKind::Tag,
                 label: face.name.clone(),
                 accent: face.color.clone(),
-                list: self.leads_to_list(row),
+                list: row.list,
             });
         }
         // **A dateless open row wears the dash**, not nothing: the design's own
@@ -883,7 +961,18 @@ impl TasksView {
             chips.push(RowChip {
                 kind: ChipKind::Priority,
                 label: koru_editor::chips::priority_label(level).to_owned(),
-                accent: None,
+                // Its level's colour, the document chip's own.
+                accent: Some(koru_editor::chips::priority_accent(level).to_owned()),
+                list: None,
+            });
+        }
+        // **The line's colour, last** — the swatch the document draws after
+        // the same task's chips, so a task coloured red there is red here.
+        if let Some(token) = &row.color {
+            chips.push(RowChip {
+                kind: ChipKind::Swatch,
+                label: String::new(),
+                accent: Some(token.clone()),
                 list: None,
             });
         }
@@ -910,15 +999,7 @@ impl TasksView {
             .map(|chips| {
                 chips
                     .iter()
-                    .map(|chip| {
-                        self.engine.measure_attr_chip(
-                            chip.kind,
-                            &chip.label,
-                            chip.accent.as_deref(),
-                            None,
-                            false,
-                        ) + koru_draw::chip::extra_w(chip.kind)
-                    })
+                    .map(|chip| chip.label_chip().width(&mut self.engine))
                     .collect()
             })
             .collect();
@@ -998,8 +1079,13 @@ impl TasksView {
         // silently re-pointed: the keyboard must not end up on a task nobody
         // put it on.
         if self.selected_row().is_none() {
-            self.selected = None;
+            self.clear_selection();
         }
+        let rows = &self.rows;
+        self.also.retain(|&(document, node)| {
+            rows.iter()
+                .any(|row| row.document == document && row.node == node)
+        });
         self.relayout();
         self.clamp_scroll();
         true
@@ -1073,26 +1159,15 @@ impl TasksView {
         }
     }
 
-    /// Where the heading's text starts. Past the swatch on a list page, at
-    /// [`PAD`] everywhere else — **one function**, because the title, the trail
-    /// beside it and the swatch itself are three things that have to agree
-    /// about one edge.
+    /// Where the heading's title started when it was placed by hand: past the
+    /// swatch on a list page, at [`PAD`] everywhere else. The heading's
+    /// element row places it now; the suite holds the row to this.
+    #[cfg(test)]
     pub(super) fn title_x(&self) -> f32 {
         match self.title_swatch() {
             Some(_) => PAD + HEADER_SWATCH + SWATCH_GAP,
             None => PAD,
         }
-    }
-
-    /// The swatch's square, on the heading's own line.
-    pub(super) fn swatch_rect(&self) -> Rect {
-        let m = super::draw::TITLE.metrics;
-        Rect::new(
-            PAD,
-            self.title_top() + (m.line_height - HEADER_SWATCH) * 0.5,
-            HEADER_SWATCH,
-            HEADER_SWATCH,
-        )
     }
 
     /// What the title reads. A bucket says its own name; a list says its own,
@@ -1136,110 +1211,6 @@ impl TasksView {
 
     // ----------------------------------------------------------- the chips
 
-    /// The chips this page offers, in the design's order.
-    ///
-    /// **Only the ones the store will apply, and only where they narrow
-    /// anything.** *Priority ≥ High* is ANDed into every query and is offered
-    /// everywhere — a filter whose answer is empty is a filter doing its job.
-    /// The other two are each withheld from the pages they cannot mean
-    /// anything on, and for the same reason wearing two different faces.
-    ///
-    /// The lifecycle chip: on a queue page the store *discards* the field,
-    /// because a bucket names its own lifecycle, so the chip would not narrow
-    /// the page, it would be ignored. A control the answer cannot hear is not
-    /// offered; the overflow menu says why, where there is room to say it.
-    ///
-    /// **The due dimension: on a list only.** The design gave a queue the two
-    /// value chips and a list the selector, and using it showed the queue half
-    /// was wrong: a bucket *is* a due window, so a second one over it is
-    /// redundant where it agrees and empty where it does not. *This week* over
-    /// Next asks for this week's work inside this week's work; *Overdue* over
-    /// Next, Upcoming or Later asks for work due before today inside a page
-    /// that starts at today, which answers nothing and can never answer
-    /// anything. A list is the one page with no time in it, which is the one
-    /// page where *when* is a cut worth offering — as the selector, so the
-    /// value that narrows nothing still has a word.
-    pub(super) fn chips(&self) -> Vec<FilterChip> {
-        let f = self.filters;
-        let mut chips = vec![FilterChip {
-            label: format!(
-                "Priority \u{2265} {}",
-                koru_editor::chips::priority_label(super::query::CHIP_MIN_PRIORITY)
-            ),
-            active: f.min_high,
-            caret: false,
-            clear: f.min_high,
-            press: ChipPress::MinHigh,
-        }];
-        if Filters::lifecycle_applies(self.target) {
-            chips.push(FilterChip {
-                label: lifecycle_label(f.lifecycle).to_owned(),
-                active: f.lifecycle != LifecycleFilter::Open,
-                // A selector: the label *is* the value, so the caret says there
-                // are others rather than that it is switched on.
-                caret: true,
-                clear: false,
-                press: ChipPress::Lifecycle,
-            });
-        }
-        if Filters::due_selects(self.target) {
-            // One chip, labelled with the value it is on — *Any date* included,
-            // which is what `1d` draws on a list page.
-            chips.push(FilterChip {
-                label: f.window.selector_label().to_owned(),
-                active: f.window != DueWindow::Any,
-                caret: true,
-                clear: false,
-                press: ChipPress::WindowNext,
-            });
-        }
-        chips
-    }
-
-    /// A chip's height — the component's, derived from the label's own line.
-    pub(super) fn chip_h(&self) -> f32 {
-        koru_ui::filter_chip::height()
-    }
-
-    pub(super) fn chips_top(&self) -> f32 {
-        let m = super::draw::TITLE.metrics;
-        self.title_top() + m.line_height + CHIPS_TOP_GAP
-    }
-
-    /// Re-measure the chip row. Called wherever a label or the set of chips can
-    /// have moved: a new page, a new filter, a new font or density.
-    pub(super) fn remeasure_chips(&mut self) {
-        let chips = self.chips();
-        let mut widths = Vec::with_capacity(chips.len());
-        for chip in &chips {
-            widths.push(koru_ui::filter_chip::width(
-                &mut self.engine,
-                &chip.label,
-                chip.mark(),
-            ));
-        }
-        self.chip_ws = widths;
-    }
-
-    /// Where the chips are, from their measured widths and nothing else.
-    ///
-    /// **The one place this arithmetic exists**, like [`parts`](Self::parts) for
-    /// a row: `paint_chips` draws into these rectangles and `hit_at` resolves a
-    /// press against them, which is what `the_chips_row_hits_back` proves.
-    pub(super) fn chip_rects(&self) -> Vec<Rect> {
-        let y = self.chips_top();
-        let h = self.chip_h();
-        let mut x = PAD;
-        self.chip_ws
-            .iter()
-            .map(|w| {
-                let r = Rect::new(x, y, *w, h);
-                x += w + FILTER_GAP;
-                r
-            })
-            .collect()
-    }
-
     /// The `…` at the page's right-hand end. The Trash tab's header button, at
     /// the Trash tab's arithmetic.
     pub(super) fn header_dots(&self) -> Rect {
@@ -1268,7 +1239,6 @@ impl TasksView {
             return None;
         }
         states::empty_state(
-            self.target,
             self.panel.known(),
             self.panel.updating(),
             self.panel.notice(),
@@ -1305,19 +1275,205 @@ impl TasksView {
         self.table().metrics.row_radius
     }
 
-    /// Where **Add a task** is, or `None` in a state that offers no action.
+    // ------------------------------------------------------- the manual order
+
+    /// Whether a press on a row arms a drag: every Tasks page. Where the
+    /// rows can land is the page's question ([`manual_order`]) and the
+    /// sidebar's (a list row).
     ///
-    /// Right-aligned in the chip, which is what puts the fact and the thing to
-    /// do about it on one line rather than in a panel.
-    pub(super) fn empty_action_rect(&self) -> Option<Rect> {
-        self.empty_state()?.action()?;
-        let chip = self.empty_chip();
-        Some(Rect::new(
-            chip.x + chip.w - FILTER_PAD_X - self.action_w,
-            chip.y,
-            self.action_w,
-            chip.h,
-        ))
+    /// [`manual_order`]: Self::manual_order
+    pub(super) fn drags_rows(&self) -> bool {
+        !matches!(self.target, RailTarget::Reminders)
+    }
+
+    /// Whether rows are being carried past the threshold — what lets the
+    /// sidebar offer itself as a target.
+    pub(crate) fn carrying_rows(&self) -> bool {
+        self.drag.as_ref().is_some_and(|drag| drag.active)
+    }
+
+    /// Whether the button is down on a row — the window keeps the pointer
+    /// on this page until it comes up, wherever it goes.
+    pub(crate) fn holding_rows(&self) -> bool {
+        self.drag.is_some()
+    }
+
+    /// The carried rows are over a list in the sidebar (`true`) or back
+    /// over the page. Answers whether that changed.
+    pub(crate) fn set_rows_outside(&mut self, outside: bool) -> bool {
+        let Some(drag) = self.drag.as_mut() else {
+            return false;
+        };
+        let changed = drag.outside != outside;
+        drag.outside = outside;
+        if outside {
+            drag.gap = None;
+        }
+        changed
+    }
+
+    /// **The carried rows dropped on a list in the sidebar**: they join it,
+    /// one request per task through the list picker's own door — shown at
+    /// once by their echoes. `false` when nothing was being carried.
+    pub(crate) fn drop_rows_into_list(&mut self, list: ListId) -> bool {
+        let Some(drag) = self.drag.take() else {
+            return false;
+        };
+        if !drag.active {
+            return false;
+        }
+        let mut requests: Vec<Request> = drag
+            .moving
+            .iter()
+            .map(|&(document, node)| Request::SetList {
+                document,
+                node,
+                list: Some(list),
+            })
+            .collect();
+        self.pending = match requests.len() {
+            0 => None,
+            1 => requests.pop(),
+            _ => Some(Request::Many(requests)),
+        };
+        true
+    }
+
+    /// Whether this page is ordered by hand — a list (by default) or a queue
+    /// set to *Manual* (not Completed): where a row can be dragged, and where a
+    /// typed task goes on top.
+    pub(super) fn manual_order(&self) -> bool {
+        match self.target {
+            RailTarget::List(_) => self.filters.list_sort == TaskSort::Manual,
+            RailTarget::Bucket(Bucket::Completed) | RailTarget::Reminders => false,
+            RailTarget::Bucket(_) => self.filters.sort == TaskSort::Manual,
+        }
+    }
+
+    /// A press on row `i` of a list ordered by hand: a drag is armed,
+    /// carrying the selection when the row is part of it and the row alone
+    /// (selected) otherwise. **No grip**: the row itself is what is held,
+    /// the owner's ask — press, and moving starts the drag.
+    pub(super) fn begin_drag(&mut self, i: usize, y: f32) -> bool {
+        let narrow_to = if self.is_selected(i) {
+            (self.selection().len() > 1).then_some(i)
+        } else {
+            self.select_row(i);
+            None
+        };
+        self.drag = Some(RowDrag {
+            moving: self.selected_tasks(),
+            start_y: y,
+            narrow_to,
+            outside: false,
+            active: false,
+            gap: None,
+        });
+        true
+    }
+
+    /// The pointer moved with a row held: past a few pixels it is a
+    /// drag, and the gap under the pointer is where the rows would land.
+    /// Near the band's top or bottom edge the page scrolls under it.
+    pub(super) fn drag_to(&mut self, y: f32) -> bool {
+        const EDGE: f32 = 24.0;
+        const STEP: f32 = 12.0;
+        let Some(drag) = self.drag.as_ref() else {
+            return false;
+        };
+        let active = drag.active || (y - drag.start_y).abs() > 3.0;
+        let outside = drag.outside;
+        // Over the sidebar the page is not what is being aimed at: it holds
+        // still rather than scrolling under a pointer that left it.
+        if active && !outside {
+            let top = self.header_h;
+            if y < top + EDGE {
+                self.scroll -= STEP;
+                self.clamp_scroll();
+            } else if y > self.viewport.1 - EDGE {
+                self.scroll += STEP;
+                self.clamp_scroll();
+            }
+        }
+        // A gap only where the page has an order of its own to put them in,
+        // and never while the rows are over a list in the sidebar.
+        let gap = (active && !outside && self.manual_order()).then(|| self.drop_gap(y));
+        let Some(drag) = self.drag.as_mut() else {
+            return false;
+        };
+        let changed = drag.active != active || drag.gap != gap;
+        drag.active = active;
+        drag.gap = gap;
+        changed
+    }
+
+    /// The gap at height `y`: before the first row whose middle is below
+    /// it, or the end.
+    pub(super) fn drop_gap(&self, y: f32) -> usize {
+        let bands = self.bands();
+        let table = self.table();
+        for (line, kind) in self.lines.iter().enumerate() {
+            if let Line::Task(row) = kind {
+                let r = table.row_rect(&bands, line);
+                if y < r.y + r.h * 0.5 {
+                    return *row;
+                }
+            }
+        }
+        self.rows.len()
+    }
+
+    /// Where the gap is drawn: a line between two rows, or under the last.
+    pub(super) fn drop_line_y(&self, gap: usize) -> Option<f32> {
+        let bands = self.bands();
+        let table = self.table();
+        let rect_of = |row: usize| {
+            self.lines
+                .iter()
+                .position(|l| l == &Line::Task(row))
+                .map(|line| table.row_rect(&bands, line))
+        };
+        match rect_of(gap) {
+            Some(r) => Some(r.y),
+            None => gap.checked_sub(1).and_then(rect_of).map(|r| r.y + r.h),
+        }
+    }
+
+    /// The release: the moved rows take ranks that put them in the gap,
+    /// written as one request — and drawn there at once, by their echoes.
+    /// A release that never became a drag was a click on the row, which
+    /// selected the row and does nothing more.
+    pub(super) fn drop_drag(&mut self) -> bool {
+        let Some(drag) = self.drag.take() else {
+            return false;
+        };
+        let (true, Some(gap), true) = (drag.active, drag.gap, self.manual_order()) else {
+            if let Some(i) = drag.narrow_to {
+                self.select_row(i);
+            }
+            return true;
+        };
+        let moving: Vec<usize> = (0..self.rows.len())
+            .filter(|&i| {
+                let key = (self.rows[i].document, self.rows[i].node);
+                drag.moving.contains(&key)
+            })
+            .collect();
+        let ranks: Vec<Option<i64>> = self.rows.iter().map(|row| row.rank).collect();
+        let mut requests: Vec<Request> = super::rank::assign(&ranks, &moving, gap)
+            .into_iter()
+            .map(|(i, rank)| Request::SetRank {
+                document: self.rows[i].document,
+                node: self.rows[i].node,
+                rank: Some(rank),
+            })
+            .collect();
+        self.pending = match requests.len() {
+            0 => None,
+            1 => requests.pop(),
+            _ => Some(Request::Many(requests)),
+        };
+        true
     }
 
     // ------------------------------------------------------- the selection
@@ -1332,6 +1488,69 @@ impl TasksView {
 
     pub(super) fn select_row(&mut self, i: usize) {
         self.selected = self.rows.get(i).map(|row| (row.document, row.node));
+        self.also.clear();
+    }
+
+    /// No row selected.
+    fn clear_selection(&mut self) {
+        self.selected = None;
+        self.also.clear();
+    }
+
+    /// Whether row `i` is part of the selection.
+    pub(super) fn is_selected(&self, i: usize) -> bool {
+        self.rows.get(i).is_some_and(|row| {
+            let key = (row.document, row.node);
+            self.selected == Some(key) || self.also.contains(&key)
+        })
+    }
+
+    /// Every selected row's index, in the page's order.
+    pub(super) fn selection(&self) -> Vec<usize> {
+        (0..self.rows.len())
+            .filter(|&i| self.is_selected(i))
+            .collect()
+    }
+
+    /// The selected tasks, in the page's order.
+    pub(super) fn selected_tasks(&self) -> Vec<(DocumentId, NodeId)> {
+        self.selection()
+            .into_iter()
+            .map(|i| (self.rows[i].document, self.rows[i].node))
+            .collect()
+    }
+
+    /// **Ctrl+click**: row `i` joins the selection, or leaves it. A row that
+    /// joins becomes the focused one; the focused row leaving hands focus to
+    /// another selected row.
+    fn toggle_row(&mut self, i: usize) {
+        let Some(key) = self.rows.get(i).map(|row| (row.document, row.node)) else {
+            return;
+        };
+        if self.selected == Some(key) {
+            self.selected = self.also.pop();
+        } else if let Some(at) = self.also.iter().position(|k| *k == key) {
+            self.also.remove(at);
+        } else {
+            if let Some(was) = self.selected.replace(key) {
+                self.also.push(was);
+            }
+        }
+    }
+
+    /// **Shift+click**: every row from the focused one to row `i`, the
+    /// focused row staying where the range started. With nothing focused it
+    /// is a plain selection of `i`.
+    fn extend_to(&mut self, i: usize) {
+        let Some(from) = self.selected_row() else {
+            self.select_row(i);
+            return;
+        };
+        let (lo, hi) = (from.min(i), from.max(i));
+        self.also = (lo..=hi.min(self.rows.len().saturating_sub(1)))
+            .filter(|&j| j != from)
+            .map(|j| (self.rows[j].document, self.rows[j].node))
+            .collect();
     }
 
     /// Step the selection by rows, not by lines: a week rule is a label for what
@@ -1385,6 +1604,95 @@ impl TasksView {
         self.clamp_scroll();
     }
 
+    /// Put the rename field over row `i`'s title, holding its words with
+    /// the caret at their end. Any other field or panel goes.
+    pub(super) fn begin_rename(&mut self, i: usize) -> bool {
+        let Some(row) = self.rows.get(i) else {
+            return false;
+        };
+        let (document, node, title) = (row.document, row.node, row.title.clone());
+        self.end_capture();
+        self.picker = None;
+        self.overflow = None;
+        self.drag = None;
+        self.select_row(i);
+        let mut input = koru_editor::components::text_input::TextInput::new(
+            &mut self.engine,
+            theme::role::row(),
+        );
+        input.set_text(&mut self.engine, &title);
+        input.move_to_end(&mut self.engine);
+        self.rename = Some(Rename {
+            document,
+            node,
+            before: title,
+            input,
+        });
+        true
+    }
+
+    /// Keep the field's words: a request when they changed and are not
+    /// empty — an empty name is a slip, not a rename — and the field goes
+    /// either way. The row's emoji, which the page draws apart from the
+    /// words, goes back in front of them.
+    pub(super) fn commit_rename(&mut self) -> bool {
+        let Some(rename) = self.rename.take() else {
+            return false;
+        };
+        let words = rename.input.value().trim().to_owned();
+        if words.is_empty() || words == rename.before {
+            return true;
+        }
+        let icon = self
+            .rows
+            .iter()
+            .find(|row| (row.document, row.node) == (rename.document, rename.node))
+            .and_then(|row| row.icon.clone());
+        let title = match icon {
+            Some(icon) => format!("{icon} {words}"),
+            None => words.clone(),
+        };
+        self.pending = Some(Request::Retitle {
+            document: rename.document,
+            node: rename.node,
+            title,
+        });
+        true
+    }
+
+    fn rename_key(&mut self, key: &Key, text: Option<&str>, mods: ModifiersState) -> bool {
+        match key {
+            Key::Named(NamedKey::Enter) => self.commit_rename(),
+            Key::Named(NamedKey::Escape) => {
+                self.rename = None;
+                true
+            }
+            _ => {
+                if let Some(rename) = self.rename.as_mut() {
+                    rename.input.key(&mut self.engine, key, text, mods);
+                }
+                true
+            }
+        }
+    }
+
+    /// Where the rename field stands: over the title of its row, between
+    /// the kind glyph and the chips. `None` while nothing is renamed or its
+    /// row is not on the page.
+    pub(super) fn rename_field(&self) -> Option<Rect> {
+        let rename = self.rename.as_ref()?;
+        let idx = self
+            .rows
+            .iter()
+            .position(|row| (row.document, row.node) == (rename.document, rename.node))?;
+        let line = self.lines.iter().position(|l| l == &Line::Task(idx))?;
+        let r = self.table().row_rect(&self.bands(), line);
+        let row = &self.rows[idx];
+        let has_icon = self.row_glyph(row).is_some() || row.icon.is_some();
+        let widths = self.row_chip_ws.get(idx).cloned().unwrap_or_default();
+        Some(super::row::title_field(r, has_icon, &widths))
+    }
+
     /// Enter on the selected row: **the same request a click makes**, so the
     /// keyboard and the pointer cannot open two different things.
     pub(super) fn open_selected(&mut self, new_tab: bool) -> bool {
@@ -1423,15 +1731,24 @@ impl TasksView {
 
     /// **Follow row `i`'s list chip.** The one chip that is a control; lifted
     /// out of `press` for [`toggle_complete`](Self::toggle_complete)'s reason.
-    pub(super) fn open_row_list(&mut self, i: usize) -> bool {
-        self.select_row(i);
-        let Some(list) = self.rows.get(i).and_then(|row| self.leads_to_list(row)) else {
-            return false;
+    /// **The list chip pressed**: the list picker, to change it — at the
+    /// pointer, or under the row's `…` when there is no pointer (a screen
+    /// reader's click). A chip inside a selection of several decides for
+    /// the whole selection, as the value chips do.
+    pub(super) fn press_list_chip(&mut self, i: usize, at: Option<(f32, f32)>) -> bool {
+        if !self.is_selected(i) {
+            self.select_row(i);
+        }
+        let tasks = if self.selection().len() > 1 {
+            self.selected_tasks()
+        } else {
+            self.rows
+                .get(i)
+                .map(|row| vec![(row.document, row.node)])
+                .unwrap_or_default()
         };
-        self.pending = Some(Request::OpenList { list });
-        true
+        self.open_list_picker_at(&tasks, at)
     }
-
     /// The menu key over the selected row — anchored on that row's `…`, which
     /// is where the same menu opens from the pointer.
     pub(super) fn menu_for_selected(&mut self) -> bool {
@@ -1442,18 +1759,48 @@ impl TasksView {
             return false;
         };
         let d = self.parts(self.table().row_rect(&self.bands(), line)).dots;
-        let Some(row) = self.rows.get(i) else {
-            return false;
-        };
-        self.pending = Some(Request::RowMenu {
+        self.pending = self.row_menu_request(i, (d.x + d.w, d.y + d.h));
+        self.pending.is_some()
+    }
+
+    /// **The menu for row `i`, opened at `at`** — the row's own, or, when `i`
+    /// is one of several selected rows, the selection's. The one place either
+    /// is built, for the `…`, a right-click and the menu key alike; it was
+    /// written out three times.
+    fn row_menu_request(&self, i: usize, at: (f32, f32)) -> Option<Request> {
+        let selection = self.selection();
+        if selection.len() > 1 && selection.contains(&i) {
+            let rows: Vec<&TaskEntry> = selection.iter().map(|&j| &self.rows[j]).collect();
+            return Some(Request::RowsMenu {
+                tasks: rows.iter().map(|row| (row.document, row.node)).collect(),
+                native: rows
+                    .iter()
+                    .filter(|row| self.task_documents.contains(&row.document))
+                    .map(|row| (row.document, row.node))
+                    .collect(),
+                completed: rows.iter().all(|row| row.completed),
+                at,
+            });
+        }
+        let row = self.rows.get(i)?;
+        Some(Request::RowMenu {
             document: row.document,
             node: row.node,
             completed: row.completed,
             pinned_today: row.pinned_today,
             native: self.task_documents.contains(&row.document),
             list: self.leads_to_list(row),
-            at: (d.x + d.w, d.y + d.h),
-        });
+            at,
+        })
+    }
+
+    /// Delete on the selection: ask the container to take it off Tasks.
+    fn remove_selection(&mut self) -> bool {
+        let tasks = self.selected_tasks();
+        if tasks.is_empty() {
+            return false;
+        }
+        self.pending = Some(Request::RemoveTasks { tasks });
         true
     }
 
@@ -1504,14 +1851,8 @@ impl TasksView {
     }
 
     fn measure_header(&mut self) {
-        self.remeasure_chips();
-        // Measured here rather than where it is drawn, with the chips and for
-        // the chips' reason — see [`action_w`](Self::action_w).
-        self.action_w = self
-            .engine
-            .simple_layout(states::ADD_A_TASK, theme::role::row())
-            .width();
-        self.header_h = self.chips_top() + self.chip_h() + HEADER_GAP;
+        // The header is the heading's line: no page draws a filter row.
+        self.header_h = self.title_top() + super::draw::TITLE.metrics.line_height + HEADER_GAP;
     }
 
     /// Where the title's layout box starts. **Less than [`PAD`], on purpose** —
@@ -1530,15 +1871,6 @@ impl TasksView {
         if self.header_dots().contains(x, y) {
             return Some(Hit::HeaderDots);
         }
-        if let Some(i) = self.chip_rects().iter().position(|r| r.contains(x, y)) {
-            return Some(Hit::Chip(i));
-        }
-        // The empty state's action sits below the capture row, where the table
-        // has no band at all — so it is resolved here, beside the header's own
-        // controls, rather than as a row that does not exist.
-        if self.empty_action_rect().is_some_and(|r| r.contains(x, y)) {
-            return Some(Hit::EmptyAction);
-        }
         let bands = self.bands();
         let i = self.table().row_at(&bands, x, y)?;
         let r = self.table().row_rect(&bands, i);
@@ -1555,19 +1887,32 @@ impl TasksView {
                 if p.dots.contains(x, y) {
                     return Some(Hit::Dots(*row));
                 }
-                // The list chip, where it leads somewhere: the one chip that
-                // is a control (finding 36). The others stay labels.
-                if let Some(entry) = self.rows.get(*row)
-                    && let Some(i) = self
+                // **The chips that change something.** The list chip opens
+                // its list, where it leads somewhere (finding 36); the due,
+                // the priority and the colour open their picker. *In trash*
+                // and a list chip on its own list's page stay labels.
+                if let Some(entry) = self.rows.get(*row) {
+                    let rects = self.row_chip_rects(r, *row);
+                    let under = self
                         .row_chips(entry)
-                        .iter()
-                        .position(|chip| chip.list.is_some())
-                    && self
-                        .row_chip_rects(r, *row)
-                        .get(i)
-                        .is_some_and(|c| c.contains(x, y))
-                {
-                    return Some(Hit::ListChip(*row));
+                        .into_iter()
+                        .zip(rects)
+                        .find(|(_, c)| c.contains(x, y))
+                        .map(|(chip, _)| chip);
+                    match under {
+                        Some(chip) if chip.list.is_some() => {
+                            return Some(Hit::ListChip(*row));
+                        }
+                        Some(chip)
+                            if matches!(
+                                chip.kind,
+                                ChipKind::Due | ChipKind::Priority | ChipKind::Swatch
+                            ) =>
+                        {
+                            return Some(Hit::ValueChip(*row, chip.kind));
+                        }
+                        _ => {}
+                    }
                 }
                 Some(Hit::Row(*row))
             }
@@ -1631,11 +1976,6 @@ impl TasksView {
             .collect()
     }
 
-    #[cfg(test)]
-    pub(super) fn chips_for_test(&self) -> Vec<FilterChip> {
-        self.chips()
-    }
-
     /// The header band's three readings, as the suite asks them.
     #[cfg(test)]
     pub(super) fn title_for_test(&self) -> String {
@@ -1671,8 +2011,8 @@ impl TasksView {
     }
 
     #[cfg(test)]
-    pub(super) fn chip_rects_for_test(&self) -> Vec<Rect> {
-        self.chip_rects()
+    pub(super) fn header_h_for_test(&self) -> f32 {
+        self.header_h
     }
 
     /// Which empty state the page is in — the gate itself, so a test asserts on
@@ -1683,18 +2023,19 @@ impl TasksView {
     }
 
     #[cfg(test)]
-    pub(super) fn empty_action_rect_for_test(&self) -> Option<Rect> {
-        self.empty_action_rect()
-    }
-
-    #[cfg(test)]
     pub(super) fn selected_for_test(&self) -> Option<usize> {
         self.selected_row()
     }
 
     #[cfg(test)]
-    pub(super) fn capturing_for_test(&self) -> bool {
+    pub(crate) fn capturing_for_test(&self) -> bool {
         self.capture.is_some()
+    }
+
+    /// What the capture row's field holds, while it is open.
+    #[cfg(test)]
+    pub(super) fn capture_value_for_test(&self) -> Option<String> {
+        self.capture.as_ref().map(|capture| capture.value())
     }
 
     #[cfg(test)]
@@ -1732,6 +2073,15 @@ impl TasksView {
         }
     }
 
+    /// The open colour picker's rows.
+    #[cfg(test)]
+    pub(super) fn color_picker_for_test(&self) -> Option<Vec<ColorPick>> {
+        match &self.picker {
+            Some(Picker::Color(picker)) => Some(picker.menu.items().to_vec()),
+            _ => None,
+        }
+    }
+
     /// The open priority picker's rows.
     #[cfg(test)]
     pub(super) fn priority_picker_for_test(&self) -> Option<Vec<super::pickers::PriorityRow>> {
@@ -1739,6 +2089,12 @@ impl TasksView {
             Some(Picker::Priority(picker)) => Some(picker.menu.items().to_vec()),
             _ => None,
         }
+    }
+
+    /// Whether the list picker is the panel standing.
+    #[cfg(test)]
+    pub(crate) fn list_picker_for_test(&self) -> Option<()> {
+        matches!(self.picker, Some(Picker::List(_))).then_some(())
     }
 
     /// The open calendar's seeds — the day it is showing and whether it offers
@@ -1835,6 +2191,17 @@ impl TasksView {
     /// A picker's decision, applied as a press or a key would apply it.
     #[cfg(test)]
     pub(super) fn settle_for_test(&mut self, choice: Choice) -> bool {
+        self.settle(choice)
+    }
+
+    /// A day pressed in the open calendar, through the calendar's own answer
+    /// for whatever it was opened for.
+    #[cfg(test)]
+    pub(super) fn pick_day_for_test(&mut self, day: NaiveDate) -> bool {
+        let Some(Picker::Due(pick)) = &self.picker else {
+            return false;
+        };
+        let choice = pick.resolve(koru_ui::date_grid::Pick::Day(day));
         self.settle(choice)
     }
 
@@ -1936,6 +2303,11 @@ impl TasksView {
                 ),
             }),
             priority: capture.priority,
+            // **On top of a list ordered by hand**, where it was typed.
+            rank: self.manual_order().then(|| {
+                let ranks: Vec<Option<i64>> = self.rows.iter().map(|row| row.rank).collect();
+                super::rank::top(&ranks)
+            }),
         })
     }
 
@@ -1949,7 +2321,7 @@ impl TasksView {
     /// second piece of state deciding it.
     pub(super) fn open_overflow(&mut self) -> bool {
         let d = self.header_dots();
-        let items = super::menu::overflow_items(&self.filters);
+        let items = super::menu::overflow_items(&self.filters, self.target);
         // One opening, one number, never reused. See `panel_instance`.
         self.panel_instance += 1;
         // The button's bottom-**right**, so the panel hangs back under it rather
@@ -2008,12 +2380,12 @@ impl TasksView {
         let mut f = self.filters;
         match item.row {
             OverflowRow::RecentlyCompleted => f.recently_completed = !f.recently_completed,
-            OverflowRow::Sort(sort) => f.sort = sort,
+            OverflowRow::Sort(sort) => f.set_sort_for(self.target, sort),
             OverflowRow::Divider | OverflowRow::SortHeading => return false,
         }
         self.set_filters(f);
         if let Some(menu) = &mut self.overflow {
-            super::menu::sync(menu.items_mut(), &f);
+            super::menu::sync(menu.items_mut(), &f, self.target);
         }
         true
     }
@@ -2031,20 +2403,33 @@ impl TasksView {
     /// off can be half a minute old, and a picker over nothing would write into
     /// a task the reader cannot see.
     pub fn open_list_picker(&mut self, document: DocumentId, node: NodeId) -> bool {
-        let Some((i, d)) = self.row_anchor(document, node) else {
+        self.open_list_picker_for(&[(document, node)])
+    }
+
+    /// The membership picker for **several rows** — a selection's *List* —
+    /// over the first of them this page shows. A list is checked only when
+    /// every one of them is in it, which is also what makes choosing it a
+    /// no-op.
+    pub fn open_list_picker_for(&mut self, tasks: &[(DocumentId, NodeId)]) -> bool {
+        self.open_list_picker_at(tasks, None)
+    }
+
+    fn open_list_picker_at(
+        &mut self,
+        tasks: &[(DocumentId, NodeId)],
+        at: Option<(f32, f32)>,
+    ) -> bool {
+        let Some((rows, d)) = self.rows_anchor(tasks) else {
             return false;
         };
-        let items = super::menu::list_picker_items(&self.lists, self.rows[i].list);
+        let (at, align) = menu_anchor(d, at);
+        let current = common(rows.iter().map(|&i| self.rows[i].list)).flatten();
+        let items = super::menu::list_picker_items(&self.lists, current);
         self.overflow = None;
         self.panel_instance += 1;
         self.picker = Some(Picker::List(ListPicker {
-            target: Target::row(document, node),
-            menu: Menu::aligned(
-                &mut self.engine,
-                (d.x + d.w, d.y + d.h),
-                items,
-                Anchor::ButtonRight,
-            ),
+            target: self.rows_target(&rows),
+            menu: Menu::aligned(&mut self.engine, at, items, align),
         }));
         true
     }
@@ -2063,30 +2448,72 @@ impl TasksView {
         ))
     }
 
-    /// *Priority…* over one row: the editor's four levels in the scale's own
+    /// The rows of `tasks` this page shows, in its order, and the `…` of the
+    /// first — or nothing when it shows none of them. A task that left the
+    /// page since its menu opened is left out rather than written blind.
+    fn rows_anchor(&self, tasks: &[(DocumentId, NodeId)]) -> Option<(Vec<usize>, Rect)> {
+        let mut rows: Vec<usize> = tasks
+            .iter()
+            .filter_map(|&(document, node)| {
+                self.rows
+                    .iter()
+                    .position(|row| row.document == document && row.node == node)
+            })
+            .collect();
+        rows.sort_unstable();
+        rows.dedup();
+        let first = &self.rows[*rows.first()?];
+        let (_, d) = self.row_anchor(first.document, first.node)?;
+        Some((rows, d))
+    }
+
+    /// The picker target for these rows.
+    fn rows_target(&self, rows: &[usize]) -> Target {
+        Target::Rows(
+            rows.iter()
+                .map(|&i| (self.rows[i].document, self.rows[i].node))
+                .collect(),
+        )
+    }
+
+    /// *Priority* over one row: the editor's four levels in the scale's own
     /// order, the row's current one checked, Clear while one is set. The same
     /// anchoring and the same refusal as [`open_list_picker`](Self::open_list_picker).
     pub fn open_priority_picker(&mut self, document: DocumentId, node: NodeId) -> bool {
-        let Some((i, d)) = self.row_anchor(document, node) else {
+        self.open_priority_picker_for(&[(document, node)])
+    }
+
+    /// *Priority* for several rows: a level is checked only when every one
+    /// of them has it.
+    pub fn open_priority_picker_for(&mut self, tasks: &[(DocumentId, NodeId)]) -> bool {
+        self.open_priority_picker_at(tasks, None)
+    }
+
+    fn open_priority_picker_at(
+        &mut self,
+        tasks: &[(DocumentId, NodeId)],
+        at: Option<(f32, f32)>,
+    ) -> bool {
+        let Some((rows, d)) = self.rows_anchor(tasks) else {
             return false;
         };
-        let current = self.rows[i].priority.as_deref().and_then(Priority::parse);
+        let (at, align) = menu_anchor(d, at);
+        let current = common(
+            rows.iter()
+                .map(|&i| self.rows[i].priority.as_deref().and_then(Priority::parse)),
+        )
+        .flatten();
         let items = priority_rows(current);
         self.overflow = None;
         self.panel_instance += 1;
         self.picker = Some(Picker::Priority(PriorityPick {
-            target: Target::row(document, node),
-            menu: Menu::aligned(
-                &mut self.engine,
-                (d.x + d.w, d.y + d.h),
-                items,
-                Anchor::ButtonRight,
-            ),
+            target: self.rows_target(&rows),
+            menu: Menu::aligned(&mut self.engine, at, items, align),
         }));
         true
     }
 
-    /// *Due…* over one row: the shared calendar, opened on the row's own day
+    /// *Due* over one row: the shared calendar, opened on the row's own day
     /// with Clear offered when it has one, else on today — the editor's rule
     /// for its picker, read off the row.
     ///
@@ -2094,22 +2521,90 @@ impl TasksView {
     /// field resolves against the same instant the panel opened on; the
     /// widget reads no clock of its own.
     pub fn open_due_picker(&mut self, document: DocumentId, node: NodeId) -> bool {
-        let Some((i, d)) = self.row_anchor(document, node) else {
+        self.open_due_picker_for(&[(document, node)])
+    }
+
+    /// *Due* for several rows: opened on their day when they share one, else
+    /// on today, with Clear offered while any of them has a date.
+    pub fn open_due_picker_for(&mut self, tasks: &[(DocumentId, NodeId)]) -> bool {
+        self.open_due_picker_at(tasks, None)
+    }
+
+    fn open_due_picker_at(
+        &mut self,
+        tasks: &[(DocumentId, NodeId)],
+        at: Option<(f32, f32)>,
+    ) -> bool {
+        let Some((rows, d)) = self.rows_anchor(tasks) else {
             return false;
         };
         let now = chrono::Local::now().naive_local();
-        let (selected, offers_clear) = due_seeds(self.rows[i].due_day(), self.today);
+        let day = common(rows.iter().map(|&i| self.rows[i].due_day())).flatten();
+        let (selected, _) = due_seeds(day, self.today);
+        let offers_clear = rows.iter().any(|&i| self.rows[i].due_day().is_some());
         let grid = DateGrid::with_phrase_field(&mut self.engine, selected, now, offers_clear);
-        let panel = DuePick::place(d, grid.size(), self.viewport);
+        let panel = match at {
+            Some((x, y)) => {
+                DuePick::place_under(Rect::new(x, y, 0.0, 0.0), grid.size(), self.viewport)
+            }
+            None => DuePick::place(d, grid.size(), self.viewport),
+        };
         self.overflow = None;
         self.panel_instance += 1;
         self.picker = Some(Picker::Due(DuePick {
-            target: Target::row(document, node),
+            target: self.rows_target(&rows),
             grid,
             panel,
             clear_hovered: false,
         }));
         true
+    }
+
+    /// The colour picker for these rows, at `at` when a chip was pressed: the
+    /// accent colours, the line's own checked while every row shares it.
+    fn open_color_picker_at(
+        &mut self,
+        tasks: &[(DocumentId, NodeId)],
+        at: Option<(f32, f32)>,
+    ) -> bool {
+        let Some((rows, d)) = self.rows_anchor(tasks) else {
+            return false;
+        };
+        let (at, align) = menu_anchor(d, at);
+        let current = common(rows.iter().map(|&i| self.rows[i].color.clone())).flatten();
+        let items = super::menu::color_picker_items(current.as_deref());
+        self.overflow = None;
+        self.panel_instance += 1;
+        self.picker = Some(Picker::Color(ColorPicker {
+            target: self.rows_target(&rows),
+            menu: Menu::aligned(&mut self.engine, at, items, align),
+        }));
+        true
+    }
+
+    /// **A value chip pressed** — its due, its priority or its colour: that
+    /// value's picker, **at the pointer**. A chip on a row inside a selection
+    /// of several decides for the whole selection, as the row's menu there
+    /// does; any other row becomes the selection first.
+    fn press_value_chip(&mut self, i: usize, kind: ChipKind, at: (f32, f32)) -> bool {
+        if !self.is_selected(i) {
+            self.select_row(i);
+        }
+        let selection = self.selection();
+        let tasks: Vec<(DocumentId, NodeId)> = if selection.len() > 1 {
+            self.selected_tasks()
+        } else {
+            self.rows
+                .get(i)
+                .map(|row| vec![(row.document, row.node)])
+                .unwrap_or_default()
+        };
+        match kind {
+            ChipKind::Due => self.open_due_picker_at(&tasks, Some(at)),
+            ChipKind::Priority => self.open_priority_picker_at(&tasks, Some(at)),
+            ChipKind::Swatch => self.open_color_picker_at(&tasks, Some(at)),
+            ChipKind::Tag => false,
+        }
     }
 
     /// A `/` row chosen on the capture: the same three pickers the row's `…`
@@ -2120,7 +2615,14 @@ impl TasksView {
         };
         let r = self.table().row_rect(&self.bands(), 0);
         let d = self.parts(r).dots;
-        let at = (d.x + d.w, d.y + d.h);
+        // **Where the command was typed**, when the row knows: the picker
+        // hangs under the `/`, top-left at it. Else the row's `…`, as a row's
+        // own pickers do.
+        let trigger = capture.trigger();
+        let (at, align) = match trigger {
+            Some(t) => ((t.x, t.y + t.h), Anchor::Cursor),
+            None => ((d.x + d.w, d.y + d.h), Anchor::ButtonRight),
+        };
         self.overflow = None;
         self.panel_instance += 1;
         match row {
@@ -2135,14 +2637,14 @@ impl TasksView {
                 let items = super::menu::list_picker_items(&self.lists, current);
                 self.picker = Some(Picker::List(ListPicker {
                     target: Target::Capture,
-                    menu: Menu::aligned(&mut self.engine, at, items, Anchor::ButtonRight),
+                    menu: Menu::aligned(&mut self.engine, at, items, align),
                 }));
             }
             SlashRow::Priority => {
                 let items = priority_rows(capture.priority);
                 self.picker = Some(Picker::Priority(PriorityPick {
                     target: Target::Capture,
-                    menu: Menu::aligned(&mut self.engine, at, items, Anchor::ButtonRight),
+                    menu: Menu::aligned(&mut self.engine, at, items, align),
                 }));
             }
             SlashRow::Due => {
@@ -2160,7 +2662,10 @@ impl TasksView {
                 let (selected, offers_clear) = due_seeds(day, self.today);
                 let grid =
                     DateGrid::with_phrase_field(&mut self.engine, selected, now, offers_clear);
-                let panel = DuePick::place(d, grid.size(), self.viewport);
+                let panel = match trigger {
+                    Some(t) => DuePick::place_under(t, grid.size(), self.viewport),
+                    None => DuePick::place(d, grid.size(), self.viewport),
+                };
                 self.picker = Some(Picker::Due(DuePick {
                     target: Target::Capture,
                     grid,
@@ -2183,6 +2688,12 @@ impl TasksView {
                 .map(koru_ui::MenuItem::selectable)
                 .collect(),
             Some(Picker::Priority(picker)) => picker
+                .menu
+                .items()
+                .iter()
+                .map(koru_ui::MenuItem::selectable)
+                .collect(),
+            Some(Picker::Color(picker)) => picker
                 .menu
                 .items()
                 .iter()
@@ -2214,15 +2725,13 @@ impl TasksView {
             ListPick::Clear => None,
             ListPick::Divider | ListPick::Empty => return false,
         };
-        match picker.target {
-            Target::Row { document, node } => {
-                self.pending = Some(Request::SetList {
-                    document,
-                    node,
-                    list,
-                });
-            }
-            Target::Capture => {
+        match picker.target.request(|document, node| Request::SetList {
+            document,
+            node,
+            list,
+        }) {
+            Some(request) => self.pending = Some(request),
+            None => {
                 if let Some(capture) = self.capture.as_mut() {
                     capture.list = list;
                 }
@@ -2230,6 +2739,41 @@ impl TasksView {
         }
         self.picker = None;
         true
+    }
+
+    /// Choose one row of the colour picker; the panel closes on a choice.
+    /// The colour the rows already share is a no-op, as a list or a level is.
+    pub(super) fn choose_color(&mut self, row: usize) -> bool {
+        let Some(Picker::Color(picker)) = &self.picker else {
+            return false;
+        };
+        let color = match picker.menu.items().get(row) {
+            Some(ColorPick::Color { checked: true, .. }) => {
+                self.picker = None;
+                return true;
+            }
+            Some(ColorPick::Color { token, .. }) => Some((*token).to_owned()),
+            Some(ColorPick::Clear) => None,
+            Some(ColorPick::Divider) | None => return false,
+        };
+        let request = picker.target.request(|document, node| Request::SetColor {
+            document,
+            node,
+            color: color.clone(),
+        });
+        self.pending = request;
+        self.picker = None;
+        true
+    }
+
+    /// Choose a row of whichever menu picker is up.
+    fn choose_picked(&mut self, row: usize) -> bool {
+        match self.picker {
+            Some(Picker::List(_)) => self.choose_list(row),
+            Some(Picker::Priority(_)) => self.choose_priority(row),
+            Some(Picker::Color(_)) => self.choose_color(row),
+            Some(Picker::Due(_)) | None => false,
+        }
     }
 
     /// Choose one row of the priority picker; the panel closes on a choice.
@@ -2299,6 +2843,7 @@ impl TasksView {
         let row = match &self.picker {
             Some(Picker::List(picker)) => Ok(picker.menu.item_at(viewport, x, y)),
             Some(Picker::Priority(picker)) => Ok(picker.menu.item_at(viewport, x, y)),
+            Some(Picker::Color(picker)) => Ok(picker.menu.item_at(viewport, x, y)),
             Some(Picker::Due(_)) => Err(()),
             None => return false,
         };
@@ -2308,11 +2853,7 @@ impl TasksView {
             // rule every menu in this app follows.
             Ok(None) => self.picker = None,
             Ok(Some(row)) => {
-                if matches!(self.picker, Some(Picker::List(_))) {
-                    self.choose_list(row);
-                } else {
-                    self.choose_priority(row);
-                }
+                self.choose_picked(row);
             }
         }
         true
@@ -2344,6 +2885,7 @@ impl TasksView {
                 match &mut self.picker {
                     Some(Picker::List(picker)) => picker.menu.step(&enabled, delta),
                     Some(Picker::Priority(picker)) => picker.menu.step(&enabled, delta),
+                    Some(Picker::Color(picker)) => picker.menu.step(&enabled, delta),
                     _ => {}
                 }
             }
@@ -2351,14 +2893,11 @@ impl TasksView {
                 let hover = match &self.picker {
                     Some(Picker::List(picker)) => picker.menu.hover,
                     Some(Picker::Priority(picker)) => picker.menu.hover,
+                    Some(Picker::Color(picker)) => picker.menu.hover,
                     _ => None,
                 };
                 if let Some(row) = hover {
-                    if matches!(self.picker, Some(Picker::List(_))) {
-                        self.choose_list(row);
-                    } else {
-                        self.choose_priority(row);
-                    }
+                    self.choose_picked(row);
                 }
             }
             _ => {}
@@ -2369,7 +2908,9 @@ impl TasksView {
     // ------------------------------------------------------------- input
 
     /// `asks_where` is Alt alone: on a row it asks where the task opens.
-    fn press(&mut self, x: f32, y: f32, asks_where: bool) -> bool {
+    /// `toggle` (Ctrl) and `extend` (Shift) grow the selection on a row
+    /// instead of replacing it.
+    fn press(&mut self, x: f32, y: f32, asks_where: bool, toggle: bool, extend: bool) -> bool {
         // One panel at a time, and the picker is the one that can be up over a
         // row: a press inside it chooses, a press outside dismisses it and does
         // nothing more — every menu in this app.
@@ -2408,6 +2949,17 @@ impl TasksView {
             }
             return true;
         }
+        // The rename field: a press in it moves the caret; anywhere else
+        // keeps the words and lets the press land where it was aimed.
+        if let Some(field) = self.rename_field() {
+            if field.contains(x, y) {
+                if let Some(rename) = self.rename.as_mut() {
+                    rename.input.click(&mut self.engine, field, x, y);
+                }
+                return true;
+            }
+            self.commit_rename();
+        }
         // A press outside the field commits it, the rule every field in this
         // app follows — and then the press still lands where it was aimed.
         if self.capture.is_some() && !self.capture_rect().contains(x, y) {
@@ -2418,22 +2970,9 @@ impl TasksView {
         }
         match self.hit_at(x, y) {
             Some(Hit::HeaderDots) => self.open_overflow(),
-            // **The action opens nothing of its own.** The capture row is
-            // already the list's first row; this puts the caret in it, which is
-            // what "Add a task" has meant on this page since V-2.
-            Some(Hit::EmptyAction) => {
-                self.begin_capture();
-                true
-            }
-            Some(Hit::Chip(i)) => {
-                let Some(chip) = self.chips().get(i).cloned() else {
-                    return false;
-                };
-                self.press_chip(chip.press)
-            }
             Some(Hit::Capture) => {
                 self.begin_capture();
-                let rect = self.capture_rect();
+                let rect = super::capture::input_rect(self.capture_rect());
                 if let Some(capture) = self.capture.as_mut() {
                     capture.input.click(&mut self.engine, rect, x, y);
                 }
@@ -2441,33 +2980,27 @@ impl TasksView {
             }
             Some(Hit::Complete(i)) => self.toggle_complete(i),
             Some(Hit::Dots(i)) => {
-                self.select_row(i);
+                // A row inside the selection keeps it: the menu is the
+                // selection's. Any other row becomes the selection.
+                if !self.is_selected(i) {
+                    self.select_row(i);
+                }
                 let bands = self.bands();
                 let Some(line) = self.lines.iter().position(|l| l == &Line::Task(i)) else {
                     return false;
                 };
                 let d = self.parts(self.table().row_rect(&bands, line)).dots;
-                let Some(row) = self.rows.get(i) else {
-                    return false;
-                };
-                self.pending = Some(Request::RowMenu {
-                    document: row.document,
-                    node: row.node,
-                    completed: row.completed,
-                    pinned_today: row.pinned_today,
-                    native: self.task_documents.contains(&row.document),
-                    list: self.leads_to_list(row),
-                    // The button's bottom-right, so the menu hangs back under
-                    // it rather than out past the window's edge.
-                    at: (d.x + d.w, d.y + d.h),
-                });
-                true
+                // The button's bottom-right, so the menu hangs back under it
+                // rather than out past the window's edge.
+                self.pending = self.row_menu_request(i, (d.x + d.w, d.y + d.h));
+                self.pending.is_some()
             }
             // **The list chip opens the list.** The owner's ask (finding 36),
             // and the one exception to the rule under `Hit::Row`: the chip
             // names a page, and a name you can see and cannot follow is the
             // dead end the rail's rows never are.
-            Some(Hit::ListChip(i)) => self.open_row_list(i),
+            Some(Hit::ListChip(i)) => self.press_list_chip(i, Some((x, y))),
+            Some(Hit::ValueChip(i, kind)) => self.press_value_chip(i, kind, (x, y)),
             // **A click selects, and that is all it does.** The design's
             // sentence was *a whole-row click opens the node*, and it is the
             // reason this page has no inline affordances — but a list whose
@@ -2482,6 +3015,19 @@ impl TasksView {
             // selected as any press selects it, so the chooser is plainly
             // about this one. The tick, the `…` and the list chip are above,
             // and keep their meaning under Alt.
+            Some(Hit::Row(i)) if toggle => {
+                self.toggle_row(i);
+                true
+            }
+            Some(Hit::Row(i)) if extend => {
+                self.extend_to(i);
+                true
+            }
+            // **Every page's rows can be carried** — into a list in the
+            // sidebar from any page, and into a new place on a page that is
+            // ordered by hand. A release that never moved is the click this
+            // arm has always been.
+            Some(Hit::Row(i)) if !asks_where && self.drags_rows() => self.begin_drag(i, y),
             Some(Hit::Row(i)) => {
                 self.select_row(i);
                 if asks_where && let Some(row) = self.rows.get(i) {
@@ -2493,23 +3039,15 @@ impl TasksView {
                 }
                 true
             }
-            None => false,
+            // **A press on the page's empty space lets the selection go**
+            // (the owner's ask, 2026-11-05): below the rows, beside the
+            // heading, anywhere that is not a row or a control.
+            None => {
+                let had = self.selected.is_some() || !self.also.is_empty();
+                self.clear_selection();
+                had
+            }
         }
-    }
-
-    /// Press one chip.
-    ///
-    /// **A dimension, not a chip.** Each arm moves one dimension and never
-    /// combines two: the due selector steps to its next value rather than
-    /// ANDing windows that exclude each other.
-    pub(super) fn press_chip(&mut self, which: ChipPress) -> bool {
-        let mut f = self.filters;
-        match which {
-            ChipPress::MinHigh => f.min_high = !f.min_high,
-            ChipPress::Lifecycle => f.lifecycle = next_lifecycle(f.lifecycle),
-            ChipPress::WindowNext => f.window = f.window.next(),
-        }
-        self.set_filters(f)
     }
 
     /// Enter on the capture row. `true` when it produced a request.
@@ -2517,8 +3055,12 @@ impl TasksView {
         let request = self.capture_request();
         self.end_capture();
         match request {
+            // **The row stays open for the next one**: a fresh, empty capture
+            // with the caret in it, so a run of tasks is typed one Enter after
+            // another rather than a click before each.
             Some(request) => {
                 self.pending = Some(request);
+                self.begin_capture();
                 true
             }
             // Empty cancels — nothing typed is nothing meant, and a complaint
@@ -2538,13 +3080,23 @@ pub(super) struct RowChip {
     pub kind: ChipKind,
     pub label: String,
     pub accent: Option<String>,
-    /// The list this chip opens when pressed — `Some` on the list chip alone,
-    /// and only where the page is not already that list's own. Every other
-    /// chip is a label.
+    /// The list this chip names — `Some` on the membership chip alone, on
+    /// every page. Pressed, it opens the list picker to change it (the
+    /// owner's ask, 2026-11-05: *show the list to change, not send me to
+    /// the list*); going to the list is the row menu's *Go to list*.
     pub list: Option<ListId>,
 }
 
 impl RowChip {
+    /// This chip as **the one chip component**: compact, in its accent's
+    /// tone, and **with no remove lane** — a chip on this page is a reading
+    /// of the row, and the control that changes it is the row's menu. It
+    /// reserved the lane once anyway, which left 6 px on the left of every
+    /// chip and 21 px on the right.
+    pub(super) fn label_chip(&self) -> LabelChip<'_> {
+        LabelChip::attribute(self.kind, &self.label, self.accent.as_deref())
+    }
+
     fn tag(label: String, accent: Option<String>) -> Self {
         Self {
             kind: ChipKind::Tag,
@@ -2558,7 +3110,14 @@ impl RowChip {
 /// The rectangles one row is made of.
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub(super) struct RowParts {
+    /// The complete control's **target** — what a press is resolved against
+    /// and what accessibility reports — a [`CONTROL_W`] square.
     pub control: Rect,
+    /// The box **drawn** inside it, at the document's own size
+    /// ([`theme::CHECKBOX_SIZE`]) and centred, so a task ticked here and in
+    /// its document is one box at one size, and the target stays the size a
+    /// pointer can hit.
+    pub checkbox: Rect,
     pub dots: Rect,
     /// Everything between the control and the chips: the kind icon, the title
     /// and — in Today — the context line under it.
@@ -2600,26 +3159,6 @@ pub fn split_date(input: &str, today: NaiveDate) -> Option<(String, Parsed)> {
         return Some((head, parsed));
     }
     None
-}
-
-/// What the lifecycle selector's own label says. **Its value, not its name** —
-/// the chip is a selector, so the word on it is what the page is showing.
-pub fn lifecycle_label(lifecycle: LifecycleFilter) -> &'static str {
-    match lifecycle {
-        LifecycleFilter::Open => "Open",
-        LifecycleFilter::Completed => "Completed",
-        LifecycleFilter::All => "All",
-    }
-}
-
-/// The next value the selector offers. Three values, so it cycles rather than
-/// toggling; *Open* is the default and therefore the one it comes back to.
-pub fn next_lifecycle(lifecycle: LifecycleFilter) -> LifecycleFilter {
-    match lifecycle {
-        LifecycleFilter::Open => LifecycleFilter::Completed,
-        LifecycleFilter::Completed => LifecycleFilter::All,
-        LifecycleFilter::All => LifecycleFilter::Open,
-    }
 }
 
 /// Which rule-label group a dated row falls under.
@@ -2732,6 +3271,23 @@ impl View for TasksView {
         text: Option<&str>,
         mods: ModifiersState,
     ) -> bool {
+        // The rename field has the keyboard while it stands: Enter keeps
+        // the words, Escape puts the old ones back.
+        if self.rename.is_some() {
+            return self.rename_key(key, text, mods);
+        }
+        // F2 renames the selected row, the platform's rename key.
+        if matches!(key, Key::Named(NamedKey::F2))
+            && self.capture.is_none()
+            && let Some(i) = self.selected_row()
+        {
+            return self.begin_rename(i);
+        }
+        // **Escape takes a drag back**: the rows stay where they were.
+        if self.drag.is_some() && matches!(key, Key::Named(NamedKey::Escape)) {
+            self.drag = None;
+            return true;
+        }
         // The picker takes the keyboard the same way the overflow does, and for
         // the same reason: Escape closes the panel rather than the field under
         // it, and the arrows step rows rather than scroll the page.
@@ -2801,7 +3357,7 @@ impl View for TasksView {
             Key::Named(NamedKey::ArrowUp)
                 if self.selected_row() == Some(0) || self.rows.is_empty() =>
             {
-                self.selected = None;
+                self.clear_selection();
                 self.begin_capture();
                 true
             }
@@ -2816,9 +3372,13 @@ impl View for TasksView {
             Key::Named(NamedKey::ContextMenu) => self.menu_for_selected(),
             Key::Named(NamedKey::Escape) => {
                 let had = self.selected.is_some();
-                self.selected = None;
+                self.clear_selection();
                 had
             }
+            // **Delete takes the selection off Tasks**, once asked — the
+            // same *Remove from Tasks* as the menu row, for every selected
+            // task. A line in a document stays; nothing is deleted from one.
+            Key::Named(NamedKey::Delete) => self.remove_selection(),
             _ => false,
         }
     }
@@ -2831,10 +3391,15 @@ impl View for TasksView {
             && !self.mods.control_key()
             && !self.mods.shift_key()
             && !self.mods.super_key();
-        self.press(x, y, asks_where)
+        let toggle = ctrl || self.mods.control_key() || self.mods.super_key();
+        let extend = !toggle && self.mods.shift_key();
+        self.press(x, y, asks_where, toggle, extend)
     }
 
     fn mouse_move(&mut self, x: f32, y: f32) -> bool {
+        if self.drag.is_some() {
+            return self.drag_to(y);
+        }
         let viewport = self.viewport;
         if let Some(picker) = &mut self.picker {
             return match picker {
@@ -2844,6 +3409,11 @@ impl View for TasksView {
                     was != picker.menu.hover
                 }
                 Picker::Priority(picker) => {
+                    let was = picker.menu.hover;
+                    picker.menu.hover = picker.menu.item_at(viewport, x, y);
+                    was != picker.menu.hover
+                }
+                Picker::Color(picker) => {
                     let was = picker.menu.hover;
                     picker.menu.hover = picker.menu.item_at(viewport, x, y);
                     was != picker.menu.hover
@@ -2875,7 +3445,7 @@ impl View for TasksView {
         let was = self.hover;
         self.hover = self.hit_at(x, y);
         if self.capture.is_some() {
-            let rect = self.capture_rect();
+            let rect = super::capture::input_rect(self.capture_rect());
             let engine = &mut self.engine;
             if let Some(capture) = self.capture.as_mut()
                 && capture.input.drag(engine, rect, x)
@@ -2887,6 +3457,12 @@ impl View for TasksView {
     }
 
     fn mouse_up(&mut self, _ws: &mut WorkspaceDoc) -> bool {
+        if self.drag.is_some() {
+            return self.drop_drag();
+        }
+        if let Some(rename) = self.rename.as_mut() {
+            rename.input.release();
+        }
         if let Some(capture) = self.capture.as_mut() {
             capture.input.release();
         }
@@ -2906,11 +3482,15 @@ impl View for TasksView {
     /// The first click of the pair has already selected the row, which is why
     /// this acts on the selection rather than hit-testing again: a double click
     /// that landed a pixel off the row it opened would be its own bug.
+    ///
+    /// **It renames** (the owner's ask, 2026-11-05): a page-made task lives
+    /// in the hidden tasks document, and opening that is a look at storage,
+    /// not at the task. Opening is the row menu's *Open document*.
     fn mouse_double_click(&mut self, _ws: &WorkspaceDoc, x: f32, y: f32) -> bool {
-        if !matches!(self.hit_at(x, y), Some(Hit::Row(_))) {
+        let Some(Hit::Row(i)) = self.hit_at(x, y) else {
             return false;
-        }
-        self.open_selected(true)
+        };
+        self.begin_rename(i)
     }
 
     fn context_menu(&mut self, _ws: &mut WorkspaceDoc, x: f32, y: f32) -> bool {
@@ -2922,24 +3502,17 @@ impl View for TasksView {
             self.picker = None;
             return true;
         }
-        let Some(Hit::Row(i) | Hit::Complete(i) | Hit::Dots(i) | Hit::ListChip(i)) =
-            self.hit_at(x, y)
+        let Some(
+            Hit::Row(i) | Hit::Complete(i) | Hit::Dots(i) | Hit::ListChip(i) | Hit::ValueChip(i, _),
+        ) = self.hit_at(x, y)
         else {
             return false;
         };
-        let Some(row) = self.rows.get(i) else {
-            return false;
-        };
-        self.pending = Some(Request::RowMenu {
-            document: row.document,
-            node: row.node,
-            completed: row.completed,
-            pinned_today: row.pinned_today,
-            native: self.task_documents.contains(&row.document),
-            list: self.leads_to_list(row),
-            at: (x, y),
-        });
-        true
+        if !self.is_selected(i) {
+            self.select_row(i);
+        }
+        self.pending = self.row_menu_request(i, (x, y));
+        self.pending.is_some()
     }
 
     fn scroll_by(&mut self, delta: MouseScrollDelta) {
@@ -2976,10 +3549,9 @@ impl View for TasksView {
                 | Hit::Dots(_)
                 | Hit::Row(_)
                 | Hit::ListChip(_)
+                | Hit::ValueChip(..)
                 | Hit::Capture
-                | Hit::Chip(_)
-                | Hit::HeaderDots
-                | Hit::EmptyAction,
+                | Hit::HeaderDots,
             ) => koru_ui::cursor::PRESS,
             None => koru_ui::cursor::IDLE,
         }
@@ -3022,4 +3594,21 @@ impl View for TasksView {
     fn restore(&mut self, _ws: &koru_workspace::Workspace, _settings: &Settings) {}
 
     fn capture(&self, _settings: &mut Settings) {}
+}
+
+/// The value every item shares, or `None` when they differ or there are
+/// none — what a picker opened for a selection shows as current.
+fn common<T: PartialEq>(mut values: impl Iterator<Item = T>) -> Option<T> {
+    let first = values.next()?;
+    values.all(|value| value == first).then_some(first)
+}
+
+/// Where a menu picker hangs: **at the pointer**, top-left there, when a chip
+/// was pressed; else under the row's `…`, right edge to it, as the row's
+/// menu that asked for it was.
+fn menu_anchor(dots: Rect, at: Option<(f32, f32)>) -> ((f32, f32), Anchor) {
+    match at {
+        Some(point) => (point, Anchor::Cursor),
+        None => ((dots.x + dots.w, dots.y + dots.h), Anchor::ButtonRight),
+    }
 }

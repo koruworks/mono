@@ -340,6 +340,8 @@ async fn run_session(
         principal: permit.dataset,
         expires_at_seconds: principal.expires_at_seconds,
         generation,
+        // A device's session: no claim reference crosses it either way.
+        claim_references: koru_replication::cloud::transfer::ClaimReferences::None,
     };
     let Some(capacity) = NonZeroUsize::new(SESSION_QUEUE) else {
         return;
@@ -445,115 +447,122 @@ async fn run_session(
         }
         std::future::pending::<()>().await;
     };
-    let work = cloud_sync::subscribe_dataset(
-        reader,
-        writer,
-        dataset_session,
-        plan,
-        store,
-        authorize,
-        downloads,
-        deferrals,
-        |_start| Decision::Accept,
-        move |progress| {
-            let step = match progress {
-                Progress::PassStarted => {
-                    counted.0.store(0, Ordering::Relaxed);
-                    counted.1.store(0, Ordering::Relaxed);
-                    progress_started
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .clear();
-                    record(&progress_activity, |a| {
-                        a.pass_started(dataset, now_millis())
-                    });
-                    set_stage(&progress_host, permit_id, CloudStage::Reconciling, None);
-                    None
-                }
-                Progress::PassFinished(outcome) => {
-                    report_pass(
-                        &progress_host,
-                        &progress_activity,
-                        dataset,
-                        permit_id,
-                        &outcome,
-                        counted.0.load(Ordering::Relaxed),
-                        counted.1.load(Ordering::Relaxed),
-                    );
-                    completed.send_replace(Some(*outcome));
-                    None
-                }
-                Progress::Documents { synced, required } => {
-                    record(&progress_activity, |a| {
-                        a.document_progress(dataset, synced, required, now_millis())
-                    });
-                    None
-                }
-                Progress::Started(unit) => {
-                    tracing::debug!(?unit, "cloud session: unit started");
-                    if let Some(key) = unit_document(unit)
-                        && let Ok(mut started) = progress_started.lock()
-                        && !started.contains(&key)
-                    {
-                        started.push(key);
+    // The extracted driver, over the one stream this session bridged: it ends
+    // when that stream does, with the session's result.
+    let driver = cloud_sync::driver::Driver::spawn(
+        cloud_sync::driver::OnceSource::new(reader, writer, dataset_session),
+        cloud_sync::driver::Parts {
+            plan,
+            stage: cloud_sync::Stage::Full,
+            jobs: store,
+            authorize,
+            downloads,
+            deferrals,
+            permission: |_start: &transfer::Start| Decision::Accept,
+            uploads: None,
+            progress: move |progress| {
+                let step = match progress {
+                    Progress::PassStarted => {
+                        counted.0.store(0, Ordering::Relaxed);
+                        counted.1.store(0, Ordering::Relaxed);
+                        progress_started
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .clear();
+                        record(&progress_activity, |a| {
+                            a.pass_started(dataset, now_millis())
+                        });
+                        set_stage(&progress_host, permit_id, CloudStage::Reconciling, None);
+                        None
                     }
-                    Some((unit, UnitStep::Started))
+                    Progress::PassFinished(outcome) => {
+                        report_pass(
+                            &progress_host,
+                            &progress_activity,
+                            dataset,
+                            permit_id,
+                            &outcome,
+                            counted.0.load(Ordering::Relaxed),
+                            counted.1.load(Ordering::Relaxed),
+                        );
+                        completed.send_replace(Some(*outcome));
+                        None
+                    }
+                    Progress::Documents { synced, required } => {
+                        record(&progress_activity, |a| {
+                            a.document_progress(dataset, synced, required, now_millis())
+                        });
+                        None
+                    }
+                    Progress::Started(unit) => {
+                        tracing::debug!(?unit, "cloud session: unit started");
+                        if let Some(key) = unit_document(unit)
+                            && let Ok(mut started) = progress_started.lock()
+                            && !started.contains(&key)
+                        {
+                            started.push(key);
+                        }
+                        Some((unit, UnitStep::Started))
+                    }
+                    Progress::Uploaded(unit) => {
+                        counted.0.fetch_add(1, Ordering::Relaxed);
+                        tracing::debug!(?unit, "cloud session: unit uploaded");
+                        Some((unit, UnitStep::Uploaded))
+                    }
+                    Progress::Downloaded(unit) => {
+                        counted.1.fetch_add(1, Ordering::Relaxed);
+                        tracing::debug!(?unit, "cloud session: unit downloaded");
+                        Some((unit, UnitStep::Downloaded))
+                    }
+                    Progress::Deferred { unit, upload } => {
+                        tracing::debug!(?unit, upload, "cloud session: unit deferred");
+                        Some((unit, UnitStep::Deferred))
+                    }
+                    // A Store refusal is recorded as the deferral it now is. The
+                    // Store's own code is already at `warn` from the pass; this
+                    // keeps the step where a query can answer it.
+                    Progress::Refused { unit, code } => {
+                        tracing::debug!(
+                            ?unit,
+                            code = code.as_str(),
+                            "cloud session: unit refused by a Store job"
+                        );
+                        Some((unit, UnitStep::Deferred))
+                    }
+                    // Not a step: the unit did not move, and saying so is the
+                    // point. It is handled beside the outcome below, where the
+                    // dataset's stage is set.
+                    Progress::Unavailable { unit, code } => {
+                        tracing::warn!(
+                            ?unit,
+                            code = code.as_str(),
+                            "cloud session: unit has stopped syncing"
+                        );
+                        None
+                    }
+                    Progress::Settled { unit, .. } => {
+                        tracing::debug!(?unit, "cloud session: unit settled");
+                        Some((unit, UnitStep::Settled))
+                    }
+                    Progress::RemoteHint => {
+                        tracing::debug!("cloud session: remote hint");
+                        None
+                    }
+                    // A device waits on no acknowledgement and reads its
+                    // session's end from the driver's result.
+                    Progress::Confirmed { .. } | Progress::SessionEnded(_) => None,
+                };
+                if let Some((unit, step)) = step {
+                    let at = now_millis();
+                    record(&progress_activity, |a| {
+                        a.unit(dataset, unit_document(unit), step, at)
+                    });
                 }
-                Progress::Uploaded(unit) => {
-                    counted.0.fetch_add(1, Ordering::Relaxed);
-                    tracing::debug!(?unit, "cloud session: unit uploaded");
-                    Some((unit, UnitStep::Uploaded))
-                }
-                Progress::Downloaded(unit) => {
-                    counted.1.fetch_add(1, Ordering::Relaxed);
-                    tracing::debug!(?unit, "cloud session: unit downloaded");
-                    Some((unit, UnitStep::Downloaded))
-                }
-                Progress::Deferred { unit, upload } => {
-                    tracing::debug!(?unit, upload, "cloud session: unit deferred");
-                    Some((unit, UnitStep::Deferred))
-                }
-                // A Store refusal is recorded as the deferral it now is. The
-                // Store's own code is already at `warn` from the pass; this
-                // keeps the step where a query can answer it.
-                Progress::Refused { unit, code } => {
-                    tracing::debug!(
-                        ?unit,
-                        code = code.as_str(),
-                        "cloud session: unit refused by a Store job"
-                    );
-                    Some((unit, UnitStep::Deferred))
-                }
-                // Not a step: the unit did not move, and saying so is the
-                // point. It is handled beside the outcome below, where the
-                // dataset's stage is set.
-                Progress::Unavailable { unit, code } => {
-                    tracing::warn!(
-                        ?unit,
-                        code = code.as_str(),
-                        "cloud session: unit has stopped syncing"
-                    );
-                    None
-                }
-                Progress::Settled { unit, .. } => {
-                    tracing::debug!(?unit, "cloud session: unit settled");
-                    Some((unit, UnitStep::Settled))
-                }
-                Progress::RemoteHint => {
-                    tracing::debug!("cloud session: remote hint");
-                    None
-                }
-            };
-            if let Some((unit, step)) = step {
-                let at = now_millis();
-                record(&progress_activity, |a| {
-                    a.unit(dataset, unit_document(unit), step, at)
-                });
-            }
+            },
         },
     );
     let outcome = tokio::select! {
-        result = work => result,
+        result = driver.join() => result,
         () = blob_work => unreachable!("file follower stays alive with the stream"),
     };
 

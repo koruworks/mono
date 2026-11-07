@@ -522,7 +522,7 @@ fn primary_wheel_over_a_canvas_is_the_canvases() {
     // Over the tab lane — chrome, not the canvas.
     assert!(!View::zoom_wheel(&mut v, pinch, x, rect.y - 4.0));
     // Under a menu.
-    v.open_new_tab_menu();
+    v.open_import_menu();
     assert!(v.menu.is_some());
     assert!(!View::zoom_wheel(&mut v, pinch, x, y));
 }

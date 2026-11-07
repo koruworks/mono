@@ -44,6 +44,24 @@ pub const SUPPORTED_CODEX_VERSIONS: &[&str] = &[
     "0.150.1", "0.153.4", "0.154.0", "0.156.1", "0.158.0", "0.163.0", "0.165.0", "0.166.0",
 ];
 
+/// The release Codex is accepted from onwards: the newest reviewed one.
+pub(super) const CODEX_FLOOR: &str = "0.166.0";
+
+/// **Whether Koru runs this Codex**: a reviewed release, or any release at or
+/// above the newest reviewed one (owner, 2026-11-06).
+///
+/// Codex used to be the one agent held to its exact list while Claude,
+/// OpenCode, Kimi, Grok and Devin admit newer releases from their pin
+/// (`AcpConfig::supports`). Codex ships often, so a machine that had just
+/// updated, 0.167.0 a day after 0.166.0 was reviewed, read *Needs attention*
+/// in Settings and couldn't start a chat until a Koru release caught up. A
+/// release older than the floor and off the list stays refused: it was
+/// never reviewed, and updating fixes it.
+pub fn codex_version_supported(version: &str) -> bool {
+    SUPPORTED_CODEX_VERSIONS.contains(&version)
+        || koru_session_protocol::version_at_least(version, CODEX_FLOOR)
+}
+
 /// One Codex app-server process, one ephemeral Codex thread, and one Koru
 /// managed session. Provider ids and JSON values never leave this adapter.
 pub struct CodexControl {
@@ -599,9 +617,7 @@ impl AgentControl for CodexControl {
                 ))
             };
         }
-        if self.shut_down
-            || !SUPPORTED_CODEX_VERSIONS.contains(&self.config.executable_version.as_str())
-        {
+        if self.shut_down || !codex_version_supported(self.config.executable_version.as_str()) {
             return Err(failure(
                 ErrorCode::ProviderIncompatible,
                 ProviderStage::Version,

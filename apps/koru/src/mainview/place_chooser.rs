@@ -102,6 +102,9 @@ pub(crate) enum PlaceTarget {
     /// reference — a Tasks page is a tab the window makes, not something a
     /// document can name.
     TasksPage(RailTarget),
+    /// A tile of the New… launcher Alt-chosen: the new thing, made where
+    /// the place says.
+    New(super::launcher::NewKind),
 }
 
 impl From<Reference> for PlaceTarget {
@@ -177,6 +180,7 @@ impl MainView {
                 self.open_task_where(ws, document, node, where_)
             }
             PlaceTarget::TasksPage(target) => self.open_tasks_page_where(target, where_),
+            PlaceTarget::New(kind) => self.create_new(kind, where_),
         };
         true
     }

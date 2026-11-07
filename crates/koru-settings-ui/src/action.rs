@@ -166,6 +166,8 @@ pub(crate) enum Action {
     RefreshAgentStatus,
     /// *Setup guide ↗*: the agent's install or setup page.
     AgentGuide(&'static str),
+    /// *Install*: run the vendor's install command for the agent, by key.
+    InstallAgent(String),
     /// *Default permission for new chats*: `true` for the *Other agents*
     /// row, and the permission chosen.
     AgentPermission(bool, koru_settings::AgentPermission),
@@ -243,6 +245,10 @@ pub enum Request {
     RefreshAgentStatus,
     /// Open an agent's setup guide in the browser: a fixed vendor page.
     OpenAgentGuide(&'static str),
+    /// Install an agent, by key: the host opens a terminal tab running the
+    /// vendor's install command, where the person sees its output and
+    /// answers its prompts, and checks the agent again when it ends.
+    InstallAgent(String),
     /// Store the permission new chats start in, on this machine: for the
     /// supported agents, or (`other`) for every other agent.
     SetAgentPermission {

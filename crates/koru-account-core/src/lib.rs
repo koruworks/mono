@@ -6,6 +6,7 @@
 //! and devices retain their existing client-minted identifiers; an account
 //! binds those identifiers without becoming their canonical store.
 
+pub mod app_connections;
 pub mod billing_history;
 pub mod cloud_leases;
 pub mod cloud_selection;
@@ -28,9 +29,11 @@ pub mod workspace_lifecycle;
 pub use creation::*;
 pub use device_ownership::*;
 pub use email::*;
-pub use ids::{AccountSessionId, AuthFlowId, AuthIdentityId, IdParseError, KoruIdentityId};
+pub use ids::{
+    AccountSessionId, AppConnectionId, AuthFlowId, AuthIdentityId, IdParseError, KoruIdentityId,
+};
 pub use koru_device::{DeviceDescriptorV1, DeviceId};
-pub use koru_store_core::{ProfileId, WorkspaceId};
+pub use koru_store_core::{DocumentId, ProfileId, WorkspaceId};
 pub use model::*;
 pub use password::*;
 pub use ports::*;

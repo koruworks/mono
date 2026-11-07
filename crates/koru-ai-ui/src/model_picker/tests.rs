@@ -1902,6 +1902,48 @@ fn the_rails_plus_asks_the_host_for_agent_providers() {
     assert!(!surface.take_agent_settings_request(), "asked once");
 }
 
+/// **An agent that cannot run here offers *Manage agent providers*** under
+/// its note (the user, 2026-11-05): the note says what is wrong — not
+/// installed, an unsupported version — and the row opens the page where it
+/// is put right. Only where the host offers that page, and not while the
+/// agent is still being checked, which settles on its own.
+#[test]
+fn an_agent_that_cannot_run_offers_manage_under_its_note() {
+    let mut surface = surface();
+    surface
+        .agent_status
+        .insert(agent("agent-claude"), AgentStatus::UnsupportedVersion);
+    open(&mut surface);
+    surface.select_rail_entry(RailEntry::Agent(agent("agent-claude")));
+    assert!(
+        !surface.picker_rows().contains(&Row::ManageAgents),
+        "not offered by the host"
+    );
+
+    surface.offer_agent_settings(true);
+    let rows = surface.picker_rows();
+    assert!(matches!(rows.first(), Some(Row::Note(_))), "the note first");
+    let index = rows
+        .iter()
+        .position(|row| *row == Row::ManageAgents)
+        .expect("Manage under the note");
+    assert!(surface.picker_choosable(&rows)[index], "it can be chosen");
+
+    assert!(surface.choose_picker_row(index));
+    assert!(!surface.chat_model_open, "the picker closes");
+    assert!(surface.take_agent_settings_request());
+
+    surface
+        .agent_status
+        .insert(agent("agent-claude"), AgentStatus::Checking);
+    open(&mut surface);
+    surface.select_rail_entry(RailEntry::Agent(agent("agent-claude")));
+    assert!(
+        !surface.picker_rows().contains(&Row::ManageAgents),
+        "Checking settles on its own"
+    );
+}
+
 /// **The arrow over the picker, the I-beam only in its search** (D44): the
 /// picker lies over the conversation, whose text gave its I-beam to the
 /// rows. Rows, *Legacy models*, the rail, ↻ and the panel's foot show the

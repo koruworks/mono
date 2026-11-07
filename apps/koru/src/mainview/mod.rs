@@ -61,6 +61,7 @@ mod harness;
 /// that call into it.
 pub(crate) mod accessibility;
 mod agent_cli_updates;
+mod agent_install;
 mod agent_mcp;
 mod agent_providers;
 mod canvas;
@@ -81,6 +82,7 @@ mod history;
 mod icon_action;
 mod import_dialog;
 mod keys;
+mod launcher;
 pub(crate) mod layout;
 mod link_device;
 pub(crate) mod linked_devices;
@@ -780,6 +782,9 @@ pub struct MainView {
     /// The place chooser an Alt+click on a reference opened, while it stands
     /// (`place_chooser`). Modal the way the menu is, and never up beside it.
     place_chooser: Option<place_chooser::PlaceAsk>,
+    /// The `+` button's New… dialog (`launcher`), centred over the window.
+    /// Modal the way the place chooser is; Alt on a tile hands over to it.
+    launcher: Option<launcher::LauncherAsk>,
     /// The modal opened by the taskbar's “New document” action. It is kept at
     /// container level so completing it can create a document and open its tab
     /// in one workspace edit.
@@ -1377,6 +1382,10 @@ pub struct MainView {
     /// presence probe's cached answer, refreshed each time the menu opens.
     /// See `mainview/profile_probe.rs`.
     profile_probe: profile_probe::ProfileProbe,
+    /// The *Install* tabs *Agent providers* opened that have not ended yet;
+    /// when one ends the agents are checked again. See
+    /// `mainview/agent_install.rs`.
+    agent_installs: Vec<agent_install::AgentInstall>,
     provider_readiness: Option<Vec<koru_session_protocol::ProviderReadiness>>,
     /// **The one delegation surface** (ROADMAP P1.14). Four gestures reach it
     /// and `MainView::begin_delegation` is the only thing that opens it.
@@ -1853,6 +1862,7 @@ impl MainView {
             hover: None,
             menu: None,
             place_chooser: None,
+            launcher: None,
             new_document: None,
             new_workspace_owner: None,
             snapshot_prompt: None,
@@ -2020,6 +2030,7 @@ impl MainView {
             terminate_after_attach: None,
             wants_session_popout: None,
             profile_probe: profile_probe::ProfileProbe::new(),
+            agent_installs: Vec::new(),
             provider_readiness: None,
             delegation: None,
             recording_modal: None,
@@ -2612,6 +2623,7 @@ impl MainView {
                         due: None,
                         list: None,
                         priority: None,
+                        rank: None,
                     },
                     false,
                 );
@@ -3042,17 +3054,19 @@ impl MainView {
 
     /// Ask for a title before creating a document. Used both for a cold taskbar
     /// launch and for an activation handed over by a second short-lived exe.
+    ///
+    /// **A document prompt even with no workspace open.** This used to ask
+    /// for a workspace's name instead, and committing it made only the
+    /// workspace — the document asked for never appeared. The shell now makes
+    /// a default workspace for a document that has nowhere to go
+    /// (`ensure_live_workspace` in the host), so the prompt asks for what was
+    /// asked for.
     pub fn prompt_new_document(&mut self) {
         self.menu = None;
         if self.new_document.is_none() {
-            // A cancelled *New workspace in…* prompt leaves its owner behind;
-            // this prompt's workspace, if it asks for one, is the open Profile's.
+            // A cancelled *New workspace in…* prompt leaves its owner behind.
             self.new_workspace_owner = None;
-            self.new_document = Some(if self.current_workspace().is_some() {
-                NewDocument::new(&mut self.engine)
-            } else {
-                NewDocument::workspace(&mut self.engine)
-            });
+            self.new_document = Some(NewDocument::new(&mut self.engine));
         }
     }
 
@@ -3138,9 +3152,10 @@ impl MainView {
     }
 
     /// The `+` menu's *Agents* flyout on its own, at the pointer — what
-    /// Welcome's *Run an agent in a terminal* opens. The same rows, dimmed off
-    /// the same probe, and a pick opens the same session tab as it does from
-    /// `+`. Nothing opens when this build shows no agents.
+    /// Welcome's *Run an agent in a terminal* opens. The same rows, off the
+    /// same probe — the installed agents, then *Manage…* — and a pick opens
+    /// the same session tab as it does from `+`. Nothing opens when this
+    /// build shows no agents.
     fn open_agents_menu(&mut self) -> bool {
         self.profile_probe.refresh(self.agent.wake_proxy());
         self.snapshot_plus_menu();
@@ -4147,11 +4162,13 @@ impl MainView {
         match &menu.subject {
             MenuSubject::NewTab => match action {
                 // A profile row reflects the off-thread presence probe: a
-                // program — shell or agent, one uniform rule — whose
-                // executable is not on this machine is dimmed with its
-                // *Not installed* note rather than hidden
-                // (`profile_probe::enabled_rows`).
+                // shell whose executable is not on this machine is dimmed
+                // with its *Not installed* note. A missing agent is left out
+                // of the *Agents* flyout altogether
+                // (`context_menu::agent_missing`); the dim is what a row
+                // fixed before the answer landed falls back to.
                 MenuAction::TerminalProfile(index) => self.profile_probe.row_enabled(index),
+                MenuAction::NewTaskIn(_) => true,
                 // Dimmed, with its reason beside it, when this build carries
                 // no configuration for the importer (C6) — never hidden.
                 MenuAction::ImportFormat(id) => {
@@ -4176,12 +4193,10 @@ impl MainView {
                         | MenuAction::OpenRunningSession(_)
                         | MenuAction::Chats
                         | MenuAction::NewAiChat
-                        | MenuAction::Socials
-                        | MenuAction::Delegate
                         | MenuAction::OpenRecentChat(_)
-                        | MenuAction::OpenWelcome
                         | MenuAction::ClearRecents
                         | MenuAction::ImportAs
+                        | MenuAction::ImportFiles
                 ),
             },
             // No tab is special any more, so this is just counting. Closing the
@@ -4209,8 +4224,10 @@ impl MainView {
                     | MenuAction::TerminalFontIs(_) => self.session_profile_of_tab(tab).is_some(),
                     MenuAction::PinTab => {
                         in_range
-                            && (document.is_some()
-                                || self.tabs().get(tab).is_some_and(|t| t.view.is_pinnable()))
+                            && self
+                                .tabs()
+                                .get(tab)
+                                .is_some_and(koru_app_shell::TabElement::pinnable)
                             && !pinned
                     }
                     MenuAction::UnpinTab => in_range && pinned,
@@ -4256,9 +4273,9 @@ impl MainView {
                 | MenuAction::ActiveShells
                 | MenuAction::ActiveAgents
                 | MenuAction::OpenRunningSession(_) => true,
-                // The same presence probe the `+` menu's rows read: a program
-                // whose executable is not on this machine is dimmed with its
-                // *Not installed* note, never hidden.
+                // The same presence probe and the same rule as the `+`
+                // menu's rows: a missing shell dims, a missing agent is not
+                // listed.
                 MenuAction::TerminalProfile(index) => self.profile_probe.row_enabled(index),
                 MenuAction::Rename => project.is_some(),
                 // Koru Terminal's refusal, in this window's local answer: a
@@ -4402,6 +4419,18 @@ impl MainView {
             // Every row of a task's menu is always available: the menu was
             // built from the row it opened on, and a row that has since gone
             // refuses at the command rather than by being dimmed here.
+            // A selection's menu offers only what applies to every task
+            // in it, so every row it holds is available.
+            MenuSubject::Tasks { .. } => matches!(
+                action,
+                MenuAction::TaskCreateDocument
+                    | MenuAction::TaskComplete
+                    | MenuAction::TaskReopen
+                    | MenuAction::TaskDue
+                    | MenuAction::TaskPriority
+                    | MenuAction::TaskList
+                    | MenuAction::TaskRemove
+            ),
             MenuSubject::Task { .. } => matches!(
                 action,
                 MenuAction::TaskGoToOrigin
@@ -4538,16 +4567,13 @@ impl MainView {
                     // The `+` menu's session has no placement: Unassigned.
                     self.open_session_tab_for_profile(index, None)
                 }
+                // The launcher's Shift+T: that page, caret in Add a task.
+                MenuAction::NewTaskIn(target) => self.new_task_in(target, None),
                 MenuAction::NewAiChat => self.open_ai_chat_tab(),
                 MenuAction::ManageAgents => {
                     self.open_settings_page(koru_settings_ui::PageId::AgentProviders)
                 }
-                MenuAction::Socials => self.open_socials_tab(),
-                // The `+` menu knows nothing about a subject, so the modal
-                // opens empty — one gesture, the same single path.
-                MenuAction::Delegate => self.begin_delegation(delegate::DelegationOrigin::PlusMenu),
                 MenuAction::OpenRecentChat(id) => self.open_ai_chat_tab_for(id),
-                MenuAction::OpenWelcome => self.open_welcome_tab(),
                 MenuAction::ClearRecents => self.clear_recents(),
                 MenuAction::ImportFormat(format) => {
                     // The who/where page stayed under its format menu; a
@@ -4558,6 +4584,9 @@ impl MainView {
                         source: koru_workspace_host::ImportSourceSelection::Picker,
                     })
                 }
+                MenuAction::ImportFiles => self.ask_pane(PaneRequest::ImportFiles(
+                    koru_workspace_host::ImportSourceSelection::Picker,
+                )),
                 MenuAction::ImportAs => false,
                 _ => false,
             },
@@ -4847,6 +4876,50 @@ impl MainView {
                     _ => false,
                 }
             }
+            MenuSubject::Tasks { tasks, native } => match action {
+                // A home each, opened by none: ten new tabs would bury the
+                // page the gesture was made on. One alone opens, as one
+                // task's own menu does.
+                MenuAction::TaskCreateDocument => {
+                    let landing = (native.len() > 1).then_some(Landing::Plain);
+                    for (document, node) in native {
+                        self.queue_task_command_landing(
+                            koru_workspace_host::tasks::TaskCommand::CreateHome { document, node },
+                            true,
+                            landing.clone(),
+                        );
+                    }
+                    true
+                }
+                MenuAction::TaskComplete | MenuAction::TaskReopen => {
+                    let completed = matches!(action, MenuAction::TaskComplete);
+                    for (document, node) in tasks {
+                        self.queue_task_command(
+                            koru_workspace_host::tasks::TaskCommand::Complete {
+                                document,
+                                node,
+                                completed,
+                            },
+                            true,
+                        );
+                    }
+                    true
+                }
+                MenuAction::TaskDue => self.each_tab_mut(|tab| match &mut tab.view {
+                    TabView::Tasks(t) => t.open_due_picker_for(&tasks),
+                    _ => false,
+                }),
+                MenuAction::TaskPriority => self.each_tab_mut(|tab| match &mut tab.view {
+                    TabView::Tasks(t) => t.open_priority_picker_for(&tasks),
+                    _ => false,
+                }),
+                MenuAction::TaskList => self.each_tab_mut(|tab| match &mut tab.view {
+                    TabView::Tasks(t) => t.open_list_picker_for(&tasks),
+                    _ => false,
+                }),
+                MenuAction::TaskRemove => self.ask_remove_tasks(tasks),
+                _ => false,
+            },
             MenuSubject::Task { document, node } => match action {
                 MenuAction::TaskGoToOrigin => self.open_task_node(document, node, true),
                 MenuAction::TaskGoToList => self
@@ -4951,6 +5024,9 @@ impl MainView {
             },
             MenuSubject::Floor => match action {
                 MenuAction::NewWorkspace => self.prompt_new_workspace(),
+                MenuAction::ImportFiles => self.ask_pane(PaneRequest::ImportFiles(
+                    koru_workspace_host::ImportSourceSelection::Picker,
+                )),
                 MenuAction::OpenTrash => self.open_trash_tab(),
                 MenuAction::ImportFormat(format) => {
                     self.ask_pane(PaneRequest::ImportContent {
@@ -7029,7 +7105,9 @@ impl MainView {
         true
     }
 
-    /// **+ → Welcome**: select the one Welcome tab, or open it.
+    /// Select the one Welcome tab, or open it. No row offers it since the
+    /// `+` menu went; a test uses it to put a second tab in front.
+    #[cfg(test)]
     fn open_welcome_tab(&mut self) -> bool {
         let existing = self
             .tabs()
@@ -7357,6 +7435,25 @@ impl MainView {
         let chats = self.plus_recent_chats();
         context_menu::set_plus_snapshots(recents, shells, agents, chats);
         context_menu::set_plus_canvases(canvases);
+        context_menu::set_profile_presence(self.profile_probe.snapshot());
+    }
+
+    /// **The probe answered while an agent menu stands.** Hand the menus the
+    /// new answer and rebuild an open *Agents* flyout — under `+` or the
+    /// Agents tree — so the agents it leaves out leave now, rather than at
+    /// the next open. The flyout's rows are fixed per opening, so this is a
+    /// new opening, the way [`refresh_open_plus_chats`] rebuilds *Chats*.
+    /// A menu that *is* the agent list (Welcome's *Run an agent*) keeps its
+    /// rows; a row there whose program turned out missing dims with its note.
+    fn refresh_open_agent_flyout(&mut self) -> bool {
+        context_menu::set_profile_presence(self.profile_probe.snapshot());
+        if !matches!(
+            self.menu.as_ref().map(|m| &m.subject),
+            Some(MenuSubject::NewTab | MenuSubject::AgentTree { .. })
+        ) {
+            return false;
+        }
+        self.rebuild_open_flyout(MenuAction::NewAgent)
     }
 
     /// Chats the `+` flyout can name. The right-hand pane is the usual source;
@@ -7397,56 +7494,32 @@ impl MainView {
     }
 
     fn rebuild_plus_chats_flyout(&mut self) {
+        self.rebuild_open_flyout(MenuAction::Chats);
+    }
+
+    /// Reopen the flyout hanging off the open menu's `parent` row, if that
+    /// flyout is the one showing, so it lists what is true now. Answers
+    /// whether it did.
+    fn rebuild_open_flyout(&mut self, parent: MenuAction) -> bool {
         let Some(i) = self
             .menu
             .as_ref()
-            .and_then(|m| m.items().iter().position(|a| *a == MenuAction::Chats))
+            .and_then(|m| m.items().iter().position(|a| *a == parent))
         else {
-            return;
+            return false;
         };
         if !self.submenu.as_ref().is_some_and(|(at, _)| *at == i) {
-            return;
+            return false;
         }
         self.nested = None;
         self.submenu = None;
         let _ = self.open_submenu(i);
-    }
-
-    fn open_new_tab_menu(&mut self) -> bool {
-        self.ensure_tab_widths();
-        let button = tabs::new_tab(self.strip(), &self.tab_widths(), self.tab_scroll());
-        self.open_new_tab_menu_at(button)
-    }
-
-    /// The Add… menu hung under `button`: the tab strip's `+`, or the lane's
-    /// New, which opens the same list whichever app is active.
-    pub(crate) fn open_new_tab_menu_at(&mut self, button: Rect) -> bool {
-        // Freshen the presence probe that dims missing programs — off the loop
-        // thread, so the menu opens now on the last known answer and the
-        // worker's wake re-dims the rows when the fresh one lands.
-        self.profile_probe.refresh(self.agent.wake_proxy());
-        // Start the pane surface so Boot can list chats. The flyout is empty
-        // until that answer lands; [`refresh_open_plus_chats`] fills it. Not
-        // when Koru AI is hidden: there is no Chats row to fill
-        // (koru-features).
-        if koru_features::ai() {
-            self.ai_chat.activate();
-        }
-        self.snapshot_plus_menu();
-        let mut menu = ContextMenu::aligned(
-            &mut self.engine,
-            MenuSubject::NewTab,
-            (button.x, button.y + button.h),
-            context_menu::new_tab_items(),
-            MenuAnchor::Cursor,
-        );
-        let enabled = self.enabled_items(&menu);
-        menu.step(&enabled, 1);
-        self.menu = Some(menu);
         true
     }
 
-    /// Open the format chooser used by the workspace-level *Import content…*
+    /// Open the one Import list (files, then content) at the pointer — what
+    /// the explore column's `…` *Import…* and the workspace manager's
+    /// import open. Formerly the formats alone, used by *Import content…*
     /// entry. It shares the NewTab subject because those are the same import
     /// actions; only the parent menu's New document row is omitted here.
     fn open_import_menu(&mut self) -> bool {
@@ -7454,7 +7527,7 @@ impl MainView {
             &mut self.engine,
             MenuSubject::NewTab,
             self.pointer,
-            context_menu::import_items(),
+            context_menu::import_menu_items(),
         );
         let enabled = self.enabled_items(&menu);
         menu.step(&enabled, 1);
@@ -7689,7 +7762,7 @@ impl MainView {
             Outcome::SelectTab(i) => self.select(i),
             Outcome::CloseTab(i) => self.close_requested(i),
             Outcome::MoveTab { from, to } => self.move_tab(from, to),
-            Outcome::NewTab => self.open_new_tab_menu(),
+            Outcome::NewTab => self.open_launcher(),
             Outcome::NewChildDocument(parent) => self.prompt_new_child_document(parent),
             Outcome::Search => self.open_search(),
             Outcome::OpenHelp => self.open_help_beside(),
@@ -7830,9 +7903,9 @@ impl MainView {
                 true
             }
             Outcome::NewCanvas => self.new_canvas(),
-            Outcome::ImportFiles => self.ask_pane(PaneRequest::ImportFiles(
-                koru_workspace_host::ImportSourceSelection::Picker,
-            )),
+            // **Import is one choice everywhere**: files or content, from
+            // the same list, whichever navigator mode the `…` was in.
+            Outcome::ImportFiles => self.open_import_menu(),
             // **The task is in the document this column is about**, so this is
             // the ordinary navigation to a node, not an open — the same request
             // the Tasks tab's own row makes, through the same door.
@@ -8138,12 +8211,9 @@ impl MainView {
             // press rather than opening an empty column.
             Hit::ToggleContext if !context_has_sections() => Outcome::Consumed,
             Hit::ToggleContext => Outcome::ToggleContext,
-            // The lane's New: the Add… menu the tab strip's `+` opens, hung
-            // under the square instead — on the settled rect, which is what
-            // the hit test that got us here read.
+            // The lane's New: the launcher the tab strip's `+` opens.
             Hit::New => {
-                let square = self.settled_lane_controls().new;
-                return if self.open_new_tab_menu_at(square) {
+                return if self.open_launcher() {
                     Outcome::Consumed
                 } else {
                     Outcome::Ignored
@@ -8250,14 +8320,18 @@ impl MainView {
     /// dispatch, and only from the active one: the ask comes from a menu, and
     /// a menu is only ever open over the tab in front.
     pub(crate) fn drain_task_view_request(&mut self, ws: &WorkspaceDoc) -> bool {
-        let node = match &mut self.tabs_mut().active_mut().view {
-            TabView::Leaf(l) => View::take_wants_task_view(l),
-            _ => None,
+        let (node, list) = match &mut self.tabs_mut().active_mut().view {
+            TabView::Leaf(l) => (View::take_wants_task_view(l), View::take_wants_task_list(l)),
+            _ => (None, None),
         };
-        match node {
+        // A title's list chip: the list's page, through the door *Go to list*
+        // and the Tasks page's own list chip use.
+        let listed = list.is_some_and(|list| self.go_to_task_list(list));
+        let revealed = match node {
             Some(node) => self.reveal_task_in_tasks_view(ws, node),
             None => false,
-        }
+        };
+        listed || revealed
     }
 
     /// **The active document's page menu asked for *Global settings*.** The
@@ -9293,6 +9367,9 @@ impl MainView {
             Request::OpenAgentGuide(url) => {
                 self.ask_pane(PaneRequest::OpenUri(url));
             }
+            Request::InstallAgent(key) => {
+                self.install_agent(&key);
+            }
             Request::SetAgentPermission { other, permission } => {
                 self.set_agent_permission(other, permission);
             }
@@ -9639,6 +9716,11 @@ impl MainView {
         // opens the reference there, a press anywhere else closes it, and
         // neither reaches what is underneath.
         if let Some(handled) = self.place_chooser_mouse_down(ws, x, y) {
+            return handled;
+        }
+        // The launcher, on the same terms: a tile is made, anywhere else
+        // closes it.
+        if let Some(handled) = self.launcher_mouse_down(x, y) {
             return handled;
         }
         // An open context menu is modal: the press either chooses an item or
@@ -10169,6 +10251,10 @@ impl MainView {
                 other => self.apply(ws, other),
             };
         }
+        // Tasks carried off a Tasks page onto a list in the sidebar join it.
+        if self.drop_tasks_on_list() {
+            return true;
+        }
         // Always delegated: a drag has to end wherever it was released, even if
         // that is over the chrome or outside the window entirely.
         let (view, doc) = self.tabs_mut().active_mut().doc(ws);
@@ -10525,7 +10611,7 @@ impl View for MainView {
         self.pointer = (x, y);
         // A right press dismisses the place chooser the way any press outside
         // it does, and goes no further: a menu must not open beside it.
-        if self.dismiss_place_chooser() {
+        if self.dismiss_place_chooser() | self.dismiss_launcher() {
             return true;
         }
         if self.error.is_some()
@@ -10605,7 +10691,7 @@ impl View for MainView {
                 self.focus_pane_at(x, y);
                 let tab = self.tabs().get(i);
                 let document = tab.is_some_and(|tab| tab.document.is_some());
-                let pinnable = tab.is_some_and(|tab| tab.view.is_pinnable());
+                let pinnable = tab.is_some_and(koru_app_shell::TabElement::pinnable);
                 let pinned = tab.is_some_and(|tab| tab.is_pinned());
                 let show_title = tab.is_some_and(|tab| tab.show_title);
                 let mcp = self
@@ -11274,6 +11360,9 @@ impl View for MainView {
             return m.cursor();
         }
         if let Some(icon) = self.place_chooser_cursor() {
+            return icon;
+        }
+        if let Some(icon) = self.launcher_cursor() {
             return icon;
         }
         if let Some(menu) = &self.menu {
@@ -13341,11 +13430,10 @@ impl View for MainView {
         self.session_tab_for(session).is_some()
     }
 
-    /// The tray's Agents ▸ New: the same `+` menu the strip's button opens,
-    /// where the agent profiles live — which one to start stays the person's
-    /// choice.
+    /// The tray's Agents ▸ New: the agent profiles, centred — which one to
+    /// start stays the person's choice.
     fn open_new_session_chooser(&mut self) -> bool {
-        self.open_new_tab_menu()
+        self.open_agent_profiles()
     }
 
     /// A chat to open as a tab — a search hit, a `koru://chat/…` link, an
@@ -13755,6 +13843,122 @@ impl View for MainView {
     fn paste_text(&mut self, ws: &mut WorkspaceDoc, text: &str) {
         if let TabView::Leaf(l) = self.active_view() {
             View::paste_text(l, ws, text);
+        }
+    }
+
+    /// The placeholder belongs to the document tab that asked. A canvas draws
+    /// none: its image still arrives, through `finish_image_import`'s default
+    /// route below.
+    fn begin_image_import(
+        &mut self,
+        ws: &WorkspaceDoc,
+        ticket: koru_workspace_host::ImageTicket,
+        place: &koru_workspace_host::ImagePlace,
+    ) {
+        // `/image` names the tab that asked; the blocking picker may have let
+        // the focus wander.
+        let i = match place {
+            koru_workspace_host::ImagePlace::Convert(_) => {
+                self.image_request.unwrap_or(self.tabs().active())
+            }
+            _ => self.tabs().active(),
+        };
+        if let Some(TabView::Leaf(l)) = self.tabs_mut().get_mut(i).map(|t| &mut t.view) {
+            View::begin_image_import(l, ws, ticket, place);
+        }
+    }
+
+    fn size_image_import(
+        &mut self,
+        ticket: koru_workspace_host::ImageTicket,
+        sizes: &[(u32, u32)],
+    ) {
+        for (_, group) in self.panes.iter_groups_mut() {
+            for tab in group.iter_tabs_mut() {
+                if let TabView::Leaf(l) = &mut tab.view
+                    && l.holds_image_import(ticket)
+                {
+                    View::size_image_import(l, ticket, sizes);
+                }
+            }
+        }
+    }
+
+    /// To the tab drawing the placeholder, whichever pane it is in. The shell
+    /// only finishes an import while its document is the one in front, so
+    /// that tab's document is `ws`. With no tab holding it — a canvas asked,
+    /// or the tab was closed — the routes these images always took.
+    fn finish_image_import(
+        &mut self,
+        ws: &mut WorkspaceDoc,
+        ticket: koru_workspace_host::ImageTicket,
+        place: koru_workspace_host::ImagePlace,
+        images: &[koru_workspace_host::PastedImage],
+    ) {
+        let mut place = Some(place);
+        for (_, group) in self.panes.iter_groups_mut() {
+            for tab in group.iter_tabs_mut() {
+                if let TabView::Leaf(l) = &mut tab.view
+                    && l.holds_image_import(ticket)
+                    && let Some(place) = place.take()
+                {
+                    View::finish_image_import(l, ws, ticket, place, images);
+                }
+            }
+        }
+        match place {
+            None => {
+                // The `/image` ask, if this was one, is answered.
+                self.image_request = None;
+                self.explore_stale = true;
+            }
+            Some(koru_workspace_host::ImagePlace::Paste(target)) => {
+                View::paste_images(self, ws, target, images)
+            }
+            Some(koru_workspace_host::ImagePlace::Append) => {
+                for image in images {
+                    View::append_image(
+                        self,
+                        ws,
+                        &image.hash,
+                        &image.mime,
+                        image.width,
+                        image.height,
+                    );
+                }
+            }
+            Some(koru_workspace_host::ImagePlace::Convert(node)) => {
+                if let Some(image) = images.first() {
+                    View::insert_image(
+                        self,
+                        ws,
+                        node,
+                        &image.hash,
+                        &image.mime,
+                        image.width,
+                        image.height,
+                    );
+                }
+            }
+        }
+    }
+
+    fn end_image_import(&mut self, ticket: koru_workspace_host::ImageTicket) -> bool {
+        let mut drawn = false;
+        for (_, group) in self.panes.iter_groups_mut() {
+            for tab in group.iter_tabs_mut() {
+                if let TabView::Leaf(l) = &mut tab.view {
+                    drawn |= View::end_image_import(l, ticket);
+                }
+            }
+        }
+        drawn
+    }
+
+    fn image_mip_side(&self) -> Option<koru_workspace_host::ImageMipSide> {
+        match &self.tabs().active_tab().view {
+            TabView::Leaf(l) => View::image_mip_side(l),
+            _ => None,
         }
     }
 
@@ -14239,6 +14443,11 @@ impl View for MainView {
         // profile rows may dim (or undim) without the pointer moving.
         let probe_changed = self.profile_probe.take_dirty();
         let agent_rows_changed = probe_changed && self.sync_agent_providers();
+        // An open *Agents* flyout drops the agents the answer says are not
+        // here (`refresh_open_agent_flyout`); the repaint is `probe_changed`'s.
+        if probe_changed {
+            self.refresh_open_agent_flyout();
+        }
         // **Only while Add… is standing.** This snapshot exists to notice the
         // chat list arriving under an open flyout, and `recent_chats` clones
         // its titles — a tick with no menu up must not pay for an answer
@@ -14576,6 +14785,9 @@ impl MainView {
             // The place chooser, on the menu's terms: its arrows, Enter and
             // Escape, and nothing else gets past it.
             Blockers::Modal(ModalKind::PlaceChooser) => return self.place_chooser_key(ws, key),
+            // The launcher: its letters, arrows, Enter and Escape, with the
+            // modifiers the key came with (Alt asks where, Shift which).
+            Blockers::Modal(ModalKind::Launcher) => return self.launcher_key(key, mods),
             Blockers::Modal(ModalKind::ReminderOverlay) => {
                 let bell = self.reminder_bell_rect();
                 let (handled, intent) =
@@ -14750,7 +14962,7 @@ impl MainView {
         }) {
             return match chord {
                 Chord::NewTab => self.new_tab(),
-                Chord::AddContent => self.open_new_tab_menu(),
+                Chord::New => self.open_launcher(),
                 Chord::CloseTab => self.close_requested(self.tabs().active()),
                 Chord::ReopenClosedTab => self.reopen_closed_tab(),
                 Chord::CloseAllTabs => self.close_all(),
@@ -16227,11 +16439,17 @@ impl MainView {
     /// Which lane controls this window offers, and where they are right now:
     /// in the lane while the pane is open, folded into the caption's left end
     /// while it is shut (`docs/features/workspace-foundation/TECHNICAL.final.md`
-    /// §5.1). The mark leads on every platform until the Mac catch-up swaps
-    /// it for the lights' reserve; New opens the Add… menu (QUESTIONS.md E21).
+    /// §5.1). The mark leads on Windows and Linux; on a Mac the slot is the
+    /// room the traffic lights take, which AppKit draws and
+    /// `koru_window::traffic_lights` seats there. New opens the Add… menu
+    /// (QUESTIONS.md E21).
     pub(crate) fn leading(&self) -> koru_shell_chrome::lane::Leading {
         koru_shell_chrome::lane::Leading {
-            mark: koru_shell_chrome::lane::Mark::Mark,
+            mark: if cfg!(target_os = "macos") {
+                koru_shell_chrome::lane::Mark::Lights(koru_window::traffic_lights::LANE_W)
+            } else {
+                koru_shell_chrome::lane::Mark::Mark
+            },
             search: true,
             // No New in the lane (the review's note, E44): the tab strip's `+`
             // is the Add… menu's one door. E21's lane `+` is superseded.
@@ -16325,6 +16543,7 @@ impl MainView {
     /// The same controls on the **settled** rects — where the hit test reads
     /// them, where a menu opened from one of them hangs, and what a test
     /// asks mid-slide.
+    #[cfg(test)]
     pub(crate) fn settled_lane_controls(&self) -> koru_shell_chrome::lane::LaneRects {
         self.lane_controls_in(self.regions.caption, self.regions.sidebar)
     }
@@ -16403,8 +16622,12 @@ impl MainView {
             Hit::New => {
                 let square = self.lane_controls().new;
                 (square.w > 0.0).then(|| {
-                    TooltipContent::new(5, square, "Add…")
-                        .with_shortcut(koru_keys::label_of(koru_keys::ShortcutId::AddContent))
+                    TooltipContent::new(
+                        5,
+                        square,
+                        koru_i18n::t(crate::format::lang(), koru_i18n::Key::LauncherTooltip),
+                    )
+                    .with_shortcut(koru_keys::label_of(koru_keys::ShortcutId::New))
                 })
             }
             Hit::HostAction if reminder_bell() => Some(TooltipContent::new(
@@ -16420,8 +16643,12 @@ impl MainView {
             Hit::NewTab => {
                 let slot = tabs::new_tab(self.strip(), &self.tab_widths(), self.tab_scroll());
                 (slot.w > 0.0).then(|| {
-                    TooltipContent::new(4, slot, "Add…")
-                        .with_shortcut(koru_keys::label_of(koru_keys::ShortcutId::AddContent))
+                    TooltipContent::new(
+                        4,
+                        slot,
+                        koru_i18n::t(crate::format::lang(), koru_i18n::Key::LauncherTooltip),
+                    )
+                    .with_shortcut(koru_keys::label_of(koru_keys::ShortcutId::New))
                 })
             }
             // A hovered history row answers with the exact moment behind its
@@ -16617,6 +16844,9 @@ impl MainView {
         // The place chooser tracks its own hover while it stands, the way the
         // menu below does; nothing under it is hovered.
         if let Some(changed) = self.place_chooser_mouse_move(x, y) {
+            return changed;
+        }
+        if let Some(changed) = self.launcher_mouse_move(x, y) {
             return changed;
         }
         // **Innermost flyout first.** Nested overlaps the submenu, the submenu
@@ -16936,6 +17166,7 @@ impl MainView {
 
         let inside = hit == Hit::Content && !self.ai_rect().contains(x, y);
         let dragging = self.tabs().active_tab().view.is_dragging();
+        let drop_moved = self.track_task_drop(x, y);
         // Leaving the content rect drops the leaf's hover exactly once — its
         // `hover_at` ignores `x`, so a row would otherwise stay lit under a
         // pointer parked over the chrome.
@@ -16953,7 +17184,8 @@ impl MainView {
                 || hover_changed
                 || chrome_moved
                 || thumb_tone
-                || tooltip_changed;
+                || tooltip_changed
+                || drop_moved;
         }
         let (lx, ly) = self.to_leaf(x, y);
         let moved = match self.active_view() {
@@ -16974,7 +17206,13 @@ impl MainView {
             TabView::Canvas(c) => View::mouse_move(c, lx, ly),
             TabView::Leaf(l) => Leaf::mouse_move(l, lx, ly),
         };
-        reminder_moved || moved || hover_changed || chrome_moved || thumb_tone || tooltip_changed
+        reminder_moved
+            || moved
+            || hover_changed
+            || chrome_moved
+            || thumb_tone
+            || tooltip_changed
+            || drop_moved
     }
 }
 

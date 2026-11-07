@@ -141,6 +141,7 @@ fn completed(scope: Scope, unit: Unit, bytes: Vec<u8>, budget: &MemoryBudget) ->
             generation: 1,
             expires_at_seconds: 600,
         },
+        claim_references: koru_replication::cloud::transfer::ClaimReferences::None,
     };
     let mut sender = Stream::new(
         &accepted,

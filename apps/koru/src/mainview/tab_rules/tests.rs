@@ -29,24 +29,41 @@ fn strip(labels: &[&str]) -> TabStrip<Tab> {
 
 // ------------------------------------------------------ the four predicates
 
-/// A welcome tab is the floor — a placeholder, and not pinnable — but a
-/// dedicated one: nothing opened replaces it.
+/// A welcome tab is the floor — a placeholder — but a dedicated one: nothing
+/// opened replaces it. Like every tab it may be pinned.
 #[test]
-fn a_welcome_tab_is_the_placeholder_and_refuses_to_be_pinned() {
+fn a_welcome_tab_is_the_placeholder_and_may_be_pinned() {
     let tab = Tab::welcome();
     assert!(TabElement::is_placeholder(&tab));
     assert!(!TabElement::is_reusable(&tab));
-    assert!(!TabElement::pinnable(&tab));
+    assert!(TabElement::pinnable(&tab));
 }
 
-/// A draft has no document *yet*, in a private workspace of its own, so pinning
-/// it would pin something nobody has saved.
+/// A draft is not a placeholder — it is content somebody has started — and,
+/// like every tab, it may be pinned.
 #[test]
-fn a_draft_is_neither_a_placeholder_nor_pinnable() {
+fn a_draft_is_not_a_placeholder_and_may_be_pinned() {
     let tab = Tab::draft(None).expect("a draft");
     assert!(!TabElement::is_placeholder(&tab));
-    assert!(!TabElement::pinnable(&tab));
+    assert!(TabElement::pinnable(&tab));
     assert!(!TabElement::is_reusable(&tab));
+}
+
+/// **Every tab may be pinned** — a task list, the Trash, Settings — which is
+/// the rule the tab menu's *Pin tab* row reads; it used to be documents and
+/// chats only, and a task list had no way to stay at the left of the strip.
+#[test]
+fn every_kind_of_tab_may_be_pinned() {
+    use crate::panes::explore::rail::{Bucket, RailTarget};
+    for tab in [
+        Tab::tasks(RailTarget::Bucket(Bucket::Today)),
+        Tab::tasks(RailTarget::List(koru_core::ids::ListId::new())),
+        Tab::trash(),
+        Tab::settings(),
+        Tab::manage(),
+    ] {
+        assert!(TabElement::pinnable(&tab), "{}", tab.label);
+    }
 }
 
 /// A document tab is what a pin is made of.
@@ -75,13 +92,14 @@ fn a_workspace_scope_survives_the_round_trip_through_the_shell() {
     assert_eq!(s.get(0).expect("the pin").home, Some(home));
 }
 
-/// `pin` refuses a welcome tab, and the tab goes back where it was.
+/// A pinned Welcome tab is one somebody asked to keep, so it stops being the
+/// placeholder the strip drops or lets opened content replace.
 #[test]
-fn cannot_pin_welcome() {
+fn a_pinned_welcome_is_not_a_placeholder() {
     let mut s = strip(&[]);
-    assert!(!s.pin(0, WorkspaceId::new().as_uuid(), false));
-    assert_eq!(s.pinned_count(), 0);
-    assert_eq!(s.main_count(), 1);
+    assert!(s.pin(0, WorkspaceId::new().as_uuid(), false));
+    assert_eq!(s.pinned_count(), 1);
+    assert!(!s.has_welcome(), "the pin is not the floor");
 }
 
 // ------------------------------------------------------------------ lookups

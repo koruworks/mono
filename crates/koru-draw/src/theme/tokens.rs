@@ -342,8 +342,11 @@ pub mod roles {
     pub const META: TextRole = TextRole::new("meta", role::meta);
     pub const UI: TextRole = TextRole::new("ui", role::ui);
     pub const POPOVER_HEADING: TextRole = TextRole::new("popover_heading", role::popover_heading);
+    /// A page's heading on a list surface — the Tasks page's *Today* — and a
+    /// document's subtitle: `role::subtitle`, 18/26.
+    pub const SUBTITLE: TextRole = TextRole::new("subtitle", role::subtitle);
 
-    pub const ALL: [TextRole; 5] = [ROW, HINT, META, UI, POPOVER_HEADING];
+    pub const ALL: [TextRole; 6] = [ROW, HINT, META, UI, POPOVER_HEADING, SUBTITLE];
 }
 
 macro_rules! colour_roles {

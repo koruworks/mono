@@ -471,20 +471,22 @@ impl TabRef {
     }
 }
 
-/// What a pinned tab is over: a document, or an AI chat (ADR-483-chattabrestore).
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum PinnedTarget {
-    Document(DocumentId),
-    /// The AI service's `ChatId`, as [`TabRef::Chat`] carries it. Written
-    /// `chat:` where a document is `doc:`, which an older reader's pinned
-    /// grammar requires, so it drops this one pin and keeps the rest.
-    Chat(uuid::Uuid),
-}
-
 /// A pinned tab, window-scoped and independent of the current workspace.
-#[derive(Copy, Clone, Debug, PartialEq)]
+///
+/// **Any tab a main tab can be saved as**, by the same [`TabRef`]: a pin is
+/// a place in the strip, not a kind of tab, so it carries no second
+/// vocabulary for what it is over. It was a document or a chat until every
+/// tab became pinnable; a pinned task list is `tasks:list:<uuid>` here
+/// exactly as it is in `tabs`.
+///
+/// Written `<tab>@<workspace>:<scroll>:<title|icon>`. A document is written
+/// `doc:<id>` with its home left to `@<workspace>`, which keeps a document
+/// pin byte-for-byte what every older build wrote and reads. **An older
+/// reader** requires `doc:` (or, since ADR-483, `chat:`) before the `@`, so
+/// it drops a pin of any other kind and keeps every other pin.
+#[derive(Clone, Debug, PartialEq)]
 pub struct PinnedTabRef {
-    pub target: PinnedTarget,
+    pub target: TabRef,
     /// The workspace it was pinned in, and a document's home.
     pub workspace: WorkspaceId,
     pub scroll: f32,
@@ -500,25 +502,34 @@ impl PinnedTabRef {
         show_title: bool,
     ) -> Self {
         Self {
-            target: PinnedTarget::Document(document),
+            target: TabRef::document(document, None),
             workspace,
             scroll,
             show_title,
         }
     }
 
-    /// The document this pin is over; `None` for a chat.
+    /// The document this pin is over; `None` for any other tab.
     pub fn document(&self) -> Option<DocumentId> {
-        match self.target {
-            PinnedTarget::Document(id) => Some(id),
-            PinnedTarget::Chat(_) => None,
+        self.target.document_id()
+    }
+
+    /// What the pin reopens: its tab, with a document's home filled in from
+    /// the pin's workspace — the one place a pin keeps it.
+    pub fn tab(&self) -> TabRef {
+        match &self.target {
+            TabRef::Document { id, .. } => TabRef::document(*id, Some(self.workspace)),
+            other => other.clone(),
         }
     }
 
-    fn to_storage(self) -> String {
-        let target = match self.target {
-            PinnedTarget::Document(id) => format!("doc:{}", id.to_storage()),
-            PinnedTarget::Chat(chat) => format!("chat:{}", chat.hyphenated()),
+    fn to_storage(&self) -> String {
+        // The home rides on `@<workspace>`; written twice it would be an
+        // `@` an older reader reads as part of the workspace, and the pin
+        // that build could read would be lost to it.
+        let target = match &self.target {
+            TabRef::Document { id, .. } => TabRef::document(*id, None).to_storage(),
+            other => other.to_storage(),
         };
         format!(
             "{target}@{}:{:.0}:{}",
@@ -541,11 +552,12 @@ impl PinnedTabRef {
             },
             None => (rest, 0.0),
         };
-        let (target, workspace) = rest.split_once('@')?;
-        let target = match (target.strip_prefix("doc:"), target.strip_prefix("chat:")) {
-            (Some(id), _) => PinnedTarget::Document(DocumentId::parse(id)?),
-            (_, Some(id)) => PinnedTarget::Chat(uuid::Uuid::try_parse(id).ok()?),
-            _ => return None,
+        // The **last** `@`: a session's token holds one of its own
+        // (`session:<id>@<profile>`), and a workspace id never does.
+        let (target, workspace) = rest.rsplit_once('@')?;
+        let target = match TabRef::parse(target)? {
+            TabRef::Document { id, .. } => TabRef::document(id, None),
+            other => other,
         };
         let workspace = WorkspaceId::parse(workspace)?;
         Some(Self {
@@ -3137,7 +3149,7 @@ mod tests {
             uuid::Uuid::new_v4(),
         );
         let chat_pin = PinnedTabRef {
-            target: PinnedTarget::Chat(pinned_chat),
+            target: TabRef::Chat(pinned_chat),
             workspace: ws,
             scroll: 0.0,
             show_title: true,
@@ -3149,7 +3161,10 @@ mod tests {
                 (TabRef::Chat(chat), 0.0),
             ],
             tab: 1,
-            pinned_tabs: vec![chat_pin, PinnedTabRef::document_pin(doc, ws, 0.0, false)],
+            pinned_tabs: vec![
+                chat_pin.clone(),
+                PinnedTabRef::document_pin(doc, ws, 0.0, false),
+            ],
             pane_tree: Some(PaneTreeState {
                 root: PaneNodeState::Split {
                     axis: SplitAxisState::Vertical,
@@ -3195,7 +3210,7 @@ mod tests {
         let s = Settings {
             tabs: vec![(TabRef::Chat(chat), 0.0)],
             pinned_tabs: vec![PinnedTabRef {
-                target: PinnedTarget::Chat(chat),
+                target: TabRef::Chat(chat),
                 workspace: ws,
                 scroll: 0.0,
                 show_title: false,
@@ -3207,7 +3222,7 @@ mod tests {
                         (TabRef::document(doc, Some(ws)), 0.0),
                     ],
                     pinned: vec![PinnedTabRef {
-                        target: PinnedTarget::Chat(uuid::Uuid::new_v4()),
+                        target: TabRef::Chat(uuid::Uuid::new_v4()),
                         workspace: ws,
                         scroll: 0.0,
                         show_title: false,
@@ -3285,7 +3300,7 @@ mod tests {
 
         let pins = write_pinned_tabs(&[
             PinnedTabRef {
-                target: PinnedTarget::Chat(uuid::Uuid::new_v4()),
+                target: TabRef::Chat(uuid::Uuid::new_v4()),
                 workspace: ws,
                 scroll: 0.0,
                 show_title: true,
@@ -3297,6 +3312,58 @@ mod tests {
             pinned,
             ["pin"],
             "the pinned chat dropped, the document kept"
+        );
+    }
+
+    /// **Any tab may be pinned, so any tab's token may be a pin's target.**
+    /// Every kind round-trips through the pinned line — a session's own `@`
+    /// included, which is why the workspace is split off the *last* one — and
+    /// a document pin is still written exactly as an older build wrote it.
+    #[test]
+    fn a_pin_of_any_tab_round_trips_and_a_document_pin_is_unchanged() {
+        let ws = WorkspaceId::new();
+        let doc = DocumentId::new();
+        let pin = |target: TabRef| PinnedTabRef {
+            target,
+            workspace: ws,
+            scroll: 12.0,
+            show_title: true,
+        };
+        let pins = vec![
+            PinnedTabRef::document_pin(doc, ws, 0.0, false),
+            pin(TabRef::Tasks(TasksTabRef::List(
+                koru_core::ids::ListId::new(),
+            ))),
+            pin(TabRef::Tasks(TasksTabRef::Bucket("today"))),
+            pin(TabRef::Tasks(TasksTabRef::Reminders)),
+            pin(TabRef::Trash),
+            pin(TabRef::Manage),
+            pin(TabRef::Welcome),
+            pin(TabRef::Draft),
+            pin(TabRef::WhatsNew),
+            pin(TabRef::Chat(uuid::Uuid::new_v4())),
+            pin(TabRef::Session {
+                session: SessionId::mint(),
+                profile: SessionProfileKey::Custom(SessionProfileId::mint()),
+                recovery: Some(SessionRecovery {
+                    working_directory: Some(r"C:\work@home, again".into()),
+                    project: None,
+                    raw: true,
+                }),
+            }),
+        ];
+        let line = write_pinned_tabs(&pins);
+        let back: Vec<PinnedTabRef> = line.split(',').filter_map(PinnedTabRef::parse).collect();
+        assert_eq!(back, pins, "{line}");
+        assert_eq!(
+            line.split(',').next(),
+            Some(format!("doc:{}@{}:0:icon", doc.to_storage(), ws.to_storage()).as_str()),
+            "a document pin keeps the spelling every older build reads"
+        );
+        assert_eq!(
+            back[0].tab(),
+            TabRef::document(doc, Some(ws)),
+            "a pinned document reopens in the workspace it was pinned in"
         );
     }
 

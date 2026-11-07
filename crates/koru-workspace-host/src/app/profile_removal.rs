@@ -17,7 +17,30 @@ pub(super) struct ProfileRemovalCleanup {
 
 pub(super) struct ProfileCascadeCompletion {
     pub(super) profile: koru_core::ProfileId,
-    pub(super) result: Result<(), String>,
+    pub(super) result: Result<(), CascadeFailure>,
+}
+
+/// Why a cascade stopped, as the code the Profiles page words.
+///
+/// Two codes because the two failures want opposite advice. One that stopped
+/// part-way (the Store or Gateway refused, or went away) can be retried and
+/// carries on from where it got to. One this window was not *permitted* to
+/// run — no first-party grant, so `workspace.destroy` was never admitted
+/// (ADR-267) — fails identically on every retry, and telling somebody to try
+/// again would send them round the same loop.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum CascadeFailure {
+    NotPermitted,
+    Incomplete,
+}
+
+impl CascadeFailure {
+    pub(super) fn code(self) -> &'static str {
+        match self {
+            Self::NotPermitted => "profile_cascade_not_permitted",
+            Self::Incomplete => "profile_cascade_incomplete",
+        }
+    }
 }
 
 pub(super) struct ProfileOfflineCompletion {
@@ -33,10 +56,13 @@ pub(super) enum HostedProfileRemovalSource {
 }
 
 /// Move every active Workspace owned by one Profile to recoverable Trash.
+///
+/// The error's detail is not kept: no caller showed it, and the code is what
+/// the page needs.
 fn cascade_profile_workspaces(
     root: Option<&std::path::Path>,
     profile: koru_core::ProfileId,
-) -> Result<(), String> {
+) -> Result<(), CascadeFailure> {
     const SCOPES: &[&str] = &[
         "store.read_documents",
         "store.manage_workspaces",
@@ -47,16 +73,18 @@ fn cascade_profile_workspaces(
         Some(root) => koru_api_client::Client::connect_at_first_party(segment, root, SCOPES),
         None => koru_api_client::Client::connect_first_party(segment, SCOPES),
     }
-    .map_err(|error| error.to_string())?;
+    .map_err(|_| CascadeFailure::Incomplete)?;
+    // Checked before the first Workspace is touched, so a refusal here has
+    // moved nothing to Trash.
     if !client.catalog().may_destroy() {
-        return Err("this Koru window was not granted workspace deletion".into());
+        return Err(CascadeFailure::NotPermitted);
     }
 
     let store_profile = koru_store_core::ids::ProfileId::from_uuid(profile.as_uuid());
     let mut workspaces = client
         .catalog()
         .workspaces()
-        .map_err(|error| error.to_string())?
+        .map_err(|_| CascadeFailure::Incomplete)?
         .into_iter()
         .filter(|workspace| workspace.owner == store_profile && workspace.deleted_at.is_none())
         .collect::<Vec<_>>();
@@ -67,7 +95,7 @@ fn cascade_profile_workspaces(
         let confirmation = client
             .catalog()
             .confirmation(&id, koru_api_client::WorkspaceLifecycleAction::SoftDelete)
-            .map_err(|error| error.to_string())?;
+            .map_err(|_| CascadeFailure::Incomplete)?;
         client
             .catalog()
             .lifecycle(
@@ -75,7 +103,7 @@ fn cascade_profile_workspaces(
                 koru_api_client::WorkspaceLifecycleAction::SoftDelete,
                 &confirmation.confirmation,
             )
-            .map_err(|error| error.to_string())?;
+            .map_err(|_| CascadeFailure::Incomplete)?;
     }
     Ok(())
 }
@@ -162,7 +190,7 @@ impl<H: Host> App<H> {
             for pane in self.panes.values_mut() {
                 changed |= pane
                     .view
-                    .local_profile_remove_failed(profile, "profile_cascade_incomplete");
+                    .local_profile_remove_failed(profile, CascadeFailure::Incomplete.code());
             }
             if changed {
                 self.invalidate_everywhere();
@@ -198,18 +226,17 @@ impl<H: Host> App<H> {
                     }
                     self.host.remove_local_profile(completion.profile)
                 }
-                Err(_) => {
+                Err(failure) => {
                     tracing::warn!(
                         target: "koru::profiles",
-                        failure = "profile_cascade_incomplete",
+                        failure = failure.code(),
                         "a Profile workspace cascade did not finish"
                     );
                     let mut changed = false;
                     for pane in self.panes.values_mut() {
-                        changed |= pane.view.local_profile_remove_failed(
-                            completion.profile,
-                            "profile_cascade_incomplete",
-                        );
+                        changed |= pane
+                            .view
+                            .local_profile_remove_failed(completion.profile, failure.code());
                     }
                     if changed {
                         self.invalidate_everywhere();

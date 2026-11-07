@@ -941,6 +941,10 @@ pub struct ViewState {
     /// offered at all — so a task you were reading in its document could only
     /// be found again by remembering which queue it fell in.
     pub wants_task_view: Option<NodeId>,
+    /// **Open this list's page** — the title's list chip was pressed. The
+    /// container owns the Tasks tab and the rail, so it is asked, as it is
+    /// for [`wants_task_view`](Self::wants_task_view).
+    pub wants_task_list: Option<koru_core::ids::ListId>,
     /// **The row whose task the due chip's `×` was pressed on.**
     ///
     /// A request rather than an edit, because what the `×` asks for is a
@@ -1126,6 +1130,18 @@ pub struct ViewState {
     /// keystroke that broke the text. Entries retire when their node leaves
     /// the body (`crate::diagram::sync`). Never synced: a drawing is derived.
     pub diagrams: HashMap<NodeId, crate::diagram::DiagramEntry>,
+    /// Images the shell is still reading, decoding and storing for this
+    /// view, each drawn as a skeleton where it will land. View-local and never
+    /// synced — see `crate::pending_image` for why the placeholder is not a
+    /// node.
+    pub pending_images: Vec<crate::pending_image::PendingImage>,
+    /// Whether the platform asks for reduced motion. Read by the host view
+    /// when something animated begins (today, an image placeholder), so its
+    /// pulse rests rather than breathes.
+    pub reduced_motion: bool,
+    /// The display scale (DPI times zoom) the last frame was drawn at, so
+    /// work done off the event loop can size an image for it.
+    pub drawn_scale: f64,
     /// The diagram whose text is open for editing in this view, if any. A
     /// reading position, like scroll — per view, never synced, and closed the
     /// moment the focus leaves the row.
@@ -1244,6 +1260,7 @@ impl Default for ViewState {
             wants_reminder_context: None,
             wants_file_action: None,
             wants_task_view: None,
+            wants_task_list: None,
             wants_remove_from_tasks: None,
             wants_copy_image: None,
             wants_paste_image: None,
@@ -1273,6 +1290,9 @@ impl Default for ViewState {
             table_controls: koru_ui::Tooltip::default(),
             table_controls_node: None,
             diagrams: HashMap::new(),
+            pending_images: Vec::new(),
+            reduced_motion: false,
+            drawn_scale: 1.0,
             diagram_text_open: None,
             diagram_requests: Vec::new(),
             wants_save_diagram_as: None,

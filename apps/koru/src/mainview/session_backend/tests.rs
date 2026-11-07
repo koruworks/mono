@@ -414,7 +414,7 @@ fn open_delegate_picker_accepts_readiness_updates_and_retries_without_launching(
         capabilities: Default::default(),
         failure: None,
     };
-    assert!(view.begin_delegation(DelegationOrigin::PlusMenu));
+    assert!(view.begin_delegation(DelegationOrigin::Blank));
     view.delegation
         .as_mut()
         .unwrap()

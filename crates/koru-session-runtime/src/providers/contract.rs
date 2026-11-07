@@ -358,6 +358,21 @@ pub struct ProviderFailure {
     pub stage: ProviderStage,
     pub diagnostic: ProviderDiagnostic,
     pub os_code: Option<i32>,
+    /// What a version gate refused, set only by one; readiness carries it to
+    /// the window so the refusal can name both versions. A field rather than
+    /// a diagnostic of its own because the diagnostic is a closed, `Copy`
+    /// wire value, and every `failure(...)` helper and caller keeps working.
+    pub version: Option<VersionRefusal>,
+}
+
+/// **A refused version**: the one the agent printed, when one could be read,
+/// and what the route accepts. `found` stays a [`ProviderVersion`], whose
+/// `Debug` shows only its length, so a failure logged with `{:?}` stays as
+/// content-free as before.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VersionRefusal {
+    pub found: Option<ProviderVersion>,
+    pub needed: Option<koru_session_protocol::VersionNeed>,
 }
 
 impl ProviderFailure {
@@ -367,6 +382,7 @@ impl ProviderFailure {
             stage,
             diagnostic,
             os_code: None,
+            version: None,
         }
     }
 
@@ -376,7 +392,19 @@ impl ProviderFailure {
             stage,
             diagnostic: ProviderDiagnostic::Io,
             os_code: error.raw_os_error(),
+            version: None,
         }
+    }
+
+    /// The same failure, saying which version was refused and what the
+    /// route accepts.
+    pub(crate) fn refusing(
+        mut self,
+        found: Option<ProviderVersion>,
+        needed: Option<koru_session_protocol::VersionNeed>,
+    ) -> Self {
+        self.version = Some(VersionRefusal { found, needed });
+        self
     }
 }
 

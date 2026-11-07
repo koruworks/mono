@@ -53,6 +53,7 @@ pub mod input;
 /// a document raises.
 pub mod objective;
 pub mod paragraph;
+pub mod pending_image;
 pub mod pillinfo;
 /// What typing may turn a row into: everything, or the AI chat composer's
 /// text-and-`@` subset.

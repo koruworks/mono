@@ -1,0 +1,76 @@
+title = "Arrange your tasks by hand, a New… launcher, and Windows updates that install"
+
+summary = [
+  "Drag tasks to reorder a list or move them onto another, rename a task in place, and act on several at once.",
+  "Ctrl+N and the + button open a New… launcher for documents, tasks, chats, agents, shells and imports, and any tab can now be pinned.",
+  "Koru on Windows can install its own updates again: if this update keeps being offered, run the installer from this release once.",
+]
+
+body = """
+## Tasks
+
+**Arrange by hand.** Drag a task to reorder its list, or a queue set to
+Manual in its … menu. Drag tasks onto a list in the sidebar to move them
+there. A selection moves together, and Escape cancels a drag.
+
+**Edit where you are.** Double-click a task, or press F2, to rename it in
+place. Ctrl+click and Shift+click select several; Delete, right-click and
+the chips then act on all of them. A task's due date, priority, colour and
+list chips open their picker where you click.
+
+**A calmer page.** Rows are one line, the checkbox is the same size as in a
+document, and chips have even padding. "Add a task" stays open after Enter,
+and its hint lists /due, /priority and /list.
+
+## New… and tabs
+
+**One launcher for everything new.** Ctrl+N, the + button and the
+sidebar's New open a grid: Document, Task, Chat, Agent, Shell and Import,
+each chosen by its letter. Alt with a letter asks where to open it; Shift
+on Agent or Shell lists which one. Ctrl+N no longer opens a new window.
+
+**Pin any tab.** A task list, the Trash, Manage, a terminal or Settings can
+be pinned, not only a document or a chat. A pinned task list keeps its list.
+
+## Agents
+
+**Only what will run.** The Agents list shows only the agents installed on
+this computer and ends in Manage…, where Settings → Agent providers can now
+install one. Koru also finds an agent installed after it started, and finds
+Claude Code in the folders it is usually installed to on Windows.
+
+**Why an agent can't run.** Agent providers now says which version it found
+and which Koru needs, or that the agent's program won't start, instead of
+"This version isn't one Koru supports yet". In a chat, an agent that can't
+run offers Manage agent providers right under its note.
+
+## Windows
+
+**Updates install again.** Since the October 16 builds, Koru on Windows
+refused every update while preparing it: Restart and install closed Koru,
+changed nothing, and reopened the same version. This build fixes how the
+updater reads the update package.
+
+**Install this one by hand.** The updater that runs is the one already
+installed, so a Koru from October 16 or later cannot install this fix by
+itself. Download the Windows installer (setup.exe) from this release and
+run it once. Your documents and settings stay where they are. If preparing
+an update ever fails again, Koru stops offering that build at every start;
+Check for updates still tries it when you ask.
+
+## Mac
+
+The window's red, yellow and green buttons sit in the sidebar's top band,
+where the Koru mark was, and the separate title strip above the window is
+gone. Tabs drag again, and the window drags smoothly.
+
+## Documents
+
+**Pictures attach without freezing.** Pasting, dropping or choosing a large
+image no longer stops the window while it is read and stored. A pulsing
+placeholder holds its place, and the picture replaces it when it's ready.
+
+**A first document always has somewhere to go.** A profile with no
+workspace can make a document again: the first one creates a workspace
+called "Workspace" and opens it there.
+"""

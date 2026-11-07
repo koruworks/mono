@@ -173,6 +173,8 @@ pub enum ChipMenu {
     Color,
     Due,
     Priority,
+    /// The title's list chip.
+    List,
 }
 
 impl ChipMenu {
@@ -186,6 +188,7 @@ impl ChipMenu {
             Self::Color => "Edit colour…",
             Self::Due => "Edit due date…",
             Self::Priority => "Edit priority…",
+            Self::List => "Edit list…",
         }
     }
 
@@ -195,6 +198,7 @@ impl ChipMenu {
             Self::Color => "Clear colour",
             Self::Due => "Clear due date",
             Self::Priority => "Clear priority",
+            Self::List => "Remove from list",
         }
     }
 
@@ -204,6 +208,7 @@ impl ChipMenu {
             Self::Color => icons::PALETTE,
             Self::Due => icons::DATE,
             Self::Priority => icons::FLAG,
+            Self::List => icons::LIST,
         }
     }
 }

@@ -180,13 +180,14 @@ impl ChatsSurface {
                 }
                 self.line(scene, root, engine, parts.title, &title, style, ink);
                 // The mark at the row's end: the ring while it works, the
-                // amber dot while it waits on the person, the accent dot
-                // while something is unseen. One clock turns every ring.
+                // amber question mark while it waits on the person, the
+                // accent dot while something is unseen. One clock turns
+                // every ring.
                 let now = (!self.reduced_motion).then(std::time::Instant::now);
                 if parts.end.w > 0.0
                     && let Some(mark) = status.mark(now)
                 {
-                    koru_shell_chrome::status_mark::draw(scene, root, parts.end, mark);
+                    koru_shell_chrome::status_mark::draw(scene, root, engine, parts.end, mark);
                 }
                 // The pin (filled, in the accent, on a pinned chat) and ⋯
                 // (D86), on the row under the pointer only (D91); a plate

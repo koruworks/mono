@@ -916,6 +916,20 @@ pub fn missing_image_detail(
     }
 }
 
+/// The larger device-pixel axis of an image drawn `dw × dh` logical units
+/// under a transform of `scale` — what [`draw_image_row`] asks the image cache
+/// for, and what a worker pre-builds the mip of
+/// (`crate::pending_image::mip_side`). One rule, so the two cannot miss.
+pub fn mip_wanted(dw: f32, dh: f32, scale: f64) -> u32 {
+    ((dw.max(dh)) as f64 * scale).ceil().max(1.0) as u32
+}
+
+/// The uniform scale a transform applies: display scale times zoom.
+pub fn root_scale(root: Affine) -> f64 {
+    let [a, b, c, d, _, _] = root.as_coeffs();
+    a.hypot(b).max(c.hypot(d))
+}
+
 /// Paint an image row: the decoded picture scaled to its display size, or a
 /// muted placeholder when its bytes have not been decoded here yet — a remote
 /// image whose bytes are still arriving, or one that failed to decode.
@@ -968,9 +982,7 @@ pub fn draw_image_row(
     // mipmaps, so a full-resolution picture drawn into a small box is sampled
     // pointwise every frame; `scaled` builds the mip on the CPU instead, and
     // caches it by size.
-    let [a, b, c, d, _, _] = root.as_coeffs();
-    let scale = a.hypot(b).max(c.hypot(d));
-    let wanted = ((dw.max(dh)) as f64 * scale).ceil().max(1.0) as u32;
+    let wanted = mip_wanted(dw, dh, root_scale(root));
 
     let Some(brush) = images.scaled(&img.hash.0, wanted) else {
         koru_draw::inspect::current(|record| {
@@ -1871,6 +1883,9 @@ pub fn frame(
     }
 
     let (body, view) = editor.parts();
+    // Remembered for the shell's image worker, which builds a new picture's
+    // display mip at the scale it will be drawn at.
+    view.drawn_scale = root_scale(root);
     let content_root = root * Affine::translate((content_x as f64, 0.0));
     // Clip the content to the content area in Page mode (so the sheet and rows
     // never paint over the toolbar or status bar), and to the column otherwise
@@ -1956,6 +1971,18 @@ pub fn frame(
         reminder_chips,
     );
     draw_drag_feedback(scene, content_root, body, view);
+    // Images still loading, in the room the rows were positioned around.
+    crate::pending_image::draw(
+        scene,
+        content_root,
+        body,
+        &view.pending_images,
+        &mut view.engine,
+        view.scroll,
+        vh,
+        now,
+        view.reduced_motion,
+    );
 
     // Both hints are set exactly the way the row they stand in for is set —
     // the row's family, its step on the ramp, its weight, and the same strut

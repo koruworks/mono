@@ -234,6 +234,11 @@ impl StdioJsonRpc {
     ) -> Result<Self, ProviderFailure> {
         let process_tree = ProcessTree::new()?;
         let mut command = Command::new(executable);
+        // The effective `PATH` first, so an adapter's own `env` — and a
+        // `PATH` it names — lands on top: `claude-agent-acp` is a
+        // `#!/usr/bin/env node` script, which a Finder-launched Koru's
+        // inherited `PATH` cannot run.
+        koru_session_profiles::with_effective_path(&mut command);
         command
             .args(argv)
             .envs(env.iter().map(|(name, value)| (name, value)))
@@ -458,6 +463,7 @@ fn spawn_failure(error: &std::io::Error) -> ProviderFailure {
             ProviderDiagnostic::Spawn
         },
         os_code: error.raw_os_error(),
+        version: None,
     }
 }
 

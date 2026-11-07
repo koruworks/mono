@@ -41,6 +41,7 @@ pub mod environment;
 pub mod events_host;
 pub mod export;
 pub mod formats;
+mod image_import;
 pub mod images;
 mod inspector;
 /// What the window actually received, on demand — `KORU_INPUT_DEBUG=1`.
@@ -182,8 +183,8 @@ pub use clipboard_markdown::parse as parse_markdown;
 /// a drawn diagram.
 pub use diagram::{CopyDiagram, SaveDiagram};
 pub use settings::{
-    DocViewPrefs, MAX_RECENTS, PinnedTabRef, PinnedTarget, PopoutClose, SessionRecovery, Settings,
-    TabRef, TasksTabRef, TerminalLook,
+    DocViewPrefs, MAX_RECENTS, PinnedTabRef, PopoutClose, SessionRecovery, Settings, TabRef,
+    TasksTabRef, TerminalLook,
 };
 
 /// A decoded image ready to become a block, produced by the shell from the
@@ -216,6 +217,40 @@ pub struct PasteTarget {
     pub anchor: NodeId,
     pub replacing: Vec<NodeId>,
 }
+
+/// One image attachment the shell is preparing off the event loop — a paste, a
+/// drop or an `/image` pick — from the gesture until its node lands or it
+/// fails. Process-local: it names a placeholder a view is drawing, never
+/// anything in a document.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ImageTicket(pub u64);
+
+/// Where an image being prepared off the event loop will land.
+///
+/// Carried by the shell from the gesture to the insertion, and **mapped again
+/// at the insertion** against the document as it is then: reading, decoding
+/// and storing a large picture takes long enough for the person to keep
+/// typing, delete the anchor, or replace the selection the paste was meant
+/// for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ImagePlace {
+    /// A paste at the block target the editor recorded, or appended at the end
+    /// of the document when it is `None`.
+    Paste(Option<PasteTarget>),
+    /// A file dropped on the window: a brand-new row at the end of the body.
+    Append,
+    /// `/image`: this node — the line the command was typed on — becomes the
+    /// picture.
+    Convert(NodeId),
+}
+
+/// How large a view would draw a freshly inserted image of `(width, height)`
+/// pixels, as the larger axis in **device** pixels — the `wanted` its draw
+/// asks the image cache for. The shell builds that mip on the worker that
+/// decoded the image, so the first frame is a lookup instead of a resample
+/// on the event loop. A closure, because the rule (content column, display
+/// scale) is the view's and the worker cannot call back into a view.
+pub type ImageMipSide = std::sync::Arc<dyn Fn(u32, u32) -> u32 + Send + Sync>;
 
 /// A paragraph of text plus the block-level structure it arrived with — a list
 /// style, a heading level — so a paste from Word or Google Docs keeps its shape
@@ -1533,6 +1568,11 @@ pub trait View {
         None
     }
 
+    /// A list's page asked for — a document title's list chip. Default: no.
+    fn take_wants_task_list(&mut self) -> Option<koru_core::ids::ListId> {
+        None
+    }
+
     /// One of those commands refused, with a sentence for a person.
     ///
     /// **The return channel exists because of `Create`.** A capture that failed
@@ -1631,10 +1671,9 @@ pub trait View {
     }
 
     /// A non-text clipboard the user pasted (Ctrl+V). Holds the captured block
-    /// target. Cleared by the shell, which reads the clipboard, decodes, stores
-    /// the bytes, and calls [`paste_images`].
-    ///
-    /// [`paste_images`]: Self::paste_images
+    /// target. Cleared by the shell, which reads the clipboard, decodes and
+    /// stores the bytes off the event loop, and calls
+    /// [`finish_image_import`](Self::finish_image_import).
     fn take_wants_paste_image(&mut self) -> Option<PasteTarget> {
         None
     }
@@ -1704,6 +1743,75 @@ pub trait View {
         _target: Option<PasteTarget>,
         _blocks: &[RichBlock],
     ) {
+    }
+
+    /// **An image is on its way to `place`**: the shell has started reading,
+    /// decoding and storing it off the event loop, and asks the view to show
+    /// where it will land. The document is not touched — see
+    /// [`finish_image_import`](Self::finish_image_import) for why the node
+    /// waits. Default: nothing, which is what a view that draws no
+    /// placeholder (a canvas, the task outline) wants; the insertion still
+    /// arrives.
+    fn begin_image_import(
+        &mut self,
+        _ws: &WorkspaceDoc,
+        _ticket: ImageTicket,
+        _place: &ImagePlace,
+    ) {
+    }
+
+    /// The pixel sizes of the images `ticket` is preparing, read from their
+    /// headers before the slow decode, so a placeholder can take the picture's
+    /// final shape and the page does not jump when it lands.
+    fn size_image_import(&mut self, _ticket: ImageTicket, _sizes: &[(u32, u32)]) {}
+
+    /// **The images are stored**: insert them at `place`, which the shell has
+    /// already re-mapped onto the document as it stands now.
+    ///
+    /// The node is created only here, on the thread that owns the document,
+    /// once the blob has an address: a node made earlier would sync a picture
+    /// with no bytes to every other device and leave a broken one behind on a
+    /// failure. Default: the synchronous calls this used to be.
+    fn finish_image_import(
+        &mut self,
+        ws: &mut WorkspaceDoc,
+        _ticket: ImageTicket,
+        place: ImagePlace,
+        images: &[PastedImage],
+    ) {
+        match place {
+            ImagePlace::Paste(target) => self.paste_images(ws, target, images),
+            ImagePlace::Append => {
+                for image in images {
+                    self.append_image(ws, &image.hash, &image.mime, image.width, image.height);
+                }
+            }
+            ImagePlace::Convert(node) => {
+                if let Some(image) = images.first() {
+                    self.insert_image(
+                        ws,
+                        node,
+                        &image.hash,
+                        &image.mime,
+                        image.width,
+                        image.height,
+                    );
+                }
+            }
+        }
+    }
+
+    /// Drop `ticket`'s placeholder: its images landed, or failed. Sent to
+    /// every pane, because the tab that drew it may not be the one in front.
+    /// Answers whether anything was drawn for it, so the shell can redraw.
+    fn end_image_import(&mut self, _ticket: ImageTicket) -> bool {
+        false
+    }
+
+    /// How this view would size a fresh image, for the mip the shell builds
+    /// ahead of the first draw. `None` when it draws no images.
+    fn image_mip_side(&self) -> Option<ImageMipSide> {
+        None
     }
 
     /// Adopt what the last run remembered, and hand back what this one should.

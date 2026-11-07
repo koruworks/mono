@@ -18,16 +18,16 @@ use koru_core::schema::Parent;
 use koru_editor::Editing;
 
 #[test]
-fn socials_menu_focuses_one_tab_and_keeps_it_out_of_document_reuse() {
+fn socials_focuses_one_tab_and_keeps_it_out_of_document_reuse() {
     let (mut view, _) = container();
-    assert!(view.run_menu_action(MenuSubject::NewTab, MenuAction::Socials));
+    assert!(view.open_socials_tab());
     let count = view.tabs().len();
     assert!(matches!(view.tabs().active_tab().view, TabView::Socials(_)));
     assert!(!view.tabs().active_tab().is_reusable());
     assert!(view.explore.showing_socials());
     assert!(view.sidebar.is_open());
     let shared = view.explore.socials().expect("navigator owns the surface");
-    assert!(view.run_menu_action(MenuSubject::NewTab, MenuAction::Socials));
+    assert!(view.open_socials_tab());
     assert_eq!(view.tabs().len(), count);
     assert!(std::rc::Rc::ptr_eq(
         &shared,
@@ -298,7 +298,7 @@ fn the_library_background_opens_import_as_a_submenu() {
     assert!(v.open_submenu(0));
     assert_eq!(
         v.submenu.as_ref().unwrap().1.items(),
-        context_menu::import_items()
+        context_menu::import_menu_items()
     );
 }
 
@@ -1424,8 +1424,8 @@ fn a_cancelled_new_workspace_in_prompt_forgets_its_owner() {
     ));
     assert!(v.new_document.is_none());
 
-    // No workspace is open, so a new document asks for one first.
-    v.prompt_new_document();
+    // The next workspace prompt is the open Profile's.
+    assert!(v.prompt_new_workspace());
     assert!(v.key(&mut workspace.ws, &ch("Research"), Some("Research"), NONE,));
     assert!(v.key(
         &mut workspace.ws,
@@ -1439,8 +1439,12 @@ fn a_cancelled_new_workspace_in_prompt_forgets_its_owner() {
     ));
 }
 
+/// With no workspace open, a new document still asks for the document: the
+/// shell makes a default workspace for it (`ensure_live_workspace`). Asking
+/// for a workspace's name instead made only the workspace, and the document
+/// that was asked for never appeared.
 #[test]
-fn document_creation_asks_for_a_workspace_when_none_is_open() {
+fn document_creation_with_no_workspace_open_still_asks_for_the_document() {
     let (mut v, mut workspace) = container();
     let (_, profile, _, _) = v.pane_context.clone().expect("pane context");
     View::set_pane_context(&mut v, Vec::new(), profile, Vec::new(), None);
@@ -1456,7 +1460,7 @@ fn document_creation_asks_for_a_workspace_when_none_is_open() {
 
     assert!(matches!(
         koru_workspace_host::View::take_pane_request(&mut v),
-        Some(koru_workspace_host::PaneRequest::NewWorkspace(name)) if name == "Research"
+        Some(koru_workspace_host::PaneRequest::CreateDocument(title)) if title == "Research"
     ));
 }
 
@@ -1513,15 +1517,16 @@ fn ctrl_w_closes_and_ctrl_t_opens() {
     assert_eq!(v.tabs().len(), before);
 }
 
+/// **Ctrl+N opens the New… launcher**, the `+` button's dialog; Ctrl+Shift+A,
+/// the old Add… chord, opens nothing.
 #[test]
-fn ctrl_shift_a_opens_the_same_add_menu_as_the_plus() {
+fn ctrl_n_opens_the_launcher_the_plus_opens() {
     let (mut v, mut workspace) = container();
-    assert!(v.menu.is_none());
-    assert!(v.key(&mut workspace.ws, &ch("a"), Some("a"), PRIMARY_SHIFT,));
-    assert_eq!(
-        v.menu.as_ref().unwrap().items(),
-        context_menu::new_tab_items()
-    );
+    assert!(v.launcher.is_none());
+    let _ = v.key(&mut workspace.ws, &ch("a"), Some("a"), PRIMARY_SHIFT);
+    assert!(v.launcher.is_none() && v.menu.is_none());
+    assert!(v.key(&mut workspace.ws, &ch("n"), Some("n"), PRIMARY));
+    assert!(v.launcher.is_some());
 }
 
 #[test]
@@ -1571,33 +1576,22 @@ fn the_welcome_page_greets_the_owner_onboarding_named_for_this_profile() {
 }
 
 #[test]
-fn the_add_menu_always_offers_one_welcome_row_that_selects_the_welcome_tab() {
+fn opening_welcome_selects_the_one_welcome_tab() {
     let (mut v, _workspace) = on_document();
     let welcome = v
         .tabs()
         .iter()
         .position(|t| matches!(t.view, TabView::Welcome(_)))
         .expect("the document fixture opens beside Welcome");
-    assert!(v.open_new_tab_menu());
-    let items = v.menu.as_ref().unwrap().items().to_vec();
-    assert_eq!(
-        items
-            .iter()
-            .filter(|a| **a == MenuAction::OpenWelcome)
-            .count(),
-        1,
-        "one Welcome row, open or not"
-    );
-    v.menu = None;
     let before = v.tabs().len();
-    assert!(v.run_menu_action(MenuSubject::NewTab, MenuAction::OpenWelcome));
+    assert!(v.open_welcome_tab());
     assert_eq!(v.tabs().active(), welcome, "it selects the open one");
     assert_eq!(v.tabs().len(), before, "and adds nothing");
 
-    // Where a Welcome tab can be closed, the same row brings it back.
+    // Where a Welcome tab can be closed, the same call brings it back.
     if v.close(welcome) {
         assert!(!v.tabs().has_welcome());
-        assert!(v.run_menu_action(MenuSubject::NewTab, MenuAction::OpenWelcome));
+        assert!(v.open_welcome_tab());
         assert!(v.tabs().has_welcome());
     }
 }
@@ -1699,52 +1693,26 @@ fn the_plus_menu_focuses_a_tab_already_showing_the_recent() {
     );
 }
 
-/// A Chats flyout opened before the list has landed stays empty; when the
-/// snapshot is filled, the open flyout is rebuilt rather than waiting for
-/// the next Add….
-#[test]
-fn the_plus_menu_chats_flyout_fills_when_the_list_arrives() {
-    let (mut v, mut workspace) = container();
-    assert!(v.key(&mut workspace.ws, &ch("a"), Some("a"), PRIMARY_SHIFT));
-    let chats = v
-        .menu
-        .as_ref()
-        .unwrap()
-        .items()
-        .iter()
-        .position(|a| *a == MenuAction::Chats)
-        .expect("Chats row");
-    assert!(v.open_submenu(chats));
-    assert_eq!(
-        v.submenu.as_ref().unwrap().1.items(),
-        &[MenuAction::NewAiChat]
-    );
-
-    let id = koru_ai_ui::ChatId::new();
-    context_menu::set_plus_snapshots(vec![], vec![], vec![], vec![(id, "Chat with Qwen".into())]);
-    v.rebuild_plus_chats_flyout();
-    assert_eq!(
-        v.submenu.as_ref().unwrap().1.items(),
-        &[
-            MenuAction::NewAiChat,
-            MenuAction::Divider,
-            MenuAction::OpenRecentChat(id),
-        ]
-    );
-    context_menu::set_plus_snapshots(vec![], vec![], vec![], vec![]);
-}
-
-/// **A machine missing a program's executable dims that program's row** with
-/// the *Not installed* note — one uniform rule for shells and agents, the
-/// same as Koru Terminal's launch menus (W4.4a). The probe's answer is
+/// **A machine missing a shell dims its row; a missing agent is not
+/// listed** (product decision, 2026-11-05). A shell row keeps Koru
+/// Terminal's rule — dimmed with the *Not installed* note — while the
+/// *Agents* flyout lists only the agents this machine can launch, and ends in
+/// *Manage…*, where the rest are installed. The probe's answer is
 /// **injected**: what is under test is the menu's reflection of an answer,
 /// never what happens to be on the test machine's real `PATH` — the menus
-/// are built directly rather than through `open_new_tab_menu`, whose refresh
+/// are built directly rather than through the launcher, whose refresh
 /// would race a real probe against the injection.
 #[test]
-fn a_missing_program_dims_its_profile_row_shell_or_agent() {
+fn a_missing_shell_dims_and_a_missing_agent_is_not_listed() {
     let (v, _workspace) = container();
+    let profiles = koru_session_profiles::built_in_profiles();
+    let is_agent = |index: usize| profiles[index].kind == koru_session_protocol::ProfileKind::Agent;
+    // Before any probe has answered the menu lists every agent rather than
+    // none: the last known answer is "everything", and a person opening the
+    // menu at launch is not shown an empty list.
+    context_menu::set_profile_presence(v.profile_probe.snapshot());
     let agents = context_menu::agent_profile_items();
+    assert!(!agents.is_empty(), "no answer yet leaves nothing out");
     let agent_menu = ContextMenu::at_width(
         MenuSubject::NewTab,
         (100.0, 100.0),
@@ -1752,6 +1720,54 @@ fn a_missing_program_dims_its_profile_row_shell_or_agent() {
         MenuAnchor::Cursor,
         200.0,
     );
+    assert!(
+        v.enabled_items(&agent_menu).iter().all(|&row| row),
+        "no answer yet dims nothing"
+    );
+
+    // This "machine": every shell present, and of the agents only the first
+    // the menu lists.
+    let MenuAction::TerminalProfile(kept) = agents[0] else {
+        panic!("an agent row is a TerminalProfile action")
+    };
+    v.profile_probe.set_for_test(
+        (0..profiles.len())
+            .map(|index| !is_agent(index) || index == kept)
+            .collect(),
+    );
+    context_menu::set_profile_presence(v.profile_probe.snapshot());
+    assert_eq!(
+        context_menu::agent_profile_items(),
+        vec![MenuAction::TerminalProfile(kept)],
+        "only the installed agent is listed"
+    );
+    assert_eq!(
+        context_menu::agent_plus_items(),
+        vec![
+            MenuAction::TerminalProfile(kept),
+            MenuAction::Divider,
+            MenuAction::ManageAgents,
+        ]
+    );
+    // A menu whose rows were fixed before the answer still cannot launch a
+    // missing agent: its row dims with the note instead.
+    let enabled = v.enabled_items(&agent_menu);
+    for (action, enabled) in agents.iter().zip(enabled) {
+        assert_eq!(enabled, *action == MenuAction::TerminalProfile(kept));
+    }
+
+    // No agent installed: the flyout is *Manage…* alone.
+    v.profile_probe
+        .set_for_test((0..profiles.len()).map(|index| !is_agent(index)).collect());
+    context_menu::set_profile_presence(v.profile_probe.snapshot());
+    assert!(context_menu::agent_profile_items().is_empty());
+    assert_eq!(
+        context_menu::agent_plus_items(),
+        vec![MenuAction::ManageAgents]
+    );
+
+    // A shell is never left out: present, it is live; probed missing, it is
+    // dimmed with the note, the same as Koru Terminal's menu.
     let shells = context_menu::shell_profile_items();
     let shell_menu = ContextMenu::at_width(
         MenuSubject::NewTab,
@@ -1760,53 +1776,17 @@ fn a_missing_program_dims_its_profile_row_shell_or_agent() {
         MenuAnchor::Cursor,
         200.0,
     );
-    // Before any probe has answered, the last known answer is "everything":
-    // the menu opens without waiting on the world and dims when told.
-    assert!(
-        v.enabled_items(&agent_menu).iter().all(|&row| row),
-        "no answer yet dims nothing"
-    );
-
-    // This "machine": every shell present, every agent missing.
-    v.profile_probe.set_for_test(
-        koru_session_profiles::built_in_profiles()
-            .iter()
-            .map(|profile| profile.kind != koru_session_protocol::ProfileKind::Agent)
-            .collect(),
-    );
-    let enabled = v.enabled_items(&agent_menu);
-    assert!(!agents.is_empty());
-    assert!(
-        enabled.iter().all(|&row| !row),
-        "every missing agent is dimmed: {enabled:?}"
-    );
-    // Dimmed, not hidden — the rows are still in the menu, and each explains
-    // itself with the note the widget shows beside a disabled row.
-    for action in agents {
-        assert_eq!(
-            koru_ui::MenuItem::disabled_reason(&action).as_deref(),
-            Some("Not installed")
-        );
-    }
-    // The shells this answer found installed stay live — presence, not kind,
-    // is what enables a row.
     assert!(
         v.enabled_items(&shell_menu).iter().all(|&row| row),
         "an installed shell stays live"
     );
-
-    // And a probed-missing shell dims exactly like a missing agent, with the
-    // same note: the two surfaces match, with no shell special case.
-    v.profile_probe.set_for_test(
-        koru_session_profiles::built_in_profiles()
-            .iter()
-            .map(|_| false)
-            .collect(),
-    );
+    v.profile_probe.set_for_test(vec![false; profiles.len()]);
+    context_menu::set_profile_presence(v.profile_probe.snapshot());
+    assert_eq!(context_menu::shell_profile_items(), shells, "still listed");
     assert!(!shells.is_empty());
     assert!(
         v.enabled_items(&shell_menu).iter().all(|&row| !row),
-        "a missing shell is dimmed too"
+        "a missing shell is dimmed"
     );
     for action in shells {
         assert_eq!(
@@ -1814,6 +1794,7 @@ fn a_missing_program_dims_its_profile_row_shell_or_agent() {
             Some("Not installed")
         );
     }
+    context_menu::set_profile_presence(None);
 }
 
 /// **Only the active session tab is live** — the active-tab-exclusive rule.
@@ -2591,15 +2572,14 @@ fn a_second_click_inside_one_document_reuses_its_tab() {
 fn tab_offers(v: &mut MainView, ws: &mut WorkspaceDoc, tab: usize, action: MenuAction) -> bool {
     right_click_tab(v, ws, tab);
     let menu = v.menu.clone().expect("the menu opened");
-    v.enabled_items(&menu)[item_of(action)]
+    v.enabled_items(&menu)[item_of(&menu, action)]
 }
 
-/// The index in [`TAB_ITEMS`] of `action`.
-fn item_of(action: MenuAction) -> usize {
-    context_menu::TAB_ITEMS
-        .iter()
-        .position(|&a| a == action)
-        .unwrap()
+/// The index of `action` in the open menu. **Read off the menu, not off
+/// [`TAB_ITEMS`]**: every tab may be pinned, so a tab's menu leads with *Pin
+/// tab* (or *Unpin*) and a divider before the items `TAB_ITEMS` lists.
+fn item_of(menu: &ContextMenu, action: MenuAction) -> usize {
+    menu.items().iter().position(|&a| a == action).unwrap()
 }
 
 /// Right-click the middle of tab `tab_index`, opening its menu.
@@ -2613,7 +2593,7 @@ fn right_click_tab(v: &mut MainView, ws: &mut WorkspaceDoc, tab_index: usize) {
 /// reading it out for the click point does not dismiss it.
 fn choose(v: &mut MainView, ws: &mut WorkspaceDoc, action: MenuAction) {
     let menu = v.menu.clone().expect("the menu is open");
-    let (x, y) = menu.item_rect(v.viewport, item_of(action)).centre();
+    let (x, y) = menu.item_rect(v.viewport, item_of(&menu, action)).centre();
     v.mouse_down(ws, x, y, false);
 }
 
@@ -2661,7 +2641,7 @@ fn a_store_document_tab_offers_rename_and_move_to_trash() {
     let menu = v.menu.as_ref().expect("the document tab menu opened");
     assert_eq!(
         menu.items(),
-        context_menu::tab_items(true, false, false, false)
+        context_menu::tab_items(true, true, false, false)
     );
     assert!(v.item_is_enabled(menu, MenuAction::Rename));
     assert!(v.item_is_enabled(menu, MenuAction::MoveToTrash));
@@ -2692,8 +2672,8 @@ fn a_store_document_tab_offers_rename_and_move_to_trash() {
     right_click_tab(&mut v, &mut workspace.ws, 0);
     assert_eq!(
         v.menu.as_ref().unwrap().items(),
-        context_menu::tab_items(false, false, false, false),
-        "Welcome does not show document-only actions"
+        context_menu::tab_items(false, true, false, false),
+        "Welcome does not show document-only actions (it may be pinned, like every tab)"
     );
 }
 
@@ -2793,20 +2773,19 @@ fn every_tabs_close_item_is_offered() {
     }
     // The bulk items still depend on there being something to bulk-close.
     right_click_tab(&mut v, &mut workspace.ws, 0);
-    let enabled = v.enabled_items(&v.menu.clone().unwrap());
-    assert!(enabled[item_of(MenuAction::CloseOthers)]);
+    let menu = v.menu.clone().unwrap();
+    let enabled = v.enabled_items(&menu);
+    assert!(enabled[item_of(&menu, MenuAction::CloseOthers)]);
     assert!(
-        !enabled[item_of(MenuAction::CloseLeft)],
+        !enabled[item_of(&menu, MenuAction::CloseLeft)],
         "nothing to the left"
     );
-    assert!(enabled[item_of(MenuAction::CloseRight)]);
-    // Pop Out still leads and a welcome tab is not poppable, so the menu opens
-    // on the first *enabled* item — which is Close, no longer dimmed.
+    assert!(enabled[item_of(&menu, MenuAction::CloseRight)]);
+    // The menu opens on the first *enabled* item — *Pin tab*, now that a
+    // welcome tab may be pinned too.
     right_click_tab(&mut v, &mut workspace.ws, 0);
-    assert_eq!(
-        v.menu.as_ref().unwrap().hover,
-        Some(item_of(MenuAction::Close))
-    );
+    let menu = v.menu.clone().unwrap();
+    assert_eq!(menu.hover, Some(item_of(&menu, MenuAction::PinTab)));
 
     // And choosing it does close the tab, rather than being inert.
     let before = labels(&v);
@@ -2830,9 +2809,13 @@ fn arrow_keys_drive_the_menu_and_enter_chooses() {
         v.key(ws, &Key::Named(NamedKey::ArrowDown), None, NONE);
     };
     // Down steps through every *selectable* item and wraps — it steps over the
-    // divider. Counted off `TAB_ITEMS` rather than a literal, so adding a row
-    // does not make this a lie.
-    let selectable: Vec<usize> = context_menu::TAB_ITEMS
+    // dividers. Counted off the open menu rather than a literal, so adding a
+    // row does not make this a lie.
+    let selectable: Vec<usize> = v
+        .menu
+        .as_ref()
+        .unwrap()
+        .items()
         .iter()
         .enumerate()
         .filter(|(_, a)| a.selectable())
@@ -2855,7 +2838,7 @@ fn arrow_keys_drive_the_menu_and_enter_chooses() {
         "Down wraps back to the top"
     );
     // Step down to Close Others, and Enter runs it.
-    let target = item_of(MenuAction::CloseOthers);
+    let target = item_of(v.menu.as_ref().unwrap(), MenuAction::CloseOthers);
     while v.menu.as_ref().unwrap().hover != Some(target) {
         down(&mut v, &mut workspace.ws);
     }
@@ -6831,9 +6814,11 @@ fn a_welcome_tick_reaches_the_container_and_runs_the_existing_command() {
 #[test]
 fn welcome_opens_the_plus_menus_list_of_agents() {
     let (mut v, _w) = container();
-    let agents = context_menu::shown(context_menu::agent_plus_items());
-    assert!(!agents.is_empty(), "agents are on unless set off");
     assert!(v.open_agents_menu());
+    // Read after the open: the list follows the probe answer the open
+    // handed the menus, which a real probe on this machine may have given.
+    let agents = context_menu::shown(context_menu::agent_plus_items());
+    assert!(!agents.is_empty(), "at least Manage…");
     let menu = v.menu.as_ref().expect("the list is open");
     assert_eq!(menu.subject, MenuSubject::NewTab);
     assert_eq!(menu.items(), agents.as_slice());
@@ -8033,6 +8018,7 @@ fn the_command_bar_offers_new_task_and_new_document_from_the_typed_text() {
             due,
             list,
             priority,
+            ..
         } => Some((
             title.clone(),
             due.is_none(),
@@ -8670,7 +8656,7 @@ fn every_caption_tooltip_takes_its_chord_from_the_registry() {
         (Hit::Search, ShortcutId::Search),
         // The historical hit name is the caption `+`; it now opens Add rather
         // than directly creating the Ctrl+T document.
-        (Hit::NewTab, ShortcutId::AddContent),
+        (Hit::NewTab, ShortcutId::New),
     ] {
         let Some(tip) = v.caption_tooltip(hit) else {
             continue;
@@ -8814,15 +8800,15 @@ fn no_tooltip_shows_while_a_rail_view_is_carried() {
 }
 
 #[test]
-fn the_plus_tooltip_names_add_and_its_own_shortcut() {
+fn the_plus_tooltip_names_new_and_its_own_shortcut() {
     let (v, _workspace) = container();
     let tip = v
         .caption_tooltip(Hit::NewTab)
         .expect("the visible plus has a tooltip");
-    assert_eq!(tip.label, "Add…");
+    assert_eq!(tip.label, "New…");
     assert_eq!(
         tip.shortcut,
-        Some(koru_keys::label_of(koru_keys::ShortcutId::AddContent))
+        Some(koru_keys::label_of(koru_keys::ShortcutId::New))
     );
 }
 
@@ -10285,6 +10271,7 @@ fn every_task_command_leaves_through_the_pane_the_shell_holds() {
             due: None,
             list: None,
             priority: None,
+            rank: None,
         },
         TaskCommand::Remove { document, node },
         TaskCommand::SetList {
@@ -10327,6 +10314,7 @@ fn every_task_command_leaves_through_the_pane_the_shell_holds() {
                 due: None,
                 list: None,
                 priority: None,
+                rank: None,
             },
             "the store would not take it"
         ),
@@ -10793,6 +10781,45 @@ fn a_second_bucket_re_points_the_one_tasks_tab() {
     assert_eq!(tab.target(), RailTarget::Bucket(Bucket::Later));
 }
 
+/// **A pinned Tasks tab keeps its queue.** Pressing another bucket opens (or
+/// re-points) an unpinned page beside it; pressing the pinned queue again
+/// selects the pin rather than opening a second page on it.
+#[test]
+fn a_pinned_tasks_tab_is_not_re_pointed_by_the_rail() {
+    use crate::panes::explore::rail::{Bucket, RailRow, RailTarget};
+    let (mut v, mut w) = on_tasks();
+    let press = |v: &mut MainView, w: &mut Workspace, bucket| {
+        let (x, y) = rail_row(v, RailRow::Bucket(bucket)).centre();
+        v.mouse_down(&mut w.ws, x, y, false);
+    };
+    press(&mut v, &mut w, Bucket::Upcoming);
+    let at = v.tabs().active();
+    assert!(v.tabs_mut().pin(at, uuid::Uuid::new_v4(), true), "pinned");
+
+    press(&mut v, &mut w, Bucket::Later);
+    let targets = |v: &MainView| -> Vec<(bool, RailTarget)> {
+        v.tabs()
+            .iter()
+            .filter_map(|t| match &t.view {
+                TabView::Tasks(tasks) => Some((t.is_pinned(), tasks.target())),
+                _ => None,
+            })
+            .collect()
+    };
+    assert_eq!(
+        targets(&v),
+        [
+            (true, RailTarget::Bucket(Bucket::Upcoming)),
+            (false, RailTarget::Bucket(Bucket::Later)),
+        ],
+        "the pin kept Upcoming; Later opened beside it"
+    );
+
+    press(&mut v, &mut w, Bucket::Upcoming);
+    assert_eq!(targets(&v).len(), 2, "no second Upcoming page");
+    assert!(v.tabs().active_tab().is_pinned(), "the pin is in front");
+}
+
 /// The rail and the tab hold one answer, and the rail is the half put back:
 /// a tab restored from a session cards its own queue on the next refresh.
 #[test]
@@ -11099,6 +11126,92 @@ fn remove_from_tasks_goes_through_the_confirm() {
     );
 }
 
+/// **A selection's menu acts on every task in it**: *Complete* is one command
+/// per task, *Remove from Tasks* is one question for the set and one command
+/// per task on its yes, and *Add document* gives each page-made task a
+/// home and opens none of them.
+#[test]
+fn a_selections_menu_acts_on_every_task() {
+    use koru_workspace_host::tasks::TaskCommand;
+    let (mut v, _w) = on_tasks();
+    let tasks: Vec<_> = (0..3)
+        .map(|_| (koru_core::DocumentId::new(), NodeId::new()))
+        .collect();
+    let native = tasks[1..].to_vec();
+    let subject = MenuSubject::Tasks {
+        tasks: tasks.clone(),
+        native: native.clone(),
+    };
+
+    v.run_menu_action_for_test(subject.clone(), MenuAction::TaskComplete);
+    assert_eq!(
+        View::take_wants_task_commands(&mut v),
+        tasks
+            .iter()
+            .map(|&(document, node)| TaskCommand::Complete {
+                document,
+                node,
+                completed: true,
+            })
+            .collect::<Vec<_>>()
+    );
+
+    v.run_menu_action_for_test(subject.clone(), MenuAction::TaskRemove);
+    assert!(
+        View::take_wants_task_commands(&mut v).is_empty(),
+        "asked first"
+    );
+    assert!(v.confirm.is_some(), "one question for the set");
+    v.settle_confirm(true);
+    assert_eq!(
+        View::take_wants_task_commands(&mut v),
+        tasks
+            .iter()
+            .map(|&(document, node)| TaskCommand::Remove { document, node })
+            .collect::<Vec<_>>()
+    );
+
+    v.run_menu_action_for_test(subject, MenuAction::TaskCreateDocument);
+    assert_eq!(
+        View::take_wants_task_commands(&mut v),
+        native
+            .iter()
+            .map(|&(document, node)| TaskCommand::CreateHome { document, node })
+            .collect::<Vec<_>>(),
+        "a home for each page-made task, and only those"
+    );
+    assert!(
+        v.pending_landings
+            .iter()
+            .all(|landing| *landing == super::Landing::Plain),
+        "none of the new documents is opened"
+    );
+}
+
+/// The selection's menu offers what applies to every task, and nothing that
+/// names one.
+#[test]
+fn a_selections_menu_holds_what_applies_to_every_task() {
+    let a = (koru_core::DocumentId::new(), NodeId::new());
+    let b = (koru_core::DocumentId::new(), NodeId::new());
+    let (_, items) = crate::tasks_view::rows_menu(vec![a, b], vec![b], false);
+    assert_eq!(
+        items,
+        vec![
+            MenuAction::TaskCreateDocument,
+            MenuAction::Divider,
+            MenuAction::TaskComplete,
+            MenuAction::TaskDue,
+            MenuAction::TaskPriority,
+            MenuAction::TaskList,
+            MenuAction::Divider,
+            MenuAction::TaskRemove,
+        ]
+    );
+    let (_, done) = crate::tasks_view::rows_menu(vec![a, b], Vec::new(), true);
+    assert_eq!(done.first(), Some(&MenuAction::TaskReopen));
+}
+
 /// A failed capture gives the typing back rather than only naming it.
 #[test]
 fn a_failed_capture_puts_the_words_back_in_the_row() {
@@ -11112,6 +11225,7 @@ fn a_failed_capture_puts_the_words_back_in_the_row() {
         due: None,
         list: None,
         priority: None,
+        rank: None,
     };
     assert!(View::task_command_failed(
         &mut v,
@@ -11317,6 +11431,7 @@ fn a_capture_that_lands_elsewhere_raises_a_toast_with_a_way_there_and_back() {
             due: Some(Temporal::Date(DateOnly::new(today))),
             list: None,
             priority: None,
+            rank: None,
         },
         false,
     );
@@ -11329,6 +11444,7 @@ fn a_capture_that_lands_elsewhere_raises_a_toast_with_a_way_there_and_back() {
             due: Some(far.clone()),
             list: None,
             priority: None,
+            rank: None,
         },
         false,
     );
@@ -11403,6 +11519,7 @@ fn a_capture_that_lands_elsewhere_raises_a_toast_with_a_way_there_and_back() {
             due: Some(far),
             list: Some(birthday),
             priority: None,
+            rank: None,
         },
         false,
     );

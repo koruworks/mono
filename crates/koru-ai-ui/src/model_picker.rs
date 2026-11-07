@@ -332,6 +332,12 @@ pub(crate) enum Row {
     /// Enter expands it, again collapses it (M4, the user's design). Only
     /// while not searching; a search shows them inline, tagged.
     LegacyToggle,
+    /// *Manage agent providers*, under the note of an agent that cannot run
+    /// here — not installed, a version Koru does not support, its chat
+    /// program missing. Opens Settings → Coding → Agent providers, as the
+    /// rail's **+** does: the note says what is wrong, and this is where it
+    /// is put right. Only while the host offers that page.
+    ManageAgents,
     /// **A search's heading for an entry** (D67): its mark and name, above
     /// what the query found in its list.
     EntryHeading(RailEntry),
@@ -1009,9 +1015,16 @@ impl crate::ChatSurface {
                         rows
                     }
                     other => {
-                        vec![Row::Note(other.word(self.lang).unwrap_or_else(|| {
-                            t(self.lang, Key::TerminalChecking).to_owned()
-                        }))]
+                        let mut rows =
+                            vec![Row::Note(other.word(self.lang).unwrap_or_else(|| {
+                                t(self.lang, Key::TerminalChecking).to_owned()
+                            }))];
+                        // Checking will settle on its own; everything else
+                        // here is put right in *Agent providers*.
+                        if other != AgentStatus::Checking && self.agent_settings_offered {
+                            rows.push(Row::ManageAgents);
+                        }
+                        rows
                     }
                 }
             }
@@ -1176,6 +1189,8 @@ impl crate::ChatSurface {
                 // Showing the older models chooses nothing: it works in a
                 // begun chat too, even where its models are only shown.
                 Row::LegacyToggle => true,
+                // Opening Settings chooses nothing either.
+                Row::ManageAgents => true,
                 Row::Favorite(agent, _) => self.entry_choosable(&RailEntry::Agent(agent.clone())),
                 // A search's row can be chosen as on its own entry's list.
                 Row::Found(entry, found) => self.entry_choosable(entry) && found.choosable(),
@@ -1200,6 +1215,7 @@ impl crate::ChatSurface {
             (RailEntry::Provider(_) | RailEntry::Favorites, Row::Default | Row::Model(_)) => {
                 String::new()
             }
+            (_, Row::ManageAgents) => t(self.lang, Key::AiPickerManageAgents).to_owned(),
             (_, Row::LegacyToggle) => koru_i18n::fill(
                 t(self.lang, Key::AiModelsLegacy),
                 &[&koru_i18n::number::decimal(
@@ -1419,6 +1435,10 @@ impl crate::ChatSurface {
         }
         if *row == Row::LegacyToggle {
             return self.toggle_legacy(index, !self.picker.legacy_open);
+        }
+        if *row == Row::ManageAgents {
+            self.ask_for_agent_settings();
+            return true;
         }
         // A search's row is its own entry's (D67).
         let (entry, row) = match row.clone() {
@@ -2024,6 +2044,7 @@ pub(crate) fn row_id(entry: &RailEntry, row: &Row) -> Option<String> {
             format!("{}\u{1f}{}\u{1f}{id}", entry_id(entry), agent.as_str())
         }
         Row::LegacyToggle => format!("{}\u{1f}legacy", entry_id(entry)),
+        Row::ManageAgents => format!("{}\u{1f}manage", entry_id(entry)),
     })
 }
 

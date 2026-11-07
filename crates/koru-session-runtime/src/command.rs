@@ -60,13 +60,37 @@ impl SpawnRequest {
         Ok(())
     }
 
+    /// The child's whole environment. An inheriting one carries the
+    /// **effective `PATH`** (`koru_session_profiles::effective_path`) in
+    /// place of this process's, before the request's own `set` and `remove`
+    /// apply — so a profile that names `PATH` still decides it. A terminal
+    /// tab, a raw agent tab and an *Install* tab of a Koru opened from Finder
+    /// would otherwise run with launchd's four directories, where neither
+    /// `node` nor `npm` nor any agent is. `Clean` stays clean.
     pub(crate) fn environment(&self) -> Vec<(OsString, OsString)> {
+        self.environment_with_path(koru_session_profiles::effective_path)
+    }
+
+    /// [`environment`](Self::environment) with the effective `PATH` supplied,
+    /// so the composition is tested without computing it.
+    pub(crate) fn environment_with_path(
+        &self,
+        effective_path: impl FnOnce() -> OsString,
+    ) -> Vec<(OsString, OsString)> {
         let mut environment: Vec<_> = match &self.environment {
             EnvironmentPolicy::Clean => Vec::new(),
             EnvironmentPolicy::Inherit | EnvironmentPolicy::InheritWith { .. } => {
                 std::env::vars_os().collect()
             }
         };
+        if !matches!(self.environment, EnvironmentPolicy::Clean) {
+            let path = effective_path();
+            if !path.is_empty() {
+                let key = OsString::from("PATH");
+                environment.retain(|(current, _)| !same_environment_key(current, &key));
+                environment.push((key, path));
+            }
+        }
         if let EnvironmentPolicy::InheritWith { set, remove } = &self.environment {
             for key in remove {
                 environment.retain(|(current, _)| !same_environment_key(current, key));
@@ -133,3 +157,6 @@ pub fn default_shell() -> OsString {
         std::env::var_os("SHELL").unwrap_or_else(|| OsString::from("/bin/sh"))
     }
 }
+
+#[cfg(test)]
+mod tests;

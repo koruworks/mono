@@ -8,6 +8,8 @@ use koru_store_core::{DocumentId, WorkspaceId};
 use loro::{ExportMode, LoroDoc};
 use sha2::{Digest, Sha256};
 mod catalog;
+mod claim_amendment;
+mod claim_reference;
 mod metadata;
 
 fn id(n: u8) -> CloudId {
@@ -45,6 +47,11 @@ fn setup(limit: usize) -> (Stream, MemoryBudget) {
     )
 }
 fn setup_scope(limit: usize, scope: Scope) -> (Stream, MemoryBudget) {
+    setup_claims(limit, scope, ClaimReferences::None)
+}
+/// A stream whose session was admitted with `claims`: which way a claim
+/// reference may cross it.
+fn setup_claims(limit: usize, scope: Scope, claims: ClaimReferences) -> (Stream, MemoryBudget) {
     let principal = scope.principal;
     let accepted = PreparedSession {
         accepted: HandshakeV1::SessionAccepted {
@@ -56,6 +63,7 @@ fn setup_scope(limit: usize, scope: Scope) -> (Stream, MemoryBudget) {
         principal,
         expires_at_seconds: 600,
         generation: 1,
+        claim_references: claims,
     };
     let budget = MemoryBudget::new(1024 * 1024 * 1024);
     (
@@ -81,6 +89,7 @@ fn start(length: usize) -> Start {
         total_length: length,
         fragment_count: 1,
         sha256: Bytes(Sha256::digest(vec![0; length]).into()),
+        claim: None,
     }
 }
 fn code<T>(r: Result<T, Error>) -> &'static str {

@@ -20,8 +20,8 @@ use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::{
         Annotations, CallToolResult, ErrorData, ListResourceTemplatesResult, ListResourcesResult,
-        ReadResourceRequestParams, ReadResourceResponse, ReadResourceResult, Resource,
-        ResourceContents, ResourceTemplate, Role, ServerCapabilities, ServerInfo,
+        ReadResourceRequestParams, ReadResourceResponse, Resource, ResourceTemplate, Role,
+        ServerCapabilities, ServerInfo,
     },
     schemars, tool, tool_handler, tool_router,
 };
@@ -50,12 +50,24 @@ use koru_store_wire::tasks::{
 use koru_store_wire::{CaptureHistory, HistoryEntry, HistoryPage, HistoryQuery, Status};
 use koru_workspace::store::{StoreSession, Synced};
 
+mod attribution;
+mod capabilities;
 mod chat_tools;
+pub mod effects;
+pub mod hosted;
+pub use attribution::{ACTOR_V1, ActorCreate, ActorMessage, ChangeAttribution};
+pub use capabilities::{HostCapabilities, RUNG1_READ_TOOLS, RUNG1_TOOLS};
 pub use chat_tools::CHAT_TOOL_NAMES;
 use chat_tools::{ListChatsToolRequest, ReadChatToolRequest, SearchChatsToolRequest};
+use effects::{EffectKind, Ledger, Recovery};
 
 mod local_ids;
 mod published_schema;
+mod shared_surface;
+pub use shared_surface::{
+    documentation_resource_templates, documentation_resources, read_documentation_resource,
+    server_instructions,
+};
 pub mod tasks;
 mod tool_pages;
 mod toolsets;
@@ -506,6 +518,14 @@ pub struct RequestContext {
     pub scopes: Vec<String>,
     pub workspace_access: WorkspaceAccess,
     pub chat_tools: ChatToolAccess,
+    /// Which tools this host serves at all, checked before anything else.
+    /// Local hosts serve [`HostCapabilities::All`].
+    pub capabilities: HostCapabilities,
+    /// Who every commit this call makes is attributed to: the app connection
+    /// a hosted call came through, written as `actor/1`
+    /// (`contracts/connector-attribution-v1.md`). `None` on every local host,
+    /// whose commits carry no message.
+    pub attribution: Option<ChangeAttribution>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -554,6 +574,8 @@ impl RequestContext {
             scopes: vec!["read_documents".into(), "edit_documents".into()],
             workspace_access: WorkspaceAccess::All,
             chat_tools: ChatToolAccess::Bridge,
+            capabilities: HostCapabilities::All,
+            attribution: None,
         }
     }
 
@@ -573,7 +595,21 @@ impl RequestContext {
                 .collect(),
             workspace_access: WorkspaceAccess::selected(workspaces),
             chat_tools: ChatToolAccess::Denied,
+            capabilities: HostCapabilities::All,
+            attribution: None,
         }
+    }
+
+    /// The same context, serving only `capabilities`' tools.
+    pub fn with_capabilities(mut self, capabilities: HostCapabilities) -> Self {
+        self.capabilities = capabilities;
+        self
+    }
+
+    /// The same context, attributing every commit it makes to `attribution`.
+    pub fn with_attribution(mut self, attribution: ChangeAttribution) -> Self {
+        self.attribution = Some(attribution);
+        self
     }
 
     fn has_scope(&self, required: Scope) -> bool {
@@ -603,17 +639,33 @@ pub trait EmbeddedStore: Send + Sync {
         &self,
         request: SearchRequest,
     ) -> Result<koru_store_wire::search::SearchResponse, ToolError>;
+    /// The tasks query, answered from the host's read model by the one task
+    /// interpretation the Store has — the page `POST /v1/tasks/query` answers.
+    /// A host whose read model has not swept a workspace says so in
+    /// `updating_workspaces`, never with an empty list that reads as done.
+    fn query_tasks(&self, query: TaskQuery) -> Result<TaskQueryResponse, ToolError>;
     fn snapshot(
         &self,
         workspace: StoreWorkspaceId,
         document: StoreDocumentId,
     ) -> Result<Vec<u8>, ToolError>;
+    /// Register an empty document. `attribution`, when given, labels the
+    /// manifest commit this makes with an app connection's `actor/1` message.
+    ///
+    /// **Two effects in one call** when an extraction makes its destination:
+    /// the empty unit and its manifest entry. A port that can save one and
+    /// not the other says which with [`ToolError::with_effects`].
     fn create_document(
         &self,
         workspace: StoreWorkspaceId,
         title: String,
         kind: String,
+        attribution: Option<&str>,
     ) -> Result<StoreDocumentId, ToolError>;
+    /// The workspace manifest's document id, which names the `manifest`
+    /// effect in a mutating call's outcome. Asked only when a call has to
+    /// report one.
+    fn manifest_id(&self, workspace: StoreWorkspaceId) -> Result<StoreDocumentId, ToolError>;
     /// The one note a file carries, creating it when it has none.
     ///
     /// Idempotent, like the store operation it ports: the boolean answers
@@ -627,6 +679,10 @@ pub trait EmbeddedStore: Send + Sync {
         &self,
         request: EmbeddedSeedDocument,
     ) -> Result<EmbeddedSeededDocument, ToolError>;
+    /// Keep one update of one unit: one effect. `Ok` means it is durable; an
+    /// error means it is not, unless its code is
+    /// [`effects::SAVE_STATUS_UNKNOWN`] — submitted and never confirmed
+    /// ([`effects`]).
     fn persist_update(
         &self,
         workspace: StoreWorkspaceId,
@@ -673,6 +729,10 @@ pub trait EmbeddedStore: Send + Sync {
     fn status(&self) -> Result<Status, ToolError>;
 }
 
+/// A created document, as [`EmbeddedStore::seed_document`] is asked to keep
+/// it: its content first, then its manifest entry — **two effects in one
+/// call**, which a port that can save one and not the other reports with
+/// [`ToolError::with_effects`].
 pub struct EmbeddedSeedDocument {
     pub workspace: StoreWorkspaceId,
     pub title: String,
@@ -682,6 +742,9 @@ pub struct EmbeddedSeedDocument {
     pub idempotency_key: String,
     pub request_hash: String,
     pub initial_update: Vec<u8>,
+    /// The app connection's `actor/1` message for the manifest entry's commit;
+    /// `None` on a local host. The content's own commits already carry theirs.
+    pub attribution: Option<String>,
 }
 
 pub struct EmbeddedSeededDocument {
@@ -804,6 +867,19 @@ fn tool_policy(name: &str) -> Option<ToolPolicy> {
             workspace: WorkspaceTarget::One,
             domain: ToolDomain::Workspace,
         },
+        // Hosted only (`hosted`): a claim changes what other agents may do,
+        // so it needs Read & edit. Taking one names its Workspace; releasing
+        // one names only its handle, which names its document server-side.
+        hosted::CLAIM_DOCUMENT => ToolPolicy {
+            scope: edit,
+            workspace: WorkspaceTarget::One,
+            domain: ToolDomain::Workspace,
+        },
+        hosted::RELEASE_DOCUMENT => ToolPolicy {
+            scope: edit,
+            workspace: WorkspaceTarget::None,
+            domain: ToolDomain::Workspace,
+        },
         _ => return None,
     })
 }
@@ -825,6 +901,11 @@ impl WorkspaceToolExecutor {
         tool: &str,
         mut arguments: Value,
     ) -> Result<Value, ToolError> {
+        // **Capabilities first**: a tool this host does not serve is refused
+        // before its scope, its workspace or the backend is consulted.
+        if let Some(refusal) = context.capabilities.refusal(tool) {
+            return Err(refusal);
+        }
         let policy = tool_policy(tool).ok_or_else(|| ToolError::invalid("unknown tool"))?;
         if policy.domain == ToolDomain::Chat && context.chat_tools == ChatToolAccess::Denied {
             return Err(ToolError::permission_denied(
@@ -1166,11 +1247,106 @@ impl DocumentSession {
         }
     }
 
+    /// Record the version an embedded session's next persist exports from,
+    /// for a caller that knows it without a decoded document of the type.
+    fn record_version(&mut self, version: loro::VersionVector) {
+        if let DocumentSession::Embedded { before, .. } = self {
+            *before = Some(version);
+        }
+    }
+
     /// Leave the room. An embedded session never joined one.
     fn leave(&self) {
         if let DocumentSession::Remote(session) = self {
             session.leave();
         }
+    }
+}
+
+/// One mutating call, as every write it makes needs to know it.
+struct Call<'a> {
+    /// The operation id: minted per mutating call, written into every commit's
+    /// attribution (`op`) and every outcome envelope.
+    operation: uuid::Uuid,
+    attribution: Option<&'a ChangeAttribution>,
+    /// Whether this host is a device, which keeps the `mcp_before`/`mcp_after`
+    /// history captures and delivers the task log. A hosted replica does
+    /// neither: history is device-local, and a replica has nowhere durable to
+    /// keep a log (TECHNICAL §5.5).
+    device: bool,
+}
+
+impl<'a> Call<'a> {
+    fn new(context: &'a RequestContext) -> Self {
+        Self {
+            operation: uuid::Uuid::new_v4(),
+            attribution: context.attribution.as_ref(),
+            device: context.capabilities.is_device(),
+        }
+    }
+
+    /// The `actor/1` message for this call's commits, when it has one.
+    fn message(&self) -> Option<String> {
+        self.attribution
+            .map(|attribution| attribution.message(self.operation))
+    }
+
+    /// Label every commit `doc` makes from now on with this call's message,
+    /// while the returned subscription lives.
+    fn label(&self, doc: &loro::LoroDoc) -> Option<loro::Subscription> {
+        self.message()
+            .map(|message| attribution::attribute_commits(doc, &message))
+    }
+
+    fn ledger(&self) -> Ledger {
+        Ledger::new(self.operation)
+    }
+}
+
+/// A document joined for writing by [`LocalBackend::join_for_edit`].
+struct Editing {
+    session: DocumentSession,
+    /// The frontier the Store holds the document at, read before any id stamp
+    /// was applied in memory: where every `*_before` history capture forks.
+    stored: loro::Frontiers,
+    /// Labels each commit on the document with the call's attribution, for as
+    /// long as the edit lives.
+    _attributed: Option<loro::Subscription>,
+}
+
+/// The workspace system document, opened by [`LocalBackend::system_document`].
+struct SystemSession {
+    id: StoreDocumentId,
+    session: SessionGuard,
+    doc: SystemDoc,
+    _attributed: Option<loro::Subscription>,
+}
+
+/// Record, in memory, the workspace and the document `doc` belongs to, where
+/// it does not say. **Both ids, for one reason.** The workspace is step 0 of
+/// every task command's preflight; the document is the middle segment of
+/// every reference minted here, and this is the only side that knows it — the
+/// caller asked the store for this document *by* this id. Each stamp is
+/// idempotent, so a document already carrying both is unchanged.
+fn stamp_ids(
+    doc: &mut WorkspaceDoc,
+    workspace: StoreWorkspaceId,
+    document: StoreDocumentId,
+) -> Result<(), ToolError> {
+    if doc.id().is_none() {
+        doc.stamp_workspace_id(CoreWorkspaceId::from_uuid(workspace.as_uuid()))?;
+    }
+    doc.stamp_document_id(CoreDocumentId::from_uuid(document.as_uuid()))?;
+    Ok(())
+}
+
+/// The refusal for a Store-made commit an app connection's call would make
+/// through the desktop bridge, which cannot label it.
+fn unattributable() -> ToolError {
+    ToolError {
+        code: "attribution_unavailable".into(),
+        message: "this Store cannot attribute a connection's changes".into(),
+        details: None,
     }
 }
 
@@ -1341,20 +1517,14 @@ impl LocalBackend {
 
     /// What is outstanding, from the store's read model.
     ///
-    /// **The embedded host has no answer to this and says so.** `EmbeddedStore`
-    /// is a port over a bounded in-process Store *worker*, and the tasks query
-    /// lives beside the daemon's HTTP surface rather than in that worker — so
-    /// widening the port would mean teaching a second host to build a page it
-    /// has no statement for. It refuses in the shape `ai()` already refuses in,
-    /// because a capability a host does not have is better named than
-    /// simulated with an empty list that reads as *you have nothing to do*.
+    /// **One query, two transports.** The bridge asks the Store's HTTP route;
+    /// an embedded host asks its port, which answers from the same task port
+    /// the route reads (`koru_store_api::routes::tasks::answer`) — so Koru AI
+    /// and a hosted replica list exactly the page the desktop does, rather
+    /// than a second interpretation of a task.
     fn query_tasks(&self, query: &TaskQuery) -> Result<TaskQueryResponse, ToolError> {
-        if self.embedded.is_some() {
-            return Err(ToolError {
-                code: "tasks_unavailable".into(),
-                message: "This embedded Koru host does not provide the tasks query.".into(),
-                details: None,
-            });
+        if let Some(store) = &self.embedded {
+            return store.query_tasks(query.clone());
         }
         self.store(|client| client.store().query_tasks(query))
     }
@@ -1375,10 +1545,25 @@ impl LocalBackend {
         workspace: StoreWorkspaceId,
         title: &str,
         kind: &str,
+        attribution: Option<&str>,
     ) -> Result<StoreDocumentId, ToolError> {
+        match (&self.embedded, attribution) {
+            (Some(store), _) => {
+                store.create_document(workspace, title.to_owned(), kind.to_owned(), attribution)
+            }
+            (None, None) => self.store(|client| client.create_document(workspace, title, kind)),
+            // The desktop bridge serves one local person, whose commits carry
+            // no message; a connection's call reaching it is a host composed
+            // wrongly, and writing its manifest entry unattributed would be
+            // the one failure nobody sees.
+            (None, Some(_)) => Err(unattributable()),
+        }
+    }
+
+    fn manifest_id(&self, workspace: StoreWorkspaceId) -> Result<StoreDocumentId, ToolError> {
         match &self.embedded {
-            Some(store) => store.create_document(workspace, title.to_owned(), kind.to_owned()),
-            None => self.store(|client| client.create_document(workspace, title, kind)),
+            Some(store) => store.manifest_id(workspace),
+            None => self.store(|client| client.manifest(workspace)),
         }
     }
 
@@ -1408,6 +1593,7 @@ impl LocalBackend {
     ) -> Result<EmbeddedSeededDocument, ToolError> {
         match &self.embedded {
             Some(store) => store.seed_document(request),
+            None if request.attribution.is_some() => Err(unattributable()),
             None => self
                 .store(|client| {
                     client.seed_document(
@@ -1542,52 +1728,49 @@ impl LocalBackend {
     /// write path there is no such problem: `validate_base` asks whether the
     /// caller's base is *included*, and a stamp only ever adds.
     ///
-    /// **It is committed here rather than carried by the edit, and that is not
-    /// tidiness.** Every write path captures a `*_before` history entry, and
-    /// [`capture`](Self::capture) hands the store this document's *frontiers* to
-    /// fork at. A frontier naming an op the store has never seen is
-    /// `version_unavailable`, so an uncommitted stamp turns the first agent edit
-    /// of an unstamped document into a failure one step later than the one it
-    /// was fixing. Committing it makes it a fact about the document rather than
-    /// part of somebody's edit, which is also what it is: a refused edit still
-    /// leaves the document knowing where it lives.
+    /// **The stamps ride in the document's next real commit** (TECHNICAL §5.5,
+    /// Cloud MCP Plan 2.1). They are applied here in memory only and reach the
+    /// Store with the edit that follows — never as a write of their own — so
+    /// a call refused after this, by its base revision, a precondition or the
+    /// validation fork, leaves the document exactly as it was, stamp included.
+    /// They used to be committed here first, which made a refused edit a
+    /// write.
     ///
-    /// The commit is paid **only when the stamp happens**. A document that
-    /// already carries an id takes this route unchanged — which matters because
-    /// a `publish` with nothing local to say still exports everything since the
-    /// empty version vector and waits for the acknowledgement.
+    /// **History still works, through [`Editing::stored`].** Every write path
+    /// captures a `*_before` entry, and [`capture`](Self::capture) hands the
+    /// Store a frontier to fork at; a frontier naming the unpersisted stamp
+    /// would be `version_unavailable`. So the frontier the Store holds is read
+    /// here, *before* any stamp, and every `*_before` capture forks there: the
+    /// before-entry is the document as the Store held it, which is exactly what
+    /// it was. The `*_after` capture follows the persist, which carries the
+    /// stamps, so it names a frontier the Store has.
+    ///
+    /// **And every commit it makes is attributed** when the call is an app
+    /// connection's: [`Editing`] holds the subscription that labels each
+    /// commit on this document with the call's `actor/1` message, from the
+    /// stamps through the persist.
     ///
     /// Undo does not come into it — the bridge never calls `enable_undo`, so
     /// there is no history for the stamp to become the first step of. That is
     /// the one thing the desktop seam has to order around and this one does not.
     fn join_for_edit(
         &self,
+        call: &Call,
         workspace: StoreWorkspaceId,
         document: StoreDocumentId,
-    ) -> Result<(DocumentSession, WorkspaceDoc), ToolError> {
-        let (mut session, mut doc) = self.join(workspace, document)?;
-        // **Both ids, for one reason.** The workspace is step 0 of every task
-        // command's preflight; the document is the middle segment of every
-        // reference minted here, and this is the only side that knows it — the
-        // caller asked the store for this document *by* this id. Each stamp is
-        // idempotent, and the document one answers whether it wrote, so a
-        // document already carrying both takes the route below unchanged.
-        let owed = doc.id().is_none();
-        if owed {
-            doc.stamp_workspace_id(CoreWorkspaceId::from_uuid(workspace.as_uuid()))?;
-        }
-        let stamped_document =
-            doc.stamp_document_id(CoreDocumentId::from_uuid(document.as_uuid()))?;
-        if owed || stamped_document {
-            // After `join`'s `record_base`, deliberately: an embedded session
-            // exports what changed since the base, and a stamp inside the base
-            // is a stamp that never reaches the disk.
-            self.persist(&mut session, &mut doc)?;
-            // And the base moves past it, so the edit that follows publishes
-            // itself rather than the stamp a second time.
-            session.record_base(&doc);
-        }
-        Ok((session, doc))
+    ) -> Result<(Editing, WorkspaceDoc), ToolError> {
+        let (session, mut doc) = self.join(workspace, document)?;
+        let stored = doc.doc().oplog_frontiers();
+        let attributed = call.label(doc.doc());
+        stamp_ids(&mut doc, workspace, document)?;
+        Ok((
+            Editing {
+                session,
+                stored,
+                _attributed: attributed,
+            },
+            doc,
+        ))
     }
 
     /// Join a room and hand back its snapshot bytes undecoded.
@@ -1647,19 +1830,31 @@ impl LocalBackend {
     /// and the manifest is the app's to keep tidy; a bridge that pruned rows
     /// as a side effect of tagging a task would be doing something nobody
     /// asked it to.
+    ///
+    /// **Through the port this backend has**, embedded or remote: listing and
+    /// registering went straight to a desktop Store client, so an embedded
+    /// host — Koru AI, a hosted replica — could not tag anything.
+    ///
+    /// `message`, when the call is an app connection's, labels every commit
+    /// made on the system document from the moment it is opened — opening
+    /// folds duplicate tags, which commits — and the registration of a new
+    /// one.
     fn system_document(
         &self,
         workspace: StoreWorkspaceId,
         create: bool,
-    ) -> Result<Option<(DocumentSession, SystemDoc)>, ToolError> {
+        message: Option<&str>,
+    ) -> Result<Option<SystemSession>, ToolError> {
         let mut ids: Vec<CoreDocumentId> = self
-            .store(|client| client.documents(workspace))?
+            .documents(workspace)?
             .into_iter()
             .filter(|entry| entry.kind == koru_core::explore::KIND_SYSTEM)
             .map(|entry| koru_workspace::explore::koru_document(entry.id))
             .collect();
         ids.sort();
         ids.dedup();
+        let loro = loro::LoroDoc::new();
+        let attributed = message.map(|message| attribution::attribute_commits(&loro, message));
 
         let Some(canonical) = SystemDoc::canonical_document(&ids) else {
             if !create {
@@ -1668,30 +1863,42 @@ impl LocalBackend {
             // Registered with an empty title, the way the app registers it:
             // `explore::listed` filters the kind out of every listing, so a
             // name here would be a name nobody ever sees.
-            let id = self.store(|client| {
-                client.create_document_at(
-                    workspace,
-                    "",
-                    koru_core::explore::KIND_SYSTEM,
-                    None,
-                    None,
-                )
-            })?;
+            let id = self.create_empty_document(
+                workspace,
+                "",
+                koru_core::explore::KIND_SYSTEM,
+                message,
+            )?;
             let (mut session, snapshot) = self.join_raw(workspace, id)?;
-            let mut doc = SystemDoc::create()?;
-            // Based on the *empty* document, before the seed is absorbed, so an
-            // embedded session exports the whole of what it then writes.
-            session.record_base(&doc);
+            // Based on the *empty* version, so an embedded session exports the
+            // whole of what it then writes — the seed `create` commits
+            // included, which a base recorded after it would leave behind.
+            session.record_version(loro::VersionVector::default());
+            let mut doc = SystemDoc::create_on(loro)?;
             // The union is the seed plus whatever a racing peer already wrote.
+            // Not persisted here: the batch that needed the table writes the
+            // seed with its tags, one submission of the unit.
             doc.absorb(&snapshot)?;
-            self.persist(&mut session, &mut doc)?;
-            return Ok(Some((session, doc)));
+            return Ok(Some(SystemSession {
+                id,
+                session: SessionGuard(session),
+                doc,
+                _attributed: attributed,
+            }));
         };
 
         let canonical = koru_workspace::explore::store_document(canonical);
         let (mut session, snapshot) = self.join_raw(workspace, canonical)?;
-        let mut doc = SystemDoc::open_or_create(Some(&snapshot))?;
-        session.record_base(&doc);
+        // Based on the version the Store holds, read from the snapshot's
+        // header before opening folds anything. A base taken after the fold
+        // would leave the fold out of the update while the tags written on
+        // top of it depend on it — and a delta whose causal ancestors are
+        // missing imports `Ok` and applies nothing (STORE.md).
+        let stored = loro::LoroDoc::decode_import_blob_meta(&snapshot, false).map_err(|error| {
+            ToolError::invalid(format!("the system document did not open: {error}"))
+        })?;
+        session.record_version(stored.partial_end_vv);
+        let mut doc = SystemDoc::from_snapshot_on(loro, &snapshot)?;
         for duplicate in ids
             .into_iter()
             .map(koru_workspace::explore::store_document)
@@ -1704,7 +1911,12 @@ impl LocalBackend {
                 extra.leave();
             }
         }
-        Ok(Some((session, doc)))
+        Ok(Some(SystemSession {
+            id: canonical,
+            session: SessionGuard(session),
+            doc,
+            _attributed: attributed,
+        }))
     }
 
     fn persist<T: Synced + ?Sized>(
@@ -1798,17 +2010,20 @@ impl LocalBackend {
         }))
     }
 
+    /// Mark the document's history at `at`, a frontier the Store holds: the
+    /// [`Editing::stored`] frontier for a `*_before` entry, the persisted
+    /// document's for an `*_after` one.
     fn capture(
         &self,
         workspace: StoreWorkspaceId,
         document: StoreDocumentId,
-        doc: &WorkspaceDoc,
+        at: &loro::Frontiers,
         reason: &str,
         boundary: Option<&str>,
     ) -> Result<Value, ToolError> {
         let request = CaptureHistory {
             reason: reason.into(),
-            frontiers: Some(doc.doc().oplog_frontiers().encode()),
+            frontiers: Some(at.encode()),
             label: None,
             message: None,
             boundary: boundary.map(str::to_owned),
@@ -1824,9 +2039,9 @@ impl LocalBackend {
     /// captures or creates anything.** They used to join by id with no kind
     /// check at all, so a client could write into a run, a schedule or the
     /// system document — kinds it can neither list, search nor read here.
-    /// Asked first, a refusal leaves nothing behind:
-    /// [`join_for_edit`](Self::join_for_edit) alone would already have
-    /// persisted a stamp.
+    /// Asked first, a refusal leaves nothing behind — and it is the first of
+    /// the checks every mutation runs before its first write (TECHNICAL
+    /// §5.5).
     fn ensure_readable(
         &self,
         workspace: StoreWorkspaceId,
@@ -1889,6 +2104,7 @@ impl LocalBackend {
     /// this call.
     fn attr_context<'a>(
         &self,
+        call: &Call,
         workspace: StoreWorkspaceId,
         operations: &'a [EditOperation],
     ) -> Result<(AttrContext, PendingAttrs<'a>), ToolError> {
@@ -1900,7 +2116,8 @@ impl LocalBackend {
         // Opened read-only, even for a batch that will need a system document:
         // registering one is a manifest write, and a batch that fails
         // validation must not leave that behind either. `commit` creates it.
-        let Some((session, mut doc)) = self.system_document(workspace, false)? else {
+        let message = call.message();
+        let Some(mut system) = self.system_document(workspace, false, message.as_deref())? else {
             // No system document. Every custom key is therefore undefined and
             // every named tag names nothing — which an empty table answers
             // exactly, refusal included. This one is a throwaway, so it *is*
@@ -1914,37 +2131,40 @@ impl LocalBackend {
             };
             return Ok((context, pending));
         };
-        let session = SessionGuard(session);
         let (context, creates) = match asked.creates() {
             // A batch that only *reads* the table — a removal, a custom key —
             // cannot write, so the real document answers it and no snapshot is
             // taken. `remove_tag_by_an_unknown_name_creates_nothing` is what
             // holds that claim up.
-            false => asked.resolve(&mut doc, now)?,
-            true => asked.resolve_on_fork(&doc, now)?,
+            false => asked.resolve(&mut system.doc, now)?,
+            true => asked.resolve_on_fork(&system.doc, now)?,
         };
         if !creates {
             // Every answer came off a record that already exists, so it is the
             // real table's answer too and there is nothing left to write.
             return Ok((context, PendingAttrs::Settled));
         }
-        Ok((
-            context,
-            PendingAttrs::Held {
-                session,
-                doc,
-                asked,
-            },
-        ))
+        Ok((context, PendingAttrs::Held { system, asked }))
     }
 
-    fn edit_document(&self, a: EditDocumentRequest) -> Result<Value, ToolError> {
-        self.edit(a).map(|(answer, _)| answer)
+    fn edit_document(&self, call: &Call, a: EditDocumentRequest) -> Result<Value, ToolError> {
+        self.edit(call, a).map(|(answer, _)| answer)
     }
 
     /// `edit_document`, handing back the document as the edit left it, for a
     /// caller that answers with something read from it.
-    fn edit(&self, mut a: EditDocumentRequest) -> Result<(Value, WorkspaceDoc), ToolError> {
+    ///
+    /// **Every check, then every write** (TECHNICAL §5.5): readability, the
+    /// tag table on a fork, the base revision and the whole batch on a
+    /// validation fork all run before anything is written, the id stamps
+    /// included. Then two effects in order — `system`, when the batch creates
+    /// tags, and `document` — and a refusal of the second after the first
+    /// landed answers `partially_saved` rather than pretending nothing did.
+    fn edit(
+        &self,
+        call: &Call,
+        mut a: EditDocumentRequest,
+    ) -> Result<(Value, WorkspaceDoc), ToolError> {
         // Ids left out and local names become UUIDs before anything else
         // reads the batch, so everything below sees only UUIDs.
         let created = local_ids::resolve_edit(&mut a.operations)?;
@@ -1956,28 +2176,69 @@ impl LocalBackend {
         // document: enough to validate with, and nothing written. Any
         // creation the batch implies is held in `pending`, which
         // writes nothing if this function leaves before committing it.
-        let (provisional, mut pending) = self.attr_context(ws, &a.operations)?;
+        let (provisional, mut pending) = self.attr_context(call, ws, &a.operations)?;
         inline_context.attrs = provisional;
-        let (mut session, mut doc) = self.join_for_edit(ws, doc_id)?;
+        let (mut editing, mut doc) = self.join_for_edit(call, ws, doc_id)?;
         validate_base(&doc, &a.base_revision)?;
         let mut validation = doc.fork_for_read();
         apply_ops(&mut validation, &a.operations, &inline_context)?;
+
+        let mut ledger = call.ledger();
+        if pending.writes() {
+            ledger.plan(
+                EffectKind::System,
+                pending.document().map(|id| id.to_storage()),
+            );
+        }
+        ledger.plan(EffectKind::Document, Some(doc_id.to_storage()));
+        let recovery = |_: &[effects::Effect]| {
+            Recovery::sentence(
+                "The tags were created; the edit was not saved. Retrying the edit is safe: existing tags are reused.",
+            )
+        };
         // Proved, so the tags this batch names may now exist. The real
         // pass runs on the ids that were persisted, never the fork's.
-        if let Some(attrs) = pending.commit(self)? {
-            inline_context.attrs = attrs;
+        let message = call.message();
+        match pending.commit(self, message.as_deref()) {
+            Ok((attrs, written)) => {
+                if let Some(attrs) = attrs {
+                    inline_context.attrs = attrs;
+                }
+                match written {
+                    Some(system) => {
+                        ledger.name(EffectKind::System, system.to_storage());
+                        ledger.saved(EffectKind::System);
+                    }
+                    None => ledger.drop_plan(EffectKind::System),
+                }
+            }
+            Err(error) => return Err(ledger.failed(&[EffectKind::System], error, recovery)),
         }
         let boundary = uuid::Uuid::new_v4().to_string();
-        let _ = self.capture(ws, doc_id, &doc, "mcp_before", Some(&boundary))?;
-        let tasks = apply_ops(&mut doc, &a.operations, &inline_context)?;
-        self.persist(&mut session, &mut doc)?;
-        // **After the durability wait**, best effort, one attempt. A
-        // failed append keeps the task change and is never retried and
-        // never fabricated later (SPEC §9), and the batch is the burst:
-        // one delivery per `edit_document` call.
-        tasks.deliver(&mut tasks::LogSink::default());
-        let after = self.capture(ws, doc_id, &doc, "mcp_after", Some(&boundary))?;
-        let mut answer = json!({"revision": revision(&doc), "history": after});
+        if call.device {
+            self.capture(ws, doc_id, &editing.stored, "mcp_before", Some(&boundary))
+                .map_err(|error| ledger.refused(error, recovery))?;
+        }
+        let tasks = apply_ops(&mut doc, &a.operations, &inline_context)
+            .map_err(|error| ledger.refused(error, recovery))?;
+        self.persist(&mut editing.session, &mut doc)
+            .map_err(|error| ledger.failed(&[EffectKind::Document], error, recovery))?;
+        let mut answer = json!({"revision": revision(&doc)});
+        if call.device {
+            // **After the durability wait**, best effort, one attempt. A
+            // failed append keeps the task change and is never retried and
+            // never fabricated later (SPEC §9), and the batch is the burst:
+            // one delivery per `edit_document` call.
+            tasks.deliver(&mut tasks::LogSink::default());
+            let after = self.capture(
+                ws,
+                doc_id,
+                &doc.doc().oplog_frontiers(),
+                "mcp_after",
+                Some(&boundary),
+            )?;
+            answer["history"] = after;
+        }
         if !created.is_empty() {
             answer["created"] = Value::Object(created);
         }
@@ -1998,7 +2259,7 @@ impl LocalBackend {
     /// precondition that read is checked against: the `title` the row
     /// reported, computed by the read model's own rule
     /// (`koru_title::resolve_title`).
-    fn update_task(&self, a: UpdateTaskRequest) -> Result<Value, ToolError> {
+    fn update_task(&self, call: &Call, a: UpdateTaskRequest) -> Result<Value, ToolError> {
         let ws = workspace(&a.workspace_id)?;
         let doc_id = document(&a.document_id)?;
         let id = node(&a.node_id)?;
@@ -2096,12 +2357,15 @@ impl LocalBackend {
                 done,
             });
         }
-        let (mut answer, doc) = self.edit(EditDocumentRequest {
-            workspace_id: a.workspace_id,
-            document_id: a.document_id,
-            base_revision: revision(&doc),
-            operations,
-        })?;
+        let (mut answer, doc) = self.edit(
+            call,
+            EditDocumentRequest {
+                workspace_id: a.workspace_id,
+                document_id: a.document_id,
+                base_revision: revision(&doc),
+                operations,
+            },
+        )?;
         answer["task"] = task_json(&doc, ws, doc_id, id)?;
         Ok(answer)
     }
@@ -2112,7 +2376,7 @@ impl LocalBackend {
     /// its type and its size is inserted through the same pipeline
     /// `edit_document` uses: the base revision, the precondition and the
     /// history markers are the edit's own.
-    fn add_image(&self, a: AddImageRequest) -> Result<Value, ToolError> {
+    fn add_image(&self, call: &Call, a: AddImageRequest) -> Result<Value, ToolError> {
         use base64::Engine as _;
         let (node_id, created) = local_ids::resolve_single(a.node_id)?;
         let ws = workspace(&a.workspace_id)?;
@@ -2122,20 +2386,23 @@ impl LocalBackend {
         let sniffed = sniff_image(&bytes)?;
         let blob = self.put_blob(ws, bytes, sniffed.mime, a.name.as_deref())?;
         let hash = blob.hash.as_str().to_owned();
-        let mut answer = self.edit_document(EditDocumentRequest {
-            workspace_id: a.workspace_id,
-            document_id: a.document_id,
-            base_revision: a.base_revision,
-            operations: vec![EditOperation::InsertImage {
-                node_id: node_id.clone(),
-                parent_id: a.parent_id,
-                after_node_id: a.after_node_id,
-                hash: hash.clone(),
-                mime: sniffed.mime.to_owned(),
-                width: sniffed.width,
-                height: sniffed.height,
-            }],
-        })?;
+        let mut answer = self.edit_document(
+            call,
+            EditDocumentRequest {
+                workspace_id: a.workspace_id,
+                document_id: a.document_id,
+                base_revision: a.base_revision,
+                operations: vec![EditOperation::InsertImage {
+                    node_id: node_id.clone(),
+                    parent_id: a.parent_id,
+                    after_node_id: a.after_node_id,
+                    hash: hash.clone(),
+                    mime: sniffed.mime.to_owned(),
+                    width: sniffed.width,
+                    height: sniffed.height,
+                }],
+            },
+        )?;
         if let Some(object) = answer.as_object_mut() {
             object.insert("node_id".into(), json!(node_id));
             if !created.is_empty() {
@@ -2150,7 +2417,23 @@ impl LocalBackend {
         Ok(answer)
     }
 
-    fn extract_to_document(&self, a: ExtractToDocumentRequest) -> Result<Value, ToolError> {
+    /// Move blocks into another document, leaving a link pill behind.
+    ///
+    /// **Every check, then every write** (TECHNICAL §5.5): both ends are
+    /// readable, the base revision holds, the first block still says
+    /// `expected`, and the whole source-side replacement is proved on a fork —
+    /// all before the first write, so a refused extraction leaves no stamp,
+    /// no empty page and no history entry. Then the effects in the contract's
+    /// order: for a new destination its empty page and manifest entry, then
+    /// the destination with the moved content, then the source. The
+    /// destination is always written before the source, so a refusal in
+    /// between leaves the content in both documents rather than in neither,
+    /// and is answered `partially_saved` with the recovery fields.
+    fn extract_to_document(
+        &self,
+        call: &Call,
+        a: ExtractToDocumentRequest,
+    ) -> Result<Value, ToolError> {
         let workspace = workspace(&a.workspace_id)?;
         let source_document = document(&a.source_document_id)?;
         let context = self.inline_context(workspace)?;
@@ -2187,7 +2470,8 @@ impl LocalBackend {
         for raw in &a.extra_source_node_ids {
             source_nodes.push(node(raw)?);
         }
-        let (mut source_session, mut source) = self.join_for_edit(workspace, source_document)?;
+        let (mut source_editing, mut source) =
+            self.join_for_edit(call, workspace, source_document)?;
         validate_base(&source, &a.base_revision)?;
 
         for (i, &source_node) in source_nodes.iter().enumerate() {
@@ -2229,35 +2513,77 @@ impl LocalBackend {
             (None, None) => unreachable!("one destination was proven above"),
         };
 
-        let (target_document, created) = match existing_target {
-            Some(target) => (target, false),
-            None => (
-                self.create_empty_document(workspace, new_title.unwrap_or_default(), "page")?,
-                true,
-            ),
+        // Every check has passed; from here on, each step is an effect.
+        let mut ledger = call.ledger();
+        let created = existing_target.is_none();
+        if created {
+            ledger.plan(EffectKind::DestinationSeed, None);
+            ledger.plan(EffectKind::Manifest, None);
+        }
+        ledger.plan(
+            EffectKind::Destination,
+            existing_target.map(|target| target.to_storage()),
+        );
+        ledger.plan(EffectKind::Source, Some(source_document.to_storage()));
+        let mut target_document = existing_target;
+        let recovery = move |effects: &[effects::Effect]| {
+            extraction_recovery(effects, target_document, source_document)
         };
-        let failure_details = |source_changed: bool| {
-            json!({
-                "created_document_id": created.then(|| target_document.to_storage()),
-                "target_document_id": target_document.to_storage(),
-                "source_document_id": source_document.to_storage(),
-                "source_unchanged": !source_changed,
-                "recovery_required": true,
-            })
+        let message = call.message();
+        if created {
+            match self.create_empty_document(
+                workspace,
+                new_title.unwrap_or_default(),
+                "page",
+                message.as_deref(),
+            ) {
+                Ok(id) => {
+                    target_document = Some(id);
+                    for effect in [EffectKind::DestinationSeed, EffectKind::Destination] {
+                        ledger.name(effect, id.to_storage());
+                    }
+                    ledger.saved(EffectKind::DestinationSeed);
+                    ledger.saved(EffectKind::Manifest);
+                }
+                Err(error) => {
+                    self.name_manifest(&mut ledger, workspace);
+                    return Err(ledger.failed(
+                        &[EffectKind::DestinationSeed, EffectKind::Manifest],
+                        error,
+                        recovery,
+                    ));
+                }
+            }
+        }
+        let target_document = target_document.expect("a destination exists from here");
+        let recovery = move |effects: &[effects::Effect]| {
+            extraction_recovery(effects, Some(target_document), source_document)
+        };
+        // What stops the sequence before or at an effect, once the first one
+        // landed: the manifest's id is asked for only then.
+        let refused = |ledger: &mut Ledger, error: ToolError| {
+            self.name_manifest(ledger, workspace);
+            ledger.refused(error, recovery)
+        };
+        let failed = |ledger: &mut Ledger, effect: EffectKind, error: ToolError| {
+            self.name_manifest(ledger, workspace);
+            ledger.failed(&[effect], error, recovery)
         };
 
-        let (mut target_session, mut target) = self
-            .join_for_edit(workspace, target_document)
-            .map_err(|error| error.with_details(failure_details(false)))?;
+        let (mut target_editing, mut target) = self
+            .join_for_edit(call, workspace, target_document)
+            .map_err(|error| refused(&mut ledger, error))?;
         let target_boundary = uuid::Uuid::new_v4().to_string();
-        self.capture(
-            workspace,
-            target_document,
-            &target,
-            "mcp_before",
-            Some(&target_boundary),
-        )
-        .map_err(|error| error.with_details(failure_details(false)))?;
+        if call.device {
+            self.capture(
+                workspace,
+                target_document,
+                &target_editing.stored,
+                "mcp_before",
+                Some(&target_boundary),
+            )
+            .map_err(|error| refused(&mut ledger, error))?;
+        }
         // Where the content goes. A created document gets its root here; an
         // existing one already has one, and `under` — when it still resolves —
         // names a block to land first beneath instead of the top.
@@ -2265,7 +2591,7 @@ impl LocalBackend {
             target
                 .insert(Parent::Root, Node::document(new_title.unwrap_or_default())?)
                 .map_err(ToolError::from)
-                .map_err(|error| error.with_details(failure_details(false)))?
+                .map_err(|error| refused(&mut ledger, error))?
         } else {
             let root = target
                 .children(Parent::Root)
@@ -2274,8 +2600,10 @@ impl LocalBackend {
                 .flatten()
                 .find(|&id| target.kind_of(id) == Some(Kind::Document))
                 .ok_or_else(|| {
-                    ToolError::invalid("the destination document has no content root")
-                        .with_details(failure_details(false))
+                    refused(
+                        &mut ledger,
+                        ToolError::invalid("the destination document has no content root"),
+                    )
                 })?;
             under
                 .filter(|&node| target.read(node).is_ok())
@@ -2283,41 +2611,49 @@ impl LocalBackend {
         };
         // Planting appends; an existing destination wants the moved content
         // first, in its original order.
-        let mut index = 0usize;
-        for cutting in &cuttings {
+        for (index, cutting) in cuttings.iter().enumerate() {
             let planted = target
                 .plant(cutting, Parent::Node(anchor), "")
                 .map_err(ToolError::from)
-                .map_err(|error| error.with_details(failure_details(false)))?;
+                .map_err(|error| refused(&mut ledger, error))?;
             if !created {
                 target
                     .move_node(planted, Parent::Node(anchor), index)
                     .map_err(ToolError::from)
-                    .map_err(|error| error.with_details(failure_details(false)))?;
+                    .map_err(|error| refused(&mut ledger, error))?;
             }
-            index += 1;
         }
-        self.persist(&mut target_session, &mut target)
-            .map_err(|error| error.with_details(failure_details(false)))?;
-        let target_history = self
-            .capture(
-                workspace,
-                target_document,
-                &target,
-                "mcp_after",
-                Some(&target_boundary),
+        self.persist(&mut target_editing.session, &mut target)
+            .map_err(|error| failed(&mut ledger, EffectKind::Destination, error))?;
+        ledger.saved(EffectKind::Destination);
+        let target_history = if call.device {
+            Some(
+                self.capture(
+                    workspace,
+                    target_document,
+                    &target.doc().oplog_frontiers(),
+                    "mcp_after",
+                    Some(&target_boundary),
+                )
+                .map_err(|error| refused(&mut ledger, error))?,
             )
-            .map_err(|error| error.with_details(failure_details(false)))?;
+        } else {
+            None
+        };
 
         let source_boundary = uuid::Uuid::new_v4().to_string();
-        self.capture(
-            workspace,
-            source_document,
-            &source,
-            "mcp_before",
-            Some(&source_boundary),
-        )
-        .map_err(|error| error.with_details(failure_details(false)))?;
+        if call.device {
+            // At the frontier the Store holds the source at: its own stamp,
+            // if it owed one, is still only in memory.
+            self.capture(
+                workspace,
+                source_document,
+                &source_editing.stored,
+                "mcp_before",
+                Some(&source_boundary),
+            )
+            .map_err(|error| refused(&mut ledger, error))?;
+        }
         // Deep-link the pill to the heading the content went under, when one
         // was chosen; the anchor of a created document is its root, which the
         // document-level reference already means.
@@ -2329,30 +2665,324 @@ impl LocalBackend {
         let replacement = source
             .replace_subtrees_with_pill(&source_nodes, &attr)
             .map_err(ToolError::from)
-            .map_err(|error| error.with_details(failure_details(false)))?;
-        self.persist(&mut source_session, &mut source)
-            .map_err(|error| error.with_details(failure_details(false)))?;
-        let source_history = self
-            .capture(
-                workspace,
-                source_document,
-                &source,
-                "mcp_after",
-                Some(&source_boundary),
-            )
-            .map_err(|error| error.with_details(failure_details(true)))?;
+            .map_err(|error| refused(&mut ledger, error))?;
+        self.persist(&mut source_editing.session, &mut source)
+            .map_err(|error| failed(&mut ledger, EffectKind::Source, error))?;
 
-        Ok(json!({
+        let mut answer = json!({
             "document_id": target_document.to_storage(),
             "document_revision": revision(&target),
             "source_revision": revision(&source),
             "source_link_node_id": replacement.to_storage(),
-            "history": {
+        });
+        if let Some(target_history) = target_history {
+            // Every effect is saved. A history marker that cannot be written
+            // now is a local failure after the move, answered as it always
+            // was: with the recovery fields, the source changed.
+            let source_history = self
+                .capture(
+                    workspace,
+                    source_document,
+                    &source.doc().oplog_frontiers(),
+                    "mcp_after",
+                    Some(&source_boundary),
+                )
+                .map_err(|error| {
+                    error.with_details(extraction_details(
+                        created.then_some(target_document),
+                        Some(target_document),
+                        source_document,
+                        false,
+                    ))
+                })?;
+            answer["history"] = json!({
                 "document": target_history,
                 "source": source_history,
-            }
-        }))
+            });
+        }
+        Ok(answer)
     }
+
+    /// Fill in the manifest's id for a call that plans a `manifest` effect,
+    /// before an outcome names it. One port question, asked only on the
+    /// failure path; an answer the port cannot give leaves the id `null`.
+    fn name_manifest(&self, ledger: &mut Ledger, workspace: StoreWorkspaceId) {
+        if ledger.plans(EffectKind::Manifest)
+            && ledger.unnamed(EffectKind::Manifest)
+            && let Ok(manifest) = self.manifest_id(workspace)
+        {
+            ledger.name(EffectKind::Manifest, manifest.to_storage());
+        }
+    }
+}
+
+/// Extraction's recovery fields: where the content went, and whether the
+/// source still has it.
+fn extraction_details(
+    created: Option<StoreDocumentId>,
+    target: Option<StoreDocumentId>,
+    source: StoreDocumentId,
+    source_unchanged: bool,
+) -> Value {
+    json!({
+        "created_document_id": created.map(|id| id.to_storage()),
+        "target_document_id": target.map(|id| id.to_storage()),
+        "source_document_id": source.to_storage(),
+        "source_unchanged": source_unchanged,
+        "recovery_required": true,
+    })
+}
+
+/// What an extraction whose later effects did not land tells the assistant,
+/// by the prefix that did (`contracts/hosted-tools-v1.md` §2). The source is
+/// always the last effect, so in every partial outcome it is unchanged.
+fn extraction_recovery(
+    effects: &[effects::Effect],
+    target: Option<StoreDocumentId>,
+    source: StoreDocumentId,
+) -> Recovery {
+    let saved = |kind: EffectKind| {
+        effects
+            .iter()
+            .any(|effect| effect.effect == kind && effect.state == effects::EffectState::Saved)
+    };
+    // A destination whose own creation call ended partly saved is named by
+    // the port's report of that call, not by `target`: the call that would
+    // have handed its id back did not succeed (Cloud MCP Plan 2.3).
+    let target = target.or_else(|| {
+        effects
+            .iter()
+            .find(|effect| effect.effect == EffectKind::DestinationSeed)
+            .and_then(|effect| effect.document_id.as_deref())
+            .and_then(StoreDocumentId::parse)
+    });
+    let created = target.filter(|_| saved(EffectKind::DestinationSeed));
+    let message = if saved(EffectKind::Destination) {
+        "The content was copied into target_document_id, but the source was not changed, so it is in both documents. Retry the source replacement with edit_document, or remove the copy."
+    } else if saved(EffectKind::Manifest) {
+        "An empty page was created as target_document_id; the content was not moved and the source is unchanged. Move the content again into target_document_id, or delete the page."
+    } else {
+        "An empty page was created as target_document_id but is not listed yet; the content was not moved and the source is unchanged. Move the content again into target_document_id, or delete the page."
+    };
+    let Value::Object(details) = extraction_details(created, target, source, true) else {
+        unreachable!("the details are an object")
+    };
+    Recovery {
+        message: message.into(),
+        details,
+    }
+}
+
+impl LocalBackend {
+    /// `create_document`: the seed, then its manifest entry, in one port call.
+    ///
+    /// **Keyed, always.** A key the caller leaves out is minted here, so the
+    /// Store's idempotency receipt always has one; a hosted host also answers
+    /// it, in every answer, so a partial or unknown outcome can always be
+    /// finished by a retry (TECHNICAL §5.5). The local answer is unchanged.
+    fn create_document(&self, call: &Call, a: CreateDocumentRequest) -> Result<Value, ToolError> {
+        let ws = workspace(&a.workspace_id)?;
+        if a.kind.as_deref().is_some_and(|kind| kind != "page") {
+            return Err(ToolError::invalid(
+                "create_document supports manifest kind page only",
+            ));
+        }
+        let idempotency_key = match a.idempotency_key.as_deref() {
+            Some(key) => uuid::Uuid::parse_str(key)
+                .map_err(|_| ToolError::invalid("idempotency_key must be a UUID"))?
+                .to_string(),
+            None => uuid::Uuid::new_v4().to_string(),
+        };
+        if call.device {
+            return self.create_keyed(call, a, ws, idempotency_key);
+        }
+        // Hosted: the key in every answer, refusals included.
+        self.create_keyed(call, a, ws, idempotency_key.clone())
+            .map_err(|mut error| {
+                let mut details = match error.details.take() {
+                    Some(Value::Object(details)) => details,
+                    Some(other) => serde_json::Map::from_iter([("cause".to_owned(), other)]),
+                    None => serde_json::Map::new(),
+                };
+                details.insert("idempotency_key".into(), json!(idempotency_key));
+                error.details = Some(Value::Object(details));
+                error
+            })
+    }
+
+    fn create_keyed(
+        &self,
+        call: &Call,
+        a: CreateDocumentRequest,
+        ws: StoreWorkspaceId,
+        idempotency_key: String,
+    ) -> Result<Value, ToolError> {
+        // The retry identity is the request as sent, before any id is
+        // minted, so a replay of a request that left ids out matches.
+        let request_hash = create_request_hash(&a, ws)?;
+        let mut a = a;
+        let created =
+            local_ids::resolve_seed(&mut a.root_node_id, a.initial_operations.as_deref_mut())?;
+        let root_id = match a.root_node_id.as_deref() {
+            Some(value) => node(value)?,
+            None => NodeId::new(),
+        };
+        let inline_context = self.inline_context(ws)?;
+        // The seed's commits carry the creation's request hash in their
+        // attribution, so a retry can recognise its first attempt from
+        // Cloud's history alone (TECHNICAL §5.6): labelled from the first.
+        let loro = loro::LoroDoc::new();
+        let _attributed = call.attribution.map(|attribution| {
+            attribution::attribute_commits(
+                &loro,
+                &attribution.seed_message(call.operation, &request_hash),
+            )
+        });
+        let mut doc =
+            WorkspaceDoc::create_on(loro, CoreWorkspaceId::from_uuid(ws.as_uuid()), &a.title)?;
+        let mut root_value = Node::document(&a.title)?;
+        root_value.id = root_id;
+        let root = doc.insert(Parent::Root, root_value)?;
+        let before = doc.fork_for_read();
+        match a.initial_operations.as_deref() {
+            Some(operations) => apply_initial_ops(&mut doc, root, operations, &inline_context)?,
+            None => {
+                doc.insert(Parent::Node(root), Node::paragraph("")?)?;
+            }
+        }
+        let initial_update = doc.export_all_updates()?;
+        // Its own message rather than `document`'s: an error naming
+        // `document_id` when `parent_document_id` is what was wrong
+        // sends somebody to check the field that is fine.
+        let parent = a
+            .parent_document_id
+            .as_deref()
+            .map(|value| {
+                StoreDocumentId::parse(value)
+                    .ok_or_else(|| ToolError::invalid("parent_document_id is not a UUID"))
+            })
+            .transpose()?;
+        let kind = a.kind.as_deref().unwrap_or("page");
+
+        let mut ledger = call.ledger();
+        ledger.plan(EffectKind::Document, None);
+        ledger.plan(EffectKind::Manifest, None);
+        if !call.device {
+            ledger.always("idempotency_key", json!(idempotency_key));
+        }
+        let key = idempotency_key.clone();
+        // The one call here that is safe to repeat by construction: the
+        // idempotency key and request hash make a second attempt a
+        // replay of the first, whichever store answers it.
+        let seeded = self
+            .seed_document(EmbeddedSeedDocument {
+                workspace: ws,
+                title: a.title.clone(),
+                kind: kind.to_owned(),
+                parent,
+                index: None,
+                idempotency_key,
+                request_hash,
+                initial_update,
+                attribution: call.message(),
+            })
+            .map_err(|error| {
+                self.name_manifest(&mut ledger, ws);
+                ledger.failed(
+                    &[EffectKind::Document, EffectKind::Manifest],
+                    error,
+                    |_| {
+                        let mut recovery = Recovery::sentence(
+                            "The document was saved but is not listed yet. Retry with the same idempotency_key to finish.",
+                        );
+                        recovery
+                            .details
+                            .insert("idempotency_key".into(), json!(key));
+                        recovery
+                    },
+                )
+            })?;
+        let returned = WorkspaceDoc::from_snapshot(&seeded.initial_update)?;
+        if call.device && !seeded.replayed {
+            let boundary = uuid::Uuid::new_v4().to_string();
+            let _ = self.capture(
+                ws,
+                seeded.id,
+                &before.doc().oplog_frontiers(),
+                "mcp_before",
+                Some(&boundary),
+            )?;
+            let _ = self.capture(
+                ws,
+                seeded.id,
+                &returned.doc().oplog_frontiers(),
+                "mcp_after",
+                Some(&boundary),
+            )?;
+        }
+        let mut answer = document_json(seeded.id, &returned)?;
+        if !created.is_empty() {
+            answer["created"] = Value::Object(local_ids::as_stored(created, &doc, &returned)?);
+        }
+        if !call.device {
+            answer["idempotency_key"] = json!(key);
+        }
+        Ok(answer)
+    }
+
+    /// `restore_document_version`: the document forward to a history entry's
+    /// state, in one effect.
+    ///
+    /// **The id stamps survive** (TECHNICAL §16). Restoring is a revert, and a
+    /// before-entry taken before the stamps were persisted — every first edit
+    /// of an unstamped document now takes one — would revert them away; so they
+    /// are applied again, in memory, before the persist.
+    fn restore_document_version(&self, call: &Call, a: RestoreRequest) -> Result<Value, ToolError> {
+        let ws = workspace(&a.workspace_id)?;
+        let doc_id = document(&a.document_id)?;
+        self.ensure_readable(ws, doc_id, "document_id")?;
+        let (mut editing, mut doc) = self.join_for_edit(call, ws, doc_id)?;
+        validate_base(&doc, &a.base_revision)?;
+        let entry_id = history(&a.entry_id)?;
+        let target = self.history_snapshot(ws, entry_id)?;
+        let mut ledger = call.ledger();
+        ledger.plan(EffectKind::Document, Some(doc_id.to_storage()));
+        let recovery = |_: &[effects::Effect]| Recovery::sentence("unreachable: one effect");
+        let boundary = uuid::Uuid::new_v4().to_string();
+        let _ = self.capture(
+            ws,
+            doc_id,
+            &editing.stored,
+            "restore_before",
+            Some(&boundary),
+        )?;
+        restore_keeping_ids(&mut doc, &target, ws, doc_id)?;
+        self.persist(&mut editing.session, &mut doc)
+            .map_err(|error| ledger.failed(&[EffectKind::Document], error, recovery))?;
+        let after = self.capture(
+            ws,
+            doc_id,
+            &doc.doc().oplog_frontiers(),
+            "restore_after",
+            Some(&boundary),
+        )?;
+        Ok(json!({"revision": revision(&doc), "history": after}))
+    }
+}
+
+/// Restore `doc` forward to `snapshot`'s state and keep the ids it carries.
+///
+/// `restore_snapshot_forward` reverts the whole document, `C_META` included,
+/// so a target that predates the id stamps would remove them; they are applied
+/// again, in memory, to ride the restore's own persist.
+fn restore_keeping_ids(
+    doc: &mut WorkspaceDoc,
+    snapshot: &[u8],
+    workspace: StoreWorkspaceId,
+    document: StoreDocumentId,
+) -> Result<(), ToolError> {
+    doc.restore_snapshot_forward(snapshot)?;
+    stamp_ids(doc, workspace, document)
 }
 
 /// Whether a manifest kind is one the read tools open: a page, or the note
@@ -2370,10 +3000,11 @@ fn readable_kind(kind: &str) -> bool {
 impl Backend for LocalBackend {
     fn invoke(
         &self,
-        _context: &RequestContext,
+        context: &RequestContext,
         tool: &str,
         arguments: Value,
     ) -> Result<Value, ToolError> {
+        let call = Call::new(context);
         match tool {
             "list_chats" => {
                 let request: ListChatsToolRequest = from(arguments)?;
@@ -2552,83 +3183,7 @@ impl Backend for LocalBackend {
             }
             "create_document" => {
                 let a: CreateDocumentRequest = from(arguments)?;
-                let ws = workspace(&a.workspace_id)?;
-                if a.kind.as_deref().is_some_and(|kind| kind != "page") {
-                    return Err(ToolError::invalid(
-                        "create_document supports manifest kind page only",
-                    ));
-                }
-                let idempotency_key = match a.idempotency_key.as_deref() {
-                    Some(key) => uuid::Uuid::parse_str(key)
-                        .map_err(|_| ToolError::invalid("idempotency_key must be a UUID"))?
-                        .to_string(),
-                    None => uuid::Uuid::new_v4().to_string(),
-                };
-                // The retry identity is the request as sent, before any id is
-                // minted, so a replay of a request that left ids out matches.
-                let request_hash = create_request_hash(&a, ws)?;
-                let mut a = a;
-                let created = local_ids::resolve_seed(
-                    &mut a.root_node_id,
-                    a.initial_operations.as_deref_mut(),
-                )?;
-                let root_id = match a.root_node_id.as_deref() {
-                    Some(value) => node(value)?,
-                    None => NodeId::new(),
-                };
-                let inline_context = self.inline_context(ws)?;
-                let mut doc =
-                    WorkspaceDoc::create(CoreWorkspaceId::from_uuid(ws.as_uuid()), &a.title)?;
-                let mut root_value = Node::document(&a.title)?;
-                root_value.id = root_id;
-                let root = doc.insert(Parent::Root, root_value)?;
-                let before = doc.fork_for_read();
-                match a.initial_operations.as_deref() {
-                    Some(operations) => {
-                        apply_initial_ops(&mut doc, root, operations, &inline_context)?
-                    }
-                    None => {
-                        doc.insert(Parent::Node(root), Node::paragraph("")?)?;
-                    }
-                }
-                let initial_update = doc.export_all_updates()?;
-                // Its own message rather than `document`'s: an error naming
-                // `document_id` when `parent_document_id` is what was wrong
-                // sends somebody to check the field that is fine.
-                let parent = a
-                    .parent_document_id
-                    .as_deref()
-                    .map(|value| {
-                        StoreDocumentId::parse(value)
-                            .ok_or_else(|| ToolError::invalid("parent_document_id is not a UUID"))
-                    })
-                    .transpose()?;
-                let kind = a.kind.as_deref().unwrap_or("page");
-                // The one call here that is safe to repeat by construction: the
-                // idempotency key and request hash make a second attempt a
-                // replay of the first, whichever store answers it.
-                let seeded = self.seed_document(EmbeddedSeedDocument {
-                    workspace: ws,
-                    title: a.title.clone(),
-                    kind: kind.to_owned(),
-                    parent,
-                    index: None,
-                    idempotency_key,
-                    request_hash,
-                    initial_update,
-                })?;
-                let returned = WorkspaceDoc::from_snapshot(&seeded.initial_update)?;
-                if !seeded.replayed {
-                    let boundary = uuid::Uuid::new_v4().to_string();
-                    let _ = self.capture(ws, seeded.id, &before, "mcp_before", Some(&boundary))?;
-                    let _ = self.capture(ws, seeded.id, &returned, "mcp_after", Some(&boundary))?;
-                }
-                let mut answer = document_json(seeded.id, &returned)?;
-                if !created.is_empty() {
-                    answer["created"] =
-                        Value::Object(local_ids::as_stored(created, &doc, &returned)?);
-                }
-                Ok(answer)
+                self.create_document(&call, a)
             }
             "ensure_file_note" => {
                 let a: FileRequest = from(arguments)?;
@@ -2644,19 +3199,19 @@ impl Backend for LocalBackend {
             }
             "edit_document" => {
                 let a: EditDocumentRequest = from(arguments)?;
-                self.edit_document(a)
+                self.edit_document(&call, a)
             }
             "update_task" => {
                 let a: UpdateTaskRequest = from(arguments)?;
-                self.update_task(a)
+                self.update_task(&call, a)
             }
             "add_image" => {
                 let a: AddImageRequest = from(arguments)?;
-                self.add_image(a)
+                self.add_image(&call, a)
             }
             "extract_to_document" => {
                 let a: ExtractToDocumentRequest = from(arguments)?;
-                self.extract_to_document(a)
+                self.extract_to_document(&call, a)
             }
             "save_document_version" => {
                 let a: SaveVersionRequest = from(arguments)?;
@@ -2708,19 +3263,7 @@ impl Backend for LocalBackend {
             }
             "restore_document_version" => {
                 let a: RestoreRequest = from(arguments)?;
-                let ws = workspace(&a.workspace_id)?;
-                let doc_id = document(&a.document_id)?;
-                self.ensure_readable(ws, doc_id, "document_id")?;
-                let (mut session, mut doc) = self.join_for_edit(ws, doc_id)?;
-                validate_base(&doc, &a.base_revision)?;
-                let entry_id = history(&a.entry_id)?;
-                let target = self.history_snapshot(ws, entry_id)?;
-                let boundary = uuid::Uuid::new_v4().to_string();
-                let _ = self.capture(ws, doc_id, &doc, "restore_before", Some(&boundary))?;
-                doc.restore_snapshot_forward(&target)?;
-                self.persist(&mut session, &mut doc)?;
-                let after = self.capture(ws, doc_id, &doc, "restore_after", Some(&boundary))?;
-                Ok(json!({"revision": revision(&doc), "history": after}))
+                self.restore_document_version(&call, a)
             }
             _ => Err(ToolError::invalid("unknown tool")),
         }
@@ -4042,8 +4585,7 @@ enum PendingAttrs<'a> {
     Settled,
     /// The workspace has a system document, open and untouched.
     Held {
-        session: SessionGuard,
-        doc: SystemDoc,
+        system: SystemSession,
         asked: AttrRequests<'a>,
     },
     /// The workspace has no system document and this batch needs one.
@@ -4055,38 +4597,56 @@ enum PendingAttrs<'a> {
 }
 
 impl PendingAttrs<'_> {
+    /// Whether committing this may write — the `system` effect an edit
+    /// plans before its `document` one.
+    fn writes(&self) -> bool {
+        !matches!(self, Self::Settled)
+    }
+
+    /// The system document it would write, when the workspace has one.
+    fn document(&self) -> Option<StoreDocumentId> {
+        match self {
+            Self::Held { system, .. } => Some(system.id),
+            _ => None,
+        }
+    }
+
     /// Write what the batch asked for, now that the batch has been proved.
     ///
     /// Answers the context the *real* pass must use, because the ids in it are
-    /// the ids that were persisted rather than the fork's. `None` means the
-    /// context from [`LocalBackend::attr_context`] was already final and
-    /// nothing was written here.
+    /// the ids that were persisted rather than the fork's — `None` when the
+    /// context from [`LocalBackend::attr_context`] was already final — and the
+    /// system document it wrote, `None` when it wrote nothing.
     ///
     /// It resolves rather than replaying the fork's ids deliberately:
     /// `create_tag` reuses on a fold-key match, so a tag some other peer
     /// created while this batch was being checked is *answered* here instead
     /// of duplicated.
-    fn commit(&mut self, backend: &LocalBackend) -> Result<Option<AttrContext>, ToolError> {
-        let (mut session, mut doc, asked) = match std::mem::replace(self, Self::Settled) {
-            Self::Settled => return Ok(None),
-            Self::Held {
-                session,
-                doc,
-                asked,
-            } => (session, doc, asked),
+    fn commit(
+        &mut self,
+        backend: &LocalBackend,
+        message: Option<&str>,
+    ) -> Result<(Option<AttrContext>, Option<StoreDocumentId>), ToolError> {
+        let (mut system, asked, registered) = match std::mem::replace(self, Self::Settled) {
+            Self::Settled => return Ok((None, None)),
+            Self::Held { system, asked } => (system, asked, false),
             Self::Absent { workspace, asked } => {
-                let (session, doc) =
-                    backend.system_document(workspace, true)?.ok_or_else(|| {
+                let system = backend
+                    .system_document(workspace, true, message)?
+                    .ok_or_else(|| {
                         ToolError::invalid("the workspace system document is missing")
                     })?;
-                (SessionGuard(session), doc, asked)
+                (system, asked, true)
             }
         };
-        let (context, created) = asked.resolve(&mut doc, koru_workspace::open::now_ms())?;
-        if created {
-            backend.persist(&mut session.0, &mut doc)?;
+        let (context, created) = asked.resolve(&mut system.doc, koru_workspace::open::now_ms())?;
+        // A table registered for this batch is written with what the batch
+        // added to it, in one persist.
+        let written = created || registered;
+        if written {
+            backend.persist(&mut system.session.0, &mut system.doc)?;
         }
-        Ok(Some(context))
+        Ok((Some(context), written.then_some(system.id)))
     }
 }
 
@@ -6144,10 +6704,9 @@ impl ServerHandler for KoruMcp {
         _: Option<rmcp::model::PaginatedRequestParams>,
         _: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> impl Future<Output = Result<ListResourcesResult, ErrorData>> + Send + '_ {
-        std::future::ready(Ok(ListResourcesResult::with_all_items(vec![
-            essentials_resource(),
-            model_resource(),
-        ])))
+        std::future::ready(Ok(ListResourcesResult::with_all_items(
+            shared_surface::documentation_resources(),
+        )))
     }
 
     fn list_resource_templates(
@@ -6155,9 +6714,9 @@ impl ServerHandler for KoruMcp {
         _: Option<rmcp::model::PaginatedRequestParams>,
         _: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> impl Future<Output = Result<ListResourceTemplatesResult, ErrorData>> + Send + '_ {
-        std::future::ready(Ok(ListResourceTemplatesResult::with_all_items(vec![
-            model_section_template(),
-        ])))
+        std::future::ready(Ok(ListResourceTemplatesResult::with_all_items(
+            shared_surface::documentation_resource_templates(),
+        )))
     }
 
     fn read_resource(
@@ -6167,37 +6726,9 @@ impl ServerHandler for KoruMcp {
     ) -> impl Future<Output = Result<ReadResourceResponse, ErrorData>> + Send + '_ {
         let started = Instant::now();
         tracing::info!(uri = %request.uri, "resource read started");
-        let known = request.uri == MODEL_RESOURCE_URI
-            || request.uri == ESSENTIALS_RESOURCE_URI
-            || request.uri.starts_with(MODEL_SECTION_URI_PREFIX);
-        let result = if !known {
-            Err(ErrorData::resource_not_found(
-                "Koru documentation resource not found",
-                Some(json!({ "uri": request.uri })),
-            ))
-        } else {
-            documentation(&request.uri, None)
-                .map(|answer| {
-                    let answer = self.with_toolsets_note(answer);
-                    let text = answer["text"].as_str().unwrap_or_default().to_owned();
-                    ReadResourceResult::new(vec![
-                        ResourceContents::text(text, request.uri.clone())
-                            .with_mime_type(MODEL_DOCUMENT_MIME),
-                    ])
-                    .into()
-                })
-                .map_err(|error| match error.code.as_str() {
-                    // A slug nobody wrote is the reader's to fix, and the
-                    // details list the slugs there are.
-                    "documentation_section_not_found" => {
-                        ErrorData::resource_not_found(error.message, error.details)
-                    }
-                    _ => ErrorData::internal_error(
-                        error.message,
-                        Some(json!({ "uri": request.uri })),
-                    ),
-                })
-        };
+        let result =
+            shared_surface::read_with(&request.uri, |answer| self.with_toolsets_note(answer))
+                .map(Into::into);
         match &result {
             Ok(_) => tracing::info!(
                 uri = %request.uri,
@@ -11642,6 +12173,8 @@ mod tests {
         /// Each `create_document` idempotency key: the request hash, the
         /// document it made, and that document's first update.
         seeds: Mutex<HashMap<String, (String, StoreDocumentId, Vec<u8>)>>,
+        /// Every tasks query the port was asked.
+        task_queries: Mutex<Vec<TaskQuery>>,
     }
 
     impl MemoryStore {
@@ -11654,6 +12187,7 @@ mod tests {
                 search_hits: Mutex::new(Vec::new()),
                 markers: Mutex::new(Vec::new()),
                 seeds: Mutex::new(HashMap::new()),
+                task_queries: Mutex::new(Vec::new()),
             })
         }
 
@@ -11819,6 +12353,25 @@ mod tests {
             })
         }
 
+        /// An empty, projected page: what a swept workspace with nothing
+        /// outstanding answers.
+        fn query_tasks(&self, query: TaskQuery) -> Result<TaskQueryResponse, ToolError> {
+            let limit = query.limit;
+            self.task_queries.lock().unwrap().push(query);
+            Ok(TaskQueryResponse {
+                rows: Vec::new(),
+                definitions: Vec::new(),
+                tags: Vec::new(),
+                groups: Vec::new(),
+                projected: true,
+                updating_workspaces: Vec::new(),
+                limit,
+                next_after: None,
+                restarted: false,
+                covered: None,
+            })
+        }
+
         fn snapshot(
             &self,
             _workspace: StoreWorkspaceId,
@@ -11837,8 +12390,13 @@ mod tests {
             _workspace: StoreWorkspaceId,
             _title: String,
             _kind: String,
+            _attribution: Option<&str>,
         ) -> Result<StoreDocumentId, ToolError> {
             unreachable!("no test here creates a bare document, and a refused extract must not")
+        }
+
+        fn manifest_id(&self, _workspace: StoreWorkspaceId) -> Result<StoreDocumentId, ToolError> {
+            unreachable!("no test here reports a manifest effect")
         }
 
         fn ensure_file_note(
@@ -12054,6 +12612,29 @@ mod tests {
             observed_modified_at_ms: None,
             workspace_last_used_at_ms: None,
         }
+    }
+
+    /// **An embedded host answers `list_tasks`** through its port — Koru AI
+    /// and a hosted replica used to be refused `tasks_unavailable` here — with
+    /// the executor's workspace grant written into the query, as for search.
+    #[test]
+    fn an_embedded_host_answers_list_tasks_through_its_port() {
+        let store = MemoryStore::new();
+        let executor = WorkspaceToolExecutor::new(Arc::new(store.backend()));
+        let context = RequestContext::selected(
+            "local",
+            "koru-ai",
+            [Scope::ReadDocuments],
+            [store.workspace],
+        );
+        let page = executor
+            .invoke(&context, "list_tasks", json!({}))
+            .expect("the port answers rather than refusing");
+        assert_eq!(page["tasks"], json!([]));
+        assert_eq!(page["restarted"], json!(false));
+        let asked = store.task_queries.lock().unwrap();
+        assert_eq!(asked.len(), 1);
+        assert_eq!(asked[0].workspaces, vec![store.workspace]);
     }
 
     /// `list_files`, `search_files` and `get_file` all build their answer

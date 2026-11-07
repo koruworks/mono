@@ -514,7 +514,22 @@ fn position_rows(outline: &mut Body, viewport_w: f32, top_inset: f32, pills: &Pi
     }
     // Chrome above the rows — a toolbar, a breadcrumb — pushes them all down.
     let mut y = theme::MARGIN_TOP + top_inset;
+    // Room that belongs to no row (an image still loading) opens before the
+    // row it is reserved ahead of, exactly where that row's own space would
+    // have started — so a placeholder sized like its picture occupies the
+    // room the picture's row will. Sorted by row; one past the last row is
+    // the end of the body.
+    let reserved = &mut outline.reserved;
+    let mut next_band = 0;
     for (i, row) in outline.rows.iter_mut().enumerate() {
+        while let Some(band) = reserved
+            .get_mut(next_band)
+            .filter(|band| band.before_row <= i)
+        {
+            band.top = y;
+            y += band.height;
+            next_band += 1;
+        }
         let step = row.type_step();
         // A heading opens space above itself — except as the first row, where
         // there is nothing to be separated from and the gap would only push the
@@ -617,6 +632,10 @@ fn position_rows(outline: &mut Body, viewport_w: f32, top_inset: f32, pills: &Pi
         if row.is_title {
             y += row.metrics.title_gap;
         }
+    }
+    for band in &mut reserved[next_band..] {
+        band.top = y;
+        y += band.height;
     }
 }
 
@@ -1354,10 +1373,18 @@ impl ClampEmpty for std::ops::Range<usize> {
 }
 
 pub fn content_height(outline: &Body) -> f32 {
+    // A placeholder after the last row is content too: the page must scroll
+    // to it, and the picture that replaces it will be.
     outline
         .rows
         .iter()
         .map(|r| r.y + r.height + theme::MARGIN_TOP)
+        .chain(
+            outline
+                .reserved
+                .iter()
+                .map(|band| band.top + band.height - band.trailing + theme::MARGIN_TOP),
+        )
         .fold(theme::MARGIN_TOP, f32::max)
 }
 

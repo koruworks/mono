@@ -9,7 +9,9 @@
 //! supported agents' *Manual · Auto · Yolo* and the other agents' *Manual ·
 //! Yolo*, and a sentence saying plainly what each means. Then one row per
 //! agent the host lists — its brand mark and name, its status in plain words,
-//! a *Setup guide ↗* link and its switch — under a card that says what a
+//! a *Setup guide ↗* link, an *Install* button when the agent (or the program
+//! its chats run through) is missing and the host knows the vendor's install
+//! command, and its switch — under a card that says what a
 //! switch does and offers *Refresh status*, and a title that offers *Restore
 //! defaults*. The host owns everything here (the agent list, the existing
 //! readiness checks, the stored settings), so every press is a
@@ -54,12 +56,25 @@ pub(crate) fn lay_out(
                 Action::AgentGuide(guide),
             );
         }
-        b.row_toggle(
-            &row.name,
-            Some(&row.status.words(lang)),
-            row.on,
-            Action::AgentEnabled(row.key.clone(), !row.on),
-        );
+        let status = row.status.words(lang);
+        let switch = Action::AgentEnabled(row.key.clone(), !row.on);
+        // *Install* only where the host knows the vendor's command and the
+        // status says something is missing; it sits before the switch, so
+        // every switch on the page stays at the card's right edge.
+        if row.install {
+            b.row_button_toggle(
+                &row.name,
+                Some(&status),
+                (
+                    t(lang, Key::SettingsAgentInstall),
+                    Action::InstallAgent(row.key.clone()),
+                ),
+                row.on,
+                switch,
+            );
+        } else {
+            b.row_toggle(&row.name, Some(&status), row.on, switch);
+        }
     }
     b.note(&order_hint(lang));
 }

@@ -234,6 +234,17 @@ impl MainView {
         index: usize,
         project: Option<ProjectId>,
     ) -> bool {
+        self.open_session_tab_where(index, project, None)
+    }
+
+    /// …in a new tab, or with `split`, in a new pane on that side of the
+    /// focused one — the New… launcher's Alt answer.
+    pub(super) fn open_session_tab_where(
+        &mut self,
+        index: usize,
+        project: Option<ProjectId>,
+        split: Option<koru_editor::SplitSide>,
+    ) -> bool {
         let Some(profile) = built_in_profiles().into_iter().nth(index) else {
             return false;
         };
@@ -260,6 +271,22 @@ impl MainView {
             }
             return false;
         }
+        self.open_launch_tab(profile, project, split);
+        true
+    }
+
+    /// **Open a session tab that launches `profile`**, and answer the tab's
+    /// id. Every launch surface comes through here once it has decided the
+    /// profile may start — the `+` menu's built-in rows above, and *Agent
+    /// providers*' *Install*, whose profile is the vendor's install command.
+    /// `split` puts it in a new pane on that side of the focused one, the New…
+    /// launcher's Alt answer; `None` opens it as a tab.
+    pub(super) fn open_launch_tab(
+        &mut self,
+        profile: koru_session_profiles::LaunchProfile,
+        project: Option<ProjectId>,
+        split: Option<koru_editor::SplitSide>,
+    ) -> u64 {
         let label = profile.fallback_display_name().to_owned();
         let backend = self.ensure_session_backend();
         let sender = backend.map(|backend| backend.sender.clone());
@@ -292,7 +319,14 @@ impl MainView {
                 view
             }
         };
-        self.tabs_mut().push(Tab::session(view, &label));
+        let tab = Tab::session(view, &label);
+        let id = tab.id;
+        match split {
+            Some(side) => self.split_with(tab, side),
+            None => {
+                self.tabs_mut().push(tab);
+            }
+        }
         self.mark_tab_widths_stale();
         // Size before the settle that launches: the grid a session is created
         // at is measured from the surface's bounds, and a launch measured at
@@ -301,7 +335,7 @@ impl MainView {
         // Settle now rather than on the next wake, so the launch leaves in
         // the same gesture that opened the tab.
         let _ = self.settle_session_tabs();
-        true
+        id
     }
 
     /// Build a tab bound to an **existing** session — never a launch. Shared
@@ -1127,6 +1161,10 @@ impl MainView {
             BackendEvent::Connected(sessions)
             | BackendEvent::Sessions(sessions)
             | BackendEvent::Recovered { sessions } => {
+                // Before the reconcile below closes the tab of a session
+                // that ended: an *Install* tab is read while it still names
+                // its session.
+                self.watch_agent_installs(&sessions);
                 let attached = self.session_attached;
                 let lane_attached: Vec<u64> = self
                     .session_lanes

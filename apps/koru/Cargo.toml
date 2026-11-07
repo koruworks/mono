@@ -130,6 +130,10 @@ koru-ai-ui = { path = "../../crates/koru-ai-ui" }
 koru-socials-ui = { path = "../../crates/koru-socials-ui" }
 koru-session-profiles = { path = "../../crates/koru-session-profiles" }
 koru-session-protocol = { path = "../../crates/koru-session-protocol" }
+# The coding-agent CLIs' npm packages, read by *Agent providers*' *Install*
+# so the package it installs is the one the update check reads. Its weight —
+# reqwest, semver, serde — is already linked here.
+koru-cli-updates = { path = "../../crates/koru-cli-updates" }
 # A session as an ordinary Koru tab (TERMINATAB W4): the extracted session
 # surface, the backend command thread it is driven by, the view vocabulary the
 # adapter translates into, and the stats handle the surface is built over.

@@ -1614,11 +1614,40 @@ pub(super) fn agent_validation(
         });
     };
     let readiness = agents.readiness(&kind.kind).map_err(ai_failure)?;
-    let (status, code) = match readiness.map(|row| row.availability) {
+    let (status, code) = readiness_status(readiness.map(|row| row.availability), || {
+        koru_ai_provider_agent::agent_program_present(&kind)
+    });
+    Ok(ProviderValidationResponse {
+        provider,
+        status,
+        models: Vec::new(),
+        selected_model: None,
+        failure: code.map(|code| failure(code, "The agent is not ready.", true)),
+    })
+}
+
+/// **A readiness row as a validation status and its closed code.**
+///
+/// The host's `Missing` is about the program a chat *runs*, which for some
+/// agents is not the agent's own: Claude's chats go through
+/// `claude-agent-acp`. With the agent's own program present, that is a
+/// missing adapter — `agent_adapter_missing`, which Settings words as "Needs
+/// attention: `claude-agent-acp` isn't on PATH" — and not an agent that is
+/// not installed. `program_present` is asked only then, because it searches
+/// the disk.
+pub(super) fn readiness_status(
+    availability: Option<ExecutableAvailability>,
+    program_present: impl FnOnce() -> bool,
+) -> (ProviderValidationStatus, Option<&'static str>) {
+    match availability {
         Some(ExecutableAvailability::Available { .. }) => (ProviderValidationStatus::Ready, None),
         Some(ExecutableAvailability::Checking) => (
             ProviderValidationStatus::Unavailable,
             Some("agent_checking"),
+        ),
+        Some(ExecutableAvailability::Missing) if program_present() => (
+            ProviderValidationStatus::Unavailable,
+            Some("agent_adapter_missing"),
         ),
         Some(ExecutableAvailability::Missing) | None => (
             ProviderValidationStatus::Unavailable,
@@ -1635,14 +1664,7 @@ pub(super) fn agent_validation(
         Some(ExecutableAvailability::Failed { .. }) => {
             (ProviderValidationStatus::Failed, Some("agent_check_failed"))
         }
-    };
-    Ok(ProviderValidationResponse {
-        provider,
-        status,
-        models: Vec::new(),
-        selected_model: None,
-        failure: code.map(|code| failure(code, "The agent is not ready.", true)),
-    })
+    }
 }
 
 /// The code a client reads when an agent's models could not be answered.

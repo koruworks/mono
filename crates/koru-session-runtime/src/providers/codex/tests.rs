@@ -2947,3 +2947,37 @@ fn a_model_chosen_after_the_start_rides_the_next_turn() {
 mod codex_skills;
 /// An agent's questions (koru-ai D108).
 mod questions;
+
+/// **Codex runs from its newest reviewed release onwards** (owner,
+/// 2026-11-06): a newer release is admitted, an older one off the list is
+/// refused naming it and the floor, and a `codex --version` that fails is the
+/// program not starting rather than an unsupported version.
+#[test]
+fn a_refused_codex_names_both_versions_and_a_crash_did_not_start() {
+    use crate::providers::ManagedAvailability;
+    use crate::providers::discovery::classify_failure;
+    use koru_session_protocol::VersionNeed;
+    let newest = SUPPORTED_CODEX_VERSIONS.last().unwrap();
+    let printed = super::probe::read_print(true, b"codex-cli 0.167.0\n").unwrap();
+    assert_eq!(printed.as_str(), "0.167.0");
+    assert_eq!(super::probe::admit(printed.clone()).unwrap(), printed);
+    let unreviewed = ProviderVersion::from_str("0.160.0").unwrap();
+    assert_eq!(
+        classify_failure(super::probe::admit(unreviewed).unwrap_err()),
+        ManagedAvailability::Incompatible {
+            code: ErrorCode::ProviderIncompatible,
+            found: Some(ProviderVersion::from_str("0.160.0").unwrap()),
+            needed: Some(VersionNeed::AtLeast((*newest).into())),
+        }
+    );
+    let reviewed = ProviderVersion::from_str(newest).unwrap();
+    assert_eq!(super::probe::admit(reviewed.clone()).unwrap(), reviewed);
+    assert!(matches!(
+        classify_failure(super::probe::read_print(false, b"").unwrap_err()),
+        ManagedAvailability::Failed {
+            stage: ProviderStage::Version,
+            diagnostic: ProviderDiagnostic::UnexpectedExit,
+            ..
+        }
+    ));
+}

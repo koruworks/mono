@@ -24,7 +24,7 @@ pub(super) fn validate_handshake(initialized: &Value) -> Result<(), ProviderFail
     if initialized
         .pointer("/agentInfo/version")
         .and_then(Value::as_str)
-        != Some("0.76.0")
+        != Some(koru_session_profiles::CLAUDE_ADAPTER_VERSION)
         || !initialized
             .pointer("/agentCapabilities/_meta/authStatus")
             .is_some_and(Value::is_object)

@@ -112,6 +112,8 @@ objc2-foundation = { version = "0.3", default-features = false, features = [
     # The Dock icon: the logo's bytes have to become an `NSData` to become an
     # `NSImage`. See `dock::set_dock_icon`.
     "NSData",
+    # `traffic_lights::place`: the buttons' frames are `NSRect`s.
+    "NSGeometry",
 ] }
 # `activation::activate_app` — the one AppKit call two binaries need and
 # `focus_window` cannot substitute for. NSResponder because NSApplication
@@ -125,6 +127,12 @@ objc2-app-kit = { version = "0.3", default-features = false, features = [
     # `NSApplicationActivationPolicy`, for `activation::become_accessory` —
     # the enum is declared in NSRunningApplication.h and gated with it.
     "NSRunningApplication",
+    # `traffic_lights::place` — the window's standard buttons and the views
+    # they sit in. `standardWindowButton` is gated on all four.
+    "NSWindow",
+    "NSView",
+    "NSButton",
+    "NSControl",
 ] }
 
 [dev-dependencies]

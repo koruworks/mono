@@ -605,17 +605,25 @@ fn draw_tab(
     let label_bl = label
         .as_ref()
         .and_then(|l| l.lines().next().map(|line| y + line.metrics().baseline));
-    // A working chat's ring takes the icon's slot; the icon comes back when
-    // the work ends (koru-ai D83).
+    // A working chat's ring, and a waiting chat's question mark, take the
+    // icon's slot; the icon comes back when the work ends or the question
+    // is answered (koru-ai D83).
     let icon_slot = Rect::new(icon_x, pill.y, crate::PAGE_ICON_SLOT, pill.h);
-    let spinning = matches!(
+    let replaced = matches!(
         tab.status,
-        Some(crate::status_mark::StatusMark::Spinner { .. })
+        Some(
+            crate::status_mark::StatusMark::Spinner { .. }
+                | crate::status_mark::StatusMark::Question(_)
+        )
     );
-    if let Some(mark @ crate::status_mark::StatusMark::Spinner { .. }) = tab.status {
-        crate::status_mark::draw(scene, root, icon_slot, mark);
+    if let Some(
+        mark @ (crate::status_mark::StatusMark::Spinner { .. }
+        | crate::status_mark::StatusMark::Question(_)),
+    ) = tab.status
+    {
+        crate::status_mark::draw(scene, root, engine, icon_slot, mark);
     }
-    match tab.icon.filter(|_| !spinning) {
+    match tab.icon.filter(|_| !replaced) {
         Some(TabIcon::Emoji(icon)) => {
             crate::draw_page_emoji(scene, root, engine, icon, icon_x, pill, label_bl)
         }

@@ -10,22 +10,23 @@ use koru_replication::protocol::{CLOUD_COMPARE_LIMIT, CloudDocumentDigest};
 use koru_store_core::sync_digest;
 
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn documents<'a, R, W, F>(
+pub(super) async fn documents<'a, R, W, J, F>(
     sync: &mut Reconciler<'a, R, W>,
     workspace: WorkspaceId,
     manifest: DocumentId,
     entries: Vec<DocumentId>,
-    worker: &StoreWorkerClient,
+    worker: &J,
     authorize: &Authorize,
     deferrals: &DeferralLedger,
     versions: &Versions,
     outcome: &mut Outcome,
     progress: &mut F,
-    rooms: &mut Option<rooms::Rooms>,
+    rooms: &mut Option<rooms::Rooms<J>>,
 ) -> Result<(), Error>
 where
     R: AsyncRead + Unpin + Send + 'a,
     W: AsyncWrite + Unpin + Send + 'a,
+    J: StoreJobs,
     F: FnMut(Progress),
 {
     let gate = authorize.clone();
@@ -91,6 +92,11 @@ where
                 progress(Progress::Documents {
                     synced: outcome.documents_synced,
                     required: None,
+                });
+                // Cloud's durable revision equals the sampled one.
+                progress(Progress::Confirmed {
+                    unit,
+                    version: positions[document].clone(),
                 });
                 progress(Progress::Settled {
                     unit,

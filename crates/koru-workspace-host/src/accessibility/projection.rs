@@ -209,6 +209,10 @@ pub struct SemanticNode {
     /// reader inside a modal, which is the other half of publishing nothing
     /// beneath one.
     pub modal: bool,
+    /// **Still being made** — a picture loading into the place this node
+    /// stands for. AccessKit's `busy`, which a screen reader reads as the
+    /// content not being ready yet rather than as an empty control.
+    pub busy: bool,
     /// The children to publish. In a whole snapshot this is every child; in a
     /// delta it is only the ones that changed, and
     /// [`child_order`](Self::child_order) then says what the full list is.
@@ -265,6 +269,7 @@ impl SemanticNode {
             position: None,
             size_of_set: None,
             modal: false,
+            busy: false,
             live: None,
             children: Vec::new(),
             child_order: None,
@@ -289,6 +294,12 @@ impl SemanticNode {
     /// [`live`](SemanticNode::live): the announcement follows the **label**.
     pub fn with_live(mut self, live: accesskit::Live) -> Self {
         self.live = Some(live);
+        self
+    }
+
+    /// Content still on its way. See [`busy`](SemanticNode::busy).
+    pub fn with_busy(mut self) -> Self {
+        self.busy = true;
         self
     }
 
@@ -631,6 +642,9 @@ fn append(
     }
     if node.modal {
         built.set_modal();
+    }
+    if node.busy {
+        built.set_busy();
     }
     if let Some(live) = node.live {
         built.set_live(live);

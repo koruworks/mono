@@ -50,16 +50,34 @@ fn registry_keeps_codex_launch_and_raw_profiles_unchanged() {
     }
 }
 
+/// The crate stays a leaf: the protocol everywhere, and on Windows only the
+/// registry binding the search path reads the current `Path` through.
 #[test]
 fn profiles_has_only_the_protocol_dependency() {
     let manifest = include_str!("../../Cargo.toml");
-    let dependencies = manifest.split_once("[dependencies]").unwrap().1;
-    let entries: Vec<_> = dependencies
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .collect();
-    assert_eq!(entries.len(), 1);
-    assert!(entries[0].starts_with("koru-session-protocol ="));
+    let table = |header: &str| -> Vec<&str> {
+        let Some((_, rest)) = manifest.split_once(header) else {
+            return Vec::new();
+        };
+        rest.lines()
+            .skip(1)
+            .take_while(|line| !line.starts_with('['))
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .filter(|line| line.contains('=') && !line.starts_with('"'))
+            .collect()
+    };
+    let everywhere = table("[dependencies]");
+    assert_eq!(everywhere.len(), 1, "{everywhere:?}");
+    assert!(everywhere[0].starts_with("koru-session-protocol ="));
+    let windows = table("[target.'cfg(windows)'.dependencies]");
+    assert_eq!(windows.len(), 1, "{windows:?}");
+    assert!(windows[0].starts_with("windows-sys ="));
+    assert_eq!(
+        manifest.matches("dependencies]").count(),
+        2,
+        "no other dependency table"
+    );
 }
 
 #[test]
@@ -232,9 +250,7 @@ fn raw_only_profiles_never_become_managed_and_unavailable_host_answers_refuse_ex
         ExecutableAvailability::Failed {
             code: ErrorCode::ProviderFailed,
         },
-        ExecutableAvailability::Incompatible {
-            code: ErrorCode::ProviderIncompatible,
-        },
+        ExecutableAvailability::incompatible(ErrorCode::ProviderIncompatible),
     ] {
         let row = ProviderReadiness {
             availability,

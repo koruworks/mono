@@ -769,12 +769,11 @@ impl Control {
             ));
         }
         let row = self.readiness.iter().find(|row| &row.kind == kind).cloned();
-        // A failed check is a moment, not a verdict — a probe that timed out
-        // under load says nothing about the agent. Ask the host to look
-        // again, once per window, and report the check as running.
+        // A failed or missing check is a moment, not a verdict. Ask the host
+        // to look again, once per window, and report the check as running.
         if row
             .as_ref()
-            .is_some_and(|row| matches!(row.availability, ExecutableAvailability::Failed { .. }))
+            .is_some_and(|row| looks_again(&row.availability))
             && refresh_due(&self.refreshed, kind, Instant::now())
         {
             let client = self.client.as_ref().expect("connected above");
@@ -826,6 +825,21 @@ impl Control {
 /// How long a failed readiness row stands before a look is asked for again,
 /// and how long after one re-probe a refused model may ask for another.
 const REFRESH_WINDOW: Duration = Duration::from_secs(30);
+
+/// **Which readiness rows the chat asks the host to look at again** (once per
+/// [`REFRESH_WINDOW`]). A failed probe — one that timed out under load —
+/// says nothing about the agent. A missing one is only as current as the
+/// host's last look: the host probes at start and when asked, so an agent
+/// (or Claude's `claude-agent-acp`) installed while Koru runs stayed "Not
+/// installed" in every chat until a restart or Settings' *Refresh status*.
+/// A missing program's probe fails at discovery, before anything is
+/// spawned, so looking again costs a `PATH` search.
+fn looks_again(availability: &ExecutableAvailability) -> bool {
+    matches!(
+        availability,
+        ExecutableAvailability::Failed { .. } | ExecutableAvailability::Missing
+    )
+}
 
 /// Whether `kind` may be re-probed again: never asked, or asked longer than
 /// a window ago.

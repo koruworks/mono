@@ -43,5 +43,7 @@ zip.workspace = true
 
 [dev-dependencies]
 koru-ai-sqlite = { path = "../../crates/koru-ai-sqlite", features = ["fixtures"] }
+# Reading every change's commit message, for the attribution sweep.
+loro.workspace = true
 koru-log = { path = "../../crates/koru-log" }
 tempfile.workspace = true

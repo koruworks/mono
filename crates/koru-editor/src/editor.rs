@@ -1567,6 +1567,9 @@ pub trait Editing {
         // Rows wrap to the page width in Page/Narrow, not the raw viewport —
         // see `set_viewport` for why this is the effective width.
         let layout_w = view.view_mode.effective_w(view.viewport.0);
+        // Room for any image still loading, resolved to rows before they are
+        // positioned. Nothing at all when none is.
+        crate::pending_image::reserve(body, &view.pending_images, layout_w);
         let (scroll, viewport_h) = (view.scroll, view.viewport.1);
         rowlayout::reflow(&mut view.engine, body, layout_w, inset, scroll, viewport_h);
         crate::draw::reserve_reminder_space(
@@ -1617,6 +1620,7 @@ pub trait Editing {
         }
         let layout_w = view.view_mode.effective_w(view.viewport.0);
         rowlayout::build_row(&mut view.engine, row, layout_w);
+        crate::pending_image::reserve(body, &view.pending_images, layout_w);
         let (scroll, viewport_h) = (view.scroll, view.viewport.1);
         rowlayout::reflow(&mut view.engine, body, layout_w, inset, scroll, viewport_h);
         crate::draw::reserve_reminder_space(
@@ -6221,6 +6225,15 @@ pub trait Editing {
             self.view_mut().wants_task_view = Some(node);
             return true;
         }
+        // **The list chip opens the list** — its page on the Tasks tab, the
+        // way the Tasks page's own list chip does. Choosing another list is
+        // the chip menu's *Edit*; with the Tasks view hidden, it is the press.
+        if let crate::chips::ChipSpec::List(list) = hit.spec
+            && koru_features::tasks()
+        {
+            self.view_mut().wants_task_list = Some(list);
+            return true;
+        }
         self.edit_chip(ws, row, hit)
     }
 
@@ -6257,6 +6270,10 @@ pub trait Editing {
             }
             crate::chips::ChipSpec::Color(_) => {
                 Outcome::ClearAttr(nodes, koru_core::attributes::KEY_COLOR.to_owned())
+            }
+            // Out of the list; the task stays a task.
+            crate::chips::ChipSpec::List(_) => {
+                Outcome::ClearAttr(nodes, koru_core::attributes::KEY_LIST.to_owned())
             }
         };
         self.attribute_outcome(ws, None, &outcome);
@@ -6295,6 +6312,7 @@ pub trait Editing {
             crate::chips::ChipSpec::Due(_) => self.open_due_chooser(ws, trigger, nodes),
             crate::chips::ChipSpec::Priority(_) => self.open_priority_chooser(ws, trigger, nodes),
             crate::chips::ChipSpec::Color(_) => self.open_color_chooser(ws, trigger, nodes),
+            crate::chips::ChipSpec::List(_) => self.open_list_chooser(ws, trigger, nodes),
         }
         self.view_mut().active = true;
         self.reflow();

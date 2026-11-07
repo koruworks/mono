@@ -17,6 +17,10 @@ pub enum SymbolicReturnTarget {
     Releases,
     DownloadWindows,
     DownloadMacos,
+    /// The website's app connection consent page (Cloud MCP TECHNICAL.final
+    /// §7.3): a sign-in started there lands back on it, where the pending
+    /// request waits in its own cookie.
+    ConnectionAuthorize,
 }
 impl SymbolicReturnTarget {
     pub fn parse(value: &str) -> Result<Self, SecurityError> {
@@ -25,6 +29,7 @@ impl SymbolicReturnTarget {
             "releases" => Ok(Self::Releases),
             "download_windows" => Ok(Self::DownloadWindows),
             "download_macos" => Ok(Self::DownloadMacos),
+            "connection_authorize" => Ok(Self::ConnectionAuthorize),
             _ => Err(SecurityError::InvalidReturnTarget),
         }
     }

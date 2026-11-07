@@ -226,6 +226,32 @@ refusals preserve their existing more specific codes. Policy initialization is
 per receiving direction/accepted stream and cannot be inferred from an older
 connection, account or previously closed stream.
 
+## App connection producer obligations (Cloud MCP, 2026-11-06)
+
+These rows amend the Cloud carrier for **app connections**: an approved
+third-party application, such as an AI assistant, whose in-memory replica
+syncs under its own credential purpose, `koru:sync:app-connection:v1`. The
+frozen vectors are [cloud-transfer-v1's `claim.json`](vectors/cloud-transfer-v1/README.md#the-app-connection-claim-amendment-claimjson).
+`CloudTransferStartV1` gains an optional `claim` reference, the SHA-256 of a
+document claim's handle, accepted only on an app connection's session.
+
+The two new codes are produced **only for uploads under an app connection's
+credential**; a device upload is never checked by either rule, and a device
+never receives either code. Each is an existing tag-0 `PeerFrame::Error`
+followed by dataset-stream close, like the carrier refusals above, and each is
+defined to leave the unit's head unmoved: nothing it refused is ever
+published, which is what lets the connection report the effect `not_saved`.
+
+| Row id | Credential and surface | Preconditions | Expected stable code | Exact refusal observation | Owning plan | Existing evidence |
+| --- | --- | --- | --- | --- | --- | --- |
+| DS-D44 | App connection upload at the worker, before `reserve` | The upload's blob is a snapshot from an empty base (a creation) and the document unit resolves `active` | `sync_unit_exists` | Exact code before `reserve`; no object row, no receipt, unit head unmoved; an `absent` or `initializing` unit is still initialized | Cloud MCP 2.2 | Pending |
+| DS-D45 | App connection upload of a document unit, before `reserve` and in the publish transaction under the claim lock | A live claim (unexpired by the database clock, holder not revoked) exists for the document, and the upload's `claim` is absent, differs from the claim's hash, or the claim belongs to another connection | `sync_document_claimed` | Exact code; before `reserve` nothing is written; at publish the transaction rolls back and its `pending` object row is never published; unit head unmoved | Cloud MCP 3.3 | Pending |
+| DS-D46 | Cloud transfer decoder on a session that is not an app connection's, or a client receiving a worker's start | A `transfer_start` carries `claim` | `sync_transfer_invalid` | Exact code and close before any payload is admitted; the same start without `claim` is byte-identical to before | Cloud MCP 3.2 | Pending; `claim.json` C04 and C05 |
+
+With no live claim, an upload's `claim` is ignored. A claim reference is a
+hash, not a bearer: no tool accepts it, it is never logged, and it is never
+written into attribution.
+
 ## Existing test evidence: partial, inspected, not run for this publication
 
 Repository-relative source paths below are exact existing locations at the

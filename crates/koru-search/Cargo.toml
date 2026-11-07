@@ -21,6 +21,8 @@ koru-store-wire = { path = "../koru-store-wire" }
 # `Kind::ListBlock` is. It arrives transitively through `koru-projection`,
 # which is unavoidable in one process and is not the same claim.
 rusqlite.workspace = true
+# The one place that knows how a database lives in memory with no file.
+koru-sqlite = { path = "../koru-sqlite" }
 unicode-normalization.workspace = true
 strsim.workspace = true
 sha2.workspace = true

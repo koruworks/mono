@@ -563,6 +563,7 @@ impl MainView {
         // Where the menu would be: it is opened in a menu's place, and its
         // targets' names are tooltips drawn after it.
         self.draw_place_chooser(scene, root);
+        self.draw_launcher(scene, root);
         // After the menu, because a menu control's chip must not end up under
         // the panel it belongs to. See `draw_tooltip`.
         self.draw_tooltip(scene, root);
@@ -1118,7 +1119,10 @@ impl MainView {
         new_hot: bool,
     ) {
         let p = theme::p();
-        if rects.leading.w > 0.0 {
+        // Only the mark is ours to draw: a Mac's lights in the same slot are
+        // AppKit's (`koru_window::traffic_lights`).
+        let mark = matches!(self.leading().mark, koru_shell_chrome::lane::Mark::Mark);
+        if mark && rects.leading.w > 0.0 {
             const MARK: f32 = 16.0;
             koru_ui::logo::KoruLogo::new(MARK).tint(p.text).draw(
                 scene,

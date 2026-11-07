@@ -64,7 +64,7 @@ impl ChatStatus {
                 phase: now.map(status_mark::spin_phase),
                 color: p.text_dim,
             }),
-            Self::NeedsYou => Some(StatusMark::Dot(attention())),
+            Self::NeedsYou => Some(StatusMark::Question(attention())),
             Self::Unread => Some(StatusMark::Dot(p.accent)),
         }
     }
@@ -121,5 +121,15 @@ mod tests {
         let still = ChatStatus::Working.mark(None).expect("a ring");
         assert!(!still.animating());
         assert!(ChatStatus::Idle.mark(Some(Instant::now())).is_none());
+        // A chat waiting on the person wears the question mark, not a dot:
+        // the tab and the Chats row both draw what this answers.
+        assert!(matches!(
+            ChatStatus::NeedsYou.mark(None),
+            Some(StatusMark::Question(_))
+        ));
+        assert!(matches!(
+            ChatStatus::Unread.mark(None),
+            Some(StatusMark::Dot(_))
+        ));
     }
 }

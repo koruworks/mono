@@ -1039,7 +1039,7 @@ wrong.
 
 **In Explore:** a single click opens a document in the current tab. Ctrl+click (or Shift+click) builds a multi-selection; right-click then offers **Open in new tab** (one tab each) and **Open in new window** (the whole set in one window).
 
-**Right-click a document tab to pin it.** Pinned tabs sit on the left, show the page icon (and the title if you ask), and stay at the front of the strip. **A pinned tab keeps that document** — clicking another page in the pane, or a link on the pin, never replaces it. Unpin from the tab menu or *Remove from this list* on the Jump List. If pins are open, Welcome is not auto-opened. **+ → Welcome** selects the Welcome tab, or brings it back when it is closed. Your recent documents are under **+ → Documents**, with **Clear recents** at the bottom of the list. Settings controls whether new pins show a title; each pin can override that. Opening a page from search prefers a window that already has that tab.
+**Right-click any tab to pin it** — a document, a task list, the Trash, a terminal, Settings. Pinned tabs sit on the left, show the page icon (and the title if you ask), and stay at the front of the strip. **A pinned tab keeps what it shows** — clicking another page in the pane, or a link on the pin, never replaces it, and a pinned task list stays on its list: choosing another list in the Tasks column opens it beside the pin. Pins come back after a restart, except Settings, Feedback, a version comparison, Socials and a run's pages, which stay pinned until you quit. Unpin from the tab menu or *Remove from this list* on the Jump List. If pins are open, Welcome is not auto-opened. **+ → Welcome** selects the Welcome tab, or brings it back when it is closed. Your recent documents are under **+ → Documents**, with **Clear recents** at the bottom of the list. Settings controls whether new pins show a title; each pin can override that. Opening a page from search prefers a window that already has that tab.
 
 **`+` and `Ctrl+Shift+A` open Add…**. Documents offers **New** (`Ctrl+T`) and
 your ten most recent pages. Agents and Shell each offer **Active** when a
@@ -3470,13 +3470,66 @@ the agent's own install page, and its status in plain words: **Ready**;
 **Not installed**, naming the program that is not on your `PATH` (*`grok`
 isn't on PATH.*); or **Needs attention**, with the reason Koru already knows —
 a version Koru does not support yet, signed out, the program a chat runs the
-agent through missing (Claude's `claude-agent-acp`, say), or a check that
-failed. Where Koru knows the command that fixes it, the row names it — Devin's
+agent through missing (Claude's `claude-agent-acp`, say), the agent's program
+not starting, or a check that failed. A version row names the version found
+and the one Koru needs: *Found 1.18.25; Koru needs 1.18.27 or newer.* Every
+agent is accepted from a checked release onwards, so a newer release of the
+agent works without waiting for a Koru update; only a release older than the
+one Koru names is refused, and updating the agent fixes it. When the agent's `--version` fails or prints nothing,
+the row says so instead — *`kimi --version` failed, so the agent can't start
+on this computer. Run it in a terminal to see why.* — because the version was
+never the problem (Kimi's CLI under a Node.js too old for it is one way to
+get there). Where Koru knows the command that fixes it, the row names it — Devin's
 reads *Run `devin update` to update it.* for a version Koru does not support
 yet, adding that the copy inside the Devin desktop app updates with the app,
 and *Run `devin auth login` to sign in.* when it is signed out. The status reads what Koru's own checks found; **Refresh status** runs
 them again, and the rows update when the answers arrive. The card's first line
 counts them (*9 of 9 enabled*).
+
+**Install an agent from its row.** When an agent is **Not installed** — or,
+for Claude, when only `claude-agent-acp`, the program its chats run through,
+is missing — and Koru knows the vendor's own install command, the row has an
+**Install** button before its switch. Pressing it opens a terminal tab named
+*Install Claude* (or the agent's name) that runs the command, so you see its
+output and can answer anything it asks:
+
+- **Claude**: Anthropic's installer — `curl -fsSL https://claude.ai/install.sh | bash`
+  on a Mac or Linux, `irm https://claude.ai/install.ps1 | iex` in PowerShell on
+  Windows — and then `npm install -g @agentclientprotocol/claude-agent-acp@0.76.0`,
+  the chat program at the version Koru's Claude chats accept. When Claude
+  itself is already installed, only the second command runs.
+- **Codex, GitHub Copilot, Kimi, OpenCode and Qwen Code**: `npm install -g`
+  with the agent's npm package (`@openai/codex`, `@github/copilot`,
+  `@moonshot-ai/kimi-code`, `opencode-ai`, `@qwen-code/qwen-code`).
+- **Grok, Antigravity, Muse and Devin** have no **Install**; their **Setup
+  guide ↗** says how.
+
+An npm command needs Node.js: where `npm` is not found, the tab says so and
+points to nodejs.org instead of failing. When the commands finish, the tab
+asks you to press Enter; it closes, and Koru checks the agents again, so the
+row reads **Ready** without restarting Koru. Closing the tab early leaves the
+installer running, and Koru checks again when it ends. Pressing **Install**
+again while its tab is open brings that tab forward.
+
+Koru looks for an agent's program on the `PATH` a new terminal would have,
+even when Koru itself was started from Finder, the Dock or a login item, which
+on a Mac get only `/usr/bin:/bin:/usr/sbin:/sbin`. On a Mac or Linux that is
+Koru's own `PATH`, then the `PATH` your login shell sets up (`$SHELL -l`,
+asked once when Koru starts looking), then the folders the agents' installers
+use — `~/.local/bin` (Claude Code, Codex, Muse, Devin), `~/.opencode/bin`,
+`~/.grok/bin`, and on a Mac Homebrew's `/opt/homebrew/bin` and
+`/usr/local/bin`, where npm puts `node` and the npm-installed agents. On
+Windows it is Koru's `PATH` and the `PATH` as Windows holds it now, so a
+program installed while Koru is running is found without restarting Koru.
+Claude Code is also looked for in `~/.claude/local`, npm's global folder
+(`%APPDATA%\npm` on Windows) and WinGet's links. Everything Koru starts — an
+agent's chat, its version check, a terminal tab, an **Install** tab — runs
+with that same `PATH`, so a program that needs `node` finds it. A folder only
+your interactive shell adds (`~/.zshrc`, `~/.bashrc`) beyond those is not
+seen; put it in your login profile (`~/.zprofile`, `~/.profile`) instead. The
+chat model picker uses the same words: an agent whose chat program is missing
+reads **Needs attention** there too, not **Not installed**, and the picker
+checks a missing agent again when you next open it.
 
 **The order of the rows is the order agents are listed in everywhere** — the
 chat model picker's agent column, the terminal's **Agents ›** menu, the
@@ -3491,7 +3544,8 @@ terminal's **Agents ›** menu, from the delegate dialog's agents and from a
 canvas agent node's menu of agents. Nothing is
 uninstalled or signed out, and a chat or a terminal session already on that
 agent stays and keeps working — its own picker still shows it. Turning one
-**on** does not install or sign in its CLI; the setup guide is for that.
+**on** does not install or sign in its CLI; **Install** and the setup guide
+are for that.
 Two other doors lead to this page: the **+** at the foot of the chat model
 picker's agent column, and **Manage…**, the last row of the terminal's
 **Agents ›** menu, under a rule.
@@ -3610,8 +3664,11 @@ documents. Press **+** at the end of the tab strip (or **Ctrl+Shift+A**) and
 pick **Shell** or **Agents**. **Active** lists running sessions of that kind
 you can switch to; below it are the same new-profile rows as before
 (System, PowerShell, Bash; Claude, OpenCode, Codex, Grok, Kimi). The session
-opens as its own tab and starts running; an agent you have not installed is
-shown greyed out with *Not installed*.
+opens as its own tab and starts running. **Agents** lists only the agents
+that are turned on and installed on this computer, then **Manage…**, which
+opens **Settings → Coding → Agent providers** to turn the others on or
+install them; with none installed it is **Manage…** alone. A shell that is
+not installed is shown greyed out with *Not installed*.
 
 The left navigator's fourth mode — the robot icon, beside Documents, Files
 and Tasks — is **Agents**: every running session, grouped by project. Click one to open or
@@ -5743,9 +5800,13 @@ profile you did not start it from. Nothing else changes: the workspace keeps
 its id, its documents and its history, and its projects follow it in Koru
 Terminal. Moving it back is the same action with the other profile chosen.
 
-If a row says *this window was not started by Koru*, the window was launched
-outside the app — a `cargo run`, or a build Koru did not start — and it holds no
-permission to archive, delete or move workspaces. If it says its terminal
+Every Koru window on this computer can archive, delete and move workspaces,
+however you opened it. If a row says *Koru could not confirm that this window
+is part of this Koru installation*, the window is a Koru from a different
+installation than the one running in the background — a second copy of the app,
+or a build from another folder — or your system would not say which program the
+window is; it holds no permission to archive, delete or move workspaces. Open
+Koru from the installation you use and try again there. If it says its terminal
 projects have not caught up, the workspace moved but Koru Terminal was not
 answering at the time; choosing the same profile again repairs them.
 

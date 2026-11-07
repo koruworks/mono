@@ -6,20 +6,16 @@ use super::*;
 use koru_store_api::cloud_changes::{Dataset, Subscription};
 use std::collections::{HashMap, HashSet};
 
-pub(super) struct Rooms {
+pub(super) struct Rooms<J> {
     workspace: WorkspaceId,
     known: HashSet<DocumentId>,
     watchers: HashMap<DocumentId, Subscription>,
     viewers: Arc<dyn Downloads>,
-    worker: StoreWorkerClient,
+    worker: J,
 }
 
-impl Rooms {
-    pub fn new(
-        workspace: WorkspaceId,
-        viewers: Arc<dyn Downloads>,
-        worker: StoreWorkerClient,
-    ) -> Self {
+impl<J: StoreJobs> Rooms<J> {
+    pub fn new(workspace: WorkspaceId, viewers: Arc<dyn Downloads>, worker: J) -> Self {
         Self {
             workspace,
             known: HashSet::new(),
@@ -98,6 +94,7 @@ impl Rooms {
                             | Progress::Deferred { .. }
                             | Progress::Refused { .. }
                             | Progress::Unavailable { .. }
+                            | Progress::Confirmed { .. }
                     ) {
                         progress(event);
                     }

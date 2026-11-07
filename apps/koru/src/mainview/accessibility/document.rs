@@ -143,6 +143,12 @@ pub(crate) const CHECK: ControlPart = ControlPart::new("check");
 /// for both would be a lie about the model.
 pub(crate) const STATE: ControlPart = ControlPart::new("state");
 
+/// **An image still loading**, where it will land: a skeleton the editor
+/// draws between two paragraphs, with no document node behind it
+/// (`koru_editor::pending_image`). Scoped by the placeholder's own uuid, which
+/// lives exactly as long as the placeholder does.
+pub(crate) const LOADING: ControlPart = ControlPart::new("loading-image");
+
 /// What one document view has published, and to whom.
 ///
 /// Keyed by **tab instance**, not by document: two tabs on one document are two
@@ -182,6 +188,10 @@ pub(crate) struct Bodies {
     /// the host that `n:<uuid>#state` is no longer on screen, and an id left in
     /// the occurrence map goes on being routable.
     published_facts: HashMap<KoruNodeId, koru_editor::accessibility::RowFacts>,
+    /// The loading-image placeholders the client holds, in order. A
+    /// placeholder is no paragraph, so the per-row cache cannot see it come
+    /// or go; a change here republishes the container's child list.
+    published_loading: Vec<uuid::Uuid>,
     /// Controls that have left the tree, waiting for the host to drain them.
     /// See `View::accessibility_retired`.
     retired: Vec<Occurrence>,
@@ -365,20 +375,48 @@ impl MainView {
                 paragraph(cx, row, read_only)
             })
             .collect();
-        let order: Vec<accesskit::NodeId> = update
+        let paragraphs: Vec<KoruNodeId> = update
             .order
             .clone()
-            .unwrap_or_else(|| editor.body.rows.iter().map(|row| row.id).collect())
-            .iter()
-            .map(|id| paragraph_occurrence(cx, *id).node_id())
-            .collect();
+            .unwrap_or_else(|| editor.body.rows.iter().map(|row| row.id).collect());
+        let paragraph_count = paragraphs.len();
+        // Images still loading stand in the child list where they are drawn:
+        // before the row their room opens ahead of.
+        let loading = loading_nodes(cx, editor, pane);
+        let mut order: Vec<accesskit::NodeId> = Vec::with_capacity(paragraph_count + loading.len());
+        let mut waiting = loading.iter().peekable();
+        for (i, id) in paragraphs.iter().enumerate() {
+            while let Some((_, _, node)) = waiting.next_if(|(before, _, _)| *before <= i) {
+                order.push(node.occurrence.node_id());
+            }
+            order.push(paragraph_occurrence(cx, *id).node_id());
+        }
+        order.extend(waiting.map(|(_, _, node)| node.occurrence.node_id()));
+        let loading_ids: Vec<uuid::Uuid> = loading.iter().map(|(_, id, _)| *id).collect();
+        let reloaded = state.published_loading != loading_ids;
+        if reloaded {
+            for gone in state
+                .published_loading
+                .iter()
+                .filter(|id| !loading_ids.contains(id))
+                .copied()
+                .collect::<Vec<_>>()
+            {
+                state.retired.push(loading_occurrence(cx, gone));
+            }
+            state.published_loading = loading_ids;
+        }
+        // Loose like a paragraph when the container is not going out: its
+        // place and words are re-sent, its parent already names it.
+        let mut rows = rows;
+        rows.extend(loading.into_iter().map(|(_, _, node)| node));
 
         state.published_tab = Some(tab);
         state.published_title = Some(title.clone());
         state.published_viewport = Some(viewport);
         state.published_read_only = Some(read_only);
 
-        if !nested && !renamed && !reordered && !moved {
+        if !nested && !renamed && !reordered && !moved && !reloaded {
             // Neither the container's name, child list nor viewport moved, so it is
             // exactly what the client already holds and is left out entirely.
             return Some((None, rows));
@@ -395,7 +433,7 @@ impl MainView {
             // a different container role it is already here. A paragraph
             // carries its own zero-based position beside it, which *does*
             // arrive. See `guide/contributing/deps/ACCESSKIT.md`.
-            .with_size_of_set(order.len())
+            .with_size_of_set(paragraph_count)
             // A node is republished whole, so the container states its complete
             // child list even when only its label moved.
             .with_child_order(order)
@@ -518,6 +556,13 @@ impl MainView {
         if let Some(row) = editor.body.rows.get(editor.body.focus) {
             rev.u64(row.selection.anchor().index() as u64);
             rev.u64(row.caret() as u64);
+        }
+        // An image loading: where its placeholder stands and how big it is,
+        // which change what is published without touching any row.
+        rev.u64(editor.body.reserved().len() as u64);
+        for band in editor.body.reserved() {
+            rev.u64(band.ticket).u64(band.before_row as u64);
+            rev.f32(band.top).f32(band.height);
         }
     }
 
@@ -667,6 +712,14 @@ impl Bodies {
                 }
                 self.retire_facts(cx, row, None);
             }
+            self.retire_loading(cx);
+        }
+    }
+
+    /// Retire every loading-image placeholder the client holds.
+    fn retire_loading(&mut self, cx: &Shell) {
+        for id in std::mem::take(&mut self.published_loading) {
+            self.retired.push(loading_occurrence(cx, id));
         }
     }
 
@@ -772,6 +825,7 @@ impl Bodies {
             }
             self.retire_facts(cx, row, None);
         }
+        self.retire_loading(cx);
         self.published_title = None;
         self.published_viewport = None;
     }
@@ -946,6 +1000,54 @@ fn state_semantics(cx: &Shell, row: &RowUpdate) -> Option<SemanticNode> {
         node = node.with_bounds(bounds);
     }
     Some(node)
+}
+
+/// Each image still loading, as `Role::Image` named *Loading image* and marked
+/// busy, at the rect its skeleton is drawn — with the row index its room opens
+/// before, so the caller can put it in reading order. No actions: there is
+/// nothing to focus or press until it is a picture, and then it is a
+/// paragraph like any other.
+fn loading_nodes(
+    cx: &Shell,
+    editor: &koru_editor::Editor,
+    pane: koru_draw::geometry::Rect,
+) -> Vec<(usize, uuid::Uuid, SemanticNode)> {
+    let mut out = Vec::new();
+    for band in editor.body.reserved() {
+        let Some(pending) = editor
+            .view
+            .pending_images
+            .iter()
+            .find(|pending| pending.ticket == band.ticket)
+        else {
+            continue;
+        };
+        let mut blocks = band.blocks();
+        let bounds = blocks.next().map(|first| {
+            // One node for the gesture, however many pictures it carries: the
+            // rect spans every block.
+            let bottom = blocks.fold(first.y + first.h, |b, block| b.max(block.y + block.h));
+            koru_editor::accessibility::geometry::box_bounds(
+                editor.view.content_x + first.x,
+                first.y - editor.view.scroll,
+                first.w,
+                bottom - first.y,
+                (pane.x, pane.y),
+            )
+        });
+        let mut node = SemanticNode::new(loading_occurrence(cx, pending.id), Role::Image)
+            .with_label(t(cx.lang, Key::ImageLoading))
+            .with_busy();
+        if let Some(bounds) = bounds {
+            node = node.with_bounds(bounds);
+        }
+        out.push((band.before_row, pending.id, node));
+    }
+    out
+}
+
+pub(crate) fn loading_occurrence(cx: &Shell, placeholder: uuid::Uuid) -> Occurrence {
+    Occurrence::model(cx.window, cx.view, placeholder, LOADING)
 }
 
 pub(crate) fn paragraph_occurrence(cx: &Shell, row: KoruNodeId) -> Occurrence {

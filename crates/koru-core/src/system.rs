@@ -209,7 +209,18 @@ pub struct SystemDoc {
 
 impl SystemDoc {
     pub fn create() -> Result<Self> {
-        let doc = LoroDoc::new();
+        Self::create_on(LoroDoc::new())
+    }
+
+    /// [`create`](Self::create), on an empty `LoroDoc` the caller already
+    /// holds.
+    ///
+    /// **For a host that annotates every commit from the first one.** A commit
+    /// message is set per commit, and `create` commits before it returns, so a
+    /// caller that has to label each commit it makes — an assistant's edit
+    /// carrying its `actor/1` attribution — subscribes on the document first
+    /// and hands it in here. Nothing about the document differs.
+    pub fn create_on(doc: LoroDoc) -> Result<Self> {
         doc.get_map(C_META)
             .insert(K_SYSTEM_SCHEMA, SYSTEM_SCHEMA_VERSION)?;
         doc.commit();
@@ -217,7 +228,14 @@ impl SystemDoc {
     }
 
     pub fn from_snapshot(bytes: &[u8]) -> Result<Self> {
-        let doc = LoroDoc::new();
+        Self::from_snapshot_on(LoroDoc::new(), bytes)
+    }
+
+    /// [`from_snapshot`](Self::from_snapshot), into an empty `LoroDoc` the
+    /// caller already holds — for the same reason as
+    /// [`create_on`](Self::create_on): opening folds duplicate tags, which
+    /// commits when there are any.
+    pub fn from_snapshot_on(doc: LoroDoc, bytes: &[u8]) -> Result<Self> {
         doc.import(bytes)?;
         let mut opened = Self { doc };
         opened.fold_duplicate_tags()?;

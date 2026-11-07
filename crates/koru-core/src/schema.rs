@@ -620,7 +620,19 @@ pub(crate) fn configure_styles(doc: &LoroDoc) {
 
 impl WorkspaceDoc {
     pub fn create(id: WorkspaceId, name: &str) -> Result<Self> {
-        let doc = LoroDoc::new();
+        Self::create_on(LoroDoc::new(), id, name)
+    }
+
+    /// [`create`](Self::create), on an empty `LoroDoc` the caller already
+    /// holds.
+    ///
+    /// **For a host that annotates every commit from the first one.** A commit
+    /// message is set per commit, and `create` commits before it returns, so a
+    /// caller that has to label each commit it makes — an assistant's
+    /// creation carrying its `actor/1` attribution — subscribes on the
+    /// document first and hands it in here. Nothing about the document
+    /// differs.
+    pub fn create_on(doc: LoroDoc, id: WorkspaceId, name: &str) -> Result<Self> {
         configure_styles(&doc);
         let meta = doc.get_map(C_META);
         meta.insert(K_ID, id.to_storage())?;

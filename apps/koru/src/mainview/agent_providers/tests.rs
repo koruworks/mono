@@ -38,9 +38,7 @@ fn an_agents_status_comes_from_the_probe_and_the_readiness_row() {
         ready("claude"),
         readiness(
             "codex",
-            ExecutableAvailability::Incompatible {
-                code: ErrorCode::ProviderIncompatible,
-            },
+            ExecutableAvailability::incompatible(ErrorCode::ProviderIncompatible),
         ),
         readiness(
             "kimi",
@@ -69,6 +67,8 @@ fn an_agents_status_comes_from_the_probe_and_the_readiness_row() {
     assert_eq!(
         status("codex", Some(true)),
         AgentProviderStatus::NeedsAttention(AgentAttention::UnsupportedVersion {
+            found: None,
+            needed: None,
             update: None,
             desktop_app: None,
         })
@@ -106,9 +106,7 @@ fn an_agents_status_comes_from_the_probe_and_the_readiness_row() {
 /// with no such command keeps today's words.
 #[test]
 fn devins_attention_rows_name_the_command_to_run() {
-    let incompatible = ExecutableAvailability::Incompatible {
-        code: ErrorCode::ProviderIncompatible,
-    };
+    let incompatible = ExecutableAvailability::incompatible(ErrorCode::ProviderIncompatible);
     let signed_out = ExecutableAvailability::SignedOut {
         code: ErrorCode::ProviderFailed,
     };
@@ -124,6 +122,8 @@ fn devins_attention_rows_name_the_command_to_run() {
             Some(&[readiness("devin", incompatible.clone())])
         ),
         AgentProviderStatus::NeedsAttention(AgentAttention::UnsupportedVersion {
+            found: None,
+            needed: None,
             update: Some("devin update".into()),
             desktop_app: Some("Devin".into()),
         })
@@ -360,6 +360,7 @@ fn the_default_agent_note_names_an_agent_that_is_not_installed() {
         status,
         guide: None,
         on,
+        install: false,
     };
     let rows = [
         row("claude", "Claude", AgentProviderStatus::Ready, true),
@@ -541,5 +542,95 @@ fn the_favorite_models_are_stored_roaming_and_reach_the_chats() {
         view.delegate_folder.authoritative().favorite_models,
         favorites,
         "not Agent providers' to restore"
+    );
+}
+
+/// **The three rows that read "This version isn't one Koru supports yet"
+/// on a real Mac, as they read now**: Codex newer than its reviewed list,
+/// OpenCode below its floor, and Kimi whose `--version` crashed — which is
+/// the program not starting, not a version.
+#[test]
+fn a_refused_version_and_a_crashed_version_command_say_what_happened() {
+    use koru_session_protocol::{ProviderReadinessFailure, VersionNeed};
+    let lang = koru_i18n::Lang::En;
+    let refused = |found: &str, needed| ExecutableAvailability::Incompatible {
+        code: ErrorCode::ProviderIncompatible,
+        found: Some(found.into()),
+        needed: Some(needed),
+    };
+    let mut crashed = readiness(
+        "kimi",
+        ExecutableAvailability::Failed {
+            code: ErrorCode::ProviderFailed,
+        },
+    );
+    crashed.failure = Some(ProviderReadinessFailure {
+        stage: ProviderStage::Version,
+        diagnostic: ProviderDiagnostic::UnexpectedExit,
+    });
+    let mut timed_out = readiness(
+        "grok",
+        ExecutableAvailability::Failed {
+            code: ErrorCode::ProviderFailed,
+        },
+    );
+    timed_out.failure = Some(ProviderReadinessFailure {
+        stage: ProviderStage::Discovery,
+        diagnostic: ProviderDiagnostic::Timeout,
+    });
+    let snapshot = vec![
+        readiness(
+            "codex",
+            refused("0.167.0", VersionNeed::Reviewed("0.166.0".into())),
+        ),
+        readiness(
+            "opencode",
+            refused("1.18.25", VersionNeed::AtLeast("1.18.27".into())),
+        ),
+        crashed,
+        timed_out,
+    ];
+    let status = |key: &str| agent_status(&profile(key), Some(true), Some(&snapshot));
+    assert_eq!(
+        status("codex"),
+        AgentProviderStatus::NeedsAttention(AgentAttention::UnsupportedVersion {
+            found: Some("0.167.0".into()),
+            needed: Some(NeededVersion::CheckedUpTo("0.166.0".into())),
+            update: None,
+            desktop_app: None,
+        })
+    );
+    assert_eq!(
+        status("codex").words(lang),
+        "Needs attention — Found 0.167.0; Koru has only checked up to 0.166.0 so far."
+    );
+    assert_eq!(
+        status("opencode").words(lang),
+        "Needs attention — Found 1.18.25; Koru needs 1.18.27 or newer."
+    );
+    assert_eq!(
+        status("kimi"),
+        AgentProviderStatus::NeedsAttention(AgentAttention::WontStart {
+            program: "kimi".into()
+        })
+    );
+    assert_eq!(
+        status("kimi").words(lang),
+        "Needs attention — `kimi --version` failed, so the agent can't start on this computer. \
+         Run it in a terminal to see why."
+    );
+    // A check that failed for any other reason still says so.
+    assert_eq!(
+        status("grok"),
+        AgentProviderStatus::NeedsAttention(AgentAttention::CheckFailed)
+    );
+    // A reviewed list the version found has not outgrown names its newest.
+    let older = vec![readiness(
+        "codex",
+        refused("0.155.0", VersionNeed::Reviewed("0.166.0".into())),
+    )];
+    assert_eq!(
+        agent_status(&profile("codex"), Some(true), Some(&older)).words(lang),
+        "Needs attention — Found 0.155.0, which Koru hasn't checked; the newest it supports is 0.166.0."
     );
 }

@@ -19,9 +19,10 @@ mod tests;
 /// `transfer::state::cancel` latches its reason, so `check` refuses every
 /// later unit for the rest of the session. That latch is the amplifier PLAN19
 /// removes: one unit a local Store job would not serve ended the pass for
-/// every other unit beside it. A sixth carrier code could not carry the
-/// distinction either, because `cloud-sync-admission` §3 freezes the five
-/// `PeerFrame::Error` codes a refusal may use.
+/// every other unit beside it. A new carrier code could not carry the
+/// distinction either, because `cloud-sync-admission` §3 freezes the
+/// `PeerFrame::Error` codes a refusal may use: the five carrier codes, and
+/// the two its app connection amendment adds for connections' uploads only.
 pub enum Answer<T> {
     Ready(T),
     /// The Store would not serve this unit, and the session is still sound.
@@ -306,8 +307,11 @@ where
                     let Step::Send(export) = std::mem::replace(&mut pass.step, Step::Upload) else {
                         unreachable!()
                     };
+                    // The Store port's word on this upload, a claim reference
+                    // above all, rides to the start (TECHNICAL §5.4 item 4).
+                    let context = export.upload_context();
                     let (bytes, guard) = export.into_payload();
-                    self.client.upload(pass.unit, bytes, guard)?;
+                    self.client.upload_with(pass.unit, bytes, guard, context)?;
                 }
                 _ => {}
             }

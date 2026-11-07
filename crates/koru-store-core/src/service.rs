@@ -1437,6 +1437,123 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         Ok(())
     }
 
+    /// Undo [`Self::provision_replica_document`] for a document that never
+    /// received anything: the container a Cloud fetch provisioned for a unit
+    /// Cloud turned out not to hold.
+    ///
+    /// **Only an empty, unlisted document goes**, and the answer says whether
+    /// this one did. A document the manifest names, one with a single update
+    /// or checkpoint, or one whose open replica holds any operation is left
+    /// exactly as it was, so this can never remove content. It exists so a
+    /// lookup leaves the Store as it found it: a hosted creation looks its
+    /// candidate id up in Cloud before seeding it (TECHNICAL §5.6), and an
+    /// empty row left behind would refuse that seed as a duplicate id.
+    pub fn discard_empty_replica_document(
+        &mut self,
+        workspace: WorkspaceId,
+        document: DocumentId,
+    ) -> Result<bool> {
+        self.ensure_open(workspace)?;
+        let open = self.open.get_mut(&workspace).expect("just opened");
+        if open.is_manifest(document)
+            || open
+                .manifest
+                .entries()
+                .iter()
+                .any(|entry| entry.id == document)
+        {
+            return Ok(false);
+        }
+        let Some(state) = open.repo.document(document)? else {
+            return Ok(false);
+        };
+        let empty_live = open
+            .documents
+            .get(&document)
+            .is_none_or(|live| live.version().is_empty());
+        if state.kind != DocumentKind::Document
+            || !empty_live
+            || open.repo.update_count(document)? != 0
+            || !open.repo.checkpoints(document)?.is_empty()
+        {
+            return Ok(false);
+        }
+        open.documents.remove(&document);
+        open.windows.remove(&document);
+        open.repo.drop_document(document)?;
+        if self.catalog.locate(document)? == Some(workspace) {
+            self.catalog.forget_location(document)?;
+        }
+        Ok(true)
+    }
+
+    /// List a document this Store already holds in the workspace's manifest,
+    /// in one manifest commit labelled `attribution` when one is given.
+    ///
+    /// **The second half of a creation whose content went first**: a hosted
+    /// replica seeds a created document's content as an unlisted replica
+    /// document, waits for Cloud to acknowledge it, and only then lists it, so
+    /// Cloud never holds an entry for content it refused (Cloud MCP TECHNICAL
+    /// §5.5, §5.6). A replay of such a creation finishes the entry the same
+    /// way. The entry is keyed by document id, so a document the manifest
+    /// already names is left as it is and the answer is `None`; otherwise it
+    /// is the manifest delta.
+    #[allow(clippy::too_many_arguments)]
+    pub fn list_replica_document(
+        &mut self,
+        workspace: WorkspaceId,
+        document: DocumentId,
+        title: &str,
+        kind: &str,
+        parent: Option<DocumentId>,
+        index: Option<usize>,
+        attribution: Option<&str>,
+        at: Timestamp,
+    ) -> Result<Option<Vec<u8>>> {
+        self.ensure_open(workspace)?;
+        let open = self.open.get_mut(&workspace).expect("just opened");
+        if open.is_manifest(document) {
+            return Err(Error::new(
+                Code::DocumentExists,
+                "the replica document id is the manifest",
+            ));
+        }
+        match open.repo.document(document)? {
+            Some(state) if state.kind == DocumentKind::Document => {}
+            _ => return Err(Error::bare(Code::DocumentNotFound)),
+        }
+        if open.manifest.contains_document(document) {
+            return Ok(None);
+        }
+        let rollback = open.manifest.export_snapshot()?;
+        let peer = open.manifest.peer_id();
+        let before = open.manifest.version();
+        let attributed = attribution.map(|message| open.manifest.attribute_commits(message));
+        open.manifest
+            .add_document_at(document, title, kind, parent, index)?;
+        drop(attributed);
+        let delta = open.manifest.export_updates_since(&before)?;
+        let manifest_id = open.manifest_id;
+        if let Err(error) = commit_one(
+            open,
+            workspace,
+            &mut self.committed,
+            &mut self.sync_dirty,
+            manifest_id,
+            delta.clone(),
+            at,
+            crate::ports::UpdateOrigin::Store,
+        ) {
+            let restored = Manifest::from_snapshot(&rollback)?;
+            restored.set_peer_id(peer)?;
+            open.manifest = restored;
+            return Err(error);
+        }
+        open.repo.reindex(&open.manifest.entries())?;
+        self.catalog.record_location(document, workspace)?;
+        Ok(Some(delta))
+    }
+
     /// Rename a workspace.
     ///
     /// **Both names are written**, and they are two different facts that happen
@@ -1946,13 +2063,34 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         index: Option<usize>,
         at: Timestamp,
     ) -> Result<(DocumentId, Vec<u8>)> {
+        self.create_document_attributed(workspace, title, kind, parent, index, None, at)
+    }
+
+    /// [`create_document`](Self::create_document), with the manifest commit
+    /// labelled `attribution` when one is given: the `actor/1` message of the
+    /// app connection whose call this is
+    /// (`contracts/connector-attribution-v1.md`). `None` is exactly
+    /// `create_document`: no Koru path writes a commit message of its own.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_document_attributed(
+        &mut self,
+        workspace: WorkspaceId,
+        title: &str,
+        kind: &str,
+        parent: Option<DocumentId>,
+        index: Option<usize>,
+        attribution: Option<&str>,
+        at: Timestamp,
+    ) -> Result<(DocumentId, Vec<u8>)> {
         self.ensure_open(workspace)?;
         let id = DocumentId::new();
         let open = self.open.get_mut(&workspace).expect("just opened");
 
         let before = open.manifest.version();
+        let attributed = attribution.map(|message| open.manifest.attribute_commits(message));
         open.manifest
             .add_document_at(id, title, kind, parent, index)?;
+        drop(attributed);
         let delta = open.manifest.export_updates_since(&before)?;
 
         open.repo.create_document(id, DocumentKind::Document, at)?;
@@ -2551,6 +2689,44 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         initial_update: Vec<u8>,
         at: Timestamp,
     ) -> Result<SeededCreation> {
+        self.create_seeded_document_attributed(
+            workspace,
+            title,
+            kind,
+            parent,
+            index,
+            scope,
+            idempotency_key,
+            request_hash,
+            candidate,
+            initial_update,
+            None,
+            at,
+        )
+    }
+
+    /// [`create_seeded_document`](Self::create_seeded_document), with the
+    /// manifest entry's commit labelled `attribution` when one is given — the
+    /// `actor/1` message of the app connection whose call this is
+    /// (`contracts/connector-attribution-v1.md`). The content is the caller's
+    /// own bytes, so its commits already say who made them; this is the one
+    /// commit the Store makes here. `None` is exactly `create_seeded_document`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_seeded_document_attributed(
+        &mut self,
+        workspace: WorkspaceId,
+        title: &str,
+        kind: &str,
+        parent: Option<DocumentId>,
+        index: Option<usize>,
+        scope: &str,
+        idempotency_key: &str,
+        request_hash: &str,
+        candidate: Option<DocumentId>,
+        initial_update: Vec<u8>,
+        attribution: Option<&str>,
+        at: Timestamp,
+    ) -> Result<SeededCreation> {
         if idempotency_key.is_empty() || idempotency_key.len() > 128 {
             return Err(Error::new(
                 Code::InvalidRequest,
@@ -2656,8 +2832,11 @@ impl<C: Catalog, B: Backend> Store<C, B> {
                 let rollback = open.manifest.export_snapshot()?;
                 let peer = open.manifest.peer_id();
                 let before = open.manifest.version();
+                let attributed =
+                    attribution.map(|message| open.manifest.attribute_commits(message));
                 open.manifest
                     .add_document_at(document, title, kind, parent, index)?;
+                drop(attributed);
                 let delta = open.manifest.export_updates_since(&before)?;
                 let manifest_id = open.manifest_id;
                 if let Err(error) = commit_one(
