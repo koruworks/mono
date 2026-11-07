@@ -643,6 +643,17 @@ pub struct SeededDocument {
 pub trait WorkspaceRepo {
     fn documents(&self) -> Result<Vec<DocumentState>>;
     fn document(&self, id: DocumentId) -> Result<Option<DocumentState>>;
+    /// Repair an absent position index from a successful full durable replay.
+    /// Never replace a populated position or change content/timestamps. The
+    /// caller must not supply a recovered or uncommitted in-memory position.
+    fn repair_missing_position(
+        &mut self,
+        _id: DocumentId,
+        _version: &[u8],
+        _frontiers: &[u8],
+    ) -> Result<bool> {
+        Ok(false)
+    }
     fn create_document(&mut self, id: DocumentId, kind: DocumentKind, at: Timestamp) -> Result<()>;
     /// **One transaction:** plant the opaque initial document and its
     /// idempotency record, or replay the original bytes for the same request.
