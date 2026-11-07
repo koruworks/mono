@@ -2502,6 +2502,12 @@ pub fn page_plus_items(shown: bool) -> Vec<MenuAction> {
     ]
 }
 
+/// The attachments lane's `+`: the page's menu without the note — the lane
+/// is about what the page holds, not what it says.
+pub fn page_lane_items() -> Vec<MenuAction> {
+    vec![MenuAction::PageAttach, MenuAction::PageAddExisting]
+}
+
 /// A document linked to a Tasks page: what a document's own row offers to
 /// open it, then taking it off the page — which leaves the document where
 /// it is.

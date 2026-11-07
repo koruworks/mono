@@ -61,6 +61,8 @@ pub(super) const CONTROL_W: f32 = 18.0;
 pub(super) const CONTROL_GAP: f32 = 10.0;
 /// Between the attachments lane's chips, and under the lane.
 pub(super) const LANE_GAP: f32 = 8.0;
+/// Between the page's `+` and the margin's edge of the content column.
+pub(super) const PLUS_GAP: f32 = 4.0;
 /// The `…` at a row's right end.
 pub(super) const DOTS_W: f32 = 24.0;
 /// The lane the `…` sits in, **reserved on every row** whether or not it is
@@ -133,8 +135,19 @@ pub(super) enum Hit {
     NoteOpen,
     /// The note's grip, along its band's bottom edge: a drag sizes the band.
     NoteGrip,
-    /// The `+` right of the heading's words, which opens the page's menu.
+    /// The `+` left of the heading's colour square, which opens the page's
+    /// menu. Drawn only while the pointer is over the heading line.
     HeaderPlus,
+    /// The `+` left of the attachments lane: *Attachment…* and *Add
+    /// existing…*, the heading's menu without the note. Drawn only while
+    /// the pointer is over the lane.
+    LanePlus,
+    /// The heading's line, away from its controls: not a control, but what
+    /// reveals the `+` — hovering it is what the `+` waits for.
+    Heading,
+    /// The attachments lane's rows, away from its chips: likewise reveals
+    /// the lane's `+`.
+    Lane,
     /// A file in the attachments lane under the heading, by lane order.
     Attachment(usize),
 }
@@ -320,7 +333,8 @@ pub enum Request {
     RenameList { list: ListId, name: String },
     /// The heading's `+` was pressed: the page's menu at `at` — the note
     /// inline, files as context. The container's one menu vocabulary.
-    PageMenu { at: (f32, f32) },
+    /// `lane` is the lane's own `+`, whose menu leaves out the note.
+    PageMenu { at: (f32, f32), lane: bool },
     /// A right-click on a file in the lane: its menu at `at`.
     AttachmentMenu { file: DocumentId, at: (f32, f32) },
     /// A press on a file in the lane: open it, as a file pill does.
@@ -476,7 +490,9 @@ pub struct TasksView {
     lane_h: f32,
     /// Where the heading's words ended when last painted, so the `+` sits
     /// right of them.
-    pub(super) heading_text_right: f32,
+    /// Whether the last page menu came from the lane's `+` — where the
+    /// *Add existing* picker hangs when that menu opens it.
+    menu_from_lane: bool,
 }
 
 impl TasksView {
@@ -532,7 +548,7 @@ impl TasksView {
             link_hover: None,
             lane: Vec::new(),
             lane_h: 0.0,
-            heading_text_right: 0.0,
+            menu_from_lane: false,
         }
     }
 
@@ -2004,11 +2020,22 @@ impl TasksView {
         if self.plus_rect().contains(x, y) {
             return Some(Hit::HeaderPlus);
         }
+        if self.lane_plus_rect().is_some_and(|r| r.contains(x, y)) {
+            return Some(Hit::LanePlus);
+        }
         if self.swatch_rect().is_some_and(|r| r.contains(x, y)) {
             return Some(Hit::Swatch);
         }
         if let Some(i) = self.lane.iter().position(|r| r.contains(x, y)) {
             return Some(Hit::Attachment(i));
+        }
+        // The two lines the `+`s wait on, across the whole page width so
+        // that approaching one from the margin keeps it there.
+        if self.heading_band().contains(x, y) {
+            return Some(Hit::Heading);
+        }
+        if self.lane_band().contains(x, y) {
+            return Some(Hit::Lane);
         }
         if let Some(hit) = self.band_hit(x, y) {
             return Some(hit);
@@ -3107,7 +3134,19 @@ impl TasksView {
         match self.hit_at(x, y) {
             Some(Hit::HeaderDots) => self.open_overflow(),
             Some(Hit::HeaderPlus) => {
-                self.pending = Some(Request::PageMenu { at: (x, y) });
+                self.menu_from_lane = false;
+                self.pending = Some(Request::PageMenu {
+                    at: (x, y),
+                    lane: false,
+                });
+                true
+            }
+            Some(Hit::LanePlus) => {
+                self.menu_from_lane = true;
+                self.pending = Some(Request::PageMenu {
+                    at: (x, y),
+                    lane: true,
+                });
                 true
             }
             Some(Hit::Attachment(i)) => match self.attachments.get(i) {
@@ -3128,6 +3167,13 @@ impl TasksView {
             // Both are the band's, taken in `mouse_down` before the note
             // could claim the press; named here so the match stays whole.
             Some(Hit::NoteOpen | Hit::NoteGrip) => false,
+            // The heading and the lane away from their controls are the
+            // page's empty space, as far as a press goes.
+            Some(Hit::Heading | Hit::Lane) => {
+                let had = self.selected.is_some() || !self.also.is_empty();
+                self.clear_selection();
+                had
+            }
             Some(Hit::Capture) => {
                 self.begin_capture();
                 let rect = super::capture::input_rect(self.capture_rect());
@@ -3959,8 +4005,10 @@ impl View for TasksView {
                 | Hit::Swatch
                 | Hit::NoteOpen
                 | Hit::HeaderPlus
+                | Hit::LanePlus
                 | Hit::Attachment(_),
             ) => koru_ui::cursor::PRESS,
+            Some(Hit::Heading | Hit::Lane) => koru_ui::cursor::IDLE,
             Some(Hit::NoteGrip) => CursorIcon::RowResize,
             None => koru_ui::cursor::IDLE,
         }
@@ -4280,17 +4328,66 @@ impl TasksView {
         self.header_h + self.lane_h + self.band_h + self.notice_h()
     }
 
-    /// The `+` right of the heading's words: the page's menu. The header's
-    /// `…` size, on the heading's line.
+    /// The page's `+`, in the left margin **left of the colour square** (or
+    /// of the title, on a queue): the header's `…` size, on the heading's
+    /// line, drawn only while the pointer is over that line.
     pub(super) fn plus_rect(&self) -> Rect {
-        let x = self.heading_text_right.max(PAD) + CONTROL_GAP;
         let size = HEADER_DOTS;
         Rect::new(
-            x,
+            PAD - size - PLUS_GAP,
             self.title_top() + (super::draw::TITLE.metrics.line_height - size) * 0.5,
             size,
             size,
         )
+    }
+
+    /// The lane's own `+`, left of its first row in the same margin; `None`
+    /// while nothing is attached.
+    pub(super) fn lane_plus_rect(&self) -> Option<Rect> {
+        let first = self.lane.first()?;
+        let size = HEADER_DOTS;
+        Some(Rect::new(
+            PAD - size - PLUS_GAP,
+            first.y + (first.h - size) * 0.5,
+            size,
+            size,
+        ))
+    }
+
+    /// The heading's line across the page: what reveals the page's `+`.
+    fn heading_band(&self) -> Rect {
+        Rect::new(
+            0.0,
+            self.title_top(),
+            self.viewport.0,
+            super::draw::TITLE.metrics.line_height,
+        )
+    }
+
+    /// The lane's rows across the page: what reveals the lane's `+`. Empty
+    /// while nothing is attached.
+    fn lane_band(&self) -> Rect {
+        if self.lane.is_empty() {
+            return Rect::new(0.0, 0.0, 0.0, 0.0);
+        }
+        Rect::new(0.0, self.header_h, self.viewport.0, self.lane_h)
+    }
+
+    /// Whether the pointer is over the heading line, on or off its controls
+    /// — the page's `+` shows then, and only then.
+    pub(super) fn plus_visible(&self) -> bool {
+        matches!(
+            self.hover,
+            Some(Hit::Heading | Hit::HeaderPlus | Hit::Swatch | Hit::HeaderDots)
+        ) || self.link.is_some() && !self.menu_from_lane
+    }
+
+    /// Whether the pointer is over the lane — its `+` shows then.
+    pub(super) fn lane_plus_visible(&self) -> bool {
+        matches!(
+            self.hover,
+            Some(Hit::Lane | Hit::LanePlus | Hit::Attachment(_))
+        ) || self.link.is_some() && self.menu_from_lane
     }
 
     /// The lane's chip for one attachment: the file glyph and its name.
@@ -4370,7 +4467,10 @@ impl TasksView {
 
     /// The picker's panel: under the `+`, kept inside the page.
     fn link_origin(&self) -> (f32, f32) {
-        let plus = self.plus_rect();
+        let plus = match (self.menu_from_lane, self.lane_plus_rect()) {
+            (true, Some(lane)) => lane,
+            _ => self.plus_rect(),
+        };
         let height = self.link.as_ref().map_or(0.0, |p| p.height());
         let x = plus
             .x

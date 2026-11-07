@@ -14762,3 +14762,45 @@ fn a_linked_pick_leaves_as_an_attach_edit() {
     );
     let _ = w;
 }
+
+/// The lane's `+` offers the page's menu without the note: attaching and
+/// linking only. The heading's keeps all three.
+#[test]
+fn the_lane_plus_menu_leaves_out_the_inline_description() {
+    use koru_core::ids::{ListId, PageKey};
+    let (mut v, _w) = on_tasks();
+    let list = ListId::new();
+    v.open_tasks_tab(crate::panes::explore::rail::RailTarget::List(list), false);
+    let page = PageKey::List(list);
+
+    let lane = context_menu::page_lane_items();
+    assert_eq!(
+        lane,
+        vec![MenuAction::PageAttach, MenuAction::PageAddExisting]
+    );
+    assert!(
+        !lane
+            .iter()
+            .any(|a| matches!(a, MenuAction::PageDescription { .. })),
+        "no description row"
+    );
+    assert_eq!(context_menu::page_plus_items(false).len(), 3);
+
+    v.handle_tasks_request_for_test(crate::tasks_view::Request::PageMenu {
+        at: (50.0, 90.0),
+        lane: true,
+    });
+    let menu = v.menu.as_ref().expect("the menu opened");
+    assert_eq!(menu.subject, MenuSubject::Page(page));
+    assert_eq!(menu.items().len(), 2, "the lane's two rows");
+    v.menu = None;
+    v.handle_tasks_request_for_test(crate::tasks_view::Request::PageMenu {
+        at: (50.0, 30.0),
+        lane: false,
+    });
+    assert_eq!(
+        v.menu.as_ref().unwrap().items().len(),
+        3,
+        "the heading's three"
+    );
+}

@@ -486,7 +486,7 @@ impl MainView {
                 }
             }
             // The page's `+`: the note inline, and files as context.
-            crate::tasks_view::Request::PageMenu { at } => {
+            crate::tasks_view::Request::PageMenu { at, lane } => {
                 let Some((page, shown)) = (match &self.tabs().active_tab().view {
                     TabView::Tasks(t) => t.page_key().map(|page| (page, t.note_shown())),
                     _ => None,
@@ -497,7 +497,12 @@ impl MainView {
                     &mut self.engine,
                     super::context_menu::MenuSubject::Page(page),
                     to_window(at),
-                    super::context_menu::page_plus_items(shown),
+                    // The lane's `+` leaves the note out.
+                    if lane {
+                        super::context_menu::page_lane_items()
+                    } else {
+                        super::context_menu::page_plus_items(shown)
+                    },
                 );
                 let enabled = self.enabled_items(&menu);
                 menu.step(&enabled, 1);

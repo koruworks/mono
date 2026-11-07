@@ -145,6 +145,10 @@ impl TasksView {
     /// The `+` right of the heading's words: the page's menu — the note
     /// inline, files as context. The icon button every control here is.
     fn paint_header_plus(&mut self, scene: &mut Scene, root: Affine) {
+        // Only while the pointer is over the heading line.
+        if !self.plus_visible() {
+            return;
+        }
         let lit = self.hover == Some(Hit::HeaderPlus);
         let plus = self.plus_rect();
         koru_ui::icon_button::draw_with(
@@ -162,17 +166,35 @@ impl TasksView {
         );
     }
 
-    /// The attachments lane under the heading: one chip per file, the file
-    /// glyph and its name, lit under the pointer as a control.
     /// The lane painted alone, for the suite.
     #[cfg(test)]
     pub(super) fn paint_lane_for_test(&mut self, scene: &mut Scene) {
         self.paint_lane(scene, Affine::IDENTITY);
     }
 
+    /// The attachments lane under the heading: one chip per file, the file
+    /// glyph and its name, lit under the pointer as a control — and its own
+    /// `+` in the margin while the pointer is over the lane.
     fn paint_lane(&mut self, scene: &mut Scene, root: Affine) {
         if self.lane.is_empty() {
             return;
+        }
+        if self.lane_plus_visible()
+            && let Some(plus) = self.lane_plus_rect()
+        {
+            koru_ui::icon_button::draw_with(
+                scene,
+                root,
+                &mut self.engine,
+                plus,
+                koru_draw::icons::PLUS,
+                koru_ui::icon_button::State {
+                    hovered: self.hover == Some(Hit::LanePlus),
+                    active: false,
+                    disabled: false,
+                },
+                koru_ui::icon_button::Metrics::INLINE,
+            );
         }
         let chips: Vec<(Rect, super::view::LaneItem)> = self
             .lane

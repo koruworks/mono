@@ -191,11 +191,6 @@ impl TasksView {
             area,
             FrameCx::root(),
         );
-        // Where the words end, so the `+` can sit right of them.
-        self.heading_text_right = frame
-            .rect_of(HEADING_TEXT)
-            .map(|r| r.x + r.w)
-            .unwrap_or(area.x);
         frame.paint(&tree, scene, root, &mut self.engine);
     }
 }

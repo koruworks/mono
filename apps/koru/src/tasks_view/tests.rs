@@ -4719,25 +4719,97 @@ mod note {
         assert!(view.body.is_none(), "hidden again: the body goes");
     }
 
-    /// The `+` right of the heading's words asks for the page's menu at the
-    /// press — the container's vocabulary, not the page's.
+    /// The page's `+` sits in the left margin, **left of the colour square**,
+    /// and shows only while the pointer is over the heading line; a press on
+    /// it asks for the page's menu at the press.
     #[test]
-    fn the_plus_right_of_the_heading_opens_the_pages_menu() {
-        let (_, _, _, mut doc, mut view) = note_view();
-        let mut scene = vello::Scene::new();
-        view.paint_heading(&mut scene, Affine::IDENTITY);
+    fn the_plus_left_of_the_colour_shows_on_hover_and_opens_the_pages_menu() {
+        let (_, list, _, mut doc, mut view) = note_view();
+        view.set_lists(vec![crate::tasks_view::ListFace {
+            id: list,
+            name: "Top".to_owned(),
+            color: Some("red".to_owned()),
+        }]);
         let plus = view.plus_rect();
+        let swatch = view.swatch_rect().expect("a list wears its colour");
         assert!(
-            plus.x >= view.heading_text_right,
-            "right of the words: {} >= {}",
-            plus.x,
-            view.heading_text_right
+            plus.x + plus.w <= swatch.x,
+            "left of the colour: {plus:?} vs {swatch:?}"
         );
+        assert!(plus.x >= 0.0, "inside the page");
+
+        assert!(!view.plus_visible(), "hidden until the heading is hovered");
+        let title = view.title_rect().expect("a list has a title");
+        assert!(
+            view.mouse_move(title.x + 3.0, title.y + 3.0),
+            "hover reveals it"
+        );
+        assert!(view.plus_visible());
+        // Away from the controls but on the line — the margin, on the way to it.
+        assert!(!view.mouse_move(2.0, title.y + 3.0) || view.plus_visible());
+        assert!(view.plus_visible(), "still on the heading line");
+
         let (x, y) = (plus.x + plus.w * 0.5, plus.y + plus.h * 0.5);
-        assert!(view.mouse_move(x, y));
+        view.mouse_move(x, y);
+        assert!(view.plus_visible());
         assert_eq!(view.cursor_icon(), koru_ui::cursor::PRESS);
         assert!(view.mouse_down(&mut doc, x, y, false));
-        assert_eq!(view.take_request(), Some(Request::PageMenu { at: (x, y) }));
+        assert_eq!(
+            view.take_request(),
+            Some(Request::PageMenu {
+                at: (x, y),
+                lane: false
+            })
+        );
+
+        assert!(view.mouse_move(300.0, 560.0), "off the line");
+        assert!(!view.plus_visible(), "hidden again");
+    }
+
+    /// With a lane, a `+` of its own in the same margin, shown while the
+    /// pointer is over the lane — and asking for the menu without the note.
+    #[test]
+    fn the_lane_has_a_plus_of_its_own_on_hover() {
+        let (_, _, _, mut doc, mut view) = note_view();
+        assert!(view.lane_plus_rect().is_none(), "no lane, no +");
+        let file = DocumentId::new();
+        view.set_attachment_faces(vec![crate::tasks_view::LaneItem {
+            id: file,
+            name: "brief.pdf".to_owned(),
+            is_file: true,
+        }]);
+        view.layout_band();
+        let chip = view.lane_for_test()[0];
+        let plus = view.lane_plus_rect().expect("a lane has one");
+        assert!(plus.x + plus.w <= chip.x, "left of the chips");
+        assert!(plus.y >= chip.y - 8.0 && plus.y + plus.h <= chip.y + chip.h + 8.0);
+        assert_ne!(plus, view.plus_rect(), "not the heading's");
+
+        assert!(!view.lane_plus_visible());
+        assert!(view.mouse_move(chip.x + 3.0, chip.y + 3.0), "over a chip");
+        assert!(view.lane_plus_visible());
+        assert!(!view.plus_visible(), "the heading's stays hidden");
+
+        let (x, y) = (plus.x + plus.w * 0.5, plus.y + plus.h * 0.5);
+        view.mouse_move(x, y);
+        assert!(view.lane_plus_visible());
+        assert_eq!(view.cursor_icon(), koru_ui::cursor::PRESS);
+        assert!(view.mouse_down(&mut doc, x, y, false));
+        assert_eq!(
+            view.take_request(),
+            Some(Request::PageMenu {
+                at: (x, y),
+                lane: true
+            })
+        );
+
+        // The *Add existing* picker hangs under the + that asked for it.
+        view.open_link_picker();
+        assert!(view.link_rect_for_test().y >= plus.y + plus.h);
+        assert!(
+            view.lane_plus_visible(),
+            "the + stays while its picker is up"
+        );
     }
 
     /// Plus-menu decisions 3 to 5: attached files make a lane under the
