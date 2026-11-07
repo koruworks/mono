@@ -14,9 +14,9 @@ use std::time::{Duration, Instant};
 
 use koru_ai_core::{
     AiErrorClass, AiProviderId, AiSurface, AiUsage, Chat, ChatRole, ContextRef,
-    DocumentDestination, DocumentExportId, DocumentId, InferenceAttemptId, MessageState,
-    ModelSelection, ReasoningChoice, ReasoningControl, SourceLink, ToolActivity,
-    ToolActivityStatus, ToolInvocationId, ToolMode, UsageReport, WebSearchPhase, WorkspaceId,
+    DocumentDestination, DocumentExportId, InferenceAttemptId, MessageState, ModelSelection,
+    ReasoningChoice, ReasoningControl, SourceLink, ToolActivity, ToolActivityStatus,
+    ToolInvocationId, ToolMode, UsageReport, WebSearchPhase, WorkspaceId,
 };
 
 pub use chats::ChatElsewhere;
@@ -24,6 +24,7 @@ pub use chats::ChatElsewhere;
 /// [`ChatSurface::recent_chats`] carry without taking a `koru-ai-core`
 /// dependency of its own.
 pub use koru_ai_core::ChatId;
+pub use koru_ai_core::DocumentId;
 /// Re-exported so a host can open a chat at one of its blocks — a chat link
 /// or a search hit — without a `koru-ai-core` dependency of its own.
 pub use koru_ai_core::MessageBlockId;
@@ -46,6 +47,7 @@ use koru_draw::text::TextEngine;
 use koru_draw::theme::{self, Brush};
 use koru_draw::{scene, theme::role};
 use koru_ui::button::{ActionButton, ActionStyle, ButtonRole};
+use koru_ui::choice::{Choice, ChoiceOutcome};
 use koru_ui::confirm::{Confirm, Outcome as ConfirmOutcome};
 use koru_ui::context_chip::{ContextChip, ContextState};
 use koru_ui::icon_button::{IconButton, State as IconButtonState};
@@ -111,6 +113,8 @@ pub use agents::{AgentDefaults, agent_key, provider_mark};
 pub use approval_modes::NewChatPermission;
 pub use attachments::ViewerLift;
 pub use composer::{ChatComposer, ComposedMessage};
+pub use composer_plus::ComputerPickerKind;
+pub use composer_plus::WorkspaceImportRequest;
 pub use dictation::{DictationPress, DictationShown};
 pub use microphone::{MicrophoneAsk, MicrophoneDevice, Microphones};
 pub use model_picker::FavoriteModel;
@@ -578,6 +582,14 @@ pub struct ChatSurface {
     context_workspace: Option<WorkspaceId>,
     recent_documents: Vec<(DocumentId, String)>,
     plus_menu: Option<Menu<composer_plus::PlusItem>>,
+    computer_picker_request: Option<ComputerPickerKind>,
+    computer_file_choice: Option<(std::path::PathBuf, Choice)>,
+    workspace_import_request: Option<WorkspaceImportRequest>,
+    pending_workspace_import_grant: Option<(uuid::Uuid, WorkspaceImportRequest)>,
+    workspace_imports: HashMap<koru_ai_core::ChatAttachmentId, WorkspaceImportRequest>,
+    workspace_import_documents: HashMap<koru_ai_core::ChatAttachmentId, DocumentId>,
+    completed_workspace_pills: HashMap<ChatId, Vec<(DocumentId, String)>>,
+    pending_computer_reference: Option<(ChatId, std::path::PathBuf, koru_ai_core::AttachmentKind)>,
     chip_band: composer_band::ChipBand,
     chip_scroll: f32,
     composer_shell: Option<composer_shell::Shell>,
@@ -913,7 +925,7 @@ impl ChatSurface {
             live_usage: None,
             live_sources: Vec::new(),
             open_searches: HashSet::new(),
-            web_search_armed: false,
+            web_search_armed: true,
             chip_label_w: 0.0,
             folder_button_w: 0.0,
             live_reasoning: String::new(),
@@ -984,6 +996,14 @@ impl ChatSurface {
             context_workspace: None,
             recent_documents: Vec::new(),
             plus_menu: None,
+            computer_picker_request: None,
+            computer_file_choice: None,
+            workspace_import_request: None,
+            pending_workspace_import_grant: None,
+            workspace_imports: HashMap::new(),
+            workspace_import_documents: HashMap::new(),
+            completed_workspace_pills: HashMap::new(),
+            pending_computer_reference: None,
             chip_band: composer_band::ChipBand::default(),
             chip_scroll: 0.0,
             composer_shell: None,
@@ -1489,6 +1509,9 @@ impl ChatSurface {
         if let Some(cursor) = self.viewer_cursor() {
             return cursor;
         }
+        if let Some((_, choice)) = &self.computer_file_choice {
+            return choice.cursor();
+        }
         if self.confirm.is_some() || self.response_menu.is_some() || self.plus_menu.is_some() {
             return CursorIcon::Default;
         }
@@ -1615,6 +1638,9 @@ impl ChatSurface {
         if let Some(confirm) = &mut self.confirm {
             let outcome = confirm.key(key);
             return self.finish_confirmation(outcome);
+        }
+        if let Some(handled) = self.computer_choice_key(key) {
+            return handled;
         }
         if let Some(handled) = self.plus_menu_key(key) {
             return handled;
@@ -2147,7 +2173,15 @@ impl ChatSurface {
             self.recall_restages.insert(id, chat);
             self.strips
                 .push(chat, attachments::Draft::restaged(source, id));
-            if !self.queue_command(Command::Restage(chat, source.id, id)) {
+            let queued = if source.source == koru_ai_core::AttachmentSource::Path {
+                if let Some(draft) = self.strips.draft_mut(chat, id) {
+                    self.attachment_work.put(chat, draft);
+                }
+                true
+            } else {
+                self.queue_command(Command::Restage(chat, source.id, id))
+            };
+            if !queued {
                 self.recall_restages.remove(&id);
                 if let Some(draft) = self.strips.draft_mut(chat, id) {
                     draft.state = attachments::DraftState::Failed { retryable: true };
@@ -2159,6 +2193,9 @@ impl ChatSurface {
     pub fn mouse_down(&mut self, x: f32, y: f32) -> bool {
         self.pointer = (x, y);
         if let Some(handled) = self.viewer_mouse_down(x, y) {
+            return handled;
+        }
+        if let Some(handled) = self.computer_choice_mouse_down(x, y) {
             return handled;
         }
         if let Some(handled) = self.plus_menu_mouse_down(x, y) {
@@ -2609,6 +2646,9 @@ impl ChatSurface {
         if self.plus_menu.take().is_some() {
             changed = true;
         }
+        if self.computer_file_choice.take().is_some() {
+            changed = true;
+        }
         if self.confirm.take().is_some() {
             changed = true;
         }
@@ -2618,6 +2658,15 @@ impl ChatSurface {
     pub fn mouse_move(&mut self, x: f32, y: f32) -> bool {
         if let Some(changed) = self.viewer_mouse_move(x, y) {
             return changed;
+        }
+        if let Some((_, choice)) = &mut self.computer_file_choice {
+            self.pointer = (x, y);
+            return choice.mouse_move(
+                &mut self.engine,
+                (self.viewport.w, self.viewport.h),
+                x - self.viewport.x,
+                y - self.viewport.y,
+            );
         }
         let old = self.cursor_icon();
         let old_control_hover = self.control_hover_at(self.pointer.0, self.pointer.1);
@@ -3012,6 +3061,14 @@ impl ChatSurface {
                 (self.viewport.w, self.viewport.h),
             );
         }
+        if let Some((_, choice)) = &self.computer_file_choice {
+            choice.draw(
+                canvas,
+                root * Affine::translate((self.viewport.x as f64, self.viewport.y as f64)),
+                &mut self.engine,
+                (self.viewport.w, self.viewport.h),
+            );
+        }
         let menu_viewport = self.menu_viewport();
         if let Some(menu) = &self.response_menu {
             menu.draw(canvas, root, &mut self.engine, menu_viewport, &[true, true]);
@@ -3269,6 +3326,15 @@ impl ChatSurface {
                 if self.paste_after_create.take() == Some(chat) {
                     self.begin_attachment_paste();
                 }
+                if self
+                    .pending_computer_reference
+                    .as_ref()
+                    .is_some_and(|(pending, _, _)| *pending == chat)
+                    && let Some((_, path, kind)) = self.pending_computer_reference.take()
+                {
+                    self.add_draft(chat, attachments::Draft::reference(path, kind));
+                }
+                self.insert_completed_workspace_pills(chat);
             }
             Update::CreateFailed(chat, failure) => {
                 // The chat on screen is a stand-in again, so the next send
@@ -3322,6 +3388,7 @@ impl ChatSurface {
                 if changed_chat {
                     self.forget_input_walk();
                     self.live_offsets.clear();
+                    self.web_search_armed = true;
                 }
                 self.transcript = Some(transcript);
                 self.usage_report = None;
@@ -3335,6 +3402,7 @@ impl ChatSurface {
                     if changed_chat {
                         self.queue_shown_again(chat);
                     }
+                    self.insert_completed_workspace_pills(chat);
                     self.after_reply(chat);
                 }
             }
@@ -3423,6 +3491,42 @@ impl ChatSurface {
                 }
             }
             Update::GrantsAdded { chat, op, result } => {
+                if let Some((pending_op, request)) = self.pending_workspace_import_grant.take() {
+                    if pending_op == op && request.chat == chat {
+                        match result {
+                            Ok(policy) => {
+                                if let Some(transcript) = &mut self.transcript
+                                    && transcript.chat.id == chat
+                                {
+                                    transcript.tool_policy = policy;
+                                }
+                                if let Some(document) = self
+                                    .workspace_import_documents
+                                    .get(&request.attachment)
+                                    .copied()
+                                {
+                                    self.copy_imported_workspace_file(&request, document);
+                                } else {
+                                    self.workspace_import_request = Some(request);
+                                }
+                            }
+                            Err(message) => {
+                                tracing::debug!(target: "koru_ai::ui", op = %op, reason = %message, "workspace grant for file failed");
+                                if let Some(draft) = self.strips.draft_mut(chat, request.attachment)
+                                {
+                                    draft.state =
+                                        attachments::DraftState::Failed { retryable: true };
+                                }
+                                self.status = Some(
+                                    koru_i18n::t(self.lang, koru_i18n::Key::AiComputerGrantFailed)
+                                        .to_owned(),
+                                );
+                            }
+                        }
+                        return true;
+                    }
+                    self.pending_workspace_import_grant = Some((pending_op, request));
+                }
                 let Some((key, pending_op)) = self.pending_grants.take() else {
                     return false;
                 };
@@ -3496,6 +3600,40 @@ impl ChatSurface {
                     && result.is_ok()
                 {
                     self.attachment_work.remove(chat, new_id);
+                }
+            }
+            Update::AttachmentCopied { chat, id, result } => {
+                let request = self.workspace_imports.get(&id).cloned();
+                let copied = result
+                    .as_ref()
+                    .ok()
+                    .map(|attachment| attachment.file_name.clone());
+                let copy_failed = result.is_err();
+                if let Some(request) = request {
+                    self.on_stored(request.chat, id, result);
+                    if copy_failed && self.shown_chat_id() == Some(request.chat) {
+                        self.status = Some(
+                            koru_i18n::t(self.lang, koru_i18n::Key::AiComputerCopyFailed)
+                                .to_owned(),
+                        );
+                    }
+                    if let Some(title) = copied {
+                        self.workspace_imports.remove(&id);
+                        if let Some(document) = self.workspace_import_documents.remove(&id) {
+                            if self.shown_chat_id() == Some(request.chat) {
+                                self.composer.insert_document(document, &title);
+                            } else {
+                                self.completed_workspace_pills
+                                    .entry(request.chat)
+                                    .or_default()
+                                    .push((document, title));
+                            }
+                        }
+                    }
+                } else if result.is_ok()
+                    && !self.strips.get(chat).iter().any(|draft| draft.id == id)
+                {
+                    self.attachment_work.remove(chat, id);
                 }
             }
             Update::ToolActivity(activity) => {
@@ -4025,6 +4163,17 @@ impl ChatSurface {
         true
     }
 
+    fn insert_completed_workspace_pills(&mut self, chat: ChatId) {
+        if self.shown_chat_id() != Some(chat) {
+            return;
+        }
+        if let Some(pills) = self.completed_workspace_pills.remove(&chat) {
+            for (document, title) in pills {
+                self.composer.insert_document(document, &title);
+            }
+        }
+    }
+
     fn remember_chat(&mut self, chat: &Chat, promote: bool) {
         if let Some(index) = self
             .chats
@@ -4409,7 +4558,7 @@ impl ChatSurface {
     /// one. The pick is remembered as what new chats start on — the choice
     /// the setup used to save — so the next chat opens on it.
     pub(crate) fn start_chat_on(&mut self, model: ModelSelection) -> bool {
-        self.web_search_armed = false;
+        self.web_search_armed = true;
         let sent = match &self.transcript {
             // A chat with no message yet takes it: the service's, or the
             // stand-in of one not made yet, which keeps it here.
@@ -4681,8 +4830,8 @@ impl ChatSurface {
                 media_type: String::new(),
                 byte_count: draft.byte_count,
                 dimensions: draft.size,
-                origin: None,
-                reference_path: None,
+                origin: draft.origin.clone(),
+                reference_path: draft.reference_path.clone(),
                 created_at: koru_ai_core::Timestamp::now(),
             })
             .collect();
@@ -4769,7 +4918,7 @@ impl ChatSurface {
             surface: SURFACE,
             markdown,
             explicit_refs,
-            web_search: self.web_search_armed,
+            web_search: self.web_search_armed && self.web_search_available(),
             // The chip sets the chat's persisted effort (R5); no per-turn
             // override rides the request.
             reasoning_override: None,
@@ -5678,12 +5827,7 @@ impl ChatSurface {
         };
         let mut model = transcript.chat.current_model.clone();
         model.requested_model = requested_model;
-        if model.provider.as_str() != AiProviderId::OPENAI
-            || !(model.requested_model.starts_with("gpt-5")
-                || model.requested_model.starts_with("gpt-4.1"))
-        {
-            self.web_search_armed = false;
-        }
+        self.web_search_armed = true;
         // A reasoning level belongs to a model's capability set. Carrying a
         // level from the previous model can make an otherwise valid switch
         // fail, so a model-only choice returns to the provider default.
@@ -5899,16 +6043,7 @@ impl ChatSurface {
     }
 
     fn web_search_button(&self) -> Option<Rect> {
-        if !self.web_search_available() {
-            return None;
-        }
-        let toolbar = self.composer_toolbar_rect();
-        let x = self
-            .privacy_button()
-            .map_or(toolbar.x + toolbar.h + 6.0, |privacy| {
-                privacy.x + privacy.w + 6.0
-            });
-        Some(Rect::new(x, toolbar.y, toolbar.h, toolbar.h))
+        None
     }
 
     /// The composer's toolbar row: inside its padding, left of the send
@@ -8734,7 +8869,7 @@ impl ChatSurface {
                         message_id: message,
                         surface: SURFACE,
                         explicit_refs,
-                        web_search: self.web_search_armed,
+                        web_search: self.web_search_armed && self.web_search_available(),
                         reasoning_override: None,
                         replace_pinned_documents: true,
                     },
@@ -10078,6 +10213,207 @@ mod tests {
     }
 
     #[test]
+    fn workspace_file_choice_retries_import_and_copy_with_one_operation() {
+        let mut surface = ChatSurface::new();
+        let (reader, commands, _updates) = Reader::test_pair();
+        surface.reader = Some(reader);
+        let mut chat = transcript();
+        chat.chat.current_model.provider = AiProviderId::parse("agent-claude").unwrap();
+        let chat_id = chat.chat.id;
+        surface.transcript = Some(chat);
+        let workspace = WorkspaceId::new();
+        surface.context_workspace = Some(workspace);
+
+        assert!(
+            surface
+                .computer_path_chosen(ComputerPickerKind::File, PathBuf::from("C:/fixture.pdf"),)
+        );
+        assert!(surface.finish_computer_file_choice(ChoiceOutcome::Chosen(0)));
+        let Command::AddGrants(granted_chat, Some(granted_workspace), _, op) =
+            commands.recv_timeout(Duration::from_millis(50)).unwrap()
+        else {
+            panic!("grant must precede import");
+        };
+        assert_eq!((granted_chat, granted_workspace), (chat_id, workspace));
+        let draft = &surface.strips.get(chat_id)[0];
+        let id = draft.id;
+        assert_eq!(draft.state, attachments::DraftState::Storing);
+        assert!(surface.take_workspace_import_request().is_none());
+
+        let policy = koru_ai_core::ChatToolPolicy {
+            chat_id,
+            mode: koru_ai_core::ToolMode::Manual,
+            workspace_ids: vec![workspace],
+        };
+        surface.apply_update(Update::GrantsAdded {
+            chat: chat_id,
+            op: uuid::Uuid::new_v4(),
+            result: Ok(policy.clone()),
+        });
+        assert!(surface.take_workspace_import_request().is_none());
+        surface.apply_update(Update::GrantsAdded {
+            chat: chat_id,
+            op,
+            result: Ok(policy.clone()),
+        });
+        let first = surface.take_workspace_import_request().unwrap();
+        assert_eq!((first.op, first.attachment), (op, id));
+        assert!(surface.workspace_file_imported(op, Err("transient import failure".into())));
+        assert_eq!(
+            surface.strips.get(chat_id)[0].state,
+            attachments::DraftState::Failed { retryable: true }
+        );
+
+        assert!(surface.retry_workspace_import(chat_id, id));
+        let Command::AddGrants(_, _, _, retry_op) =
+            commands.recv_timeout(Duration::from_millis(50)).unwrap()
+        else {
+            panic!("retry must recheck the grant");
+        };
+        assert_eq!(retry_op, op);
+        surface.apply_update(Update::GrantsAdded {
+            chat: chat_id,
+            op,
+            result: Ok(policy.clone()),
+        });
+        let retry = surface.take_workspace_import_request().unwrap();
+        assert_eq!((retry.op, retry.attachment), (op, id));
+
+        let document = DocumentId::new();
+        assert!(surface.workspace_file_imported(op, Ok(document)));
+        let Command::CopyWorkspaceFile(copied_chat, copy) =
+            commands.recv_timeout(Duration::from_millis(50)).unwrap()
+        else {
+            panic!("copy must follow import");
+        };
+        assert_eq!(
+            (copied_chat, copy.id, copy.document),
+            (chat_id, id, document)
+        );
+        surface.apply_update(Update::AttachmentCopied {
+            chat: chat_id,
+            id,
+            result: Err(koru_ai_wire::Failure {
+                code: "workspace_file_unavailable".into(),
+                message: "copy failed".into(),
+                retryable: true,
+                details: Default::default(),
+            }),
+        });
+        assert_eq!(
+            surface.strips.get(chat_id)[0].state,
+            attachments::DraftState::Failed { retryable: true }
+        );
+
+        assert!(surface.retry_workspace_import(chat_id, id));
+        let Command::AddGrants(_, _, _, retry_op) =
+            commands.recv_timeout(Duration::from_millis(50)).unwrap()
+        else {
+            panic!("retry must recheck the grant");
+        };
+        assert_eq!(retry_op, op);
+        surface.apply_update(Update::GrantsAdded {
+            chat: chat_id,
+            op,
+            result: Ok(policy),
+        });
+        assert!(
+            surface.take_workspace_import_request().is_none(),
+            "known document skips import"
+        );
+        let Command::CopyWorkspaceFile(_, copy_again) =
+            commands.recv_timeout(Duration::from_millis(50)).unwrap()
+        else {
+            panic!("retry should copy the known file");
+        };
+        assert_eq!(copy_again, copy);
+
+        surface.apply_update(Update::AttachmentCopied {
+            chat: chat_id,
+            id,
+            result: Ok(koru_ai_core::ChatAttachment {
+                id,
+                message_id: None,
+                ordinal: None,
+                kind: koru_ai_core::AttachmentKind::File,
+                source: koru_ai_core::AttachmentSource::Workspace,
+                file_name: "fixture.pdf".into(),
+                media_type: "application/pdf".into(),
+                byte_count: 12,
+                dimensions: None,
+                origin: Some(koru_ai_core::WorkspaceFileOrigin {
+                    workspace_id: workspace,
+                    document_id: document,
+                }),
+                reference_path: None,
+                created_at: koru_ai_core::Timestamp::now(),
+            }),
+        });
+        assert_eq!(
+            surface.strips.get(chat_id)[0].state,
+            attachments::DraftState::Stored
+        );
+        assert_eq!(
+            surface.composer.message().documents,
+            vec![(document, "fixture.pdf".into())]
+        );
+    }
+
+    #[test]
+    fn folder_reference_is_attachment_only_and_recall_mints_a_fresh_path_row() {
+        let mut surface = ChatSurface::new();
+        let (reader, commands, _updates) = Reader::test_pair();
+        surface.reader = Some(reader);
+        let mut chat = transcript();
+        chat.chat.current_model.provider = AiProviderId::parse("agent-claude").unwrap();
+        let chat_id = chat.chat.id;
+        surface.transcript = Some(chat);
+        surface.validated_ready = true;
+        let path = PathBuf::from("C:/Project/日本語 folder");
+        assert!(surface.computer_path_chosen(ComputerPickerKind::Folder, path.clone()));
+        let source_id = surface.strips.get(chat_id)[0].id;
+        assert_eq!(
+            surface.strips.get(chat_id)[0].reference_path.as_deref(),
+            Some(path.to_str().unwrap())
+        );
+        surface.on_stored(
+            chat_id,
+            source_id,
+            Ok(koru_ai_core::ChatAttachment {
+                id: source_id,
+                message_id: None,
+                ordinal: None,
+                kind: koru_ai_core::AttachmentKind::Folder,
+                source: koru_ai_core::AttachmentSource::Path,
+                file_name: "日本語 folder".into(),
+                media_type: "inode/directory".into(),
+                byte_count: 0,
+                dimensions: None,
+                origin: None,
+                reference_path: Some(path.to_string_lossy().into_owned()),
+                created_at: koru_ai_core::Timestamp::now(),
+            }),
+        );
+        assert!(surface.send_composer());
+        assert!(commands
+            .try_iter()
+            .any(|command| matches!(command, Command::Send(request) if request.attachment_ids == vec![source_id])));
+        let recalled = surface.sent_inputs.last().unwrap().attachments.clone();
+        assert_eq!(
+            recalled[0].reference_path.as_deref(),
+            Some(path.to_str().unwrap())
+        );
+        surface.replace_recalled_attachments(chat_id, &recalled);
+        let fresh = &surface.strips.get(chat_id)[0];
+        assert_ne!(fresh.id, source_id);
+        assert_eq!(fresh.source, koru_ai_core::AttachmentSource::Path);
+        assert_eq!(
+            fresh.reference_path.as_deref(),
+            Some(path.to_str().unwrap())
+        );
+    }
+
+    #[test]
     fn dismiss_popovers_closes_every_transient_overlay() {
         let mut surface = ChatSurface::new();
         surface.chat_model_open = true;
@@ -11066,9 +11402,22 @@ mod tests {
         surface.validated_ready = true;
         surface.composer_rect();
 
-        let button = surface.web_search_button().expect("gpt-5.4 can search");
-        assert!(surface.mouse_down(button.x + button.w / 2.0, button.y + button.h / 2.0));
+        assert!(surface.web_search_available());
+        assert!(surface.web_search_armed, "web search starts on");
+        surface.open_plus_menu();
+        let search = surface
+            .plus_menu
+            .as_ref()
+            .unwrap()
+            .items()
+            .iter()
+            .position(|item| matches!(item, composer_plus::PlusItem::SearchWeb(_, true)))
+            .expect("the available OpenAI chat offers web search in +");
+        assert!(surface.choose_plus_item(search));
+        assert!(!surface.web_search_armed);
+        assert!(surface.choose_plus_item(search));
         assert!(surface.web_search_armed);
+        assert!(surface.key(&Key::Named(NamedKey::Escape), None, ModifiersState::empty(),));
         assert!(surface.key(
             &Key::Character("q".into()),
             Some("question"),
@@ -11127,7 +11476,17 @@ mod tests {
             requested_model: "qwen3:4b".into(),
             default_reasoning: ReasoningChoice::Default,
         };
-        assert!(surface.web_search_button().is_none());
+        assert!(!surface.web_search_available());
+        surface.open_plus_menu();
+        assert!(
+            !surface
+                .plus_menu
+                .as_ref()
+                .unwrap()
+                .items()
+                .iter()
+                .any(|item| matches!(item, composer_plus::PlusItem::SearchWeb(..)))
+        );
     }
 
     /// **A reply's picture from a file is asked of the disk loader** (the
@@ -12039,7 +12398,7 @@ mod tests {
     }
 
     #[test]
-    fn composer_footer_separates_context_search_approval_and_model_controls() {
+    fn composer_footer_keeps_search_in_plus_and_separates_approval_and_model() {
         let mut surface = ChatSurface::new();
         let mut transcript = transcript();
         transcript.chat.current_model.requested_model = "gpt-5.5".into();
@@ -12052,18 +12411,23 @@ mod tests {
             .tool_mode_button()
             .expect("a Koru-run chat has the mode chip");
         let model = surface.chat_model_button();
-        // The private mark is hidden for now
-        // (`koru_features::PRIVATE_CHAT_BUTTON_SHOWN`): the globe follows
-        // the context button at the toolbar's left edge.
+        // The private mark is hidden for now; search is in the plus menu.
         assert_eq!(surface.privacy_button(), None);
-        let search = surface
-            .web_search_button()
-            .expect("gpt-5.5 supports search");
+        assert!(surface.web_search_button().is_none());
+        surface.open_plus_menu();
+        assert!(
+            surface
+                .plus_menu
+                .as_ref()
+                .unwrap()
+                .items()
+                .iter()
+                .any(|item| matches!(item, composer_plus::PlusItem::SearchWeb(_, true)))
+        );
 
         assert_eq!(plus.x, toolbar.x);
         assert!((model.x + model.w - toolbar.x - toolbar.w).abs() < 0.01);
-        assert!(plus.x + plus.w < search.x);
-        assert!(search.x + search.w < approval.x);
+        assert!(plus.x + plus.w < approval.x);
         assert!(approval.x + approval.w < model.x);
         assert_eq!(surface.tool_access_label(), "0 spaces");
         assert_eq!(surface.tool_mode_label(), "Manual");
@@ -13813,8 +14177,8 @@ mod tests {
 
     /// **The private mark is hidden for now** (the user, 2026-11-03:
     /// `koru_features::PRIVATE_CHAT_BUTTON_SHOWN`): the composer's toolbar
-    /// has none, a press where it sat makes nothing private, and the globe
-    /// follows the context button. A chat that is already private still
+    /// has none, a press on the plus menu makes nothing private, and web
+    /// search lives in that menu. A chat that is already private still
     /// takes the service's answer and stays private.
     #[test]
     fn the_private_mark_is_hidden_and_a_private_chat_stays_private() {
@@ -13830,14 +14194,19 @@ mod tests {
         surface.draw_chat(&mut Scene::new(), Affine::IDENTITY);
         assert_eq!(surface.privacy_button(), None);
         let toolbar = surface.composer_toolbar_rect();
-        let first = surface
-            .web_search_button()
-            .expect("gpt-5.5 supports search");
         let plus = surface.plus_button();
         assert_eq!(plus.x, toolbar.x, "the context button keeps the left edge");
-        assert!(plus.x + plus.w < first.x);
-        // Pressing the globe arms search and makes nothing private.
-        surface.mouse_down(first.x + first.w * 0.5, first.y + first.h * 0.5);
+        assert!(surface.web_search_button().is_none());
+        surface.open_plus_menu();
+        assert!(
+            surface
+                .plus_menu
+                .as_ref()
+                .unwrap()
+                .items()
+                .iter()
+                .any(|item| matches!(item, composer_plus::PlusItem::SearchWeb(_, true)))
+        );
         assert!(surface.web_search_armed);
         assert!(
             !matches!(

@@ -1421,8 +1421,9 @@ struct KnownFile {
 fn known_workspace_files(
     client: &koru_api_client::Client,
     workspace: koru_store_core::ids::WorkspaceId,
-) -> Result<std::collections::HashMap<String, KnownFile>, String> {
-    let mut known = std::collections::HashMap::new();
+) -> Result<std::collections::HashMap<String, Vec<KnownFile>>, String> {
+    let mut known: std::collections::HashMap<String, Vec<KnownFile>> =
+        std::collections::HashMap::new();
     let entries = client.documents(workspace).map_err(|error| {
         format!("could not check whether selected files are already known: {error}")
     })?;
@@ -1439,13 +1440,27 @@ fn known_workspace_files(
         let Some((hash, node)) = snapshot_file_locator(&snapshot) else {
             continue;
         };
-        known.entry(hash).or_insert_with(|| KnownFile {
+        known.entry(hash).or_default().push(KnownFile {
             document: koru_core::DocumentId::from_uuid(entry.id.as_uuid()),
             node,
             title: entry.title,
         });
     }
     Ok(known)
+}
+
+fn known_file_for_import<'a>(
+    known: &'a std::collections::HashMap<String, Vec<KnownFile>>,
+    hash: &str,
+    title: &str,
+    exact_name: bool,
+) -> Option<&'a KnownFile> {
+    let files = known.get(hash)?;
+    if exact_name {
+        files.iter().find(|file| file.title == title)
+    } else {
+        files.first()
+    }
 }
 
 /// Redirect attachment attributes when a content import reuses a file already
@@ -2492,6 +2507,7 @@ struct App<H: Host> {
     deleting_workspaces: HashSet<WorkspaceId>,
     /// `/attach` waits for the generic file importer to publish its file entry.
     pending_attachment: Option<(WindowId, NodeId)>,
+    pending_ai_import: Option<(WindowId, uuid::Uuid)>,
     /// Importable paths coalesced from winit's one-event-per-file drop stream.
     /// Batches wait here while any other import is active rather than being
     /// silently discarded by `import_busy`.
@@ -5511,6 +5527,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
             pending_import: None,
             deleting_workspaces: HashSet::new(),
             pending_attachment: None,
+            pending_ai_import: None,
             pending_content_drops: VecDeque::new(),
             // Due once at startup: the share that opened this window was
             // staged before the process existed, so nothing will focus-event
@@ -9181,6 +9198,51 @@ Nothing was written. The store starts on demand, so this usually means it could 
                     pane.window.request_redraw();
                 }
             }
+            PaneRequest::ChooseAiComputer { title, folder } => {
+                // The file picker is unparented here: rfd has silently failed
+                // from this event-loop phase on Windows when parented.
+                let chosen = if folder {
+                    crate::dialogs::pick_folder(&title, None, None)
+                } else {
+                    crate::dialogs::pick_open_file(&title, &[], None, None)
+                };
+                if let Some(path) = chosen
+                    && let Some(pane) = self.panes.get_mut(&source)
+                    && pane.view.ai_computer_path_chosen(path)
+                {
+                    pane.window.request_redraw();
+                }
+            }
+            PaneRequest::ImportAiWorkspaceFile {
+                op,
+                workspace,
+                path,
+            } => {
+                let lang = koru_i18n::Lang::for_system(
+                    koru_window::system_locale::system_locale().as_deref(),
+                );
+                let answer = if self.import_busy {
+                    Some(koru_i18n::t(lang, koru_i18n::Key::AiComputerImportBusy).to_owned())
+                } else if self.runtime.workspace.current() != Some(workspace) {
+                    Some(koru_i18n::t(lang, koru_i18n::Key::AiComputerOpenWorkspace).to_owned())
+                } else {
+                    None
+                };
+                if let Some(message) = answer {
+                    if let Some(pane) = self.panes.get_mut(&source)
+                        && pane.view.ai_workspace_file_imported(op, Err(message))
+                    {
+                        pane.window.request_redraw();
+                    }
+                } else {
+                    self.pending_ai_import = Some((source, op));
+                    self.import_content(
+                        source,
+                        "files",
+                        crate::ImportSourceSelection::Files(vec![path]),
+                    );
+                }
+            }
             PaneRequest::ImportFiles(selection) => {
                 self.import_content(source, "files", selection);
             }
@@ -9338,6 +9400,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
             .id()
             .map(|id| koru_store_core::ids::ProfileId::from_uuid(id.as_uuid()));
         let store_workspace = koru_store_core::ids::WorkspaceId::from_uuid(workspace.as_uuid());
+        let composer_exact_file_name = self.pending_ai_import.is_some();
         if let Err(error) = std::thread::Builder::new()
             .name("koru-import-content".into())
             .spawn(move || {
@@ -9475,7 +9538,14 @@ Nothing was written. The store starts on demand, so this usually means it could 
                             .flatten();
                         if let Some(known) = file_locator
                             .as_ref()
-                            .and_then(|(hash, _)| known_files.get(hash))
+                            .and_then(|(hash, _)| {
+                                known_file_for_import(
+                                    &known_files,
+                                    hash,
+                                    &document.title,
+                                    composer_exact_file_name,
+                                )
+                            })
                             .cloned()
                         {
                             already_known += 1;
@@ -9531,14 +9601,11 @@ Nothing was written. The store starts on demand, so this usually means it could 
                                 if kind == koru_core::explore::KIND_FILE {
                                     files.push((id, document.title));
                                     if let Some((hash, node)) = file_locator {
-                                        known_files.insert(
-                                            hash,
-                                            KnownFile {
+                                        known_files.entry(hash).or_default().push(KnownFile {
                                                 document: id,
                                                 node,
                                                 title: files.last().unwrap().1.clone(),
-                                            },
-                                        );
+                                            });
                                     }
                                 }
                             }
@@ -9627,6 +9694,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
             })
         {
             self.import_busy = false;
+            self.answer_ai_import(Err(error.to_string()));
             self.import_source = None;
             self.import_cancel = None;
             self.import_cancel_hide_due = None;
@@ -9897,6 +9965,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
                     return;
                 }
                 self.import_busy = false;
+                self.answer_ai_import(Err(error.to_string()));
                 self.import_source = None;
                 self.import_cancel = None;
                 self.import_cancel_hide_due = None;
@@ -9964,6 +10033,17 @@ Nothing was written. The store starts on demand, so this usually means it could 
                     had_failures,
                     warnings,
                 } = summary;
+                self.answer_ai_import(
+                    files
+                        .first()
+                        .map(|(document, _)| *document)
+                        .ok_or_else(|| {
+                            let lang = koru_i18n::Lang::for_system(
+                                koru_window::system_locale::system_locale().as_deref(),
+                            );
+                            koru_i18n::t(lang, koru_i18n::Key::AiComputerImportEmpty).to_owned()
+                        }),
+                );
                 if let Some(format) = self.import_format.take() {
                     crate::events_host::import_completed(
                         format,
@@ -11435,10 +11515,28 @@ Nothing was written. The store starts on demand, so this usually means it could 
 
     fn finish_content_import_cancellation(&mut self) {
         self.import_busy = false;
+        let lang =
+            koru_i18n::Lang::for_system(koru_window::system_locale::system_locale().as_deref());
+        self.answer_ai_import(Err(koru_i18n::t(
+            lang,
+            koru_i18n::Key::AiComputerImportCancelled,
+        )
+        .to_owned()));
         self.import_source = None;
         self.import_cancel = None;
         self.import_cancel_worker_done = false;
         self.finish_pending_attachment(true);
+    }
+
+    fn answer_ai_import(&mut self, result: Result<koru_core::DocumentId, String>) {
+        let Some((source, op)) = self.pending_ai_import.take() else {
+            return;
+        };
+        if let Some(pane) = self.panes.get_mut(&source)
+            && pane.view.ai_workspace_file_imported(op, result)
+        {
+            pane.window.request_redraw();
+        }
     }
 
     /// Clear a pending `/attach`. When `cancelled`, restore the trigger row so
@@ -20156,6 +20254,33 @@ mod tests {
         assert_eq!(
             snapshot_file_locator(&snapshot).map(|(hash, _)| hash),
             Some("b3:abc".into())
+        );
+    }
+
+    #[test]
+    fn composer_file_import_reuses_only_matching_hash_and_name() {
+        let hash = "b3:same".to_owned();
+        let first = KnownFile {
+            document: koru_core::DocumentId::new(),
+            node: koru_core::NodeId::new(),
+            title: "first.pdf".into(),
+        };
+        let second = KnownFile {
+            document: koru_core::DocumentId::new(),
+            node: koru_core::NodeId::new(),
+            title: "second.pdf".into(),
+        };
+        let known = [(hash.clone(), vec![first.clone(), second.clone()])]
+            .into_iter()
+            .collect();
+        assert_eq!(
+            known_file_for_import(&known, &hash, "second.pdf", true).map(|file| file.document),
+            Some(second.document)
+        );
+        assert!(known_file_for_import(&known, &hash, "third.pdf", true).is_none());
+        assert_eq!(
+            known_file_for_import(&known, &hash, "third.pdf", false).map(|file| file.document),
+            Some(first.document)
         );
     }
 

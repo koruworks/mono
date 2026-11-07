@@ -176,6 +176,8 @@ fn stored_attachment(surface: &mut ChatSurface) {
             state: attachments::DraftState::Stored,
             bytes: None,
             path: None,
+            reference_path: None,
+            origin: None,
         },
     );
 }

@@ -13670,6 +13670,31 @@ fn opening_ai_setup_from_settings_is_a_chat_tab_not_the_setup() {
     assert_eq!(v.ai_visible(), panel_was, "the side panel did not move");
 }
 
+#[test]
+fn computer_file_picker_returns_to_the_requesting_chat_host() {
+    let (mut view, _workspace) = container();
+    view.ai_computer_ask = Some((
+        AiChatFolderSource::Pane,
+        koru_ai_ui::ComputerPickerKind::File,
+    ));
+    assert!(View::ai_computer_path_chosen(
+        &mut view,
+        std::path::PathBuf::from("C:/fixture.pdf"),
+    ));
+    assert!(view.ai_computer_ask.is_none());
+
+    assert!(view.open_ai_chat_tab());
+    view.ai_computer_ask = Some((
+        AiChatFolderSource::AiChatTab,
+        koru_ai_ui::ComputerPickerKind::File,
+    ));
+    assert!(View::ai_computer_path_chosen(
+        &mut view,
+        std::path::PathBuf::from("C:/fixture.pdf"),
+    ));
+    assert!(view.ai_computer_ask.is_none());
+}
+
 /// **The page's `…` replaces the ✦.** It opens a menu whose one row,
 /// *Open in chat*, puts a new chat in a split beside the document with the
 /// document already a chip in its composer; the side panel is not touched.

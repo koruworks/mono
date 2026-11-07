@@ -58,6 +58,7 @@ pub(crate) enum Command {
         koru_ai_core::ChatAttachmentId,
         koru_ai_core::ChatAttachmentId,
     ),
+    CopyWorkspaceFile(ChatId, koru_ai_wire::FromWorkspaceAttachmentRequest),
     ApproveTool(ToolInvocationId),
     DenyTool(ToolInvocationId),
     /// Answer a local agent's permission request with one of the choices it
@@ -115,6 +116,7 @@ impl Command {
             Self::UpdateToolPolicy(_, _) => "update_tool_policy",
             Self::AddGrants(..) => "add_grants",
             Self::Restage(..) => "restage_attachment",
+            Self::CopyWorkspaceFile(..) => "copy_workspace_file",
             Self::ApproveTool(_) => "approve_tool",
             Self::DenyTool(_) => "deny_tool",
             Self::DecideTool(..) => "decide_tool",
@@ -187,6 +189,11 @@ pub(crate) enum Update {
     Restaged {
         new_id: koru_ai_core::ChatAttachmentId,
         result: Result<koru_ai_core::ChatAttachment, String>,
+    },
+    AttachmentCopied {
+        chat: ChatId,
+        id: koru_ai_core::ChatAttachmentId,
+        result: Result<koru_ai_core::ChatAttachment, koru_ai_wire::Failure>,
     },
     ToolActivity(koru_ai_core::ToolActivity),
     Usage(UsageReport),
@@ -679,6 +686,18 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, updates: SyncSender<U
                         .map(|response| response.attachment)
                         .map_err(|failure| failure.message);
                     let _ = updates.send(Update::Restaged { new_id, result });
+                });
+            }
+            Command::CopyWorkspaceFile(chat, request) => {
+                let client = client.clone();
+                let updates = updates.clone();
+                off_thread("koru-ai-workspace-copy", move || {
+                    let id = request.id;
+                    let result = client
+                        .ai()
+                        .from_workspace_attachment(chat, request)
+                        .map(|response| response.attachment);
+                    let _ = updates.send(Update::AttachmentCopied { chat, id, result });
                 });
             }
             Command::Send(request) => match client.ai().send_turn(&request) {

@@ -26,7 +26,9 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
 
 use koru_ai_core::attachments::{AttachmentFamily, allowed_type, extension_of};
-use koru_ai_core::{AttachmentKind, AttachmentSource, ChatAttachment, ChatAttachmentId, ChatId};
+use koru_ai_core::{
+    AttachmentKind, AttachmentSource, ChatAttachment, ChatAttachmentId, ChatId, WorkspaceFileOrigin,
+};
 use koru_ai_wire::{Failure, attachment_codes};
 use koru_draw::geometry::Rect;
 use koru_draw::icons;
@@ -90,6 +92,10 @@ pub(crate) struct Draft {
     /// A copied file's path, read on the upload thread — its size checked
     /// first — and kept, like `bytes`, so a failed store can be tried again.
     pub path: Option<PathBuf>,
+    /// A local path is delivered to an agent as a reference, without reading
+    /// or copying bytes. It is retained for retry and recall.
+    pub reference_path: Option<String>,
+    pub origin: Option<WorkspaceFileOrigin>,
 }
 
 impl Draft {
@@ -106,6 +112,8 @@ impl Draft {
             state: DraftState::Storing,
             bytes: None,
             path: None,
+            reference_path: source.reference_path.clone(),
+            origin: source.origin.clone(),
         }
     }
 
@@ -121,6 +129,8 @@ impl Draft {
             state: DraftState::Storing,
             bytes: Some(png.bytes.into()),
             path: None,
+            reference_path: None,
+            origin: None,
         }
     }
 
@@ -145,13 +155,51 @@ impl Draft {
             state: DraftState::Storing,
             bytes: None,
             path: Some(path),
+            reference_path: None,
+            origin: None,
+        }
+    }
+
+    /// A file or folder whose absolute path is sent to an agent as context.
+    pub(crate) fn reference(path: PathBuf, kind: AttachmentKind) -> Self {
+        let file_name = file_name_of(&path);
+        Self {
+            id: ChatAttachmentId::new(),
+            file_name,
+            source: AttachmentSource::Path,
+            kind,
+            size: None,
+            byte_count: 0,
+            state: DraftState::Storing,
+            bytes: None,
+            path: None,
+            reference_path: Some(path.to_string_lossy().into_owned()),
+            origin: None,
+        }
+    }
+
+    /// A selected file being granted, imported, and copied through Files.
+    /// It owns no local bytes in the composer; the Store import is the source.
+    pub(crate) fn workspace_pending(id: ChatAttachmentId, path: &std::path::Path) -> Self {
+        Self {
+            id,
+            file_name: file_name_of(path),
+            source: AttachmentSource::Workspace,
+            kind: AttachmentKind::File,
+            size: None,
+            byte_count: 0,
+            state: DraftState::Storing,
+            bytes: None,
+            path: None,
+            reference_path: None,
+            origin: None,
         }
     }
 
     /// Whether a failed store can be tried again: its bytes, or the file
     /// they come from, are still here.
     pub(crate) fn can_retry(&self) -> bool {
-        self.bytes.is_some() || self.path.is_some()
+        self.bytes.is_some() || self.path.is_some() || self.reference_path.is_some()
     }
 
     pub(crate) fn tile(&self) -> Tile {
@@ -475,6 +523,12 @@ enum Upload {
         source: AttachmentSource,
         payload: Payload,
     },
+    Reference {
+        chat: ChatId,
+        id: ChatAttachmentId,
+        kind: AttachmentKind,
+        path: String,
+    },
     Remove {
         chat: ChatId,
         id: ChatAttachmentId,
@@ -559,6 +613,15 @@ impl Work {
     /// Store a draft with the AI service, on the upload thread: its bytes,
     /// or the copied file they are read from there.
     pub(crate) fn put(&mut self, chat: ChatId, draft: &Draft) {
+        if let Some(path) = &draft.reference_path {
+            self.upload(Upload::Reference {
+                chat,
+                id: draft.id,
+                kind: draft.kind,
+                path: path.clone(),
+            });
+            return;
+        }
         let payload = match (&draft.bytes, &draft.path) {
             (Some(bytes), _) => Payload::Bytes(bytes.clone()),
             (None, Some(path)) => Payload::Path(path.clone()),
@@ -587,7 +650,7 @@ impl Work {
             return;
         }
         let put = match &job {
-            Upload::Put { chat, id, .. } => Some((*chat, *id)),
+            Upload::Put { chat, id, .. } | Upload::Reference { chat, id, .. } => Some((*chat, *id)),
             Upload::Remove { .. } => None,
         };
         let (root, events) = (self.root.clone(), self.events_tx.clone());
@@ -815,6 +878,26 @@ fn spawn_uploader(root: Option<PathBuf>, events: Sender<Event>) -> Sender<Upload
                             upload_ms = started.elapsed().as_secs_f64() * 1_000.0,
                             "attachment upload finished"
                         );
+                        if events.send(Event::Stored { chat, id, result }).is_err() {
+                            return;
+                        }
+                    }
+                    Upload::Reference {
+                        chat,
+                        id,
+                        kind,
+                        path,
+                    } => {
+                        let result = match &client {
+                            Some(client) => client
+                                .ai()
+                                .reference_attachment(
+                                    chat,
+                                    koru_ai_wire::ReferenceAttachmentRequest { id, kind, path },
+                                )
+                                .map(|response| response.attachment),
+                            None => Err(unavailable()),
+                        };
                         if events.send(Event::Stored { chat, id, result }).is_err() {
                             return;
                         }
@@ -1083,6 +1166,9 @@ impl ChatSurface {
         match draft.state {
             DraftState::Storing => koru_i18n::t(self.lang, Key::AiAttachmentAddingOne).into(),
             DraftState::Failed { .. } => koru_i18n::t(self.lang, Key::AiAttachmentFailed).into(),
+            DraftState::Stored if draft.source == AttachmentSource::Path => {
+                koru_i18n::t(self.lang, Key::AiComposerThisComputer).into()
+            }
             DraftState::Stored if draft.byte_count > 0 => {
                 koru_i18n::number::bytes(self.lang, draft.byte_count)
             }
@@ -1091,10 +1177,10 @@ impl ChatSurface {
     }
 
     pub(super) fn attachment_chip_icon(&self, draft: &Draft) -> char {
-        if draft.kind == AttachmentKind::Image {
-            icons::IMAGE
-        } else {
-            koru_ui::file_icon::glyph(None, Some(&draft.file_name))
+        match draft.kind {
+            AttachmentKind::Image => icons::IMAGE,
+            AttachmentKind::Folder => icons::FOLDER,
+            AttachmentKind::File => koru_ui::file_icon::glyph(None, Some(&draft.file_name)),
         }
     }
 
@@ -1237,7 +1323,7 @@ impl ChatSurface {
         self.strips.push(chat, draft);
     }
 
-    fn on_stored(
+    pub(super) fn on_stored(
         &mut self,
         chat: ChatId,
         id: ChatAttachmentId,
@@ -1258,6 +1344,8 @@ impl ChatSurface {
                 draft.kind = attachment.kind;
                 draft.byte_count = attachment.byte_count;
                 draft.file_name = attachment.file_name;
+                draft.origin = attachment.origin;
+                draft.reference_path = attachment.reference_path;
                 // A copied picture had no bytes here to decode: its tile
                 // shows the thumbnail the service made.
                 if from_file && attachment.kind == AttachmentKind::Image {
@@ -1312,9 +1400,30 @@ impl ChatSurface {
         };
         if chip.remove_rect(rect).contains(x, y) {
             self.strips.remove(chat, id)?;
+            self.workspace_imports.remove(&id);
+            self.workspace_import_documents.remove(&id);
+            if self
+                .pending_workspace_import_grant
+                .as_ref()
+                .is_some_and(|(_, request)| request.attachment == id)
+            {
+                self.pending_workspace_import_grant = None;
+            }
+            if self
+                .workspace_import_request
+                .as_ref()
+                .is_some_and(|request| request.attachment == id)
+            {
+                self.workspace_import_request = None;
+            }
             self.attachment_work.remove(chat, id);
             self.thumbnails.remove(id);
             return Some(true);
+        }
+        if matches!(draft.state, DraftState::Failed { retryable: true })
+            && self.workspace_imports.contains_key(&id)
+        {
+            return Some(self.retry_workspace_import(chat, id));
         }
         if draft.state == (DraftState::Failed { retryable: true }) && draft.can_retry() {
             let draft = self.strips.draft_mut(chat, id)?;
@@ -1328,6 +1437,7 @@ impl ChatSurface {
         // opens in the system's app.
         match draft.state {
             DraftState::Failed { .. } => {}
+            DraftState::Stored if draft.source == AttachmentSource::Path => {}
             DraftState::Stored if draft.kind == AttachmentKind::File => {
                 let name = draft.file_name.clone();
                 self.attachment_work.open_file(chat, id, &name);

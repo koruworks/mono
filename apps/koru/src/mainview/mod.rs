@@ -696,6 +696,8 @@ pub struct MainView {
     /// The chat whose folder pick is out with the shell, and which surface
     /// asked: the pane's, or an AI chat tab's.
     ai_chat_folder_ask: Option<(AiChatFolderSource, koru_ai_ui::ChatId)>,
+    ai_computer_ask: Option<(AiChatFolderSource, koru_ai_ui::ComputerPickerKind)>,
+    ai_import_asks: std::collections::HashMap<uuid::Uuid, (AiChatFolderSource, koru_ai_ui::ChatId)>,
     ai_focused: bool,
     document_history: history::HistoryPanel,
     /// What the context column's Cloud tab shows — one query per refresh on a
@@ -1800,6 +1802,8 @@ impl MainView {
             context_view: ContextView::new(),
             ai_panel: Panel::new(480.0, false),
             ai_chat_folder_ask: None,
+            ai_computer_ask: None,
+            ai_import_asks: std::collections::HashMap::new(),
             ai_chat: {
                 let mut chat = ChatSurface::new_at(koru_workspace_host::cli::root_from_args());
                 // Koru has a Settings tab: the picker's + opens *Agent
@@ -11948,6 +11952,48 @@ impl View for MainView {
         }
     }
 
+    fn ai_computer_path_chosen(&mut self, chosen: std::path::PathBuf) -> bool {
+        let Some((source, kind)) = self.ai_computer_ask.take() else {
+            return false;
+        };
+        match source {
+            AiChatFolderSource::Pane => self.ai_chat.computer_path_chosen(kind, chosen),
+            AiChatFolderSource::AiChatTab => {
+                if let TabView::AiChat(view) = self.tabs_mut().active_view() {
+                    view.computer_path_chosen(kind, chosen)
+                } else {
+                    false
+                }
+            }
+        }
+    }
+
+    fn ai_workspace_file_imported(
+        &mut self,
+        op: uuid::Uuid,
+        result: Result<koru_core::DocumentId, String>,
+    ) -> bool {
+        let Some((source, chat)) = self.ai_import_asks.remove(&op) else {
+            return false;
+        };
+        let result = result.map(|document| koru_ai_ui::DocumentId::from_uuid(document.as_uuid()));
+        match source {
+            AiChatFolderSource::Pane => self.ai_chat.workspace_file_imported(op, result),
+            AiChatFolderSource::AiChatTab => {
+                for (_, group) in self.panes.iter_groups_mut() {
+                    for tab in group.tabs_mut().iter_mut() {
+                        if let TabView::AiChat(view) = &mut tab.view
+                            && view.chat_id() == Some(chat)
+                        {
+                            return view.workspace_file_imported(op, result);
+                        }
+                    }
+                }
+                false
+            }
+        }
+    }
+
     fn recording_path_chosen(&mut self, chosen: std::path::PathBuf) -> bool {
         self.recording_path_chosen_impl(chosen)
     }
@@ -14485,6 +14531,8 @@ impl View for MainView {
         // handed to every other chat.
         let favorites_saved = self.save_favorite_models_from_chat();
         self.ask_pending_ai_chat_folder();
+        self.ask_pending_ai_computer();
+        self.ask_pending_ai_import();
         // The level meter's tick. `false` the moment the session ends, because
         // there is no `Listening` left to ask.
         let meter_changed = self.tick_dictation(now);
@@ -15957,6 +16005,56 @@ impl MainView {
             title: koru_i18n::t(crate::format::lang(), koru_i18n::Key::AiAgentChooseFolder)
                 .to_owned(),
             start: request.start,
+        });
+    }
+
+    /// Route This computer to the same native picker for either chat host.
+    fn ask_pending_ai_computer(&mut self) {
+        let (request, source) = if let Some(request) = self.ai_chat.take_computer_picker_request() {
+            (Some(request), AiChatFolderSource::Pane)
+        } else if let TabView::AiChat(view) = self.tabs_mut().active_view() {
+            (
+                view.take_computer_picker_request(),
+                AiChatFolderSource::AiChatTab,
+            )
+        } else {
+            (None, AiChatFolderSource::Pane)
+        };
+        let Some(kind) = request else {
+            return;
+        };
+        self.ai_computer_ask = Some((source, kind));
+        let key = match kind {
+            koru_ai_ui::ComputerPickerKind::File => koru_i18n::Key::AiComputerFileChoiceTitle,
+            koru_ai_ui::ComputerPickerKind::Folder => koru_i18n::Key::AiComposerComputerFolder,
+        };
+        self.ask_pane(koru_workspace_host::PaneRequest::ChooseAiComputer {
+            title: koru_i18n::t(crate::format::lang(), key).to_owned(),
+            folder: kind == koru_ai_ui::ComputerPickerKind::Folder,
+        });
+    }
+
+    fn ask_pending_ai_import(&mut self) {
+        let (request, source) = if let Some(request) = self.ai_chat.take_workspace_import_request()
+        {
+            (Some(request), AiChatFolderSource::Pane)
+        } else if let TabView::AiChat(view) = self.tabs_mut().active_view() {
+            (
+                view.take_workspace_import_request(),
+                AiChatFolderSource::AiChatTab,
+            )
+        } else {
+            (None, AiChatFolderSource::Pane)
+        };
+        let Some(request) = request else {
+            return;
+        };
+        self.ai_import_asks
+            .insert(request.op, (source, request.chat));
+        self.ask_pane(koru_workspace_host::PaneRequest::ImportAiWorkspaceFile {
+            op: request.op,
+            workspace: koru_core::WorkspaceId::from_uuid(request.workspace.as_uuid()),
+            path: request.path,
         });
     }
 
