@@ -242,18 +242,17 @@ impl Host for MobileCloudHost {
     ) -> Result<(), Failure> {
         let host = self.host()?;
         let binding = koru_store_core::ProfileAccountBinding::from_identity_uuid(account.as_uuid())
-            .map_err(|_| Failure::Denied)?
-            .to_storage();
+            .map_err(|_| Failure::Denied)?;
         let present = host
             .store()
             .with_store(move |store| -> Result<bool, &'static str> {
                 store
                     .profile_lifecycle_inventory()
                     .map(|inventory| {
-                        inventory.profiles.iter().any(|stored| {
-                            stored.profile_id == profile
+                        inventory.iter().any(|stored| {
+                            stored.profile == profile
                                 && stored.account_binding == binding
-                                && stored.removed_at_millis.is_none()
+                                && stored.removed_at.is_none()
                         })
                     })
                     .map_err(|_| "store_unavailable")
