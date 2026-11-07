@@ -473,8 +473,7 @@ pub enum HeadButton {
     New,
     /// The linked devices, with their count: the Manage tab on the Profile.
     Devices,
-    /// The sync state's words at the foot's leading end — or, with no cloud
-    /// set up, the offer to subscribe to Koru Cloud (the review's note).
+    /// The sync state's words at the foot's leading end: opens Koru Cloud.
     Status,
 }
 
@@ -3906,16 +3905,7 @@ impl ExploreView {
             PopoverRow::WorkspacesHeading | PopoverRow::ProfilesHeading => Outcome::Consumed,
             PopoverRow::ProfilesFooter => match part {
                 PopoverPart::Button(HeadButton::New) => Outcome::NewProfile,
-                // With no cloud set up the words are the offer (the review's
-                // note: the option to subscribe, re-enabled); otherwise
-                // they lead to Settings, where the sync state is explained.
-                PopoverPart::Button(HeadButton::Status) => {
-                    if self.sync_status() == SyncStatus::NotSetUp {
-                        Outcome::SubscribeCloud
-                    } else {
-                        Outcome::OpenSettings
-                    }
-                }
+                PopoverPart::Button(HeadButton::Status) => Outcome::ManageCloud,
                 // The Manage tab on *Linked devices* (the review's note), not
                 // on the Profile.
                 PopoverPart::Button(HeadButton::Devices) => Outcome::ManageDevices,

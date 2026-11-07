@@ -143,7 +143,9 @@ connection progress for these Profiles. “Syncing via Koru Cloud” describes t
 path, not confirmation that every document is up to date. Turning Cloud sync off
 returns the Profile to its existing device-to-device connection behavior.
 
-**The Koru Cloud page.** In the **Manage** tab, **Koru Cloud** under *This
+**The Koru Cloud page.** Click the cloud status at the bottom of the Profile
+popover to open **Manage › Koru Cloud** directly, including when Cloud is not
+set up yet. In the **Manage** tab, **Koru Cloud** under *This
 computer* in the nav (its *On* / *Off* says whether you subscribe) shows the
 subscription for your signed-in Koru account, from top to bottom:
 

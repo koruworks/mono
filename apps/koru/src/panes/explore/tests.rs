@@ -1689,9 +1689,8 @@ fn the_arrows_walk_the_profiles_and_the_foot() {
 }
 
 /// **The foot's three buttons** (the review's artboard): the sync state's
-/// words lead to Settings — or, with no cloud set up, to the subscription
-/// (the review's note: the option re-enabled); the devices open the Manage tab
-/// on *Linked devices*; the `+` creates.
+/// words lead to Koru Cloud, including when Cloud is not set up; the devices
+/// open the Manage tab on *Linked devices*; the `+` creates.
 #[test]
 fn the_foot_offers_the_cloud_the_devices_and_a_new_profile() {
     let (mut v, profiles, _) = with_context(0);
@@ -1705,8 +1704,8 @@ fn the_foot_offers_the_cloud_the_devices_and_a_new_profile() {
     let (x, y) = button(&v, HeadButton::Status);
     assert_eq!(
         v.mouse_down(a, VIEW, x, y, false),
-        Outcome::SubscribeCloud,
-        "nothing set up: the words are the offer"
+        Outcome::ManageCloud,
+        "nothing set up: open Koru Cloud for setup and subscription"
     );
     assert!(!v.popover_open());
     v.advance_popover(Instant::now() + Duration::from_secs(1));
@@ -1715,8 +1714,8 @@ fn the_foot_offers_the_cloud_the_devices_and_a_new_profile() {
     let (x, y) = button(&v, HeadButton::Status);
     assert_eq!(
         v.mouse_down(a, VIEW, x, y, false),
-        Outcome::OpenSettings,
-        "set up: the words lead to Settings"
+        Outcome::ManageCloud,
+        "set up: open Koru Cloud for sync status"
     );
     v.advance_popover(Instant::now() + Duration::from_secs(1));
     v.toggle_profile_popover();

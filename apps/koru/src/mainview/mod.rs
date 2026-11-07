@@ -7874,6 +7874,7 @@ impl MainView {
                 self.open_manage(crate::manage::Page::Profile(profile))
             }
             Outcome::ManageDevices => self.open_manage(crate::manage::Page::Devices),
+            Outcome::ManageCloud => self.open_manage(crate::manage::Page::Cloud),
             Outcome::FloorMenu { at } => self.open_floor_menu(at),
             Outcome::WorkspaceMenu { workspace, at } => {
                 self.open_workspace_menu(workspace, at, false)

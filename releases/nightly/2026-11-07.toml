@@ -24,6 +24,8 @@ retained workspace records.
 
 ## Desktop progress and missing files
 
+The cloud status in the Profile popover opens Manage's Koru Cloud page directly.
+
 Routine verification no longer resets confirmed document counts or makes a
 synced workspace appear unfinished. Actual edits, inventory changes and sync
 failures still update the status.
