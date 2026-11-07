@@ -827,7 +827,7 @@ impl BlobEngine {
             let durable = |hash: &str| {
                 matches!(
                     entry.and_then(|entry| entry.presence.get(hash)),
-                    Some(BlobPresence::Durable { size }) if *size > 0
+                    Some(BlobPresence::Durable { size }) if koru_cloud_blob::valid_blob_size(hash, *size)
                 )
             };
             let mut files = DocumentFiles {
@@ -1528,6 +1528,14 @@ impl BlobEngine {
     }
 
     fn finish(&self, workspace: WorkspaceId, held: Option<TransferHold>, pass: &mut Pass) {
+        if !pass.parked.is_empty() {
+            let mut reasons = BTreeMap::<&str, usize>::new();
+            for (_, code) in &pass.parked {
+                *reasons.entry(code).or_default() += 1;
+            }
+            tracing::info!(target: "koru_blob_sync", event = "cloud.blob.wait_reasons",
+                %workspace, ?reasons);
+        }
         let mut state = self.state();
         let entry = state.entry(workspace).or_default();
         let oldest = entry

@@ -339,10 +339,12 @@ pub fn compute(
     let mut missing = 0u32;
     for blob in &walk.blobs {
         match presence.get(blob.hash.as_str()) {
-            Some(BlobPresence::Durable { size }) if *size > 0 => durable += 1,
-            // A mapping with no verified size is not a mapping: the length is
-            // what the object worker proved before the API claimed durability,
-            // and a zero is the absence of that proof rather than a small file.
+            Some(BlobPresence::Durable { size })
+                if koru_cloud_blob::valid_blob_size(blob.hash.as_str(), *size) =>
+            {
+                durable += 1
+            }
+            // Zero proves coverage only at the empty file's content address.
             Some(BlobPresence::Durable { .. }) | None => missing += 1,
             Some(BlobPresence::Uploading) => uploading += 1,
             Some(BlobPresence::Missing) => missing += 1,
