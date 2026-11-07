@@ -1744,16 +1744,16 @@ impl ChatSurface {
     }
 
     /// The strip, inside the composer's box above the text.
-    pub(super) fn draw_strip(&mut self, canvas: &mut Scene, root: Affine, composer: Rect) {
+    pub(super) fn draw_strip(&mut self, canvas: &mut Scene, root: Affine, band_parent: Rect) {
         if self.chip_band.rects.is_empty() {
             return;
         }
         let drafts = self
             .current_chat_id()
             .map_or_else(Vec::new, |chat| self.strips.get(chat).to_vec());
-        let origin_x = composer.x + COMPOSER_PAD_X;
-        let origin_y = composer.y + COMPOSER_PAD_TOP;
-        let available = (composer.w - COMPOSER_PAD_X * 2.0).max(1.0);
+        let origin_x = band_parent.x + COMPOSER_PAD_X;
+        let origin_y = band_parent.y + COMPOSER_PAD_TOP;
+        let available = (band_parent.w - COMPOSER_PAD_X * 2.0).max(1.0);
         let band = self.chip_band.band_rect(origin_x, origin_y, available);
         let _strip = koru_draw::inspect::scope(
             "ComposerContextBand",

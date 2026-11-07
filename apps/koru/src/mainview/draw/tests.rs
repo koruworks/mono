@@ -3,6 +3,57 @@
 use super::*;
 use koru_draw::inspect;
 
+/// Both embedded chat hosts receive the window's resolved document recents.
+/// The composer uses this list for its plus menu; a document missing from the
+/// Store listing is never offered even if an old recent id still names it.
+#[test]
+fn chat_tab_and_ai_pane_receive_the_same_resolved_document_recents() {
+    let (mut view, workspace) = crate::mainview::harness::on_document();
+    let document = koru_core::DocumentId::new();
+    let stale = koru_core::DocumentId::new();
+    View::set_entries(
+        &mut view,
+        vec![koru_core::explore::ExploreEntry {
+            id: document,
+            parent: None,
+            ordinal: 0,
+            title: "Saved context".into(),
+            kind: koru_core::explore::KIND_DOCUMENT.into(),
+            mime: None,
+            note: None,
+            trashed_at: None,
+            trashed_by: None,
+        }],
+        None,
+    );
+    view.recents = vec![stale, document];
+    let expected = vec![(
+        koru_store_core::ids::DocumentId::from_uuid(document.as_uuid()),
+        "Saved context".to_string(),
+    )];
+    let paint = |view: &mut MainView| {
+        view.draw_frame(
+            &mut Scene::new(),
+            &workspace,
+            &ImageCache::new(),
+            Affine::IDENTITY,
+            false,
+            (-1.0, -1.0),
+        );
+    };
+
+    assert!(view.open_ai_chat_tab());
+    paint(&mut view);
+    let TabView::AiChat(chat) = &mut view.tabs_mut().active_mut().view else {
+        panic!("new chat tab is active");
+    };
+    assert!(!chat.set_recent_documents(expected.clone()));
+
+    assert!(view.toggle_ai());
+    paint(&mut view);
+    assert!(!view.ai_chat.set_recent_documents(expected));
+}
+
 #[test]
 fn resize_badge_hosts_preserve_sidebar_clamp_pane_center_and_small_pane_suppression() {
     let (mut view, _workspace) = crate::mainview::harness::on_document();

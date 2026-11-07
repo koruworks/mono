@@ -83,6 +83,7 @@ mod chats;
 mod composer;
 mod composer_band;
 mod composer_plus;
+mod composer_shell;
 mod dictation;
 mod doc_links;
 mod effort;
@@ -574,6 +575,7 @@ pub struct ChatSurface {
     plus_menu: Option<Menu<composer_plus::PlusItem>>,
     chip_band: composer_band::ChipBand,
     chip_scroll: f32,
+    composer_shell: Option<composer_shell::Shell>,
     /// *Add to chat* over a reply's selection (D88).
     add_pill: AddPill,
     response_menu_anchor: Option<Rect>,
@@ -980,6 +982,7 @@ impl ChatSurface {
             plus_menu: None,
             chip_band: composer_band::ChipBand::default(),
             chip_scroll: 0.0,
+            composer_shell: None,
             add_pill: AddPill::default(),
             response_menu_anchor: None,
             credential_request: None,
@@ -5434,6 +5437,13 @@ impl ChatSurface {
         };
         let rect = Rect::new(content.x, y, width, height);
         self.composer_hit_rect = rect;
+        self.composer_shell = Some(composer_shell::layout(
+            rect,
+            self.strip_band(),
+            text_h,
+            koru_i18n::t(self.lang, koru_i18n::Key::AiComposerAddContext),
+            self.send_button_name(),
+        ));
         if below > 0.0 {
             // The folder control is as wide as what it shows.
             let label = self.folder_label_shown();
@@ -5462,6 +5472,9 @@ impl ChatSurface {
     /// toolbar row. The editor insets its words by the same padding
     /// ([`composer`]).
     fn composer_text_rect(&self) -> Rect {
+        if let Some(shell) = &self.composer_shell {
+            return shell.text();
+        }
         // Below the strip of attachments, when the message has any.
         let band = self.strip_band();
         Rect::new(
@@ -5513,6 +5526,9 @@ impl ChatSurface {
     /// The send (and stop) button, in the composer's bottom-right corner,
     /// inset by the composer's own padding like the toolbar beside it.
     fn send_button(&self) -> Rect {
+        if let Some(shell) = &self.composer_shell {
+            return shell.send();
+        }
         let composer = self.composer_hit_rect;
         let side = BUTTON_H;
         Rect::new(
@@ -5707,14 +5723,6 @@ impl ChatSurface {
         ))
     }
 
-    /// Whether the folder can still be chosen: an agent chat with no message.
-    fn folder_editable(&self) -> bool {
-        self.transcript.as_ref().is_some_and(|transcript| {
-            agents::is_agent_provider(&transcript.chat.current_model.provider)
-                && transcript.messages.is_empty()
-        })
-    }
-
     /// [`folder_label`](Self::folder_label) cut with an ellipsis to fit the
     /// composer's width beside the folder icon, so a long folder name never
     /// runs past the box it sits under.
@@ -5890,6 +5898,9 @@ impl ChatSurface {
     }
 
     fn plus_button(&self) -> Rect {
+        if let Some(shell) = &self.composer_shell {
+            return shell.plus();
+        }
         let toolbar = self.composer_toolbar_rect();
         Rect::new(toolbar.x, toolbar.y, toolbar.h, toolbar.h)
     }
@@ -6365,6 +6376,140 @@ impl ChatSurface {
         }
     }
 
+    fn paint_composer_box(&self, canvas: &mut Scene, root: Affine, rect: Rect) {
+        let p = theme::p();
+        let shape = scene::rrect(rect.x, rect.y, rect.w, rect.h, 8.0);
+        scene::fill(canvas, root, p.panel_bg, &shape);
+        scene::stroke(
+            canvas,
+            root,
+            if self.focus == Focus::Composer {
+                p.focus_ring
+            } else {
+                p.panel_border
+            },
+            theme::BORDER_W,
+            &shape,
+        );
+    }
+
+    fn paint_composer_text(&mut self, canvas: &mut Scene, root: Affine) {
+        let focused = self.focus == Focus::Composer;
+        self.composer.set_focused(focused);
+        self.composer.draw(
+            canvas,
+            root,
+            focused,
+            self.pointer,
+            koru_i18n::t(
+                self.lang,
+                if self.transcript.as_ref().is_some_and(|chat| {
+                    agents::is_agent_provider(&chat.chat.current_model.provider)
+                }) {
+                    koru_i18n::Key::AiComposerAgentPlaceholder
+                } else {
+                    koru_i18n::Key::AiComposerPlaceholder
+                },
+            ),
+        );
+    }
+
+    /// Paint the controls whose model and microphone widths depend on the
+    /// current chat. The plus and send have their own element targets.
+    fn paint_composer_toolbar_content(
+        &mut self,
+        canvas: &mut Scene,
+        root: Affine,
+        composer: Rect,
+    ) -> bool {
+        if self.draw_dictation_row(canvas, root) {
+            self.draw_reasoning_drawer(canvas, root, composer);
+            return true;
+        }
+        self.draw_mic(canvas, root);
+        let chip_label = self.chip_label();
+        self.chip_label_w = self.engine.simple_layout(&chip_label, role::row()).width();
+        self.draw_approval_mode_chip(canvas, root);
+        if let Some(mode_button) = self.tool_mode_button() {
+            ActionButton::new(
+                self.tool_mode_label(),
+                ActionStyle::Ghost,
+                Some(icons::CARET_DOWN),
+            )
+            .draw(
+                canvas,
+                root,
+                &mut self.engine,
+                mode_button,
+                mode_button.contains(self.pointer.0, self.pointer.1),
+            );
+        }
+        if let Some(privacy) = self.privacy_button() {
+            let private = self
+                .transcript
+                .as_ref()
+                .is_some_and(|transcript| transcript.chat.private);
+            IconButton::new(icons::DETECTIVE, privacy)
+                .with_state(IconButtonState {
+                    hovered: privacy.contains(self.pointer.0, self.pointer.1),
+                    active: private,
+                    disabled: false,
+                })
+                .draw(canvas, root, &mut self.engine);
+        }
+        if let Some(search) = self.web_search_button() {
+            IconButton::new(icons::GLOBE, search)
+                .with_state(IconButtonState {
+                    hovered: search.contains(self.pointer.0, self.pointer.1),
+                    active: self.web_search_armed,
+                    disabled: false,
+                })
+                .draw(canvas, root, &mut self.engine);
+        }
+        self.draw_reasoning_drawer(canvas, root, composer);
+        let model_button = self.chat_model_button();
+        let koru_chat = self.koru_chat();
+        let model_label = self.chip_label();
+        let model_caret =
+            (!koru_chat || self.effort_control().is_some()).then_some(icons::CARET_DOWN);
+        ActionButton::new(&model_label, ActionStyle::Ghost, model_caret).draw(
+            canvas,
+            root,
+            &mut self.engine,
+            model_button,
+            model_button.contains(self.pointer.0, self.pointer.1),
+        );
+        false
+    }
+
+    fn paint_composer_plus(&mut self, canvas: &mut Scene, root: Affine, plus: Rect) {
+        IconButton::new(icons::PLUS, plus)
+            .with_state(IconButtonState {
+                hovered: plus.contains(self.pointer.0, self.pointer.1),
+                active: self.plus_menu.is_some(),
+                disabled: false,
+            })
+            .draw(canvas, root, &mut self.engine);
+    }
+
+    fn paint_composer_send(&mut self, canvas: &mut Scene, root: Affine, send: Rect) {
+        let mode = self.send_mode();
+        let enabled = match mode {
+            queue::SendMode::Stop => true,
+            queue::SendMode::Queue => self.composer_has_content(),
+            queue::SendMode::Send => !self.awaiting_model() && self.composer_has_content(),
+        };
+        draw_composer_action(
+            canvas,
+            root,
+            &mut self.engine,
+            send,
+            mode,
+            enabled,
+            send.contains(self.pointer.0, self.pointer.1),
+        );
+    }
+
     fn draw_chat(&mut self, canvas: &mut Scene, root: Affine) {
         let p = theme::p();
         // **No title row.** A chat's name is its tab's in a workspace and
@@ -6398,251 +6543,31 @@ impl ChatSurface {
                 self.stored_open_link = Some(hit);
             }
         }
-        // **The composer is one component** in the inspector, every primitive
-        // it paints inside it: the box, the text, the toolbar's controls and
-        // the folder row under the box — so a review sees `KoruComposer` and
-        // its parts rather than loose fills and strokes.
-        let footer_row = self.composer_footer_rect();
-        let whole = match footer_row {
-            Some(row) => Rect::new(
-                composer.x,
-                composer.y,
-                composer.w,
-                row.y + row.h - composer.y,
-            ),
-            None => composer,
-        };
-        let _composer = koru_draw::inspect::scope(
-            "KoruComposer",
-            "component",
-            root,
-            scene::rect(whole.x, whole.y, whole.w, whole.h),
-            |r| {
-                r.property("radius", 8.0, "box corners");
-                r.property("pad x", COMPOSER_PAD_X, "text and toolbar inset");
-                r.property("pad top", COMPOSER_PAD_TOP, "above the text");
-                r.property("pad bottom", COMPOSER_PAD_BOTTOM, "below the toolbar");
-            },
-        );
-        {
-            let _box = koru_draw::inspect::scope(
-                "ComposerBox",
-                "part",
-                root,
-                scene::rect(composer.x, composer.y, composer.w, composer.h),
-                |_| {},
-            );
-            scene::fill(
-                canvas,
-                root,
-                p.panel_bg,
-                &scene::rrect(composer.x, composer.y, composer.w, composer.h, 8.0),
-            );
-            scene::stroke(
-                canvas,
-                root,
-                if self.focus == Focus::Composer {
-                    p.focus_ring
-                } else {
-                    p.panel_border
-                },
-                theme::BORDER_W,
-                &scene::rrect(composer.x, composer.y, composer.w, composer.h, 8.0),
-            );
-        }
-        self.draw_strip(canvas, root, composer);
-        {
-            let text = self.composer_text_rect();
-            let _text = koru_draw::inspect::scope(
-                "ComposerText",
-                "part",
-                root,
-                scene::rect(text.x, text.y, text.w, text.h),
-                |r| r.property("editor", "koru-editor", "a private document"),
-            );
-            let focused = self.focus == Focus::Composer;
-            self.composer.set_focused(focused);
-            self.composer.draw(
-                canvas,
-                root,
-                focused,
-                self.pointer,
-                koru_i18n::t(
-                    self.lang,
-                    if self.transcript.as_ref().is_some_and(|chat| {
-                        agents::is_agent_provider(&chat.chat.current_model.provider)
-                    }) {
-                        koru_i18n::Key::AiComposerAgentPlaceholder
-                    } else {
-                        koru_i18n::Key::AiComposerPlaceholder
-                    },
-                ),
-            );
-        }
-        'toolbar: {
-            let toolbar = Rect::new(
-                composer.x,
-                composer.y + composer.h - COMPOSER_PAD_BOTTOM - COMPOSER_TOOLBAR_H,
-                composer.w,
-                COMPOSER_TOOLBAR_H,
-            );
-            let _toolbar = koru_draw::inspect::scope(
-                "ComposerToolbar",
-                "part",
-                root,
-                scene::rect(toolbar.x, toolbar.y, toolbar.w, toolbar.h),
-                |_| {},
-            );
-            // **Recording** (D103): the row is the waveform, the timer, ✕
-            // and ■ — none of the toolbar's controls, and no send.
-            if self.draw_dictation_row(canvas, root) {
-                self.draw_reasoning_drawer(canvas, root, composer);
-                break 'toolbar;
-            }
-            let plus = self.plus_button();
-            let plus_name = koru_i18n::t(self.lang, koru_i18n::Key::AiComposerAddContext);
-            let _plus = koru_draw::inspect::scope(
-                "ComposerAddContext",
-                "button",
-                root,
-                scene::rect(plus.x, plus.y, plus.w, plus.h),
-                |r| r.property("accessible name", plus_name, "composer action"),
-            );
-            IconButton::new(icons::PLUS, plus)
-                .with_state(IconButtonState {
-                    hovered: plus.contains(self.pointer.0, self.pointer.1),
-                    active: self.plus_menu.is_some(),
-                    disabled: false,
-                })
-                .draw(canvas, root, &mut self.engine);
-            drop(_plus);
-            self.draw_mic(canvas, root);
-            let send = self.send_button();
-            let mode = self.send_mode();
-            // Off while the chat waits for a model, whatever is typed.
-            let send_enabled = match mode {
-                queue::SendMode::Stop => true,
-                queue::SendMode::Queue => self.composer_has_content(),
-                queue::SendMode::Send => !self.awaiting_model() && self.composer_has_content(),
-            };
-            let name = self.send_button_name();
-            let _send = koru_draw::inspect::scope(
-                name,
-                "button",
-                root,
-                scene::rect(send.x, send.y, send.w, send.h),
-                |r| r.property("accessible name", name, "caller label"),
-            );
-            draw_composer_action(
-                canvas,
-                root,
-                &mut self.engine,
-                send,
-                mode,
-                send_enabled,
-                send.contains(self.pointer.0, self.pointer.1),
-            );
-            drop(_send);
-            let chip_label = self.chip_label();
-            self.chip_label_w = self.engine.simple_layout(&chip_label, role::row()).width();
-            self.draw_approval_mode_chip(canvas, root);
-            if let Some(mode_button) = self.tool_mode_button() {
-                ActionButton::new(
-                    self.tool_mode_label(),
-                    ActionStyle::Ghost,
-                    Some(icons::CARET_DOWN),
-                )
-                .draw(
-                    canvas,
-                    root,
-                    &mut self.engine,
-                    mode_button,
-                    mode_button.contains(self.pointer.0, self.pointer.1),
-                );
-            }
-            if let Some(privacy) = self.privacy_button() {
-                let private = self
-                    .transcript
-                    .as_ref()
-                    .is_some_and(|transcript| transcript.chat.private);
-                IconButton::new(icons::DETECTIVE, privacy)
-                    .with_state(IconButtonState {
-                        hovered: privacy.contains(self.pointer.0, self.pointer.1),
-                        active: private,
-                        disabled: false,
-                    })
-                    .draw(canvas, root, &mut self.engine);
-            }
-            if let Some(search) = self.web_search_button() {
-                IconButton::new(icons::GLOBE, search)
-                    .with_state(IconButtonState {
-                        hovered: search.contains(self.pointer.0, self.pointer.1),
-                        active: self.web_search_armed,
-                        disabled: false,
-                    })
-                    .draw(canvas, root, &mut self.engine);
-            }
-            self.draw_reasoning_drawer(canvas, root, composer);
-            let model_button = self.chat_model_button();
-            let koru_chat = self.koru_chat();
-            let model_label = self.chip_label();
-            let model_caret =
-                (!koru_chat || self.effort_control().is_some()).then_some(icons::CARET_DOWN);
-            ActionButton::new(&model_label, ActionStyle::Ghost, model_caret).draw(
-                canvas,
-                root,
-                &mut self.engine,
-                model_button,
-                model_button.contains(self.pointer.0, self.pointer.1),
-            );
-        }
-        if let Some(footer_row) = footer_row {
-            let _row = koru_draw::inspect::scope(
-                "ComposerFolderRow",
-                "part",
-                root,
-                scene::rect(footer_row.x, footer_row.y, footer_row.w, footer_row.h),
-                |_| {},
-            );
-            if let Some(folder) = self.folder_button() {
-                // Quiet, under the box: the icon and the name in the meta face,
-                // dim; a hover tint while the folder can still be chosen.
-                let hovered =
-                    self.folder_editable() && folder.contains(self.pointer.0, self.pointer.1);
-                if hovered {
-                    scene::fill(
-                        canvas,
-                        root,
-                        p.hover_tint,
-                        &scene::rrect(folder.x, folder.y, folder.w, folder.h, 4.0),
-                    );
+        // The shell frame resolves the box, band, editor and toolbar from
+        // current state. Its ancestry stays open while each mutable host part
+        // paints, so F12 sees the editor and every control under KoruComposer.
+        let shell = self.composer_shell.take().expect("composer was laid out");
+        let mut recording = false;
+        shell
+            .frame
+            .paint_host(&shell.tree, canvas, root, |node, canvas, root| {
+                match node.name {
+                    "ComposerBox" => self.paint_composer_box(canvas, root, node.rect),
+                    "ComposerContextBand" => self.draw_strip(canvas, root, node.rect),
+                    "ComposerText" => self.paint_composer_text(canvas, root),
+                    "ComposerToolbar" => {
+                        recording = self.paint_composer_toolbar_content(canvas, root, composer);
+                    }
+                    "ComposerAddContext" if !recording => {
+                        self.paint_composer_plus(canvas, root, node.rect);
+                    }
+                    "ComposerSend" if !recording => {
+                        self.paint_composer_send(canvas, root, node.rect);
+                    }
+                    _ => {}
                 }
-                let colour = if hovered { p.text } else { p.text_dim };
-                let icon = self
-                    .engine
-                    .icon_layout(icons::FOLDER, ActionButton::ICON_SIZE);
-                let shown = self.folder_label_shown();
-                let label = self.engine.simple_layout(&shown, role::meta());
-                let x = folder.x + ActionButton::PAD_X;
-                scene::draw_layout_first_line(
-                    canvas,
-                    root,
-                    &icon,
-                    x,
-                    folder.y + (folder.h - icon.height()) * 0.5,
-                    Some(colour),
-                );
-                scene::draw_layout_first_line(
-                    canvas,
-                    root,
-                    &label,
-                    x + icon.width() + ActionButton::GAP,
-                    folder.y + (folder.h - label.height()) * 0.5,
-                    Some(colour),
-                );
-            }
-        }
-        drop(_composer);
+            });
+        self.composer_shell = Some(shell);
         // A link's card (D95): over the transcript and the composer, under
         // the pickers and panes that float over both.
         self.link_card.draw(
@@ -14622,21 +14547,22 @@ mod tests {
             }
             false
         };
-        for part in ["ComposerBox", "ComposerText", "ComposerToolbar"] {
+        let the_box = records
+            .iter()
+            .position(|r| r.name == "ComposerBox")
+            .expect("the box is drawn");
+        assert_eq!(records[the_box].parent, Some(composer));
+        for part in ["ComposerText", "ComposerToolbar"] {
             let i = records
                 .iter()
                 .position(|r| r.name == part)
                 .unwrap_or_else(|| panic!("{part} is drawn"));
             assert_eq!(
                 records[i].parent,
-                Some(composer),
-                "{part} is the composer's part"
+                Some(the_box),
+                "{part} is inside the composer's box"
             );
         }
-        let the_box = records
-            .iter()
-            .position(|r| r.name == "ComposerBox")
-            .unwrap();
         let primitives: Vec<usize> = records
             .iter()
             .enumerate()
