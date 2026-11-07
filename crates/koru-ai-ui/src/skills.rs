@@ -165,7 +165,6 @@ impl ChatSurface {
     }
 
     /// Whether the `$` list is open.
-    #[cfg(test)]
     pub(crate) fn skill_list_open(&self) -> bool {
         self.skills.open.is_some()
     }

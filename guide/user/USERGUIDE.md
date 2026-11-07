@@ -1400,23 +1400,20 @@ even if the document or Explore last held focus;
 `Alt+Down` walks forward again, and one step past the newest question returns
 the caret to the composer.
 
-Each chat has its own workspace authority in the left control at the bottom of
-the composer, immediately after the web-search globe when search is available.
-Open it to select only the workspaces this chat may read or change; lists with
-more than five workspaces add a filter field above the rows. Selecting none
-means no workspace access. In an embedded AI pane, the
-workspace shown by that window is always the first row and is selected when the
-chat is opened there. You may remove that grant while the chat remains open;
-opening it again in the embedded pane initializes it from the current workspace
-again.
+The composer shows the open document and attachments as removable context
+chips inside the message box. Use **+ → Recent** to insert a recent document
+or **+ → Koru context** to open the same document picker as `@`. The band wraps
+up to three lines and then scrolls. When you send from a workspace or mention
+another workspace's document, Koru grants the needed workspace before it sends
+the message. A refused grant leaves the draft and its attachments in place.
 
-The approval control is independent and sits immediately left of the model
-control. **Manual approval** lets reads proceed but pauses every proposed
-change for an explicit decision. **Automatic** allows both reads and changes
-within the selected workspaces. A chat with a local agent has the agent's own
-**approval modes** there instead: the chip shows the current mode's icon and
-name, and opens a list upward of every mode the agent offers, each with a line
-saying what it does and a check on the current one. Claude Code offers **Ask
+On a chat with a local agent, the send button carries the agent's current
+approval mode: its color and icon identify the mode, and its chevron appears
+on hover or keyboard focus. The chevron opens a list above the composer with
+each mode's name, explanation and a check on the current one. The menu footer
+says the choice applies to this chat; **Change default** opens **Settings →
+Coding → Agent providers**. The chevron remains available when Send is
+disabled. While Stop shows, the chevron is hidden. Claude Code offers **Ask
 first** (its default: it asks before every change), **Accept edits** (it edits
 files without asking, and still asks before commands), **Plan** (it reads and
 plans, and changes nothing until you approve the plan), **Auto** (Claude
@@ -1425,13 +1422,13 @@ asking). Codex offers **Ask for approval** (the default), **Approve for me**
 (Codex edits in the chat's folder and its reviewer decides anything that needs
 more) and **Full access** (no sandbox at all); OpenCode offers **Build** and
 **Plan**. Full access is shown in the warning color. `Shift+Tab` in the
-composer steps to the next mode, which the chip then names; it never steps
+composer steps to the next mode, which the send button then shows; it never steps
 to Full access, which you choose only from the list. The mode is the chat's: a
 change inside a chat applies to that chat only, and a new chat starts from the
 **default permission** you set on **Settings → Coding → Agent providers** —
 Manual (the agent's asking mode) until you choose otherwise. A mode chosen while a reply is running
-applies to your next message, and the note beside the chip says so. When the
-agent leaves a mode by itself — Claude after you approve its plan — the chip
+applies to your next message, and the note beside the send button says so. When the
+agent leaves a mode by itself — Claude after you approve its plan — the send button
 follows. Whatever the mode, the agent asks for permission with its own choices,
 on a card in the reply. A proposed change waits on a card with **Approve** and
 **Deny**. In the agent's work above a reply, a change to a file shows the
@@ -1445,9 +1442,8 @@ chat's working folder. When an agent opens a
 picture — a PNG, JPEG, GIF, WebP or BMP file — open that step to see the
 picture itself under the file's name; Koru shows it straight from the file,
 so if the file has since been moved or deleted the step shows just its name. The
-composer footer keeps the
-globe and workspace controls against its left edge and approval plus
-model controls against its right edge. The send action is an arrow inside the
+composer toolbar keeps the plus and available web-search controls against its left edge,
+and the model control and send button at its right edge. The send action is an arrow inside the
 composer; it is disabled while the composer is empty and becomes a stop control
 during an active response. Pressing `Esc` twice does the same as the stop
 control: the first press shows *Press Esc again to stop* above the composer,

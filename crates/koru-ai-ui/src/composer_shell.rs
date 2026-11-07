@@ -11,11 +11,13 @@ use koru_draw::el::{
 use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
 use koru_draw::theme::tokens::Space;
+use koru_ui::split_button::SplitButton;
 
 use crate::{BUTTON_H, COMPOSER_PAD_TOP, COMPOSER_TEXT_GAP};
 
 pub(crate) const PLUS: Key = Key::surface("KoruComposer", "add-context");
 pub(crate) const SEND: Key = Key::surface("KoruComposer", "send");
+pub(crate) const MODE: Key = Key::surface("KoruComposer", "mode");
 
 pub(crate) struct Shell {
     pub(crate) tree: El,
@@ -42,6 +44,10 @@ impl Shell {
     pub(crate) fn send(&self) -> Rect {
         self.frame.rect_of("ComposerSend").expect("composer send")
     }
+
+    pub(crate) fn mode(&self) -> Option<Rect> {
+        self.frame.rect_of("ComposerModeChevron")
+    }
 }
 
 thread_local! {
@@ -54,8 +60,56 @@ pub(crate) fn layout(
     text_height: f32,
     plus_name: &str,
     send_name: &str,
+    mode_name: Option<&str>,
 ) -> Shell {
     let text_region = COMPOSER_PAD_TOP + text_height + COMPOSER_TEXT_GAP;
+    let mut toolbar = row("ComposerToolbar")
+        .h(Length::Runtime(BUTTON_H, "action button height"))
+        .pad_x(Space::S4)
+        .child(
+            boxed("ComposerAddContext")
+                .w(Length::Runtime(BUTTON_H, "action button height"))
+                .h(Length::Runtime(BUTTON_H, "action button height"))
+                .id(PLUS)
+                .hit()
+                .focusable()
+                .action(Action::Click)
+                .semantics(Role::Button)
+                .name_text(plus_name),
+        )
+        .child(spacer());
+    let send = boxed("ComposerSend")
+        .w(Length::Runtime(BUTTON_H, "action button height"))
+        .h(Length::Runtime(BUTTON_H, "action button height"))
+        .id(SEND)
+        .hit()
+        .focusable()
+        .action(Action::Click)
+        .semantics(Role::Button)
+        .name_text(send_name);
+    toolbar = if let Some(mode_name) = mode_name {
+        toolbar.child(
+            row("ComposerSplitButton")
+                .w(Length::Runtime(SplitButton::W, "split button width"))
+                .child(send)
+                .child(
+                    boxed("ComposerModeChevron")
+                        .w(Length::Runtime(
+                            SplitButton::MENU_W,
+                            "mode menu target width",
+                        ))
+                        .h(Length::Runtime(BUTTON_H, "action button height"))
+                        .id(MODE)
+                        .hit()
+                        .focusable()
+                        .action(Action::Click)
+                        .semantics(Role::Button)
+                        .name_text(mode_name),
+                ),
+        )
+    } else {
+        toolbar.child(send)
+    };
     let tree = col("KoruComposer").child(
         col("ComposerBox")
             .pad_bottom(Space::S2)
@@ -63,34 +117,7 @@ pub(crate) fn layout(
                 boxed("ComposerContextBand").h(Length::Runtime(band_height, "measured chip band")),
             )
             .child(boxed("ComposerText").h(Length::Runtime(text_region, "editor lines and insets")))
-            .child(
-                row("ComposerToolbar")
-                    .h(Length::Runtime(BUTTON_H, "action button height"))
-                    .pad_x(Space::S4)
-                    .child(
-                        boxed("ComposerAddContext")
-                            .w(Length::Runtime(BUTTON_H, "action button height"))
-                            .h(Length::Runtime(BUTTON_H, "action button height"))
-                            .id(PLUS)
-                            .hit()
-                            .focusable()
-                            .action(Action::Click)
-                            .semantics(Role::Button)
-                            .name_text(plus_name),
-                    )
-                    .child(spacer())
-                    .child(
-                        boxed("ComposerSend")
-                            .w(Length::Runtime(BUTTON_H, "action button height"))
-                            .h(Length::Runtime(BUTTON_H, "action button height"))
-                            .id(SEND)
-                            .hit()
-                            .focusable()
-                            .action(Action::Click)
-                            .semantics(Role::Button)
-                            .name_text(send_name),
-                    ),
-            ),
+            .child(toolbar),
     );
     let frame = LAYOUT.with_borrow_mut(|slot| {
         let (engine, cache) = slot.get_or_insert_with(|| (TextEngine::new(), TextCache::default()));
@@ -106,7 +133,7 @@ mod tests {
     #[test]
     fn shell_parts_share_frame_geometry_and_ancestry() {
         let rect = Rect::new(10.0, 20.0, 360.0, 130.0);
-        let shell = layout(rect, 46.0, 28.0, "Add context", "Send");
+        let shell = layout(rect, 46.0, 28.0, "Add context", "Send", None);
         assert!(
             shell.frame.diagnostics.is_empty(),
             "{:?}",
@@ -140,5 +167,26 @@ mod tests {
             parent.map(|at| shell.frame.nodes[at].name),
             Some("KoruComposer")
         );
+    }
+
+    #[test]
+    fn split_send_keeps_the_menu_target_after_the_action() {
+        let shell = layout(
+            Rect::new(10.0, 20.0, 360.0, 130.0),
+            0.0,
+            74.0,
+            "Add context",
+            "Send",
+            Some("Approval mode"),
+        );
+        assert!(shell.frame.diagnostics.is_empty());
+        let send = shell.send();
+        let mode = shell.mode().expect("mode menu target");
+        let group = shell.frame.rect_of("ComposerSplitButton").unwrap();
+        assert_eq!(group.w, SplitButton::W);
+        assert_eq!(send.x, group.x);
+        assert_eq!(send.w, SplitButton::ACTION_W);
+        assert_eq!(send.x + send.w, mode.x);
+        assert_eq!(shell.frame.hit_at(mode.x + 1.0, mode.y + 1.0), Some(MODE));
     }
 }

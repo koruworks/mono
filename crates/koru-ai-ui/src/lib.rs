@@ -49,6 +49,7 @@ use koru_ui::button::{ActionButton, ActionStyle, ButtonRole};
 use koru_ui::confirm::{Confirm, Outcome as ConfirmOutcome};
 use koru_ui::context_chip::{ContextChip, ContextState};
 use koru_ui::icon_button::{IconButton, State as IconButtonState};
+use koru_ui::split_button::SplitButton;
 use koru_ui::text_input::{InputStyle, TextInput};
 use koru_ui::tooltip::{Tooltip, TooltipContent};
 use koru_ui::{Menu, PulsingDots, TextArea, Typed};
@@ -261,6 +262,10 @@ impl Drop for OpenAiCredentialRequest {
 enum Focus {
     None,
     Composer,
+    /// The send half of an agent chat's split button.
+    SendArrow,
+    /// The send button's independently enabled approval-mode menu target.
+    ModeChevron,
     /// A reply's *Worked for …* header: Enter or Space opens it.
     Work(MessageId),
     /// An agent's waiting questions (koru-ai D108): the card's own cursor
@@ -597,7 +602,6 @@ pub struct ChatSurface {
     /// The row the keyboard is on in the open approval-mode list.
     approval_mode_focus: Option<usize>,
     /// The approval-mode chip's width as last drawn: its icon, name and caret.
-    approval_mode_chip_w: f32,
     /// The workspace-access chip's width as last measured: its label, caret
     /// and padding (D107).
     tool_access_chip_w: f32,
@@ -997,7 +1001,6 @@ impl ChatSurface {
             tool_mode_open: false,
             approval_mode_open: false,
             approval_mode_focus: None,
-            approval_mode_chip_w: 0.0,
             tool_access_chip_w: 0.0,
             agent_modes: HashMap::new(),
             modes_asked: HashMap::new(),
@@ -1708,6 +1711,40 @@ impl ChatSurface {
         {
             return handled;
         }
+        // The split button is an independent keyboard stop. Its menu remains
+        // reachable with an empty draft, when the send action is disabled.
+        if let Some(handled) = self.approval_modes_key(key, mods) {
+            return handled;
+        }
+        if matches!(self.focus, Focus::SendArrow | Focus::ModeChevron) {
+            if self.approval_mode_button().is_none() {
+                self.focus = Focus::Composer;
+            } else if mods.is_empty() {
+                match key {
+                    Key::Named(NamedKey::Tab) => {
+                        self.focus = if self.focus == Focus::SendArrow {
+                            Focus::ModeChevron
+                        } else {
+                            Focus::Composer
+                        };
+                        return true;
+                    }
+                    Key::Named(NamedKey::Enter | NamedKey::Space) => {
+                        if self.focus == Focus::SendArrow {
+                            return self.activate_send_button();
+                        }
+                        self.approval_mode_open = true;
+                        self.approval_mode_focus = None;
+                        return true;
+                    }
+                    Key::Named(NamedKey::Escape) => {
+                        self.focus = Focus::Composer;
+                        return true;
+                    }
+                    _ => self.focus = Focus::Composer,
+                }
+            }
+        }
         // **A modifier pressed on its own is not typing** (D90's Ctrl+L
         // bug): the shell hands this surface the Ctrl of `Ctrl+L` as a key
         // of its own, and taking it as the keyboard arriving in the composer
@@ -1727,6 +1764,17 @@ impl ChatSurface {
         ) {
             return false;
         }
+        if self.focus == Focus::Composer
+            && mods.is_empty()
+            && matches!(key, Key::Named(NamedKey::Tab))
+            && self.approval_presentation().is_some()
+            && self.send_mode() != queue::SendMode::Stop
+            && !self.skill_list_open()
+            && !self.composer.picker_open()
+        {
+            self.focus = Focus::SendArrow;
+            return true;
+        }
         if self.focus != Focus::Composer {
             self.focus = Focus::Composer;
         }
@@ -1745,10 +1793,6 @@ impl ChatSurface {
         // once it has closed.
         if self.composer.picker_open() {
             return self.composer_key(key, text, mods);
-        }
-        // The open approval-mode list takes Up, Down, Enter and Escape.
-        if let Some(handled) = self.approval_modes_key(key, mods) {
-            return handled;
         }
         // **Shift+Tab steps the approval mode** (koru-ai D7) — after the
         // composer: an outdent wins wherever there is one to make.
@@ -2337,24 +2381,8 @@ impl ChatSurface {
         if let Some(hit) = self.queue_hit_at(x, y) {
             return self.queue_action(hit);
         }
-        if self.reply_busy() && self.send_button().contains(x, y) {
-            // **Queue** while the composer holds something, **Stop** while
-            // it is empty ([`queue::SendMode`]).
-            match (self.send_mode(), self.attempt) {
-                (queue::SendMode::Stop, Some(attempt)) => {
-                    return self.send_command(Command::Cancel(attempt));
-                }
-                _ => {
-                    self.queue_composer();
-                    return true;
-                }
-            }
-        } else if self.send_button().contains(x, y) {
-            // Off while the chat waits for a model: the chip is the way on.
-            if !self.awaiting_model() {
-                self.send_composer();
-            }
-            return true;
+        if self.send_button().contains(x, y) {
+            return self.activate_send_button();
         }
         if let Some(hit) = self.work_hit_at(x, y) {
             if let work_view::WorkHit::Header(message) = hit {
@@ -5437,12 +5465,17 @@ impl ChatSurface {
         };
         let rect = Rect::new(content.x, y, width, height);
         self.composer_hit_rect = rect;
+        let mode_name = (self.send_mode() != queue::SendMode::Stop)
+            .then(|| self.approval_presentation())
+            .flatten()
+            .map(|(row, _)| row.title);
         self.composer_shell = Some(composer_shell::layout(
             rect,
             self.strip_band(),
             text_h,
             koru_i18n::t(self.lang, koru_i18n::Key::AiComposerAddContext),
             self.send_button_name(),
+            mode_name.as_deref(),
         ));
         if below > 0.0 {
             // The folder control is as wide as what it shows.
@@ -6376,6 +6409,26 @@ impl ChatSurface {
         }
     }
 
+    fn activate_send_button(&mut self) -> bool {
+        if self.reply_busy() {
+            // Queue while the composer holds something, Stop while it is
+            // empty. Pointer and keyboard use this same route.
+            match (self.send_mode(), self.attempt) {
+                (queue::SendMode::Stop, Some(attempt)) => {
+                    return self.send_command(Command::Cancel(attempt));
+                }
+                _ => {
+                    self.queue_composer();
+                    return true;
+                }
+            }
+        }
+        if !self.awaiting_model() {
+            self.send_composer();
+        }
+        true
+    }
+
     fn paint_composer_box(&self, canvas: &mut Scene, root: Affine, rect: Rect) {
         let p = theme::p();
         let shape = scene::rrect(rect.x, rect.y, rect.w, rect.h, 8.0);
@@ -6429,7 +6482,6 @@ impl ChatSurface {
         self.draw_mic(canvas, root);
         let chip_label = self.chip_label();
         self.chip_label_w = self.engine.simple_layout(&chip_label, role::row()).width();
-        self.draw_approval_mode_chip(canvas, root);
         if let Some(mode_button) = self.tool_mode_button() {
             ActionButton::new(
                 self.tool_mode_label(),
@@ -6510,6 +6562,43 @@ impl ChatSurface {
         );
     }
 
+    fn paint_composer_split(&mut self, canvas: &mut Scene, root: Affine, rect: Rect) {
+        let Some((row, tone)) = self.approval_presentation() else {
+            return;
+        };
+        let mode = self.send_mode();
+        let enabled = match mode {
+            queue::SendMode::Stop => true,
+            queue::SendMode::Queue => self.composer_has_content(),
+            queue::SendMode::Send => !self.awaiting_model() && self.composer_has_content(),
+        };
+        let mut button = SplitButton {
+            rect,
+            tone,
+            action_enabled: enabled,
+            action_hot: false,
+            action_focused: self.focus == Focus::SendArrow,
+            menu_hot: false,
+            menu_focused: self.focus == Focus::ModeChevron,
+            menu_open: self.approval_mode_open,
+        };
+        button.action_hot = button
+            .action_rect()
+            .contains(self.pointer.0, self.pointer.1);
+        button.menu_hot = button.menu_rect().contains(self.pointer.0, self.pointer.1);
+        button.draw(
+            canvas,
+            root,
+            &mut self.engine,
+            if mode == queue::SendMode::Queue {
+                icons::CLOCK
+            } else {
+                icons::ARROW_UP
+            },
+            row.icon,
+        );
+    }
+
     fn draw_chat(&mut self, canvas: &mut Scene, root: Affine) {
         let p = theme::p();
         // **No title row.** A chat's name is its tab's in a workspace and
@@ -6561,7 +6650,10 @@ impl ChatSurface {
                     "ComposerAddContext" if !recording => {
                         self.paint_composer_plus(canvas, root, node.rect);
                     }
-                    "ComposerSend" if !recording => {
+                    "ComposerSplitButton" if !recording => {
+                        self.paint_composer_split(canvas, root, node.rect);
+                    }
+                    "ComposerSend" if !recording && shell.mode().is_none() => {
                         self.paint_composer_send(canvas, root, node.rect);
                     }
                     _ => {}

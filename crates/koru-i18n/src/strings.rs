@@ -342,6 +342,8 @@ pub enum Key {
     AiAgentModeBuildHelp,
     AiAgentModeOpenCodePlanHelp,
     AiAgentModeNextMessage,
+    AiAgentModeAppliesThisChat,
+    AiAgentModeChangeDefault,
     AiModelFast,
     /// The composer's model chip before any model is chosen.
     AiChooseModel,
@@ -2925,7 +2927,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2037] = [
+    pub const ALL: [Key; 2039] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -3161,6 +3163,8 @@ impl Key {
         Key::AiAgentModeBuildHelp,
         Key::AiAgentModeOpenCodePlanHelp,
         Key::AiAgentModeNextMessage,
+        Key::AiAgentModeAppliesThisChat,
+        Key::AiAgentModeChangeDefault,
         Key::AiModelFast,
         Key::AiChooseModel,
         Key::AiComposerPlaceholder,
@@ -7657,6 +7661,29 @@ pub const ROWS: &[Row] = &[
         ar: "{} · يُطبَّق على رسالتك التالية",
         zh_hans: "{} · 将用于你的下一条消息",
         ja: "{} · 次のメッセージから適用されます",
+    },
+    // The model picker's footer: the row that turns the model's Fast mode on or off (koru-ai D11).
+    Row {
+        key: Key::AiAgentModeAppliesThisChat,
+        en: "Applies to this chat",
+        es: "Se aplica a este chat",
+        pt_br: "Aplica-se a este chat",
+        de: "Gilt für diesen Chat",
+        fr: "S'applique à cette discussion",
+        ar: "ينطبق على هذه المحادثة",
+        zh_hans: "适用于此聊天",
+        ja: "このチャットに適用",
+    },
+    Row {
+        key: Key::AiAgentModeChangeDefault,
+        en: "Change default",
+        es: "Cambiar valor predeterminado",
+        pt_br: "Alterar padrão",
+        de: "Standard ändern",
+        fr: "Modifier la valeur par défaut",
+        ar: "تغيير الإعداد الافتراضي",
+        zh_hans: "更改默认设置",
+        ja: "既定値を変更",
     },
     // The model picker's footer: the row that turns the model's Fast mode on or off (koru-ai D11).
     Row {

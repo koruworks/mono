@@ -37,14 +37,16 @@ use koru_ai_core::AiProviderId;
 use koru_ai_wire::{AgentModeView, UpdateChatAgentSettingsRequest};
 use koru_draw::el::{Frame, FrameCx, Interaction};
 use koru_draw::geometry::Rect;
+use koru_draw::inspect;
 use koru_draw::{icons, scene, theme, theme::role};
 use koru_i18n::{Key as Words, fill, t};
-use koru_ui::button::ActionButton;
+use koru_ui::split_button::SplitTone;
 use koru_ui::tooltip::TooltipContent;
 use vello::Scene;
 use vello::kurbo::Affine;
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 
+use crate::Focus;
 use crate::agents::is_agent_provider;
 use crate::reader::Command;
 
@@ -54,6 +56,7 @@ pub(crate) const MODE_ROW_H: f32 = 46.0;
 const PANEL_PAD: f32 = 4.0;
 /// The panel's corners, as the composer's other panels have them.
 const PANEL_RADIUS: f32 = 8.0;
+const FOOTER_H: f32 = 38.0;
 /// How long the note beside the chip stays.
 const NOTE_HOLD: Duration = Duration::from_millis(2200);
 /// The note's tooltip key, apart from every hover tooltip's.
@@ -511,6 +514,27 @@ impl crate::ChatSurface {
             .find(|row| row.id == current)
     }
 
+    /// The selected mode's badge and send-button tone. Codex's automatic
+    /// review and the agents' accept-edits modes approve safe work, while a
+    /// plain Auto mode stays neutral. Unknown modes keep the accent role.
+    pub(crate) fn approval_presentation(&self) -> Option<(ModeRow, SplitTone)> {
+        let (agent, _) = self.chat_modes()?;
+        let row = self.current_approval_row()?;
+        let tone = match role_of(agent, &row.id) {
+            Role::Full => SplitTone::Warning,
+            _ if matches!(
+                row.id.as_str(),
+                "acceptEdits" | "accept-edits" | "auto-review"
+            ) =>
+            {
+                SplitTone::Success
+            }
+            Role::Auto => SplitTone::Neutral,
+            Role::Ask | Role::Other => SplitTone::Accent,
+        };
+        Some((row, tone))
+    }
+
     /// **The mode a new chat with `agent` starts in**: the person's default
     /// permission mapped onto the agent's own modes ([`default_mode`]) —
     /// not the mode it was last used in. `None` until the agent has listed
@@ -542,24 +566,16 @@ impl crate::ChatSurface {
         }
     }
 
-    /// The chip, left of the model chip where an API chat has its
-    /// Manual/Automatic chip: an agent chat whose agent lists modes.
+    /// The split send button's menu target when an agent lists modes.
     pub(crate) fn approval_mode_button(&self) -> Option<Rect> {
         self.chat_modes()?;
-        let toolbar = self.composer_toolbar_rect();
-        let model = self.chat_model_button();
-        let width = self
-            .approval_mode_chip_w
-            .clamp(72.0, (toolbar.w * 0.4).max(72.0));
-        Some(Rect::new(
-            (model.x - 6.0 - width).max(toolbar.x),
-            toolbar.y,
-            width.min((model.x - toolbar.x - 6.0).max(1.0)),
-            toolbar.h,
-        ))
+        if self.send_mode() == crate::queue::SendMode::Stop {
+            return None;
+        }
+        self.composer_shell.as_ref()?.mode()
     }
 
-    /// The open list: above the composer, its right edge on the chip's.
+    /// The open list: above the composer, aligned with the menu target.
     pub(crate) fn approval_mode_panel(&self) -> Option<Rect> {
         if !self.approval_mode_open {
             return None;
@@ -567,8 +583,35 @@ impl crate::ChatSurface {
         let chip = self.approval_mode_button()?;
         let count = self.approval_mode_rows().len();
         let width = self.composer_hit_rect.w.min(340.0).max(1.0);
-        let height = count as f32 * MODE_ROW_H + PANEL_PAD * 2.0;
+        let height = count as f32 * MODE_ROW_H + PANEL_PAD * 2.0 + FOOTER_H;
         Some(self.above_composer(chip.x + chip.w - width, width, height))
+    }
+
+    fn approval_mode_footer_rect(&self) -> Option<Rect> {
+        let panel = self.approval_mode_panel()?;
+        Some(Rect::new(
+            panel.x,
+            panel.y + panel.h - FOOTER_H,
+            panel.w,
+            FOOTER_H,
+        ))
+    }
+
+    fn approval_mode_default_rect(&self) -> Option<Rect> {
+        let footer = self.approval_mode_footer_rect()?;
+        Some(Rect::new(
+            footer.x + footer.w * 0.5,
+            footer.y,
+            footer.w * 0.5,
+            footer.h,
+        ))
+    }
+
+    fn change_approval_default(&mut self) -> bool {
+        self.close_approval_modes();
+        self.focus = Focus::Composer;
+        self.ask_for_agent_settings();
+        true
     }
 
     /// What the open list's tree declares (D105): a row a mode, the
@@ -650,6 +693,7 @@ impl crate::ChatSurface {
             return false;
         };
         self.close_approval_modes();
+        self.focus = Focus::Composer;
         if self.current_approval_mode().as_deref() != Some(id) {
             // Shown at once; the service's answer confirms it.
             if let Some(transcript) = &mut self.transcript {
@@ -673,9 +717,9 @@ impl crate::ChatSurface {
     /// to the next message. With no reply running there is none — the
     /// chip's label already names the mode (D65).
     fn announce_next_message(&mut self, row: &ModeRow) {
-        let Some(chip) = self.approval_mode_button() else {
-            return;
-        };
+        let chip = self
+            .approval_mode_button()
+            .unwrap_or_else(|| self.send_button());
         let label = fill(t(self.lang, Words::AiAgentModeNextMessage), &[&row.title]);
         self.copy_feedback.show_transient(
             TooltipContent::new(NOTE_KEY, chip, label),
@@ -702,6 +746,7 @@ impl crate::ChatSurface {
             return None;
         }
         let rows = self.approval_mode_rows();
+        let count = rows.len() + 1; // The footer's Change default is the last stop.
         let current = self.current_approval_mode();
         let focused = self
             .approval_mode_focus
@@ -711,16 +756,32 @@ impl crate::ChatSurface {
             })
             .unwrap_or(0);
         match key {
-            Key::Named(NamedKey::Escape) => Some(self.close_approval_modes()),
+            Key::Named(NamedKey::Escape) => {
+                let closed = self.close_approval_modes();
+                self.focus = Focus::ModeChevron;
+                Some(closed)
+            }
             Key::Named(NamedKey::ArrowDown) if !rows.is_empty() => {
-                self.approval_mode_focus = Some((focused + 1) % rows.len());
+                self.approval_mode_focus = Some((focused + 1) % count);
                 Some(true)
             }
             Key::Named(NamedKey::ArrowUp) if !rows.is_empty() => {
-                self.approval_mode_focus = Some((focused + rows.len() - 1) % rows.len());
+                self.approval_mode_focus = Some((focused + count - 1) % count);
                 Some(true)
             }
-            Key::Named(NamedKey::Enter) => {
+            Key::Named(NamedKey::Tab) => {
+                if focused == rows.len() {
+                    self.close_approval_modes();
+                    self.focus = Focus::Composer;
+                } else {
+                    self.approval_mode_focus = Some(rows.len());
+                }
+                Some(true)
+            }
+            Key::Named(NamedKey::Enter | NamedKey::Space) => {
+                if focused == rows.len() {
+                    return Some(self.change_approval_default());
+                }
                 let id = rows.get(focused).map(|row| row.id.clone())?;
                 Some(self.choose_approval_mode(&id))
             }
@@ -728,9 +789,15 @@ impl crate::ChatSurface {
         }
     }
 
-    /// A press: the chip opens and shuts the list, a row chooses its mode,
+    /// A press: the menu target opens and shuts the list, a row chooses its mode,
     /// and a press anywhere else shuts the list and goes on (`None`).
     pub(crate) fn approval_mode_mouse_down(&mut self, x: f32, y: f32) -> Option<bool> {
+        if self
+            .approval_mode_default_rect()
+            .is_some_and(|button| button.contains(x, y))
+        {
+            return Some(self.change_approval_default());
+        }
         if let Some(index) = self.approval_mode_row_at(x, y) {
             let id = self.approval_mode_rows().get(index)?.id.clone();
             return Some(self.choose_approval_mode(&id));
@@ -747,74 +814,13 @@ impl crate::ChatSurface {
             }
             self.approval_mode_open = open;
             self.approval_mode_focus = None;
+            self.focus = Focus::ModeChevron;
             return Some(true);
         }
         if self.approval_mode_panel().is_some() {
             self.close_approval_modes();
         }
         None
-    }
-
-    /// The chip: the mode's icon and name, and a caret, as a ghost button.
-    pub(crate) fn draw_approval_mode_chip(&mut self, canvas: &mut Scene, root: Affine) {
-        let Some(row) = self.current_approval_row() else {
-            return;
-        };
-        let p = theme::p();
-        let icon = self.engine.icon_layout(row.icon, ActionButton::ICON_SIZE);
-        let caret = self
-            .engine
-            .icon_layout(icons::CARET_DOWN, ActionButton::ICON_SIZE);
-        let label = self.engine.simple_layout(&row.title, role::row());
-        self.approval_mode_chip_w = ActionButton::PAD_X * 2.0
-            + icon.width()
-            + ActionButton::GAP
-            + label.width()
-            + ActionButton::GAP
-            + caret.width();
-        let Some(chip) = self.approval_mode_button() else {
-            return;
-        };
-        let hovered = chip.contains(self.pointer.0, self.pointer.1);
-        if hovered || self.approval_mode_open {
-            scene::fill(
-                canvas,
-                root,
-                p.hover_tint,
-                &scene::rrect(chip.x, chip.y, chip.w, chip.h, ActionButton::RADIUS),
-            );
-        }
-        let colour = if row.full_access { p.notice_fg } else { p.text };
-        let mut x = chip.x + ActionButton::PAD_X;
-        scene::draw_layout_first_line(
-            canvas,
-            root,
-            &icon,
-            x,
-            chip.y + (chip.h - icon.height()) * 0.5,
-            Some(colour),
-        );
-        x += icon.width() + ActionButton::GAP;
-        let room = (chip.x + chip.w - ActionButton::PAD_X - caret.width() - ActionButton::GAP - x)
-            .max(1.0);
-        let shown = self.engine.elided(&row.title, role::row(), room);
-        let label = self.engine.simple_layout(&shown, role::row());
-        scene::draw_layout_first_line(
-            canvas,
-            root,
-            &label,
-            x,
-            chip.y + (chip.h - label.height()) * 0.5,
-            Some(colour),
-        );
-        scene::draw_layout_first_line(
-            canvas,
-            root,
-            &caret,
-            chip.x + chip.w - ActionButton::PAD_X - caret.width(),
-            chip.y + (chip.h - caret.height()) * 0.5,
-            Some(p.text_dim),
-        );
     }
 
     /// **The open list** (D105): its element tree ([`elements`]) — each
@@ -848,6 +854,70 @@ impl crate::ChatSurface {
             &scene::Panel::popover(PANEL_RADIUS),
         );
         frame.paint(&tree, canvas, root, &mut self.engine);
+        if let Some(footer) = self.approval_mode_footer_rect() {
+            let _footer = inspect::scope(
+                "ApprovalModeFooter",
+                "part",
+                root,
+                scene::rect(footer.x, footer.y, footer.w, footer.h),
+                |record| record.property("scope", "this chat", "mode persistence"),
+            );
+            let p = theme::p();
+            scene::fill(
+                canvas,
+                root,
+                p.panel_border,
+                &scene::rect(
+                    footer.x + 8.0,
+                    footer.y,
+                    footer.w - 16.0,
+                    theme::BORDER_W as f32,
+                ),
+            );
+            let label = t(self.lang, Words::AiAgentModeAppliesThisChat);
+            let label = self
+                .engine
+                .elided(label, role::meta(), (footer.w * 0.5 - 16.0).max(1.0));
+            let label = self.engine.simple_layout(&label, role::meta());
+            scene::draw_layout_first_line(
+                canvas,
+                root,
+                &label,
+                footer.x + 8.0,
+                footer.y + (footer.h - label.height()) * 0.5,
+                Some(p.text_dim),
+            );
+            if let Some(button) = self.approval_mode_default_rect() {
+                let focused = self.approval_mode_focus == Some(self.approval_mode_rows().len());
+                if focused || button.contains(self.pointer.0, self.pointer.1) {
+                    scene::fill(
+                        canvas,
+                        root,
+                        p.hover_tint,
+                        &scene::rrect(
+                            button.x,
+                            button.y + 3.0,
+                            button.w - 4.0,
+                            button.h - 6.0,
+                            4.0,
+                        ),
+                    );
+                }
+                let text = t(self.lang, Words::AiAgentModeChangeDefault);
+                let text = self
+                    .engine
+                    .elided(text, role::meta(), (button.w - 16.0).max(1.0));
+                let text = self.engine.simple_layout(&text, role::meta());
+                scene::draw_layout_first_line(
+                    canvas,
+                    root,
+                    &text,
+                    button.x + button.w - text.width() - 8.0,
+                    button.y + (button.h - text.height()) * 0.5,
+                    Some(p.accent),
+                );
+            }
+        }
     }
 }
 
