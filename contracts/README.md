@@ -25,6 +25,9 @@ client cannot erase state it does not understand.
 
 ## Wire-contract vectors
 
+Blob receivers support [verified empty files](vectors/cloud-blob-object-v1/EMPTY-FILES.md)
+through the ordinary durable publication path.
+
 `vectors/` holds the checked-in test vectors of the Cloud wire contracts
 (`cloud-blob-object-v1`, `host-control-v1`, `cloud-sync-admission-v1`,
 `workspace-crypto` and the rest). They are read by the test suites of the

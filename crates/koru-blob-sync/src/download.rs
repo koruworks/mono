@@ -143,6 +143,13 @@ pub async fn run(
         return Err(TransferError::InsufficientStorage);
     }
 
+    if total == 0 {
+        // No range exists for an empty file. Materialize its staging object,
+        // then use the same hash verification and installation as every file.
+        let staging = staging.clone();
+        let hash = hash.clone();
+        blocking(move || staging.append(&hash, 0, &[])).await?;
+    }
     let mut received = 0u64;
     while offset < total {
         let want = engine.chunk().min(total - offset);
@@ -245,7 +252,7 @@ async fn grant(
         .control()
         .read_capability(access.clone(), workspace, hash.clone())
         .await?;
-    if size == 0 || size > koru_cloud_blob::MAX_BLOB_SIZE {
+    if !koru_cloud_blob::valid_blob_size(hash.as_str(), size) {
         return Err(TransferError::Refused(BlobCode::LengthMismatch));
     }
     Ok(Grant {
