@@ -27,7 +27,6 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-mod app_menu;
 mod catalog;
 mod due_picker;
 mod entity_search;
@@ -49,8 +48,7 @@ use result_layout::ResultContent;
 use scope::SearchScope;
 pub use state::persist_choices_in;
 use state::{
-    DEFAULT_SORT, FilterState, SearchMenu, SearchView, drop_hidden_kinds, hit_key,
-    keep_top_hit_per_document,
+    DEFAULT_SORT, FilterState, SearchMenu, drop_hidden_kinds, hit_key, keep_top_hit_per_document,
 };
 
 use koru_ai_core::{ChatId, MessageBlockId, MessageId};
@@ -411,12 +409,6 @@ pub struct SearchSurface {
     /// the results list so an open profile picker cannot move the result that
     /// Enter would otherwise open.
     menu_selected: Option<usize>,
-    /// The `…` menu's widget, built by `open_menu` when that menu opens and
-    /// read only while `menu == SearchMenu::App` — a stale value left behind
-    /// by a close is replaced on the next open, never consulted before it.
-    app_menu: Option<koru_ui::Menu<app_menu::AppMenuRow>>,
-    view: SearchView,
-    show_shortcuts: bool,
     /// The host's CREATE rows, drawn first while there is a query.
     create_rows: Vec<CreateRow>,
     /// The host's footer chips, drawn instead of the hint line when any.
@@ -635,9 +627,6 @@ impl SearchSurface {
             menu_scroll: 0.0,
             temporal: None,
             menu_selected: None,
-            app_menu: None,
-            view: SearchView::Results,
-            show_shortcuts: false,
             create_rows: Vec::new(),
             footer_chips: Vec::new(),
             selected_create: None,
@@ -719,37 +708,18 @@ impl SearchSurface {
         // alone on relevance, so choosing a sort moved the filter icon and
         // narrowed the query field under the caret — a control that resizes
         // the thing you are typing in as a side effect of an unrelated menu.
+        let outline = self.query_outline_rect();
         Rect::new(
-            self.app_menu_rect().x - SORT_CHIP_W - 6.0,
+            outline.x + outline.w - QUERY_PAD_X - SORT_CHIP_W,
             (HEADER_H - HEADER_CONTROL_SIZE) * 0.5,
             SORT_CHIP_W,
             HEADER_CONTROL_SIZE,
         )
     }
 
-    fn app_menu_rect(&self) -> Rect {
-        let icon = self.app_menu_icon_rect();
-        Rect::new(
-            icon.x - (HEADER_CONTROL_SIZE - icon.w) * 0.5,
-            (HEADER_H - HEADER_CONTROL_SIZE) * 0.5,
-            HEADER_CONTROL_SIZE,
-            HEADER_CONTROL_SIZE,
-        )
-    }
-
-    fn app_menu_icon_rect(&self) -> Rect {
-        let outline = self.query_outline_rect();
-        Rect::new(
-            outline.x + outline.w - QUERY_PAD_X - QUERY_ICON_SIZE,
-            outline.y + (outline.h - QUERY_ICON_SIZE) * 0.5,
-            QUERY_ICON_SIZE,
-            QUERY_ICON_SIZE,
-        )
-    }
-
     /// The header buttons' chips.
     ///
-    /// **`Literal`, and all three are this surface's own bindings** — resolved
+    /// **`Literal`, and both are this surface's own bindings** — resolved
     /// by hand in [`SearchSurface::key`] and written out by hand here, which is
     /// what the registry exists to stop. They are unregistered because this
     /// surface is a layer the table does not have yet: it is a window (and an
@@ -780,18 +750,14 @@ impl SearchSurface {
                     .with_optional_shortcut(hint("Ctrl+O")),
             );
         }
-        self.app_menu_rect().contains(x, y).then(|| {
-            TooltipContent::new(3, self.app_menu_rect(), "More")
-                .with_optional_shortcut(hint("Ctrl+,"))
-        })
+        None
     }
 
     fn filter_line_visible(&self) -> bool {
-        self.view == SearchView::Results
-            && (self.filters_visible
-                || self.filters.active()
-                || self.archived_only
-                || self.lifecycle != LifecycleFilter::Live)
+        self.filters_visible
+            || self.filters.active()
+            || self.archived_only
+            || self.lifecycle != LifecycleFilter::Live
     }
 
     fn filter_line_h(&self) -> f32 {
@@ -803,7 +769,7 @@ impl SearchSurface {
     }
 
     fn correction_h(&self) -> f32 {
-        if self.view == SearchView::Results && self.page.corrected_query.is_some() {
+        if self.page.corrected_query.is_some() {
             24.0
         } else {
             0.0
@@ -811,7 +777,7 @@ impl SearchSurface {
     }
 
     fn warning_h(&self) -> f32 {
-        if self.view == SearchView::Results && self.warning_message().is_some() {
+        if self.warning_message().is_some() {
             WARNING_H
         } else {
             0.0
@@ -898,7 +864,6 @@ impl SearchSurface {
                 16.0 + (self.workspace_facets().count() + 1) as f32 * 32.0,
                 PopoverAlign::Start,
             ),
-            SearchMenu::App => (self.app_menu_rect(), 132.0, PopoverAlign::End),
             SearchMenu::Tags => (
                 self.query_rect(),
                 16.0 + self.tag_hits.len().min(TAG_ROWS) as f32 * 32.0,
@@ -1102,7 +1067,6 @@ impl SearchSurface {
         match self.menu {
             SearchMenu::None => 0,
             SearchMenu::Sort => SORTS.len(),
-            SearchMenu::App => 3,
             SearchMenu::Profiles => self.catalog.profiles().len(),
             SearchMenu::Workspaces => self.workspace_facets().count() + 1,
             SearchMenu::Tags => self.tag_hits.len().min(TAG_ROWS),
@@ -1799,13 +1763,12 @@ impl SearchSurface {
         let debug_input = koru_ui::keys::debug::enabled();
         if debug_input {
             koru_ui::keys::debug::write(format_args!(
-                "[Koru][input][pid={}] search input begin key={} text={} mods={} bytes_before={} view={:?}",
+                "[Koru][input][pid={}] search input begin key={} text={} mods={} bytes_before={}",
                 std::process::id(),
                 koru_ui::keys::debug::key_of(key),
                 koru_ui::keys::debug::text_of(text),
                 koru_ui::keys::debug::mods_of(mods),
                 before.len(),
-                self.view,
             ));
         }
         self.query.key(&mut self.engine, key, text, mods);
@@ -1840,7 +1803,6 @@ impl SearchSurface {
         self.selected_create = None;
         self.clear_selection_memory();
         self.menu = SearchMenu::None;
-        self.view = SearchView::Results;
         self.refresh();
     }
 
@@ -1925,15 +1887,13 @@ impl SearchSurface {
 
     /// Whether the footer is the host's chips rather than the hint line.
     pub fn footer_shows_chips(&self) -> bool {
-        !self.footer_chips.is_empty()
-            && self.view == SearchView::Results
-            && !self.replacing_results()
+        !self.footer_chips.is_empty() && !self.replacing_results()
     }
 
     /// CREATE is drawn while the host gave rows and there is something typed
     /// to make them from — never over the landing page.
     fn create_shown(&self) -> bool {
-        !self.create_rows.is_empty() && !self.query.is_empty() && self.view == SearchView::Results
+        !self.create_rows.is_empty() && !self.query.is_empty()
     }
 
     /// The group's height: heading, rows, and the gap before the results.
@@ -2789,13 +2749,6 @@ impl SearchSurface {
     }
 
     fn popover_row_at(&self, x: f32, y: f32) -> Option<usize> {
-        // The `…` menu is the shared widget; its own hit test answers.
-        if self.menu == SearchMenu::App {
-            return self
-                .app_menu
-                .as_ref()
-                .and_then(|menu| menu.item_at(self.menu_viewport(), x, y));
-        }
         // The calendar hit-tests itself, in panel-local coordinates.
         if self.temporal.is_some() {
             return None;
@@ -2817,11 +2770,6 @@ impl SearchSurface {
         (row < self.menu_row_count()).then_some(row)
     }
 
-    /// The area a floating menu may occupy: the window above the footer.
-    fn menu_viewport(&self) -> (f32, f32) {
-        (self.viewport.0, self.viewport.1 - FOOTER_H)
-    }
-
     fn open_menu(&mut self, menu: SearchMenu) {
         self.menu_scroll = 0.0;
         self.menu_selected = if menu == SearchMenu::Profiles {
@@ -2834,23 +2782,6 @@ impl SearchSurface {
         } else {
             None
         };
-        if menu == SearchMenu::App {
-            // The shared widget, hanging back under the `…` button the way
-            // every `…` menu in the container does. Its rows are built from
-            // the surface's state now, and fixed while the menu is open.
-            let button = self.app_menu_rect();
-            let rows = app_menu::AppMenuRow::list(self.show_shortcuts, self.view);
-            let mut widget = koru_ui::Menu::aligned(
-                &mut self.engine,
-                (button.x + button.w, button.y + button.h),
-                rows,
-                koru_ui::Anchor::ButtonRight,
-            );
-            // The first row arrives highlighted, so Enter does something and
-            // the arrows have somewhere to start from.
-            widget.step(&[true, true, true], 1);
-            self.app_menu = Some(widget);
-        }
         self.menu = menu;
     }
 
@@ -2946,36 +2877,6 @@ impl SearchSurface {
                 if let Some(facet) = facet {
                     self.filters.toggle_workspace(&facet);
                     self.refresh_after_filter_change();
-                }
-            }
-            SearchMenu::App => {
-                let action = self
-                    .app_menu
-                    .as_ref()
-                    .and_then(|menu| menu.items().get(row))
-                    .map(|row| row.action);
-                match action {
-                    // A toggle: the menu stays open so the check is seen to
-                    // move, and the row's state follows the surface's.
-                    Some(app_menu::AppMenuAction::KeyboardHints) => {
-                        self.show_shortcuts = !self.show_shortcuts;
-                        if let Some(menu) = &mut self.app_menu {
-                            for row in menu.items_mut() {
-                                if row.action == app_menu::AppMenuAction::KeyboardHints {
-                                    row.checked = self.show_shortcuts;
-                                }
-                            }
-                        }
-                    }
-                    Some(app_menu::AppMenuAction::HelpPreview) => {
-                        self.view = SearchView::HelpPreview;
-                        self.menu = SearchMenu::None;
-                    }
-                    Some(app_menu::AppMenuAction::FeedbackPreview) => {
-                        self.view = SearchView::FeedbackPreview;
-                        self.menu = SearchMenu::None;
-                    }
-                    None => {}
                 }
             }
             SearchMenu::None => {}
@@ -3210,16 +3111,14 @@ impl SearchSurface {
             );
         }
 
-        if self.view == SearchView::Results && self.warning_message().is_some() {
+        if self.warning_message().is_some() {
             self.paint_availability_warning(canvas, root);
         }
 
         if self.create_shown() {
             self.paint_create(canvas, root);
         }
-        if self.view != SearchView::Results {
-            self.paint_secondary_view(canvas, root);
-        } else if self.unavailable.is_some() {
+        if self.unavailable.is_some() {
             // The warning is the result state. Painting an empty page below it
             // would falsely say that the query completed with no matches.
         } else if self.query.is_empty() {
@@ -3340,30 +3239,6 @@ impl SearchSurface {
             sort.x + 27.0,
             sort.y + 6.0,
             Some(sort_ink),
-        );
-
-        let app = self.app_menu_rect();
-        if self.menu == SearchMenu::App || app.contains(self.pointer.0, self.pointer.1) {
-            scene::fill(
-                canvas,
-                root,
-                if self.menu == SearchMenu::App {
-                    p.chip_bg
-                } else {
-                    p.hover_tint
-                },
-                &scene::rrect(app.x, app.y, app.w, app.h, 7.0),
-            );
-        }
-        let dots_rect = self.app_menu_icon_rect();
-        let dots = self.engine.icon_layout(icons::DOTS_THREE, QUERY_ICON_SIZE);
-        scene::draw_layout_first_line(
-            canvas,
-            root,
-            &dots,
-            dots_rect.x,
-            dots_rect.y,
-            Some(p.text_dim),
         );
     }
 
@@ -3557,254 +3432,7 @@ impl SearchSurface {
         self.paint_scrollbar(canvas, root);
     }
 
-    fn paint_secondary_view(&mut self, canvas: &mut Scene, root: Affine) {
-        let p = theme::p();
-        let card = Rect::new(
-            8.0,
-            HEADER_H + 4.0,
-            self.viewport.0 - 16.0,
-            self.viewport.1 - HEADER_H - FOOTER_H - 12.0,
-        );
-        scene::fill(
-            canvas,
-            root,
-            p.panel_bg,
-            &scene::rrect(card.x, card.y, card.w, card.h, 10.0),
-        );
-        let title_text = match self.view {
-            SearchView::HelpPreview => "Help preview",
-            SearchView::FeedbackPreview => "Feedback preview",
-            SearchView::Results => return,
-        };
-        let back = self.engine.icon_layout(icons::CARET_LEFT, 15.0);
-        scene::draw_layout_first_line(
-            canvas,
-            root,
-            &back,
-            card.x + 14.0,
-            card.y + 15.0,
-            Some(p.text_dim),
-        );
-        let title = self.engine.simple_layout(
-            title_text,
-            theme::role::row().with_weight(theme::FontWeight::Bold),
-        );
-        scene::draw_layout_first_line(
-            canvas,
-            root,
-            &title,
-            card.x + 38.0,
-            card.y + 12.0,
-            Some(p.text),
-        );
-        match self.view {
-            SearchView::HelpPreview => self.paint_help_preview(canvas, root, card),
-            SearchView::FeedbackPreview => self.paint_feedback_preview(canvas, root, card),
-            SearchView::Results => {}
-        }
-    }
-
-    fn paint_help_preview(&mut self, canvas: &mut Scene, root: Affine, card: Rect) {
-        let p = theme::p();
-        let mut y = card.y + 48.0;
-        for (section, articles) in [
-            (
-                "FINDING THINGS",
-                [
-                    (
-                        "Search every workspace",
-                        "Titles, headings, tasks, properties, and body text.",
-                    ),
-                    (
-                        "Filter and sort",
-                        "Exclude a profile for this session or change result order.",
-                    ),
-                    (
-                        "Use only the keyboard",
-                        "Move with arrows; Enter opens; Ctrl+Enter opens a window.",
-                    ),
-                ],
-            ),
-            (
-                "OPENING RESULTS",
-                [
-                    (
-                        "Switch workspaces safely",
-                        "Koru routes the exact profile, workspace, and document.",
-                    ),
-                    (
-                        "Find the matched text",
-                        "The authored match flashes briefly with the caret before it.",
-                    ),
-                    (
-                        "Look in deleted pages",
-                        "The no-results action searches recoverable Trash content.",
-                    ),
-                ],
-            ),
-        ] {
-            let heading = self.engine.simple_layout(section, theme::role::hint());
-            scene::draw_layout_first_line(
-                canvas,
-                root,
-                &heading,
-                card.x + 20.0,
-                y,
-                Some(p.text_dim),
-            );
-            y += 22.0;
-            for (title, description) in articles {
-                if y + 34.0 > card.y + card.h - 20.0 {
-                    break;
-                }
-                let row = Rect::new(card.x + 12.0, y - 4.0, card.w - 24.0, 38.0);
-                if row.contains(self.pointer.0, self.pointer.1) {
-                    scene::fill(
-                        canvas,
-                        root,
-                        p.hover_tint,
-                        &scene::rrect(row.x, row.y, row.w, row.h, 8.0),
-                    );
-                }
-                let title = self.engine.simple_layout(title, theme::role::row());
-                scene::draw_layout_first_line(canvas, root, &title, card.x + 20.0, y, Some(p.text));
-                let description =
-                    self.engine
-                        .elided(description, theme::role::hint(), card.w - 48.0);
-                let description = self.engine.simple_layout(&description, theme::role::hint());
-                scene::draw_layout_first_line(
-                    canvas,
-                    root,
-                    &description,
-                    card.x + 20.0,
-                    y + 18.0,
-                    Some(p.text_dim),
-                );
-                y += 42.0;
-            }
-            y += 8.0;
-        }
-    }
-
-    fn paint_feedback_preview(&mut self, canvas: &mut Scene, root: Affine, card: Rect) {
-        let p = theme::p();
-        let notice = self.engine.simple_layout(
-            "Preview only — no telemetry, persistence, or submission",
-            theme::role::hint(),
-        );
-        scene::draw_layout_first_line(
-            canvas,
-            root,
-            &notice,
-            card.x + 20.0,
-            card.y + 48.0,
-            Some(p.text_dim),
-        );
-        let question = self.engine.simple_layout(
-            "Did you find what you were looking for?",
-            theme::role::row(),
-        );
-        scene::draw_layout_first_line(
-            canvas,
-            root,
-            &question,
-            card.x + 20.0,
-            card.y + 80.0,
-            Some(p.text),
-        );
-        for index in 0..5 {
-            let rect = Rect::new(
-                card.x + 20.0 + index as f32 * 34.0,
-                card.y + 106.0,
-                26.0,
-                26.0,
-            );
-            scene::fill(
-                canvas,
-                root,
-                p.chip_bg,
-                &scene::rrect(rect.x, rect.y, rect.w, rect.h, 8.0),
-            );
-            let number = self
-                .engine
-                .simple_layout(&(index + 1).to_string(), theme::role::hint());
-            scene::draw_layout_first_line(
-                canvas,
-                root,
-                &number,
-                rect.x + 9.0,
-                rect.y + 6.0,
-                Some(p.text_dim),
-            );
-        }
-        let obstacle = self
-            .engine
-            .simple_layout("What got in the way?", theme::role::row());
-        scene::draw_layout_first_line(
-            canvas,
-            root,
-            &obstacle,
-            card.x + 20.0,
-            card.y + 150.0,
-            Some(p.text),
-        );
-        let mut chip_x = card.x + 20.0;
-        for label in ["Wrong results", "Too slow", "Wrong workspace"] {
-            let layout = self.engine.simple_layout(label, theme::role::hint());
-            let width = layout.width() + 18.0;
-            scene::fill(
-                canvas,
-                root,
-                p.chip_bg,
-                &scene::rrect(chip_x, card.y + 176.0, width, 26.0, 7.0),
-            );
-            scene::draw_layout_first_line(
-                canvas,
-                root,
-                &layout,
-                chip_x + 9.0,
-                card.y + 182.0,
-                Some(p.text_dim),
-            );
-            chip_x += width + 7.0;
-        }
-        let field = Rect::new(card.x + 20.0, card.y + 218.0, card.w - 40.0, 54.0);
-        scene::fill(
-            canvas,
-            root,
-            p.hover_tint,
-            &scene::rrect(field.x, field.y, field.w, field.h, 8.0),
-        );
-        let placeholder = self.engine.simple_layout(
-            "Tell us what you expected to see — optional",
-            theme::role::hint(),
-        );
-        scene::draw_layout_first_line(
-            canvas,
-            root,
-            &placeholder,
-            field.x + 10.0,
-            field.y + 9.0,
-            Some(p.text_dim),
-        );
-    }
-
     fn paint_popover(&mut self, canvas: &mut Scene, root: Affine) {
-        // The `…` menu is the shared widget: standard rows, standard chord
-        // column, standard hover. Every row here is enabled.
-        if self.menu == SearchMenu::App {
-            let viewport = self.menu_viewport();
-            if let Some(menu) = &self.app_menu {
-                menu.draw(
-                    canvas,
-                    root,
-                    &mut self.engine,
-                    viewport,
-                    &[true, true, true],
-                );
-            }
-            return;
-        }
         let Some(shell) = self.popover() else { return };
         shell.draw(canvas, root);
         if self.menu == SearchMenu::Profiles {
@@ -3866,7 +3494,7 @@ impl SearchSurface {
                 }));
             }
             // Each painted by its own function, above.
-            SearchMenu::Tags | SearchMenu::Filters | SearchMenu::App | SearchMenu::None => return,
+            SearchMenu::Tags | SearchMenu::Filters | SearchMenu::None => return,
         }
         canvas.push_clip_layer(
             Fill::NonZero,
@@ -4499,17 +4127,8 @@ impl SearchSurface {
             canvas.pop_layer();
             return;
         }
-        let hints: &[(char, &str)] = if self.view != SearchView::Results {
-            &[(icons::CARET_LEFT, " Esc back")]
-        } else if self.replacing_results() {
+        let hints: &[(char, &str)] = if self.replacing_results() {
             &[(icons::SEARCH, " Searching…")]
-        } else if self.show_shortcuts {
-            &[
-                (icons::CARET_DOWN, " Move  ·  "),
-                (icons::CHECK, " Enter open  ·  "),
-                (icons::POP_OUT, " Ctrl+Enter/click window  ·  "),
-                (icons::WINDOW_CLOSE, " Esc close"),
-            ]
         } else {
             &[]
         };
@@ -4658,13 +4277,12 @@ impl SearchSurface {
     pub fn key(&mut self, key: &Key, text: Option<&str>, mods: ModifiersState) -> bool {
         let command_modifier = mods.control_key() || mods.super_key() || mods.alt_key();
         // Recover modified editing keys before interpreting Ctrl+letter
-        // shortcuts: ASCII Backspace is U+0008, which otherwise looks exactly
-        // like Ctrl+H and opens Help instead of deleting a word.
+        // shortcuts: ASCII Backspace is U+0008 and must remain an editing key.
         let recovered_editing_key = koru_ui::keys::recover_modified_editing_key(key, mods);
         let key = recovered_editing_key.as_ref().unwrap_or(key);
         // A recovered U+0008/U+007F belongs to Backspace, not shortcut text.
-        // Passing that original text to `ctrl_letter` maps it to Ctrl+H and
-        // opens Help before the shared input ever sees the edit.
+        // Passing that original text to `ctrl_letter` would classify the edit
+        // as a letter shortcut before the shared input sees it.
         let named_modified_editing_key = (mods.control_key() || mods.super_key())
             && matches!(key, Key::Named(NamedKey::Backspace | NamedKey::Delete));
         let shortcut_text = if recovered_editing_key.is_some() || named_modified_editing_key {
@@ -4679,7 +4297,7 @@ impl SearchSurface {
         };
         if koru_ui::keys::debug::enabled() {
             koru_ui::keys::debug::write(format_args!(
-                "[Koru][input][pid={}] search receive key={} text={} mods={} recovered_editing={} shortcut_text={} control_letter={:?} view={:?} bytes={}",
+                "[Koru][input][pid={}] search receive key={} text={} mods={} recovered_editing={} shortcut_text={} control_letter={:?} bytes={}",
                 std::process::id(),
                 koru_ui::keys::debug::key_of(key),
                 koru_ui::keys::debug::text_of(text),
@@ -4687,7 +4305,6 @@ impl SearchSurface {
                 recovered_editing_key.is_some(),
                 koru_ui::keys::debug::text_of(shortcut_text),
                 control_letter,
-                self.view,
                 self.query.raw_text().len(),
             ));
         }
@@ -4699,8 +4316,6 @@ impl SearchSurface {
                 self.close_filter_completion();
             } else if self.menu != SearchMenu::None {
                 self.menu = SearchMenu::None;
-            } else if self.view != SearchView::Results {
-                self.view = SearchView::Results;
             } else if !self.query.is_empty() {
                 self.set_query_text("");
                 self.refresh();
@@ -4742,44 +4357,6 @@ impl SearchSurface {
             && self.switch_to_profile_scope()
         {
             return true;
-        }
-        if (mods.control_key() || mods.super_key())
-            && matches!(key, Key::Character(value) if value.as_str() == ",")
-        {
-            if self.menu == SearchMenu::App {
-                self.menu = SearchMenu::None;
-            } else {
-                self.open_menu(SearchMenu::App);
-            }
-            return true;
-        }
-        // The `…` menu is keyboard-driven, the way every menu in the
-        // container is: arrows step the highlight, Enter chooses, Escape
-        // (above) closes. Anything else falls through — typing still edits
-        // the query, as it does with this surface's other menus open.
-        if self.menu == SearchMenu::App {
-            match key {
-                Key::Named(NamedKey::ArrowDown) => {
-                    if let Some(menu) = &mut self.app_menu {
-                        menu.step(&[true, true, true], 1);
-                    }
-                    return true;
-                }
-                Key::Named(NamedKey::ArrowUp) => {
-                    if let Some(menu) = &mut self.app_menu {
-                        menu.step(&[true, true, true], -1);
-                    }
-                    return true;
-                }
-                Key::Named(NamedKey::Enter) => {
-                    let row = self.app_menu.as_ref().and_then(|menu| menu.hover);
-                    if let Some(row) = row {
-                        self.activate_popover_row(row);
-                    }
-                    return true;
-                }
-                _ => {}
-            }
         }
         // **Before the results list sees any of these.** While the completion
         // is up it owns Up, Down, Enter, Tab and Escape; the hit the results
@@ -4838,27 +4415,6 @@ impl SearchSurface {
                 _ => {}
             }
         }
-        if self.view != SearchView::Results {
-            if control_letter == Some('h') {
-                koru_ui::keys::debug::write(format_args!(
-                    "[Koru][input][pid={}] search claimed=help-shortcut",
-                    std::process::id()
-                ));
-                self.view = SearchView::HelpPreview;
-            } else if control_letter == Some('f') && mods.shift_key() {
-                koru_ui::keys::debug::write(format_args!(
-                    "[Koru][input][pid={}] search claimed=feedback-shortcut",
-                    std::process::id()
-                ));
-                self.view = SearchView::FeedbackPreview;
-            } else {
-                // The query remains a real focused input on read-only Help and
-                // Feedback screens. Editing it returns to results; navigation
-                // keys that do not edit remain safely swallowed here.
-                self.edit_query(key, text, mods);
-            }
-            return true;
-        }
         if control_letter == Some('o') {
             if self.menu == SearchMenu::Sort {
                 self.menu = SearchMenu::None;
@@ -4867,12 +4423,7 @@ impl SearchSurface {
             }
             return true;
         }
-        if control_letter == Some('f') && mods.shift_key() {
-            self.view = SearchView::FeedbackPreview;
-            self.menu = SearchMenu::None;
-            return true;
-        }
-        if control_letter == Some('f') {
+        if control_letter == Some('f') && !mods.shift_key() {
             self.filters_visible = !self.filters_visible;
             if !self.filters_visible {
                 self.reset_filters();
@@ -4881,21 +4432,6 @@ impl SearchSurface {
         }
         if control_letter == Some('p') && mods.alt_key() && !mods.shift_key() {
             self.open_menu(SearchMenu::Profiles);
-            return true;
-        }
-        if control_letter == Some('h') {
-            koru_ui::keys::debug::write(format_args!(
-                "[Koru][input][pid={}] search claimed=help-shortcut",
-                std::process::id()
-            ));
-            self.view = SearchView::HelpPreview;
-            self.menu = SearchMenu::None;
-            return true;
-        }
-        if (mods.control_key() || mods.super_key())
-            && matches!(key, Key::Character(value) if value.as_str() == "/" || value.as_str() == "?")
-        {
-            self.show_shortcuts = !self.show_shortcuts;
             return true;
         }
         match key {
@@ -4966,16 +4502,6 @@ impl SearchSurface {
                 self.close_filter_completion();
             } else {
                 self.menu = SearchMenu::None;
-            }
-            return true;
-        }
-        if self.app_menu_rect().contains(x, y) {
-            self.open_menu(SearchMenu::App);
-            return true;
-        }
-        if self.view != SearchView::Results {
-            if y >= HEADER_H && y <= HEADER_H + 52.0 {
-                self.view = SearchView::Results;
             }
             return true;
         }
@@ -5125,14 +4651,7 @@ impl SearchSurface {
         // the result list underneath must not react merely because the picker
         // happens to cover it.
         if self.menu != SearchMenu::None {
-            // The `…` menu's widget tracks which row the pointer is over;
-            // the older popovers answer hover at draw time instead.
-            if self.menu == SearchMenu::App {
-                let viewport = self.menu_viewport();
-                if let Some(menu) = &mut self.app_menu {
-                    menu.hover = menu.item_at(viewport, x, y);
-                }
-            } else if self.menu == SearchMenu::Profiles {
+            if self.menu == SearchMenu::Profiles {
                 let next = self.popover_row_at(x, y);
                 let changed = next != self.menu_selected;
                 self.menu_selected = next;
@@ -5319,9 +4838,6 @@ impl SearchSurface {
                 .is_some_and(|rect| rect.contains(self.pointer.0, self.pointer.1));
         let control = self.filter_rect().contains(self.pointer.0, self.pointer.1)
             || self.sort_rect().contains(self.pointer.0, self.pointer.1)
-            || self
-                .app_menu_rect()
-                .contains(self.pointer.0, self.pointer.1)
             || (matches!(self.scope, SearchScope::Global)
                 && self
                     .profiles_chip_rect()
@@ -5980,8 +5496,7 @@ mod tests {
         assert!(!surface.mouse_down(PAD, band.y + 4.0, false));
     }
 
-    /// **The host's chips replace the hint line**, and only while results are
-    /// showing — a secondary view keeps its own *Esc back*.
+    /// The host's chips replace the hint line while results are showing.
     #[test]
     fn footer_chips_replace_the_hint_line() {
         let mut surface = command_bar();
@@ -5995,7 +5510,7 @@ mod tests {
             label: "open".into(),
         }]);
         assert!(surface.footer_shows_chips());
-        surface.view = SearchView::HelpPreview;
+        surface.set_footer_chips(Vec::new());
         assert!(!surface.footer_shows_chips());
     }
 
@@ -6325,16 +5840,14 @@ mod tests {
 
         let icon = surface.search_icon_rect();
         let input = surface.query_rect();
-        let menu = surface.app_menu_rect();
-        let menu_icon = surface.app_menu_icon_rect();
+        let sort = surface.sort_rect();
         assert_eq!(icon.x - outline.x, 12.0);
         assert_eq!(input.x + koru_ui::text_field::PAD, icon.x + icon.w + 12.0);
-        assert_eq!(outline.x + outline.w - (menu_icon.x + menu_icon.w), 12.0);
+        assert_eq!(outline.x + outline.w - (sort.x + sort.w), 12.0);
         assert_eq!(input.y, outline.y);
         assert_eq!(input.h, outline.h);
         assert_eq!(icon.y + icon.h * 0.5, outline.y + outline.h * 0.5);
-        assert_eq!(menu.y + menu.h * 0.5, outline.y + outline.h * 0.5);
-        assert_eq!(menu_icon.y + menu_icon.h * 0.5, outline.y + outline.h * 0.5);
+        assert_eq!(sort.y + sort.h * 0.5, outline.y + outline.h * 0.5);
         assert_eq!(
             (outline.h - theme::BORDER_W as f32 * 2.0 - theme::role::row().metrics.line_height)
                 * 0.5,
@@ -7329,7 +6842,6 @@ mod tests {
         set_query(&mut surface, "launch");
 
         assert!(surface.key(&Key::Named(NamedKey::Tab), None, ModifiersState::empty(),));
-        assert_eq!(surface.view, SearchView::Results);
         assert_eq!(surface.menu, SearchMenu::None);
         assert_eq!(surface.query.raw_text(), "launch");
     }
@@ -7379,7 +6891,6 @@ mod tests {
             );
 
             assert_eq!(surface.query.value(), "hello", "raw key {raw:?}");
-            assert_eq!(surface.view, SearchView::Results, "raw key {raw:?}");
         }
     }
 
@@ -7398,101 +6909,6 @@ mod tests {
         );
 
         assert_eq!(surface.query.value(), "hello");
-        assert_eq!(surface.view, SearchView::Results);
-    }
-
-    #[test]
-    fn editing_the_visible_query_from_help_returns_to_results() {
-        let mut surface = SearchSurface::new();
-        set_query(&mut surface, "hello someone");
-        surface.view = SearchView::HelpPreview;
-
-        surface.key(
-            &Key::Character("\u{8}".into()),
-            Some("\u{8}"),
-            ModifiersState::CONTROL,
-        );
-
-        assert_eq!(surface.query.value(), "hello");
-        assert_eq!(surface.view, SearchView::Results);
-    }
-
-    #[test]
-    fn app_menu_opens_above_the_help_preview() {
-        let mut surface = SearchSurface::new();
-        surface.view = SearchView::HelpPreview;
-        let menu = surface.app_menu_rect();
-
-        surface.mouse_down(menu.x + menu.w * 0.5, menu.y + menu.h * 0.5, false);
-
-        assert_eq!(surface.view, SearchView::HelpPreview);
-        assert_eq!(surface.menu, SearchMenu::App);
-        assert!(surface.popover().is_some());
-    }
-
-    #[test]
-    fn app_menu_shortcut_works_while_help_is_visible() {
-        let mut surface = SearchSurface::new();
-        surface.view = SearchView::HelpPreview;
-
-        surface.key(
-            &Key::Character(",".into()),
-            Some(","),
-            ModifiersState::CONTROL,
-        );
-
-        assert_eq!(surface.view, SearchView::HelpPreview);
-        assert_eq!(surface.menu, SearchMenu::App);
-    }
-
-    /// The `…` menu is the shared menu widget: arrows step the highlight and
-    /// Enter chooses, the way every menu in the container works.
-    #[test]
-    fn the_app_menu_steps_and_chooses_by_keyboard() {
-        let mut surface = SearchSurface::new();
-        surface.key(
-            &Key::Character(",".into()),
-            Some(","),
-            ModifiersState::CONTROL,
-        );
-        assert_eq!(surface.menu, SearchMenu::App);
-        let first = surface.app_menu.as_ref().and_then(|menu| menu.hover);
-        assert_eq!(first, Some(0), "the first row arrives highlighted");
-
-        surface.key(
-            &Key::Named(NamedKey::ArrowDown),
-            None,
-            ModifiersState::empty(),
-        );
-        let second = surface.app_menu.as_ref().and_then(|menu| menu.hover);
-        assert_eq!(second, Some(1));
-
-        surface.key(&Key::Named(NamedKey::Enter), None, ModifiersState::empty());
-        assert_eq!(surface.view, SearchView::HelpPreview, "row 1 chosen");
-        assert_eq!(surface.menu, SearchMenu::None, "choosing closes the menu");
-    }
-
-    /// The toggle row is the exception: choosing it flips the state and the
-    /// menu stays open, so the check is seen to move.
-    #[test]
-    fn the_keyboard_hints_row_toggles_without_closing_the_menu() {
-        let mut surface = SearchSurface::new();
-        surface.key(
-            &Key::Character(",".into()),
-            Some(","),
-            ModifiersState::CONTROL,
-        );
-
-        surface.key(&Key::Named(NamedKey::Enter), None, ModifiersState::empty());
-
-        assert!(surface.show_shortcuts, "the toggle flipped");
-        assert_eq!(surface.menu, SearchMenu::App, "the menu stayed open");
-        let checked = surface
-            .app_menu
-            .as_ref()
-            .and_then(|menu| menu.items().first())
-            .map(|row| row.checked);
-        assert_eq!(checked, Some(true), "the row shows the new state");
     }
 
     #[test]
@@ -7509,6 +6925,23 @@ mod tests {
 
         assert!(!surface.tooltip.is_present());
         assert!(surface.filters_visible);
+    }
+
+    #[test]
+    fn removed_overflow_shortcuts_leave_search_and_filters_in_place() {
+        let mut surface = SearchSurface::new();
+        set_query(&mut surface, "hello");
+        for (key, mods) in [
+            (",", ModifiersState::CONTROL),
+            ("h", ModifiersState::CONTROL),
+            ("f", ModifiersState::CONTROL | ModifiersState::SHIFT),
+            ("/", ModifiersState::CONTROL),
+        ] {
+            surface.key(&Key::Character(key.into()), None, mods);
+            assert_eq!(surface.menu, SearchMenu::None);
+            assert!(!surface.filters_visible);
+            assert_eq!(surface.query.raw_text(), "hello");
+        }
     }
 
     #[test]

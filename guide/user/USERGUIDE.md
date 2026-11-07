@@ -900,12 +900,9 @@ observed different searchable content, not an authored or shared modification
 date — and it is what puts a relative age (`2h ago`) beside each result.
 “Last used workspace” is based on machine-local navigation. The selected
 sort remains active when search is closed and reopened during the current Koru
-session. The More menu
-can show keyboard hints and opens clearly labelled, read-only **Help preview**
-and **Feedback preview** screens. More remains available from either preview so
-the user can move between them without first returning to results. Feedback is
-not sent, stored, or measured in
-this phase. Search uses Koru's current theme, font roles, and global density;
+session. The search header contains the query, filter control and sort control;
+there is no More menu or Help/Feedback preview. Search uses Koru's current theme,
+font roles, and global density;
 there is no separate search appearance preference.
 Rest an intentional hover on an icon-only control for 400 ms to see its tooltip.
 It fades and settles toward the control over 100 ms; moving away fades it over

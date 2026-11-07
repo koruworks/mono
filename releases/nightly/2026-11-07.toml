@@ -38,6 +38,7 @@ stop documents or other workspaces from syncing.
 ## Search
 
 In-app search shows matching results without New task or New document options.
+Search also removes the overflow menu and its Help/Feedback previews.
 Result selection boxes contain their matching excerpts at compact density, and
 the UI inspector groups the overlay under one SearchModal component.
 
