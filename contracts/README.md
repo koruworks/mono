@@ -32,3 +32,7 @@ public crates that speak those contracts, through `include_str!` and paths
 relative to this directory, so **their bytes are the contract**: a vector
 changes only with the contract it encodes, and moving one breaks the build.
 Each folder's `README.md` says what its columns mean.
+
+The transfer carrier's [existing UUIDv5 document compatibility](vectors/cloud-transfer-v1/DOCUMENT-IDS.md)
+extends document-ID acceptance without rewriting stored identities; deploy
+support to Cloud workers before clients.
