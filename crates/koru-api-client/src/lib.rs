@@ -1197,6 +1197,20 @@ impl AiClient<'_> {
         )
     }
 
+    /// Stage an absolute local file or folder path without reading bytes.
+    /// Blocking: call it off the UI thread.
+    pub fn reference_attachment(
+        &self,
+        chat: ChatId,
+        request: koru_ai_wire::ReferenceAttachmentRequest,
+    ) -> AiResult<koru_ai_wire::ChatAttachmentResponse> {
+        self.json(
+            reqwest::Method::POST,
+            format!("/v1/ai/chats/{chat}/attachments/reference"),
+            Some(json_body(&request)?),
+        )
+    }
+
     /// Copy a sent attachment's bytes into a new staged id for recall.
     pub fn restage_attachment(
         &self,

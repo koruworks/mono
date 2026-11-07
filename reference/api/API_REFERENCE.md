@@ -704,6 +704,12 @@ Store a picture or file for a local agent chat's next message
 
 Returns: The stored attachment's metadata, staged until a send names it. Idempotent by id: the same content answers the same attachment, different content answers attachment_conflict.
 
+## POST `/v1/ai/chats/{chat}/attachments/reference`
+
+Stage a local file or folder path for a local agent chat
+
+Returns: The staged path reference. No file or folder contents are read or copied.
+
 ## POST `/v1/ai/chats/{chat}/attachments/{attachment}/restage`
 
 Copy a sent attachment into a fresh staged attachment for recall

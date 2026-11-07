@@ -225,6 +225,15 @@ pub struct RestageAttachmentRequest {
     pub new_id: koru_ai_core::ChatAttachmentId,
 }
 
+/// Stage a local path for an agent without reading or copying its contents.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReferenceAttachmentRequest {
+    pub id: koru_ai_core::ChatAttachmentId,
+    pub kind: AttachmentKind,
+    pub path: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct RemoveAttachmentResponse {
     /// Whether a staged attachment existed and was removed.

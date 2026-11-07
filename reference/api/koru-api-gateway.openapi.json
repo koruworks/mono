@@ -2927,7 +2927,7 @@
         "type": "object"
       },
       "ChatAttachment": {
-        "description": "The public metadata of one stored attachment. Never a path.",
+        "description": "The public metadata of one stored attachment. A path reference keeps its\npath here because the person explicitly chose to send that path to an agent.",
         "properties": {
           "byte_count": {
             "format": "uint64",
@@ -3001,6 +3001,10 @@
               }
             ]
           },
+          "reference_path": {
+            "nullable": true,
+            "type": "string"
+          },
           "source": {
             "$ref": "#/components/schemas/ChatAttachmentSource"
           }
@@ -3036,6 +3040,13 @@
               "file"
             ],
             "type": "string"
+          },
+          {
+            "description": "A local directory named to an agent without copying its contents.",
+            "enum": [
+              "folder"
+            ],
+            "type": "string"
           }
         ]
       },
@@ -3065,6 +3076,13 @@
             "description": "Linked with `@` from a workspace the chat may use, and copied.",
             "enum": [
               "workspace"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "A local path reference with no copied bytes.",
+            "enum": [
+              "path"
             ],
             "type": "string"
           }
@@ -9603,6 +9621,27 @@
       "RefId": {
         "format": "uuid",
         "type": "string"
+      },
+      "ReferenceAttachmentRequest": {
+        "additionalProperties": false,
+        "description": "Stage a local path for an agent without reading or copying its contents.",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/ChatAttachmentId"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ChatAttachmentKind"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "path"
+        ],
+        "type": "object"
       },
       "RegisterFileRequest": {
         "additionalProperties": false,
@@ -18035,6 +18074,143 @@
           }
         ],
         "summary": "Choose the approval mode a chat's local agent runs its next message in"
+      }
+    },
+    "/v1/ai/chats/{chat}/attachments/reference": {
+      "post": {
+        "description": "The staged path reference. No file or folder contents are read or copied.",
+        "operationId": "ai_reference_attachment",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "chat",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReferenceAttachmentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatAttachmentResponse"
+                }
+              }
+            },
+            "description": "The staged path reference. No file or folder contents are read or copied."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The request body or path identity is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The gateway bearer is absent or invalid"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The bearer lacks the operation's declared AI scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment, or the stored file, is not there"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The operation conflicts with durable chat state"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment is larger than the limit"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment's type is not allowed, or its content is not what its name says"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The AI worker is unavailable or saturated"
+          },
+          "507": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment could not be stored on this computer"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "ai.chat"
+            ]
+          }
+        ],
+        "summary": "Stage a local file or folder path for a local agent chat"
       }
     },
     "/v1/ai/chats/{chat}/attachments/{attachment}": {

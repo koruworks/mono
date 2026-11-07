@@ -83,6 +83,7 @@ fn stored(chat: ChatId, draft: &Draft) -> Event {
             byte_count: draft.byte_count,
             dimensions: draft.size,
             origin: None,
+            reference_path: None,
             created_at: Timestamp::from_millis(2),
         }),
     }
@@ -472,6 +473,7 @@ fn a_sent_messages_pictures_are_laid_out_under_its_words() {
         byte_count: 10,
         dimensions: Some((300, 150)),
         origin: None,
+        reference_path: None,
         created_at: Timestamp::from_millis(1),
     };
     let transcript = surface.transcript.as_mut().unwrap();
@@ -766,6 +768,7 @@ fn a_stored_file_learns_its_size_and_a_copied_picture_its_thumbnail() {
         byte_count: bytes,
         dimensions: (kind == AttachmentKind::Image).then_some((40, 20)),
         origin: None,
+        reference_path: None,
         created_at: Timestamp::from_millis(1),
     };
     surface.attachment_work.inject(Event::Stored {

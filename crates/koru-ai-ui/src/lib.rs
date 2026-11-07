@@ -4682,6 +4682,7 @@ impl ChatSurface {
                 byte_count: draft.byte_count,
                 dimensions: draft.size,
                 origin: None,
+                reference_path: None,
                 created_at: koru_ai_core::Timestamp::now(),
             })
             .collect();
@@ -14381,6 +14382,7 @@ mod tests {
             byte_count: 12,
             dimensions: None,
             origin: None,
+            reference_path: None,
             created_at: koru_ai_core::Timestamp::from_millis(2),
         };
         chat.messages.push(message);
@@ -14490,6 +14492,7 @@ mod tests {
             byte_count: 12,
             dimensions: None,
             origin: None,
+            reference_path: None,
             created_at: koru_ai_core::Timestamp::from_millis(2),
         };
         chat.messages.push(message);

@@ -372,6 +372,15 @@ impl Client {
             .restage_attachment(context, chat, source, request)
     }
 
+    pub fn reference_attachment(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        request: koru_ai_wire::ReferenceAttachmentRequest,
+    ) -> Result<koru_ai_wire::ChatAttachmentResponse> {
+        self.server.reference_attachment(context, chat, request)
+    }
+
     pub fn remove_attachment(
         &self,
         context: RequestContext,

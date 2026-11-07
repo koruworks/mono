@@ -970,6 +970,15 @@ impl AiServerPort for AiWorkerClient {
         attachments::put_attachment(self, context, chat, attachment, upload)
     }
 
+    fn reference_attachment(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        request: koru_ai_wire::ReferenceAttachmentRequest,
+    ) -> ApiResult<koru_ai_wire::ChatAttachmentResponse> {
+        attachments::reference_attachment(self, context, chat, request)
+    }
+
     fn restage_attachment(
         &self,
         context: RequestContext,
@@ -6109,8 +6118,10 @@ fn run_provider_job(
     // here, on the provider thread, and never on the dispatcher.
     for message in &mut job.request.messages {
         for attachment in &mut message.attachments {
-            if attachment.kind == koru_ai_core::AttachmentKind::Image {
-                attachment.native = Some(crate::attachments::native_copy(&attachment.path));
+            if attachment.kind == koru_ai_core::AttachmentKind::Image
+                && let Some(path) = &attachment.path
+            {
+                attachment.native = Some(crate::attachments::native_copy(path));
             }
         }
     }

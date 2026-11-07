@@ -253,7 +253,7 @@ impl Tile {
                 (height * width as f32 / height_px as f32).clamp(min, max)
             }
             (AttachmentKind::Image, _) => height,
-            (AttachmentKind::File, _) => FILE_TILE_W.min(max),
+            (AttachmentKind::File | AttachmentKind::Folder, _) => FILE_TILE_W.min(max),
         }
     }
 }
@@ -1593,6 +1593,7 @@ impl ChatSurface {
                 self.attachment_work.open_file(chat, tile.id, &tile.name);
                 true
             }
+            AttachmentKind::Folder => false,
         }
     }
 

@@ -549,6 +549,12 @@ pub const MOBILE_UNAVAILABLE_OPERATIONS: &[MobileUnavailableOperation] = &[
         reason: "Attachments go to local agents, which run on the desktop that installed them",
     },
     MobileUnavailableOperation {
+        id: "ai.reference_attachment",
+        client: "client.ai().reference_attachment",
+        http: "POST /v1/ai/chats/{chat}/attachments/reference",
+        reason: "Local path references name files or folders on the desktop running the agent",
+    },
+    MobileUnavailableOperation {
         id: "ai.remove_attachment",
         client: "client.ai().remove_attachment",
         http: "DELETE /v1/ai/chats/{chat}/attachments/{attachment}",

@@ -370,6 +370,7 @@ impl AttachmentStore {
                     byte_count,
                     dimensions,
                     origin: None,
+                    reference_path: None,
                     created_at: Timestamp::now(),
                 },
                 has_sent_copy: sent_bytes.is_some(),

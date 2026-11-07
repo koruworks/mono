@@ -687,12 +687,19 @@ pub(crate) fn compose_prompt(request: &AiRequest, fresh: bool) -> String {
 pub(crate) fn attachment_block(heading: &str, attachments: &[AttachmentInput]) -> String {
     let mut block = String::from(heading);
     for attachment in attachments {
+        let location = attachment.reference.clone().or_else(|| {
+            attachment
+                .path
+                .as_ref()
+                .map(|path| path.display().to_string())
+        });
+        let Some(location) = location else { continue };
         block.push_str(&format!(
             "\n- {} — {}, {} — {}",
             attachment.file_name,
             attachment.media_type,
             human_size(attachment.byte_count),
-            attachment.path.display()
+            location
         ));
     }
     block
@@ -1514,7 +1521,8 @@ mod tests {
             },
             byte_count: 2_516_582,
             native: (kind == AttachmentKind::Image).then(|| path.clone()),
-            path,
+            path: Some(path),
+            reference: None,
         }
     }
 
@@ -1546,11 +1554,11 @@ mod tests {
         assert!(text.starts_with("What is in these?\n\nAttached to this message"));
         assert!(text.contains(&format!(
             "- shot.png — image/png, 2.4 MB — {}",
-            picture.path.display()
+            picture.path.as_ref().unwrap().display()
         )));
         assert!(text.contains(&format!(
             "- report.pdf — application/pdf, 2.4 MB — {}",
-            report.path.display()
+            report.path.as_ref().unwrap().display()
         )));
 
         // A message of attachments only is the block alone.
@@ -1569,7 +1577,7 @@ mod tests {
         request.messages[0].attachments = vec![earlier.clone()];
         let fresh = compose_prompt(&request, true);
         assert!(fresh.contains("**Person:**\nLook\nAttached to that message:"));
-        assert!(fresh.contains(&earlier.path.display().to_string()));
+        assert!(fresh.contains(&earlier.path.as_ref().unwrap().display().to_string()));
         assert!(fresh.ends_with("And now?"));
         // A session that saw it already is not told again.
         assert_eq!(compose_prompt(&request, false), "And now?");

@@ -300,6 +300,13 @@ pub trait AiServerPort: Send + Sync {
         attachment: ChatAttachmentId,
         upload: AttachmentUpload,
     ) -> Result<ChatAttachmentResponse>;
+    /// Stage a local file or folder path without copying bytes.
+    fn reference_attachment(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        request: koru_ai_wire::ReferenceAttachmentRequest,
+    ) -> Result<ChatAttachmentResponse>;
     /// Copy a sent attachment into a fresh staged row for message recall.
     fn restage_attachment(
         &self,

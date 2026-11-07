@@ -1804,11 +1804,35 @@ fn staged(chat_id: ChatId, name: &str, offset: i64) -> koru_ai_core::AttachmentR
             byte_count: 1_024,
             dimensions: Some((40, 30)),
             origin: None,
+            reference_path: None,
             created_at: at(offset),
         },
         has_sent_copy: false,
         content_blake3: "a".repeat(64),
     }
+}
+
+#[test]
+fn path_reference_round_trips_and_removes_without_file_cleanup() {
+    let (mut repository, chat) = repository_with_chat();
+    let mut record = staged(chat, "folder", 1);
+    record.attachment.kind = koru_ai_core::AttachmentKind::Folder;
+    record.attachment.source = koru_ai_core::AttachmentSource::Path;
+    record.attachment.media_type = "inode/directory".into();
+    record.attachment.byte_count = 0;
+    record.attachment.dimensions = None;
+    record.attachment.reference_path = Some("C:/资料 folder".into());
+    repository.stage_attachment(&record).unwrap();
+    assert_eq!(
+        repository.attachment(record.attachment.id).unwrap(),
+        Some(record.clone())
+    );
+    assert_eq!(
+        repository
+            .remove_staged_attachment(chat, record.attachment.id)
+            .unwrap(),
+        RemovedAttachment::Removed { had_files: false }
+    );
 }
 
 #[test]
@@ -1895,7 +1919,7 @@ fn only_a_staged_attachment_can_be_removed() {
         repository
             .remove_staged_attachment(chat_id, draft.attachment.id)
             .unwrap(),
-        RemovedAttachment::Removed
+        RemovedAttachment::Removed { had_files: true }
     );
     assert_eq!(
         repository

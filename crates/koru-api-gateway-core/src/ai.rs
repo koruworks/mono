@@ -27,10 +27,10 @@ use koru_ai_wire::{
     FeedbackRequest, FeedbackResponse, ListChatsResponse, ListChatsToolRequest,
     ListChatsToolResponse, ModelPullEvent, OllamaSettingsView, OpenAiSettingsView,
     ProviderSettingsResponse, ProviderValidationResponse, PullOllamaModelAccepted,
-    PullOllamaModelRequest, ReadChatToolRequest, ReadChatToolResponse, RemoveAttachmentResponse,
-    RenameChatRequest, RenameChatResponse, RestageAttachmentRequest, RetryTurnRequest,
-    SearchChatsToolRequest, SearchChatsToolResponse, SelectProviderRequest, SendTurnAccepted,
-    SendTurnRequest, StreamEvent, ToolDecisionRequest, ToolDecisionResponse,
+    PullOllamaModelRequest, ReadChatToolRequest, ReadChatToolResponse, ReferenceAttachmentRequest,
+    RemoveAttachmentResponse, RenameChatRequest, RenameChatResponse, RestageAttachmentRequest,
+    RetryTurnRequest, SearchChatsToolRequest, SearchChatsToolResponse, SelectProviderRequest,
+    SendTurnAccepted, SendTurnRequest, StreamEvent, ToolDecisionRequest, ToolDecisionResponse,
     UpdateChatModelRequest, UpdateChatModelResponse, UpdateChatPrivacyRequest,
     UpdateChatPrivacyResponse, UpdateChatToolPolicyRequest, UpdateOllamaSettingsRequest,
     UpdateOpenAiSettingsRequest, UsageResponse,
@@ -652,6 +652,19 @@ pub const ROUTES: &[AiRoute] = &[
         response: AiBody::Json(|generator| generator.subschema_for::<ChatAttachmentResponse>()),
         stream: false,
         path_parameters: &["chat", "attachment"],
+    },
+    AiRoute {
+        operation_id: "ai_reference_attachment",
+        method: "POST",
+        path: "/v1/ai/chats/{chat}/attachments/reference",
+        scope: AiScope::Chat,
+        summary: "Stage a local file or folder path for a local agent chat",
+        returns: "The staged path reference. No file or folder contents are read or copied.",
+        handler: || post(reference_attachment),
+        request: AiBody::Json(|generator| generator.subschema_for::<ReferenceAttachmentRequest>()),
+        response: AiBody::Json(|generator| generator.subschema_for::<ChatAttachmentResponse>()),
+        stream: false,
+        path_parameters: &["chat"],
     },
     AiRoute {
         operation_id: "ai_restage_attachment",
@@ -1677,6 +1690,22 @@ async fn remove_attachment(
         Err(response) => return response,
     };
     answer(call(move || client.remove_attachment(context, chat, attachment)).await)
+}
+
+async fn reference_attachment(
+    State(state): State<Arc<GatewayState>>,
+    Extension(principal): Extension<GatewayPrincipal>,
+    Path(chat): Path<String>,
+    Json(request): Json<ReferenceAttachmentRequest>,
+) -> Response {
+    let Some(chat) = ChatId::parse(&chat) else {
+        return invalid_identity("chat");
+    };
+    let (client, context) = match admitted(&state, principal, AiScope::Chat) {
+        Ok(values) => values,
+        Err(response) => return response,
+    };
+    answer(call(move || client.reference_attachment(context, chat, request)).await)
 }
 
 async fn restage_attachment(

@@ -159,6 +159,7 @@ Generated from the route catalog. Do not edit.
 - POST `/v1/ai/tool-calls/{tool}/approve` — Approve a pending workspace-tool call (Public)
 - POST `/v1/ai/tool-calls/{tool}/deny` — Deny a pending workspace-tool call (Public)
 - PUT `/v1/ai/chats/{chat}/attachments/{attachment}` — Store a picture or file for a local agent chat's next message (Public)
+- POST `/v1/ai/chats/{chat}/attachments/reference` — Stage a local file or folder path for a local agent chat (Public)
 - POST `/v1/ai/chats/{chat}/attachments/{attachment}/restage` — Copy a sent attachment into a fresh staged attachment for recall (Public)
 - DELETE `/v1/ai/chats/{chat}/attachments/{attachment}` — Remove a staged attachment (Public)
 - GET `/v1/ai/chats/{chat}/attachments/{attachment}` — Read an attachment's stored original (Public)

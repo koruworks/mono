@@ -20,7 +20,9 @@ use super::{
 /// What removing a staged attachment found.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum RemovedAttachment {
-    Removed,
+    Removed {
+        had_files: bool,
+    },
     /// No such attachment in this chat.
     NotFound,
     /// It was sent with a message, which keeps it.
@@ -41,7 +43,7 @@ const COLUMNS: &str = "attachment.id, attachment.chat_id, attachment.message_id,
     attachment.ordinal, attachment.kind, attachment.source, attachment.file_name,
     attachment.media_type, attachment.byte_count, attachment.width, attachment.height,
     attachment.origin_workspace_id, attachment.origin_document_id, attachment.created_at_ms,
-    attachment.has_sent_copy, attachment.content_blake3";
+    attachment.has_sent_copy, attachment.content_blake3, attachment.reference_path";
 
 impl Repository {
     /// One attachment by id, in whichever chat it belongs to.
@@ -73,20 +75,20 @@ impl Repository {
         chat: ChatId,
         id: ChatAttachmentId,
     ) -> Result<RemovedAttachment, AiError> {
-        let bound: Option<bool> = self
+        let state: Option<(bool, bool)> = self
             .connection
             .query_row(
-                "SELECT message_id IS NOT NULL FROM message_attachments
+                "SELECT message_id IS NOT NULL, source != 'path' FROM message_attachments
                   WHERE id = ?1 AND chat_id = ?2",
                 [id.to_storage(), chat.to_storage()],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()
             .map_err(storage_failed)?;
-        match bound {
+        match state {
             None => Ok(RemovedAttachment::NotFound),
-            Some(true) => Ok(RemovedAttachment::Sent),
-            Some(false) => {
+            Some((true, _)) => Ok(RemovedAttachment::Sent),
+            Some((false, had_files)) => {
                 self.connection
                     .execute(
                         "DELETE FROM message_attachments
@@ -94,7 +96,7 @@ impl Repository {
                         [id.to_storage(), chat.to_storage()],
                     )
                     .map_err(storage_failed)?;
-                Ok(RemovedAttachment::Removed)
+                Ok(RemovedAttachment::Removed { had_files })
             }
         }
     }
@@ -216,6 +218,11 @@ pub(super) fn insert_attachment(
     if attachment.message_id.is_some() != bound_at.is_some()
         || attachment.message_id.is_some() != attachment.ordinal.is_some()
         || (attachment.source == AttachmentSource::Workspace) != attachment.origin.is_some()
+        || (attachment.source == AttachmentSource::Path) != attachment.reference_path.is_some()
+        || (attachment.source == AttachmentSource::Path) != (attachment.byte_count == 0)
+        || (attachment.kind == AttachmentKind::Folder
+            && attachment.source != AttachmentSource::Path)
+        || (attachment.kind == AttachmentKind::Image && attachment.source == AttachmentSource::Path)
     {
         return Err(invariant_failed());
     }
@@ -227,8 +234,9 @@ pub(super) fn insert_attachment(
             "INSERT INTO message_attachments (
                 id, chat_id, message_id, ordinal, kind, source, file_name, media_type,
                 byte_count, width, height, origin_workspace_id, origin_document_id,
-                created_at_ms, has_sent_copy, content_blake3, bound_at_ms
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+                created_at_ms, has_sent_copy, content_blake3, bound_at_ms,
+                reference_path
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
             params![
                 attachment.id.to_storage(),
                 record.chat_id.to_storage(),
@@ -253,6 +261,7 @@ pub(super) fn insert_attachment(
                 record.has_sent_copy,
                 record.content_blake3,
                 bound_at.map(Timestamp::millis),
+                attachment.reference_path,
             ],
         )
         .map_err(storage_failed)?;
@@ -295,6 +304,7 @@ fn record_from_row(row: &Row<'_>) -> rusqlite::Result<AttachmentRecord> {
                 }),
                 _ => None,
             },
+            reference_path: row.get(16)?,
             created_at: Timestamp::from_millis(row.get(13)?),
         },
         has_sent_copy: row.get(14)?,

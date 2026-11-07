@@ -4,7 +4,7 @@
 
 use koru_ai_api::AttachmentUpload;
 use koru_ai_core::{AttachmentKind, AttachmentSource, ChatAttachmentId};
-use koru_ai_wire::attachment_codes;
+use koru_ai_wire::{ReferenceAttachmentRequest, attachment_codes};
 
 use super::*;
 
@@ -140,11 +140,11 @@ fn a_pasted_picture_is_stored_bound_and_carried_to_the_agent() {
     let sent = &request.messages.last().unwrap().attachments;
     assert_eq!(sent.len(), 1);
     assert_eq!(sent[0].id, id);
-    assert!(sent[0].path.is_file());
-    assert!(sent[0].path.starts_with(directory.path()));
+    assert!(sent[0].path.as_ref().unwrap().is_file());
+    assert!(sent[0].path.as_ref().unwrap().starts_with(directory.path()));
     assert_eq!(
         sent[0].native.as_deref(),
-        Some(sent[0].path.as_path()),
+        sent[0].path.as_deref(),
         "a small picture goes as it is"
     );
     assert_eq!(
@@ -457,6 +457,111 @@ fn a_message_may_be_attachments_only_but_never_nothing() {
     assert_eq!(
         wait_for_terminal(&client, stream.accepted.attempt_id),
         AttemptStatus::Complete
+    );
+}
+
+#[test]
+fn a_path_reference_stages_without_bytes_replays_and_sends_alone() {
+    let directory = tempfile::tempdir().unwrap();
+    let (worker, requests) = agent_worker(directory.path());
+    let client = worker.client();
+    let chat = create_agent_chat(&client);
+    let id = ChatAttachmentId::new();
+    let path = directory
+        .path()
+        .join("资料 folder")
+        .to_string_lossy()
+        .into_owned();
+    let request = ReferenceAttachmentRequest {
+        id,
+        kind: AttachmentKind::Folder,
+        path: path.clone(),
+    };
+    let staged = client
+        .reference_attachment(context(), chat, request.clone())
+        .unwrap()
+        .attachment;
+    assert_eq!(staged.reference_path.as_deref(), Some(path.as_str()));
+    assert_eq!(staged.byte_count, 0);
+    assert!(
+        !chat_folder(directory.path(), chat).exists(),
+        "a reference owns no folder"
+    );
+    assert_eq!(
+        client
+            .reference_attachment(context(), chat, request.clone())
+            .unwrap()
+            .attachment,
+        staged,
+        "the same id and path replay"
+    );
+    assert_eq!(
+        client
+            .reference_attachment(
+                context(),
+                chat,
+                ReferenceAttachmentRequest {
+                    path: format!("{path}/other"),
+                    ..request.clone()
+                }
+            )
+            .unwrap_err()
+            .code,
+        attachment_codes::CONFLICT
+    );
+    assert_eq!(
+        client
+            .reference_attachment(
+                context(),
+                chat,
+                ReferenceAttachmentRequest {
+                    id: ChatAttachmentId::new(),
+                    path: "relative/path".into(),
+                    ..request
+                }
+            )
+            .unwrap_err()
+            .code,
+        "invalid_request"
+    );
+    assert_eq!(
+        client
+            .read_attachment(context(), chat, id)
+            .err()
+            .unwrap()
+            .code,
+        attachment_codes::NO_PREVIEW,
+        "a reference cannot return bytes"
+    );
+    let stream = send_with(&client, chat, "", vec![id]).unwrap();
+    let sent = requests.recv_timeout(Duration::from_secs(5)).unwrap();
+    let input = &sent.messages.last().unwrap().attachments[0];
+    assert_eq!(input.path, None);
+    assert_eq!(input.reference.as_deref(), Some(path.as_str()));
+    assert_eq!(
+        wait_for_terminal(&client, stream.accepted.attempt_id),
+        AttemptStatus::Complete
+    );
+    assert!(
+        !chat_folder(directory.path(), chat).exists(),
+        "send did not copy bytes"
+    );
+    let restaged = client
+        .restage_attachment(
+            context(),
+            chat,
+            id,
+            koru_ai_wire::RestageAttachmentRequest {
+                new_id: ChatAttachmentId::new(),
+            },
+        )
+        .unwrap()
+        .attachment;
+    assert_eq!(restaged.reference_path.as_deref(), Some(path.as_str()));
+    assert_eq!(restaged.message_id, None);
+    assert!(
+        !chat_folder(directory.path(), chat).exists(),
+        "recall copied only the row"
     );
 }
 
