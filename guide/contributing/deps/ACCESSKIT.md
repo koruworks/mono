@@ -93,6 +93,21 @@ Two consequences:
 is the whole of "an ordinary session pays nothing": there is no separate
 "is anyone listening" query to get wrong.
 
+## A modal must withhold body deltas as well as the initial body
+
+AccessKit removes subtrees when a parent's child list drops them. Publishing a
+removed node again without a parent panics in `accesskit_consumer::State::update`
+with "nodes which are neither in the current tree nor a child of another node
+from the update". Retaining disconnected nodes in a test client hides this.
+
+The desktop shell publishes only the blocker when Move to or another modal
+opens. Subsequent updates with unchanged chrome must also withhold the document
+body. Otherwise the body projector sees a withheld body, produces a complete
+one, and sends its root as a loose delta under a parent that no longer exists.
+Closing the blocker changes the chrome revision and restores the body beneath
+its content region. Integration fixtures prune disconnected nodes and reject
+new unattached nodes to cover this transition.
+
 ## Which UIA property a Koru locator lands on
 
 This is the mapping the roadmap required to be established rather than assumed.

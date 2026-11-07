@@ -47,6 +47,10 @@ the UI inspector groups the overlay under one SearchModal component.
 Document outline icons use the document's chosen color. Priority flags appear
 between the icon and title, in the same colors as the priority picker.
 
+Fixed a Windows accessibility crash while the Move to dialog was open over a
+document. Repeated accessibility updates now keep the underlying document out
+of the modal's tree until the dialog closes.
+
 ## MCP assistants
 
 MCP edits validate their requested changes before writing. If a request is
