@@ -381,6 +381,16 @@ impl Client {
         self.server.reference_attachment(context, chat, request)
     }
 
+    pub fn from_workspace_attachment(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        request: koru_ai_wire::FromWorkspaceAttachmentRequest,
+    ) -> Result<koru_ai_wire::ChatAttachmentResponse> {
+        self.server
+            .from_workspace_attachment(context, chat, request)
+    }
+
     pub fn remove_attachment(
         &self,
         context: RequestContext,

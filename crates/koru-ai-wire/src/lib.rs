@@ -234,6 +234,16 @@ pub struct ReferenceAttachmentRequest {
     pub path: String,
 }
 
+/// Copy a Files document into a chat attachment. The id is minted before
+/// import so a retry can finish the same operation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FromWorkspaceAttachmentRequest {
+    pub id: koru_ai_core::ChatAttachmentId,
+    pub workspace: koru_ai_core::WorkspaceId,
+    pub document: koru_ai_core::DocumentId,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct RemoveAttachmentResponse {
     /// Whether a staged attachment existed and was removed.

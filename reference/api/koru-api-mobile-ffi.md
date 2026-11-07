@@ -90,6 +90,7 @@ These public HTTP/client operations are catalogued but have no mobile FFI or Pro
 | `ai.put_attachment` | `client.ai().put_attachment` | PUT /v1/ai/chats/{chat}/attachments/{attachment} | Attachments go to local agents, which run on the desktop that installed them |
 | `ai.restage_attachment` | `client.ai().restage_attachment` | POST /v1/ai/chats/{chat}/attachments/{attachment}/restage | Attachments go to local agents, which run on the desktop that installed them |
 | `ai.reference_attachment` | `client.ai().reference_attachment` | POST /v1/ai/chats/{chat}/attachments/reference | Local path references name files or folders on the desktop running the agent |
+| `ai.from_workspace_attachment` | `client.ai().from_workspace_attachment` | POST /v1/ai/chats/{chat}/attachments/from-workspace | Workspace file copies are made on the desktop that runs the local agent |
 | `ai.remove_attachment` | `client.ai().remove_attachment` | DELETE /v1/ai/chats/{chat}/attachments/{attachment} | Attachments go to local agents, which run on the desktop that installed them |
 | `ai.read_attachment` | `client.ai().attachment_bytes` | GET /v1/ai/chats/{chat}/attachments/{attachment} | Attachments go to local agents, which run on the desktop that installed them |
 | `ai.read_attachment_thumbnail` | `client.ai().attachment_thumbnail` | GET /v1/ai/chats/{chat}/attachments/{attachment}/thumbnail | Attachments go to local agents, which run on the desktop that installed them |

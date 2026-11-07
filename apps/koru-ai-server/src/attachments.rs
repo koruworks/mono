@@ -240,10 +240,12 @@ impl AttachmentStore {
     }
 
     /// The stored original: the path an agent is told about.
-    pub(crate) fn original(&self, record: &AttachmentRecord) -> PathBuf {
-        self.attachment_dir(record.chat_id, record.attachment.id)
-            .join(ORIGINAL_DIR)
-            .join(&record.attachment.file_name)
+    pub(crate) fn original(&self, record: &AttachmentRecord) -> Option<PathBuf> {
+        (record.attachment.source != AttachmentSource::Path).then(|| {
+            self.attachment_dir(record.chat_id, record.attachment.id)
+                .join(ORIGINAL_DIR)
+                .join(&record.attachment.file_name)
+        })
     }
 
     pub(crate) fn thumbnail(&self, chat: ChatId, id: ChatAttachmentId) -> PathBuf {

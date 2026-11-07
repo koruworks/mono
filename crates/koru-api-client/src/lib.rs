@@ -1211,6 +1211,20 @@ impl AiClient<'_> {
         )
     }
 
+    /// Copy a granted workspace file into a staged chat attachment.
+    /// Blocking: call it off the UI thread.
+    pub fn from_workspace_attachment(
+        &self,
+        chat: ChatId,
+        request: koru_ai_wire::FromWorkspaceAttachmentRequest,
+    ) -> AiResult<koru_ai_wire::ChatAttachmentResponse> {
+        self.json(
+            reqwest::Method::POST,
+            format!("/v1/ai/chats/{chat}/attachments/from-workspace"),
+            Some(json_body(&request)?),
+        )
+    }
+
     /// Copy a sent attachment's bytes into a new staged id for recall.
     pub fn restage_attachment(
         &self,

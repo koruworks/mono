@@ -5622,6 +5622,27 @@
         ],
         "type": "object"
       },
+      "FromWorkspaceAttachmentRequest": {
+        "additionalProperties": false,
+        "description": "Copy a Files document into a chat attachment. The id is minted before\nimport so a retry can finish the same operation.",
+        "properties": {
+          "document": {
+            "$ref": "#/components/schemas/DocumentId"
+          },
+          "id": {
+            "$ref": "#/components/schemas/ChatAttachmentId"
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/WorkspaceId"
+          }
+        },
+        "required": [
+          "id",
+          "workspace",
+          "document"
+        ],
+        "type": "object"
+      },
       "GatewayStatus": {
         "description": "`GET /v1/status`. Its first four fields preserve the Store status shape so\nolder readers ignore the additive gateway readiness fields safely.",
         "properties": {
@@ -18104,6 +18125,143 @@
           }
         ],
         "summary": "Choose the approval mode a chat's local agent runs its next message in"
+      }
+    },
+    "/v1/ai/chats/{chat}/attachments/from-workspace": {
+      "post": {
+        "description": "The staged copy with workspace provenance. The source grant is checked before reading bytes.",
+        "operationId": "ai_from_workspace_attachment",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "chat",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FromWorkspaceAttachmentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatAttachmentResponse"
+                }
+              }
+            },
+            "description": "The staged copy with workspace provenance. The source grant is checked before reading bytes."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The request body or path identity is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The gateway bearer is absent or invalid"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The bearer lacks the operation's declared AI scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment, or the stored file, is not there"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The operation conflicts with durable chat state"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment is larger than the limit"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment's type is not allowed, or its content is not what its name says"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The AI worker is unavailable or saturated"
+          },
+          "507": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment could not be stored on this computer"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "ai.chat"
+            ]
+          }
+        ],
+        "summary": "Copy a granted workspace file into a local agent chat"
       }
     },
     "/v1/ai/chats/{chat}/attachments/reference": {

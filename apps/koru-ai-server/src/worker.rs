@@ -264,6 +264,7 @@ impl AiWorker {
     pub fn spawn(self) -> Result<WorkerHandle, WorkerError> {
         let (sender, receiver) = sync_channel(WORKER_COMMAND_CAPACITY);
         let attachments = AttachmentStore::new(&self.config.root);
+        let store_context = self.config.store_context.clone();
         let (ready_tx, ready_rx) = sync_channel(1);
         let shutdown = Arc::new(AtomicBool::new(false));
         let thread_shutdown = Arc::clone(&shutdown);
@@ -305,6 +306,7 @@ impl AiWorker {
                 Ok(WorkerHandle {
                     sender,
                     attachments,
+                    store_context,
                     shutdown,
                     status,
                     join: Some(join),
@@ -330,13 +332,21 @@ impl AiWorker {
     }
 }
 
-#[derive(Debug)]
 pub struct WorkerHandle {
     sender: SyncSender<Envelope>,
     attachments: AttachmentStore,
+    store_context: Option<Arc<dyn StoreContextPort>>,
     shutdown: Arc<AtomicBool>,
     status: Arc<Mutex<WorkerStatus>>,
     join: Option<JoinHandle<WorkerExit>>,
+}
+
+impl std::fmt::Debug for WorkerHandle {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("WorkerHandle")
+            .finish_non_exhaustive()
+    }
 }
 
 impl WorkerHandle {
@@ -344,6 +354,7 @@ impl WorkerHandle {
         AiWorkerClient {
             sender: self.sender.clone(),
             attachments: self.attachments.clone(),
+            store_context: self.store_context.clone(),
         }
     }
 
@@ -398,6 +409,7 @@ pub struct AiWorkerClient {
     sender: SyncSender<Envelope>,
     /// Where uploads are prepared and read, on the caller's own thread.
     attachments: AttachmentStore,
+    store_context: Option<Arc<dyn StoreContextPort>>,
 }
 
 impl AiWorkerClient {
@@ -979,6 +991,15 @@ impl AiServerPort for AiWorkerClient {
         attachments::reference_attachment(self, context, chat, request)
     }
 
+    fn from_workspace_attachment(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        request: koru_ai_wire::FromWorkspaceAttachmentRequest,
+    ) -> ApiResult<koru_ai_wire::ChatAttachmentResponse> {
+        attachments::from_workspace_attachment(self, context, chat, request)
+    }
+
     fn restage_attachment(
         &self,
         context: RequestContext,
@@ -1274,6 +1295,13 @@ enum WorkerCommand {
         attachment: ChatAttachmentId,
         reply: SyncSender<ApiResult<Option<AttachmentRecord>>>,
     },
+    WorkspaceCopyAdmission {
+        context: RequestContext,
+        chat: ChatId,
+        attachment: ChatAttachmentId,
+        workspace: WorkspaceId,
+        reply: SyncSender<ApiResult<koru_ai_core::ProfileId>>,
+    },
     StageAttachment {
         context: RequestContext,
         record: Box<AttachmentRecord>,
@@ -1346,6 +1374,7 @@ impl WorkerCommand {
             Self::ExportChat { .. } => "export_chat",
             Self::ReadExport { .. } => "read_export",
             Self::AttachmentAdmission { .. } => "attachment_admission",
+            Self::WorkspaceCopyAdmission { .. } => "workspace_copy_admission",
             Self::StageAttachment { .. } => "stage_attachment",
             Self::RemoveStagedAttachment { .. } => "remove_staged_attachment",
             Self::ResolveAttachments { .. } => "resolve_attachments",
@@ -2024,6 +2053,16 @@ impl WorkerState {
                 reply,
             } => {
                 let _ = reply.send(self.attachment_admission(context, chat, attachment));
+            }
+            WorkerCommand::WorkspaceCopyAdmission {
+                context,
+                chat,
+                attachment,
+                workspace,
+                reply,
+            } => {
+                let _ =
+                    reply.send(self.workspace_copy_admission(context, chat, attachment, workspace));
             }
             WorkerCommand::StageAttachment {
                 context,

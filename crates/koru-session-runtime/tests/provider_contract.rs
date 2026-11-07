@@ -49,6 +49,34 @@ fn capabilities() -> AgentCapabilities {
     }
 }
 
+#[test]
+fn path_lines_count_toward_provider_input_byte_limit() {
+    let path = std::env::temp_dir()
+        .join("folder with spaces 文書")
+        .display()
+        .to_string();
+    let input = AgentInput {
+        model: None,
+        turn_id: AgentTurnId::mint(),
+        text: "read".into(),
+        attachments: Vec::new(),
+        references: vec![koru_session_protocol::PathReference {
+            kind: koru_session_protocol::PathReferenceKind::Folder,
+            path: path.clone(),
+        }],
+        mode: None,
+        fast: None,
+        reasoning: None,
+        skills: Vec::new(),
+    };
+    let bytes = "read".len() + format!("Local Folder path: {path}").len();
+    assert!(input.validate(bytes).is_ok());
+    assert_eq!(
+        input.validate(bytes - 1).unwrap_err().code,
+        ErrorCode::InvalidRequest
+    );
+}
+
 /// A fixture that meets every declared requirement, so each test can take
 /// one away and watch the verdict turn.
 fn delegation_facts() -> DelegationFacts {

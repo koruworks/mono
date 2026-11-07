@@ -307,6 +307,13 @@ pub trait AiServerPort: Send + Sync {
         chat: ChatId,
         request: koru_ai_wire::ReferenceAttachmentRequest,
     ) -> Result<ChatAttachmentResponse>;
+    /// Copy a granted workspace Files document into a staged chat attachment.
+    fn from_workspace_attachment(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        request: koru_ai_wire::FromWorkspaceAttachmentRequest,
+    ) -> Result<ChatAttachmentResponse>;
     /// Copy a sent attachment into a fresh staged row for message recall.
     fn restage_attachment(
         &self,

@@ -710,6 +710,12 @@ Stage a local file or folder path for a local agent chat
 
 Returns: The staged path reference. No file or folder contents are read or copied.
 
+## POST `/v1/ai/chats/{chat}/attachments/from-workspace`
+
+Copy a granted workspace file into a local agent chat
+
+Returns: The staged copy with workspace provenance. The source grant is checked before reading bytes.
+
 ## POST `/v1/ai/chats/{chat}/attachments/{attachment}/restage`
 
 Copy a sent attachment into a fresh staged attachment for recall

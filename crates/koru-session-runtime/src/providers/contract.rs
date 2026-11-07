@@ -312,8 +312,16 @@ pub struct AgentInput {
 
 impl AgentInput {
     pub fn validate(&self, maximum_text_bytes: usize) -> Result<(), ProviderFailure> {
+        // The provider's text limit includes path lines added after the
+        // person's words. ACP separately bounds the serialized JSON frame.
+        let delivered_text_bytes = self
+            .references
+            .iter()
+            .try_fold(self.text.len(), |used, reference| {
+                used.checked_add(reference_line(reference).len())
+            });
         if (self.text.is_empty() && self.attachments.is_empty() && self.references.is_empty())
-            || self.text.len() > maximum_text_bytes
+            || delivered_text_bytes.is_none_or(|bytes| bytes > maximum_text_bytes)
             || !koru_session_protocol::valid_input_skills(&self.skills)
             || self.attachments.len() + self.references.len() > 10
             || self.references.iter().any(|reference| !reference.valid())

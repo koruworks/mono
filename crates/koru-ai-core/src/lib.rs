@@ -40,6 +40,7 @@ pub use inference::{
 pub use model::*;
 pub use ports::{
     AiPersistence, AiProvider, AiToolExecutionContext, AiToolExecutor, StoreContextPort,
+    WorkspaceFileData,
 };
 pub use profiles::{ChatPlacementEvidence, ChatRead, ProfileCatalog, place_chat};
 pub use provider::*;

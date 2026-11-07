@@ -148,7 +148,7 @@ fn a_large_screenshot_gets_a_sent_copy_within_the_edge_and_the_bytes() {
     assert!(prepared.record.has_sent_copy);
     store.publish(&prepared).unwrap();
 
-    let original_path = store.original(&prepared.record);
+    let original_path = store.original(&prepared.record).unwrap();
     assert_eq!(fs::read(&original_path).unwrap(), original, "byte for byte");
     let sent = native_copy(&original_path);
     assert_ne!(sent, original_path);
@@ -172,7 +172,7 @@ fn a_small_photo_goes_as_it_is() {
     assert!(!prepared.record.has_sent_copy);
     assert_eq!(prepared.record.attachment.media_type, "image/jpeg");
     store.publish(&prepared).unwrap();
-    let original = store.original(&prepared.record);
+    let original = store.original(&prepared.record).unwrap();
     assert_eq!(native_copy(&original), original);
 }
 
@@ -242,12 +242,15 @@ fn a_name_is_sanitized_before_it_names_a_file() {
     let prepared = prepare(&store, "../../evil<>.txt", b"hello").unwrap();
     assert_eq!(prepared.record.attachment.file_name, "evil.txt");
     store.publish(&prepared).unwrap();
-    assert!(store.original(&prepared.record).is_file());
+    assert!(store.original(&prepared.record).unwrap().is_file());
     assert!(
-        store.original(&prepared.record).starts_with(
+        store.original(&prepared.record).unwrap().starts_with(
             store.attachment_dir(prepared.record.chat_id, prepared.record.attachment.id)
         )
     );
+    let mut reference = prepared.record.clone();
+    reference.attachment.source = AttachmentSource::Path;
+    assert!(store.original(&reference).is_none());
 }
 
 #[test]
@@ -285,8 +288,8 @@ fn the_sweep_removes_orphans_and_staging_and_leaves_anything_else() {
             staging: 1,
         }
     );
-    assert!(store.original(&kept.record).is_file());
-    assert!(!store.original(&orphan.record).exists());
+    assert!(store.original(&kept.record).unwrap().is_file());
+    assert!(!store.original(&orphan.record).unwrap().exists());
     assert!(!store.chat_dir(gone_chat.record.chat_id).exists());
     assert!(!in_flight.staging.exists());
     assert!(
@@ -303,7 +306,7 @@ fn nothing_newer_than_the_sweep_is_swept() {
     store.publish(&fresh).unwrap();
     let counts = store.sweep(&KnownAttachmentDirs::default(), started);
     assert_eq!(counts, SweepCounts::default());
-    assert!(store.original(&fresh.record).is_file());
+    assert!(store.original(&fresh.record).unwrap().is_file());
 }
 
 #[test]
@@ -362,7 +365,10 @@ fn editing_a_branch_attachment_leaves_the_original_alone() {
         .write_all(b"after")
         .unwrap();
     assert_eq!(fs::read(&copied).unwrap(), b"after");
-    assert_eq!(fs::read(store.original(&first.record)).unwrap(), b"before");
+    assert_eq!(
+        fs::read(store.original(&first.record).unwrap()).unwrap(),
+        b"before"
+    );
 }
 
 #[test]

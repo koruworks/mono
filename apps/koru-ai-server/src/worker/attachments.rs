@@ -36,6 +36,38 @@ pub(super) enum BranchPlan {
 impl WorkerState {
     // ----- rows, for the caller's thread --------------------------------
 
+    pub(super) fn workspace_copy_admission(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        attachment: ChatAttachmentId,
+        workspace: WorkspaceId,
+    ) -> ApiResult<koru_ai_core::ProfileId> {
+        authorize(&context, AiScope::Chat)?;
+        self.admit_chat_work(Some(chat))?;
+        let chat = self.require_attachment_chat(chat)?;
+        let granted = self
+            .repository
+            .chat_tool_policy(chat.id)
+            .map_err(ai_failure)?
+            .is_some_and(|policy| policy.workspace_ids.contains(&workspace));
+        let owned_by_chat = self
+            .store
+            .as_ref()
+            .and_then(|store| store.profile_catalog().ok())
+            .and_then(|catalog| catalog.owner(workspace))
+            == chat.profile_id;
+        let Some(profile) = chat.profile_id.filter(|_| granted && owned_by_chat) else {
+            return Err(attachment_failure(
+                attachment_codes::WORKSPACE_NOT_GRANTED,
+                "This space is not shared with the chat.",
+                false,
+                attachment,
+            ));
+        };
+        Ok(profile)
+    }
+
     /// Before an upload is prepared: the chat must exist and take
     /// attachments, and an earlier row under the same id is returned so the
     /// caller can tell a repeat from a conflict without storing anything.
@@ -69,6 +101,16 @@ impl WorkerState {
         self.admit_chat_work(Some(record.chat_id))?;
         self.require_attachment_chat(record.chat_id)?;
         let id = record.attachment.id;
+        if let Some(origin) = &record.attachment.origin {
+            // A revoked grant while the blocking copy ran cannot publish a
+            // new row. Sent content is immutable and unaffected.
+            self.workspace_copy_admission(
+                context.clone(),
+                record.chat_id,
+                id,
+                origin.workspace_id,
+            )?;
+        }
         if let Some(existing) = self.repository.attachment(id).map_err(ai_failure)? {
             return if existing.chat_id == record.chat_id
                 && existing.content_blake3 == record.content_blake3
@@ -235,8 +277,7 @@ impl WorkerState {
                 file_name: record.attachment.file_name.clone(),
                 media_type: record.attachment.media_type.clone(),
                 byte_count: record.attachment.byte_count,
-                path: (record.attachment.source != AttachmentSource::Path)
-                    .then(|| self.attachments.original(record)),
+                path: self.attachments.original(record),
                 reference: record.attachment.reference_path.clone(),
                 native: None,
             })
@@ -450,6 +491,111 @@ pub(super) fn put_attachment(
         }
         Err(error) => {
             // No row names the folder: it goes now rather than at the sweep.
+            store.remove_attachment(chat, id);
+            Err(error)
+        }
+    }
+}
+
+/// Copy a granted Files document through the Store and stage owned bytes.
+/// The grant is checked before the Store reads, and the source identity stays
+/// on the staged row for the send's second authorization check.
+pub(super) fn from_workspace_attachment(
+    client: &AiWorkerClient,
+    context: RequestContext,
+    chat: ChatId,
+    request: koru_ai_wire::FromWorkspaceAttachmentRequest,
+) -> ApiResult<koru_ai_wire::ChatAttachmentResponse> {
+    let koru_ai_wire::FromWorkspaceAttachmentRequest {
+        id,
+        workspace,
+        document,
+    } = request;
+    let Some(_claim) = client.attachments.claim(id) else {
+        return Err(attachment_failure(
+            attachment_codes::CONFLICT,
+            "This attachment is still being stored.",
+            true,
+            id,
+        ));
+    };
+    let (reply, response) = sync_channel(1);
+    client.send(WorkerCommand::WorkspaceCopyAdmission {
+        context: context.clone(),
+        chat,
+        attachment: id,
+        workspace,
+        reply,
+    })?;
+    let profile = receive_api(response)?;
+    let (reply, response) = sync_channel(1);
+    client.send(WorkerCommand::AttachmentAdmission {
+        context: context.clone(),
+        chat,
+        attachment: id,
+        reply,
+    })?;
+    let existing = receive_api(response)?;
+    let source = client.store_context.as_ref().ok_or_else(|| {
+        attachment_failure(
+            attachment_codes::WORKSPACE_FILE_UNAVAILABLE,
+            "Koru's workspace files are unavailable.",
+            true,
+            id,
+        )
+    })?;
+    let file = source
+        .read_workspace_file(workspace, document, profile)
+        .map_err(|error| {
+            attachment_failure(
+                if error.class == AiErrorClass::ContextTooLarge {
+                    attachment_codes::TOO_LARGE
+                } else {
+                    attachment_codes::WORKSPACE_FILE_UNAVAILABLE
+                },
+                &error.public_message,
+                error.retryable,
+                id,
+            )
+        })?;
+    if let Some(existing) = existing {
+        return if existing.attachment.origin.as_ref().is_some_and(|origin| {
+            origin.workspace_id == workspace && origin.document_id == document
+        }) && existing.content_blake3 == blake3::hash(&file.bytes).to_hex().as_str()
+        {
+            Ok(koru_ai_wire::ChatAttachmentResponse {
+                attachment: existing.attachment,
+            })
+        } else {
+            Err(conflict(id))
+        };
+    }
+    let store = &client.attachments;
+    let mut prepared = store.prepare(
+        chat,
+        id,
+        &file.file_name,
+        AttachmentSource::Workspace,
+        &file.bytes,
+    )?;
+    prepared.record.attachment.origin = Some(koru_ai_core::WorkspaceFileOrigin {
+        workspace_id: workspace,
+        document_id: document,
+    });
+    store.publish(&prepared)?;
+    let (reply, response) = sync_channel(1);
+    let staged = client
+        .send(WorkerCommand::StageAttachment {
+            context,
+            record: Box::new(prepared.record.clone()),
+            reply,
+        })
+        .and_then(|()| receive_api(response));
+    match staged {
+        Ok(StageAnswer::Stored(attachment) | StageAnswer::Existing(attachment)) => {
+            Ok(koru_ai_wire::ChatAttachmentResponse { attachment })
+        }
+        Err(error) => {
             store.remove_attachment(chat, id);
             Err(error)
         }
@@ -728,8 +874,11 @@ pub(super) fn read_attachment(
             id,
         ));
     }
-    let bytes =
-        std::fs::read(client.attachments.original(&record)).map_err(|_| attachment_missing(id))?;
+    let original = client
+        .attachments
+        .original(&record)
+        .ok_or_else(|| attachment_missing(id))?;
+    let bytes = std::fs::read(original).map_err(|_| attachment_missing(id))?;
     Ok(koru_ai_api::AttachmentContent {
         file_name: record.attachment.file_name,
         media_type: record.attachment.media_type,
@@ -777,7 +926,11 @@ pub(super) fn check_files_for_send(
         if record.attachment.source == AttachmentSource::Path {
             continue;
         }
-        if !client.attachments.original(&record).is_file() {
+        if !client
+            .attachments
+            .original(&record)
+            .is_some_and(|path| path.is_file())
+        {
             tracing::warn!(
                 target: "koru_ai::attachments",
                 attachment_id = %record.attachment.id,

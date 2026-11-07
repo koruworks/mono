@@ -555,6 +555,12 @@ pub const MOBILE_UNAVAILABLE_OPERATIONS: &[MobileUnavailableOperation] = &[
         reason: "Local path references name files or folders on the desktop running the agent",
     },
     MobileUnavailableOperation {
+        id: "ai.from_workspace_attachment",
+        client: "client.ai().from_workspace_attachment",
+        http: "POST /v1/ai/chats/{chat}/attachments/from-workspace",
+        reason: "Workspace file copies are made on the desktop that runs the local agent",
+    },
+    MobileUnavailableOperation {
         id: "ai.remove_attachment",
         client: "client.ai().remove_attachment",
         http: "DELETE /v1/ai/chats/{chat}/attachments/{attachment}",

@@ -24,16 +24,16 @@ use koru_ai_wire::{
     CancelAttemptResponse, CancelModelPullResponse, ChatAttachmentResponse, ChatToolPolicyResponse,
     ChatTranscript, ClearHistoryResponse, ClearUsageResponse, CreateChatRequest,
     CreateChatResponse, DeleteChatResponse, ExportChatRequest, ExportChatResponse, Failure,
-    FeedbackRequest, FeedbackResponse, ListChatsResponse, ListChatsToolRequest,
-    ListChatsToolResponse, ModelPullEvent, OllamaSettingsView, OpenAiSettingsView,
-    ProviderSettingsResponse, ProviderValidationResponse, PullOllamaModelAccepted,
-    PullOllamaModelRequest, ReadChatToolRequest, ReadChatToolResponse, ReferenceAttachmentRequest,
-    RemoveAttachmentResponse, RenameChatRequest, RenameChatResponse, RestageAttachmentRequest,
-    RetryTurnRequest, SearchChatsToolRequest, SearchChatsToolResponse, SelectProviderRequest,
-    SendTurnAccepted, SendTurnRequest, StreamEvent, ToolDecisionRequest, ToolDecisionResponse,
-    UpdateChatModelRequest, UpdateChatModelResponse, UpdateChatPrivacyRequest,
-    UpdateChatPrivacyResponse, UpdateChatToolPolicyRequest, UpdateOllamaSettingsRequest,
-    UpdateOpenAiSettingsRequest, UsageResponse,
+    FeedbackRequest, FeedbackResponse, FromWorkspaceAttachmentRequest, ListChatsResponse,
+    ListChatsToolRequest, ListChatsToolResponse, ModelPullEvent, OllamaSettingsView,
+    OpenAiSettingsView, ProviderSettingsResponse, ProviderValidationResponse,
+    PullOllamaModelAccepted, PullOllamaModelRequest, ReadChatToolRequest, ReadChatToolResponse,
+    ReferenceAttachmentRequest, RemoveAttachmentResponse, RenameChatRequest, RenameChatResponse,
+    RestageAttachmentRequest, RetryTurnRequest, SearchChatsToolRequest, SearchChatsToolResponse,
+    SelectProviderRequest, SendTurnAccepted, SendTurnRequest, StreamEvent, ToolDecisionRequest,
+    ToolDecisionResponse, UpdateChatModelRequest, UpdateChatModelResponse,
+    UpdateChatPrivacyRequest, UpdateChatPrivacyResponse, UpdateChatToolPolicyRequest,
+    UpdateOllamaSettingsRequest, UpdateOpenAiSettingsRequest, UsageResponse,
 };
 use schemars::{Schema, SchemaGenerator};
 
@@ -662,6 +662,21 @@ pub const ROUTES: &[AiRoute] = &[
         returns: "The staged path reference. No file or folder contents are read or copied.",
         handler: || post(reference_attachment),
         request: AiBody::Json(|generator| generator.subschema_for::<ReferenceAttachmentRequest>()),
+        response: AiBody::Json(|generator| generator.subschema_for::<ChatAttachmentResponse>()),
+        stream: false,
+        path_parameters: &["chat"],
+    },
+    AiRoute {
+        operation_id: "ai_from_workspace_attachment",
+        method: "POST",
+        path: "/v1/ai/chats/{chat}/attachments/from-workspace",
+        scope: AiScope::Chat,
+        summary: "Copy a granted workspace file into a local agent chat",
+        returns: "The staged copy with workspace provenance. The source grant is checked before reading bytes.",
+        handler: || post(from_workspace_attachment),
+        request: AiBody::Json(|generator| {
+            generator.subschema_for::<FromWorkspaceAttachmentRequest>()
+        }),
         response: AiBody::Json(|generator| generator.subschema_for::<ChatAttachmentResponse>()),
         stream: false,
         path_parameters: &["chat"],
@@ -1659,7 +1674,9 @@ async fn put_attachment(
         return invalid_request("The upload names no file name or source.");
     };
     let source = match AttachmentSource::parse(&query.source) {
-        Some(source) if source != AttachmentSource::Workspace => source,
+        Some(source) if !matches!(source, AttachmentSource::Workspace | AttachmentSource::Path) => {
+            source
+        }
         _ => return invalid_request("The upload source is not one a person adds a file by."),
     };
     let (client, context) = match admitted(&state, principal, AiScope::Chat) {
@@ -1706,6 +1723,22 @@ async fn reference_attachment(
         Err(response) => return response,
     };
     answer(call(move || client.reference_attachment(context, chat, request)).await)
+}
+
+async fn from_workspace_attachment(
+    State(state): State<Arc<GatewayState>>,
+    Extension(principal): Extension<GatewayPrincipal>,
+    Path(chat): Path<String>,
+    Json(request): Json<FromWorkspaceAttachmentRequest>,
+) -> Response {
+    let Some(chat) = ChatId::parse(&chat) else {
+        return invalid_identity("chat");
+    };
+    let (client, context) = match admitted(&state, principal, AiScope::Chat) {
+        Ok(values) => values,
+        Err(response) => return response,
+    };
+    answer(call(move || client.from_workspace_attachment(context, chat, request)).await)
 }
 
 async fn restage_attachment(

@@ -215,6 +215,20 @@ pub trait StoreContextPort: Send + Sync {
         document: DocumentId,
         reader: Option<ProfileId>,
     ) -> Result<DocumentContext, AiError>;
+    /// Copy one Files document's bytes for a chat in the owning profile.
+    /// The caller checks the chat's workspace grant before invoking this.
+    fn read_workspace_file(
+        &self,
+        _workspace: WorkspaceId,
+        _document: DocumentId,
+        _reader: ProfileId,
+    ) -> Result<WorkspaceFileData, AiError> {
+        Err(AiError::new(
+            AiErrorClass::Storage,
+            "The selected workspace file is not available.",
+            false,
+        ))
+    }
     fn create_document(
         &self,
         idempotency_key: Uuid,
@@ -258,4 +272,10 @@ pub trait StoreContextPort: Send + Sync {
     fn removed_profiles(&self) -> Result<Vec<ProfileId>, AiError> {
         Ok(Vec::new())
     }
+}
+
+/// A Files document's name and copied bytes, read on a blocking context thread.
+pub struct WorkspaceFileData {
+    pub file_name: String,
+    pub bytes: Vec<u8>,
 }
