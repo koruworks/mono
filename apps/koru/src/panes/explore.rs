@@ -55,6 +55,22 @@ use crate::panes::sidebar::{apps_rail, floor};
 use koru_app_shell::tabslide::TabSlides;
 use koru_shell_chrome::title_icon::{PAGE_ICON_SLOT, draw_page_emoji, split_leading_emoji};
 
+/// Presentation of a document root, separate from its manifest listing.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct DocumentAppearance {
+    pub color: Option<String>,
+    pub priority: Option<koru_core::attributes::Priority>,
+}
+
+impl DocumentAppearance {
+    pub(crate) fn from_node(node: &koru_core::node::Node) -> Self {
+        Self {
+            color: node.color_token().map(str::to_owned),
+            priority: node.priority(),
+        }
+    }
+}
+
 /// How far the pointer must travel before a press on a manifest row stops being
 /// a click and becomes a drag. Small enough that an intent to drag reads as
 /// one, large enough that a click on a row does not shuffle the tree.
@@ -656,6 +672,8 @@ pub struct RowParts {
     /// Agents row with children keeps a lane of its own, left of its icon.
     pub caret: Rect,
     pub icon: Rect,
+    /// Zero-width when no priority is set; otherwise between icon and title.
+    pub priority: Rect,
     /// What is left for the label, between the icon and the note lane (or the
     /// `…` when the row has no note).
     pub label: Rect,
@@ -731,6 +749,7 @@ pub struct ExploreView {
     /// this small cache lets the mode buttons swap lists without another IPC
     /// round trip or a document walk.
     manifest_entries: Vec<ExploreEntry>,
+    document_appearances: HashMap<NodeId, DocumentAppearance>,
     /// Files whose bytes this device does not hold, and the ones being fetched
     /// right now.
     ///
@@ -2997,6 +3016,8 @@ impl ExploreView {
                 skip_below = None;
             }
             let Ok(read) = ws.read(*node) else { continue };
+            self.document_appearances
+                .insert(*node, DocumentAppearance::from_node(&read));
             let expanded = !self.collapsed.contains(node);
             if !expanded {
                 skip_below = Some(depth);
@@ -4499,6 +4520,23 @@ impl ExploreView {
         Rect::new(icon_lane(r.x, row.depth, false), r.y, PAGE_ICON_SLOT, r.h)
     }
 
+    pub(crate) fn set_document_appearances(
+        &mut self,
+        appearances: HashMap<NodeId, DocumentAppearance>,
+    ) {
+        self.document_appearances = appearances;
+    }
+
+    pub(crate) fn set_document_appearance(&mut self, id: NodeId, appearance: DocumentAppearance) {
+        self.document_appearances.insert(id, appearance);
+    }
+
+    fn document_appearance(&self, row: &Row) -> Option<&DocumentAppearance> {
+        (self.mode == NavigatorMode::Documents && row.kind == Kind::Document)
+            .then(|| self.document_appearances.get(&row.node))
+            .flatten()
+    }
+
     /// Every rect inside a library row, derived from the row and its band alone.
     ///
     /// One function per row rather than two, so the label's width and the `…`'s
@@ -4511,7 +4549,27 @@ impl ExploreView {
         // `PAGE_ICON_SLOT`, not a number of its own: the slot has to hold a
         // colour emoji as well as an outline glyph, and the tab strip reserves
         // the same width for the same reason.
-        let text_x = icon_x + PAGE_ICON_SLOT + 4.0;
+        let after_icon = icon_x + PAGE_ICON_SLOT + 4.0;
+        let priority = Rect::new(
+            after_icon,
+            r.y,
+            if self
+                .document_appearance(row)
+                .and_then(|a| a.priority)
+                .is_some()
+            {
+                PAGE_ICON_SLOT
+            } else {
+                0.0
+            },
+            r.h,
+        );
+        let text_x = after_icon
+            + if priority.w > 0.0 {
+                priority.w + 4.0
+            } else {
+                0.0
+            };
         let dots = Rect::new(
             (r.x + r.w - theme::NAV_PAD - ROW_DOTS).max(r.x),
             r.y + (r.h - ROW_DOTS) * 0.5,
@@ -4542,6 +4600,7 @@ impl ExploreView {
         RowParts {
             caret: self.caret_rect(row, r),
             icon: Rect::new(icon_x, r.y, PAGE_ICON_SLOT, r.h),
+            priority,
             // **Bounded by the trailing lanes whether or not they are
             // showing.** If the `…` took its space only on hover, the label
             // would reflow as the pointer moved down the list, which reads as
@@ -7408,6 +7467,16 @@ impl ExploreView {
         hovered: bool,
     ) {
         let parts = self.row_parts(row, r);
+        let appearance = self.document_appearance(row);
+        let icon_color = appearance
+            .and_then(|a| a.color.as_deref())
+            .and_then(theme::accent_tone)
+            .map_or(p.text_dim, |tone| tone.swatch);
+        if let Some(priority) = appearance.and_then(|a| a.priority) {
+            let color = theme::accent_tone(koru_editor::chips::priority_accent(priority))
+                .map_or(p.text_dim, |tone| tone.swatch);
+            draw_icon(scene, root, engine, icons::FLAG, parts.priority, color);
+        }
         // The Agents *Projects* heading: a dim section label with the create
         // `+` in the reserved trailing lane — Koru Terminal's heading band,
         // drawn as a row of this tree. Nothing else of a row applies to it.
@@ -7568,7 +7637,7 @@ impl ExploreView {
                 engine,
                 glyph,
                 Rect::new(icon_x, r.y, PAGE_ICON_SLOT, r.h),
-                p.text_dim,
+                icon_color,
             );
         }
         let label_colour = match row.file_state {

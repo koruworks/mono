@@ -974,6 +974,11 @@ Hide the sidebar and the lane's buttons fold into the title bar's left end; the 
 keyboard over the lane, the apps row and the floor; the arrows move within
 each, Enter presses, Escape returns to the page.
 
+In the desktop **Documents** list, a document's chosen color tints its outline
+icon. A priority flag (Urgent, High, Medium or Low) appears after the icon and
+before the title, using the same color as the priority picker. Custom emoji
+icons keep their original colors. Clearing priority removes the flag.
+
 ### With a screen reader
 
 On Windows, **Narrator and NVDA can find their way around Koru** — the window

@@ -490,6 +490,8 @@ impl MainView {
         // client reaches it, the same seam History uses. No request is made
         // here, and a window with no store simply draws a rail with no numbers.
         self.task_counts.set_client(workspace.store_client());
+        self.document_appearances
+            .set_client(workspace.store_client());
         // The delegation job clones this when a person presses the
         // button; no request is made here, and a window with no store
         // refuses honestly instead of opening a thread that answers never.

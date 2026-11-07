@@ -75,6 +75,7 @@ pub(crate) mod cloud_sync;
 pub(crate) mod context_menu;
 mod delegate;
 pub(crate) mod dictation;
+mod document_appearance;
 pub(crate) mod draw;
 mod error_dialog;
 mod font_picker;
@@ -702,6 +703,7 @@ pub struct MainView {
     /// What the tasks rail's numbers come from — one query per refresh on a
     /// worker thread, and nothing at all while the rail is not showing.
     task_counts: taskcounts::TaskCountsPanel,
+    document_appearances: document_appearance::DocumentAppearances,
     /// **The one place the local date is watched.** Every bucket is a function
     /// of *today*, so midnight — and waking on the other side of one — makes all
     /// five wrong at the same instant and nothing else announces it. Compared on
@@ -1828,6 +1830,7 @@ impl MainView {
             cloud_images_due: true,
             cloud_images: (0, Vec::new()),
             task_counts: taskcounts::TaskCountsPanel::default(),
+            document_appearances: document_appearance::DocumentAppearances::default(),
             tasks_day: crate::tasks_view::query::DayWatch::default(),
             context_tasks_stale: true,
             context_tasks_doc: None,
@@ -8360,6 +8363,23 @@ impl MainView {
     /// sidebar still tracks that the tree is stale — it just does not pay to
     /// build rows nobody can see, and builds them when it opens.
     fn refresh_explore(&mut self, ws: &WorkspaceDoc, visible: bool) {
+        if self
+            .document_appearances
+            .set_workspace(self.current_workspace())
+        {
+            self.explore.set_document_appearances(Default::default());
+        }
+        if self.entries.is_some()
+            && let Some(document) = self.active_document
+            && ws.own_document_id() == Some(document)
+            && let Some(root) = koru_workspace::document_root(ws)
+            && let Ok(node) = ws.read(root)
+        {
+            let id = NodeId::from_uuid(document.as_uuid());
+            let appearance = crate::panes::explore::DocumentAppearance::from_node(&node);
+            self.document_appearances.observe(id, appearance.clone());
+            self.explore.set_document_appearance(id, appearance);
+        }
         // A structural change in the active tab — a row added, deleted or moved,
         // local or remote — changes what the explore tree shows. `rebuild` sets
         // the body's flag; drain it here so a deleted code block disappears from
@@ -13967,6 +13987,7 @@ impl View for MainView {
             // has no clock, which is the same bargain History keeps.
             self.cloud_sync.deadline(),
             self.task_counts.deadline(),
+            self.document_appearances.deadline(),
             self.welcome_progress.deadline(),
             // Only the tab in front has one: a Tasks tab in the background
             // contributes no clock and therefore no wake.
@@ -14177,6 +14198,15 @@ impl View for MainView {
         // The rail's numbers. Visible means *the tasks mode is on screen*: a
         // sidebar showing documents, or shut, makes no task traffic at all.
         let rail_visible = self.sidebar.is_open() && self.explore.showing_tasks();
+        let appearances_changed = self.document_appearances.maintain(
+            self.sidebar.is_open()
+                && self.explore.navigator_mode() == crate::panes::explore::NavigatorMode::Documents,
+            now,
+        );
+        if appearances_changed {
+            self.explore
+                .set_document_appearances(self.document_appearances.rows.clone());
+        }
         let counts_changed = self
             .task_counts
             .maintain(self.current_workspace(), rail_visible, now);
@@ -14465,6 +14495,7 @@ impl View for MainView {
             || entity_changed
             || history_changed
             || counts_changed
+            || appearances_changed
             || context_tasks_changed
             || rolled
             || page_changed

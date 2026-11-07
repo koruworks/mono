@@ -42,6 +42,11 @@ Search also removes the overflow menu and its Help/Feedback previews.
 Result selection boxes contain their matching excerpts at compact density, and
 the UI inspector groups the overlay under one SearchModal component.
 
+## Documents
+
+Document outline icons use the document's chosen color. Priority flags appear
+between the icon and title, in the same colors as the priority picker.
+
 ## MCP assistants
 
 MCP edits validate their requested changes before writing. If a request is
