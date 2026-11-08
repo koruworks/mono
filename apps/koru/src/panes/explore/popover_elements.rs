@@ -237,9 +237,13 @@ impl ExploreView {
                     Some(koru_keys::ShortcutId::Settings),
                 ));
             }
-            if let Some(node) = frame
-                .node(profiles::MenuAction::Sync.key())
-                .filter(|node| node.rect.contains(x, y))
+            if let Some(node) = [
+                profiles::MenuAction::Sync.key(),
+                super::workspace_menu_elements::MenuAction::Sync.key(),
+                super::workspace_menu_elements::MenuAction::Cloud.key(),
+            ]
+            .into_iter()
+            .find_map(|key| frame.node(key).filter(|node| node.rect.contains(x, y)))
             {
                 return Some((node.rect, self.sync_control_name(), None));
             }
@@ -606,12 +610,7 @@ impl ExploreView {
             .into_iter()
             .filter_map(|row| match row {
                 PopoverRow::WorkspaceAction(action) => {
-                    let key = if action == super::workspace_menu_elements::MenuAction::Sync {
-                        super::workspace_menu_elements::HEADER
-                    } else {
-                        action.key()
-                    };
-                    frame.node(key).map(|node| (row, node.rect))
+                    frame.node(action.key()).map(|node| (row, node.rect))
                 }
                 PopoverRow::WorkspaceNotice => frame
                     .node(super::workspace_menu_elements::NOTICE)

@@ -47,15 +47,17 @@ impl MainView {
         self.refresh_help();
         match action {
             Action::Offer => self.help_offer_action(),
-            Action::Current => self.open_whats_new(koru_channel::build_info().version),
+            Action::Current => {
+                let url = crate::whatsnew::release_url(
+                    koru_channel::build_info().version,
+                    koru_channel::ReleaseChannel::of_this_build(),
+                );
+                self.help_notes_read = true;
+                self.refresh_help();
+                self.ask_pane(PaneRequest::OpenWebsite(url))
+            }
             Action::Releases => {
                 self.ask_pane(PaneRequest::OpenUri(crate::whatsnew::RELEASES_URL));
-                true
-            }
-            Action::Docs => {
-                self.ask_pane(PaneRequest::OpenUri(
-                    "https://www.koru.do/en/support/desktop",
-                ));
                 true
             }
             Action::Feedback => {

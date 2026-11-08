@@ -21,7 +21,7 @@
 //! Deleted workspaces are removed automatically.
 //! ```
 //!
-//! **The data is a [`WorkspacesController`]**, the same state machine the
+//! **The data is a [`WorkspacesController`](koru_workspaces_ui::WorkspacesController)**, the same state machine the
 //! Workspaces tab drew: it reads the including-deleted catalog through its own
 //! vouched link, owns the lifecycle and move confirmations, and says why a
 //! control cannot be pressed. This file only places what it says for one
@@ -45,7 +45,9 @@ use koru_draw::tile::Tile;
 use koru_ui::button::{ActionButton, ActionStyle};
 use koru_ui::card::Card;
 use koru_ui::text_paragraph::KoruTextParagraph;
-use koru_workspaces_ui::{Action, Group, Row as Catalog, WorkspacesController};
+#[cfg(test)]
+use koru_workspaces_ui::WorkspacesController;
+use koru_workspaces_ui::{Action, Group, Row as Catalog};
 
 #[cfg(test)]
 mod tests;
@@ -197,14 +199,14 @@ fn now_ms() -> i64 {
 }
 
 impl ManageView {
-    /// The Workspaces controller, for the window's workspace menu: its rows,
-    /// its reasons and its destinations.
+    /// Inspect the shared controller in a page or container test.
+    #[cfg(test)]
     pub fn workspaces(&self) -> std::cell::Ref<'_, WorkspacesController> {
         self.w.borrow()
     }
 
-    /// Run `call` on the Workspaces controller — a menu verb the window
-    /// carries in — and lay the page out again.
+    /// Apply a fixture change to the controller and reproject the page.
+    #[cfg(test)]
     pub fn with_workspaces<R>(&mut self, call: impl FnOnce(&mut WorkspacesController) -> R) -> R {
         let result = call(&mut self.w.borrow_mut());
         self.relayout();

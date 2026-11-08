@@ -3534,9 +3534,12 @@ impl ExploreView {
             PopoverKind::Summary => {
                 let list = &self.workspaces;
                 let mut out = Vec::with_capacity(list.len() + 1);
-                out.push(PopoverRow::WorkspaceAction(
-                    workspace_menu_elements::MenuAction::Sync,
-                ));
+                out.extend(
+                    self.sync_channels()
+                        .controls()
+                        .into_iter()
+                        .map(|(action, _)| PopoverRow::WorkspaceAction(action)),
+                );
                 out.push(PopoverRow::WorkspacesHeading);
                 // **Pinned first, archived not at all — except the one you are
                 // in — and deleted never.** A workspace can be archived while
@@ -3580,10 +3583,14 @@ impl ExploreView {
                 use popover_elements::profiles::MenuAction;
                 let mut out = vec![PopoverRow::ProfilesHeading];
                 out.extend((0..self.profiles.len()).map(PopoverRow::Profile));
+                out.push(PopoverRow::ProfileAction(MenuAction::New));
                 out.extend(
-                    [MenuAction::New, MenuAction::Sync, MenuAction::Settings]
-                        .map(PopoverRow::ProfileAction),
+                    self.sync_channels()
+                        .controls()
+                        .into_iter()
+                        .map(|(action, _)| PopoverRow::WorkspaceAction(action)),
                 );
+                out.extend([MenuAction::Sync, MenuAction::Settings].map(PopoverRow::ProfileAction));
                 out
             }
             PopoverKind::LibraryActions => actions::available(self.mode)
@@ -4285,6 +4292,7 @@ impl ExploreView {
     /// had only the `…` left, and a row that names nothing above a list is
     /// a row the eye has to work out (the review's note). Zero-sized when the
     /// band is.
+    #[cfg(test)]
     pub fn heading_title_rect(&self, area: Rect) -> Rect {
         self.heading_part_rect(area, heading_elements::TITLE)
     }

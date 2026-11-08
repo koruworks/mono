@@ -89,70 +89,112 @@ pub struct VerifiedWorkspaceManifest {
     pub documents: Vec<DocumentId>,
 }
 
+/// Catalog facts and a pinned durable reader from the same Store turn.
+/// Finishing owns no Store reference or lock; it never repairs the catalog.
+pub struct WorkspaceAuthorityRead {
+    workspace: Workspace,
+    current: BTreeSet<DocumentId>,
+    inspect: Box<dyn FnOnce() -> WorkspaceManifestInspection + Send>,
+}
+
+impl WorkspaceAuthorityRead {
+    pub fn finish(self) -> Result<WorkspaceAuthority> {
+        let Self {
+            workspace,
+            current,
+            inspect,
+        } = self;
+        let (authority, listing_differs) = match inspect() {
+            WorkspaceManifestInspection::Verified(verified) => {
+                let projected = project(&workspace, &verified)?;
+                let desired: BTreeSet<_> = if verified.deleted_at.is_some() {
+                    BTreeSet::new()
+                } else {
+                    verified.documents.into_iter().collect()
+                };
+                (
+                    WorkspaceAuthorityState::Read {
+                        archived: verified.archived,
+                        deleted_at: verified.deleted_at,
+                        pinned: verified.pinned,
+                        applied: true,
+                    },
+                    projected != workspace || desired != current,
+                )
+            }
+            WorkspaceManifestInspection::Pending { .. } => (
+                WorkspaceAuthorityState::Read {
+                    archived: false,
+                    deleted_at: None,
+                    pinned: false,
+                    applied: false,
+                },
+                false,
+            ),
+            WorkspaceManifestInspection::Unavailable(error) => (
+                WorkspaceAuthorityState::Unreadable {
+                    cause: error.code().as_str().into(),
+                    recovery: None,
+                },
+                false,
+            ),
+            WorkspaceManifestInspection::Recovered(recovery) => (
+                WorkspaceAuthorityState::Unreadable {
+                    cause: "workspace_recovered".into(),
+                    recovery: Some(recovery),
+                },
+                false,
+            ),
+        };
+        Ok(WorkspaceAuthority {
+            workspace,
+            authority,
+            listing_differs,
+        })
+    }
+}
+
 impl<C: Catalog, B: Backend> Store<C, B> {
-    /// Owner-scoped, read-only overlay. No live Loro state participates.
+    /// Owner-scoped, read-only overlay for callers already owning the Store.
     pub fn workspace_authority(&self, owner: ProfileId) -> Result<Vec<WorkspaceAuthority>> {
+        self.workspace_authority_ids(owner)?
+            .into_iter()
+            .map(|id| self.prepare_workspace_authority(owner, id)?.finish())
+            .collect()
+    }
+
+    /// Enumerate identity only. HTTP captures and decodes each workspace in
+    /// separate turns so catalog size cannot lengthen a single lock hold.
+    pub fn workspace_authority_ids(&self, owner: ProfileId) -> Result<Vec<WorkspaceId>> {
         self.profile(owner)?;
-        self.catalog
+        Ok(self
+            .catalog
             .workspaces_including_deleted()?
             .into_iter()
-            .filter(|w| w.owner == owner)
-            .map(|workspace| {
-                let (authority, listing_differs) =
-                    match self.backend.inspect_workspace_manifest(workspace.id) {
-                        WorkspaceManifestInspection::Verified(verified) => {
-                            let projected = project(&workspace, &verified)?;
-                            let current: BTreeSet<_> = self
-                                .catalog
-                                .workspace_locations(workspace.id)?
-                                .into_iter()
-                                .collect();
-                            let desired: BTreeSet<_> = if verified.deleted_at.is_some() {
-                                BTreeSet::new()
-                            } else {
-                                verified.documents.into_iter().collect()
-                            };
-                            (
-                                WorkspaceAuthorityState::Read {
-                                    archived: verified.archived,
-                                    deleted_at: verified.deleted_at,
-                                    pinned: verified.pinned,
-                                    applied: true,
-                                },
-                                projected != workspace || desired != current,
-                            )
-                        }
-                        WorkspaceManifestInspection::Pending { .. } => (
-                            WorkspaceAuthorityState::Read {
-                                archived: false,
-                                deleted_at: None,
-                                pinned: false,
-                                applied: false,
-                            },
-                            false,
-                        ),
-                        WorkspaceManifestInspection::Unavailable(error) => (
-                            WorkspaceAuthorityState::Unreadable {
-                                cause: error.code().as_str().into(),
-                                recovery: None,
-                            },
-                            false,
-                        ),
-                        WorkspaceManifestInspection::Recovered(recovery) => (
-                            WorkspaceAuthorityState::Unreadable {
-                                cause: "workspace_recovered".into(),
-                                recovery: Some(recovery),
-                            },
-                            false,
-                        ),
-                    };
-                Ok(WorkspaceAuthority {
-                    workspace,
-                    authority,
-                    listing_differs,
-                })
-            })
-            .collect()
+            .filter(|row| row.owner == owner)
+            .map(|row| row.id)
+            .collect())
+    }
+
+    pub fn prepare_workspace_authority(
+        &self,
+        owner: ProfileId,
+        id: WorkspaceId,
+    ) -> Result<WorkspaceAuthorityRead> {
+        self.profile(owner)?;
+        let workspace = self.workspace_including_deleted(id)?;
+        // A move since enumeration cannot leak a different owner's row into
+        // the response. The caller retries on the next catalog invalidation.
+        if workspace.owner != owner {
+            return Err(Error::bare(Code::WorkspaceNotFound));
+        }
+        let current = self.catalog.workspace_locations(id)?.into_iter().collect();
+        let inspect = self.backend.prepare_workspace_manifest_inspection(id);
+        Ok(WorkspaceAuthorityRead {
+            workspace,
+            current,
+            inspect,
+        })
     }
 
     pub fn profile_removal(&self, owner: ProfileId) -> Result<Option<RemovalMark>> {

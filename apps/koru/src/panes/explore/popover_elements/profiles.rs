@@ -266,6 +266,32 @@ impl ExploreView {
     }
 
     fn profile_menu_action(&self, action: MenuAction) -> El {
+        if action == MenuAction::Sync {
+            return row("Profile menu sync")
+                .min_h(metrics::ROW_MIN)
+                .pad_x(alias::NAV_PAD)
+                .gap(Space::S2)
+                .child(self.sync_channel_controls())
+                .child(
+                    row("Profile menu action")
+                        .id(action.key())
+                        .fill()
+                        .min_h(metrics::ROW_MIN)
+                        .hit()
+                        .focusable()
+                        .action(Action::Click)
+                        .action(Action::Focus)
+                        .semantics(Role::MenuItem)
+                        .name(action.words())
+                        .radius(Radius::M)
+                        .states(&WORKSPACE_ROW_STATES)
+                        .child(
+                            text(t(crate::format::lang(), action.words()))
+                                .role(roles::ROW)
+                                .fill(),
+                        ),
+                );
+        }
         let mut item = row("Profile menu action")
             .id(action.key())
             .min_h(metrics::ROW_MIN)
@@ -279,22 +305,18 @@ impl ExploreView {
             .name(action.words())
             .radius(Radius::M)
             .states(&WORKSPACE_ROW_STATES);
-        if action == MenuAction::Sync {
-            item = item.child(self.sync_channel_glyphs());
-        } else {
-            item = item.child(
-                icon(
-                    if action == MenuAction::New {
-                        icons::PLUS
-                    } else {
-                        icons::FADERS
-                    },
-                    IconSize::L,
-                )
-                .decorative()
-                .ink(Ink::Secondary),
-            );
-        }
+        item = item.child(
+            icon(
+                if action == MenuAction::New {
+                    icons::PLUS
+                } else {
+                    icons::FADERS
+                },
+                IconSize::L,
+            )
+            .decorative()
+            .ink(Ink::Secondary),
+        );
         item.child(
             text(t(crate::format::lang(), action.words()))
                 .role(roles::ROW)

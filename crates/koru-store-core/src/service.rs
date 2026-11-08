@@ -67,8 +67,8 @@ use crate::text::Locale;
 
 mod availability;
 pub use availability::{
-    EnsuredWorkspace, VerifiedWorkspaceManifest, WorkspaceAuthority, WorkspaceAuthorityState,
-    WorkspaceAvailabilityIssue, WorkspaceManifestInspection,
+    EnsuredWorkspace, VerifiedWorkspaceManifest, WorkspaceAuthority, WorkspaceAuthorityRead,
+    WorkspaceAuthorityState, WorkspaceAvailabilityIssue, WorkspaceManifestInspection,
 };
 mod pins;
 mod preparation;
@@ -105,6 +105,17 @@ pub trait Backend {
             Code::StorageFailed,
             "read-only workspace inspection is unsupported",
         ))
+    }
+
+    /// Capture a committed read view under the caller's serialization lock.
+    /// The returned reader owns that view and may decode it after releasing
+    /// the Store. Backends without a detached reader retain their old behavior.
+    fn prepare_workspace_manifest_inspection(
+        &self,
+        id: WorkspaceId,
+    ) -> Box<dyn FnOnce() -> WorkspaceManifestInspection + Send> {
+        let result = self.inspect_workspace_manifest(id);
+        Box::new(move || result)
     }
 
     /// Claim a new repository exclusively. Existing, even unlisted storage

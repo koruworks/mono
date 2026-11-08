@@ -2782,9 +2782,7 @@ fn live_profile_ids_for_settings(
 #[derive(Clone, Copy)]
 enum OnboardingCheckpoint {
     BeforeProfile,
-    Profile {
-        profile: koru_core::ProfileId,
-    },
+    // Profile and first Workspace are now acknowledged by one atomic command.
     Workspace {
         profile: koru_core::ProfileId,
         workspace: koru_core::WorkspaceId,
@@ -2801,7 +2799,6 @@ impl OnboardingCheckpoint {
     ) -> T {
         match self {
             Self::BeforeProfile => retryable(),
-            Self::Profile { profile } => committed(profile, None),
             Self::Workspace { profile, workspace } => committed(profile, Some(workspace)),
         }
     }
@@ -19829,16 +19826,6 @@ mod tests {
             !called.get(),
             "pre-commit failure must not attempt a strict reopen"
         );
-    }
-
-    #[test]
-    fn failure_after_profile_acknowledgement_reopens_that_profile() {
-        let profile = koru_core::ProfileId::new();
-        let target = OnboardingCheckpoint::Profile { profile }.resolve(
-            || None,
-            |reopened_profile, workspace| Some((reopened_profile, workspace)),
-        );
-        assert_eq!(target, Some((profile, None)));
     }
 
     #[test]

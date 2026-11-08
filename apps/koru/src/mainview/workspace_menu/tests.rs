@@ -27,7 +27,7 @@ fn profile(name: &str) -> ProfileSummary {
 
 #[test]
 fn only_verified_retirement_asks_the_host_to_leave_and_pending_rows_stay_out_of_navigation() {
-    let mut f = fixture();
+    let f = fixture();
     let owner = profile("Owner");
     let current = WorkspaceId::new();
     let mut entry = row(current, &owner, "Current", 0);

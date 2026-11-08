@@ -271,6 +271,8 @@ pub(crate) enum Answer {
         attempt: u64,
         result: koru_store_core::errors::Result<koru_api_client::EnsuredWorkspace>,
     },
+    /// Update fixture rows without changing the removal-authority fixture.
+    #[cfg(any(test, feature = "fixtures"))]
     Catalog(Vec<Row>),
     CatalogState {
         rows: Vec<Row>,

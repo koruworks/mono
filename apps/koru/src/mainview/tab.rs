@@ -1126,7 +1126,8 @@ impl Tab {
         }
     }
 
-    /// The singleton Manage tab, on whichever page the caller then shows.
+    /// An inert Manage tab for container tests.
+    #[cfg(test)]
     pub fn manage() -> Self {
         Self::manage_with_controller(std::rc::Rc::new(std::cell::RefCell::new(
             koru_workspaces_ui::WorkspacesController::with_links(

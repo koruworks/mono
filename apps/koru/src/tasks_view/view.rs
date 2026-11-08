@@ -196,9 +196,6 @@ pub enum Request {
         pinned_today: bool,
         at: (f32, f32),
     },
-    /// Open the list's page — the list chip was pressed, or *Go to list* was
-    /// chosen. The container owns the tabs and the rail, so it is asked.
-    OpenList { list: ListId },
     /// Tick or untick — the canonical command, for every kind.
     Complete {
         document: DocumentId,
@@ -658,8 +655,7 @@ impl TasksView {
             | Request::ChoosePlace { .. }
             | Request::RowMenu { .. }
             | Request::RowsMenu { .. }
-            | Request::RemoveTasks { .. }
-            | Request::OpenList { .. } => return,
+            | Request::RemoveTasks { .. } => return,
             Request::Many(_) => unreachable!("taken apart above"),
         };
         crate::tasks::debug_line(format_args!(
@@ -2137,12 +2133,6 @@ impl TasksView {
             .get(row)
             .map(|row| self.row_chips(row))
             .unwrap_or_default()
-    }
-
-    /// Leave a request the way a press would, for the container's tests.
-    #[cfg(test)]
-    pub(crate) fn request_for_test(&mut self, request: Request) {
-        self.pending = Some(request);
     }
 
     /// Where one row's chips are, in the page's own coordinates.

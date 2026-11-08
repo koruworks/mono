@@ -130,7 +130,10 @@ impl<H: Host> App<H> {
         // selection could reopen a durably removed neighbor during repair.
         if let Err(error) = self.show_empty_workspace() {
             self.report(crate::ErrorReport::new(
-                "Couldn't leave the removed workspace",
+                koru_i18n::t(
+                    koru_i18n::current(),
+                    koru_i18n::Key::ProfileLeaveRemovedFailed,
+                ),
                 error,
             ));
             return;

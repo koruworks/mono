@@ -13,10 +13,9 @@ use koru_store_core::service::{VerifiedWorkspaceManifest, WorkspaceManifestInspe
 mod disk_tests;
 
 impl SqliteWorkspace {
-    pub(crate) fn inspect_existing_connection(
-        connection: Connection,
-        workspace: WorkspaceId,
-    ) -> Result<WorkspaceManifestInspection> {
+    /// Pin the SQLite snapshot while serialized with Store catalog changes.
+    /// Reading user_version starts the deferred transaction's read view.
+    pub(crate) fn prepare_manifest_inspection(connection: Connection) -> Result<Self> {
         // Connection-local guards only. No configure, migrations or DDL. BEGIN
         // pins one consistent snapshot for schema, discovery and journal reads.
         connection
@@ -37,7 +36,15 @@ impl SqliteWorkspace {
         }
         // Intentionally bypass from_connection: it creates/migrates. This
         // private read-only handle uses the exact ordinary repository readers.
-        let repo = Self { connection };
+        Ok(Self { connection })
+    }
+
+    /// Replay only the captured durable view, with no Store mutex held.
+    pub(crate) fn inspect_prepared_manifest(
+        self,
+        workspace: WorkspaceId,
+    ) -> Result<WorkspaceManifestInspection> {
+        let repo = self;
         let documents = repo.documents()?;
         let mut manifests = documents
             .iter()

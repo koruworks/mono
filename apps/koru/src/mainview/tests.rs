@@ -4173,7 +4173,6 @@ fn the_chip_and_the_square_open_their_own_pages_and_shut_them() {
 /// popover beside the page, which stays.
 #[test]
 fn the_chip_and_the_help_open_whichever_app_is_showing() {
-    use crate::mainview::context_menu::MenuSubject;
     use crate::panes::explore::NavigatorMode;
     let (mut v, mut w, _) = with_summary_open();
     v.explore.close_popover();
@@ -6451,9 +6450,8 @@ fn the_workspace_menu_actions_reach_import_trash_and_creation() {
     assert!(v.new_document.is_some());
 }
 
-/// **The toolbar's sync icon opens the Sync settings tab**, once; the
-/// settings icon the Settings tab. Both shut the page. The sync tab says
-/// only its name for now, and comes back from a session as itself.
+/// Global sync opens Linked devices in the singleton Manage tab; the
+/// Profile menu's settings action opens Settings.
 #[test]
 fn the_sync_settings_tab_opens_once_and_the_profile_menu_opens_settings() {
     let (mut v, mut w, _) = with_summary_open();
@@ -6461,15 +6459,10 @@ fn the_sync_settings_tab_opens_once_and_the_profile_menu_opens_settings() {
     let tabs = v.tabs().len();
     assert!(v.open_sync_settings_tab());
     assert_eq!(v.tabs().len(), tabs + 1, "one tab opened");
-    let lang = crate::format::lang();
-    assert_eq!(
-        v.tabs().active_tab().label,
-        koru_i18n::t(lang, koru_i18n::Key::SyncSettingsTab)
-    );
-    assert_eq!(
-        v.tabs().active_tab().whats_new.as_ref().map(|n| n.page),
-        Some(tab::PrivatePage::SyncSettings)
-    );
+    let TabView::Manage(manage) = &v.tabs().active_tab().view else {
+        panic!("Global sync opens Manage");
+    };
+    assert_eq!(manage.page(), Some(crate::manage::Page::Devices));
     assert!(v.open_sync_settings_tab(), "the same tab comes forward");
     assert_eq!(v.tabs().len(), tabs + 1, "and no second one opens");
 
@@ -11350,17 +11343,6 @@ fn go_to_list_moves_the_page_to_the_list() {
         panic!("the Tasks tab, still")
     };
     assert_eq!(page.target(), RailTarget::List(birthday));
-
-    // The chip's request takes the same door.
-    v.open_tasks_tab(RailTarget::Bucket(Bucket::Today), false);
-    if let TabView::Tasks(page) = &mut v.tabs_mut().active_mut().view {
-        page.request_for_test(crate::tasks_view::Request::OpenList { list: birthday });
-    }
-    assert!(v.drain_tasks_request());
-    let TabView::Tasks(page) = &v.tabs().active_tab().view else {
-        panic!("the Tasks tab, still")
-    };
-    assert_eq!(page.target(), RailTarget::List(birthday));
 }
 
 /// **A capture that lands somewhere else says so.** Typed into Today with a
@@ -13787,7 +13769,6 @@ fn the_help_popover_lists_the_timeline_and_links_beside_the_rail() {
                     [
                         PopoverRow::Help(Action::Current),
                         PopoverRow::Help(Action::Releases),
-                        PopoverRow::Help(Action::Docs),
                         PopoverRow::Help(Action::Feedback),
                         PopoverRow::Help(Action::GitHub),
                         PopoverRow::Help(Action::X),
@@ -13818,7 +13799,6 @@ fn the_help_popover_lists_the_timeline_and_links_beside_the_rail() {
                         );
                         for (action, label) in [
                             (Action::Releases, "View all releases"),
-                            (Action::Docs, "Help & docs"),
                             (Action::Feedback, "Send feedback"),
                             (Action::GitHub, "Star us on GitHub"),
                             (Action::X, "Follow on X"),
@@ -13846,14 +13826,14 @@ fn the_help_popover_lists_the_timeline_and_links_beside_the_rail() {
                     .find(|(row, _)| *row == PopoverRow::Help(Action::Releases))
                     .unwrap()
                     .1;
-                let docs = rows
+                let feedback = rows
                     .iter()
-                    .find(|(row, _)| *row == PopoverRow::Help(Action::Docs))
+                    .find(|(row, _)| *row == PopoverRow::Help(Action::Feedback))
                     .unwrap()
                     .1;
                 assert!(
-                    docs.y > releases.y + releases.h,
-                    "the divider precedes Help & docs"
+                    feedback.y > releases.y + releases.h,
+                    "the divider precedes Send feedback"
                 );
                 assert!(!v.window_menu_open());
                 let content = v.content();
@@ -13892,7 +13872,7 @@ fn the_help_popover_lists_the_timeline_and_links_beside_the_rail() {
     koru_draw::theme::set_dark(was_dark);
 }
 
-/// Help navigation uses the shell URI port and retains Feedback and What's new.
+/// Help navigation uses the shell URI port and retains the Feedback tab.
 #[test]
 fn the_help_rows_open_their_destinations() {
     use crate::mainview::context_menu::{GITHUB_URL, Social};
@@ -13901,8 +13881,10 @@ fn the_help_rows_open_their_destinations() {
     let (mut v, _w) = container();
     while View::take_pane_request(&mut v).is_some() {}
     for (action, uri) in [
-        (Action::Releases, "https://www.koru.do/en/releases"),
-        (Action::Docs, "https://www.koru.do/en/support/desktop"),
+        (
+            Action::Releases,
+            "https://github.com/koruworks/mono/releases",
+        ),
         (Action::GitHub, "https://github.com/koruworks/mono"),
         (Action::X, "https://x.com/korudotdo"),
     ] {
@@ -13919,7 +13901,7 @@ fn the_help_rows_open_their_destinations() {
     }
     assert_eq!(
         crate::whatsnew::RELEASES_URL,
-        "https://www.koru.do/en/releases"
+        "https://github.com/koruworks/mono/releases"
     );
     assert_eq!(GITHUB_URL, "https://github.com/koruworks/mono");
     assert_eq!(Social::X.url(), "https://x.com/korudotdo");
@@ -13929,10 +13911,21 @@ fn the_help_rows_open_their_destinations() {
     assert!(v.help_action(Action::Feedback));
     assert_eq!(v.tabs().len(), tabs, "Feedback reuses its tab");
     assert!(v.help_action(Action::Current));
-    assert!(v.tabs().active_tab().whats_new.is_some());
+    assert_eq!(
+        v.tabs().len(),
+        tabs,
+        "release opens in the browser, not a new tab"
+    );
+    assert_eq!(
+        View::take_pane_request(&mut v),
+        Some(PaneRequest::OpenWebsite(crate::whatsnew::release_url(
+            koru_channel::build_info().version,
+            koru_channel::ReleaseChannel::of_this_build(),
+        )))
+    );
     assert!(
         v.help_notes_read,
-        "opening What's new acknowledges the notes"
+        "opening the release acknowledges the notes"
     );
     crate::feedback::draft::reset();
 }

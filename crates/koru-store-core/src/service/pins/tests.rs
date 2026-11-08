@@ -18,7 +18,7 @@ fn snapshot_restore_failure_reloads_committed_content_and_keeps_the_writer_ident
     assert_eq!(restored.manifest.name().as_deref(), Some("Cloud name"));
     assert!(!restored.manifest.pinned().unwrap_or(false));
     assert_eq!(restored.manifest.entries().len(), 1);
-    let mut manifest = restored.manifest;
+    let manifest = restored.manifest;
     manifest.set_pinned(true).unwrap();
     let reopened = Manifest::from_snapshot(&manifest.export_snapshot().unwrap()).unwrap();
     assert_eq!(reopened.pinned(), Some(true));

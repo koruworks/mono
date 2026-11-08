@@ -2,7 +2,7 @@
 panel 52.000 46.000 258.000 300.000
 band 52.000 131.000 258.000 113.000
 focus koru:w1/v1/s:explore-popover#popover
-row workspace-action:workspace-sync 52.000 52.000 258.000 44.000
+row workspace-action:workspace-sync 276.000 52.000 26.000 44.000
 row heading 52.000 105.000 258.000 26.000
 row ws:0001 52.000 131.000 258.000 26.000
 part ws:0001 tile 60.000 132.000 24.000 24.000
@@ -24,7 +24,7 @@ row workspace-action:new-workspace 52.000 253.000 258.000 26.000
 row workspace-action:workspace-import 52.000 279.000 258.000 26.000
 row workspace-action:workspace-trash 52.000 314.000 258.000 26.000
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Workspaces" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: Not set up. Channels: Local only. Open sync settings" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Devices linked to this computer" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Workspaces" 60.000 105.000 116.671 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Manage workspaces" 184.671 105.000 117.329 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -60,8 +60,8 @@ paint 6 text_run primitive 92.000 53.406 55.682 15.729 font_size=13 font_weight=
 paint 4 Text element 92.000 72.000 176.000 14.000 element=text within=surface_explore-popover/workspace-header occurrence=2_of_2_named_alike profile=desktop theme=light appearance=light contrast=standard text_role=hint ink=Ink::Secondary_->_#6B6B6B@1.000 text_mode=single_line,_elided lines=1 semantics=none:_transparent_to_semantic_parenting input=neutral
 paint 5 label_line part 92.000 71.999 90.514 14.000 line_height=14 baseline=83 ink_bounds=Not_exposed
 paint 6 text_run primitive 92.000 72.344 90.514 13.310 font_size=11 font_weight=500 baseline=83 ascent_/_descent=10.65625_/_2.6533203 foreground=#6B6B6B@1.000 rendered_family=Inter
-paint 3 Sync_settings element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=model_content input=pointer_target;_focusable;_Click/Focus
-paint 4 Configured_sync_channels element 280.000 52.000 18.000 44.000 element=row within=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 3 Sync_channels element 276.000 52.000 26.000 44.000 element=row within=surface_explore-popover/workspace-header profile=desktop theme=light appearance=light contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 4 Sync_channel element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=Key::SyncChannelDevices input=pointer_target;_focusable;_Click/Focus
 paint 5 Icon element 280.000 52.000 18.000 44.000 element=icon within=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard icon_size=IconSize::L_->_18 ink=Ink::Secondary_->_#6B6B6B@1.000 semantics=decorative input=neutral
 paint 6 text_line part 280.000 65.000 18.000 18.000 line_height=18 baseline=83 ink_bounds=Not_exposed
 paint 7 icon primitive 280.000 65.000 18.000 18.000 icon_pack=Tabler icon_source=Tabler icon_name=DESKTOP icon_codepoint=U+E560 icon_variant=regular icon_size=18 foreground=#6B6B6B@1.000
@@ -173,7 +173,7 @@ paint 6 text_run primitive 294.899 320.344 7.101 13.310 font_size=11 font_weight
 panel 52.000 46.000 258.000 300.000
 band 52.000 131.000 258.000 113.000
 focus koru:w1/v1/s:explore-popover#popover
-row workspace-action:workspace-sync 52.000 52.000 258.000 44.000
+row workspace-action:workspace-sync 276.000 52.000 26.000 44.000
 row heading 52.000 105.000 258.000 26.000
 row ws:0001 52.000 131.000 258.000 26.000
 part ws:0001 tile 60.000 132.000 24.000 24.000
@@ -195,7 +195,7 @@ row workspace-action:new-workspace 52.000 253.000 258.000 26.000
 row workspace-action:workspace-import 52.000 279.000 258.000 26.000
 row workspace-action:workspace-trash 52.000 314.000 258.000 26.000
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Workspaces" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: Not set up. Channels: Local only. Open sync settings" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Devices linked to this computer" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Workspaces" 60.000 105.000 116.671 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Manage workspaces" 184.671 105.000 117.329 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Quarterly planning for the European expansion programme" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -231,8 +231,8 @@ paint 6 text_run primitive 92.000 53.406 55.682 15.729 font_size=13 font_weight=
 paint 4 Text element 92.000 72.000 176.000 14.000 element=text within=surface_explore-popover/workspace-header occurrence=2_of_2_named_alike profile=desktop theme=light appearance=light contrast=standard text_role=hint ink=Ink::Secondary_->_#6B6B6B@1.000 text_mode=single_line,_elided lines=1 semantics=none:_transparent_to_semantic_parenting input=neutral
 paint 5 label_line part 92.000 71.999 90.514 14.000 line_height=14 baseline=83 ink_bounds=Not_exposed
 paint 6 text_run primitive 92.000 72.344 90.514 13.310 font_size=11 font_weight=500 baseline=83 ascent_/_descent=10.65625_/_2.6533203 foreground=#6B6B6B@1.000 rendered_family=Inter
-paint 3 Sync_settings element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=model_content input=pointer_target;_focusable;_Click/Focus
-paint 4 Configured_sync_channels element 280.000 52.000 18.000 44.000 element=row within=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 3 Sync_channels element 276.000 52.000 26.000 44.000 element=row within=surface_explore-popover/workspace-header profile=desktop theme=light appearance=light contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 4 Sync_channel element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=Key::SyncChannelDevices input=pointer_target;_focusable;_Click/Focus
 paint 5 Icon element 280.000 52.000 18.000 44.000 element=icon within=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard icon_size=IconSize::L_->_18 ink=Ink::Secondary_->_#6B6B6B@1.000 semantics=decorative input=neutral
 paint 6 text_line part 280.000 65.000 18.000 18.000 line_height=18 baseline=83 ink_bounds=Not_exposed
 paint 7 icon primitive 280.000 65.000 18.000 18.000 icon_pack=Tabler icon_source=Tabler icon_name=DESKTOP icon_codepoint=U+E560 icon_variant=regular icon_size=18 foreground=#6B6B6B@1.000
@@ -344,7 +344,7 @@ paint 6 text_run primitive 294.899 320.344 7.101 13.310 font_size=11 font_weight
 panel 52.000 46.000 258.000 300.000
 band 52.000 131.000 258.000 113.000
 focus koru:w1/v1/s:explore-popover#popover
-row workspace-action:workspace-sync 52.000 52.000 258.000 44.000
+row workspace-action:workspace-sync 276.000 52.000 26.000 44.000
 row heading 52.000 105.000 258.000 26.000
 row ws:0001 52.000 131.000 258.000 26.000
 part ws:0001 tile 60.000 132.000 24.000 24.000
@@ -366,7 +366,7 @@ row workspace-action:new-workspace 52.000 253.000 258.000 26.000
 row workspace-action:workspace-import 52.000 279.000 258.000 26.000
 row workspace-action:workspace-trash 52.000 314.000 258.000 26.000
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Arbeitsbereiche" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: Nicht eingerichtet. Kanäle: Nur lokal. Synchronisierungseinstellungen öffnen" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Mit diesem Computer verknüpfte Geräte" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Arbeitsbereiche" 60.000 105.000 87.351 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Arbeitsbereiche verwalten" 155.351 105.000 146.649 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -402,8 +402,8 @@ paint 6 text_run primitive 92.000 53.406 55.682 15.729 font_size=13 font_weight=
 paint 4 Text element 92.000 72.000 176.000 14.000 element=text within=surface_explore-popover/workspace-header occurrence=2_of_2_named_alike profile=desktop theme=light appearance=light contrast=standard text_role=hint ink=Ink::Secondary_->_#6B6B6B@1.000 text_mode=single_line,_elided lines=1 semantics=none:_transparent_to_semantic_parenting input=neutral
 paint 5 label_line part 92.000 71.999 114.893 14.000 line_height=14 baseline=83 ink_bounds=Not_exposed
 paint 6 text_run primitive 92.000 72.344 114.893 13.310 font_size=11 font_weight=500 baseline=83 ascent_/_descent=10.65625_/_2.6533203 foreground=#6B6B6B@1.000 rendered_family=Inter
-paint 3 Sync_settings element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=model_content input=pointer_target;_focusable;_Click/Focus
-paint 4 Configured_sync_channels element 280.000 52.000 18.000 44.000 element=row within=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 3 Sync_channels element 276.000 52.000 26.000 44.000 element=row within=surface_explore-popover/workspace-header profile=desktop theme=light appearance=light contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 4 Sync_channel element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=Key::SyncChannelDevices input=pointer_target;_focusable;_Click/Focus
 paint 5 Icon element 280.000 52.000 18.000 44.000 element=icon within=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard icon_size=IconSize::L_->_18 ink=Ink::Secondary_->_#6B6B6B@1.000 semantics=decorative input=neutral
 paint 6 text_line part 280.000 65.000 18.000 18.000 line_height=18 baseline=83 ink_bounds=Not_exposed
 paint 7 icon primitive 280.000 65.000 18.000 18.000 icon_pack=Tabler icon_source=Tabler icon_name=DESKTOP icon_codepoint=U+E560 icon_variant=regular icon_size=18 foreground=#6B6B6B@1.000
@@ -515,7 +515,7 @@ paint 6 text_run primitive 294.899 320.344 7.101 13.310 font_size=11 font_weight
 panel 52.000 46.000 258.000 300.000
 band 52.000 131.000 258.000 113.000
 focus koru:w1/v1/s:explore-popover#popover
-row workspace-action:workspace-sync 52.000 52.000 258.000 44.000
+row workspace-action:workspace-sync 276.000 52.000 26.000 44.000
 row heading 52.000 105.000 258.000 26.000
 row ws:0001 52.000 131.000 258.000 26.000
 part ws:0001 tile 60.000 132.000 24.000 24.000
@@ -537,7 +537,7 @@ row workspace-action:new-workspace 52.000 253.000 258.000 26.000
 row workspace-action:workspace-import 52.000 279.000 258.000 26.000
 row workspace-action:workspace-trash 52.000 314.000 258.000 26.000
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Arbeitsbereiche" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: Nicht eingerichtet. Kanäle: Nur lokal. Synchronisierungseinstellungen öffnen" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Mit diesem Computer verknüpfte Geräte" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Arbeitsbereiche" 60.000 105.000 87.351 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Arbeitsbereiche verwalten" 155.351 105.000 146.649 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Quarterly planning for the European expansion programme" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -573,8 +573,8 @@ paint 6 text_run primitive 92.000 53.406 55.682 15.729 font_size=13 font_weight=
 paint 4 Text element 92.000 72.000 176.000 14.000 element=text within=surface_explore-popover/workspace-header occurrence=2_of_2_named_alike profile=desktop theme=light appearance=light contrast=standard text_role=hint ink=Ink::Secondary_->_#6B6B6B@1.000 text_mode=single_line,_elided lines=1 semantics=none:_transparent_to_semantic_parenting input=neutral
 paint 5 label_line part 92.000 71.999 114.893 14.000 line_height=14 baseline=83 ink_bounds=Not_exposed
 paint 6 text_run primitive 92.000 72.344 114.893 13.310 font_size=11 font_weight=500 baseline=83 ascent_/_descent=10.65625_/_2.6533203 foreground=#6B6B6B@1.000 rendered_family=Inter
-paint 3 Sync_settings element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=model_content input=pointer_target;_focusable;_Click/Focus
-paint 4 Configured_sync_channels element 280.000 52.000 18.000 44.000 element=row within=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 3 Sync_channels element 276.000 52.000 26.000 44.000 element=row within=surface_explore-popover/workspace-header profile=desktop theme=light appearance=light contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 4 Sync_channel element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=Key::SyncChannelDevices input=pointer_target;_focusable;_Click/Focus
 paint 5 Icon element 280.000 52.000 18.000 44.000 element=icon within=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard icon_size=IconSize::L_->_18 ink=Ink::Secondary_->_#6B6B6B@1.000 semantics=decorative input=neutral
 paint 6 text_line part 280.000 65.000 18.000 18.000 line_height=18 baseline=83 ink_bounds=Not_exposed
 paint 7 icon primitive 280.000 65.000 18.000 18.000 icon_pack=Tabler icon_source=Tabler icon_name=DESKTOP icon_codepoint=U+E560 icon_variant=regular icon_size=18 foreground=#6B6B6B@1.000
@@ -686,7 +686,7 @@ paint 6 text_run primitive 294.899 320.344 7.101 13.310 font_size=11 font_weight
 panel 52.000 46.000 258.000 300.000
 band 52.000 131.000 258.000 113.000
 focus koru:w1/v1/s:explore-popover#popover
-row workspace-action:workspace-sync 52.000 52.000 258.000 44.000
+row workspace-action:workspace-sync 276.000 52.000 26.000 44.000
 row heading 52.000 105.000 258.000 26.000
 row ws:0001 52.000 131.000 258.000 26.000
 part ws:0001 tile 60.000 132.000 24.000 24.000
@@ -708,7 +708,7 @@ row workspace-action:new-workspace 52.000 253.000 258.000 26.000
 row workspace-action:workspace-import 52.000 279.000 258.000 26.000
 row workspace-action:workspace-trash 52.000 314.000 258.000 26.000
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "مساحات العمل" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: غير مُعدّ. القنوات: محلي فقط. فتح إعدادات المزامنة" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "الأجهزة المرتبطة بهذا الكمبيوتر" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "مساحات العمل" 60.000 105.000 135.631 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "إدارة مساحات العمل" 203.631 105.000 98.369 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -748,8 +748,8 @@ paint 6 text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ ascent_
 paint 6 text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#6B6B6B@1.000 rendered_family=~
 paint 6 text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#6B6B6B@1.000 rendered_family=~
 paint 6 text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#6B6B6B@1.000 rendered_family=~
-paint 3 Sync_settings element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=model_content input=pointer_target;_focusable;_Click/Focus
-paint 4 Configured_sync_channels element 280.000 52.000 18.000 44.000 element=row within=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 3 Sync_channels element 276.000 52.000 26.000 44.000 element=row within=surface_explore-popover/workspace-header profile=desktop theme=light appearance=light contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 4 Sync_channel element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=Key::SyncChannelDevices input=pointer_target;_focusable;_Click/Focus
 paint 5 Icon element 280.000 52.000 18.000 44.000 element=icon within=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard icon_size=IconSize::L_->_18 ink=Ink::Secondary_->_#6B6B6B@1.000 semantics=decorative input=neutral
 paint 6 text_line part 280.000 65.000 18.000 18.000 line_height=18 baseline=83 ink_bounds=Not_exposed
 paint 7 icon primitive 280.000 65.000 18.000 18.000 icon_pack=Tabler icon_source=Tabler icon_name=DESKTOP icon_codepoint=U+E560 icon_variant=regular icon_size=18 foreground=#6B6B6B@1.000
@@ -872,7 +872,7 @@ paint 6 text_run primitive 294.899 320.344 7.101 13.310 font_size=11 font_weight
 panel 52.000 46.000 258.000 300.000
 band 52.000 131.000 258.000 113.000
 focus koru:w1/v1/s:explore-popover#popover
-row workspace-action:workspace-sync 52.000 52.000 258.000 44.000
+row workspace-action:workspace-sync 276.000 52.000 26.000 44.000
 row heading 52.000 105.000 258.000 26.000
 row ws:0001 52.000 131.000 258.000 26.000
 part ws:0001 tile 60.000 132.000 24.000 24.000
@@ -894,7 +894,7 @@ row workspace-action:new-workspace 52.000 253.000 258.000 26.000
 row workspace-action:workspace-import 52.000 279.000 258.000 26.000
 row workspace-action:workspace-trash 52.000 314.000 258.000 26.000
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "مساحات العمل" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: غير مُعدّ. القنوات: محلي فقط. فتح إعدادات المزامنة" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "الأجهزة المرتبطة بهذا الكمبيوتر" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "مساحات العمل" 60.000 105.000 135.631 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "إدارة مساحات العمل" 203.631 105.000 98.369 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Quarterly planning for the European expansion programme" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -934,8 +934,8 @@ paint 6 text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ ascent_
 paint 6 text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#6B6B6B@1.000 rendered_family=~
 paint 6 text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#6B6B6B@1.000 rendered_family=~
 paint 6 text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#6B6B6B@1.000 rendered_family=~
-paint 3 Sync_settings element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=model_content input=pointer_target;_focusable;_Click/Focus
-paint 4 Configured_sync_channels element 280.000 52.000 18.000 44.000 element=row within=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 3 Sync_channels element 276.000 52.000 26.000 44.000 element=row within=surface_explore-popover/workspace-header profile=desktop theme=light appearance=light contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 4 Sync_channel element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=Key::SyncChannelDevices input=pointer_target;_focusable;_Click/Focus
 paint 5 Icon element 280.000 52.000 18.000 44.000 element=icon within=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard icon_size=IconSize::L_->_18 ink=Ink::Secondary_->_#6B6B6B@1.000 semantics=decorative input=neutral
 paint 6 text_line part 280.000 65.000 18.000 18.000 line_height=18 baseline=83 ink_bounds=Not_exposed
 paint 7 icon primitive 280.000 65.000 18.000 18.000 icon_pack=Tabler icon_source=Tabler icon_name=DESKTOP icon_codepoint=U+E560 icon_variant=regular icon_size=18 foreground=#6B6B6B@1.000
@@ -1058,7 +1058,7 @@ paint 6 text_run primitive 294.899 320.344 7.101 13.310 font_size=11 font_weight
 panel 52.000 46.000 258.000 300.000
 band 52.000 131.000 258.000 113.000
 focus koru:w1/v1/s:explore-popover#popover
-row workspace-action:workspace-sync 52.000 52.000 258.000 44.000
+row workspace-action:workspace-sync 276.000 52.000 26.000 44.000
 row heading 52.000 105.000 258.000 26.000
 row ws:0001 52.000 131.000 258.000 26.000
 part ws:0001 tile 60.000 132.000 24.000 24.000
@@ -1080,7 +1080,7 @@ row workspace-action:new-workspace 52.000 253.000 258.000 26.000
 row workspace-action:workspace-import 52.000 279.000 258.000 26.000
 row workspace-action:workspace-trash 52.000 314.000 258.000 26.000
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Workspaces" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: Not set up. Channels: Local only. Open sync settings" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Devices linked to this computer" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Workspaces" 60.000 105.000 116.671 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Manage workspaces" 184.671 105.000 117.329 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -1116,8 +1116,8 @@ paint 6 text_run primitive 92.000 53.406 55.682 15.729 font_size=13 font_weight=
 paint 4 Text element 92.000 72.000 176.000 14.000 element=text within=surface_explore-popover/workspace-header occurrence=2_of_2_named_alike profile=desktop theme=dark appearance=dark contrast=standard text_role=hint ink=Ink::Secondary_->_#8A8A8A@1.000 text_mode=single_line,_elided lines=1 semantics=none:_transparent_to_semantic_parenting input=neutral
 paint 5 label_line part 92.000 71.999 90.514 14.000 line_height=14 baseline=83 ink_bounds=Not_exposed
 paint 6 text_run primitive 92.000 72.344 90.514 13.310 font_size=11 font_weight=500 baseline=83 ascent_/_descent=10.65625_/_2.6533203 foreground=#8A8A8A@1.000 rendered_family=Inter
-paint 3 Sync_settings element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=model_content input=pointer_target;_focusable;_Click/Focus
-paint 4 Configured_sync_channels element 280.000 52.000 18.000 44.000 element=row within=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 3 Sync_channels element 276.000 52.000 26.000 44.000 element=row within=surface_explore-popover/workspace-header profile=desktop theme=dark appearance=dark contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 4 Sync_channel element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=Key::SyncChannelDevices input=pointer_target;_focusable;_Click/Focus
 paint 5 Icon element 280.000 52.000 18.000 44.000 element=icon within=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard icon_size=IconSize::L_->_18 ink=Ink::Secondary_->_#8A8A8A@1.000 semantics=decorative input=neutral
 paint 6 text_line part 280.000 65.000 18.000 18.000 line_height=18 baseline=83 ink_bounds=Not_exposed
 paint 7 icon primitive 280.000 65.000 18.000 18.000 icon_pack=Tabler icon_source=Tabler icon_name=DESKTOP icon_codepoint=U+E560 icon_variant=regular icon_size=18 foreground=#8A8A8A@1.000
@@ -1229,7 +1229,7 @@ paint 6 text_run primitive 294.899 320.344 7.101 13.310 font_size=11 font_weight
 panel 52.000 46.000 258.000 300.000
 band 52.000 131.000 258.000 113.000
 focus koru:w1/v1/s:explore-popover#popover
-row workspace-action:workspace-sync 52.000 52.000 258.000 44.000
+row workspace-action:workspace-sync 276.000 52.000 26.000 44.000
 row heading 52.000 105.000 258.000 26.000
 row ws:0001 52.000 131.000 258.000 26.000
 part ws:0001 tile 60.000 132.000 24.000 24.000
@@ -1251,7 +1251,7 @@ row workspace-action:new-workspace 52.000 253.000 258.000 26.000
 row workspace-action:workspace-import 52.000 279.000 258.000 26.000
 row workspace-action:workspace-trash 52.000 314.000 258.000 26.000
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Workspaces" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: Not set up. Channels: Local only. Open sync settings" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Devices linked to this computer" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Workspaces" 60.000 105.000 116.671 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Manage workspaces" 184.671 105.000 117.329 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Quarterly planning for the European expansion programme" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -1287,8 +1287,8 @@ paint 6 text_run primitive 92.000 53.406 55.682 15.729 font_size=13 font_weight=
 paint 4 Text element 92.000 72.000 176.000 14.000 element=text within=surface_explore-popover/workspace-header occurrence=2_of_2_named_alike profile=desktop theme=dark appearance=dark contrast=standard text_role=hint ink=Ink::Secondary_->_#8A8A8A@1.000 text_mode=single_line,_elided lines=1 semantics=none:_transparent_to_semantic_parenting input=neutral
 paint 5 label_line part 92.000 71.999 90.514 14.000 line_height=14 baseline=83 ink_bounds=Not_exposed
 paint 6 text_run primitive 92.000 72.344 90.514 13.310 font_size=11 font_weight=500 baseline=83 ascent_/_descent=10.65625_/_2.6533203 foreground=#8A8A8A@1.000 rendered_family=Inter
-paint 3 Sync_settings element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=model_content input=pointer_target;_focusable;_Click/Focus
-paint 4 Configured_sync_channels element 280.000 52.000 18.000 44.000 element=row within=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 3 Sync_channels element 276.000 52.000 26.000 44.000 element=row within=surface_explore-popover/workspace-header profile=desktop theme=dark appearance=dark contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 4 Sync_channel element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=Key::SyncChannelDevices input=pointer_target;_focusable;_Click/Focus
 paint 5 Icon element 280.000 52.000 18.000 44.000 element=icon within=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard icon_size=IconSize::L_->_18 ink=Ink::Secondary_->_#8A8A8A@1.000 semantics=decorative input=neutral
 paint 6 text_line part 280.000 65.000 18.000 18.000 line_height=18 baseline=83 ink_bounds=Not_exposed
 paint 7 icon primitive 280.000 65.000 18.000 18.000 icon_pack=Tabler icon_source=Tabler icon_name=DESKTOP icon_codepoint=U+E560 icon_variant=regular icon_size=18 foreground=#8A8A8A@1.000
@@ -1400,7 +1400,7 @@ paint 6 text_run primitive 294.899 320.344 7.101 13.310 font_size=11 font_weight
 panel 52.000 46.000 258.000 300.000
 band 52.000 131.000 258.000 113.000
 focus koru:w1/v1/s:explore-popover#popover
-row workspace-action:workspace-sync 52.000 52.000 258.000 44.000
+row workspace-action:workspace-sync 276.000 52.000 26.000 44.000
 row heading 52.000 105.000 258.000 26.000
 row ws:0001 52.000 131.000 258.000 26.000
 part ws:0001 tile 60.000 132.000 24.000 24.000
@@ -1422,7 +1422,7 @@ row workspace-action:new-workspace 52.000 253.000 258.000 26.000
 row workspace-action:workspace-import 52.000 279.000 258.000 26.000
 row workspace-action:workspace-trash 52.000 314.000 258.000 26.000
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Arbeitsbereiche" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: Nicht eingerichtet. Kanäle: Nur lokal. Synchronisierungseinstellungen öffnen" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Mit diesem Computer verknüpfte Geräte" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Arbeitsbereiche" 60.000 105.000 87.351 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Arbeitsbereiche verwalten" 155.351 105.000 146.649 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -1458,8 +1458,8 @@ paint 6 text_run primitive 92.000 53.406 55.682 15.729 font_size=13 font_weight=
 paint 4 Text element 92.000 72.000 176.000 14.000 element=text within=surface_explore-popover/workspace-header occurrence=2_of_2_named_alike profile=desktop theme=dark appearance=dark contrast=standard text_role=hint ink=Ink::Secondary_->_#8A8A8A@1.000 text_mode=single_line,_elided lines=1 semantics=none:_transparent_to_semantic_parenting input=neutral
 paint 5 label_line part 92.000 71.999 114.893 14.000 line_height=14 baseline=83 ink_bounds=Not_exposed
 paint 6 text_run primitive 92.000 72.344 114.893 13.310 font_size=11 font_weight=500 baseline=83 ascent_/_descent=10.65625_/_2.6533203 foreground=#8A8A8A@1.000 rendered_family=Inter
-paint 3 Sync_settings element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=model_content input=pointer_target;_focusable;_Click/Focus
-paint 4 Configured_sync_channels element 280.000 52.000 18.000 44.000 element=row within=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 3 Sync_channels element 276.000 52.000 26.000 44.000 element=row within=surface_explore-popover/workspace-header profile=desktop theme=dark appearance=dark contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 4 Sync_channel element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=Key::SyncChannelDevices input=pointer_target;_focusable;_Click/Focus
 paint 5 Icon element 280.000 52.000 18.000 44.000 element=icon within=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard icon_size=IconSize::L_->_18 ink=Ink::Secondary_->_#8A8A8A@1.000 semantics=decorative input=neutral
 paint 6 text_line part 280.000 65.000 18.000 18.000 line_height=18 baseline=83 ink_bounds=Not_exposed
 paint 7 icon primitive 280.000 65.000 18.000 18.000 icon_pack=Tabler icon_source=Tabler icon_name=DESKTOP icon_codepoint=U+E560 icon_variant=regular icon_size=18 foreground=#8A8A8A@1.000
@@ -1571,7 +1571,7 @@ paint 6 text_run primitive 294.899 320.344 7.101 13.310 font_size=11 font_weight
 panel 52.000 46.000 258.000 300.000
 band 52.000 131.000 258.000 113.000
 focus koru:w1/v1/s:explore-popover#popover
-row workspace-action:workspace-sync 52.000 52.000 258.000 44.000
+row workspace-action:workspace-sync 276.000 52.000 26.000 44.000
 row heading 52.000 105.000 258.000 26.000
 row ws:0001 52.000 131.000 258.000 26.000
 part ws:0001 tile 60.000 132.000 24.000 24.000
@@ -1593,7 +1593,7 @@ row workspace-action:new-workspace 52.000 253.000 258.000 26.000
 row workspace-action:workspace-import 52.000 279.000 258.000 26.000
 row workspace-action:workspace-trash 52.000 314.000 258.000 26.000
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Arbeitsbereiche" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: Nicht eingerichtet. Kanäle: Nur lokal. Synchronisierungseinstellungen öffnen" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Mit diesem Computer verknüpfte Geräte" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Arbeitsbereiche" 60.000 105.000 87.351 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Arbeitsbereiche verwalten" 155.351 105.000 146.649 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Quarterly planning for the European expansion programme" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -1629,8 +1629,8 @@ paint 6 text_run primitive 92.000 53.406 55.682 15.729 font_size=13 font_weight=
 paint 4 Text element 92.000 72.000 176.000 14.000 element=text within=surface_explore-popover/workspace-header occurrence=2_of_2_named_alike profile=desktop theme=dark appearance=dark contrast=standard text_role=hint ink=Ink::Secondary_->_#8A8A8A@1.000 text_mode=single_line,_elided lines=1 semantics=none:_transparent_to_semantic_parenting input=neutral
 paint 5 label_line part 92.000 71.999 114.893 14.000 line_height=14 baseline=83 ink_bounds=Not_exposed
 paint 6 text_run primitive 92.000 72.344 114.893 13.310 font_size=11 font_weight=500 baseline=83 ascent_/_descent=10.65625_/_2.6533203 foreground=#8A8A8A@1.000 rendered_family=Inter
-paint 3 Sync_settings element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=model_content input=pointer_target;_focusable;_Click/Focus
-paint 4 Configured_sync_channels element 280.000 52.000 18.000 44.000 element=row within=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 3 Sync_channels element 276.000 52.000 26.000 44.000 element=row within=surface_explore-popover/workspace-header profile=desktop theme=dark appearance=dark contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 4 Sync_channel element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=Key::SyncChannelDevices input=pointer_target;_focusable;_Click/Focus
 paint 5 Icon element 280.000 52.000 18.000 44.000 element=icon within=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard icon_size=IconSize::L_->_18 ink=Ink::Secondary_->_#8A8A8A@1.000 semantics=decorative input=neutral
 paint 6 text_line part 280.000 65.000 18.000 18.000 line_height=18 baseline=83 ink_bounds=Not_exposed
 paint 7 icon primitive 280.000 65.000 18.000 18.000 icon_pack=Tabler icon_source=Tabler icon_name=DESKTOP icon_codepoint=U+E560 icon_variant=regular icon_size=18 foreground=#8A8A8A@1.000
@@ -1742,7 +1742,7 @@ paint 6 text_run primitive 294.899 320.344 7.101 13.310 font_size=11 font_weight
 panel 52.000 46.000 258.000 300.000
 band 52.000 131.000 258.000 113.000
 focus koru:w1/v1/s:explore-popover#popover
-row workspace-action:workspace-sync 52.000 52.000 258.000 44.000
+row workspace-action:workspace-sync 276.000 52.000 26.000 44.000
 row heading 52.000 105.000 258.000 26.000
 row ws:0001 52.000 131.000 258.000 26.000
 part ws:0001 tile 60.000 132.000 24.000 24.000
@@ -1764,7 +1764,7 @@ row workspace-action:new-workspace 52.000 253.000 258.000 26.000
 row workspace-action:workspace-import 52.000 279.000 258.000 26.000
 row workspace-action:workspace-trash 52.000 314.000 258.000 26.000
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "مساحات العمل" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: غير مُعدّ. القنوات: محلي فقط. فتح إعدادات المزامنة" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "الأجهزة المرتبطة بهذا الكمبيوتر" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "مساحات العمل" 60.000 105.000 135.631 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "إدارة مساحات العمل" 203.631 105.000 98.369 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -1804,8 +1804,8 @@ paint 6 text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ ascent_
 paint 6 text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#8A8A8A@1.000 rendered_family=~
 paint 6 text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#8A8A8A@1.000 rendered_family=~
 paint 6 text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#8A8A8A@1.000 rendered_family=~
-paint 3 Sync_settings element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=model_content input=pointer_target;_focusable;_Click/Focus
-paint 4 Configured_sync_channels element 280.000 52.000 18.000 44.000 element=row within=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 3 Sync_channels element 276.000 52.000 26.000 44.000 element=row within=surface_explore-popover/workspace-header profile=desktop theme=dark appearance=dark contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 4 Sync_channel element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=Key::SyncChannelDevices input=pointer_target;_focusable;_Click/Focus
 paint 5 Icon element 280.000 52.000 18.000 44.000 element=icon within=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard icon_size=IconSize::L_->_18 ink=Ink::Secondary_->_#8A8A8A@1.000 semantics=decorative input=neutral
 paint 6 text_line part 280.000 65.000 18.000 18.000 line_height=18 baseline=83 ink_bounds=Not_exposed
 paint 7 icon primitive 280.000 65.000 18.000 18.000 icon_pack=Tabler icon_source=Tabler icon_name=DESKTOP icon_codepoint=U+E560 icon_variant=regular icon_size=18 foreground=#8A8A8A@1.000
@@ -1928,7 +1928,7 @@ paint 6 text_run primitive 294.899 320.344 7.101 13.310 font_size=11 font_weight
 panel 52.000 46.000 258.000 300.000
 band 52.000 131.000 258.000 113.000
 focus koru:w1/v1/s:explore-popover#popover
-row workspace-action:workspace-sync 52.000 52.000 258.000 44.000
+row workspace-action:workspace-sync 276.000 52.000 26.000 44.000
 row heading 52.000 105.000 258.000 26.000
 row ws:0001 52.000 131.000 258.000 26.000
 part ws:0001 tile 60.000 132.000 24.000 24.000
@@ -1950,7 +1950,7 @@ row workspace-action:new-workspace 52.000 253.000 258.000 26.000
 row workspace-action:workspace-import 52.000 279.000 258.000 26.000
 row workspace-action:workspace-trash 52.000 314.000 258.000 26.000
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "مساحات العمل" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: غير مُعدّ. القنوات: محلي فقط. فتح إعدادات المزامنة" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "الأجهزة المرتبطة بهذا الكمبيوتر" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "مساحات العمل" 60.000 105.000 135.631 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "إدارة مساحات العمل" 203.631 105.000 98.369 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Quarterly planning for the European expansion programme" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -1990,8 +1990,8 @@ paint 6 text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ ascent_
 paint 6 text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#8A8A8A@1.000 rendered_family=~
 paint 6 text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#8A8A8A@1.000 rendered_family=~
 paint 6 text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#8A8A8A@1.000 rendered_family=~
-paint 3 Sync_settings element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=model_content input=pointer_target;_focusable;_Click/Focus
-paint 4 Configured_sync_channels element 280.000 52.000 18.000 44.000 element=row within=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 3 Sync_channels element 276.000 52.000 26.000 44.000 element=row within=surface_explore-popover/workspace-header profile=desktop theme=dark appearance=dark contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 4 Sync_channel element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=Key::SyncChannelDevices input=pointer_target;_focusable;_Click/Focus
 paint 5 Icon element 280.000 52.000 18.000 44.000 element=icon within=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard icon_size=IconSize::L_->_18 ink=Ink::Secondary_->_#8A8A8A@1.000 semantics=decorative input=neutral
 paint 6 text_line part 280.000 65.000 18.000 18.000 line_height=18 baseline=83 ink_bounds=Not_exposed
 paint 7 icon primitive 280.000 65.000 18.000 18.000 icon_pack=Tabler icon_source=Tabler icon_name=DESKTOP icon_codepoint=U+E560 icon_variant=regular icon_size=18 foreground=#8A8A8A@1.000
@@ -2114,7 +2114,7 @@ paint 6 text_run primitive 294.899 320.344 7.101 13.310 font_size=11 font_weight
 panel 52.000 46.000 258.000 300.000
 band 52.000 131.000 258.000 113.000
 focus koru:w1/v1/s:explore-popover#popover
-row workspace-action:workspace-sync 52.000 52.000 258.000 44.000
+row workspace-action:workspace-sync 276.000 52.000 26.000 44.000
 row heading 52.000 105.000 258.000 26.000
 row ws:0001 52.000 131.000 258.000 26.000
 part ws:0001 tile 60.000 132.000 24.000 24.000
@@ -2136,7 +2136,7 @@ row workspace-action:new-workspace 52.000 253.000 258.000 26.000
 row workspace-action:workspace-import 52.000 279.000 258.000 26.000
 row workspace-action:workspace-trash 52.000 314.000 258.000 26.000
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Workspaces" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: Not set up. Channels: Local only. Open sync settings" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Devices linked to this computer" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Workspaces" 60.000 105.000 116.671 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Manage workspaces" 184.671 105.000 117.329 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -2172,8 +2172,8 @@ paint 6 text_run primitive 92.000 53.406 55.682 15.729 font_size=13 font_weight=
 paint 4 Text element 92.000 72.000 176.000 14.000 element=text within=surface_explore-popover/workspace-header occurrence=2_of_2_named_alike profile=desktop theme=light appearance=light contrast=standard text_role=hint ink=Ink::Secondary_->_#6B6B6B@1.000 text_mode=single_line,_elided lines=1 semantics=none:_transparent_to_semantic_parenting input=neutral
 paint 5 label_line part 92.000 71.999 90.514 14.000 line_height=14 baseline=83 ink_bounds=Not_exposed
 paint 6 text_run primitive 92.000 72.344 90.514 13.310 font_size=11 font_weight=500 baseline=83 ascent_/_descent=10.65625_/_2.6533203 foreground=#6B6B6B@1.000 rendered_family=Inter
-paint 3 Sync_settings element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=model_content input=pointer_target;_focusable;_Click/Focus
-paint 4 Configured_sync_channels element 280.000 52.000 18.000 44.000 element=row within=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 3 Sync_channels element 276.000 52.000 26.000 44.000 element=row within=surface_explore-popover/workspace-header profile=desktop theme=light appearance=light contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 4 Sync_channel element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=Key::SyncChannelDevices input=pointer_target;_focusable;_Click/Focus
 paint 5 Icon element 280.000 52.000 18.000 44.000 element=icon within=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard icon_size=IconSize::L_->_18 ink=Ink::Secondary_->_#6B6B6B@1.000 semantics=decorative input=neutral
 paint 6 text_line part 280.000 65.000 18.000 18.000 line_height=18 baseline=83 ink_bounds=Not_exposed
 paint 7 icon primitive 280.000 65.000 18.000 18.000 icon_pack=Tabler icon_source=Tabler icon_name=DESKTOP icon_codepoint=U+E560 icon_variant=regular icon_size=18 foreground=#6B6B6B@1.000
@@ -2285,7 +2285,7 @@ paint 6 text_run primitive 294.899 320.344 7.101 13.310 font_size=11 font_weight
 panel 52.000 46.000 258.000 300.000
 band 52.000 131.000 258.000 113.000
 focus koru:w1/v1/s:explore-popover#popover
-row workspace-action:workspace-sync 52.000 52.000 258.000 44.000
+row workspace-action:workspace-sync 276.000 52.000 26.000 44.000
 row heading 52.000 105.000 258.000 26.000
 row ws:0001 52.000 131.000 258.000 26.000
 part ws:0001 tile 60.000 132.000 24.000 24.000
@@ -2307,7 +2307,7 @@ row workspace-action:new-workspace 52.000 253.000 258.000 26.000
 row workspace-action:workspace-import 52.000 279.000 258.000 26.000
 row workspace-action:workspace-trash 52.000 314.000 258.000 26.000
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Workspaces" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: Not set up. Channels: Local only. Open sync settings" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Devices linked to this computer" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Workspaces" 60.000 105.000 116.671 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Manage workspaces" 184.671 105.000 117.329 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Quarterly planning for the European expansion programme" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -2343,8 +2343,8 @@ paint 6 text_run primitive 92.000 53.406 55.682 15.729 font_size=13 font_weight=
 paint 4 Text element 92.000 72.000 176.000 14.000 element=text within=surface_explore-popover/workspace-header occurrence=2_of_2_named_alike profile=desktop theme=light appearance=light contrast=standard text_role=hint ink=Ink::Secondary_->_#6B6B6B@1.000 text_mode=single_line,_elided lines=1 semantics=none:_transparent_to_semantic_parenting input=neutral
 paint 5 label_line part 92.000 71.999 90.514 14.000 line_height=14 baseline=83 ink_bounds=Not_exposed
 paint 6 text_run primitive 92.000 72.344 90.514 13.310 font_size=11 font_weight=500 baseline=83 ascent_/_descent=10.65625_/_2.6533203 foreground=#6B6B6B@1.000 rendered_family=Inter
-paint 3 Sync_settings element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=model_content input=pointer_target;_focusable;_Click/Focus
-paint 4 Configured_sync_channels element 280.000 52.000 18.000 44.000 element=row within=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 3 Sync_channels element 276.000 52.000 26.000 44.000 element=row within=surface_explore-popover/workspace-header profile=desktop theme=light appearance=light contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 4 Sync_channel element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=Key::SyncChannelDevices input=pointer_target;_focusable;_Click/Focus
 paint 5 Icon element 280.000 52.000 18.000 44.000 element=icon within=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard icon_size=IconSize::L_->_18 ink=Ink::Secondary_->_#6B6B6B@1.000 semantics=decorative input=neutral
 paint 6 text_line part 280.000 65.000 18.000 18.000 line_height=18 baseline=83 ink_bounds=Not_exposed
 paint 7 icon primitive 280.000 65.000 18.000 18.000 icon_pack=Tabler icon_source=Tabler icon_name=DESKTOP icon_codepoint=U+E560 icon_variant=regular icon_size=18 foreground=#6B6B6B@1.000
@@ -2456,7 +2456,7 @@ paint 6 text_run primitive 294.899 320.344 7.101 13.310 font_size=11 font_weight
 panel 52.000 46.000 258.000 300.000
 band 52.000 131.000 258.000 113.000
 focus koru:w1/v1/s:explore-popover#popover
-row workspace-action:workspace-sync 52.000 52.000 258.000 44.000
+row workspace-action:workspace-sync 276.000 52.000 26.000 44.000
 row heading 52.000 105.000 258.000 26.000
 row ws:0001 52.000 131.000 258.000 26.000
 part ws:0001 tile 60.000 132.000 24.000 24.000
@@ -2478,7 +2478,7 @@ row workspace-action:new-workspace 52.000 253.000 258.000 26.000
 row workspace-action:workspace-import 52.000 279.000 258.000 26.000
 row workspace-action:workspace-trash 52.000 314.000 258.000 26.000
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Arbeitsbereiche" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: Nicht eingerichtet. Kanäle: Nur lokal. Synchronisierungseinstellungen öffnen" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Mit diesem Computer verknüpfte Geräte" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Arbeitsbereiche" 60.000 105.000 87.351 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Arbeitsbereiche verwalten" 155.351 105.000 146.649 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -2514,8 +2514,8 @@ paint 6 text_run primitive 92.000 53.406 55.682 15.729 font_size=13 font_weight=
 paint 4 Text element 92.000 72.000 176.000 14.000 element=text within=surface_explore-popover/workspace-header occurrence=2_of_2_named_alike profile=desktop theme=light appearance=light contrast=standard text_role=hint ink=Ink::Secondary_->_#6B6B6B@1.000 text_mode=single_line,_elided lines=1 semantics=none:_transparent_to_semantic_parenting input=neutral
 paint 5 label_line part 92.000 71.999 114.893 14.000 line_height=14 baseline=83 ink_bounds=Not_exposed
 paint 6 text_run primitive 92.000 72.344 114.893 13.310 font_size=11 font_weight=500 baseline=83 ascent_/_descent=10.65625_/_2.6533203 foreground=#6B6B6B@1.000 rendered_family=Inter
-paint 3 Sync_settings element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=model_content input=pointer_target;_focusable;_Click/Focus
-paint 4 Configured_sync_channels element 280.000 52.000 18.000 44.000 element=row within=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 3 Sync_channels element 276.000 52.000 26.000 44.000 element=row within=surface_explore-popover/workspace-header profile=desktop theme=light appearance=light contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 4 Sync_channel element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=Key::SyncChannelDevices input=pointer_target;_focusable;_Click/Focus
 paint 5 Icon element 280.000 52.000 18.000 44.000 element=icon within=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard icon_size=IconSize::L_->_18 ink=Ink::Secondary_->_#6B6B6B@1.000 semantics=decorative input=neutral
 paint 6 text_line part 280.000 65.000 18.000 18.000 line_height=18 baseline=83 ink_bounds=Not_exposed
 paint 7 icon primitive 280.000 65.000 18.000 18.000 icon_pack=Tabler icon_source=Tabler icon_name=DESKTOP icon_codepoint=U+E560 icon_variant=regular icon_size=18 foreground=#6B6B6B@1.000
@@ -2627,7 +2627,7 @@ paint 6 text_run primitive 294.899 320.344 7.101 13.310 font_size=11 font_weight
 panel 52.000 46.000 258.000 300.000
 band 52.000 131.000 258.000 113.000
 focus koru:w1/v1/s:explore-popover#popover
-row workspace-action:workspace-sync 52.000 52.000 258.000 44.000
+row workspace-action:workspace-sync 276.000 52.000 26.000 44.000
 row heading 52.000 105.000 258.000 26.000
 row ws:0001 52.000 131.000 258.000 26.000
 part ws:0001 tile 60.000 132.000 24.000 24.000
@@ -2649,7 +2649,7 @@ row workspace-action:new-workspace 52.000 253.000 258.000 26.000
 row workspace-action:workspace-import 52.000 279.000 258.000 26.000
 row workspace-action:workspace-trash 52.000 314.000 258.000 26.000
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Arbeitsbereiche" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: Nicht eingerichtet. Kanäle: Nur lokal. Synchronisierungseinstellungen öffnen" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Mit diesem Computer verknüpfte Geräte" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Arbeitsbereiche" 60.000 105.000 87.351 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Arbeitsbereiche verwalten" 155.351 105.000 146.649 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Quarterly planning for the European expansion programme" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -2685,8 +2685,8 @@ paint 6 text_run primitive 92.000 53.406 55.682 15.729 font_size=13 font_weight=
 paint 4 Text element 92.000 72.000 176.000 14.000 element=text within=surface_explore-popover/workspace-header occurrence=2_of_2_named_alike profile=desktop theme=light appearance=light contrast=standard text_role=hint ink=Ink::Secondary_->_#6B6B6B@1.000 text_mode=single_line,_elided lines=1 semantics=none:_transparent_to_semantic_parenting input=neutral
 paint 5 label_line part 92.000 71.999 114.893 14.000 line_height=14 baseline=83 ink_bounds=Not_exposed
 paint 6 text_run primitive 92.000 72.344 114.893 13.310 font_size=11 font_weight=500 baseline=83 ascent_/_descent=10.65625_/_2.6533203 foreground=#6B6B6B@1.000 rendered_family=Inter
-paint 3 Sync_settings element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=model_content input=pointer_target;_focusable;_Click/Focus
-paint 4 Configured_sync_channels element 280.000 52.000 18.000 44.000 element=row within=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 3 Sync_channels element 276.000 52.000 26.000 44.000 element=row within=surface_explore-popover/workspace-header profile=desktop theme=light appearance=light contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 4 Sync_channel element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=Key::SyncChannelDevices input=pointer_target;_focusable;_Click/Focus
 paint 5 Icon element 280.000 52.000 18.000 44.000 element=icon within=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard icon_size=IconSize::L_->_18 ink=Ink::Secondary_->_#6B6B6B@1.000 semantics=decorative input=neutral
 paint 6 text_line part 280.000 65.000 18.000 18.000 line_height=18 baseline=83 ink_bounds=Not_exposed
 paint 7 icon primitive 280.000 65.000 18.000 18.000 icon_pack=Tabler icon_source=Tabler icon_name=DESKTOP icon_codepoint=U+E560 icon_variant=regular icon_size=18 foreground=#6B6B6B@1.000
@@ -2798,7 +2798,7 @@ paint 6 text_run primitive 294.899 320.344 7.101 13.310 font_size=11 font_weight
 panel 52.000 46.000 258.000 300.000
 band 52.000 131.000 258.000 113.000
 focus koru:w1/v1/s:explore-popover#popover
-row workspace-action:workspace-sync 52.000 52.000 258.000 44.000
+row workspace-action:workspace-sync 276.000 52.000 26.000 44.000
 row heading 52.000 105.000 258.000 26.000
 row ws:0001 52.000 131.000 258.000 26.000
 part ws:0001 tile 60.000 132.000 24.000 24.000
@@ -2820,7 +2820,7 @@ row workspace-action:new-workspace 52.000 253.000 258.000 26.000
 row workspace-action:workspace-import 52.000 279.000 258.000 26.000
 row workspace-action:workspace-trash 52.000 314.000 258.000 26.000
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "مساحات العمل" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: غير مُعدّ. القنوات: محلي فقط. فتح إعدادات المزامنة" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "الأجهزة المرتبطة بهذا الكمبيوتر" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "مساحات العمل" 60.000 105.000 135.631 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "إدارة مساحات العمل" 203.631 105.000 98.369 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -2860,8 +2860,8 @@ paint 6 text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ ascent_
 paint 6 text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#6B6B6B@1.000 rendered_family=~
 paint 6 text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#6B6B6B@1.000 rendered_family=~
 paint 6 text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#6B6B6B@1.000 rendered_family=~
-paint 3 Sync_settings element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=model_content input=pointer_target;_focusable;_Click/Focus
-paint 4 Configured_sync_channels element 280.000 52.000 18.000 44.000 element=row within=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 3 Sync_channels element 276.000 52.000 26.000 44.000 element=row within=surface_explore-popover/workspace-header profile=desktop theme=light appearance=light contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 4 Sync_channel element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=Key::SyncChannelDevices input=pointer_target;_focusable;_Click/Focus
 paint 5 Icon element 280.000 52.000 18.000 44.000 element=icon within=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard icon_size=IconSize::L_->_18 ink=Ink::Secondary_->_#6B6B6B@1.000 semantics=decorative input=neutral
 paint 6 text_line part 280.000 65.000 18.000 18.000 line_height=18 baseline=83 ink_bounds=Not_exposed
 paint 7 icon primitive 280.000 65.000 18.000 18.000 icon_pack=Tabler icon_source=Tabler icon_name=DESKTOP icon_codepoint=U+E560 icon_variant=regular icon_size=18 foreground=#6B6B6B@1.000
@@ -2984,7 +2984,7 @@ paint 6 text_run primitive 294.899 320.344 7.101 13.310 font_size=11 font_weight
 panel 52.000 46.000 258.000 300.000
 band 52.000 131.000 258.000 113.000
 focus koru:w1/v1/s:explore-popover#popover
-row workspace-action:workspace-sync 52.000 52.000 258.000 44.000
+row workspace-action:workspace-sync 276.000 52.000 26.000 44.000
 row heading 52.000 105.000 258.000 26.000
 row ws:0001 52.000 131.000 258.000 26.000
 part ws:0001 tile 60.000 132.000 24.000 24.000
@@ -3006,7 +3006,7 @@ row workspace-action:new-workspace 52.000 253.000 258.000 26.000
 row workspace-action:workspace-import 52.000 279.000 258.000 26.000
 row workspace-action:workspace-trash 52.000 314.000 258.000 26.000
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "مساحات العمل" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: غير مُعدّ. القنوات: محلي فقط. فتح إعدادات المزامنة" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "الأجهزة المرتبطة بهذا الكمبيوتر" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "مساحات العمل" 60.000 105.000 135.631 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "إدارة مساحات العمل" 203.631 105.000 98.369 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Quarterly planning for the European expansion programme" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -3046,8 +3046,8 @@ paint 6 text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ ascent_
 paint 6 text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#6B6B6B@1.000 rendered_family=~
 paint 6 text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#6B6B6B@1.000 rendered_family=~
 paint 6 text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#6B6B6B@1.000 rendered_family=~
-paint 3 Sync_settings element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=model_content input=pointer_target;_focusable;_Click/Focus
-paint 4 Configured_sync_channels element 280.000 52.000 18.000 44.000 element=row within=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 3 Sync_channels element 276.000 52.000 26.000 44.000 element=row within=surface_explore-popover/workspace-header profile=desktop theme=light appearance=light contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 4 Sync_channel element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=Key::SyncChannelDevices input=pointer_target;_focusable;_Click/Focus
 paint 5 Icon element 280.000 52.000 18.000 44.000 element=icon within=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard icon_size=IconSize::L_->_18 ink=Ink::Secondary_->_#6B6B6B@1.000 semantics=decorative input=neutral
 paint 6 text_line part 280.000 65.000 18.000 18.000 line_height=18 baseline=83 ink_bounds=Not_exposed
 paint 7 icon primitive 280.000 65.000 18.000 18.000 icon_pack=Tabler icon_source=Tabler icon_name=DESKTOP icon_codepoint=U+E560 icon_variant=regular icon_size=18 foreground=#6B6B6B@1.000
@@ -3170,7 +3170,7 @@ paint 6 text_run primitive 294.899 320.344 7.101 13.310 font_size=11 font_weight
 panel 52.000 46.000 258.000 300.000
 band 52.000 131.000 258.000 113.000
 focus koru:w1/v1/s:explore-popover#popover
-row workspace-action:workspace-sync 52.000 52.000 258.000 44.000
+row workspace-action:workspace-sync 276.000 52.000 26.000 44.000
 row heading 52.000 105.000 258.000 26.000
 row ws:0001 52.000 131.000 258.000 26.000
 part ws:0001 tile 60.000 132.000 24.000 24.000
@@ -3192,7 +3192,7 @@ row workspace-action:new-workspace 52.000 253.000 258.000 26.000
 row workspace-action:workspace-import 52.000 279.000 258.000 26.000
 row workspace-action:workspace-trash 52.000 314.000 258.000 26.000
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Workspaces" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: Not set up. Channels: Local only. Open sync settings" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Devices linked to this computer" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Workspaces" 60.000 105.000 116.671 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Manage workspaces" 184.671 105.000 117.329 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -3228,8 +3228,8 @@ paint 6 text_run primitive 92.000 53.406 55.682 15.729 font_size=13 font_weight=
 paint 4 Text element 92.000 72.000 176.000 14.000 element=text within=surface_explore-popover/workspace-header occurrence=2_of_2_named_alike profile=desktop theme=dark appearance=dark contrast=standard text_role=hint ink=Ink::Secondary_->_#8A8A8A@1.000 text_mode=single_line,_elided lines=1 semantics=none:_transparent_to_semantic_parenting input=neutral
 paint 5 label_line part 92.000 71.999 90.514 14.000 line_height=14 baseline=83 ink_bounds=Not_exposed
 paint 6 text_run primitive 92.000 72.344 90.514 13.310 font_size=11 font_weight=500 baseline=83 ascent_/_descent=10.65625_/_2.6533203 foreground=#8A8A8A@1.000 rendered_family=Inter
-paint 3 Sync_settings element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=model_content input=pointer_target;_focusable;_Click/Focus
-paint 4 Configured_sync_channels element 280.000 52.000 18.000 44.000 element=row within=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 3 Sync_channels element 276.000 52.000 26.000 44.000 element=row within=surface_explore-popover/workspace-header profile=desktop theme=dark appearance=dark contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 4 Sync_channel element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=Key::SyncChannelDevices input=pointer_target;_focusable;_Click/Focus
 paint 5 Icon element 280.000 52.000 18.000 44.000 element=icon within=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard icon_size=IconSize::L_->_18 ink=Ink::Secondary_->_#8A8A8A@1.000 semantics=decorative input=neutral
 paint 6 text_line part 280.000 65.000 18.000 18.000 line_height=18 baseline=83 ink_bounds=Not_exposed
 paint 7 icon primitive 280.000 65.000 18.000 18.000 icon_pack=Tabler icon_source=Tabler icon_name=DESKTOP icon_codepoint=U+E560 icon_variant=regular icon_size=18 foreground=#8A8A8A@1.000
@@ -3341,7 +3341,7 @@ paint 6 text_run primitive 294.899 320.344 7.101 13.310 font_size=11 font_weight
 panel 52.000 46.000 258.000 300.000
 band 52.000 131.000 258.000 113.000
 focus koru:w1/v1/s:explore-popover#popover
-row workspace-action:workspace-sync 52.000 52.000 258.000 44.000
+row workspace-action:workspace-sync 276.000 52.000 26.000 44.000
 row heading 52.000 105.000 258.000 26.000
 row ws:0001 52.000 131.000 258.000 26.000
 part ws:0001 tile 60.000 132.000 24.000 24.000
@@ -3363,7 +3363,7 @@ row workspace-action:new-workspace 52.000 253.000 258.000 26.000
 row workspace-action:workspace-import 52.000 279.000 258.000 26.000
 row workspace-action:workspace-trash 52.000 314.000 258.000 26.000
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Workspaces" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: Not set up. Channels: Local only. Open sync settings" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Devices linked to this computer" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Workspaces" 60.000 105.000 116.671 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Manage workspaces" 184.671 105.000 117.329 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Quarterly planning for the European expansion programme" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -3399,8 +3399,8 @@ paint 6 text_run primitive 92.000 53.406 55.682 15.729 font_size=13 font_weight=
 paint 4 Text element 92.000 72.000 176.000 14.000 element=text within=surface_explore-popover/workspace-header occurrence=2_of_2_named_alike profile=desktop theme=dark appearance=dark contrast=standard text_role=hint ink=Ink::Secondary_->_#8A8A8A@1.000 text_mode=single_line,_elided lines=1 semantics=none:_transparent_to_semantic_parenting input=neutral
 paint 5 label_line part 92.000 71.999 90.514 14.000 line_height=14 baseline=83 ink_bounds=Not_exposed
 paint 6 text_run primitive 92.000 72.344 90.514 13.310 font_size=11 font_weight=500 baseline=83 ascent_/_descent=10.65625_/_2.6533203 foreground=#8A8A8A@1.000 rendered_family=Inter
-paint 3 Sync_settings element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=model_content input=pointer_target;_focusable;_Click/Focus
-paint 4 Configured_sync_channels element 280.000 52.000 18.000 44.000 element=row within=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 3 Sync_channels element 276.000 52.000 26.000 44.000 element=row within=surface_explore-popover/workspace-header profile=desktop theme=dark appearance=dark contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 4 Sync_channel element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=Key::SyncChannelDevices input=pointer_target;_focusable;_Click/Focus
 paint 5 Icon element 280.000 52.000 18.000 44.000 element=icon within=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard icon_size=IconSize::L_->_18 ink=Ink::Secondary_->_#8A8A8A@1.000 semantics=decorative input=neutral
 paint 6 text_line part 280.000 65.000 18.000 18.000 line_height=18 baseline=83 ink_bounds=Not_exposed
 paint 7 icon primitive 280.000 65.000 18.000 18.000 icon_pack=Tabler icon_source=Tabler icon_name=DESKTOP icon_codepoint=U+E560 icon_variant=regular icon_size=18 foreground=#8A8A8A@1.000
@@ -3512,7 +3512,7 @@ paint 6 text_run primitive 294.899 320.344 7.101 13.310 font_size=11 font_weight
 panel 52.000 46.000 258.000 300.000
 band 52.000 131.000 258.000 113.000
 focus koru:w1/v1/s:explore-popover#popover
-row workspace-action:workspace-sync 52.000 52.000 258.000 44.000
+row workspace-action:workspace-sync 276.000 52.000 26.000 44.000
 row heading 52.000 105.000 258.000 26.000
 row ws:0001 52.000 131.000 258.000 26.000
 part ws:0001 tile 60.000 132.000 24.000 24.000
@@ -3534,7 +3534,7 @@ row workspace-action:new-workspace 52.000 253.000 258.000 26.000
 row workspace-action:workspace-import 52.000 279.000 258.000 26.000
 row workspace-action:workspace-trash 52.000 314.000 258.000 26.000
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Arbeitsbereiche" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: Nicht eingerichtet. Kanäle: Nur lokal. Synchronisierungseinstellungen öffnen" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Mit diesem Computer verknüpfte Geräte" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Arbeitsbereiche" 60.000 105.000 87.351 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Arbeitsbereiche verwalten" 155.351 105.000 146.649 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -3570,8 +3570,8 @@ paint 6 text_run primitive 92.000 53.406 55.682 15.729 font_size=13 font_weight=
 paint 4 Text element 92.000 72.000 176.000 14.000 element=text within=surface_explore-popover/workspace-header occurrence=2_of_2_named_alike profile=desktop theme=dark appearance=dark contrast=standard text_role=hint ink=Ink::Secondary_->_#8A8A8A@1.000 text_mode=single_line,_elided lines=1 semantics=none:_transparent_to_semantic_parenting input=neutral
 paint 5 label_line part 92.000 71.999 114.893 14.000 line_height=14 baseline=83 ink_bounds=Not_exposed
 paint 6 text_run primitive 92.000 72.344 114.893 13.310 font_size=11 font_weight=500 baseline=83 ascent_/_descent=10.65625_/_2.6533203 foreground=#8A8A8A@1.000 rendered_family=Inter
-paint 3 Sync_settings element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=model_content input=pointer_target;_focusable;_Click/Focus
-paint 4 Configured_sync_channels element 280.000 52.000 18.000 44.000 element=row within=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 3 Sync_channels element 276.000 52.000 26.000 44.000 element=row within=surface_explore-popover/workspace-header profile=desktop theme=dark appearance=dark contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 4 Sync_channel element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=Key::SyncChannelDevices input=pointer_target;_focusable;_Click/Focus
 paint 5 Icon element 280.000 52.000 18.000 44.000 element=icon within=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard icon_size=IconSize::L_->_18 ink=Ink::Secondary_->_#8A8A8A@1.000 semantics=decorative input=neutral
 paint 6 text_line part 280.000 65.000 18.000 18.000 line_height=18 baseline=83 ink_bounds=Not_exposed
 paint 7 icon primitive 280.000 65.000 18.000 18.000 icon_pack=Tabler icon_source=Tabler icon_name=DESKTOP icon_codepoint=U+E560 icon_variant=regular icon_size=18 foreground=#8A8A8A@1.000
@@ -3683,7 +3683,7 @@ paint 6 text_run primitive 294.899 320.344 7.101 13.310 font_size=11 font_weight
 panel 52.000 46.000 258.000 300.000
 band 52.000 131.000 258.000 113.000
 focus koru:w1/v1/s:explore-popover#popover
-row workspace-action:workspace-sync 52.000 52.000 258.000 44.000
+row workspace-action:workspace-sync 276.000 52.000 26.000 44.000
 row heading 52.000 105.000 258.000 26.000
 row ws:0001 52.000 131.000 258.000 26.000
 part ws:0001 tile 60.000 132.000 24.000 24.000
@@ -3705,7 +3705,7 @@ row workspace-action:new-workspace 52.000 253.000 258.000 26.000
 row workspace-action:workspace-import 52.000 279.000 258.000 26.000
 row workspace-action:workspace-trash 52.000 314.000 258.000 26.000
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Arbeitsbereiche" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: Nicht eingerichtet. Kanäle: Nur lokal. Synchronisierungseinstellungen öffnen" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Mit diesem Computer verknüpfte Geräte" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Arbeitsbereiche" 60.000 105.000 87.351 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Arbeitsbereiche verwalten" 155.351 105.000 146.649 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Quarterly planning for the European expansion programme" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -3741,8 +3741,8 @@ paint 6 text_run primitive 92.000 53.406 55.682 15.729 font_size=13 font_weight=
 paint 4 Text element 92.000 72.000 176.000 14.000 element=text within=surface_explore-popover/workspace-header occurrence=2_of_2_named_alike profile=desktop theme=dark appearance=dark contrast=standard text_role=hint ink=Ink::Secondary_->_#8A8A8A@1.000 text_mode=single_line,_elided lines=1 semantics=none:_transparent_to_semantic_parenting input=neutral
 paint 5 label_line part 92.000 71.999 114.893 14.000 line_height=14 baseline=83 ink_bounds=Not_exposed
 paint 6 text_run primitive 92.000 72.344 114.893 13.310 font_size=11 font_weight=500 baseline=83 ascent_/_descent=10.65625_/_2.6533203 foreground=#8A8A8A@1.000 rendered_family=Inter
-paint 3 Sync_settings element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=model_content input=pointer_target;_focusable;_Click/Focus
-paint 4 Configured_sync_channels element 280.000 52.000 18.000 44.000 element=row within=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 3 Sync_channels element 276.000 52.000 26.000 44.000 element=row within=surface_explore-popover/workspace-header profile=desktop theme=dark appearance=dark contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 4 Sync_channel element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=Key::SyncChannelDevices input=pointer_target;_focusable;_Click/Focus
 paint 5 Icon element 280.000 52.000 18.000 44.000 element=icon within=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard icon_size=IconSize::L_->_18 ink=Ink::Secondary_->_#8A8A8A@1.000 semantics=decorative input=neutral
 paint 6 text_line part 280.000 65.000 18.000 18.000 line_height=18 baseline=83 ink_bounds=Not_exposed
 paint 7 icon primitive 280.000 65.000 18.000 18.000 icon_pack=Tabler icon_source=Tabler icon_name=DESKTOP icon_codepoint=U+E560 icon_variant=regular icon_size=18 foreground=#8A8A8A@1.000
@@ -3854,7 +3854,7 @@ paint 6 text_run primitive 294.899 320.344 7.101 13.310 font_size=11 font_weight
 panel 52.000 46.000 258.000 300.000
 band 52.000 131.000 258.000 113.000
 focus koru:w1/v1/s:explore-popover#popover
-row workspace-action:workspace-sync 52.000 52.000 258.000 44.000
+row workspace-action:workspace-sync 276.000 52.000 26.000 44.000
 row heading 52.000 105.000 258.000 26.000
 row ws:0001 52.000 131.000 258.000 26.000
 part ws:0001 tile 60.000 132.000 24.000 24.000
@@ -3876,7 +3876,7 @@ row workspace-action:new-workspace 52.000 253.000 258.000 26.000
 row workspace-action:workspace-import 52.000 279.000 258.000 26.000
 row workspace-action:workspace-trash 52.000 314.000 258.000 26.000
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "مساحات العمل" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: غير مُعدّ. القنوات: محلي فقط. فتح إعدادات المزامنة" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "الأجهزة المرتبطة بهذا الكمبيوتر" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "مساحات العمل" 60.000 105.000 135.631 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "إدارة مساحات العمل" 203.631 105.000 98.369 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -3916,8 +3916,8 @@ paint 6 text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ ascent_
 paint 6 text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#8A8A8A@1.000 rendered_family=~
 paint 6 text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#8A8A8A@1.000 rendered_family=~
 paint 6 text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#8A8A8A@1.000 rendered_family=~
-paint 3 Sync_settings element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=model_content input=pointer_target;_focusable;_Click/Focus
-paint 4 Configured_sync_channels element 280.000 52.000 18.000 44.000 element=row within=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 3 Sync_channels element 276.000 52.000 26.000 44.000 element=row within=surface_explore-popover/workspace-header profile=desktop theme=dark appearance=dark contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 4 Sync_channel element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=Key::SyncChannelDevices input=pointer_target;_focusable;_Click/Focus
 paint 5 Icon element 280.000 52.000 18.000 44.000 element=icon within=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard icon_size=IconSize::L_->_18 ink=Ink::Secondary_->_#8A8A8A@1.000 semantics=decorative input=neutral
 paint 6 text_line part 280.000 65.000 18.000 18.000 line_height=18 baseline=83 ink_bounds=Not_exposed
 paint 7 icon primitive 280.000 65.000 18.000 18.000 icon_pack=Tabler icon_source=Tabler icon_name=DESKTOP icon_codepoint=U+E560 icon_variant=regular icon_size=18 foreground=#8A8A8A@1.000
@@ -4040,7 +4040,7 @@ paint 6 text_run primitive 294.899 320.344 7.101 13.310 font_size=11 font_weight
 panel 52.000 46.000 258.000 300.000
 band 52.000 131.000 258.000 113.000
 focus koru:w1/v1/s:explore-popover#popover
-row workspace-action:workspace-sync 52.000 52.000 258.000 44.000
+row workspace-action:workspace-sync 276.000 52.000 26.000 44.000
 row heading 52.000 105.000 258.000 26.000
 row ws:0001 52.000 131.000 258.000 26.000
 part ws:0001 tile 60.000 132.000 24.000 24.000
@@ -4062,7 +4062,7 @@ row workspace-action:new-workspace 52.000 253.000 258.000 26.000
 row workspace-action:workspace-import 52.000 279.000 258.000 26.000
 row workspace-action:workspace-trash 52.000 314.000 258.000 26.000
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "مساحات العمل" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: غير مُعدّ. القنوات: محلي فقط. فتح إعدادات المزامنة" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "الأجهزة المرتبطة بهذا الكمبيوتر" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "مساحات العمل" 60.000 105.000 135.631 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "إدارة مساحات العمل" 203.631 105.000 98.369 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Quarterly planning for the European expansion programme" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -4102,8 +4102,8 @@ paint 6 text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ ascent_
 paint 6 text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#8A8A8A@1.000 rendered_family=~
 paint 6 text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#8A8A8A@1.000 rendered_family=~
 paint 6 text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#8A8A8A@1.000 rendered_family=~
-paint 3 Sync_settings element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=model_content input=pointer_target;_focusable;_Click/Focus
-paint 4 Configured_sync_channels element 280.000 52.000 18.000 44.000 element=row within=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 3 Sync_channels element 276.000 52.000 26.000 44.000 element=row within=surface_explore-popover/workspace-header profile=desktop theme=dark appearance=dark contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 4 Sync_channel element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=Key::SyncChannelDevices input=pointer_target;_focusable;_Click/Focus
 paint 5 Icon element 280.000 52.000 18.000 44.000 element=icon within=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard icon_size=IconSize::L_->_18 ink=Ink::Secondary_->_#8A8A8A@1.000 semantics=decorative input=neutral
 paint 6 text_line part 280.000 65.000 18.000 18.000 line_height=18 baseline=83 ink_bounds=Not_exposed
 paint 7 icon primitive 280.000 65.000 18.000 18.000 icon_pack=Tabler icon_source=Tabler icon_name=DESKTOP icon_codepoint=U+E560 icon_variant=regular icon_size=18 foreground=#8A8A8A@1.000
@@ -4226,7 +4226,7 @@ paint 6 text_run primitive 294.899 320.344 7.101 13.310 font_size=11 font_weight
 panel 52.000 46.000 258.000 300.000
 band 52.000 131.000 258.000 113.000
 focus koru:w1/v1/n:6b6f7275000040008000000000000003#root
-row workspace-action:workspace-sync 52.000 52.000 258.000 44.000
+row workspace-action:workspace-sync 276.000 52.000 26.000 44.000
 row heading 52.000 105.000 258.000 26.000
 row ws:0001 52.000 131.000 258.000 26.000
 part ws:0001 tile 60.000 132.000 24.000 24.000
@@ -4248,7 +4248,7 @@ row workspace-action:new-workspace 52.000 253.000 258.000 26.000
 row workspace-action:workspace-import 52.000 279.000 258.000 26.000
 row workspace-action:workspace-trash 52.000 314.000 258.000 26.000
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Workspaces" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: Not set up. Channels: Local only. Open sync settings" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Devices linked to this computer" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Workspaces" 60.000 105.000 116.671 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Manage workspaces" 184.671 105.000 117.329 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -4284,8 +4284,8 @@ paint 6 text_run primitive 92.000 53.406 55.682 15.729 font_size=13 font_weight=
 paint 4 Text element 92.000 72.000 176.000 14.000 element=text within=surface_explore-popover/workspace-header occurrence=2_of_2_named_alike profile=desktop theme=light appearance=light contrast=standard text_role=hint ink=Ink::Secondary_->_#6B6B6B@1.000 text_mode=single_line,_elided lines=1 semantics=none:_transparent_to_semantic_parenting input=neutral
 paint 5 label_line part 92.000 71.999 90.514 14.000 line_height=14 baseline=83 ink_bounds=Not_exposed
 paint 6 text_run primitive 92.000 72.344 90.514 13.310 font_size=11 font_weight=500 baseline=83 ascent_/_descent=10.65625_/_2.6533203 foreground=#6B6B6B@1.000 rendered_family=Inter
-paint 3 Sync_settings element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=model_content input=pointer_target;_focusable;_Click/Focus
-paint 4 Configured_sync_channels element 280.000 52.000 18.000 44.000 element=row within=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 3 Sync_channels element 276.000 52.000 26.000 44.000 element=row within=surface_explore-popover/workspace-header profile=desktop theme=light appearance=light contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 4 Sync_channel element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=Key::SyncChannelDevices input=pointer_target;_focusable;_Click/Focus
 paint 5 Icon element 280.000 52.000 18.000 44.000 element=icon within=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard icon_size=IconSize::L_->_18 ink=Ink::Secondary_->_#6B6B6B@1.000 semantics=decorative input=neutral
 paint 6 text_line part 280.000 65.000 18.000 18.000 line_height=18 baseline=83 ink_bounds=Not_exposed
 paint 7 icon primitive 280.000 65.000 18.000 18.000 icon_pack=Tabler icon_source=Tabler icon_name=DESKTOP icon_codepoint=U+E560 icon_variant=regular icon_size=18 foreground=#6B6B6B@1.000
@@ -4402,7 +4402,7 @@ paint 6 text_run primitive 294.899 320.344 7.101 13.310 font_size=11 font_weight
 panel 52.000 46.000 258.000 300.000
 band 52.000 131.000 258.000 113.000
 focus koru:w1/v1/n:6b6f7275000040008000000000000003#manage
-row workspace-action:workspace-sync 52.000 52.000 258.000 44.000
+row workspace-action:workspace-sync 276.000 52.000 26.000 44.000
 row heading 52.000 105.000 258.000 26.000
 row ws:0001 52.000 131.000 258.000 26.000
 part ws:0001 tile 60.000 132.000 24.000 24.000
@@ -4424,7 +4424,7 @@ row workspace-action:new-workspace 52.000 253.000 258.000 26.000
 row workspace-action:workspace-import 52.000 279.000 258.000 26.000
 row workspace-action:workspace-trash 52.000 314.000 258.000 26.000
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Workspaces" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: Not set up. Channels: Local only. Open sync settings" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Devices linked to this computer" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Workspaces" 60.000 105.000 116.671 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Manage workspaces" 184.671 105.000 117.329 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -4460,8 +4460,8 @@ paint 6 text_run primitive 92.000 53.406 55.682 15.729 font_size=13 font_weight=
 paint 4 Text element 92.000 72.000 176.000 14.000 element=text within=surface_explore-popover/workspace-header occurrence=2_of_2_named_alike profile=desktop theme=light appearance=light contrast=standard text_role=hint ink=Ink::Secondary_->_#6B6B6B@1.000 text_mode=single_line,_elided lines=1 semantics=none:_transparent_to_semantic_parenting input=neutral
 paint 5 label_line part 92.000 71.999 90.514 14.000 line_height=14 baseline=83 ink_bounds=Not_exposed
 paint 6 text_run primitive 92.000 72.344 90.514 13.310 font_size=11 font_weight=500 baseline=83 ascent_/_descent=10.65625_/_2.6533203 foreground=#6B6B6B@1.000 rendered_family=Inter
-paint 3 Sync_settings element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=model_content input=pointer_target;_focusable;_Click/Focus
-paint 4 Configured_sync_channels element 280.000 52.000 18.000 44.000 element=row within=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 3 Sync_channels element 276.000 52.000 26.000 44.000 element=row within=surface_explore-popover/workspace-header profile=desktop theme=light appearance=light contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 4 Sync_channel element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=Key::SyncChannelDevices input=pointer_target;_focusable;_Click/Focus
 paint 5 Icon element 280.000 52.000 18.000 44.000 element=icon within=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard icon_size=IconSize::L_->_18 ink=Ink::Secondary_->_#6B6B6B@1.000 semantics=decorative input=neutral
 paint 6 text_line part 280.000 65.000 18.000 18.000 line_height=18 baseline=83 ink_bounds=Not_exposed
 paint 7 icon primitive 280.000 65.000 18.000 18.000 icon_pack=Tabler icon_source=Tabler icon_name=DESKTOP icon_codepoint=U+E560 icon_variant=regular icon_size=18 foreground=#6B6B6B@1.000
@@ -4579,7 +4579,7 @@ paint 6 text_run primitive 294.899 320.344 7.101 13.310 font_size=11 font_weight
 panel 52.000 46.000 258.000 300.000
 band 52.000 131.000 258.000 113.000
 focus koru:w1/v1/s:explore-popover#manage-workspaces
-row workspace-action:workspace-sync 52.000 52.000 258.000 44.000
+row workspace-action:workspace-sync 276.000 52.000 26.000 44.000
 row heading 52.000 105.000 258.000 26.000
 row ws:0001 52.000 131.000 258.000 26.000
 part ws:0001 tile 60.000 132.000 24.000 24.000
@@ -4601,7 +4601,7 @@ row workspace-action:new-workspace 52.000 253.000 258.000 26.000
 row workspace-action:workspace-import 52.000 279.000 258.000 26.000
 row workspace-action:workspace-trash 52.000 314.000 258.000 26.000
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Workspaces" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: Not set up. Channels: Local only. Open sync settings" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Devices linked to this computer" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Workspaces" 60.000 105.000 116.671 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Manage workspaces" 184.671 105.000 117.329 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -4637,8 +4637,8 @@ paint 6 text_run primitive 92.000 53.406 55.682 15.729 font_size=13 font_weight=
 paint 4 Text element 92.000 72.000 176.000 14.000 element=text within=surface_explore-popover/workspace-header occurrence=2_of_2_named_alike profile=desktop theme=light appearance=light contrast=standard text_role=hint ink=Ink::Secondary_->_#6B6B6B@1.000 text_mode=single_line,_elided lines=1 semantics=none:_transparent_to_semantic_parenting input=neutral
 paint 5 label_line part 92.000 71.999 90.514 14.000 line_height=14 baseline=83 ink_bounds=Not_exposed
 paint 6 text_run primitive 92.000 72.344 90.514 13.310 font_size=11 font_weight=500 baseline=83 ascent_/_descent=10.65625_/_2.6533203 foreground=#6B6B6B@1.000 rendered_family=Inter
-paint 3 Sync_settings element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=model_content input=pointer_target;_focusable;_Click/Focus
-paint 4 Configured_sync_channels element 280.000 52.000 18.000 44.000 element=row within=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 3 Sync_channels element 276.000 52.000 26.000 44.000 element=row within=surface_explore-popover/workspace-header profile=desktop theme=light appearance=light contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 4 Sync_channel element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=Key::SyncChannelDevices input=pointer_target;_focusable;_Click/Focus
 paint 5 Icon element 280.000 52.000 18.000 44.000 element=icon within=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard icon_size=IconSize::L_->_18 ink=Ink::Secondary_->_#6B6B6B@1.000 semantics=decorative input=neutral
 paint 6 text_line part 280.000 65.000 18.000 18.000 line_height=18 baseline=83 ink_bounds=Not_exposed
 paint 7 icon primitive 280.000 65.000 18.000 18.000 icon_pack=Tabler icon_source=Tabler icon_name=DESKTOP icon_codepoint=U+E560 icon_variant=regular icon_size=18 foreground=#6B6B6B@1.000
@@ -4751,7 +4751,7 @@ paint 6 text_run primitive 294.899 320.344 7.101 13.310 font_size=11 font_weight
 panel 52.000 46.000 258.000 500.000
 band 52.000 131.000 258.000 313.000
 focus koru:w1/v1/s:explore-popover#popover
-row workspace-action:workspace-sync 52.000 52.000 258.000 44.000
+row workspace-action:workspace-sync 276.000 52.000 26.000 44.000
 row heading 52.000 105.000 258.000 26.000
 row ws:0001 52.000 131.000 258.000 26.000
 part ws:0001 tile 60.000 132.000 24.000 24.000
@@ -4917,7 +4917,7 @@ row workspace-action:new-workspace 52.000 453.000 258.000 26.000
 row workspace-action:workspace-import 52.000 479.000 258.000 26.000
 row workspace-action:workspace-trash 52.000 514.000 258.000 26.000
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Workspaces" 52.000 46.000 258.000 500.000 size=125
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Profile 01: Not set up. Channels: Local only. Open sync settings" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Devices linked to this computer" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Workspaces" 60.000 105.000 116.671 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Manage workspaces" 184.671 105.000 117.329 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Workspace 00" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -5062,8 +5062,8 @@ paint 6 text_run primitive 92.000 53.406 57.383 15.729 font_size=13 font_weight=
 paint 4 Text element 92.000 72.000 176.000 14.000 element=text within=surface_explore-popover/workspace-header occurrence=2_of_2_named_alike profile=desktop theme=light appearance=light contrast=standard text_role=hint ink=Ink::Secondary_->_#6B6B6B@1.000 text_mode=single_line,_elided lines=1 semantics=none:_transparent_to_semantic_parenting input=neutral
 paint 5 label_line part 92.000 71.999 90.514 14.000 line_height=14 baseline=83 ink_bounds=Not_exposed
 paint 6 text_run primitive 92.000 72.344 90.514 13.310 font_size=11 font_weight=500 baseline=83 ascent_/_descent=10.65625_/_2.6533203 foreground=#6B6B6B@1.000 rendered_family=Inter
-paint 3 Sync_settings element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=model_content input=pointer_target;_focusable;_Click/Focus
-paint 4 Configured_sync_channels element 280.000 52.000 18.000 44.000 element=row within=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 3 Sync_channels element 276.000 52.000 26.000 44.000 element=row within=surface_explore-popover/workspace-header profile=desktop theme=light appearance=light contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 4 Sync_channel element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=Key::SyncChannelDevices input=pointer_target;_focusable;_Click/Focus
 paint 5 Icon element 280.000 52.000 18.000 44.000 element=icon within=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard icon_size=IconSize::L_->_18 ink=Ink::Secondary_->_#6B6B6B@1.000 semantics=decorative input=neutral
 paint 6 text_line part 280.000 65.000 18.000 18.000 line_height=18 baseline=83 ink_bounds=Not_exposed
 paint 7 icon primitive 280.000 65.000 18.000 18.000 icon_pack=Tabler icon_source=Tabler icon_name=DESKTOP icon_codepoint=U+E560 icon_variant=regular icon_size=18 foreground=#6B6B6B@1.000
@@ -5280,7 +5280,7 @@ paint 1 fill primitive 306.000 131.000 2.000 93.393 color=#9E9E9E@1.000
 panel 52.000 46.000 258.000 500.000
 band 52.000 131.000 258.000 313.000
 focus koru:w1/v1/s:explore-popover#popover
-row workspace-action:workspace-sync 52.000 52.000 258.000 44.000
+row workspace-action:workspace-sync 276.000 52.000 26.000 44.000
 row heading 52.000 105.000 258.000 26.000
 row ws:0001 52.000 131.000 258.000 26.000
 part ws:0001 tile 60.000 132.000 24.000 24.000
@@ -5446,7 +5446,7 @@ row workspace-action:new-workspace 52.000 453.000 258.000 26.000
 row workspace-action:workspace-import 52.000 479.000 258.000 26.000
 row workspace-action:workspace-trash 52.000 514.000 258.000 26.000
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Workspaces" 52.000 46.000 258.000 500.000 size=125
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Profile 01: Not set up. Channels: Local only. Open sync settings" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Devices linked to this computer" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Workspaces" 60.000 105.000 116.671 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Manage workspaces" 184.671 105.000 117.329 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Workspace 00" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -5591,8 +5591,8 @@ paint 6 text_run primitive 92.000 53.406 57.383 15.729 font_size=13 font_weight=
 paint 4 Text element 92.000 72.000 176.000 14.000 element=text within=surface_explore-popover/workspace-header occurrence=2_of_2_named_alike profile=desktop theme=dark appearance=dark contrast=standard text_role=hint ink=Ink::Secondary_->_#8A8A8A@1.000 text_mode=single_line,_elided lines=1 semantics=none:_transparent_to_semantic_parenting input=neutral
 paint 5 label_line part 92.000 71.999 90.514 14.000 line_height=14 baseline=83 ink_bounds=Not_exposed
 paint 6 text_run primitive 92.000 72.344 90.514 13.310 font_size=11 font_weight=500 baseline=83 ascent_/_descent=10.65625_/_2.6533203 foreground=#8A8A8A@1.000 rendered_family=Inter
-paint 3 Sync_settings element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=model_content input=pointer_target;_focusable;_Click/Focus
-paint 4 Configured_sync_channels element 280.000 52.000 18.000 44.000 element=row within=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 3 Sync_channels element 276.000 52.000 26.000 44.000 element=row within=surface_explore-popover/workspace-header profile=desktop theme=dark appearance=dark contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 4 Sync_channel element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=Key::SyncChannelDevices input=pointer_target;_focusable;_Click/Focus
 paint 5 Icon element 280.000 52.000 18.000 44.000 element=icon within=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard icon_size=IconSize::L_->_18 ink=Ink::Secondary_->_#8A8A8A@1.000 semantics=decorative input=neutral
 paint 6 text_line part 280.000 65.000 18.000 18.000 line_height=18 baseline=83 ink_bounds=Not_exposed
 paint 7 icon primitive 280.000 65.000 18.000 18.000 icon_pack=Tabler icon_source=Tabler icon_name=DESKTOP icon_codepoint=U+E560 icon_variant=regular icon_size=18 foreground=#8A8A8A@1.000
@@ -5809,7 +5809,7 @@ paint 1 fill primitive 306.000 131.000 2.000 93.393 color=#7E7E7E@1.000
 panel 52.000 46.000 258.000 500.000
 band 52.000 131.000 258.000 313.000
 focus koru:w1/v1/s:explore-popover#popover
-row workspace-action:workspace-sync 52.000 52.000 258.000 44.000
+row workspace-action:workspace-sync 276.000 52.000 26.000 44.000
 row heading 52.000 105.000 258.000 26.000
 row ws:0001 52.000 -605.000 258.000 26.000
 part ws:0001 tile 60.000 -604.000 24.000 24.000
@@ -5975,7 +5975,7 @@ row workspace-action:new-workspace 52.000 453.000 258.000 26.000
 row workspace-action:workspace-import 52.000 479.000 258.000 26.000
 row workspace-action:workspace-trash 52.000 514.000 258.000 26.000
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Workspaces" 52.000 46.000 258.000 500.000 size=125
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Profile 01: Not set up. Channels: Local only. Open sync settings" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Devices linked to this computer" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Workspaces" 60.000 105.000 116.671 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Manage workspaces" 184.671 105.000 117.329 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Workspace 00" 60.000 -605.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -6120,8 +6120,8 @@ paint 6 text_run primitive 92.000 53.406 57.383 15.729 font_size=13 font_weight=
 paint 4 Text element 92.000 72.000 176.000 14.000 element=text within=surface_explore-popover/workspace-header occurrence=2_of_2_named_alike profile=desktop theme=light appearance=light contrast=standard text_role=hint ink=Ink::Secondary_->_#6B6B6B@1.000 text_mode=single_line,_elided lines=1 semantics=none:_transparent_to_semantic_parenting input=neutral
 paint 5 label_line part 92.000 71.999 90.514 14.000 line_height=14 baseline=83 ink_bounds=Not_exposed
 paint 6 text_run primitive 92.000 72.344 90.514 13.310 font_size=11 font_weight=500 baseline=83 ascent_/_descent=10.65625_/_2.6533203 foreground=#6B6B6B@1.000 rendered_family=Inter
-paint 3 Sync_settings element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=model_content input=pointer_target;_focusable;_Click/Focus
-paint 4 Configured_sync_channels element 280.000 52.000 18.000 44.000 element=row within=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 3 Sync_channels element 276.000 52.000 26.000 44.000 element=row within=surface_explore-popover/workspace-header profile=desktop theme=light appearance=light contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 4 Sync_channel element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=Key::SyncChannelDevices input=pointer_target;_focusable;_Click/Focus
 paint 5 Icon element 280.000 52.000 18.000 44.000 element=icon within=surface_explore-popover/workspace-sync profile=desktop theme=light appearance=light contrast=standard icon_size=IconSize::L_->_18 ink=Ink::Secondary_->_#6B6B6B@1.000 semantics=decorative input=neutral
 paint 6 text_line part 280.000 65.000 18.000 18.000 line_height=18 baseline=83 ink_bounds=Not_exposed
 paint 7 icon primitive 280.000 65.000 18.000 18.000 icon_pack=Tabler icon_source=Tabler icon_name=DESKTOP icon_codepoint=U+E560 icon_variant=regular icon_size=18 foreground=#6B6B6B@1.000
@@ -6339,7 +6339,7 @@ paint 1 fill primitive 306.000 350.607 2.000 93.393 color=#9E9E9E@1.000
 panel 52.000 46.000 258.000 500.000
 band 52.000 131.000 258.000 313.000
 focus koru:w1/v1/s:explore-popover#popover
-row workspace-action:workspace-sync 52.000 52.000 258.000 44.000
+row workspace-action:workspace-sync 276.000 52.000 26.000 44.000
 row heading 52.000 105.000 258.000 26.000
 row ws:0001 52.000 -605.000 258.000 26.000
 part ws:0001 tile 60.000 -604.000 24.000 24.000
@@ -6505,7 +6505,7 @@ row workspace-action:new-workspace 52.000 453.000 258.000 26.000
 row workspace-action:workspace-import 52.000 479.000 258.000 26.000
 row workspace-action:workspace-trash 52.000 514.000 258.000 26.000
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Workspaces" 52.000 46.000 258.000 500.000 size=125
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Profile 01: Not set up. Channels: Local only. Open sync settings" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Devices linked to this computer" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Workspaces" 60.000 105.000 116.671 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Manage workspaces" 184.671 105.000 117.329 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Workspace 00" 60.000 -605.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -6650,8 +6650,8 @@ paint 6 text_run primitive 92.000 53.406 57.383 15.729 font_size=13 font_weight=
 paint 4 Text element 92.000 72.000 176.000 14.000 element=text within=surface_explore-popover/workspace-header occurrence=2_of_2_named_alike profile=desktop theme=dark appearance=dark contrast=standard text_role=hint ink=Ink::Secondary_->_#8A8A8A@1.000 text_mode=single_line,_elided lines=1 semantics=none:_transparent_to_semantic_parenting input=neutral
 paint 5 label_line part 92.000 71.999 90.514 14.000 line_height=14 baseline=83 ink_bounds=Not_exposed
 paint 6 text_run primitive 92.000 72.344 90.514 13.310 font_size=11 font_weight=500 baseline=83 ascent_/_descent=10.65625_/_2.6533203 foreground=#8A8A8A@1.000 rendered_family=Inter
-paint 3 Sync_settings element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=model_content input=pointer_target;_focusable;_Click/Focus
-paint 4 Configured_sync_channels element 280.000 52.000 18.000 44.000 element=row within=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 3 Sync_channels element 276.000 52.000 26.000 44.000 element=row within=surface_explore-popover/workspace-header profile=desktop theme=dark appearance=dark contrast=standard gap=Space::S1_->_4 semantics=none:_transparent_to_semantic_parenting input=neutral
+paint 4 Sync_channel element 276.000 52.000 26.000 44.000 element=row key=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard min_h=metrics::ROW_MIN_->_26 pad_x=Space::S1_->_4 radius=Radius::M_->_6 state_rule=workspace_row:_base state=rest semantics=MenuItem name=Key::SyncChannelDevices input=pointer_target;_focusable;_Click/Focus
 paint 5 Icon element 280.000 52.000 18.000 44.000 element=icon within=surface_explore-popover/workspace-sync profile=desktop theme=dark appearance=dark contrast=standard icon_size=IconSize::L_->_18 ink=Ink::Secondary_->_#8A8A8A@1.000 semantics=decorative input=neutral
 paint 6 text_line part 280.000 65.000 18.000 18.000 line_height=18 baseline=83 ink_bounds=Not_exposed
 paint 7 icon primitive 280.000 65.000 18.000 18.000 icon_pack=Tabler icon_source=Tabler icon_name=DESKTOP icon_codepoint=U+E560 icon_variant=regular icon_size=18 foreground=#8A8A8A@1.000

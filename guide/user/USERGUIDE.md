@@ -5667,14 +5667,17 @@ heading opens Manage on the current Profile.
 
 The fixed rows below the Profiles are **Add new profile**, **Global sync**
 and **App settings**. Add opens the combined Profile/workspace creation form.
-Global sync opens the same Sync settings tab as the workspace menu's header;
-its glyphs show configured device and Cloud channels, independently of their
-health. App settings opens Settings and carries its shortcut in the tooltip.
+Global sync opens **Linked devices** in Manage. In both menus,
+the device icon opens **Linked devices** and the cloud icon opens **Koru Cloud**.
+When both channels are configured, each icon is a separate control. With neither
+configured, the computer icon opens Linked devices. These destinations reuse
+the existing Manage tab. The glyphs show configured channels independently of
+their health. App settings opens Settings and carries its shortcut in the tooltip.
 Each row is its own keyboard stop and closes the menu when activated.
-Linked devices remain available in Manage.
 
 The rail's **Help (`?`)** opens **What's new** with a release timeline. The
-current version opens its shipped release notes; a build without notes says
+current version opens its GitHub release page in your browser; local builds open
+the GitHub releases list. A build without bundled notes says
 *Not shipped with this build*. An offered update appears above it with its
 current stage and one available action: **Download**, **Download manually**,
 **Restart**, or **Try again**. Downloading, verifying and installing show
@@ -5683,9 +5686,9 @@ consent and terminal-session warning.
 
 Choosing **Later** in the update banner keeps the offer in Help and clears
 that offer's dot. Unread release notes can keep the dot lit; opening Help does
-not read them. Opening What's new clears the notes' contribution for this
+not read them. Opening the release clears the notes' contribution for this
 window, while an active update offer still contributes its own dot. **View all
-releases**, **Help & docs**, **Send feedback**, **Star us on GitHub** and
+releases**, **Send feedback**, **Star us on GitHub** and
 **Follow on X** are the remaining Help rows.
 
 The account chooser —

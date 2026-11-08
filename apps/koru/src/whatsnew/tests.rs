@@ -4,6 +4,35 @@ use super::*;
 use koru_core::{Heading, ListStyle, Mark};
 use koru_workspace_host::{RichListSpec, RichTextKind};
 
+#[test]
+fn github_release_links_match_published_tags_and_local_builds_use_the_list() {
+    use koru_channel::ReleaseChannel;
+    for (channel, version, expected) in [
+        (
+            ReleaseChannel::Stable,
+            "0.1.4",
+            "https://github.com/koruworks/mono/releases/tag/v0.1.4",
+        ),
+        (
+            ReleaseChannel::Beta,
+            "0.1.5-beta.2",
+            "https://github.com/koruworks/mono/releases/tag/v0.1.5-beta.2",
+        ),
+        (
+            ReleaseChannel::Nightly,
+            "0.1.5-nightly.7",
+            "https://github.com/koruworks/mono/releases/tag/nightly",
+        ),
+        (
+            ReleaseChannel::Internal,
+            "0.0.3",
+            "https://github.com/koruworks/mono/releases",
+        ),
+    ] {
+        assert_eq!(release_url(version, channel), expected);
+    }
+}
+
 fn text_blocks(blocks: &[RichBlock]) -> Vec<&koru_workspace_host::RichTextBlock> {
     blocks
         .iter()

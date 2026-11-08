@@ -109,7 +109,20 @@ pub async fn workspace_authority(
     Path(owner): Path<ProfileId>,
 ) -> ApiResult<Json<Vec<koru_store_wire::WorkspaceAuthority>>> {
     caller.require(Scope::ReadDocuments)?;
-    Ok(Json(lock(&state)?.workspace_authority(owner)?))
+    let rows = tokio::task::spawn_blocking(move || -> ApiResult<_> {
+        let ids = lock(&state)?.workspace_authority_ids(owner)?;
+        let mut rows = Vec::with_capacity(ids.len());
+        for id in ids {
+            let read = { lock(&state)?.prepare_workspace_authority(owner, id)? };
+            // SQLite has pinned its committed snapshot. Replay, checksum and
+            // projection work must not hold the global Store mutex.
+            rows.push(read.finish()?);
+        }
+        Ok(rows)
+    })
+    .await
+    .map_err(|_| ApiError::new(Code::Internal, "workspace authority worker did not finish"))??;
+    Ok(Json(rows))
 }
 
 pub async fn create_profile_with_workspace(

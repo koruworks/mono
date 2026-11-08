@@ -36,6 +36,30 @@ fn inventory(root: &Path) -> BTreeMap<String, (u64, String)> {
     files
 }
 
+// The maintainer permits new empty WAL coordination files. Existing files
+// still must be byte-identical, and no other new persisted file is allowed.
+fn assert_read_only(
+    before: &BTreeMap<String, (u64, String)>,
+    after: &BTreeMap<String, (u64, String)>,
+) {
+    for (path, bytes) in before {
+        assert_eq!(
+            after.get(path),
+            Some(bytes),
+            "existing file changed: {path}"
+        );
+    }
+    for (path, (size, hash)) in after {
+        if !before.contains_key(path) {
+            assert!(
+                path.ends_with("-wal") && *size == 0,
+                "unexpected new file: {path}"
+            );
+            assert_eq!(hash, &blake3::hash(&[]).to_hex().to_string());
+        }
+    }
+}
+
 #[test]
 fn disk_inspection_keeps_missing_unsupported_and_trash_storage_unchanged() {
     let directory = tempfile::tempdir().unwrap();
@@ -101,11 +125,7 @@ fn disk_inspection_keeps_missing_unsupported_and_trash_storage_unchanged() {
             WorkspaceManifestInspection::Unavailable(_)
         ));
     }
-    assert_eq!(
-        inventory(root),
-        before,
-        "inspection changed persisted files"
-    );
+    assert_read_only(&before, &inventory(root));
     assert!(!backend.workspace_dir(missing).exists());
     println!(
         "disk read-only: missing stays absent; Live/Trash verified; schemas {}/{} refused; {} persisted files byte-identical",
@@ -116,7 +136,7 @@ fn disk_inspection_keeps_missing_unsupported_and_trash_storage_unchanged() {
 }
 
 #[test]
-fn authority_inventory_cost_is_measured_under_the_store_lock_with_live_wal() {
+fn authority_inventory_reports_capture_and_total_time_with_live_wal() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
     let mut store = Store::open(
@@ -140,10 +160,30 @@ fn authority_inventory_cost_is_measured_under_the_store_lock_with_live_wal() {
     let before = inventory(root);
     for (owner, count) in owners {
         let mut samples = Vec::new();
+        let mut longest_lock_ms = 0.0_f64;
         for _ in 0..5 {
-            let guard = store.lock().unwrap();
             let started = Instant::now();
-            let authority = guard.workspace_authority(owner).unwrap();
+            let ids = {
+                let guard = store.lock().unwrap();
+                let began = Instant::now();
+                let ids = guard.workspace_authority_ids(owner).unwrap();
+                longest_lock_ms = longest_lock_ms.max(began.elapsed().as_secs_f64() * 1000.0);
+                ids
+            };
+            let mut authority = Vec::new();
+            for id in ids {
+                let read = {
+                    let guard = store.lock().unwrap();
+                    let began = Instant::now();
+                    let read = guard.prepare_workspace_authority(owner, id).unwrap();
+                    longest_lock_ms = longest_lock_ms.max(began.elapsed().as_secs_f64() * 1000.0);
+                    read
+                };
+                // Same boundary as the HTTP route: another writer can acquire
+                // the mutex before replay finishes, regardless of inventory size.
+                assert!(store.try_lock().is_ok());
+                authority.push(read.finish().unwrap());
+            }
             samples.push(started.elapsed().as_secs_f64() * 1000.0);
             assert_eq!(authority.len(), count);
             assert!(authority.iter().all(|row| matches!(
@@ -153,13 +193,55 @@ fn authority_inventory_cost_is_measured_under_the_store_lock_with_live_wal() {
         }
         samples.sort_by(f64::total_cmp);
         println!(
-            "AUTHORITY_READ inventory={count} median_ms={:.3} max_ms={:.3} samples=5 (Store lock, live WAL)",
+            "AUTHORITY_READ inventory={count} total_median_ms={:.3} total_max_ms={:.3} longest_lock_ms={longest_lock_ms:.3} samples=5 (detached replay, live WAL)",
             samples[2], samples[4]
         );
     }
-    assert_eq!(
-        inventory(root),
-        before,
-        "authority read changed database or WAL bytes"
-    );
+    assert_read_only(&before, &inventory(root));
+}
+
+/// Explicit disk lane: a detached WAL snapshot must not observe a later
+/// lifecycle commit, even when decoding starts after that commit.
+#[test]
+fn detached_wal_inspection_keeps_its_captured_lifecycle() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut store = Store::open(
+        SqliteCatalog::open(&directory.path().join("catalog.db")).unwrap(),
+        SqliteBackend::new(directory.path()),
+    )
+    .unwrap();
+    let owner = store
+        .create_profile("Owner", None, None, Locale::default(), Timestamp::now())
+        .unwrap();
+    let workspace = store
+        .create_workspace(owner.id, "Before", Timestamp::now())
+        .unwrap();
+    let read = store
+        .prepare_workspace_authority(owner.id, workspace.id)
+        .unwrap();
+    store
+        .delete_workspace(workspace.id, Timestamp::now())
+        .unwrap();
+    let before = read.finish().unwrap();
+    assert!(matches!(
+        before.authority,
+        WorkspaceAuthorityState::Read {
+            deleted_at: None,
+            applied: true,
+            ..
+        }
+    ));
+    let after = store
+        .prepare_workspace_authority(owner.id, workspace.id)
+        .unwrap()
+        .finish()
+        .unwrap();
+    assert!(matches!(
+        after.authority,
+        WorkspaceAuthorityState::Read {
+            deleted_at: Some(_),
+            applied: true,
+            ..
+        }
+    ));
 }

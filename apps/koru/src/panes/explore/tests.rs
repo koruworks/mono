@@ -1586,6 +1586,20 @@ fn the_popover_rows_run_top_to_bottom_inside_the_panel() {
         let rects = v.popover_rects(a, VIEW);
         for pair in rects.windows(2) {
             use workspace_menu_elements::MenuAction;
+            if pair[0].0 == PopoverRow::WorkspaceAction(MenuAction::Sync)
+                && pair[1].0 == PopoverRow::ProfileAction(ProfileAction::Sync)
+            {
+                assert_eq!(pair[0].1.y, pair[1].1.y, "channel and label share a row");
+                assert_eq!(pair[0].1.h, pair[1].1.h);
+                assert!(
+                    (pair[0].1.x + pair[0].1.w + theme::Space::S2.px(theme::Profile::Desktop)
+                        - pair[1].1.x)
+                        .abs()
+                        < 0.01,
+                    "channel and label have separate targets with the row gap"
+                );
+                continue;
+            }
             let divider = pair[0].0 == PopoverRow::WorkspaceAction(MenuAction::Sync)
                 || pair[0].0 == PopoverRow::ProfileAction(ProfileAction::New)
                 || matches!(
@@ -2111,10 +2125,11 @@ fn each_page_lists_its_head_list_and_footer_in_order() {
             PopoverRow::Profile(1),
             PopoverRow::Profile(2),
             PopoverRow::ProfileAction(ProfileAction::New),
+            PopoverRow::WorkspaceAction(workspace_menu_elements::MenuAction::Sync),
             PopoverRow::ProfileAction(ProfileAction::Sync),
             PopoverRow::ProfileAction(ProfileAction::Settings),
         ],
-        "PROFILES, every Profile, Add new Profile, Global sync, App settings"
+        "PROFILES, every Profile, Add new Profile, device control, Global sync, App settings"
     );
     // The chip's page: the heading and the workspaces, nothing else.
     v.toggle_popover(PopoverKind::Summary);

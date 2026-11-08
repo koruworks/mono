@@ -160,10 +160,15 @@ impl Backend for SqliteBackend {
         &self,
         id: WorkspaceId,
     ) -> koru_store_core::service::WorkspaceManifestInspection {
+        self.prepare_workspace_manifest_inspection(id)()
+    }
+
+    fn prepare_workspace_manifest_inspection(
+        &self,
+        id: WorkspaceId,
+    ) -> Box<dyn FnOnce() -> koru_store_core::service::WorkspaceManifestInspection + Send> {
         use koru_store_core::service::WorkspaceManifestInspection;
-        let span =
-            koru_store_core::stats::Span::start(koru_store_core::stats::names::AUTHORITY_READ);
-        let inspected = (|| {
+        let prepared = (|| {
             let connection = if let Some(memory) = &self.memory {
                 // Hold the keeper until the new connection has joined. Unlike
                 // open(), this never inserts a missing entry in the map.
@@ -188,10 +193,15 @@ impl Backend for SqliteBackend {
                 )
                 .map_err(crate::db::sql_failed)?
             };
-            SqliteWorkspace::inspect_existing_connection(connection, id)
+            SqliteWorkspace::prepare_manifest_inspection(connection)
         })();
-        span.stop();
-        inspected.unwrap_or_else(WorkspaceManifestInspection::Unavailable)
+        Box::new(move || {
+            let span =
+                koru_store_core::stats::Span::start(koru_store_core::stats::names::AUTHORITY_READ);
+            let inspected = prepared.and_then(|repo| repo.inspect_prepared_manifest(id));
+            span.stop();
+            inspected.unwrap_or_else(WorkspaceManifestInspection::Unavailable)
+        })
     }
 
     fn create_workspace(&self, id: WorkspaceId) -> Result<Self::Workspace> {

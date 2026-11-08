@@ -11,6 +11,7 @@ use koru_i18n::{Key as Words, t};
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum MenuAction {
     Sync,
+    Cloud,
     New,
     Import,
     Trash,
@@ -23,6 +24,7 @@ impl MenuAction {
             popover_elements::SURFACE,
             match self {
                 Self::Sync => "workspace-sync",
+                Self::Cloud => "workspace-cloud",
                 Self::New => "new-workspace",
                 Self::Import => "workspace-import",
                 Self::Trash => "workspace-trash",
@@ -33,7 +35,8 @@ impl MenuAction {
 
     pub(crate) fn words(self) -> Words {
         match self {
-            Self::Sync => Words::SyncSettingsTab,
+            Self::Sync => Words::SyncChannelDevices,
+            Self::Cloud => Words::CloudTitle,
             Self::New => Words::TerminalNewWorkspace,
             Self::Import => Words::WorkspacesImport,
             Self::Trash => Words::WorkspacesTrash,
@@ -44,6 +47,7 @@ impl MenuAction {
     pub(crate) fn outcome(self) -> Outcome {
         match self {
             Self::Sync => Outcome::OpenSyncSettings,
+            Self::Cloud => Outcome::ManageCloud,
             Self::New => Outcome::NewWorkspace,
             Self::Import => Outcome::ImportContent,
             Self::Trash => Outcome::OpenTrash,
@@ -54,6 +58,7 @@ impl MenuAction {
     pub(crate) fn from_key(key: Key) -> Option<Self> {
         [
             Self::Sync,
+            Self::Cloud,
             Self::New,
             Self::Import,
             Self::Trash,
@@ -76,13 +81,16 @@ pub(crate) struct SyncChannels {
 }
 
 impl SyncChannels {
-    fn glyphs(self) -> Vec<char> {
+    pub(crate) fn controls(self) -> Vec<(MenuAction, char)> {
         use koru_draw::icons;
         match (self.devices, self.cloud) {
-            (true, true) => vec![icons::DEVICES, icons::CLOUD],
-            (true, false) => vec![icons::DEVICES],
-            (false, true) => vec![icons::CLOUD],
-            (false, false) => vec![icons::DESKTOP],
+            (true, true) => vec![
+                (MenuAction::Sync, icons::DEVICES),
+                (MenuAction::Cloud, icons::CLOUD),
+            ],
+            (true, false) => vec![(MenuAction::Sync, icons::DEVICES)],
+            (false, true) => vec![(MenuAction::Cloud, icons::CLOUD)],
+            (false, false) => vec![(MenuAction::Sync, icons::DESKTOP)],
         }
     }
 
@@ -135,12 +143,26 @@ impl ExploreView {
         )
     }
 
-    pub(crate) fn sync_channel_glyphs(&self) -> El {
-        row("Configured sync channels").gap(Space::S1).children(
+    pub(crate) fn sync_channel_controls(&self) -> El {
+        row("Sync channels").gap(Space::S1).children(
             self.sync_channels()
-                .glyphs()
+                .controls()
                 .into_iter()
-                .map(|glyph| icon(glyph, IconSize::L).decorative().ink(Ink::Secondary)),
+                .map(|(action, glyph)| {
+                    row("Sync channel")
+                        .id(action.key())
+                        .hit()
+                        .focusable()
+                        .action(Action::Click)
+                        .action(Action::Focus)
+                        .semantics(Role::MenuItem)
+                        .name(action.words())
+                        .min_h(metrics::ROW_MIN)
+                        .pad_x(Space::S1)
+                        .radius(Radius::M)
+                        .states(&WORKSPACE_ROW_STATES)
+                        .child(icon(glyph, IconSize::L).decorative().ink(Ink::Secondary))
+                }),
         )
     }
     pub(crate) fn workspace_import_anchor(
@@ -216,21 +238,7 @@ impl ExploreView {
                         .truncate(),
                     ),
             )
-            .child(
-                row("Sync settings")
-                    .id(MenuAction::Sync.key())
-                    .hit()
-                    .focusable()
-                    .action(Action::Click)
-                    .action(Action::Focus)
-                    .semantics(Role::MenuItem)
-                    .name_text(self.sync_control_name())
-                    .min_h(metrics::ROW_MIN)
-                    .pad_x(Space::S1)
-                    .radius(Radius::M)
-                    .states(&WORKSPACE_ROW_STATES)
-                    .child(self.sync_channel_glyphs()),
-            )
+            .child(self.sync_channel_controls())
     }
 
     pub(crate) fn workspace_menu_heading(&self) -> El {
@@ -273,6 +281,7 @@ impl ExploreView {
             MenuAction::Import => koru_draw::icons::IMPORT,
             MenuAction::Trash => koru_draw::icons::TRASH,
             MenuAction::Sync => koru_draw::icons::ARROWS_CLOCKWISE,
+            MenuAction::Cloud => koru_draw::icons::CLOUD,
             MenuAction::Retry => koru_draw::icons::ARROWS_CLOCKWISE,
         };
         let mut item = row("Workspace menu action")

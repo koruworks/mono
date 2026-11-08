@@ -46,6 +46,8 @@ pub mod cloud_driver;
 pub mod cloud_sync;
 mod dispatch;
 #[cfg(any(test, feature = "test-support"))]
+// The exported fixture API includes faults used by downstream host tests.
+#[cfg_attr(not(feature = "test-support"), allow(dead_code))]
 pub mod fake_cloud;
 pub mod memory;
 mod session_io;

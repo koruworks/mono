@@ -26,6 +26,12 @@ impl Backend for Memory {
     fn inspect_workspace_manifest(&self, id: WorkspaceId) -> WorkspaceManifestInspection {
         self.0.inspect_workspace_manifest(id)
     }
+    fn prepare_workspace_manifest_inspection(
+        &self,
+        id: WorkspaceId,
+    ) -> Box<dyn FnOnce() -> WorkspaceManifestInspection + Send> {
+        self.0.prepare_workspace_manifest_inspection(id)
+    }
     fn delete_workspace(&self, id: WorkspaceId) -> Result<()> {
         self.0.delete_workspace(id)
     }
@@ -362,4 +368,63 @@ fn manifest_flush_may_evict_a_deleted_workspace_before_selection_continues() {
             .is_some()
     );
     assert_eq!(f.listed(), 2);
+}
+
+#[test]
+fn detached_authority_read_allows_another_workspace_write_before_decode() {
+    let mut f = Fixture::new();
+    let id = f.create();
+    let store = std::sync::Mutex::new(f.store);
+    let read = {
+        store
+            .lock()
+            .unwrap()
+            .prepare_workspace_authority(f.owner, id)
+            .unwrap()
+    };
+    let (resume, wait) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        wait.recv().unwrap();
+        read.finish().unwrap()
+    });
+    // Keep the captured reader alive while a different workspace commits.
+    // This uses only named in-memory databases, with no Store server or disk.
+    let other = store
+        .try_lock()
+        .unwrap()
+        .create_workspace(f.owner, "Other", at())
+        .unwrap();
+    assert_ne!(other.id, id);
+    resume.send(()).unwrap();
+    let row = worker.join().unwrap();
+    assert_eq!(row.workspace.id, id);
+    assert!(!row.listing_differs);
+    assert!(matches!(
+        row.authority,
+        WorkspaceAuthorityState::Read { applied: true, .. }
+    ));
+}
+
+#[test]
+fn authority_capture_rechecks_owner_after_enumeration() {
+    let mut f = Fixture::new();
+    let id = f.create();
+    let ids = f.store.workspace_authority_ids(f.owner).unwrap();
+    assert_eq!(ids, vec![id]);
+    let other = f
+        .store
+        .create_profile("Other", None, None, Locale::default(), at())
+        .unwrap();
+    f.store.move_workspace(id, other.id).unwrap();
+    assert!(
+        matches!(f.store.prepare_workspace_authority(f.owner, id), Err(error)
+        if error.code() == koru_store_core::Code::WorkspaceNotFound)
+    );
+    let row = f
+        .store
+        .prepare_workspace_authority(other.id, id)
+        .unwrap()
+        .finish()
+        .unwrap();
+    assert_eq!(row.workspace.owner, other.id);
 }

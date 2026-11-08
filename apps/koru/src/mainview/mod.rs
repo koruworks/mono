@@ -7390,29 +7390,9 @@ impl MainView {
         }
     }
 
-    /// The Sync settings tab: a singleton page that, for now, says only its
-    /// name (the review's artboard; what it holds is QUESTIONS.md E31). Nothing
-    /// opens it since the popover's toolbar went (E32); it waits for the
-    /// Sync settings design to say where its door is.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Global sync opens the existing device-management page.
     pub(crate) fn open_sync_settings_tab(&mut self) -> bool {
-        let existing = self.tabs().iter().position(|t| {
-            t.whats_new
-                .as_ref()
-                .is_some_and(|n| n.page == tab::PrivatePage::SyncSettings)
-        });
-        if let Some(i) = existing {
-            self.select(i);
-            return true;
-        }
-        let Some(tab) = Tab::sync_settings() else {
-            return false;
-        };
-        self.tabs_mut().push(tab);
-        self.slides_mut().clear();
-        self.relayout();
-        self.select(self.tabs().len() - 1);
-        true
+        self.open_manage(crate::manage::Page::Devices)
     }
 
     /// The library background's context menu. It deliberately keeps the

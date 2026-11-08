@@ -386,7 +386,6 @@ fn stage_and_action_labels_use_the_localized_menu_keys() {
             for (action, key) in [
                 (Action::Current, Words::WhatsNew),
                 (Action::Releases, Words::HelpViewAllReleases),
-                (Action::Docs, Words::HelpAndDocs),
                 (Action::Feedback, Words::SendFeedback),
                 (Action::GitHub, Words::StarOnGitHub),
                 (Action::X, Words::HelpFollowOnX),

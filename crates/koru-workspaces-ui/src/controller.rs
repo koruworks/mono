@@ -636,6 +636,7 @@ impl WorkspacesController {
                 }
                 true
             }
+            #[cfg(any(test, feature = "fixtures"))]
             Answer::Catalog(rows) => self.adopt_rows(&rows),
             Answer::CatalogState { rows, removals } => {
                 let changed = !self.removals_received || self.removals != removals;

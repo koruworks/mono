@@ -884,10 +884,13 @@ impl ExploreView {
             {
                 node.description = Some(self.profile_description(profile));
             }
-        } else if node.occurrence.part.name()
-            == super::popover_elements::profiles::MenuAction::Sync
-                .key()
-                .part
+        } else if [
+            super::popover_elements::profiles::MenuAction::Sync.key(),
+            super::workspace_menu_elements::MenuAction::Sync.key(),
+            super::workspace_menu_elements::MenuAction::Cloud.key(),
+        ]
+        .iter()
+        .any(|key| node.occurrence.part.name() == key.part)
         {
             node.description = Some(self.sync_control_name());
         }

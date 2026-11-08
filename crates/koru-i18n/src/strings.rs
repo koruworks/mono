@@ -2974,13 +2974,14 @@ pub enum Key {
     ProfileWaitProvisioning,
     ProfileWaitRateLimited,
     ProfileWaitCredential,
+    ProfileLeaveRemovedFailed,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2092] = [
+    pub const ALL: [Key; 2093] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -5073,6 +5074,7 @@ impl Key {
         Key::ProfileWaitProvisioning,
         Key::ProfileWaitRateLimited,
         Key::ProfileWaitCredential,
+        Key::ProfileLeaveRemovedFailed,
     ];
 }
 
@@ -16048,4 +16050,5 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::ProfileWaitProvisioning, en: "Koru Cloud isn’t ready to deliver this workspace’s content yet.", es: "Koru Cloud aún no está listo para entregar el contenido de este espacio de trabajo.", pt_br: "O Koru Cloud ainda não está pronto para entregar o conteúdo deste espaço de trabalho.", de: "Koru Cloud ist noch nicht bereit, den Inhalt dieses Arbeitsbereichs bereitzustellen.", fr: "Koru Cloud n’est pas encore prêt à fournir le contenu de cet espace de travail.", ar: "Koru Cloud غير جاهز بعد لتقديم محتوى مساحة العمل هذه.", zh_hans: "Koru Cloud 尚未准备好传送此工作区的内容。", ja: "Koru Cloud は、このワークスペースのコンテンツをまだ配信できません。" },
     Row { key: Key::ProfileWaitRateLimited, en: "Koru Cloud is limiting requests. Please wait before trying again.", es: "Koru Cloud está limitando las solicitudes. Espera antes de volver a intentarlo.", pt_br: "O Koru Cloud está limitando as solicitações. Aguarde antes de tentar novamente.", de: "Koru Cloud begrenzt Anfragen. Warte vor einem erneuten Versuch.", fr: "Koru Cloud limite les demandes. Patientez avant de réessayer.", ar: "يحدّ Koru Cloud من الطلبات. يُرجى الانتظار قبل المحاولة مجددًا.", zh_hans: "Koru Cloud 正在限制请求。请稍候再试。", ja: "Koru Cloud がリクエストを制限しています。しばらく待ってから再試行してください。" },
     Row { key: Key::ProfileWaitCredential, en: "Koru needs to renew this workspace’s Cloud connection.", es: "Koru necesita renovar la conexión a la nube de este espacio de trabajo.", pt_br: "O Koru precisa renovar a conexão deste espaço de trabalho com a nuvem.", de: "Koru muss die Cloud-Verbindung dieses Arbeitsbereichs erneuern.", fr: "Koru doit renouveler la connexion cloud de cet espace de travail.", ar: "يحتاج Koru إلى تجديد اتصال مساحة العمل هذه بالسحابة.", zh_hans: "Koru 需要续期此工作区的云连接。", ja: "このワークスペースのクラウド接続を更新する必要があります。" },
+    Row { key: Key::ProfileLeaveRemovedFailed, en: "Couldn't leave the removed workspace", es: "No se pudo salir del espacio de trabajo eliminado", pt_br: "Não foi possível sair do espaço de trabalho removido", de: "Der entfernte Arbeitsbereich konnte nicht verlassen werden", fr: "Impossible de quitter l’espace de travail supprimé", ar: "تعذّر مغادرة مساحة العمل المُزالة", zh_hans: "无法离开已移除的工作区", ja: "削除されたワークスペースから移動できませんでした" },
 ];

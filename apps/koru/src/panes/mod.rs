@@ -321,10 +321,11 @@ pub enum Outcome {
     /// page, scrolled to its Workspaces.
     ManageWorkspace(WorkspaceId),
     ManageWorkspaces,
+    /// Global sync and the device channel: Manage's Linked devices page.
     OpenSyncSettings,
     /// The gear on a Profile row: the Manage tab on that Profile's page.
     ManageProfile(ProfileId),
-    /// The Profile menu's cloud control: Manage on Koru Cloud.
+    /// The Cloud channel: Manage's Koru Cloud page.
     ManageCloud,
     /// Home's Today row: the Home tab, a singleton.
     OpenHome,

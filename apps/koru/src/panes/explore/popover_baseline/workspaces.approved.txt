@@ -1,6 +1,6 @@
 == workspaces width=256 theme=light lang=en names=normal state=rest
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Workspaces" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: Not set up. Channels: Local only. Open sync settings" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Devices linked to this computer" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Workspaces" 60.000 105.000 116.671 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Manage workspaces" 184.671 105.000 117.329 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -20,7 +20,7 @@ sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "Import…" 52.000 
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-trash "Trash" 52.000 314.000 258.000 26.000 position=16 actions=Click,Focus
 == workspaces width=256 theme=light lang=en names=long state=rest
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Workspaces" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: Not set up. Channels: Local only. Open sync settings" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Devices linked to this computer" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Workspaces" 60.000 105.000 116.671 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Manage workspaces" 184.671 105.000 117.329 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Quarterly planning for the European expansion programme" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -40,7 +40,7 @@ sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "Import…" 52.000 
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-trash "Trash" 52.000 314.000 258.000 26.000 position=16 actions=Click,Focus
 == workspaces width=256 theme=light lang=de names=normal state=rest
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Arbeitsbereiche" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: Nicht eingerichtet. Kanäle: Nur lokal. Synchronisierungseinstellungen öffnen" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Mit diesem Computer verknüpfte Geräte" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Arbeitsbereiche" 60.000 105.000 87.351 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Arbeitsbereiche verwalten" 155.351 105.000 146.649 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -64,7 +64,7 @@ paint heading label_line part 159.351 110.999 138.649 14.000 line_height=14 base
 paint heading text_run primitive 159.351 111.344 138.649 13.310 font_size=11 font_weight=500 baseline=122 ascent_/_descent=10.65625_/_2.6533203 foreground=#6B6B6B@1.000 rendered_family=Inter
 == workspaces width=256 theme=light lang=de names=long state=rest
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Arbeitsbereiche" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: Nicht eingerichtet. Kanäle: Nur lokal. Synchronisierungseinstellungen öffnen" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Mit diesem Computer verknüpfte Geräte" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Arbeitsbereiche" 60.000 105.000 87.351 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Arbeitsbereiche verwalten" 155.351 105.000 146.649 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Quarterly planning for the European expansion programme" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -88,7 +88,7 @@ paint heading label_line part 159.351 110.999 138.649 14.000 line_height=14 base
 paint heading text_run primitive 159.351 111.344 138.649 13.310 font_size=11 font_weight=500 baseline=122 ascent_/_descent=10.65625_/_2.6533203 foreground=#6B6B6B@1.000 rendered_family=Inter
 == workspaces width=256 theme=light lang=ar names=normal state=rest
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "مساحات العمل" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: غير مُعدّ. القنوات: محلي فقط. فتح إعدادات المزامنة" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "الأجهزة المرتبطة بهذا الكمبيوتر" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "مساحات العمل" 60.000 105.000 135.631 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "إدارة مساحات العمل" 203.631 105.000 98.369 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -118,7 +118,7 @@ paint heading text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ a
 paint heading text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#6B6B6B@1.000 rendered_family=~
 == workspaces width=256 theme=light lang=ar names=long state=rest
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "مساحات العمل" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: غير مُعدّ. القنوات: محلي فقط. فتح إعدادات المزامنة" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "الأجهزة المرتبطة بهذا الكمبيوتر" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "مساحات العمل" 60.000 105.000 135.631 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "إدارة مساحات العمل" 203.631 105.000 98.369 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Quarterly planning for the European expansion programme" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -148,7 +148,7 @@ paint heading text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ a
 paint heading text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#6B6B6B@1.000 rendered_family=~
 == workspaces width=256 theme=dark lang=en names=normal state=rest
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Workspaces" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: Not set up. Channels: Local only. Open sync settings" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Devices linked to this computer" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Workspaces" 60.000 105.000 116.671 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Manage workspaces" 184.671 105.000 117.329 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -168,7 +168,7 @@ sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "Import…" 52.000 
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-trash "Trash" 52.000 314.000 258.000 26.000 position=16 actions=Click,Focus
 == workspaces width=256 theme=dark lang=en names=long state=rest
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Workspaces" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: Not set up. Channels: Local only. Open sync settings" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Devices linked to this computer" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Workspaces" 60.000 105.000 116.671 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Manage workspaces" 184.671 105.000 117.329 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Quarterly planning for the European expansion programme" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -188,7 +188,7 @@ sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "Import…" 52.000 
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-trash "Trash" 52.000 314.000 258.000 26.000 position=16 actions=Click,Focus
 == workspaces width=256 theme=dark lang=de names=normal state=rest
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Arbeitsbereiche" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: Nicht eingerichtet. Kanäle: Nur lokal. Synchronisierungseinstellungen öffnen" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Mit diesem Computer verknüpfte Geräte" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Arbeitsbereiche" 60.000 105.000 87.351 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Arbeitsbereiche verwalten" 155.351 105.000 146.649 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -212,7 +212,7 @@ paint heading label_line part 159.351 110.999 138.649 14.000 line_height=14 base
 paint heading text_run primitive 159.351 111.344 138.649 13.310 font_size=11 font_weight=500 baseline=122 ascent_/_descent=10.65625_/_2.6533203 foreground=#8A8A8A@1.000 rendered_family=Inter
 == workspaces width=256 theme=dark lang=de names=long state=rest
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Arbeitsbereiche" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: Nicht eingerichtet. Kanäle: Nur lokal. Synchronisierungseinstellungen öffnen" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Mit diesem Computer verknüpfte Geräte" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Arbeitsbereiche" 60.000 105.000 87.351 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Arbeitsbereiche verwalten" 155.351 105.000 146.649 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Quarterly planning for the European expansion programme" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -236,7 +236,7 @@ paint heading label_line part 159.351 110.999 138.649 14.000 line_height=14 base
 paint heading text_run primitive 159.351 111.344 138.649 13.310 font_size=11 font_weight=500 baseline=122 ascent_/_descent=10.65625_/_2.6533203 foreground=#8A8A8A@1.000 rendered_family=Inter
 == workspaces width=256 theme=dark lang=ar names=normal state=rest
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "مساحات العمل" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: غير مُعدّ. القنوات: محلي فقط. فتح إعدادات المزامنة" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "الأجهزة المرتبطة بهذا الكمبيوتر" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "مساحات العمل" 60.000 105.000 135.631 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "إدارة مساحات العمل" 203.631 105.000 98.369 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -266,7 +266,7 @@ paint heading text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ a
 paint heading text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#8A8A8A@1.000 rendered_family=~
 == workspaces width=256 theme=dark lang=ar names=long state=rest
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "مساحات العمل" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: غير مُعدّ. القنوات: محلي فقط. فتح إعدادات المزامنة" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "الأجهزة المرتبطة بهذا الكمبيوتر" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "مساحات العمل" 60.000 105.000 135.631 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "إدارة مساحات العمل" 203.631 105.000 98.369 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Quarterly planning for the European expansion programme" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -296,7 +296,7 @@ paint heading text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ a
 paint heading text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#8A8A8A@1.000 rendered_family=~
 == workspaces width=600 theme=light lang=en names=normal state=rest
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Workspaces" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: Not set up. Channels: Local only. Open sync settings" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Devices linked to this computer" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Workspaces" 60.000 105.000 116.671 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Manage workspaces" 184.671 105.000 117.329 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -316,7 +316,7 @@ sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "Import…" 52.000 
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-trash "Trash" 52.000 314.000 258.000 26.000 position=16 actions=Click,Focus
 == workspaces width=600 theme=light lang=en names=long state=rest
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Workspaces" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: Not set up. Channels: Local only. Open sync settings" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Devices linked to this computer" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Workspaces" 60.000 105.000 116.671 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Manage workspaces" 184.671 105.000 117.329 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Quarterly planning for the European expansion programme" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -336,7 +336,7 @@ sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "Import…" 52.000 
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-trash "Trash" 52.000 314.000 258.000 26.000 position=16 actions=Click,Focus
 == workspaces width=600 theme=light lang=de names=normal state=rest
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Arbeitsbereiche" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: Nicht eingerichtet. Kanäle: Nur lokal. Synchronisierungseinstellungen öffnen" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Mit diesem Computer verknüpfte Geräte" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Arbeitsbereiche" 60.000 105.000 87.351 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Arbeitsbereiche verwalten" 155.351 105.000 146.649 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -360,7 +360,7 @@ paint heading label_line part 159.351 110.999 138.649 14.000 line_height=14 base
 paint heading text_run primitive 159.351 111.344 138.649 13.310 font_size=11 font_weight=500 baseline=122 ascent_/_descent=10.65625_/_2.6533203 foreground=#6B6B6B@1.000 rendered_family=Inter
 == workspaces width=600 theme=light lang=de names=long state=rest
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Arbeitsbereiche" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: Nicht eingerichtet. Kanäle: Nur lokal. Synchronisierungseinstellungen öffnen" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Mit diesem Computer verknüpfte Geräte" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Arbeitsbereiche" 60.000 105.000 87.351 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Arbeitsbereiche verwalten" 155.351 105.000 146.649 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Quarterly planning for the European expansion programme" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -384,7 +384,7 @@ paint heading label_line part 159.351 110.999 138.649 14.000 line_height=14 base
 paint heading text_run primitive 159.351 111.344 138.649 13.310 font_size=11 font_weight=500 baseline=122 ascent_/_descent=10.65625_/_2.6533203 foreground=#6B6B6B@1.000 rendered_family=Inter
 == workspaces width=600 theme=light lang=ar names=normal state=rest
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "مساحات العمل" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: غير مُعدّ. القنوات: محلي فقط. فتح إعدادات المزامنة" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "الأجهزة المرتبطة بهذا الكمبيوتر" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "مساحات العمل" 60.000 105.000 135.631 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "إدارة مساحات العمل" 203.631 105.000 98.369 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -414,7 +414,7 @@ paint heading text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ a
 paint heading text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#6B6B6B@1.000 rendered_family=~
 == workspaces width=600 theme=light lang=ar names=long state=rest
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "مساحات العمل" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: غير مُعدّ. القنوات: محلي فقط. فتح إعدادات المزامنة" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "الأجهزة المرتبطة بهذا الكمبيوتر" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "مساحات العمل" 60.000 105.000 135.631 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "إدارة مساحات العمل" 203.631 105.000 98.369 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Quarterly planning for the European expansion programme" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -444,7 +444,7 @@ paint heading text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ a
 paint heading text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#6B6B6B@1.000 rendered_family=~
 == workspaces width=600 theme=dark lang=en names=normal state=rest
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Workspaces" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: Not set up. Channels: Local only. Open sync settings" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Devices linked to this computer" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Workspaces" 60.000 105.000 116.671 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Manage workspaces" 184.671 105.000 117.329 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -464,7 +464,7 @@ sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "Import…" 52.000 
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-trash "Trash" 52.000 314.000 258.000 26.000 position=16 actions=Click,Focus
 == workspaces width=600 theme=dark lang=en names=long state=rest
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Workspaces" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: Not set up. Channels: Local only. Open sync settings" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Devices linked to this computer" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Workspaces" 60.000 105.000 116.671 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Manage workspaces" 184.671 105.000 117.329 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Quarterly planning for the European expansion programme" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -484,7 +484,7 @@ sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "Import…" 52.000 
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-trash "Trash" 52.000 314.000 258.000 26.000 position=16 actions=Click,Focus
 == workspaces width=600 theme=dark lang=de names=normal state=rest
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Arbeitsbereiche" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: Nicht eingerichtet. Kanäle: Nur lokal. Synchronisierungseinstellungen öffnen" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Mit diesem Computer verknüpfte Geräte" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Arbeitsbereiche" 60.000 105.000 87.351 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Arbeitsbereiche verwalten" 155.351 105.000 146.649 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -508,7 +508,7 @@ paint heading label_line part 159.351 110.999 138.649 14.000 line_height=14 base
 paint heading text_run primitive 159.351 111.344 138.649 13.310 font_size=11 font_weight=500 baseline=122 ascent_/_descent=10.65625_/_2.6533203 foreground=#8A8A8A@1.000 rendered_family=Inter
 == workspaces width=600 theme=dark lang=de names=long state=rest
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Arbeitsbereiche" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: Nicht eingerichtet. Kanäle: Nur lokal. Synchronisierungseinstellungen öffnen" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Mit diesem Computer verknüpfte Geräte" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Arbeitsbereiche" 60.000 105.000 87.351 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Arbeitsbereiche verwalten" 155.351 105.000 146.649 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Quarterly planning for the European expansion programme" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -532,7 +532,7 @@ paint heading label_line part 159.351 110.999 138.649 14.000 line_height=14 base
 paint heading text_run primitive 159.351 111.344 138.649 13.310 font_size=11 font_weight=500 baseline=122 ascent_/_descent=10.65625_/_2.6533203 foreground=#8A8A8A@1.000 rendered_family=Inter
 == workspaces width=600 theme=dark lang=ar names=normal state=rest
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "مساحات العمل" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: غير مُعدّ. القنوات: محلي فقط. فتح إعدادات المزامنة" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "الأجهزة المرتبطة بهذا الكمبيوتر" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "مساحات العمل" 60.000 105.000 135.631 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "إدارة مساحات العمل" 203.631 105.000 98.369 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -562,7 +562,7 @@ paint heading text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ a
 paint heading text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#8A8A8A@1.000 rendered_family=~
 == workspaces width=600 theme=dark lang=ar names=long state=rest
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "مساحات العمل" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: غير مُعدّ. القنوات: محلي فقط. فتح إعدادات المزامنة" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "الأجهزة المرتبطة بهذا الكمبيوتر" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "مساحات العمل" 60.000 105.000 135.631 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "إدارة مساحات العمل" 203.631 105.000 98.369 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Quarterly planning for the European expansion programme" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -592,7 +592,7 @@ paint heading text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ a
 paint heading text_run primitive ~ ~ ~ ~ font_size=11 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#8A8A8A@1.000 rendered_family=~
 == workspaces width=256 theme=light lang=en names=normal state=hover-row
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Workspaces" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: Not set up. Channels: Local only. Open sync settings" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Devices linked to this computer" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Workspaces" 60.000 105.000 116.671 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Manage workspaces" 184.671 105.000 117.329 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -613,7 +613,7 @@ sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-trash "Trash" 52.000 314.0
 == workspaces width=256 theme=light lang=en names=normal state=hover-gear
 focus koru:w1/v1/n:6b6f7275000040008000000000000003#manage
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Workspaces" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: Not set up. Channels: Local only. Open sync settings" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Devices linked to this computer" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Workspaces" 60.000 105.000 116.671 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Manage workspaces" 184.671 105.000 117.329 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -633,7 +633,7 @@ sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "Import…" 52.000 
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-trash "Trash" 52.000 314.000 258.000 26.000 position=16 actions=Click,Focus
 == workspaces width=256 theme=light lang=en names=normal state=keyboard
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Workspaces" 52.000 46.000 258.000 300.000 size=17
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "dev-data: Not set up. Channels: Local only. Open sync settings" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Devices linked to this computer" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Workspaces" 60.000 105.000 116.671 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Manage workspaces" 184.671 105.000 117.329 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -653,7 +653,7 @@ sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "Import…" 52.000 
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-trash "Trash" 52.000 314.000 258.000 26.000 position=16 actions=Click,Focus
 == workspaces width=256 theme=light lang=en names=forty state=rest
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Workspaces" 52.000 46.000 258.000 500.000 size=125
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Profile 01: Not set up. Channels: Local only. Open sync settings" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Devices linked to this computer" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Workspaces" 60.000 105.000 116.671 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Manage workspaces" 184.671 105.000 117.329 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Workspace 00" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -781,7 +781,7 @@ sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "Import…" 52.000 
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-trash "Trash" 52.000 514.000 258.000 26.000 position=124 actions=Click,Focus
 == workspaces width=256 theme=dark lang=en names=forty state=rest
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Workspaces" 52.000 46.000 258.000 500.000 size=125
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Profile 01: Not set up. Channels: Local only. Open sync settings" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Devices linked to this computer" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Workspaces" 60.000 105.000 116.671 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Manage workspaces" 184.671 105.000 117.329 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Workspace 00" 60.000 131.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -909,7 +909,7 @@ sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "Import…" 52.000 
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-trash "Trash" 52.000 514.000 258.000 26.000 position=124 actions=Click,Focus
 == workspaces width=256 theme=light lang=en names=forty state=scrolled-to-end
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Workspaces" 52.000 46.000 258.000 500.000 size=125
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Profile 01: Not set up. Channels: Local only. Open sync settings" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Devices linked to this computer" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Workspaces" 60.000 105.000 116.671 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Manage workspaces" 184.671 105.000 117.329 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Workspace 00" 60.000 -605.000 194.000 26.000 position=2 selected=false actions=Click,Focus
@@ -1037,7 +1037,7 @@ sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "Import…" 52.000 
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-trash "Trash" 52.000 514.000 258.000 26.000 position=124 actions=Click,Focus
 == workspaces width=256 theme=dark lang=en names=forty state=scrolled-to-end
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Workspaces" 52.000 46.000 258.000 500.000 size=125
-sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Profile 01: Not set up. Channels: Local only. Open sync settings" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-sync "Devices linked to this computer" 276.000 52.000 26.000 44.000 position=0 actions=Click,Focus
 sem 1 Heading koru:w1/v1/s:explore-popover#workspaces-title "Workspaces" 60.000 105.000 116.671 26.000
 sem 1 MenuItem koru:w1/v1/s:explore-popover#manage-workspaces "Manage workspaces" 184.671 105.000 117.329 26.000 position=1 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Workspace 00" 60.000 -605.000 194.000 26.000 position=2 selected=false actions=Click,Focus

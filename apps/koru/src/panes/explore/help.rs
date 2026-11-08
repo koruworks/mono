@@ -55,18 +55,16 @@ pub enum Action {
     Offer,
     Current,
     Releases,
-    Docs,
     Feedback,
     GitHub,
     X,
 }
 
 impl Action {
-    pub(crate) const ALL: [Self; 7] = [
+    pub(crate) const ALL: [Self; 6] = [
         Self::Offer,
         Self::Current,
         Self::Releases,
-        Self::Docs,
         Self::Feedback,
         Self::GitHub,
         Self::X,
@@ -78,7 +76,6 @@ impl Action {
                 Self::Offer => "help-offer",
                 Self::Current => "help-current",
                 Self::Releases => "help-releases",
-                Self::Docs => "help-docs",
                 Self::Feedback => "help-feedback",
                 Self::GitHub => "help-github",
                 Self::X => "help-x",
@@ -172,7 +169,6 @@ impl Model {
             },
             Action::Current => Words::WhatsNew,
             Action::Releases => Words::HelpViewAllReleases,
-            Action::Docs => Words::HelpAndDocs,
             Action::Feedback => Words::SendFeedback,
             Action::GitHub => Words::StarOnGitHub,
             Action::X => Words::HelpFollowOnX,
@@ -278,12 +274,11 @@ impl ExploreView {
         ));
         for action in [
             Action::Releases,
-            Action::Docs,
             Action::Feedback,
             Action::GitHub,
             Action::X,
         ] {
-            if action == Action::Docs {
+            if action == Action::Feedback {
                 list = list.child(super::workspace_menu_elements::rule());
             }
             let label = self.help.action_label(action);

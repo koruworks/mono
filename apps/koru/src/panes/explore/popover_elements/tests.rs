@@ -860,8 +860,8 @@ fn the_profiles_page_puts_each_gear_beside_its_profile_and_lists_fixed_actions()
     assert_eq!(menu.label.as_deref(), Some("Switch profile"));
     assert_eq!(
         menu.size_of_set,
-        Some(10),
-        "Manage profiles, three Profiles, three gears, three fixed actions"
+        Some(11),
+        "Manage profiles, three Profiles, three gears, three fixed actions, device control"
     );
     assert_eq!(menu.children[0].role, AkRole::Heading);
     assert_eq!(menu.children[0].label.as_deref(), Some("Profiles"));
@@ -885,12 +885,17 @@ fn the_profiles_page_puts_each_gear_beside_its_profile_and_lists_fixed_actions()
         actions,
         vec![
             ("new-profile", Some("Add new profile")),
+            ("workspace-sync", Some("Devices linked to this computer")),
             ("global-sync", Some("Global sync")),
             ("app-settings", Some("App settings")),
         ]
     );
     assert_eq!(
         menu.children[9].description.as_deref(),
+        Some(v.sync_control_name().as_str())
+    );
+    assert_eq!(
+        menu.children[10].description.as_deref(),
         Some(v.sync_control_name().as_str())
     );
     for node in &menu.children[8..] {

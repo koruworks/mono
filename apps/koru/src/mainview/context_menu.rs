@@ -171,59 +171,31 @@ pub enum MenuSubject {
     },
 }
 
-/// Koru's accounts, in the strip's order after the website's globe. Brand
-/// names, so no row of the catalog: a name a translator must not touch.
+/// Koru's social account exposed by Help. Its brand name is not translated.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Social {
     X,
-    Reddit,
-    Instagram,
-    TikTok,
-    YouTube,
 }
 
 impl Social {
-    pub const ALL: [Social; 5] = [
-        Social::X,
-        Social::Reddit,
-        Social::Instagram,
-        Social::TikTok,
-        Social::YouTube,
-    ];
-
     pub fn name(self) -> &'static str {
         match self {
             Social::X => "X",
-            Social::Reddit => "Reddit",
-            Social::Instagram => "Instagram",
-            Social::TikTok => "TikTok",
-            Social::YouTube => "YouTube",
         }
     }
 
     pub fn url(self) -> &'static str {
         match self {
             Social::X => "https://x.com/korudotdo",
-            Social::Reddit => "https://www.reddit.com/r/korudo/",
-            Social::Instagram => "https://www.instagram.com/korudotdo/",
-            Social::TikTok => "https://www.tiktok.com/@korudotdo",
-            Social::YouTube => "https://www.youtube.com/@korudotdo",
         }
     }
 
     pub fn glyph(self) -> char {
         match self {
             Social::X => koru_draw::icons::X_LOGO,
-            Social::Reddit => koru_draw::icons::REDDIT_LOGO,
-            Social::Instagram => koru_draw::icons::INSTAGRAM_LOGO,
-            Social::TikTok => koru_draw::icons::TIKTOK_LOGO,
-            Social::YouTube => koru_draw::icons::YOUTUBE_LOGO,
         }
     }
 }
-
-/// Where the strip's globe goes.
-pub const WEBSITE_URL: &str = "https://www.koru.do";
 
 /// Where the help popover's *Star us on GitHub* goes: Koru's repository.
 pub const GITHUB_URL: &str = "https://github.com/koruworks/mono";
