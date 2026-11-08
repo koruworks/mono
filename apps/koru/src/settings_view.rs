@@ -96,6 +96,7 @@ pub struct SettingsView {
     dictionary_version: u64,
     /// `spelling::overlay_version` when the dictionary count was last read.
     overlay_version: u64,
+    app_menu_read: Option<std::sync::mpsc::Receiver<crate::app_menu::Outcome>>,
 }
 
 impl Default for SettingsView {
@@ -130,6 +131,7 @@ impl SettingsView {
         // Koru has panes: *Document fonts* may open its sample beside this tab.
         surface.offer_sample_document(true);
         surface.set_telemetry_consent(koru_workspace_host::telemetry_consent::current().toggle());
+
         // Read the record again as the page opens: another window may have
         // answered since this process last looked, or the Gateway may not have
         // been answering then. Off the event loop; the maintenance pass pushes
@@ -145,6 +147,7 @@ impl SettingsView {
             wants_voice_devices: false,
             dictionary_version: 0,
             overlay_version: 0,
+            app_menu_read: koru_autostart::app_menu::SUPPORTED.then(crate::app_menu::read),
         };
         // **The world, asked once.** The kill switch and a walk of the model
         // cache — neither may happen on a frame, and neither may happen under
@@ -292,6 +295,13 @@ impl SettingsView {
     /// the switch moved.
     pub fn set_telemetry_consent(&mut self, granted: Option<bool>) -> bool {
         self.surface.set_telemetry_consent(granted)
+    }
+
+    /// Whether Koru's app-menu entry is there, as the host just read it.
+    pub fn set_app_menu_entry(&mut self, added: Option<bool>) -> bool {
+        // An initial read queued before this change must not overwrite it.
+        self.app_menu_read = None;
+        self.surface.set_app_menu_entry(added)
     }
 
     pub fn push_spelling_preferences(&mut self) {
@@ -623,7 +633,15 @@ impl View for SettingsView {
     }
 
     fn maintenance_deadline(&self) -> Option<std::time::Instant> {
-        self.surface.maintenance_deadline()
+        [
+            self.surface.maintenance_deadline(),
+            self.app_menu_read
+                .as_ref()
+                .map(|_| std::time::Instant::now() + std::time::Duration::from_millis(50)),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
     }
 
     fn maintain(&mut self, _ws: &mut WorkspaceDoc, _now: std::time::Instant) -> bool {
@@ -639,11 +657,20 @@ impl View for SettingsView {
         }
         // The Terminal section's link, and the liveness the read-only state
         // reads off it. Never blocks: a `try_recv` and a clock comparison.
+        let app_menu = self
+            .app_menu_read
+            .as_ref()
+            .and_then(|reply| match reply.try_recv() {
+                Ok(outcome) => Some(outcome.added),
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(None),
+                Err(std::sync::mpsc::TryRecvError::Empty) => None,
+            });
+        let app_menu_changed = app_menu.is_some_and(|added| self.set_app_menu_entry(added));
         let polled = self.surface.poll();
         // What this page shows is what open terminals should draw — a press
         // here reaches them now, not after the authority's round trip.
         crate::terminal_prefs::adopt(self.surface.terminal());
-        polled || downloaded
+        polled || downloaded || app_menu_changed
     }
 
     fn dictation_refused(&mut self, refusal: koru_dictation::Refusal) -> bool {

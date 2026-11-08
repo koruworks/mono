@@ -51,6 +51,11 @@ use crate::auth::Caller;
 use crate::error::{ApiError, ApiResult};
 use crate::state::AppState;
 
+pub mod pins;
+pub(crate) mod profile_removal;
+mod replacement;
+pub use replacement::{archive_replacing, delete_replacing, move_replacing};
+
 /// What the API needs from the derived node projection to measure live files.
 ///
 /// Blob metadata is authoritative Store data; only the reference set comes
@@ -77,6 +82,90 @@ pub trait DocumentOutlineService: Send + Sync + 'static {
 }
 
 // ------------------------------------------------------------------ profiles
+
+pub async fn ensure_live_workspace(
+    State(state): State<Arc<AppState>>,
+    Extension(caller): Extension<Caller>,
+    Path(owner): Path<ProfileId>,
+    Json(body): Json<koru_store_wire::EnsureLiveWorkspace>,
+) -> ApiResult<Json<koru_store_wire::EnsuredWorkspace>> {
+    caller.require(Scope::ManageWorkspaces)?;
+    let outcome = lock(&state)?.ensure_live_workspace(owner, &body.name, now())?;
+    // Selection can repair listing/routing as well as create. An invalidation
+    // has no settlement identity and cannot complete another command.
+    if let koru_store_wire::EnsuredWorkspace::Created { workspace } = &outcome {
+        state.publish_catalog_event(koru_events::WorkspaceCatalogCreated {
+            workspace_id: workspace.id.as_uuid(),
+        });
+        state.notify_replication();
+    }
+    state.notify_catalog_change();
+    Ok(Json(outcome))
+}
+
+pub async fn workspace_authority(
+    State(state): State<Arc<AppState>>,
+    Extension(caller): Extension<Caller>,
+    Path(owner): Path<ProfileId>,
+) -> ApiResult<Json<Vec<koru_store_wire::WorkspaceAuthority>>> {
+    caller.require(Scope::ReadDocuments)?;
+    let rows = tokio::task::spawn_blocking(move || -> ApiResult<_> {
+        let ids = lock(&state)?.workspace_authority_ids(owner)?;
+        let mut rows = Vec::with_capacity(ids.len());
+        for id in ids {
+            let read = { lock(&state)?.prepare_workspace_authority(owner, id)? };
+            // SQLite has pinned its committed snapshot. Replay, checksum and
+            // projection work must not hold the global Store mutex.
+            rows.push(read.finish()?);
+        }
+        Ok(rows)
+    })
+    .await
+    .map_err(|_| ApiError::new(Code::Internal, "workspace authority worker did not finish"))??;
+    Ok(Json(rows))
+}
+
+pub async fn create_profile_with_workspace(
+    State(state): State<Arc<AppState>>,
+    Extension(caller): Extension<Caller>,
+    Json(body): Json<koru_store_wire::CreateProfileWithWorkspace>,
+) -> ApiResult<Json<koru_store_wire::CreatedProfile>> {
+    caller.require(Scope::ManageWorkspaces)?;
+    let locale = match body.locale.as_deref() {
+        None => Locale::default(),
+        Some(tag) => Locale::parse(tag)
+            .ok_or_else(|| ApiError::new(Code::InvalidLocale, "not a BCP 47 language tag"))?,
+    };
+    let created = lock(&state)?.create_profile_with_workspace(
+        &koru_store_core::service::CreateProfileWithWorkspace {
+            id: body.id,
+            name: body.name,
+            locale,
+            purpose: body.purpose,
+            avatar: body.avatar,
+            icon: body.icon,
+            color: body.color,
+            workspace: koru_store_core::service::FirstWorkspace {
+                name: body.workspace.name,
+                icon: body.workspace.icon,
+                color: body.workspace.color,
+            },
+        },
+        now(),
+    )?;
+    state.notify_replication();
+    state.publish_catalog_event(koru_events::ProfileCreated {
+        profile_id: created.profile.id.as_uuid(),
+    });
+    state.publish_catalog_event(koru_events::WorkspaceCatalogCreated {
+        workspace_id: created.workspace.id.as_uuid(),
+    });
+    state.notify_catalog_change();
+    Ok(Json(koru_store_wire::CreatedProfile {
+        profile: created.profile,
+        workspace: created.workspace,
+    }))
+}
 
 pub async fn create_profile(
     State(state): State<Arc<AppState>>,
@@ -163,10 +252,16 @@ pub async fn remove_profile_local(
     State(state): State<Arc<AppState>>,
     Extension(caller): Extension<Caller>,
     Path(id): Path<String>,
+    body: Option<Json<koru_store_wire::CompleteProfileRemoval>>,
 ) -> ApiResult<Json<LocalProfileRemoval>> {
     caller.require(Scope::ManageWorkspaces)?;
     let id = ProfileId::parse(&id).ok_or_else(invalid_id)?;
-    let outcome = lock(&state)?.remove_profile_local(id, now())?;
+    let outcome =
+        lock(&state)?.remove_profile_local(id, body.and_then(|body| body.attempt), now())?;
+    state.notify_catalog_change();
+    state.publish_catalog_event(koru_events::ProfileRemovalChanged {
+        profile_id: id.as_uuid(),
+    });
     Ok(Json(match outcome {
         koru_store_core::LocalProfileRemoval::Removed => LocalProfileRemoval::Removed,
         koru_store_core::LocalProfileRemoval::AlreadyRemoved => LocalProfileRemoval::AlreadyRemoved,
@@ -564,6 +659,7 @@ pub async fn delete_workspace(
     caller.require(Scope::DestroyWorkspaces)?;
     let id = WorkspaceId::parse(&id).ok_or_else(invalid_id)?;
     let mut store = lock(&state)?;
+    store.validate_workspace_removal(id, None)?;
     let mut rooms = vec![crate::rooms::Room::Manifest(id)];
     rooms.extend(
         store
@@ -1838,6 +1934,8 @@ mod cloud_coverage_tests;
 mod cloud_status;
 #[cfg(test)]
 mod cloud_waiting_tests;
+#[cfg(test)]
+mod creation_tests;
 #[cfg(test)]
 mod transport_mode_tests;
 #[cfg(test)]

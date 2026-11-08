@@ -459,6 +459,9 @@ async fn lifecycle(
     let Ok(Json(request)) = payload else {
         return invalid("the workspace lifecycle body is not a lifecycle request");
     };
+    if request.removal_attempt.is_some() && request.action != WorkspaceLifecycleAction::SoftDelete {
+        return invalid("a Profile removal attempt applies only to soft delete");
+    }
     if request.confirmation.trim().is_empty() {
         return invalid("a lifecycle request carries the confirmation that was accepted");
     }
@@ -504,15 +507,15 @@ async fn lifecycle(
             );
         }
     };
-    // **Already there is the outcome the caller wanted.** The Store's own
-    // routes are not uniformly idempotent — `DELETE` walks the workspace's
-    // documents before it looks at `deleted_at`, and a workspace in the trash
-    // has none to walk — so the operation decides this rather than inheriting
-    // whichever answer the route underneath happens to give. That is what makes
-    // "the same request again" a retry instead of a second outcome.
+    if let Err(response) =
+        removal_preflight(&state, &principal, &row, request.removal_attempt).await
+    {
+        return response;
+    }
+    // Replacing verbs must run even after a catalog reopen repaired the source
+    // projection: the replacement obligation may still be outstanding.
     let already_applied = match request.action {
-        WorkspaceLifecycleAction::Archive => row["archived"].as_bool().unwrap_or(false),
-        WorkspaceLifecycleAction::SoftDelete => !row["deleted_at"].is_null(),
+        WorkspaceLifecycleAction::Archive | WorkspaceLifecycleAction::SoftDelete => false,
         WorkspaceLifecycleAction::Restore => row["deleted_at"].is_null(),
     };
 
@@ -532,6 +535,9 @@ async fn lifecycle(
         terminated_sessions: Vec::new(),
         sessions_closed: !request.action.closes_sessions(),
         mutation_applied: false,
+        authority_committed: (request.action != WorkspaceLifecycleAction::Restore).then_some(false),
+        listing: None,
+        replacement: None,
     };
 
     // Steps 2 and 3. Restore closes nothing: a soft-deleted workspace has no
@@ -579,9 +585,21 @@ async fn lifecycle(
     // confirmed soft delete uses the Store's existing force contract: all
     // acknowledged edits are already durable, affected document rooms are
     // disconnected, and their windows leave on the catalog event.
-    match apply(&state, &principal, &workspace, request.action).await {
-        Ok(()) => {
+    match apply(
+        &state,
+        &principal,
+        &workspace,
+        request.action,
+        &request.replacement_name,
+        request.removal_attempt,
+    )
+    .await
+    {
+        Ok(removed) => {
             outcome.mutation_applied = true;
+            if let Some(removed) = removed {
+                apply_removal_facts(&mut outcome, removed);
+            }
             Json(outcome).into_response()
         }
         // **S24, told exactly.** The terminals are closed and the catalog is
@@ -597,6 +615,9 @@ async fn lifecycle(
         // person can do something about.
         Err(response) => {
             let refusal = refusal_of(response).await;
+            if let Some(removed) = refusal.removal.clone() {
+                apply_removal_facts(&mut outcome, removed);
+            }
             caused(
                 refusal.status,
                 "workspace_lifecycle_incomplete",
@@ -782,62 +803,54 @@ async fn migration(
         sessions_closed: true,
         mutation_applied: false,
         projects_rescoped: None,
+        replacement: None,
     };
 
-    // **Already there.** Nothing to close and nothing to write — but the repair
-    // still runs, and that is what makes this branch a retry rather than a
-    // shrug. The case it exists for is a migration whose Store write committed
-    // while the session host was unreachable: the workspace has moved, its
-    // projects still name the profile it left, and sending the same request
-    // again is how a person fixes that. Short-circuiting before step 6 would
-    // leave them stranded in the missing-workspace area with no way back.
-    if from == to {
-        outcome.mutation_applied = true;
-        outcome.projects_rescoped = rescope(&state, &workspace, &to).await;
-        return Json(outcome).into_response();
-    }
-
-    let Some(bridge) = state.session_bridge() else {
-        return failure(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "capability_unavailable",
-            "this gateway has no session-host bridge, so it cannot close a workspace's terminals",
-        );
-    };
-    if !bridge.lifecycle_supervised() {
-        return failure(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "capability_unavailable",
-            "this gateway was not supervised, so it holds no session-lifecycle authority",
-        );
-    }
-    let Ok(owner) = from.parse() else {
-        return failure(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "server_unavailable",
-            "the catalog answered a workspace whose owner is not an id",
-        );
-    };
-    let scope = koru_session_protocol::WorkspaceScope {
-        profile: owner,
-        workspace: workspace
-            .parse()
-            .expect("a workspace id that parsed as a uuid"),
-    };
-    outcome.sessions_closed = false;
-    match bridge.terminate_workspace_sessions(scope).await {
-        Ok(terminated) => {
-            outcome.terminated_sessions = terminated.iter().map(|id| id.to_string()).collect();
-            outcome.sessions_closed = true;
-        }
-        Err(error) => {
-            return refused_move(
-                bridge_status(&error),
-                "workspace_sessions_not_closed",
-                "the workspace's terminals could not be closed, so it was not moved",
-                outcome,
-                true,
+    // A same-owner retry still reaches the replacing operation and project
+    // repair. It must not terminate sessions opened under the new owner.
+    if from != to {
+        let Some(bridge) = state.session_bridge() else {
+            return failure(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "capability_unavailable",
+                "this gateway has no session-host bridge, so it cannot close a workspace's terminals",
             );
+        };
+        if !bridge.lifecycle_supervised() {
+            return failure(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "capability_unavailable",
+                "this gateway was not supervised, so it holds no session-lifecycle authority",
+            );
+        }
+        let Ok(owner) = from.parse() else {
+            return failure(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "server_unavailable",
+                "the catalog answered a workspace whose owner is not an id",
+            );
+        };
+        let scope = koru_session_protocol::WorkspaceScope {
+            profile: owner,
+            workspace: workspace
+                .parse()
+                .expect("a workspace id that parsed as a uuid"),
+        };
+        outcome.sessions_closed = false;
+        match bridge.terminate_workspace_sessions(scope).await {
+            Ok(terminated) => {
+                outcome.terminated_sessions = terminated.iter().map(|id| id.to_string()).collect();
+                outcome.sessions_closed = true;
+            }
+            Err(error) => {
+                return refused_move(
+                    bridge_status(&error),
+                    "workspace_sessions_not_closed",
+                    "the workspace's terminals could not be closed, so it was not moved",
+                    outcome,
+                    true,
+                );
+            }
         }
     }
 
@@ -845,13 +858,17 @@ async fn migration(
         &state,
         &principal,
         "POST",
-        &format!("/v1/workspaces/{workspace}/move"),
-        Some(serde_json::json!({ "owner": to })),
+        &format!("/v1/workspaces/{workspace}/move-replacing"),
+        Some(serde_json::json!({ "owner": to, "name": request.replacement_name })),
     )
     .await
     {
-        Ok(_) => {
+        Ok(moved) => {
             outcome.mutation_applied = true;
+            outcome.replacement = serde_json::from_value(moved["replacement"].clone()).ok();
+            if let Some(from) = moved["from"].as_str() {
+                outcome.from = from.to_owned();
+            }
             // **Step 6, and it runs after the commit rather than before it.**
             // A project's scope names a profile and a workspace; between the
             // Store write and this call those projects name the profile the
@@ -1000,6 +1017,7 @@ struct Refusal {
     status: StatusCode,
     code: String,
     message: String,
+    removal: Option<koru_store_wire::RemovedWorkspace>,
 }
 
 /// Read a Store refusal out of the response it answered with.
@@ -1011,14 +1029,19 @@ async fn refusal_of(response: Response) -> Refusal {
     let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or_default();
     Refusal {
         status,
-        code: body["code"].as_str().unwrap_or_default().to_owned(),
+        code: body["cause"]
+            .as_str()
+            .or_else(|| body["code"].as_str())
+            .unwrap_or_default()
+            .to_owned(),
         message: body["message"].as_str().unwrap_or_default().to_owned(),
+        removal: serde_json::from_value(body["outcome"].clone()).ok(),
     }
 }
 
 /// Step 4, through the Store's public routes.
 fn soft_delete_uri(workspace: &str) -> String {
-    format!("/v1/workspaces/{workspace}?force=true")
+    format!("/v1/workspaces/{workspace}/delete-replacing")
 }
 
 async fn apply(
@@ -1026,39 +1049,88 @@ async fn apply(
     principal: &GatewayPrincipal,
     workspace: &str,
     action: WorkspaceLifecycleAction,
-) -> Result<(), Response> {
+    replacement_name: &str,
+    removal_attempt: Option<koru_store_core::ids::RemovalAttemptId>,
+) -> Result<Option<koru_store_wire::RemovedWorkspace>, Response> {
     let (method, uri, body) = match action {
-        WorkspaceLifecycleAction::Archive => {
-            // The appearance route takes the whole set every time, so the three
-            // fields that are not changing are read back first. Sending them
-            // absent would clear somebody's colour on the way to archiving.
-            let current = crate::store_json(
-                state,
-                principal,
-                "GET",
-                &format!("/v1/workspaces/{workspace}"),
-                None,
-            )
-            .await?;
-            (
-                "PATCH",
-                format!("/v1/workspaces/{workspace}/appearance"),
-                Some(serde_json::json!({
-                    "icon": current["icon"],
-                    "color": current["color"],
-                    "pinned": current["pinned"].as_bool().unwrap_or(false),
-                    "archived": true,
-                })),
-            )
-        }
-        WorkspaceLifecycleAction::SoftDelete => ("DELETE", soft_delete_uri(workspace), None),
+        WorkspaceLifecycleAction::Archive => (
+            "POST",
+            format!("/v1/workspaces/{workspace}/archive-replacing"),
+            Some(serde_json::json!({"name": replacement_name})),
+        ),
+        WorkspaceLifecycleAction::SoftDelete => (
+            "POST",
+            soft_delete_uri(workspace),
+            Some(
+                serde_json::json!({"name": replacement_name, "force": true, "removal_attempt": removal_attempt}),
+            ),
+        ),
         WorkspaceLifecycleAction::Restore => {
             ("POST", format!("/v1/workspaces/{workspace}/restore"), None)
         }
     };
-    crate::store_json(state, principal, method, &uri, body)
-        .await
-        .map(drop)
+    let body = crate::store_json(state, principal, method, &uri, body).await?;
+    if action == WorkspaceLifecycleAction::Restore {
+        return Ok(None);
+    }
+    serde_json::from_value(body).map(Some).map_err(|_| {
+        failure(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "invalid_response",
+            "Store returned invalid lifecycle facts",
+        )
+    })
+}
+
+async fn removal_preflight(
+    state: &Arc<GatewayState>,
+    principal: &GatewayPrincipal,
+    row: &serde_json::Value,
+    attempt: Option<koru_store_core::ids::RemovalAttemptId>,
+) -> Result<(), Response> {
+    let owner = row["owner"]
+        .as_str()
+        .ok_or_else(|| invalid("workspace has no owner"))?;
+    let value = crate::store_json(
+        state,
+        principal,
+        "GET",
+        &format!("/v1/profiles/{owner}/removal"),
+        None,
+    )
+    .await?;
+    let mark: Option<koru_store_wire::RemovalMark> =
+        serde_json::from_value(value).map_err(|_| {
+            failure(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "invalid_response",
+                "Store returned an invalid removal mark",
+            )
+        })?;
+    let code = match attempt {
+        Some(attempt) => koru_store_core::profile_removal::require_attempt(mark.as_ref(), attempt)
+            .err()
+            .map(|error| error.code()),
+        None if mark.is_some() => Some(koru_store_core::Code::ProfileBeingRemoved),
+        None => None,
+    };
+    if let Some(code) = code {
+        return Err(failure(
+            StatusCode::CONFLICT,
+            code.as_str(),
+            "Profile removal attempt refused",
+        ));
+    }
+    Ok(())
+}
+
+fn apply_removal_facts(
+    outcome: &mut WorkspaceLifecycleOutcome,
+    removed: koru_store_wire::RemovedWorkspace,
+) {
+    outcome.authority_committed = Some(removed.authority_committed);
+    outcome.listing = Some(removed.listing);
+    outcome.replacement = Some(removed.replacement);
 }
 
 fn bridge_status(error: &crate::BridgeError) -> StatusCode {

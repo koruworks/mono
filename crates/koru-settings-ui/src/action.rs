@@ -141,6 +141,8 @@ pub(crate) enum Action {
     StartOnLogin(bool),
     /// *Share anonymous usage data*: the value the switch moves to.
     TelemetryConsent(bool),
+    /// *Show Koru in the app menu*: the value the switch moves to.
+    AppMenuEntry(bool),
     /// *Preview in sample document*, at the right of *Document fonts*.
     PreviewSampleDocument,
 
@@ -235,6 +237,9 @@ pub enum Request {
     /// journal's, behind the Gateway (the opt-in contract of 2026-10-11), and
     /// the write must leave the event loop — so it is the host's to perform.
     SetTelemetryConsent(bool),
+    /// Add Koru's entry to the desktop's app menu, or take it out. A file the
+    /// host's executable path goes into, so the host writes it.
+    SetAppMenuEntry(bool),
     /// Turn a coding agent on or off on this machine, by its key. The host
     /// holds the stored list and everything that hides an agent.
     SetAgentEnabled {

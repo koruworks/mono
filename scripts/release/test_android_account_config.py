@@ -6,9 +6,12 @@
 """
 
 import importlib.util
+import json
 import os
+import shutil
 import subprocess
 import sys
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -128,6 +131,52 @@ class ReleaseArgsTest(unittest.TestCase):
         self.assertEqual(missing.returncode, 1)
         self.assertIn("KORU_PUBLIC_API_ISSUER", missing.stderr)
         self.assertNotIn(ORIGIN, missing.stderr)
+
+
+class WorkflowValidationTest(unittest.TestCase):
+    """Execute the workflow's argument collection in Bash before a build marker."""
+
+    def run_workflow(self, output: str, status: int = 0):
+        root = SCRIPT.parents[2]
+        workflow = (root / ".github/workflows/release-build.yml").read_text(encoding="utf-8")
+        step = workflow.split('          echo "versionCode $code, versionName $VERSION"\n', 1)[1]
+        collect_args = textwrap.dedent(step.split("          (cd apps/android && ./gradlew", 1)[0])
+        bash = (
+            str(Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Git/bin/bash.exe")
+            if sys.platform == "win32"
+            else shutil.which("bash")
+        )
+        self.assertTrue(bash, "Bash is required to test the Android release workflow")
+        env = os.environ.copy()
+        env.update(CHANNEL="nightly", WITH_CLOUD="true", FIXTURE_OUTPUT=output, FIXTURE_STATUS=str(status))
+        return subprocess.run(
+            [bash, "--noprofile", "--norc", "-c", (
+                "set -euo pipefail\n"
+                'python3() { printf "%s" "$FIXTURE_OUTPUT"; return "$FIXTURE_STATUS"; }\n'
+                + collect_args
+                + 'printf "build:%s\\n" "${#account_args[@]}"\n'
+                + 'for arg in "${account_args[@]}"; do printf "%s\\n" "$arg"; done\n'
+            )],
+            cwd=root, env=env, capture_output=True, text=True, check=False,
+        )
+
+    def test_validation_failure_stops_before_build_even_with_partial_output(self):
+        result = self.run_workflow("-Ppartial=value\n", status=7)
+        self.assertEqual(result.returncode, 7, result.stderr)
+        self.assertEqual(result.stdout, "")
+
+    def test_cloud_off_passes_zero_arguments(self):
+        result = self.run_workflow("")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "build:0\n")
+
+    def test_valid_configuration_preserves_spaces_and_quotes(self):
+        args = config.release_args("nightly", True, cloud_env(
+            KORU_PUBLIC_API_CREDENTIAL_ROLLOUT=json.dumps(json.loads(ROLLOUT)),
+        ))
+        result = self.run_workflow("\n".join(args) + "\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines(), ["build:5", *args])
 
 
 if __name__ == "__main__":

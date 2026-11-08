@@ -7,6 +7,64 @@
 //! What is left here is the part that needs no store at all.
 
 #[test]
+fn opening_requires_applied_live_authority_and_settled_listing() {
+    use koru_store_core::{
+        model::{Timestamp, Workspace},
+        service::{WorkspaceAuthority, WorkspaceAuthorityState},
+    };
+    let owner = koru_store_core::ProfileId::new();
+    let live = WorkspaceAuthority {
+        workspace: Workspace::new(owner, "Live", Timestamp::from_millis(1)).unwrap(),
+        authority: WorkspaceAuthorityState::Read {
+            applied: true,
+            archived: false,
+            deleted_at: None,
+            pinned: false,
+        },
+        listing_differs: false,
+    };
+    let mut pending = live.clone();
+    pending.authority = WorkspaceAuthorityState::Read {
+        applied: false,
+        archived: false,
+        deleted_at: None,
+        pinned: false,
+    };
+    let mut archived = live.clone();
+    archived.authority = WorkspaceAuthorityState::Read {
+        applied: true,
+        archived: true,
+        deleted_at: None,
+        pinned: false,
+    };
+    let mut deleted = live.clone();
+    deleted.authority = WorkspaceAuthorityState::Read {
+        applied: true,
+        archived: false,
+        deleted_at: Some(Timestamp::from_millis(2)),
+        pinned: false,
+    };
+    let mut repair = live.clone();
+    repair.listing_differs = true;
+    let mut unreadable = live.clone();
+    unreadable.authority = WorkspaceAuthorityState::Unreadable {
+        cause: "missing".into(),
+        recovery: None,
+    };
+    assert_eq!(
+        super::eligible_workspaces(vec![
+            pending,
+            archived,
+            deleted,
+            repair,
+            unreadable,
+            live.clone()
+        ]),
+        vec![live.workspace]
+    );
+}
+
+#[test]
 fn explicit_profile_opens_first_active_workspace_while_startup_keeps_its_preference() {
     use koru_store_core::{
         ids::ProfileId,

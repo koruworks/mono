@@ -86,6 +86,33 @@ fn row(id: NodeId) -> Occurrence {
     Occurrence::model(WINDOW, VIEW, id.as_uuid(), ControlPart::ROOT)
 }
 
+#[test]
+fn rail_revision_tracks_catalog_arrival_rename_and_current_identity() {
+    let (mut view, _) = pane(&[]);
+    let profile = koru_core::ProfileId::new();
+    let current = koru_core::WorkspaceId::new();
+    let revision = |view: &ExploreView| {
+        let mut rev = koru_workspace_host::accessibility::Revision::new();
+        view.revise(&mut rev);
+        rev.finish()
+    };
+    view.set_context(vec![], profile, vec![], Some(current));
+    let waiting = revision(&view);
+    let mut rows = vec![koru_core::profile::WorkspaceEntry::new(current, "Alpha", 0)];
+    view.set_context(vec![], profile, rows.clone(), Some(current));
+    let arrived = revision(&view);
+    assert_ne!(waiting, arrived);
+    rows[0].name = "Beta".into();
+    view.set_context(vec![], profile, rows.clone(), Some(current));
+    let renamed = revision(&view);
+    assert_ne!(arrived, renamed);
+    let other = koru_core::WorkspaceId::new();
+    rows[0].id = other;
+    view.set_context(vec![], profile, rows, Some(other));
+    assert_ne!(renamed, revision(&view));
+    assert!(!view.popover_open());
+}
+
 // ------------------------------------------------------------------ identity
 
 /// **The property the roadmap gates on**, run rather than argued: the same
@@ -235,7 +262,9 @@ fn the_projection_buttons_are_named_and_one_is_selected() {
     let published = nodes(&view, &cx(Lang::En));
     let modes: Vec<&SemanticNode> = published
         .iter()
-        .filter(|node| node.role == Role::Tab)
+        .filter(|node| {
+            node.role == Role::Button && NavigatorMode::parse(node.occurrence.part.name()).is_some()
+        })
         .collect();
     assert_eq!(modes.len(), NavigatorMode::visible().len());
     assert_eq!(
@@ -275,7 +304,9 @@ fn the_projection_buttons_follow_the_order_the_rail_is_in() {
     let published = nodes(&view, &cx(Lang::En));
     let tabs: Vec<&SemanticNode> = published
         .iter()
-        .filter(|node| node.role == Role::Tab)
+        .filter(|node| {
+            node.role == Role::Button && NavigatorMode::parse(node.occurrence.part.name()).is_some()
+        })
         .collect();
     let tokens: Vec<String> = tabs
         .iter()

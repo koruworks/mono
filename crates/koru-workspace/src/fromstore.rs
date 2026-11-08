@@ -158,6 +158,20 @@ pub fn create_local_profile_with_appearance(
     Ok(ProfileId::from_uuid(profile.id.as_uuid()))
 }
 
+/// Publish a Profile and its prepared first workspace together. The caller
+/// owns the request identity and retains it through an uncertain response.
+pub fn create_profile_with_workspace(
+    segment: &str,
+    root: Option<&Path>,
+    request: &koru_api_client::CreateProfileWithWorkspace,
+) -> Result<koru_api_client::CreatedProfile> {
+    let client = match root {
+        Some(root) => Client::open_at(segment, root),
+        None => Client::open(segment),
+    }?;
+    client.create_profile_with_workspace(request)
+}
+
 /// Create a local Profile and return its open state only after the Store has
 /// acknowledged that creation durably.
 ///
@@ -448,8 +462,8 @@ pub fn open_from_store_preferring(
     open_from_store_with_policy(segment, root, None, wanted, true)
 }
 
-/// App startup variant: an existing profile with no active workspaces opens on
-/// the welcome screen instead of silently creating content.
+/// App startup variant: unresolved availability enters the host's waiting
+/// state. Only the window's delivery-gated EnsureLive operation may create.
 pub fn open_from_store_preferring_empty(
     segment: &str,
     root: Option<&Path>,
@@ -477,7 +491,7 @@ fn open_from_store_with_policy(
     root: Option<&Path>,
     selected_profile: Option<ProfileId>,
     wanted: Option<WorkspaceId>,
-    create_workspace_if_empty: bool,
+    ensure_local_workspace: bool,
 ) -> Result<StoreLaunch> {
     let client = match root {
         Some(root) => Client::open_at(segment, root),
@@ -510,15 +524,24 @@ fn open_from_store_with_policy(
     let profiles = profile_rows.iter().map(profile_summary).collect();
 
     // ---- the workspace
-    let mine: Vec<_> = client
-        .workspaces()?
-        .into_iter()
-        .filter(|w| w.owner == profile_row.id)
-        .collect();
+    // A removal mark takes precedence even over healthy local bytes. Opening
+    // never abandons the attempt; the host presents its recovery choices.
+    let removing = client.profile_removal(profile_row.id)?.is_some();
+    let mine = if removing {
+        Vec::new()
+    } else {
+        eligible_workspaces(client.workspace_authority(profile_row.id)?)
+    };
     let workspace_row = match choose_workspace(&mine, wanted, selected_profile.is_some()).cloned() {
         Some(workspace) => Some(workspace),
-        None if create_workspace_if_empty => {
-            Some(client.create_workspace(profile_row.id, "My Workspace")?)
+        None if !removing && ensure_local_workspace && profile_row.account.is_none() => {
+            match client.ensure_live_workspace(profile_row.id, "My Workspace")? {
+                koru_store_core::service::EnsuredWorkspace::Active { workspace, .. }
+                | koru_store_core::service::EnsuredWorkspace::Created { workspace } => {
+                    Some(workspace)
+                }
+                _ => None,
+            }
         }
         None => None,
     };
@@ -587,6 +610,29 @@ fn open_from_store_with_policy(
         current,
         has_workspace: workspace_row.is_some(),
     }))
+}
+
+/// A listing is navigation furniture, not evidence that content can be opened.
+/// A candidate needing repair stays in the waiting flow until Store selection
+/// has acknowledged the repair; an unapplied/recovered value never opens.
+fn eligible_workspaces(
+    rows: Vec<koru_store_core::service::WorkspaceAuthority>,
+) -> Vec<koru_store_core::model::Workspace> {
+    rows.into_iter()
+        .filter(|row| {
+            !row.listing_differs
+                && matches!(
+                    row.authority,
+                    koru_store_core::service::WorkspaceAuthorityState::Read {
+                        applied: true,
+                        archived: false,
+                        deleted_at: None,
+                        ..
+                    }
+                )
+        })
+        .map(|row| row.workspace)
+        .collect()
 }
 
 // Explicit Profile navigation follows its list. Ordinary startup still honors

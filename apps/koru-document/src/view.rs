@@ -291,7 +291,7 @@ impl View for BuiltInDocument {
                 };
             }
             let rows = self.menu_shape();
-            let vp = self.editor.view.viewport;
+            let vp = self.menu_viewport();
             // Menu owns the cursor everywhere while open — not only over the
             // panel — matching mouse_move, which no longer falls through.
             return match open.menu().item_at(&rows, vp, x, y) {
@@ -625,22 +625,37 @@ impl View for BuiltInDocument {
             files.len(),
             files.iter().map(|(_, n)| n.as_str()).collect::<Vec<_>>()
         );
+        let at = self.editor.view.attachment_at.take();
         let Some((first, rest)) = files.split_first() else {
             return;
         };
-        let put =
-            |ws: &mut WorkspaceDoc, target: NodeId, file: koru_core::DocumentId, label: &str| {
-                let attr = koru_core::Attr::labelled(
-                    "attachment",
-                    koru_core::AttrValue::Ref(koru_core::Ref::in_doc(
-                        NodeId::from_uuid(file.as_uuid()),
-                        koru_core::DocRef::Document(file),
-                    )),
-                    label,
-                );
-                ws.set_text(target, "").is_ok() && ws.insert_pill(target, 0, &attr).is_ok()
-            };
-        if !put(ws, node, first.0, &first.1) {
+        let put = |ws: &mut WorkspaceDoc,
+                   target: NodeId,
+                   at: usize,
+                   file: koru_core::DocumentId,
+                   label: &str| {
+            let attr = koru_core::Attr::labelled(
+                "attachment",
+                koru_core::AttrValue::Ref(koru_core::Ref::in_doc(
+                    NodeId::from_uuid(file.as_uuid()),
+                    koru_core::DocRef::Document(file),
+                )),
+                label,
+            );
+            ws.insert_pill(target, at, &attr).is_ok()
+        };
+        // **The row keeps its words.** The typed command was taken out when
+        // it was chosen (`attachment_at` is where it stood); the pill goes
+        // there, or at the end of whatever the row says when nothing
+        // recorded a place. Wiping the row first — the old recipe — took a
+        // sentence away with its `/attach` (acceptance round 2).
+        let len = ws
+            .read(node)
+            .ok()
+            .and_then(|n| n.content.as_text().map(str::len))
+            .unwrap_or(0);
+        let at = at.map_or(len, |at| at.min(len));
+        if !put(ws, node, at, first.0, &first.1) {
             return;
         }
         let mut after = node;
@@ -651,7 +666,7 @@ impl View for BuiltInDocument {
             let Ok(row) = ws.insert_after(after, para) else {
                 break;
             };
-            if !put(ws, row, *file, label) {
+            if !put(ws, row, 0, *file, label) {
                 break;
             }
             after = row;
@@ -660,11 +675,11 @@ impl View for BuiltInDocument {
         self.editor.reflow();
     }
 
-    fn attachment_cancelled(&mut self, ws: &mut WorkspaceDoc, node: NodeId) {
+    /// Nothing to undo on the row: the typed command was taken out when it
+    /// was chosen, and what the row said besides is the person's.
+    fn attachment_cancelled(&mut self, _ws: &mut WorkspaceDoc, node: NodeId) {
         koru_workspace_host::attach_debug!("document attachment_cancelled node={node:?}");
-        let _ = ws.set_text(node, "");
-        self.editor.body.rebuild(ws);
-        self.editor.reflow();
+        self.editor.view.attachment_at = None;
     }
 
     fn take_wants_file_action(
@@ -1175,10 +1190,13 @@ impl View for BuiltInDocument {
         let chrome = self.window_chrome();
         let bubble = self.context_toolbar_panel().or_else(|| self.bubble_panel());
         let tooltip = self.bubble_tooltip_progress();
-        let placeholder = body_placeholder(
-            koru_dictation::available(),
-            koru_keys::show_hint(koru_keys::ShortcutId::Dictate, koru_keys::Section::Guide),
-        );
+        let placeholder = match &self.body_placeholder {
+            Some(own) => own.clone(),
+            None => body_placeholder(
+                koru_dictation::available(),
+                koru_keys::show_hint(koru_keys::ShortcutId::Dictate, koru_keys::Section::Guide),
+            ),
+        };
         frame(
             scene,
             root,
@@ -1219,14 +1237,46 @@ impl View for BuiltInDocument {
         if self.viewer.is_some() {
             return;
         }
+        // An embedded view's menu is its host's to draw, after everything
+        // else on the host's page, so it floats over the rows below the band
+        // rather than being cut at the band's edge.
+        if self.editor.view.embedded.is_none() {
+            self.draw_menu(scene, root, ws);
+        }
+    }
+}
 
-        // An open menu paints last, over the bubble it hangs from and over the
-        // rows — the same reason the list flyout used to.
+impl BuiltInDocument {
+    /// The viewport an open menu is placed and hit-tested in: the view's
+    /// own, or for an embedded view the host's page as the editor's
+    /// `Embedded::panels` describes it — so a menu opened on a note's last
+    /// line opens downwards over the rows rather than being folded into the
+    /// band.
+    pub(crate) fn menu_viewport(&self) -> (f32, f32) {
+        match self.editor.view.embedded {
+            Some(embedded) => (
+                embedded.panels.x + embedded.panels.w,
+                embedded.panels.y + embedded.panels.h,
+            ),
+            None => self.editor.view.viewport,
+        }
+    }
+
+    /// Whether this view's own menu — a right-click's, the page menu — is
+    /// open.
+    pub fn menu_open(&self) -> bool {
+        self.menu.is_some()
+    }
+
+    /// The open menu, if any, last and over everything: the bubble it hangs
+    /// from and the rows — the same reason the list flyout used to. A host
+    /// embedding this view calls it with the host's other floating panels.
+    pub fn draw_menu(&mut self, scene: &mut Scene, root: Affine, ws: &WorkspaceDoc) {
         let Some(open) = self.menu else {
             return;
         };
         let rows = self.menu_rows(ws);
-        let vp = self.editor.view.viewport;
+        let vp = self.menu_viewport();
         let swatches = crate::page_menu::swatch_colors();
         let engine = &mut self.editor.view.engine;
         // Only the page menu's width rows carry leading art (a little page
@@ -1255,9 +1305,7 @@ impl View for BuiltInDocument {
             );
         }
     }
-}
 
-impl BuiltInDocument {
     /// Pasted images become new blocks at the target the editor recorded, one
     /// each, in the order the clipboard reported them. The whole paste is one
     /// undo group, and one `rebuild` + `reflow` — N images must not cost N

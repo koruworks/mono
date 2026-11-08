@@ -175,6 +175,9 @@ pub enum WelcomeWant {
     /// *Run an agent in a terminal* — the `+` menu's list of agents, at the
     /// pointer.
     Agents,
+    /// *Add Koru to your app menu* — Linux's desktop entry, written by the
+    /// container, which ticks the row once it is there.
+    AddToAppMenu,
 }
 
 /// Who the page greets and whose page it is.
@@ -442,6 +445,8 @@ impl WelcomeView {
                     self.wants.push(WelcomeWant::Reminders);
                     self.tick(row);
                 }
+                // Not ticked here: a write that fails must leave it unticked.
+                RowId::AppMenu => self.wants.push(WelcomeWant::AddToAppMenu),
                 RowId::Phone | RowId::Computer => {
                     self.wants.push(WelcomeWant::LinkDevice);
                     self.tick(row);

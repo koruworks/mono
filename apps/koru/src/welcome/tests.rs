@@ -68,12 +68,36 @@ fn key(view: &mut WelcomeView, named: NamedKey, mods: ModifiersState) -> bool {
 
 // --------------------------------------------------------- what is counted
 
+/// *Your first five minutes* counts five rows, and Linux's app-menu row too.
+fn first_minutes() -> usize {
+    5 + usize::from(koru_autostart::app_menu::SUPPORTED)
+}
+
+/// **Linux's app-menu row**: on the page only where there is an app menu to
+/// add Koru to, and ticked by the container once the entry is written, never
+/// by the press, so a write that failed leaves it open.
+#[test]
+fn the_app_menu_row_asks_the_container_and_does_not_tick_itself() {
+    assert_eq!(
+        Section::FirstMinutes.rows().contains(&RowId::AppMenu),
+        koru_autostart::app_menu::SUPPORTED
+    );
+    assert_eq!(RowId::from_key("app-menu"), Some(RowId::AppMenu));
+    let mut view = page();
+    view.activate(Target::Row(RowId::AppMenu));
+    assert_eq!(view.take_wants(), vec![WelcomeWant::AddToAppMenu]);
+    assert!(!view.is_done(RowId::AppMenu));
+    assert!(view.take_newly_done().is_empty());
+    view.set_done(["app-menu"]);
+    assert!(view.is_done(RowId::AppMenu));
+}
+
 #[test]
 fn only_rows_with_an_action_tick_and_only_checklist_rows_count() {
     let view = page();
     assert_eq!(
         view.progress_of(Section::FirstMinutes),
-        (0, 5),
+        (0, first_minutes()),
         "Learn your way around is off the page, so not counted"
     );
     assert_eq!(
@@ -100,6 +124,7 @@ fn only_rows_with_an_action_tick_and_only_checklist_rows_count() {
             "documents",
             "files",
             "learn",
+            "app-menu",
             "reminder",
             "feedback",
             "phone",
@@ -131,7 +156,9 @@ fn the_header_counts_and_a_finished_card_stays_open() {
             section.rows.len(),
         )
     };
-    assert_eq!(first(&mut view), (Some("0 of 5 done".into()), 5));
+    let count = first_minutes();
+    let done = |n| Some(format!("{n} of {count} done"));
+    assert_eq!(first(&mut view), (done(0), count));
     assert!(
         laid(&mut view).sections[1].progress.is_none(),
         "Connect your devices has no count"
@@ -139,12 +166,12 @@ fn the_header_counts_and_a_finished_card_stays_open() {
 
     // A tick stored for a row that is off the page counts for nothing.
     view.set_done(["first-document", "documents", "files", "learn"]);
-    assert_eq!(first(&mut view), (Some("3 of 5 done".into()), 5));
+    assert_eq!(first(&mut view), (done(3), count));
 
-    view.set_done(["reminder", "feedback"]);
+    view.set_done(["reminder", "feedback", "app-menu"]);
     assert_eq!(
         first(&mut view),
-        (Some("5 of 5 done".into()), 5),
+        (done(count), count),
         "all counted rows done: the card keeps its rows"
     );
 

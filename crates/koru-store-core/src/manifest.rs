@@ -331,6 +331,28 @@ impl Manifest {
         Ok(())
     }
 
+    /// Change the synced pin without rewriting independent appearance fields.
+    pub fn set_pinned(&self, pinned: bool) -> Result<()> {
+        self.writable()?;
+        self.doc
+            .get_map(C_META)
+            .insert(K_PINNED, pinned)
+            .map_err(loro_failed)?;
+        self.doc.commit();
+        Ok(())
+    }
+
+    /// Change lifecycle without rewriting independent appearance fields.
+    pub fn set_archived(&self, archived: bool) -> Result<()> {
+        self.writable()?;
+        self.doc
+            .get_map(C_META)
+            .insert(K_ARCHIVED, archived)
+            .map_err(loro_failed)?;
+        self.doc.commit();
+        Ok(())
+    }
+
     pub fn set_workspace_deleted_at(&self, deleted_at: Option<Timestamp>) -> Result<()> {
         self.writable()?;
         let meta = self.doc.get_map(C_META);

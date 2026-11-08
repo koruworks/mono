@@ -257,7 +257,16 @@ fn retries_never_rebind_existing_profiles_or_restore_removed_ones() {
             .code,
         Code::ProfileAccountConflict
     );
-    store.remove_profile_local(id, at()).unwrap();
+    let mark = store
+        .begin_profile_removal(
+            id,
+            koru_store_core::profile_removal::RemovalKind::Local,
+            at(),
+        )
+        .unwrap();
+    store
+        .remove_profile_local(id, Some(mark.attempt), at())
+        .unwrap();
     assert_eq!(
         store
             .provision_account_profile(id, binding(1), "Work", Locale::default(), at())

@@ -93,6 +93,11 @@ use super::{Hit, OnboardingView, PURPOSES, Purpose, Screen, TEMPLATES, template_
 /// looking at an inspector can tell one screen's controls from the next.
 const FORM: &str = "onb";
 
+fn next_screen_instance() -> u64 {
+    static NEXT_SCREEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1 << 32);
+    NEXT_SCREEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
 /// The parts of the first-run window. Keywords chosen by the code, never a
 /// label and never an index: §5's *renaming, reordering or translating must
 /// not change the identity of a surviving control*.
@@ -324,6 +329,7 @@ impl OnboardingView {
     /// folded in.
     pub fn semantics_revision(&self) -> u64 {
         let mut rev = Revision::new();
+        rev.u64(self.screen_instance);
         rev.str(match self.screen {
             Screen::Entry => "entry",
             Screen::Browser => "browser",
@@ -400,7 +406,13 @@ impl OnboardingView {
     ) -> Vec<SemanticNode> {
         if self.screen_shown != Some(self.screen) {
             self.screen_shown = Some(self.screen);
-            self.screen_instance = self.screen_instance.wrapping_add(1);
+            // Embedded forms can be closed and recreated in the same tab.
+            // A new form must not reuse a departed form's control locators.
+            self.screen_instance = if self.embedded {
+                next_screen_instance()
+            } else {
+                self.screen_instance.wrapping_add(1)
+            };
         }
         let cx = Context {
             window,
@@ -418,7 +430,7 @@ impl OnboardingView {
             return vec![
                 SemanticNode::new(cx.at(parts::APPEARANCE), Role::Dialog)
                     .with_label(t(cx.lang, Key::A11yFirstRunAppearance))
-                    .with_bounds(LogicalRect::new(0.0, 0.0, self.viewport.0, self.viewport.1))
+                    .with_bounds(self.appearance_area())
                     .modal(),
             ];
         }
@@ -1005,6 +1017,11 @@ impl OnboardingView {
         // copy catches up.
         let (drawn, name) = if finishing {
             ("Finishing...", t(cx.lang, Key::A11yFirstRunCreating))
+        } else if self.creation_conflict {
+            (
+                self.workspace_action_label(),
+                t(cx.lang, Key::ProfileCreationManage),
+            )
         } else {
             ("Create workspace", t(cx.lang, Key::CreateWorkspace))
         };

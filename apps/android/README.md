@@ -618,7 +618,10 @@ passes the public settings the desktop already bakes in:
 | `koruAccountChannel` | `nightly` or `stable`, the same channel segment the desktop uses |
 
 `scripts/release/android-account-config.py` checks those values and prints the
-`-P` arguments. With Cloud off it prints nothing, so `android-check` and a
+`-P` arguments. If validation fails, the release workflow stops before Gradle
+builds the APK. CI runs `python3 scripts/release/test_android_account_config.py`
+to check the validator and the workflow's Bash failure handling. With Cloud
+off it prints nothing, so `android-check` and a
 local build without the properties stay offline. The nightly package is
 `do.koru.app.nightly`. The same job with channel `stable` uses `do.koru.app`.
 The stable tag workflow does not build Android. Signing is the existing release

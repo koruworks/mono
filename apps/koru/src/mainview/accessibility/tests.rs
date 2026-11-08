@@ -38,6 +38,36 @@ fn seated() -> (MainView, Workspace) {
     (v, w)
 }
 
+#[test]
+fn f6_and_rail_arrow_focus_moves_invalidate_the_native_projection() {
+    koru_features::testing::with(koru_features::Features::ALL_OFF, || {
+        let (mut view, mut workspace) = seated();
+        let before = view.semantics_revision();
+        assert!(view.focus_chrome());
+        let lane = view.semantics_revision();
+        assert_ne!(before, lane);
+        let lane_focus = view.accessibility_focus(VIEW);
+        assert!(view.focus_chrome());
+        let rail = view.semantics_revision();
+        assert_ne!(lane, rail);
+        let rail_focus = view.accessibility_focus(VIEW);
+        assert_ne!(lane_focus, rail_focus);
+        assert!(view.chrome_focus_key(
+            &mut workspace.ws,
+            &Key::Named(NamedKey::ArrowDown),
+            None,
+            winit::keyboard::ModifiersState::empty()
+        ));
+        assert_ne!(view.semantics_revision(), rail);
+        assert_ne!(view.accessibility_focus(VIEW), rail_focus);
+        assert!(
+            nodes(&view)
+                .iter()
+                .any(|node| Some(node.occurrence.clone()) == view.accessibility_focus(VIEW))
+        );
+    });
+}
+
 /// The tree this window would publish right now, flattened for searching.
 fn nodes(v: &MainView) -> Vec<SemanticNode> {
     let mut out = Vec::new();
@@ -906,6 +936,46 @@ fn a_change_a_person_can_see_does_change_the_revision() {
     for pair in seen.windows(2) {
         assert_ne!(pair[0], pair[1], "a visible change left the revision alone");
     }
+}
+
+#[test]
+fn folded_workspace_menu_is_published_focused_and_operable() {
+    let (mut v, mut w) = seated();
+    with_rows(&mut v, &["Hidden document"]);
+    let hidden_row = by_role(&v, Role::TreeItem)[0].occurrence;
+    assert!(v.toggle_sidebar());
+    let closed = v.semantics_revision();
+    assert!(v.explore.toggle_workspace_menu());
+    assert_ne!(v.semantics_revision(), closed);
+    let published = nodes(&v);
+    assert!(published.iter().any(|n| n.role == Role::Menu));
+    assert!(!published.iter().any(|n| n.role == Role::TreeItem));
+    assert!(
+        published
+            .iter()
+            .any(|n| Some(n.occurrence) == v.accessibility_focus(VIEW))
+    );
+    assert!(!v.accessibility_action(&mut w.ws, hidden_row, Action::Click, None));
+    let new = published
+        .iter()
+        .find(|n| n.occurrence.part.name() == "new-workspace")
+        .expect("the folded menu offers New workspace")
+        .occurrence;
+    assert!(v.accessibility_action(&mut w.ws, new, Action::Click, None));
+    assert!(!v.explore.popover_open());
+}
+
+#[test]
+fn folded_profile_menu_changes_revision_and_hides_on_close() {
+    let (mut v, _) = seated();
+    assert!(v.toggle_sidebar());
+    let closed = v.semantics_revision();
+    assert!(v.explore.toggle_profile_menu());
+    assert_ne!(v.semantics_revision(), closed);
+    assert!(!by_role(&v, Role::Menu).is_empty());
+    assert!(v.explore.close_popover());
+    assert!(by_role(&v, Role::Menu).is_empty());
+    assert_eq!(v.semantics_revision(), closed);
 }
 
 #[test]

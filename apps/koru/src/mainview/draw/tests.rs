@@ -222,7 +222,7 @@ fn the_rail_ground_runs_under_the_lane_so_no_seam_shows_under_the_mark() {
     let lane_at = records.iter().position(|r| r.name == "KoruLane").unwrap();
     assert!(ground_at < lane_at, "the ground is under the lane");
     // The spacing is the rail's own: the first square where it always was.
-    let squares = view.explore.navigator_mode_rects(view.rail_area());
+    let squares = view.explore.apps_rail_rects(view.rail_area()).workspaces;
     assert_eq!(
         squares[0].1.y as f64,
         band.y0 + crate::panes::sidebar::apps_rail::PAD_TOP as f64

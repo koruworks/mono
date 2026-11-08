@@ -400,6 +400,127 @@ fn a_narrow_tab_puts_the_nav_in_chips_above_the_page() {
 // ------------------------------------------------------------- New profile
 
 #[test]
+fn embedded_creation_scrolls_and_exposes_the_same_fields_and_actions() {
+    use accesskit::{Action, ActionData};
+    use koru_workspace_host::accessibility::{ControlPart, SemanticNode};
+    fn find(node: &SemanticNode, part: &'static str) -> Option<SemanticNode> {
+        if node.occurrence.part == ControlPart::new(part) {
+            return Some(node.clone());
+        }
+        node.children.iter().find_map(|child| find(child, part))
+    }
+    for (width, height) in [(660., 470.), (900., 500.), (1000., 700.)] {
+        let (mut view, _, _) = manage();
+        View::set_viewport(&mut view, width, height);
+        view.show(Page::NewProfile);
+        view.c.with_creation_form(|form| form.show_profile());
+        view.size_creation_form();
+        let mut cx = context();
+        cx.area.w = width;
+        cx.area.h = height;
+        let tree = view.semantics(&cx);
+        let owner = find(&tree, "owner-name").expect("embedded owner field");
+        let name = find(&tree, "profile-name").expect("embedded Profile field");
+        let primary = find(&tree, "primary").unwrap();
+        assert!(name.bounds.unwrap().y + name.bounds.unwrap().h < primary.bounds.unwrap().y);
+        assert!(view.creation_accessibility_action(
+            owner.occurrence,
+            Action::SetValue,
+            Some(&ActionData::Value("Ada".into()))
+        ));
+        assert!(view.creation_accessibility_action(
+            name.occurrence,
+            Action::SetValue,
+            Some(&ActionData::Value("Personal".into()))
+        ));
+        assert!(view.creation_accessibility_action(name.occurrence, Action::Focus, None));
+        let visible = find(&view.semantics(&cx), "profile-name").unwrap();
+        let bounds = visible.bounds.unwrap();
+        let area = view.page_area();
+        assert!(bounds.y >= cx.area.y + area.y);
+        assert!(bounds.y + bounds.h <= cx.area.y + area.y + area.h + 0.01);
+        assert_eq!(view.accessible_focus(&cx), name.occurrence);
+        let form = view.form_rect();
+        assert_eq!(view.form_point(form.x, form.y - view.page_scroll), (0., 0.));
+        view.page_scroll = 0.0;
+        view.pointer = (area.x + area.w * 0.5, area.y + area.h * 0.5);
+        View::scroll_by(&mut view, MouseScrollDelta::LineDelta(0.0, -3.0));
+        assert!(
+            view.page_scroll > 0.0,
+            "the embedded form uses page scrolling"
+        );
+        for _ in 0..8 {
+            key(&mut view, NamedKey::Tab);
+            let focus = view
+                .c
+                .creation_form_mut()
+                .unwrap()
+                .focused_form_rect()
+                .unwrap();
+            let top = view.form_rect().y + focus.y - view.page_scroll;
+            assert!(top >= area.y - 0.01);
+            assert!(top + focus.h <= area.y + area.h + 0.01);
+        }
+        let primary = find(&view.semantics(&cx), "primary").unwrap();
+        assert!(view.creation_accessibility_action(primary.occurrence, Action::Click, None));
+        let workspace_tree = view.semantics(&cx);
+        let workspace_name = find(&workspace_tree, "workspace-name")
+            .unwrap()
+            .bounds
+            .unwrap();
+        let create = find(&workspace_tree, "primary").unwrap().bounds.unwrap();
+        assert!(workspace_name.y + workspace_name.h < create.y);
+        let icon = find(&workspace_tree, "workspace-icon").unwrap();
+        let scroll = view.page_scroll;
+        assert!(view.creation_accessibility_action(icon.occurrence, Action::Click, None));
+        capture(&mut view);
+        assert_eq!(
+            view.page_scroll, scroll,
+            "opening the modal does not scroll its host"
+        );
+        let overlay = find(&view.semantics(&cx), "appearance")
+            .unwrap()
+            .bounds
+            .unwrap();
+        assert_eq!(overlay.x, cx.area.x + area.x);
+        assert_eq!(overlay.y, cx.area.y + area.y);
+        assert_eq!((overlay.w, overlay.h), (area.w, area.h));
+        assert!(key(&mut view, NamedKey::Escape));
+        assert!(
+            !view.creation_accessibility_action(primary.occurrence, Action::Click, None),
+            "departed screen cannot create a workspace"
+        );
+        view.close_creation();
+        view.show(Page::NewProfile);
+        view.c.with_creation_form(|form| form.show_profile());
+        view.semantics(&cx);
+        assert!(!view.creation_accessibility_action(
+            name.occurrence,
+            Action::SetValue,
+            Some(&ActionData::Value("Stale".into()))
+        ));
+    }
+}
+
+#[test]
+fn a_conflicting_profile_create_opens_manage_without_another_creation_request() {
+    let (mut view, personal, _) = manage();
+    view.show(Page::NewProfile);
+    view.delegate(|c| {
+        assert!(c.connected_profile_creation_conflict());
+        c.with_creation_form(|form| {
+            // The conflict offers Open Manage even with the name field empty.
+            form.key(&Key::Named(NamedKey::Tab), None, ModifiersState::SHIFT);
+            form.key(&Key::Named(NamedKey::Tab), None, ModifiersState::SHIFT);
+            form.key(&Key::Named(NamedKey::Enter), None, ModifiersState::empty());
+        });
+        assert!(c.take_profile_creation_request().is_none());
+    });
+    assert!(!view.controller().creating());
+    assert_eq!(view.page(), Some(Page::Profile(personal.id)));
+}
+
+#[test]
 fn the_create_form_is_hosted_beside_the_nav_and_finishing_lands_on_the_profile() {
     let (mut view, _, work) = manage();
     view.show(Page::NewProfile);

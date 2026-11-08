@@ -16,6 +16,7 @@ pub mod explore;
 pub mod ids;
 pub mod markdown;
 pub mod node;
+pub mod pages;
 pub mod profile;
 pub mod query;
 pub mod schema;

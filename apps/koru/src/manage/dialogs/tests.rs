@@ -133,6 +133,8 @@ fn an_unknown_count_removes_by_the_cascade_and_cancel_is_the_default() {
         panic!("the controller's question, as a dialog");
     };
     assert_eq!(confirm.title(), "Remove Local and all its Workspaces?");
+    assert!(!confirm.body().contains("Koru account"));
+    assert!(!confirm.body().contains("hosted Profile"));
     assert_eq!(confirm.default_action(), Some(ConfirmOutcome::Cancel));
     // Enter cancels it, and the controller hears that.
     assert!(key(&mut view, NamedKey::Enter));
@@ -148,6 +150,18 @@ fn an_unknown_count_removes_by_the_cascade_and_cancel_is_the_default() {
     assert!(key(&mut view, NamedKey::Enter));
     assert_eq!(view.c.take_remove_request(), Some((local.id, true)));
     assert!(view.dialog().is_none());
+}
+
+#[test]
+fn account_bound_removal_preserves_the_hosted_recovery_explanation() {
+    let (mut view, _) = synced(Vec::new());
+    press(&mut view, Control::Delete);
+    assert!(key(&mut view, NamedKey::ArrowDown));
+    assert!(key(&mut view, NamedKey::Enter));
+    let Some(Dialog::Remove(confirm)) = view.dialog() else {
+        panic!("remove confirmation");
+    };
+    assert!(confirm.body().contains(REMOVE_HOSTED_BODY));
 }
 
 #[test]

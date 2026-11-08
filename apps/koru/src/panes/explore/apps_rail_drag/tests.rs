@@ -178,7 +178,7 @@ fn the_foot_is_never_carried() {
     testing::with(Features::ALL_ON, || {
         let mut v = ExploreView::new();
         let rects = v.apps_rail_rects(rail());
-        for foot in [rects.help, rects.settings, rects.profile] {
+        for foot in [rects.help, rects.profile] {
             let (x, y) = foot.centre();
             v.apps_rail_mouse_down(rail(), x, y);
             assert!(!v.rail_dragging(), "{foot:?}");

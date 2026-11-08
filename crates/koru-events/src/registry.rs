@@ -1836,6 +1836,17 @@ pub const REGISTRY: &[EventSpec] = &[
               signal and not a second copy of the catalog.",
     },
     EventSpec {
+        name: "profile.removal_changed",
+        version: 1,
+        class: EventClass::Domain,
+        telemetry: TelemetryPolicy::Never,
+        attrs: &[reference_attr(
+            "profile",
+            "The Profile whose local removal coordination changed.",
+        )],
+        doc: "A Profile removal attempt began, stopped, was abandoned, or completed. Emitted after durable catalog commit. Receivers read the current mark; no attempt, names or content cross this local wake.",
+    },
+    EventSpec {
         name: "workspace.catalog.created",
         version: 1,
         class: EventClass::Domain,

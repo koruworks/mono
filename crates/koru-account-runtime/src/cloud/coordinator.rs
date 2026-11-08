@@ -52,6 +52,10 @@ pub(super) struct Coordinator<A: Api, H: Host> {
     admissions: BTreeMap<WorkspaceId, Admission>,
     records: BTreeMap<Uuid, StatusRecord>,
     deferred: Vec<Deferred>,
+    deferred_failure: Option<Failure>,
+    discovery: Option<DiscoveryReceipt>,
+    discovery_counts: BTreeMap<ProfileId, DiscoveryCounts>,
+    discovery_exhausted: bool,
     carried: VecDeque<CloudWorkspaceCandidateV1>,
     /// The verification material, bound to the generation it was read under.
     jwks: Option<(u64, JwksResponseV1)>,
@@ -83,6 +87,10 @@ impl<A: Api, H: Host> Coordinator<A, H> {
             admissions: BTreeMap::new(),
             records: BTreeMap::new(),
             deferred: Vec::new(),
+            deferred_failure: None,
+            discovery: None,
+            discovery_counts: BTreeMap::new(),
+            discovery_exhausted: false,
             carried: VecDeque::new(),
             jwks: None,
             pending: false,
@@ -206,6 +214,10 @@ impl<A: Api, H: Host> Coordinator<A, H> {
         self.admissions.clear();
         self.records.clear();
         self.deferred.clear();
+        self.deferred_failure = None;
+        self.discovery = None;
+        self.discovery_counts.clear();
+        self.discovery_exhausted = false;
         self.carried.clear();
         self.jwks = None;
         self.retry_at = None;
@@ -285,6 +297,7 @@ impl<A: Api, H: Host> Coordinator<A, H> {
             retry_at_millis: self.retry_at_millis,
             carried: self.carried.len(),
             sequence: self.sequence,
+            discovery: self.discovery.clone(),
         }
     }
 
@@ -302,6 +315,18 @@ impl<A: Api, H: Host> Coordinator<A, H> {
         };
         self.revision = self.revision.saturating_add(1);
         self.deferred.clear();
+        self.deferred_failure = None;
+        self.discovery_counts.clear();
+        self.discovery_exhausted = false;
+        for candidate in &self.carried {
+            self.discovery_counts
+                .entry(candidate.profile_id)
+                .or_default()
+                .discovered += 1;
+        }
+        if let Some(receipt) = &mut self.discovery {
+            receipt.stale = true;
+        }
         if self.live.is_empty() {
             self.stage = Stage::Connecting;
         }
@@ -326,17 +351,19 @@ impl<A: Api, H: Host> Coordinator<A, H> {
             return;
         }
 
-        let mut cohort = Vec::with_capacity(self.carried.len());
+        let mut cohort = VecDeque::with_capacity(self.carried.len());
         while cohort.len() < MAX_CARRIED_CANDIDATES {
             match self.carried.pop_front() {
-                Some(candidate) => cohort.push(candidate),
+                Some(candidate) => cohort.push_back(candidate),
                 None => break,
             }
         }
 
         let mut admitted = Vec::with_capacity(cohort.len());
-        for candidate in cohort {
+        while let Some(candidate) = cohort.pop_front() {
             if self.cancel.cancelled() {
+                self.carried.push_front(candidate);
+                self.carried.extend(cohort);
                 break;
             }
             let pair = (candidate.profile_id, candidate.workspace_id);
@@ -376,7 +403,7 @@ impl<A: Api, H: Host> Coordinator<A, H> {
                 Ok(Some(admission)) => admitted.push(admission),
                 Ok(None) => {}
                 Err(error) => {
-                    self.defer(pair, error.code());
+                    self.defer(pair, error.clone());
                     failure = Some(merge(failure, error));
                 }
             }
@@ -388,7 +415,7 @@ impl<A: Api, H: Host> Coordinator<A, H> {
             if let Some(dropped) = admitted.pop() {
                 self.defer(
                     (dropped.candidate.profile_id, dropped.candidate.workspace_id),
-                    CLOUD_UNAVAILABLE,
+                    Failure::Unavailable,
                 );
             }
         }
@@ -424,6 +451,12 @@ impl<A: Api, H: Host> Coordinator<A, H> {
                 ]
             })
             .collect();
+        for admission in &admitted {
+            self.discovery_counts
+                .entry(admission.candidate.profile_id)
+                .or_default()
+                .admitted += 1;
+        }
         let Ok(authority) = self.current_authority() else {
             return;
         };
@@ -494,6 +527,10 @@ impl<A: Api, H: Host> Coordinator<A, H> {
             }
             let page = self.authorized(|api, authority| api.discover(authority, after.clone()))?;
             for candidate in page.workspaces {
+                self.discovery_counts
+                    .entry(candidate.profile_id)
+                    .or_default()
+                    .discovered += 1;
                 if candidates.len() >= MAX_CARRIED_CANDIDATES {
                     tracing::warn!(
                         capacity = MAX_CARRIED_CANDIDATES,
@@ -505,7 +542,10 @@ impl<A: Api, H: Host> Coordinator<A, H> {
             }
             match page.next {
                 Some(cursor) => after = Some(cursor),
-                _ => break,
+                None => {
+                    self.discovery_exhausted = true;
+                    break;
+                }
             }
         }
         // Round robin before taking a bounded cohort: a large Profile cannot
@@ -544,7 +584,12 @@ impl<A: Api, H: Host> Coordinator<A, H> {
         Ok(())
     }
 
-    fn defer(&mut self, pair: (ProfileId, WorkspaceId), code: &'static str) {
+    fn defer(&mut self, pair: (ProfileId, WorkspaceId), error: Failure) {
+        let code = error.code();
+        self.deferred_failure = Some(merge(self.deferred_failure.take(), error));
+        let counts = self.discovery_counts.entry(pair.0).or_default();
+        counts.deferred += 1;
+        counts.deferred_code.get_or_insert(code);
         // Which workspace, and why, or the only trace of a deferred dataset
         // is a counter. Ids and a stable code; nothing a person wrote.
         tracing::info!(
@@ -561,6 +606,15 @@ impl<A: Api, H: Host> Coordinator<A, H> {
     }
 
     fn settle(&mut self, clock: &dyn Clock, failure: Option<Failure>) {
+        // A cancelled/replaced pass cannot turn its stale receipt current.
+        if self.cancel.cancelled() || self.current_authority().is_err() {
+            return;
+        }
+        let failure = match self.deferred_failure.take() {
+            Some(deferred) => Some(merge(failure, deferred)),
+            None => failure,
+        };
+        let automatic_retry = failure.as_ref().is_some_and(Failure::automatic);
         match failure {
             None => {
                 self.failures = 0;
@@ -584,6 +638,25 @@ impl<A: Api, H: Host> Coordinator<A, H> {
                 }
             }
         }
+        for counts in self.discovery_counts.values_mut() {
+            counts.carried = 0;
+        }
+        for candidate in &self.carried {
+            self.discovery_counts
+                .entry(candidate.profile_id)
+                .or_default()
+                .carried += 1;
+        }
+        self.discovery = self.authority.as_ref().map(|authority| DiscoveryReceipt {
+            account_id: authority.owner.account,
+            pass: self.revision,
+            stale: false,
+            exhausted: self.discovery_exhausted,
+            profiles: self.discovery_counts.clone(),
+            failure_code: self.failure_code,
+            retry_at_millis: self.retry_at_millis,
+            automatic_retry,
+        });
     }
 
     /// Steps 3 to 7 for one discovery pair. `Ok(None)` means the pass was

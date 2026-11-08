@@ -10,6 +10,8 @@ use std::fmt;
 
 use uuid::Uuid;
 
+use crate::tasks::Bucket;
+
 /// Declares a newtype over `Uuid` with the usual conversions.
 macro_rules! id_type {
     ($(#[$doc:meta])* $name:ident, $prefix:literal) => {
@@ -141,6 +143,131 @@ impl DocumentId {
     /// nil so that a reader who does look at one sees *unknown* rather than a
     /// plausible-looking id naming nothing.
     pub const UNIDENTIFIED: Self = Self(Uuid::nil());
+}
+
+id_type!(
+    /// One permanent deletion of a page document
+    /// ([`pages::deletion`](crate::pages::deletion)). Fresh per deletion: a
+    /// document deleted, recovered and deleted again has two events, and a
+    /// Recover that names the first says nothing about the second.
+    EventId,
+    "event"
+);
+id_type!(
+    /// One *Keep deleted* decision about a deletion event. Fresh per press,
+    /// so the decisions about an event form a set that only grows and a
+    /// retry of the same press is the same decision.
+    DecisionId,
+    "decision"
+);
+
+// ------------------------------------------------------- page documents
+
+/// The namespace every `V1` page-document id and genesis peer is derived in
+/// ([ADR-000-pagedocumentidentity]).
+///
+/// **`V1` names a genesis contract, not a format.** The namespace is what
+/// makes `page_document_id` and `genesis_peer` the functions they are, and
+/// [`WorkspaceDoc::page_genesis`](crate::schema::WorkspaceDoc::page_genesis)
+/// writes the same operations under the same op ids on every device for an
+/// id minted here. A change to what genesis writes would put two different
+/// contents under one op id — which no amendment can make safe — so such a
+/// change is a `V2`: a new namespace, therefore new ids, and every `V1`
+/// document keeps `V1`.
+///
+/// [ADR-000-pagedocumentidentity]: ../../../docs/decisions/ADR-000-pagedocumentidentity.md
+pub const PAGE_DOCUMENT_NS_V1: Uuid = uuid::uuid!("69e0aede-4a7b-439c-8912-c36bb3cb2d92");
+
+/// Which Tasks page a page document is the document of.
+///
+/// A list, by its id, or an agenda bucket, by its token — never by a name or a
+/// localized label, both of which change. The storage form is the key of the
+/// page's record in the workspace system document and the middle of the
+/// string a page document's id is derived from.
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub enum PageKey {
+    List(ListId),
+    Bucket(Bucket),
+}
+
+impl PageKey {
+    /// `list:<uuid>` or `bucket:<token>`.
+    pub fn to_storage(&self) -> String {
+        match self {
+            Self::List(id) => format!("list:{}", id.to_storage()),
+            Self::Bucket(bucket) => format!("bucket:{}", bucket.as_str()),
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        if let Some(id) = s.strip_prefix("list:") {
+            return ListId::parse(id).map(Self::List);
+        }
+        let token = s.strip_prefix("bucket:")?;
+        Bucket::ALL
+            .into_iter()
+            .find(|bucket| bucket.as_str() == token)
+            .map(Self::Bucket)
+    }
+}
+
+impl fmt::Display for PageKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.to_storage())
+    }
+}
+
+/// The id of generation `generation` of `page`'s document in `workspace`.
+///
+/// **The one id in Koru that is derived rather than minted** (A1 of the
+/// page-document plan; the exception [ADR-39]'s rule now carries). Two
+/// devices that each start writing above the same list while offline have no
+/// way to agree on a random id, and copying one document into the other is
+/// not a CRDT merge; deriving the id is what lets both write to *one*
+/// document from the first keystroke, with the genesis making the two starts
+/// identical rather than merely mergeable.
+///
+/// `UUIDv5(PAGE_DOCUMENT_NS_V1, "{workspace}|{page}|{generation}")`, with the
+/// ids in their hyphenated storage form and the generation in decimal. A
+/// replacement after a deletion is the next generation, so it is a different
+/// document with a different id.
+///
+/// [ADR-39]: ../../../docs/decisions/ADR-026-050.md#adr-39-identity--identity-is-client-minted-document-scoped-and-cloud-ready
+pub fn page_document_id(workspace: WorkspaceId, page: PageKey, generation: u64) -> DocumentId {
+    let name = format!("{workspace}|{page}|{generation}");
+    DocumentId::from_uuid(Uuid::new_v5(&PAGE_DOCUMENT_NS_V1, name.as_bytes()))
+}
+
+/// The Loro peer a page document's genesis is written under, and nothing else
+/// ever is.
+///
+/// Loro op ids are `(peer, counter)`, so two replicas writing the same
+/// operations under the same peer produce the same op ids, and importing
+/// one's genesis into the other is a no-op. Loro's own warning — never reuse
+/// a peer across concurrent writers — is exactly why this peer is used for
+/// the genesis alone: the genesis is the one write whose content every
+/// writer agrees on in advance. [`WorkspaceDoc::page_genesis`] moves off it
+/// before the document can take an edit.
+///
+/// The first eight bytes of `UUIDv5(PAGE_DOCUMENT_NS_V1, "genesis|{document}")`
+/// as a big-endian integer; `u64::MAX` is Loro's reserved peer, so that one
+/// value steps down by one. Loro's random peers span the whole range, so
+/// there is no reserved band to keep this out of — the guard is that no
+/// writer ever has two documents under one peer, which a derived peer per
+/// document keeps.
+///
+/// [`WorkspaceDoc::page_genesis`]: crate::schema::WorkspaceDoc::page_genesis
+pub fn genesis_peer(document: DocumentId) -> u64 {
+    let id = Uuid::new_v5(
+        &PAGE_DOCUMENT_NS_V1,
+        format!("genesis|{document}").as_bytes(),
+    );
+    let mut bytes = [0u8; 8];
+    bytes.copy_from_slice(&id.as_bytes()[..8]);
+    match u64::from_be_bytes(bytes) {
+        u64::MAX => u64::MAX - 1,
+        peer => peer,
+    }
 }
 
 /// Which document holds a node.

@@ -21,7 +21,7 @@
 //! Deleted workspaces are removed automatically.
 //! ```
 //!
-//! **The data is a [`WorkspacesController`]**, the same state machine the
+//! **The data is a [`WorkspacesController`](koru_workspaces_ui::WorkspacesController)**, the same state machine the
 //! Workspaces tab drew: it reads the including-deleted catalog through its own
 //! vouched link, owns the lifecycle and move confirmations, and says why a
 //! control cannot be pressed. This file only places what it says for one
@@ -45,7 +45,9 @@ use koru_draw::tile::Tile;
 use koru_ui::button::{ActionButton, ActionStyle};
 use koru_ui::card::Card;
 use koru_ui::text_paragraph::KoruTextParagraph;
-use koru_workspaces_ui::{Action, Group, Row as Catalog, WorkspacesController};
+#[cfg(test)]
+use koru_workspaces_ui::WorkspacesController;
+use koru_workspaces_ui::{Action, Group, Row as Catalog};
 
 #[cfg(test)]
 mod tests;
@@ -197,33 +199,25 @@ fn now_ms() -> i64 {
 }
 
 impl ManageView {
-    /// The Workspaces controller, for the window's workspace menu: its rows,
-    /// its reasons and its destinations.
-    pub fn workspaces(&self) -> &WorkspacesController {
-        &self.w
+    /// Inspect the shared controller in a page or container test.
+    #[cfg(test)]
+    pub fn workspaces(&self) -> std::cell::Ref<'_, WorkspacesController> {
+        self.w.borrow()
     }
 
-    /// Run `call` on the Workspaces controller — a menu verb the window
-    /// carries in — and lay the page out again.
+    /// Apply a fixture change to the controller and reproject the page.
+    #[cfg(test)]
     pub fn with_workspaces<R>(&mut self, call: impl FnOnce(&mut WorkspacesController) -> R) -> R {
-        let result = call(&mut self.w);
+        let result = call(&mut self.w.borrow_mut());
         self.relayout();
         self.clamp_scroll();
         result
     }
 
-    /// Take whatever the controller's link answered. Only while a Profile's
-    /// page is showing: nothing else here draws a workspace.
-    pub fn poll_workspaces(&mut self) -> bool {
-        if !matches!(self.page, Some(Page::Profile(_))) && !self.w.is_confirming() {
-            return false;
-        }
-        let moved = self.w.poll();
-        if moved {
-            self.relayout();
-            self.clamp_scroll();
-        }
-        moved
+    /// Reproject the shared controller after the window drains its answers.
+    pub fn refresh_workspaces(&mut self) {
+        self.relayout();
+        self.clamp_scroll();
     }
 
     /// The workspace this window has open, for its *Open* tag.
@@ -247,7 +241,7 @@ impl ManageView {
                 name: profile.name.clone(),
             })
             .collect();
-        self.w.adopt_profiles(&rows)
+        self.w.borrow_mut().adopt_profiles(&rows)
     }
 
     /// Bring the Workspaces section to the top of the page — the switcher's
@@ -261,7 +255,7 @@ impl ManageView {
 
     /// The workspace `F2` renames: the row selected on this page.
     pub fn selected_workspace(&self) -> Option<koru_core::WorkspaceId> {
-        let selected = self.w.selected()?;
+        let selected = self.w.borrow().selected()?;
         self.laid
             .workspaces
             .as_ref()
@@ -303,7 +297,7 @@ impl ManageView {
             | Control::RestoreWorkspace(id) => id,
             _ => return None,
         };
-        self.w.set_selected(Some(id));
+        self.w.borrow_mut().set_selected(Some(id));
         self.page_focus = Some(Control::WorkspaceRow(id));
         self.focus = None;
         Some(app_workspace(id))
@@ -312,10 +306,15 @@ impl ManageView {
     /// Open a workspace from its row — a double-click, or Enter on it — when
     /// the controller allows it (a workspace in the trash is restored first).
     pub(super) fn open_row(&mut self, id: Wid) -> bool {
-        let Some(row) = self.w.row(id).cloned() else {
+        let Some(row) = self.w.borrow().row(id).cloned() else {
             return false;
         };
-        if self.w.reason_for(&Action::Open(id), &row).is_some() {
+        if self
+            .w
+            .borrow()
+            .reason_for(&Action::Open(id), &row)
+            .is_some()
+        {
             return true;
         }
         self.requests
@@ -340,6 +339,7 @@ impl ManageView {
         let p = theme::p();
         let rows: Vec<(Group, Catalog)> = self
             .w
+            .borrow()
             .rows_of(owner)
             .into_iter()
             .map(|(group, row)| (group, row.clone()))
@@ -367,7 +367,12 @@ impl ManageView {
                 label: IMPORT.into(),
                 look: Look::Action(ActionStyle::Ghost),
             });
-            if self.w.reason_for(&Action::Import, &blank).is_some() {
+            if self
+                .w
+                .borrow()
+                .reason_for(&Action::Import, &blank)
+                .is_some()
+            {
                 disabled.push(Control::ImportWorkspaces);
             }
         }
@@ -377,7 +382,12 @@ impl ManageView {
             label: NEW.into(),
             look: Look::Action(ActionStyle::Secondary),
         });
-        if self.w.reason_for(&Action::Create, &blank).is_some() {
+        if self
+            .w
+            .borrow()
+            .reason_for(&Action::Create, &blank)
+            .is_some()
+        {
             disabled.push(Control::NewWorkspace);
         }
         let caption = theme::role::meta();
@@ -396,7 +406,7 @@ impl ManageView {
         let mut cy = y + band + Card::TITLE_GAP;
 
         // The controller's notice (S24): its words, then Retry and Dismiss.
-        let notice = self.w.notice().map(|notice| {
+        let notice = self.w.borrow().notice().map(|notice| {
             let mut answers = Vec::new();
             if notice.is_retryable() {
                 answers.push((Control::NoticeRetry, RETRY));
@@ -434,8 +444,8 @@ impl ManageView {
         // What is true of the whole list: nothing answering, still looking,
         // or nothing there.
         let mut quiet = Vec::new();
-        let availability = self.w.availability();
-        let said = if let Some(reason) = self.w.unavailable_reason() {
+        let availability = self.w.borrow().availability();
+        let said = if let Some(reason) = self.w.borrow().unavailable_reason() {
             Some(reason)
         } else if availability.is_loading() && rows.is_empty() {
             Some(LOADING.to_owned())
@@ -467,21 +477,21 @@ impl ManageView {
 
         // *Show archived (n)* and *Show trash (n)*, each only while there is
         // something to show or its list is open.
-        let archived_n = self.w.count_of(owner, Group::Archived);
-        let trash_n = self.w.count_of(owner, Group::Deleted);
+        let archived_n = self.w.borrow().count_of(owner, Group::Archived);
+        let trash_n = self.w.borrow().count_of(owner, Group::Deleted);
         let mut x = column.x;
         let mut links = false;
         for (control, open, n, show, hide) in [
             (
                 Control::ShowArchived,
-                self.w.show_archived(),
+                self.w.borrow().show_archived(),
                 archived_n,
                 "Show archived",
                 "Hide archived",
             ),
             (
                 Control::ShowTrash,
-                self.w.show_trash(),
+                self.w.borrow().show_trash(),
                 trash_n,
                 "Show trash",
                 "Hide trash",
@@ -508,14 +518,11 @@ impl ManageView {
             cy += meta_line + LINE_GAP;
         }
 
+        let show_archived = self.w.borrow().show_archived();
+        let show_trash = self.w.borrow().show_trash();
         for (kind, open, group, label) in [
-            (
-                ListKind::Archived,
-                self.w.show_archived(),
-                Group::Archived,
-                ARCHIVED,
-            ),
-            (ListKind::Trash, self.w.show_trash(), Group::Deleted, TRASH),
+            (ListKind::Archived, show_archived, Group::Archived, ARCHIVED),
+            (ListKind::Trash, show_trash, Group::Deleted, TRASH),
         ] {
             if !open {
                 continue;
@@ -547,7 +554,7 @@ impl ManageView {
                     ListKind::Archived => Action::Archive(row.id, false),
                     _ => Action::Restore(row.id),
                 };
-                self.w.reason_for(&action, row)
+                self.w.borrow().reason_for(&action, row)
             });
             let mut notes: Vec<String> = refused.into_iter().collect();
             if kind == ListKind::Trash {
@@ -646,7 +653,7 @@ impl ManageView {
                     ),
                     _ => (Control::RestoreWorkspace(id), RESTORE, Action::Restore(id)),
                 };
-                if self.w.reason_for(&action, catalog).is_some() {
+                if self.w.borrow().reason_for(&action, catalog).is_some() {
                     disabled.push(control);
                 }
                 let w =
@@ -674,7 +681,7 @@ impl ManageView {
         });
         // Tags, right to left before the trailing control.
         let mut tag_names = Vec::new();
-        if kind == ListKind::Active && catalog.pinned {
+        if kind == ListKind::Active && self.w.borrow().effective_pinned(catalog) {
             tag_names.push(PINNED_TAG);
         }
         if kind == ListKind::Active
@@ -705,7 +712,9 @@ impl ManageView {
             .min(room);
         let name_line = name_style.metrics.line_height;
         let sub_line = theme::role::meta().metrics.line_height;
-        let sub_text = catalog.last_opened_at.map(|then| opened_line(then, now));
+        let sub_text = catalog
+            .authority_reason(crate::format::lang())
+            .or_else(|| catalog.last_opened_at.map(|then| opened_line(then, now)));
         let block = name_line + sub_text.as_ref().map_or(0.0, |_| sub_line);
         let top = rect.y + (ROW_H - block) * 0.5;
         let name = Rect::new(text_x, top, name_w, name_line);
@@ -744,11 +753,11 @@ impl ManageView {
             }
             // A click selects; a double-click or Enter opens.
             Control::WorkspaceRow(id) => {
-                self.w.set_selected(Some(id));
+                self.w.borrow_mut().set_selected(Some(id));
                 true
             }
             Control::WorkspaceMore(id) => {
-                self.w.set_selected(Some(id));
+                self.w.borrow_mut().set_selected(Some(id));
                 let Some(rect) = self.laid.placed(control).map(|placed| placed.rect) else {
                     return Some(false);
                 };
@@ -759,27 +768,27 @@ impl ManageView {
                 true
             }
             Control::ShowArchived => {
-                self.w.perform(Action::ShowArchived);
+                self.w.borrow_mut().perform(Action::ShowArchived);
                 true
             }
             Control::ShowTrash => {
-                self.w.perform(Action::ShowTrash);
+                self.w.borrow_mut().perform(Action::ShowTrash);
                 true
             }
             Control::Unarchive(id) => {
-                self.w.perform(Action::Archive(id, false));
+                self.w.borrow_mut().perform(Action::Archive(id, false));
                 true
             }
             Control::RestoreWorkspace(id) => {
-                self.w.perform(Action::Restore(id));
+                self.w.borrow_mut().perform(Action::Restore(id));
                 true
             }
             Control::NoticeRetry => {
-                self.w.perform(Action::Retry);
+                self.w.borrow_mut().perform(Action::Retry);
                 true
             }
             Control::NoticeDismiss => {
-                self.w.perform(Action::DismissNotice);
+                self.w.borrow_mut().perform(Action::DismissNotice);
                 true
             }
             _ => return None,
@@ -787,34 +796,6 @@ impl ManageView {
         self.relayout();
         self.clamp_scroll();
         Some(done)
-    }
-
-    /// The controller's confirmation — archive, delete or move — takes every
-    /// key while it is up.
-    pub(super) fn workspace_dialog_key(&mut self, key: &Key) -> Option<bool> {
-        let outcome = self.w.dialog_mut()?.key(key);
-        self.w.answer(outcome);
-        self.relayout();
-        Some(true)
-    }
-
-    /// And every press: one outside the panel is consumed and answers
-    /// nothing, as the Workspaces tab's was.
-    pub(super) fn workspace_dialog_mouse_down(&mut self, x: f32, y: f32) -> Option<bool> {
-        let viewport = self.viewport;
-        let outcome = self
-            .w
-            .dialog_mut()?
-            .mouse_down(&mut self.engine, viewport, x, y);
-        self.w.answer(outcome);
-        self.relayout();
-        Some(true)
-    }
-
-    pub(super) fn workspace_dialog_mouse_move(&mut self, x: f32, y: f32) -> Option<bool> {
-        let viewport = self.viewport;
-        let dialog = self.w.dialog_mut()?;
-        Some(dialog.mouse_move(&mut self.engine, viewport, x, y))
     }
 
     // ---- paint ---------------------------------------------------------------
@@ -833,8 +814,12 @@ impl ManageView {
             scene::rect(r.x, r.y, r.w, r.h),
             |rec| {
                 rec.property("count", section.count.1.clone(), "rows_of(profile)");
-                rec.property("show archived", self.w.show_archived(), "controller");
-                rec.property("show trash", self.w.show_trash(), "controller");
+                rec.property(
+                    "show archived",
+                    self.w.borrow().show_archived(),
+                    "controller",
+                );
+                rec.property("show trash", self.w.borrow().show_trash(), "controller");
                 rec.property(
                     "implementation",
                     "apps/koru manage::workspaces",
@@ -968,7 +953,7 @@ impl ManageView {
         let control = Control::WorkspaceRow(row.id);
         let hovered = self.page_hover == Some(control);
         let focused = self.page_focus == Some(control);
-        let selected = self.w.selected() == Some(row.id);
+        let selected = self.w.borrow().selected() == Some(row.id);
         let _row = inspect::scope(
             "Manage workspace row",
             "part",

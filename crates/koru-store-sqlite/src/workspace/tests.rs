@@ -3,9 +3,12 @@
 use super::*;
 use koru_store_core::fixtures::{BIDI_LINE, SAMPLES, UNICODE_FILENAME};
 
+mod availability;
 mod client_receive;
 mod cloud_origin;
 mod commit_retry;
+mod inspection;
+mod preparation;
 
 #[test]
 fn missing_position_repair_preserves_content_and_existing_positions() {

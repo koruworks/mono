@@ -33,15 +33,16 @@ pub use koru_store_wire::search::{
 };
 pub use koru_store_wire::tasks::{TaskQuery, TaskQueryResponse, TaskRow};
 pub use koru_store_wire::{
-    AssociateBlob, BindProfileAccount, CaptureHistory, ClearProfileAccount, Created,
-    DocumentLocation, DocumentOutline, EnsuredFileNote, Failure, HistoryEntry, HistoryPage,
-    HistoryQuery, ImportQuery, LocalProfileRemoval, LocalProfileRestoration, ManifestRef,
-    NewDocument, NewProfile, NewWorkspace, OutlineHeading, PersonalAttributeValue,
+    AssociateBlob, BeginProfileRemoval, BindProfileAccount, CaptureHistory, ClearProfileAccount,
+    Created, DocumentLocation, DocumentOutline, EnsuredFileNote, Failure, HistoryEntry,
+    HistoryPage, HistoryQuery, ImportQuery, LocalProfileRemoval, LocalProfileRestoration,
+    ManifestRef, NewDocument, NewProfile, NewWorkspace, OutlineHeading, PersonalAttributeValue,
     PersonalAttributesResponse, PersonalDictionaryResponse, ProfileAccountBindingOutcome,
-    ProfileAccountClearOutcome, ProfileAppearance, ProfileLifecycleInventory, RelabelHistory,
-    RenameProfile, RenameWorkspace, SeedDocumentRequest, SeedDocumentWithCandidateRequest,
-    SetDictionaryWord, SetPersonalAttribute, Status, Stopping, StoreBackup, StoreBackupResult,
-    WorkspaceAppearance, WorkspaceOrder, WorkspaceUsage,
+    ProfileAccountClearOutcome, ProfileAppearance, ProfileLifecycleInventory,
+    ProfileRemovalAttempt, RelabelHistory, RemovalKind, RemovalMark, RenameProfile,
+    RenameWorkspace, SeedDocumentRequest, SeedDocumentWithCandidateRequest, SetDictionaryWord,
+    SetPersonalAttribute, Status, Stopping, StoreBackup, StoreBackupResult, WorkspaceAppearance,
+    WorkspaceOrder, WorkspaceUsage,
 };
 
 /// The Store's durable answer to content-first document creation.
@@ -602,6 +603,33 @@ impl Client {
         self.get("/v1/profiles")
     }
 
+    pub fn ensure_live_workspace(
+        &self,
+        owner: ProfileId,
+        name: &str,
+    ) -> Result<koru_store_wire::EnsuredWorkspace> {
+        self.post(
+            &format!("/v1/profiles/{owner}/workspaces/ensure-live"),
+            &koru_store_wire::EnsureLiveWorkspace {
+                name: name.to_owned(),
+            },
+        )
+    }
+
+    pub fn workspace_authority(
+        &self,
+        owner: ProfileId,
+    ) -> Result<Vec<koru_store_wire::WorkspaceAuthority>> {
+        self.get(&format!("/v1/profiles/{owner}/workspaces/authority"))
+    }
+
+    pub fn create_profile_with_workspace(
+        &self,
+        request: &koru_store_wire::CreateProfileWithWorkspace,
+    ) -> Result<koru_store_wire::CreatedProfile> {
+        self.post("/v1/profiles/with-workspace", request)
+    }
+
     /// Content-free active and locally removed Profile inventory for the
     /// trusted Agent lifecycle worker. Ordinary product listings stay active-only.
     pub fn profile_lifecycle_inventory(&self) -> Result<ProfileLifecycleInventory> {
@@ -672,10 +700,23 @@ impl Client {
         self.decode(response)
     }
 
+    pub fn profile_removal(&self, id: ProfileId) -> Result<Option<RemovalMark>> {
+        let response = self.send_with_retry(|discovery| {
+            self.http
+                .get(format!("{}/v1/profiles/{id}/removal", discovery.base_url()))
+                .bearer_auth(&discovery.token)
+        })?;
+        self.decode(response)
+    }
+
     /// Hide one empty Profile in this installation's Store catalog while preserving
     /// all recovery data. Settings cleanup remains the caller's responsibility.
-    /// Retries return `AlreadyRemoved` after the first durable marker write.
-    pub fn remove_profile_local(&self, id: ProfileId) -> Result<LocalProfileRemoval> {
+    /// Completion must carry the attempt that performed the cascade.
+    pub fn remove_profile_local(
+        &self,
+        id: ProfileId,
+        attempt: Option<koru_store_core::ids::RemovalAttemptId>,
+    ) -> Result<LocalProfileRemoval> {
         let response = self.send_with_retry(|discovery| {
             self.http
                 .delete(format!(
@@ -684,6 +725,7 @@ impl Client {
                     id.to_storage()
                 ))
                 .bearer_auth(&discovery.token)
+                .json(&koru_store_wire::CompleteProfileRemoval { attempt })
         })?;
         self.decode(response)
     }
@@ -1581,6 +1623,37 @@ impl Client {
                     pinned,
                     archived,
                 })
+        })?;
+        self.decode(response)
+    }
+
+    /// Commit only the pin flag, without overwriting appearance or lifecycle.
+    pub fn set_workspace_pinned(
+        &self,
+        id: WorkspaceId,
+        pinned: bool,
+    ) -> Result<koru_store_wire::PinnedWorkspace> {
+        let response = self.send_with_retry(|discovery| {
+            self.http
+                .put(format!(
+                    "{}/v1/workspaces/{id}/pinned",
+                    discovery.base_url()
+                ))
+                .bearer_auth(&discovery.token)
+                .json(&koru_store_wire::WorkspacePin { pinned })
+        })?;
+        self.decode(response)
+    }
+
+    /// Explicitly repair a derived listing; ordinary reads never do this.
+    pub fn reconcile_workspace_listing(&self, id: WorkspaceId) -> Result<Workspace> {
+        let response = self.send_with_retry(|discovery| {
+            self.http
+                .post(format!(
+                    "{}/v1/workspaces/{id}/reconcile-listing",
+                    discovery.base_url()
+                ))
+                .bearer_auth(&discovery.token)
         })?;
         self.decode(response)
     }

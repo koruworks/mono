@@ -1261,6 +1261,86 @@ impl View for ManagerView {
         }
     }
 
+    fn connected_profile_creation_conflict(&mut self) -> bool {
+        match self {
+            Self::Container(c) => c.connected_profile_creation_conflict(),
+            _ => false,
+        }
+    }
+
+    fn show_profile_manager(&mut self, profile: koru_core::ProfileId) -> bool {
+        match self {
+            Self::Container(c) => c.show_profile_manager(profile),
+            _ => false,
+        }
+    }
+
+    fn create_profile_with_workspace(
+        &mut self,
+        request: koru_api_client::CreateProfileWithWorkspace,
+        reply: std::sync::mpsc::Sender<
+            koru_store_core::errors::Result<koru_api_client::CreatedProfile>,
+        >,
+    ) -> bool {
+        match self {
+            Self::Container(c) => c.create_profile_with_workspace(request, reply),
+            Self::Document(_) => false,
+        }
+    }
+
+    fn ensure_live_workspace(
+        &mut self,
+        owner: koru_store_core::ProfileId,
+        name: String,
+        attempt: u64,
+        reply: std::sync::mpsc::Sender<
+            koru_store_core::errors::Result<koru_api_client::EnsuredWorkspace>,
+        >,
+    ) -> bool {
+        match self {
+            Self::Container(c) => c.ensure_live_workspace(owner, name, attempt, reply),
+            Self::Document(_) => false,
+        }
+    }
+
+    fn workspace_retired(
+        &self,
+        profile: koru_core::ProfileId,
+        workspace: koru_core::WorkspaceId,
+    ) -> bool {
+        match self {
+            Self::Container(c) => c.workspace_retired(profile, workspace),
+            Self::Document(_) => false,
+        }
+    }
+
+    fn profile_has_live_content(&self, profile: koru_core::ProfileId) -> bool {
+        match self {
+            Self::Container(c) => c.profile_has_live_content(profile),
+            Self::Document(_) => false,
+        }
+    }
+
+    fn profile_removal(
+        &self,
+        profile: koru_core::ProfileId,
+    ) -> Option<Option<koru_store_core::profile_removal::RemovalMark>> {
+        match self {
+            Self::Container(c) => c.profile_removal(profile),
+            Self::Document(_) => None,
+        }
+    }
+
+    fn set_profile_wait(
+        &mut self,
+        waiting: Option<koru_workspace_host::profile_wait::ProfileWait>,
+    ) -> bool {
+        match self {
+            Self::Container(c) => c.set_profile_wait(waiting),
+            Self::Document(_) => false,
+        }
+    }
+
     fn connected_profile_connection_paused(
         &mut self,
         owner_scope: u64,
@@ -2019,6 +2099,16 @@ impl View for ManagerView {
             Self::Container(v) => v.take_wants_list_edits(),
             Self::Document(v) => v.take_wants_list_edits(),
         }
+    }
+
+    forward_to_the_window! {
+        fn take_wants_page_documents(&mut self) -> Vec<koru_core::ids::PageKey>;
+        fn set_page_state(&mut self, state: &koru_workspace::pages::PageState) -> bool;
+        fn take_wants_page_retry(&mut self) -> Vec<koru_core::ids::PageKey>;
+        fn take_wants_page_of(&mut self) -> Vec<koru_core::DocumentId>;
+        fn set_page_of(&mut self, document: koru_core::DocumentId, page: Option<koru_core::ids::PageKey>) -> bool;
+        fn take_wants_page_decisions(&mut self) -> Vec<(koru_core::ids::PageKey, koru_workspace::pages::PageDecision)>;
+        fn take_wants_page_attachments(&mut self) -> Vec<koru_core::ids::PageKey>;
     }
 
     /// **Every task the Tasks page asked for, on its way to the one hand that

@@ -118,6 +118,8 @@ pub(crate) mod parts {
     pub const CAPTURE: ControlPart = ControlPart::new("capture");
     /// The list of rows — the container an item's total is read from.
     pub const LIST: ControlPart = ControlPart::new("list");
+    /// The note above the rows, when the page has one.
+    pub const NOTE: ControlPart = ControlPart::new("note");
 
     /// The four parts of one row. Prefixed, because a task's node may also be
     /// a paragraph of the open document (`#text`, `#check`, `#state`) and an
@@ -199,10 +201,28 @@ impl TasksView {
     /// `&self` throughout: nothing here lays out, scrolls, measures or reads
     /// the store, and the signature is what makes that true rather than a
     /// comment.
+    /// The note's region — named, so a reader knows the page has one and
+    /// where it is. Its rows are the document's to describe (P3).
+    fn note_semantics(&self, cx: &Context) -> Option<SemanticNode> {
+        let body = self.body.as_ref()?;
+        let band = body.band;
+        Some(
+            SemanticNode::new(cx.surface(parts::NOTE), Role::Group)
+                .with_label(t(cx.lang, Key::PageNote).to_owned())
+                .with_bounds(Rect::new(
+                    cx.area.x + band.x,
+                    cx.area.y + band.y,
+                    band.w,
+                    band.h,
+                )),
+        )
+    }
+
     pub(crate) fn semantics(&self, cx: &Context) -> SemanticNode {
         let name = page_name(self, cx.lang);
         let mut children = Vec::new();
         children.extend(self.count_semantics(cx));
+        children.extend(self.note_semantics(cx));
         children.push(self.capture_semantics(cx));
         children.push(self.list_semantics(cx, &name));
         children.extend(self.panel_semantics(cx));
@@ -422,10 +442,7 @@ impl TasksView {
         })
     }
 
-    /// **The list chip, where it leads somewhere.** The one chip that is a
-    /// control (the others are labels and stay labels), so it is the one that
-    /// is published as one — a `Role::Link`, because following it opens
-    /// another page.
+    /// The list chip opens the list picker, so it is published as a button.
     ///
     /// Its name is the list's own, which is the person's content: never
     /// translated, never invented.

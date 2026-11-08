@@ -67,6 +67,7 @@ pub mod preferences;
 mod profile_activation;
 mod profile_lifecycle_decision;
 mod profile_runtime;
+pub mod profile_wait;
 pub mod reveal;
 /// Who owns the keyboard, factored so the container and the built-in
 /// document cannot drift apart about it. See the module's own note.
@@ -1222,6 +1223,70 @@ pub trait View {
     fn connected_profile_creation_failed(&mut self, _message: &str) -> bool {
         false
     }
+
+    fn connected_profile_creation_conflict(&mut self) -> bool {
+        false
+    }
+
+    fn show_profile_manager(&mut self, _profile: koru_core::ProfileId) -> bool {
+        false
+    }
+
+    /// Execute a validated embedded Profile draft on the window-owned link.
+    /// The background template worker resumes only after durable publication.
+    fn create_profile_with_workspace(
+        &mut self,
+        _request: koru_api_client::CreateProfileWithWorkspace,
+        reply: std::sync::mpsc::Sender<
+            koru_store_core::errors::Result<koru_api_client::CreatedProfile>,
+        >,
+    ) -> bool {
+        let _ = reply.send(Err(koru_store_core::Error::new(
+            koru_store_core::Code::StorageFailed,
+            "this window does not support Profile creation",
+        )));
+        false
+    }
+    /// Resolve availability on this window's worker. The host alone may land
+    /// the answer, after checking the window, Profile and attempt sequence.
+    fn ensure_live_workspace(
+        &mut self,
+        _owner: koru_store_core::ProfileId,
+        _name: String,
+        _attempt: u64,
+        reply: std::sync::mpsc::Sender<
+            koru_store_core::errors::Result<koru_api_client::EnsuredWorkspace>,
+        >,
+    ) -> bool {
+        let _ = reply.send(Err(koru_store_core::Error::new(
+            koru_store_core::Code::StorageFailed,
+            "this window does not support workspace preparation",
+        )));
+        false
+    }
+
+    /// Cached durable authority only. A failed read must never claim removal.
+    fn workspace_retired(&self, _profile: ProfileId, _workspace: WorkspaceId) -> bool {
+        false
+    }
+
+    /// Applied local live content precedes Cloud delivery. Listing repair may
+    /// still be required; EnsureLive performs it before navigation.
+    fn profile_has_live_content(&self, _profile: ProfileId) -> bool {
+        false
+    }
+
+    fn profile_removal(
+        &self,
+        _profile: ProfileId,
+    ) -> Option<Option<koru_store_core::profile_removal::RemovalMark>> {
+        None
+    }
+
+    fn set_profile_wait(&mut self, _waiting: Option<profile_wait::ProfileWait>) -> bool {
+        false
+    }
+
     fn connected_profile_connection_paused(
         &mut self,
         _owner_scope: u64,
@@ -1513,6 +1578,63 @@ pub trait View {
     /// and the shell performs what it is handed.
     fn take_wants_list_edits(&mut self) -> Vec<tasks::ListEdit> {
         Vec::new()
+    }
+
+    /// **The Tasks pages this view is showing**, so the shell can make sure
+    /// each has its page document and say where it stands
+    /// ([`set_page_state`](Self::set_page_state)).
+    ///
+    /// Asked every turn and answered from what the tabs show, because a
+    /// page's document is the workspace's to create, open and register — a
+    /// view holds one `&mut WorkspaceDoc` at most and cannot reach the
+    /// registry. The shell calls `Workspace::ensure_page` for each, which is
+    /// idempotent and cheap once the document exists.
+    fn take_wants_page_documents(&mut self) -> Vec<koru_core::ids::PageKey> {
+        Vec::new()
+    }
+
+    /// Where a Tasks page's document stands, pushed after
+    /// [`take_wants_page_documents`](Self::take_wants_page_documents).
+    /// Returns whether anything on screen changed.
+    fn set_page_state(&mut self, _state: &koru_workspace::pages::PageState) -> bool {
+        false
+    }
+
+    /// **Pages whose *Retry* was pressed** — a failed registration or open
+    /// the person asked to run again.
+    fn take_wants_page_retry(&mut self) -> Vec<koru_core::ids::PageKey> {
+        Vec::new()
+    }
+
+    /// **A deletion-conflict answer the person gave on a Tasks page** — Keep
+    /// deleted or Recover, per page (plan §6.3).
+    fn take_wants_page_decisions(
+        &mut self,
+    ) -> Vec<(koru_core::ids::PageKey, koru_workspace::pages::PageDecision)> {
+        Vec::new()
+    }
+
+    /// **Documents the view wants to know the page of** — a note opened in a
+    /// tab of its own takes its list's default list only once the shell says
+    /// which list it is the note of.
+    fn take_wants_page_of(&mut self) -> Vec<koru_core::DocumentId> {
+        Vec::new()
+    }
+
+    /// **Tasks pages whose `+` asked for files** — the shell opens the
+    /// picker, stores what is chosen as workspace files, and attaches them
+    /// to the page as context.
+    fn take_wants_page_attachments(&mut self) -> Vec<koru_core::ids::PageKey> {
+        Vec::new()
+    }
+
+    /// The answer, per document: a page, or `None` for an ordinary one.
+    fn set_page_of(
+        &mut self,
+        _document: koru_core::DocumentId,
+        _page: Option<koru_core::ids::PageKey>,
+    ) -> bool {
+        false
     }
 
     /// **Task changes a view asked for but cannot make**, in the order it asked.
@@ -2233,6 +2355,7 @@ impl Eq for MoveSelectionPayload {}
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ConnectedProfileDraft {
+    pub id: ProfileId,
     pub owner_display_name: String,
     pub profile_name: String,
     pub workspace_name: String,
@@ -2428,6 +2551,13 @@ pub enum PaneRequest {
     /// whatever is open, which is a different thing that happens to look the
     /// same in the sidebar until you reopen.
     CreateDocument(String),
+    /// Rename a document by id — a note above a Tasks page, whose title is
+    /// not a row anybody can type into: the workspace writes the override
+    /// and the manifest follows.
+    RenameDocument {
+        document: koru_core::DocumentId,
+        title: String,
+    },
     /// Create a document **inside** `parent` — as its last child — and open
     /// it: a sidebar row's `+` (the review's note). The same round trip as
     /// [`CreateDocument`](Self::CreateDocument), placed under the row.
@@ -2553,6 +2683,14 @@ pub enum PaneRequest {
     PurgeDocuments(Vec<koru_core::DocumentId>),
     /// Switch the requesting window to this Store profile in place.
     SwitchProfile(ProfileId),
+    /// A Store availability receipt may land only in its still-waiting window.
+    LandIn {
+        profile: ProfileId,
+        workspace: WorkspaceId,
+        attempt: profile_wait::WaitAttempt,
+    },
+    CancelProfileWait(profile_wait::WaitAttempt),
+    RetryProfileWait(profile_wait::WaitAttempt),
     /// Switch the requesting window to this Profile **and this workspace in
     /// it**, in place. What the switcher sends when a workspace of another
     /// Profile is chosen; within the open Profile it is a workspace switch.
@@ -2720,7 +2858,6 @@ pub enum PaneRequest {
     /// raised when the manager opens rather than on any clock.
     RefreshWorkspaceStats,
     /// Sort it to the top of the switcher, or stop.
-    PinWorkspace(WorkspaceId, bool),
     /// Persist the complete profile workspace order after a manager drag.
     ReorderWorkspaces(Vec<WorkspaceId>),
     /// Keep it out of the switcher, or put it back.
@@ -2824,6 +2961,7 @@ impl PaneRequest {
             Self::NewWorkspace { .. } => "request.new_workspace",
             Self::NewWorkspaceIn(..) => "request.new_workspace_in",
             Self::CreateDocument { .. } => "request.create_document",
+            Self::RenameDocument { .. } => "request.rename_document",
             Self::CreateDocumentIn { .. } => "request.create_document_in",
             Self::CreateCanvas(..) => "request.create_canvas",
             Self::CopyDocument { .. } => "request.copy_document",
@@ -2836,6 +2974,9 @@ impl PaneRequest {
             Self::EmptyDocumentTrash => "request.empty_trash",
             Self::PurgeDocuments(..) => "request.purge_documents",
             Self::SwitchProfile(..) => "request.switch_profile",
+            Self::LandIn { .. } => "request.land_in",
+            Self::CancelProfileWait(..) => "request.cancel_profile_wait",
+            Self::RetryProfileWait(..) => "request.retry_profile_wait",
             Self::SwitchToWorkspaceIn(..) => "request.switch_to_workspace_in",
             Self::RenameProfile(..) => "request.rename_profile",
             Self::SetProfileAppearance { .. } => "request.profile_appearance",
@@ -2872,7 +3013,6 @@ impl PaneRequest {
             // expensive one and therefore the one worth naming.
             Self::FinishWorkspaceImport(..) => "request.finish_workspace_import",
             Self::RefreshWorkspaceStats => "request.workspace_stats",
-            Self::PinWorkspace { .. } => "request.pin_workspace",
             Self::ArchiveWorkspace { .. } => "request.archive_workspace",
             Self::RevealPath(..) => "request.reveal_path",
             Self::Relaunch => "request.relaunch",
@@ -3310,7 +3450,12 @@ pub trait Host {
     fn account_command_deadline(&self) -> Option<std::time::Instant> {
         None
     }
-    fn remove_local_profile(&self, _profile: ProfileId) {}
+    fn remove_local_profile(
+        &self,
+        _profile: ProfileId,
+        _attempt: koru_store_core::ids::RemovalAttemptId,
+    ) {
+    }
 
     fn take_local_profile_removal(
         &self,

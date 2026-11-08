@@ -265,7 +265,9 @@ impl MainView {
                 TabRef::Welcome => Tab::welcome(),
                 // The Workspaces tab's token restores Manage (maintainers' decision
                 // 9): its Profile pages are where the workspaces went.
-                TabRef::Workspaces => Tab::manage(),
+                TabRef::Workspaces => {
+                    Tab::manage_with_controller(self.workspace_controller.clone())
+                }
                 // Manage Profiles is a utility destination, not a place Koru
                 // should strand somebody on at startup. Older settings files
                 // still parse, but reopen on the durable Welcome floor.
@@ -273,7 +275,7 @@ impl MainView {
                 // The Manage tab comes back on the open Profile's page (maintainer
                 // decision 9): it opens with no page, and the first context
                 // push lands it there.
-                TabRef::Manage => Tab::manage(),
+                TabRef::Manage => Tab::manage_with_controller(self.workspace_controller.clone()),
                 TabRef::Trash => Tab::trash(),
                 // **The rail is put back from the tab**, not the other way
                 // round: the container pushes this target into
@@ -528,12 +530,12 @@ impl MainView {
         let mut tab = match which {
             TabRef::Welcome => Tab::welcome(),
             // The legacy token restores Manage (maintainers' decision 9).
-            TabRef::Workspaces => Tab::manage(),
+            TabRef::Workspaces => Tab::manage_with_controller(self.workspace_controller.clone()),
             // Manage Profiles is a utility destination, not a place Koru
             // should strand somebody on at startup. Older settings files
             // still parse, but reopen on the durable Welcome floor.
             TabRef::ManageProfiles => Tab::welcome(),
-            TabRef::Manage => Tab::manage(),
+            TabRef::Manage => Tab::manage_with_controller(self.workspace_controller.clone()),
             TabRef::Trash => Tab::trash(),
             // **The rail is put back from the tab**, not the other way round:
             // the container pushes this target into `rail_mut().set_selected`

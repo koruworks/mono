@@ -11,6 +11,54 @@
 use super::*;
 use crate::{Authorization, WorkspacesController};
 
+#[test]
+fn answers_are_queued_before_the_wake_including_late_settlements() {
+    let (tx, rx) = channel();
+    let seen = std::cell::Cell::new(0);
+    let wake = || {
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(Answer::Settled(crate::CommandId(7), _))
+        ));
+        seen.set(seen.get() + 1);
+    };
+    assert!(publish_answer(
+        &tx,
+        &wake,
+        Answer::Settled(crate::CommandId(7), Box::new(Answer::Unavailable))
+    ));
+    assert_eq!(seen.get(), 1);
+}
+
+#[test]
+fn catalog_invalidations_are_visible_before_the_wake() {
+    let flags = CatalogFlags::default();
+    let seen = std::cell::Cell::new(0);
+    let wake = || {
+        assert!(flags.take(CatalogChange::Workspaces));
+        seen.set(seen.get() + 1);
+    };
+    invalidate_and_wake(&flags, &wake, CatalogChange::Workspaces);
+    assert_eq!(seen.get(), 1);
+}
+
+#[test]
+fn worker_exit_settles_every_queued_command_once() {
+    let links = WorkspaceLinks::open_ended();
+    links.reorder(crate::CommandId(1), ProfileId::new(), Vec::new());
+    links.reorder(crate::CommandId(2), ProfileId::new(), Vec::new());
+    assert!(matches!(
+        links.take(),
+        Some(Answer::Settled(crate::CommandId(1), _))
+    ));
+    assert!(matches!(
+        links.take(),
+        Some(Answer::Settled(crate::CommandId(2), _))
+    ));
+    assert!(matches!(links.take(), Some(Answer::Unavailable)));
+    assert!(links.take().is_none());
+}
+
 /// **The four tiers say which they are.** A host that feeds the rows itself
 /// must not also be handed a link, and the only way to check that is for the
 /// surface to be able to answer.
@@ -171,6 +219,9 @@ fn a_partial_failure_keeps_its_actionable_documents_open_cause() {
             terminated_sessions: Vec::new(),
             sessions_closed: true,
             mutation_applied: false,
+            authority_committed: None,
+            listing: None,
+            replacement: None,
         }),
         migration: None,
         cause: Some(koru_api_client::WORKSPACE_IN_USE.into()),
@@ -185,6 +236,45 @@ fn a_partial_failure_keeps_its_actionable_documents_open_cause() {
         true,
     );
     assert!(notice.retry.is_none());
+}
+
+#[test]
+fn committed_removal_has_listing_copy_and_the_same_lifecycle_retry() {
+    let workspace = WorkspaceId::new();
+    let error = koru_api_client::WorkspaceError::Api(koru_api_client::WorkspaceApiFailure {
+        status: 409,
+        code: "workspace_lifecycle_incomplete".into(),
+        message: String::new(),
+        outcome: Some(koru_api_wire::WorkspaceLifecycleOutcome {
+            workspace: workspace.to_storage(),
+            action: koru_api_wire::WorkspaceLifecycleAction::SoftDelete,
+            terminated_sessions: vec![],
+            sessions_closed: true,
+            mutation_applied: false,
+            authority_committed: Some(true),
+            listing: Some(koru_store_core::service::ListingState::Pending {
+                cause: "storage_failed".into(),
+            }),
+            replacement: Some(koru_store_core::service::Replacement::Unknown),
+        }),
+        migration: None,
+        cause: Some("storage_failed".into()),
+        retryable: true,
+    });
+    let notice = super::refusal(
+        workspace,
+        koru_api_wire::WorkspaceLifecycleAction::SoftDelete,
+        &error,
+        true,
+    );
+    assert_eq!(notice.text, crate::REFUSAL_LISTING_PENDING);
+    assert_eq!(
+        notice.retry,
+        Some(crate::state::Retry::Lifecycle(
+            workspace,
+            koru_api_wire::WorkspaceLifecycleAction::SoftDelete
+        ))
+    );
 }
 
 /// **A catalog row keeps when it was last opened**, in epoch milliseconds, and

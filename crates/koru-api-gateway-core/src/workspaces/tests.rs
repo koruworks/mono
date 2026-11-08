@@ -141,6 +141,58 @@ async fn with_workspace() -> Fixture {
     fixture
 }
 
+#[tokio::test]
+async fn profile_removal_refuses_stale_or_ordinary_lifecycle_before_session_host_work() {
+    let fixture = with_workspace().await;
+    let uri = format!("/v1/profiles/{}/removal", fixture.owner);
+    let (status, mark) = call(
+        &fixture.state,
+        &fixture.destroyer,
+        "POST",
+        &uri,
+        Some(serde_json::json!({"kind":"local"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{mark}");
+    for attempt in [
+        None,
+        Some(koru_store_core::ids::RemovalAttemptId::new().to_storage()),
+    ] {
+        let mut body = confirmed(&fixture, "soft_delete").await;
+        if let Some(attempt) = &attempt {
+            body["removal_attempt"] = attempt.clone().into();
+        }
+        let (status, refusal) = call(
+            &fixture.state,
+            &fixture.destroyer,
+            "POST",
+            &format!("/v1/workspaces/{}/lifecycle", fixture.workspace),
+            Some(body),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{refusal}");
+        assert_eq!(
+            refusal["code"],
+            if attempt.is_some() {
+                "removal_attempt_stale"
+            } else {
+                "profile_being_removed"
+            }
+        );
+        // This fixture has no session bridge. Reaching it would instead return
+        // capability_unavailable, so this proves ordering before session work.
+    }
+    let (status, _) = call(
+        &fixture.state,
+        &fixture.destroyer,
+        "DELETE",
+        &uri,
+        Some(serde_json::json!({"attempt":mark["attempt"]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+}
+
 /// **Ask for the consequence, and answer with the token it came with.**
 ///
 /// Every caller of the operation goes through this, because every caller of the
@@ -525,12 +577,88 @@ async fn a_refusal_carries_the_outcome_it_is_refusing() {
 }
 
 #[test]
-fn a_confirmed_soft_delete_uses_the_store_room_disconnect_contract() {
+fn a_confirmed_soft_delete_uses_the_replacing_route() {
     let workspace = "00000000-0000-4000-8000-000000000001";
     assert_eq!(
         super::soft_delete_uri(workspace),
-        format!("/v1/workspaces/{workspace}?force=true")
+        format!("/v1/workspaces/{workspace}/delete-replacing")
     );
+}
+
+#[tokio::test]
+async fn pending_listing_preserves_committed_facts_and_original_cause_in_old_failure_envelope() {
+    use axum::response::IntoResponse;
+    use koru_store_core::{ProfileId, Timestamp, Workspace};
+    use koru_store_wire::{ListingState, RemovedWorkspace, Replacement};
+    let workspace = Workspace::new(ProfileId::new(), "Source", Timestamp::from_millis(1)).unwrap();
+    let removed = RemovedWorkspace {
+        workspace: workspace.clone(),
+        authority_committed: true,
+        listing: ListingState::Pending {
+            cause: "storage_failed".into(),
+        },
+        replacement: Replacement::Unknown,
+    };
+    let response = (
+        StatusCode::CONFLICT,
+        axum::Json(koru_store_wire::ListingPendingFailure {
+            code: "listing_pending".into(),
+            message: "catalog publication pending".into(),
+            cause: "storage_failed".into(),
+            outcome: removed.clone(),
+        }),
+    )
+        .into_response();
+    let refusal = super::refusal_of(response).await;
+    assert_eq!(refusal.code, "storage_failed");
+    let mut outcome = WorkspaceLifecycleOutcome {
+        workspace: workspace.id.to_storage(),
+        action: WorkspaceLifecycleAction::SoftDelete,
+        terminated_sessions: vec!["closed-session".into()],
+        sessions_closed: true,
+        mutation_applied: false,
+        authority_committed: Some(false),
+        listing: None,
+        replacement: None,
+    };
+    super::apply_removal_facts(&mut outcome, refusal.removal.clone().unwrap());
+    let response = super::caused(
+        refusal.status,
+        "workspace_lifecycle_incomplete",
+        "catalog pending",
+        outcome,
+        &refusal,
+    );
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let body: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(body["code"], "workspace_lifecycle_incomplete");
+    assert_eq!(body["retryable"], true);
+    assert_eq!(body["cause"], "storage_failed");
+    assert_eq!(body["outcome"]["sessions_closed"], true);
+    assert_eq!(body["outcome"]["mutation_applied"], false);
+    assert_eq!(body["outcome"]["authority_committed"], true);
+    assert_eq!(body["outcome"]["listing"]["state"], "pending");
+    assert_eq!(body["outcome"]["replacement"]["state"], "unknown");
+}
+
+#[test]
+fn old_lifecycle_shapes_remain_readable_and_old_requests_have_a_replacement_name() {
+    let old = serde_json::json!({"workspace":"source", "action":"soft_delete", "terminated_sessions":[], "sessions_closed":true, "mutation_applied":false});
+    let outcome: WorkspaceLifecycleOutcome = serde_json::from_value(old.clone()).unwrap();
+    assert_eq!(outcome.authority_committed, None);
+    assert_eq!(outcome.listing, None);
+    assert_eq!(outcome.replacement, None);
+    assert_eq!(serde_json::to_value(outcome).unwrap(), old);
+    let request: koru_api_wire::WorkspaceLifecycleRequest = serde_json::from_value(
+        serde_json::json!({"action":"soft_delete", "confirmation":"receipt"}),
+    )
+    .unwrap();
+    assert!(!request.replacement_name.is_empty());
 }
 
 /// The route table is the whole authorization story, and each operation and

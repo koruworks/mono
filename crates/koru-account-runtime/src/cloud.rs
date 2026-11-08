@@ -470,7 +470,11 @@ pub struct Snapshot {
     pub carried: usize,
     /// The last `replace_cloud_context` sequence this session sent.
     pub sequence: u64,
+    pub discovery: Option<DiscoveryReceipt>,
 }
+
+mod discovery;
+pub use discovery::{DiscoveryCounts, DiscoveryReceipt};
 
 impl Snapshot {
     fn idle() -> Self {

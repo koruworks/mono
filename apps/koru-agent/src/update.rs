@@ -32,7 +32,7 @@
 //! the first has never meant agreeing to the second.
 //!
 //! [`allows`] is where that stops being a convention. The stage has to be
-//! `Available` for `Download` and `Ready` for `Install`, so a shell cannot skip
+//! `Available` or `Deferred` for `Download` and `Ready` for `Install`, so a shell cannot skip
 //! a step even by sending the wrong message — see
 //! [`koru_agent_wire::UpdateChoice`], where the contract is written down.
 
@@ -149,7 +149,7 @@ pub fn report_for(
 /// nothing happen has no way to tell that from a hung agent.
 pub fn allows(stage: UpdateStage, choice: UpdateChoice) -> bool {
     match choice {
-        UpdateChoice::Download => stage == UpdateStage::Available,
+        UpdateChoice::Download => matches!(stage, UpdateStage::Available | UpdateStage::Deferred),
         UpdateChoice::Install { .. } => stage == UpdateStage::Ready,
         // Putting off an offer, whichever half of it is showing.
         UpdateChoice::Later => matches!(stage, UpdateStage::Available | UpdateStage::Ready),
@@ -163,6 +163,33 @@ pub fn allows(stage: UpdateStage, choice: UpdateChoice) -> bool {
         // Always answerable: neither is about an offer.
         UpdateChoice::CheckNow | UpdateChoice::SetAutomatic { .. } => true,
     }
+}
+
+/// Progress and deferral keep the same offered release visible in Help.
+/// Terminal/no-offer states never inherit stale metadata from the cache.
+pub(crate) fn retain_offer(report: &mut UpdateReport, manifest: Option<&UpdateManifest>) {
+    if !matches!(
+        report.stage,
+        UpdateStage::Downloading
+            | UpdateStage::Verifying
+            | UpdateStage::Installing
+            | UpdateStage::Deferred
+            | UpdateStage::Failed
+    ) {
+        return;
+    }
+    let Some(manifest) = manifest else {
+        return;
+    };
+    if report.stage == UpdateStage::Deferred && report.build_number != manifest.build_number {
+        return;
+    }
+    report.version = manifest.version.clone();
+    report.build_number = manifest.build_number;
+    report.title = manifest.release_notes.title.clone();
+    report.summary = manifest.release_notes.summary.clone();
+    report.notes_url = manifest.release_notes.url.clone();
+    report.download_url = Some(manifest.package.url.clone());
 }
 
 /// The stable code a refused [`allows`] answers with.

@@ -252,6 +252,7 @@ impl ProductionAccountService {
             .flat_map(|account| &account.profiles)
             .filter(|(_, profile)| profile.enabled)
             .map(|(id, _)| koru_agent_wire::AccountProfileCloud {
+                discovery: None,
                 profile_id: id.to_string(),
                 stage: koru_agent_wire::CloudConnectionStage::Connecting,
             })

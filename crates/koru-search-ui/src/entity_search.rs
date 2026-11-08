@@ -77,6 +77,13 @@ pub struct EntityHeading {
     pub text: String,
 }
 
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct EntityDocumentFace {
+    pub document: DocumentId,
+    pub title: String,
+    pub is_file: bool,
+}
+
 #[derive(Clone, PartialEq, Debug)]
 pub struct EntitySearchUpdate {
     pub seq: u64,
@@ -109,6 +116,7 @@ pub struct EntitySearch {
     /// than a slot: two pills into two documents are two separate answers, and
     /// the newest does not supersede the other.
     pending_outlines: Vec<EntityOutline>,
+    pending_faces: Vec<EntityDocumentFace>,
 }
 
 impl EntitySearch {
@@ -144,6 +152,7 @@ impl EntitySearch {
             last_documents: Vec::new(),
             pending_hits: None,
             pending_outlines: Vec::new(),
+            pending_faces: Vec::new(),
         }
     }
 
@@ -257,6 +266,18 @@ impl EntitySearch {
         Some(self.pending_outlines.remove(0))
     }
 
+    /// Resolve titles and kinds for links loaded from a saved page.
+    pub fn request_document_faces(&mut self, documents: Vec<DocumentId>) {
+        if let Some(reader) = &self.reader {
+            reader.request_document_faces(documents);
+        }
+    }
+
+    pub fn poll_document_faces(&mut self) -> Vec<EntityDocumentFace> {
+        self.pump();
+        std::mem::take(&mut self.pending_faces)
+    }
+
     /// Take everything the reader has said and file it.
     ///
     /// **Draining is separate from answering.** `poll` returns early in two
@@ -273,6 +294,7 @@ impl EntitySearch {
                 // An entity picker completes no `#tag` and no `/key`; it
                 // never asks for either table.
                 SearchReadResult::ScopeTables { .. } => {}
+                SearchReadResult::DocumentFaces(faces) => self.pending_faces.extend(faces),
                 SearchReadResult::Catalog(catalog) => {
                     // A failed read is distinguishable from an empty store
                     // (see `Catalog::load`), and only a complete one is
@@ -522,6 +544,31 @@ mod tests {
         assert_eq!(outline.document, document);
         assert_eq!(outline.headings[0].text, "Rollout");
         assert!(outline.projected);
+    }
+
+    #[test]
+    fn saved_link_metadata_is_delivered_without_a_picker_query() {
+        let (reader, response_tx, _request_rx) = SearchReader::test_pair();
+        let document = DocumentId::new();
+        let mut search = EntitySearch::new();
+        search.reader = Some(reader);
+        response_tx
+            .send(SearchReadResponse {
+                seq: 0,
+                result: SearchReadResult::DocumentFaces(vec![EntityDocumentFace {
+                    document,
+                    title: "Project plan".into(),
+                    is_file: false,
+                }]),
+            })
+            .unwrap();
+
+        let faces = search.poll_document_faces();
+        assert_eq!(faces.len(), 1);
+        assert_eq!(faces[0].document, document);
+        assert_eq!(faces[0].title, "Project plan");
+        assert!(!faces[0].is_file);
+        assert!(search.poll_document_faces().is_empty());
     }
 
     /// A surface built without a reader still has to reach a terminal state.

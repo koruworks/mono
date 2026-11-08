@@ -117,8 +117,9 @@ impl Dialog {
 }
 
 const ADD_GOOGLE_BODY: &str = "This Google Account will be able to help connect new devices to this Profile. Your Profile content stays on your devices.";
-const REMOVE_CASCADE_BODY: &str = "Koru will close this Profile's open Workspace sessions, move every Workspace to Trash, and remove the Profile and its AI chats from this device. For 30 days you can restore the Profile with its chats and recover its Workspaces from Trash; after that they are deleted from this device. The hosted Profile listing stays in your Koru account so another trusted device can offer recovery.";
-const REMOVE_EMPTY_BODY: &str = "This removes the Profile, its settings and its AI chats from this device. You can restore it with its chats for 30 days; after that the chats are deleted. The hosted Profile listing stays in your Koru account, so it can appear again after sign-in and another trusted device can offer recovery.";
+const REMOVE_CASCADE_BODY: &str = "Koru will close this Profile's open Workspace sessions, move every Workspace to Trash, and remove the Profile and its AI chats from this device. For 30 days you can restore the Profile with its chats and recover its Workspaces from Trash; after that they are deleted from this device.";
+const REMOVE_EMPTY_BODY: &str = "This removes the Profile, its settings and its AI chats from this device. You can restore it with its chats for 30 days; after that the chats are deleted.";
+const REMOVE_HOSTED_BODY: &str = "The hosted Profile listing stays in your Koru account so another trusted device can offer recovery.";
 const OFFLINE_BODY: &str = "This removes the last sign-in method. Local content and established trusted-device sync remain. Connect a Google Account again before adding a new device.";
 const SIGN_OUT_TITLE: &str = "Sign out of Koru on this computer?";
 const SIGN_OUT_BODY: &str = "Every signed-in profile on this computer stops syncing until you sign in again. Your profiles and their workspaces stay on this computer.";
@@ -129,7 +130,9 @@ impl ManageView {
     /// Whether nothing is being asked: no page dialog and no controller
     /// prompt. A second question never opens under the first.
     pub(super) fn no_question_up(&self) -> bool {
-        self.dialog.is_none() && self.c.prompts().next().is_none() && !self.w.is_confirming()
+        self.dialog.is_none()
+            && self.c.prompts().next().is_none()
+            && !self.w.borrow().is_confirming()
     }
 
     fn profile_name(&self, profile: ProfileId) -> String {
@@ -289,6 +292,15 @@ impl ManageView {
                         REMOVE_EMPTY_BODY,
                         "Remove Profile",
                     )
+                };
+                let body = if self
+                    .c
+                    .selected_profile()
+                    .is_some_and(|row| row.account.is_some())
+                {
+                    format!("{body} {REMOVE_HOSTED_BODY}")
+                } else {
+                    body.to_owned()
                 };
                 Dialog::Remove(Confirm::new(title, body, label))
             }

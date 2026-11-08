@@ -18,6 +18,7 @@ fn subtitle_and_rows(
     let work = c.profiles[0].clone();
     c.account.cloud_profiles = stage
         .map(|stage| koru_agent_wire::AccountProfileCloud {
+            discovery: None,
             profile_id: work.id.to_string(),
             stage,
         })

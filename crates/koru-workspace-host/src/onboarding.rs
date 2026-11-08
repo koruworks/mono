@@ -15,6 +15,8 @@
 
 pub mod accessibility;
 mod browser_signin;
+#[cfg(test)]
+mod creation_tests;
 mod email;
 mod profile_selection;
 use profile_selection::SelectionDraft;
@@ -65,6 +67,7 @@ pub enum Telemetry {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
     Account(koru_agent_wire::AccountCommand),
+    ManageProfiles,
     OpenCreatedProfile(koru_core::ProfileId),
     ConfirmAccountCreation,
     CancelAccountCreation,
@@ -96,6 +99,7 @@ pub enum Action {
         profile_id: String,
     },
     CreateLocalProfile {
+        id: koru_core::ProfileId,
         owner_display_name: String,
         name: String,
         workspace_name: String,
@@ -287,6 +291,9 @@ pub struct OnboardingView {
     /// manager's *New profile*): no presentation pane, and the column starts
     /// at the left edge and the top, under the page's own head.
     embedded: bool,
+    /// Visible host area in form coordinates; overlays must not use the
+    /// scrollable form's virtual height as their window.
+    embedded_visible_area: Option<Rect>,
     caption_hover: Option<koru_ui::caption::Action>,
     maximized: bool,
     /// **The screen the accessibility tree was last built for, and the number
@@ -300,6 +307,9 @@ pub struct OnboardingView {
     focus: usize,
     hover: Option<Hit>,
     pending: Option<Action>,
+    /// Kept through uncertain Store responses; a new form mints a new identity.
+    local_creation_id: koru_core::ProfileId,
+    creation_conflict: bool,
     creation_submission: Option<crate::account_ui::CommandSubmissionId>,
     creation_waiting: bool,
     telemetry: Vec<Telemetry>,
@@ -377,6 +387,7 @@ impl Default for OnboardingView {
             workspace_appearance: None,
             custom_caption: false,
             embedded: false,
+            embedded_visible_area: None,
             caption_hover: None,
             maximized: false,
             screen_shown: None,
@@ -384,6 +395,8 @@ impl Default for OnboardingView {
             focus: 0,
             hover: None,
             pending: None,
+            local_creation_id: koru_core::ProfileId::new(),
+            creation_conflict: false,
             creation_submission: None,
             creation_waiting: false,
             telemetry: Vec::new(),
@@ -473,6 +486,7 @@ impl OnboardingView {
         next.viewport = self.viewport;
         next.custom_caption = self.custom_caption;
         next.embedded = self.embedded;
+        next.embedded_visible_area = self.embedded_visible_area;
         next.language = self.language;
         std::mem::swap(self, &mut next);
         forms.insert(old_scope, next);
@@ -490,6 +504,16 @@ impl OnboardingView {
     /// and the column lines up with the page's head instead of centring.
     pub fn set_embedded(&mut self, embedded: bool) {
         self.embedded = embedded;
+    }
+
+    pub fn set_embedded_visible_area(&mut self, area: Rect) {
+        self.embedded_visible_area = Some(area);
+    }
+
+    fn appearance_area(&self) -> Rect {
+        self.embedded_visible_area
+            .filter(|_| self.embedded)
+            .unwrap_or(Rect::new(0.0, 0.0, self.viewport.0, self.viewport.1))
     }
 
     pub fn set_custom_caption(&mut self, enabled: bool) {
@@ -933,6 +957,24 @@ impl OnboardingView {
         self.error = Some(message.into());
     }
 
+    pub fn creation_conflict(&mut self) {
+        self.creation_conflict = true;
+        self.creation_failed(koru_i18n::t(
+            self.language,
+            koru_i18n::Key::ProfileCreationExists,
+        ));
+    }
+
+    fn workspace_action_label(&self) -> &'static str {
+        if self.screen == Screen::Finishing {
+            "Finishing..."
+        } else if self.creation_conflict {
+            koru_i18n::t(self.language, koru_i18n::Key::ProfileCreationManage)
+        } else {
+            "Create workspace"
+        }
+    }
+
     /// Account errors return to the entry choice; they are unrelated to local
     /// Profile creation and must not skip the offline path.
     pub fn account_failed(&mut self, message: impl Into<String>) {
@@ -944,11 +986,22 @@ impl OnboardingView {
 
     pub fn mouse_move(&mut self, x: f32, y: f32) -> bool {
         self.pointer = (x, y);
+        let area = self.appearance_area();
         if let Some(appearance) = self.profile_appearance.as_mut() {
-            return appearance.mouse_move(&mut self.engine, self.viewport, x, y);
+            return appearance.mouse_move(
+                &mut self.engine,
+                (area.w, area.h),
+                x - area.x,
+                y - area.y,
+            );
         }
         if let Some(appearance) = self.workspace_appearance.as_mut() {
-            return appearance.mouse_move(&mut self.engine, self.viewport, x, y);
+            return appearance.mouse_move(
+                &mut self.engine,
+                (area.w, area.h),
+                x - area.x,
+                y - area.y,
+            );
         }
         let caption_hover = self.caption_action_at(x, y);
         let caption_changed = caption_hover != self.caption_hover;
@@ -1026,18 +1079,17 @@ impl OnboardingView {
     pub fn mouse_down(&mut self, x: f32, y: f32) -> bool {
         self.restart_caret_blink();
         self.pointer = (x, y);
+        let area = self.appearance_area();
         if self.profile_appearance.is_some() {
-            let outcome = self
-                .profile_appearance
-                .as_mut()
-                .map(|appearance| appearance.mouse_down(&mut self.engine, self.viewport, x, y));
+            let outcome = self.profile_appearance.as_mut().map(|appearance| {
+                appearance.mouse_down(&mut self.engine, (area.w, area.h), x - area.x, y - area.y)
+            });
             return outcome.is_some_and(|outcome| self.settle_profile_appearance(outcome));
         }
         if self.workspace_appearance.is_some() {
-            let outcome = self
-                .workspace_appearance
-                .as_mut()
-                .map(|appearance| appearance.mouse_down(&mut self.engine, self.viewport, x, y));
+            let outcome = self.workspace_appearance.as_mut().map(|appearance| {
+                appearance.mouse_down(&mut self.engine, (area.w, area.h), x - area.x, y - area.y)
+            });
             return outcome.is_some_and(|outcome| self.settle_workspace_appearance(outcome));
         }
         if let Some(bar) = self.existing_profile_scrollbar()
@@ -1431,12 +1483,14 @@ impl OnboardingView {
                 Screen::Profile => self.draw_profile(canvas, root),
                 Screen::Workspace | Screen::Finishing => self.draw_workspace(canvas, root),
             }
+            let area = self.appearance_area();
+            let overlay = root * Affine::translate((f64::from(area.x), f64::from(area.y)));
             if let Some(mut appearance) = self.workspace_appearance.take() {
-                appearance.draw(canvas, root, &mut self.engine, self.viewport);
+                appearance.draw(canvas, overlay, &mut self.engine, (area.w, area.h));
                 self.workspace_appearance = Some(appearance);
             }
             if let Some(mut appearance) = self.profile_appearance.take() {
-                appearance.draw(canvas, root, &mut self.engine, self.viewport);
+                appearance.draw(canvas, overlay, &mut self.engine, (area.w, area.h));
                 self.profile_appearance = Some(appearance);
             }
         }
@@ -1574,6 +1628,54 @@ impl OnboardingView {
             width,
             self.viewport.1 - 68.0,
         )
+    }
+
+    /// The host scrolls an embedded form instead of shrinking its fields into
+    /// the action row. This uses the same field geometry as paint and input.
+    pub fn embedded_content_height(&self) -> f32 {
+        let field = match self.screen {
+            Screen::Profile => self.profile_name_rect(),
+            Screen::Workspace | Screen::Finishing => self.workspace_name_rect(),
+            _ => return 600.0,
+        };
+        (field.y + field.h + 16.0 + profile_note_h(self.connect_account) + 24.0 + 64.0 + PAD)
+            .max(600.0)
+    }
+
+    /// The currently focused local-creation control, for the host's existing
+    /// scroll container to reveal after keyboard or accessibility navigation.
+    pub fn focused_form_rect(&mut self) -> Option<Rect> {
+        if self.profile_appearance.is_some() || self.workspace_appearance.is_some() {
+            return None;
+        }
+        if !matches!(self.screen, Screen::Profile | Screen::Workspace) {
+            return None;
+        }
+        let hit = *self.controls().get(self.focus)?;
+        Some(match hit {
+            Hit::Name if self.screen == Screen::Workspace => self.workspace_name_rect(),
+            Hit::Name => self.owner_name_rect(),
+            Hit::ProfileName => self.profile_name_rect(),
+            Hit::ProfileAppearance => self.profile_icon_rect(),
+            Hit::WorkspaceAppearance => self.workspace_icon_rect(),
+            Hit::Purpose(purpose) => self.card_rect(
+                PURPOSES
+                    .iter()
+                    .position(|candidate| *candidate == purpose)?,
+                self.profile_card_metrics(),
+            ),
+            Hit::Template(index) => self.card_rect(index, self.workspace_card_metrics()),
+            Hit::Primary | Hit::Back => {
+                let label = if self.screen == Screen::Profile {
+                    "Continue"
+                } else {
+                    self.workspace_action_label()
+                };
+                let (primary, back) = self.form_action_buttons(label);
+                if hit == Hit::Primary { primary } else { back }
+            }
+            _ => return None,
+        })
     }
 
     fn existing_profiles_viewport(&mut self) -> Rect {
@@ -1848,10 +1950,15 @@ impl OnboardingView {
                 self.screen = Screen::Profile;
                 self.focus = 0;
             }
+            (Screen::Workspace, Hit::Primary) if self.creation_conflict => {
+                self.screen = Screen::Finishing;
+                self.pending = Some(Action::ManageProfiles);
+            }
             (Screen::Workspace, Hit::Primary) if self.workspace_form_complete() => {
                 let index = self.template.unwrap_or(EMPTY_TEMPLATE);
                 self.screen = Screen::Finishing;
                 self.pending = Some(Action::CreateLocalProfile {
+                    id: self.local_creation_id,
                     owner_display_name: self.owner_name.value(),
                     name: self.profile_name(),
                     workspace_name: self.workspace_name.value(),
@@ -1982,13 +2089,13 @@ impl OnboardingView {
         }
         if self.workspace_form_complete()
             && self
-                .form_action_buttons("Create workspace")
+                .form_action_buttons(self.workspace_action_label())
                 .0
                 .contains(x, y)
         {
             Some(Hit::Primary)
         } else if self
-            .form_action_buttons("Create workspace")
+            .form_action_buttons(self.workspace_action_label())
             .1
             .contains(x, y)
         {
@@ -2145,7 +2252,7 @@ impl OnboardingView {
     /// enough, and a workspace named without a card starts
     /// [empty](EMPTY_TEMPLATE).
     fn workspace_form_complete(&self) -> bool {
-        !self.workspace_name.is_empty()
+        self.creation_conflict || !self.workspace_name.is_empty()
     }
 
     fn profile_name(&self) -> String {
@@ -3047,11 +3154,7 @@ impl OnboardingView {
                 p.notice_fg,
             );
         }
-        let label = if self.screen == Screen::Finishing {
-            "Finishing..."
-        } else {
-            "Create workspace"
-        };
+        let label = self.workspace_action_label();
         let (primary, back) = self.form_action_buttons(label);
         let complete = self.workspace_form_complete();
         let controls = self.controls();
@@ -3883,6 +3986,26 @@ mod tests {
     }
 
     #[test]
+    fn a_creation_retry_preserves_identity_but_a_new_form_does_not() {
+        let mut view = OnboardingView::default();
+        view.show_profile();
+        view.owner_name.set_text(&mut view.engine, "Ana");
+        view.activate(Hit::Purpose(Purpose::Work));
+        view.activate(Hit::Primary);
+        view.workspace_name.set_text(&mut view.engine, "Notes");
+        view.activate(Hit::Primary);
+        let Some(Action::CreateLocalProfile { id, .. }) = view.take_action() else {
+            panic!("complete form did not submit");
+        };
+        view.creation_failed("response was lost");
+        view.activate(Hit::Primary);
+        assert!(
+            matches!(view.take_action(), Some(Action::CreateLocalProfile { id: retry, .. }) if id == retry)
+        );
+        assert_ne!(id, OnboardingView::default().local_creation_id);
+    }
+
+    #[test]
     fn the_empty_template_constant_names_the_empty_card() {
         assert_eq!(TEMPLATES[EMPTY_TEMPLATE].key, "empty");
     }
@@ -4295,6 +4418,7 @@ mod tests {
         assert_eq!(
             view.take_action(),
             Some(Action::CreateLocalProfile {
+                id: view.local_creation_id,
                 owner_display_name: "New account Profile".into(),
                 name: "New account Profile (Work)".into(),
                 workspace_name: "New account Workspace".into(),

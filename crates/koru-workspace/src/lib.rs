@@ -18,7 +18,10 @@ use koru_core::{Kind, NodeId};
 pub mod durability;
 pub mod explore;
 pub mod fromstore;
+mod store_open;
+use store_open::require_live_manifest;
 pub mod open;
+pub mod pages;
 pub mod profile;
 pub mod seed;
 pub mod session;
@@ -230,6 +233,10 @@ pub struct Workspace {
     /// rail redraws on a list rename, and the tag chooser does not. One flag
     /// would make each of them repaint for the other's news.
     lists_changed: bool,
+    /// The page documents of Tasks pages this process is making exist, and
+    /// the writing on disk the store has not confirmed for them. See
+    /// [`pages`].
+    pages: pages::PageRegistry,
     /// The `SystemStore` a test wants the lazy open to use, in place of the
     /// Store client production builds. `system.rs`'s `new_system_session` is
     /// the only reader, so a test exercises the real open path rather than
@@ -237,6 +244,10 @@ pub struct Workspace {
     #[cfg(test)]
     pub(crate) system_store_for_tests: Option<std::sync::Arc<dyn system::SystemStore>>,
 }
+
+/// The start of the message a failed open answers once the store has
+/// already made the document — the host reads it to say the right thing.
+pub const CREATED_BUT_NOT_OPENED: &str = "the document was made, but could not be opened";
 
 /// A document the store has registered and this replica's manifest has not
 /// heard about yet.
@@ -341,6 +352,7 @@ impl Workspace {
             replay_trouble: Vec::new(),
             entries_changed: false,
             pending_documents: Vec::new(),
+            pages: pages::PageRegistry::default(),
             system: None,
             tags_changed: false,
             lists_changed: false,
@@ -385,6 +397,7 @@ impl Workspace {
             replay_trouble: Vec::new(),
             entries_changed: false,
             pending_documents: Vec::new(),
+            pages: pages::PageRegistry::default(),
             system: None,
             tags_changed: false,
             lists_changed: false,
@@ -419,6 +432,7 @@ impl Workspace {
         let (mut session, snapshot) =
             store::StoreSession::join_manifest(segment, root, explore::store_workspace(workspace))?;
         let mut manifest = koru_store_core::manifest::Manifest::from_snapshot(&snapshot)?;
+        require_live_manifest(&manifest, workspace)?;
         // Discover and authenticate the ordinary HTTP side too before touching
         // the outgoing workspace. A failed incoming open must leave all of its
         // rooms and documents intact.
@@ -456,6 +470,9 @@ impl Workspace {
         // list table travels with it — same document, same reason.
         self.tags_changed = true;
         self.lists_changed = true;
+        // Notes written above a Tasks page before a crash: taken up and
+        // registered again, whatever page they were for.
+        self.discover_pages();
         Ok(())
     }
 
@@ -473,20 +490,21 @@ impl Workspace {
         if keep.is_empty() {
             return self.open_from_store(segment, root, workspace);
         }
-        if let Some(id) = self.active
-            && keep.contains(&id)
-        {
-            self.park_active();
-        }
         let (mut session, snapshot) =
             store::StoreSession::join_manifest(segment, root, explore::store_workspace(workspace))?;
         let mut manifest = koru_store_core::manifest::Manifest::from_snapshot(&snapshot)?;
+        require_live_manifest(&manifest, workspace)?;
         let client = match root {
             Some(root) => koru_api_client::Client::open_at(segment, root),
             None => koru_api_client::Client::open(segment),
         }?;
         self.replay_trouble
             .extend(session.replay_buffered(&mut manifest));
+        if let Some(id) = self.active
+            && keep.contains(&id)
+        {
+            self.park_active();
+        }
         self.close_store_sessions_except(keep);
         self.manifest = Some(manifest);
         if let Some(waker) = &self.waker {
@@ -501,6 +519,7 @@ impl Workspace {
         self.pending_documents.clear();
         self.tags_changed = true;
         self.lists_changed = true;
+        self.discover_pages();
         Ok(())
     }
 
@@ -516,6 +535,7 @@ impl Workspace {
     /// delete of the workspace just left does.
     fn close_store_sessions(&mut self) {
         self.buffer_everything_owed();
+        self.detach_pages();
         if let Some(session) = &self.manifest_session {
             session.leave();
         }
@@ -532,6 +552,7 @@ impl Workspace {
 
     fn close_store_sessions_except(&mut self, keep: &[koru_core::DocumentId]) {
         self.buffer_everything_owed();
+        self.detach_pages();
         if let Some(session) = &self.manifest_session {
             session.leave();
         }
@@ -1036,7 +1057,12 @@ impl Workspace {
             });
             self.entries_changed = true;
         }
-        self.open_document(id)?;
+        // The store has the document from here on, whatever happens next:
+        // a failed open is not *nothing was changed*, and the message says
+        // so rather than letting the window claim the opposite.
+        self.open_document(id).map_err(|e| {
+            koru_store_core::errors::Error::new(e.code(), format!("{CREATED_BUT_NOT_OPENED}: {e}"))
+        })?;
         // **The schema marker, on the document the store made.**
         //
         // `WorkspaceDoc::create` writes it and nothing here calls `create`: the
@@ -1560,6 +1586,7 @@ impl Workspace {
         if let Some(system) = &mut self.system {
             system.set_waker(waker.clone());
         }
+        self.wake_pages_with(&waker);
         self.waker = Some(waker);
     }
 
@@ -1691,6 +1718,12 @@ impl Workspace {
     pub fn close_document(&mut self, id: koru_core::DocumentId) -> bool {
         if self.active == Some(id) {
             return false;
+        }
+        // A page document whose registration the registry still owes is
+        // handed back to it rather than dropped — its writing exists only
+        // here until the store confirms it.
+        if self.take_page_back(id) {
+            return true;
         }
         // **Correctness, and the case the outbox is easiest to get wrong.**
         // Closing a tab drops its session, and with it everything that knew
@@ -1889,6 +1922,9 @@ impl Workspace {
         id: koru_core::DocumentId,
         title: &str,
     ) -> Result<(), koru_store_core::errors::Error> {
+        // A note's rename is an override in the system document (plan §6.6);
+        // the manifest's copy follows as the cache it is.
+        self.rename_page_document(id, title);
         self.edit_manifest(|manifest| manifest.rename_document(explore::store_document(id), title))
     }
 
@@ -1913,7 +1949,13 @@ impl Workspace {
         &mut self,
         id: koru_core::DocumentId,
     ) -> Result<(), koru_store_core::errors::Error> {
-        self.edit_manifest(|manifest| manifest.restore_document(explore::store_document(id)))
+        self.edit_manifest(|manifest| manifest.restore_document(explore::store_document(id)))?;
+        // Restoring a page document is a *Recover* of every deletion event
+        // this device has observed (page-document plan §6.4, owner Q2): a
+        // trashed note that a permanent delete elsewhere turned into a
+        // tombstone comes back rather than staying deleted.
+        self.recover_on_restore(id);
+        Ok(())
     }
 
     /// **Destroy every trashed document.** The one irreversible operation in the
@@ -1931,21 +1973,11 @@ impl Workspace {
     /// them is destroying the wrong thing.
     pub fn empty_trashed_documents(&mut self) -> Result<usize, koru_store_core::errors::Error> {
         let doomed: Vec<_> = self.trashed_entries().into_iter().map(|e| e.id).collect();
-        // **Roots first, and children only if they were not swept with one.**
-        // `remove_document` takes a subtree, so a child named after its parent
-        // has already gone and asking again is an error about a document nobody
-        // is missing.
-        for id in &doomed {
-            let store_id = explore::store_document(*id);
-            let Some(manifest) = &mut self.manifest else {
-                break;
-            };
-            if manifest.contains(store_id) {
-                let _ = manifest.remove_document(store_id);
-            }
+        let mut removed = 0;
+        for id in doomed {
+            removed += usize::from(self.purge_document(id)?);
         }
-        self.publish_manifest();
-        Ok(doomed.len())
+        Ok(removed)
     }
 
     /// **Destroy one trashed document**, named rather than swept.
@@ -1966,15 +1998,18 @@ impl Workspace {
         id: koru_core::DocumentId,
     ) -> Result<bool, koru_store_core::errors::Error> {
         let store_id = explore::store_document(id);
-        let Some(manifest) = &mut self.manifest else {
-            return Ok(false);
-        };
-        if !manifest.contains(store_id) {
+        if self
+            .manifest
+            .as_ref()
+            .is_none_or(|manifest| !manifest.contains(store_id))
+        {
             return Ok(false);
         }
-        manifest.remove_document(store_id)?;
-        self.publish_manifest();
-        Ok(true)
+        self.request_page_purge(id);
+        let Some(proof) = self.prove_page_purge(id) else {
+            return Ok(false);
+        };
+        self.remove_durable_page_tree(proof)
     }
 
     /// Change the manifest and get the change on its way at once.
@@ -2154,8 +2189,15 @@ impl Workspace {
     /// [ADR-50-ondemand]: ../../../docs/decisions/README.md
     /// [ADR-91]: ../../../docs/decisions/ADR-076-100.md#adr-91-perdocument--a-document-keeps-a-root-node-for-its-title-and-the-manifest-mirrors-it
     fn reconcile_title(&mut self, active: koru_core::DocumentId) -> bool {
-        let Some(title) = self.active_title() else {
-            return false;
+        // A page document's title is resolved, never read off its root
+        // (plan A2): the manifest caches the semantic value — a list's name,
+        // a rename, a bucket's token — and is written only when it differs.
+        let title = match self.page_title_of(active) {
+            Some(resolved) => resolved.semantic(),
+            None => match self.active_title() {
+                Some(title) => title,
+                None => return false,
+            },
         };
         // HTTP creation can precede its manifest echo. Keep that existing
         // provisional projection current without creating a competing tree node.
@@ -2273,6 +2315,9 @@ impl Workspace {
             self.replay_trouble.extend(system.take_trouble());
             draining += d.stop();
         }
+
+        changed |= self.tick_pages();
+        self.tick_held_pages();
 
         let (_, p, d) = self.sync_manifest();
         publishing += p;
@@ -2425,6 +2470,7 @@ impl Workspace {
         if let Some(system) = &mut self.system {
             system.buffer_now();
         }
+        self.buffer_pages_now();
     }
 
     /// Whether everything typed has reached the store's disk, and where it is
@@ -2460,6 +2506,14 @@ impl Workspace {
         }
         if let (Some(session), Some(manifest)) = (&self.manifest_session, &self.manifest) {
             out.document_list = owing(session, manifest);
+        }
+        // Notes above Tasks pages the store does not hold yet. Their writing
+        // is on this disk as pending revisions unless a write failed, which
+        // is the one case that makes closing unsafe.
+        let (pages, pages_not_buffered) = self.pages_owed();
+        out.documents += pages;
+        if why_not_buffered.is_none() {
+            why_not_buffered = pages_not_buffered;
         }
 
         out.not_buffered = why_not_buffered;
@@ -2513,10 +2567,10 @@ impl Workspace {
         let store_due = self
             .store_busy()
             .then(|| std::time::Instant::now() + STORE_WATCHDOG);
-        match (folder, store_due) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (a, b) => a.or(b),
-        }
+        // A note being typed above a Tasks page owes its next revision write
+        // a second after the last one.
+        let pages_due = self.pages_next_due();
+        [folder, store_due, pages_due].into_iter().flatten().min()
     }
 
     /// Whether anything about the store still needs looking at on a clock.
@@ -2535,6 +2589,7 @@ impl Workspace {
                 .system
                 .as_ref()
                 .is_some_and(system::SystemSession::busy)
+            || self.pages_busy()
     }
 
     /// Compact to a snapshot — on exit, and whenever the app goes quiet.

@@ -103,6 +103,9 @@ pub struct SessionView {
     /// answers.
     pub profile_key: Option<SessionProfileKey>,
     pub pending_launch: Option<PendingLaunch>,
+    /// One fresh attempt if a resume launch fails before attachment. Taken
+    /// when retried and cleared on attachment, so a later exit never restarts.
+    pub resume_fallback: Option<PendingLaunch>,
     /// What this tab was when it was saved — its folder, its project, whether
     /// it was a raw terminal — kept from a restore until the Agent's first
     /// catalog says the session is still alive (then it is dropped) or is not
@@ -168,6 +171,7 @@ impl SessionView {
                 .as_ref()
                 .map(|launch| launch.profile.id.clone()),
             pending_launch,
+            resume_fallback: None,
             recovery: None,
             offer: None,
             offer_auto_start: false,

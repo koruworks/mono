@@ -14,8 +14,269 @@ use koru_store_core::ids::{ProfileId, WorkspaceId};
 use koru_ui::confirm::Outcome;
 
 use super::*;
+
+#[test]
+fn availability_preserves_the_retirement_retry_and_its_original_owner() {
+    let mut c = controller();
+    c.perform(Action::SoftDelete(id('a')));
+    c.receive(Answer::Refused(Notice {
+        text: crate::REFUSAL_LISTING_PENDING.into(),
+        retry: Some(Retry::Lifecycle(
+            id('a'),
+            WorkspaceLifecycleAction::SoftDelete,
+        )),
+    }));
+    let (reply, _answer) = std::sync::mpsc::channel();
+    c.ensure_live(owner(), "Default".into(), 20, reply);
+    assert!(c.notice_for(owner()).unwrap().is_retryable());
+    assert!(c.notice_for(elsewhere()).is_none());
+    c.perform(Action::Retry);
+    assert!(matches!(c.stage, Some(Stage::Asking { confirm: true })));
+    assert!(c.notice().is_none());
+}
+
+#[test]
+fn keep_refusal_is_scoped_to_the_profile_whose_attempt_failed() {
+    let mut c = WorkspacesController::with_links(WorkspaceLinks::inert());
+    let command = c.start_command(Pending::KeepProfile(owner()));
+    c.receive(Answer::Settled(
+        command,
+        Box::new(Answer::ProfileKept(Err(
+            koru_api_client::WorkspaceError::Transport(koru_store_core::Error::bare(
+                koru_store_core::Code::StorageFailed,
+            )),
+        ))),
+    ));
+    assert!(c.notice_for(owner()).is_some());
+    assert!(c.notice_for(elsewhere()).is_none());
+    assert!(!c.notice_for(owner()).unwrap().is_retryable());
+}
+
+#[test]
+fn move_retry_notice_keeps_the_source_owner_after_catalog_invalidation() {
+    let mut c = controller();
+    c.perform(Action::MigrateTo(id('a'), elsewhere()));
+    let mut moved = row("Notes", 'a');
+    moved.owner = elsewhere();
+    c.adopt_rows(&[moved]);
+    c.receive(Answer::Refused(Notice {
+        text: crate::REFUSAL_MOVE_PARTIAL.into(),
+        retry: Some(Retry::Migration(id('a'), elsewhere())),
+    }));
+    assert!(c.notice_for(owner()).unwrap().is_retryable());
+    assert!(c.notice_for(elsewhere()).is_none());
+}
+
+#[test]
+fn availability_requires_both_command_and_attempt_and_never_lands_itself() {
+    let mut c = WorkspacesController::with_links(WorkspaceLinks::inert());
+    let (reply, answer) = std::sync::mpsc::channel();
+    c.ensure_live(owner(), "First".into(), 19, reply);
+    let command = *c.pending.keys().next().unwrap();
+    c.receive(Answer::Catalog(vec![]));
+    assert!(answer.try_recv().is_err());
+    assert!(!c.receive(Answer::Settled(
+        CommandId(command.0 + 1),
+        Box::new(Answer::WorkspaceEnsured {
+            attempt: 19,
+            result: Ok(koru_api_client::EnsuredWorkspace::Pending { workspaces: vec![] }),
+        }),
+    )));
+    assert!(c.has_pending());
+    c.receive(Answer::Settled(
+        command,
+        Box::new(Answer::WorkspaceEnsured {
+            attempt: 19,
+            result: Ok(koru_api_client::EnsuredWorkspace::Pending {
+                workspaces: vec![id('a')],
+            }),
+        }),
+    ));
+    assert!(matches!(answer.try_recv().unwrap().unwrap(),
+        koru_api_client::EnsuredWorkspace::Pending { workspaces } if workspaces == vec![id('a')]));
+    assert!(!c.has_pending());
+    assert!(c.take_requests().is_empty(), "the host owns navigation");
+    assert!(!c.receive(Answer::Settled(command, Box::new(Answer::Unavailable))));
+}
+
+#[test]
+fn mismatched_availability_attempt_and_lost_transport_settle_as_failures() {
+    for receipt in [
+        Answer::WorkspaceEnsured {
+            attempt: 3,
+            result: Ok(koru_api_client::EnsuredWorkspace::Pending { workspaces: vec![] }),
+        },
+        Answer::Unavailable,
+    ] {
+        let mut c = WorkspacesController::with_links(WorkspaceLinks::inert());
+        let (reply, answer) = std::sync::mpsc::channel();
+        c.ensure_live(owner(), "First".into(), 4, reply);
+        let command = *c.pending.keys().next().unwrap();
+        c.receive(Answer::Settled(command, Box::new(receipt)));
+        assert!(answer.try_recv().unwrap().is_err());
+        assert!(!c.has_pending());
+        assert!(c.take_requests().is_empty());
+    }
+}
+
+#[test]
+fn abandoned_availability_receiver_does_not_reopen_or_keep_polling() {
+    let mut c = WorkspacesController::with_links(WorkspaceLinks::inert());
+    let (reply, answer) = std::sync::mpsc::channel();
+    c.ensure_live(owner(), "First".into(), 4, reply);
+    let command = *c.pending.keys().next().unwrap();
+    drop(answer);
+    c.receive(Answer::Settled(
+        command,
+        Box::new(Answer::WorkspaceEnsured {
+            attempt: 4,
+            result: Ok(koru_api_client::EnsuredWorkspace::Pending { workspaces: vec![] }),
+        }),
+    ));
+    assert!(!c.has_pending());
+    assert!(c.take_requests().is_empty());
+}
+
+#[test]
+fn profile_creation_waits_for_its_keyed_answer_and_preserves_typed_refusal() {
+    let mut c = WorkspacesController::with_links(WorkspaceLinks::inert());
+    let (reply, answer) = std::sync::mpsc::channel();
+    c.create_profile(
+        koru_api_client::CreateProfileWithWorkspace {
+            id: ProfileId::new(),
+            name: "Owner".into(),
+            locale: None,
+            purpose: None,
+            avatar: None,
+            icon: None,
+            color: None,
+            workspace: koru_api_client::FirstWorkspace {
+                name: "First".into(),
+                icon: None,
+                color: None,
+            },
+        },
+        reply,
+    );
+    let id = *c.pending.keys().next().unwrap();
+    c.receive(Answer::Catalog(vec![]));
+    assert!(c.has_pending());
+    assert!(answer.try_recv().is_err());
+    assert!(!c.receive(Answer::Settled(
+        CommandId(id.0 + 1),
+        Box::new(Answer::Unavailable)
+    )));
+    assert!(answer.try_recv().is_err());
+    c.receive(Answer::Settled(
+        id,
+        Box::new(Answer::ProfileCreated(Err(koru_store_core::Error::bare(
+            koru_store_core::Code::ProfileExists,
+        )))),
+    ));
+    assert!(!c.has_pending());
+    assert_eq!(
+        answer.try_recv().unwrap().unwrap_err().code(),
+        koru_store_core::Code::ProfileExists
+    );
+}
+
+#[test]
+fn lost_profile_creation_transport_settles_the_waiting_template_worker() {
+    let mut c = WorkspacesController::with_links(WorkspaceLinks::inert());
+    let (reply, answer) = std::sync::mpsc::channel();
+    let id = c.start_command(Pending::CreateProfile(reply));
+    c.receive(Answer::Settled(id, Box::new(Answer::Unavailable)));
+    assert!(!c.has_pending());
+    assert!(answer.try_recv().unwrap().is_err());
+}
+
+#[test]
+fn first_empty_catalog_and_recovery_are_changes_and_failure_retains_it() {
+    let mut controller = WorkspacesController::new();
+    assert!(controller.catalog_rows().is_none());
+    assert!(controller.adopt_rows(&[]));
+    assert_eq!(controller.catalog_rows(), Some([].as_slice()));
+    assert!(!controller.adopt_rows(&[]));
+    controller.set_availability(Availability::Down);
+    assert_eq!(controller.catalog_rows(), Some([].as_slice()));
+    assert!(controller.adopt_rows(&[]));
+}
 use crate::state::{Answer, Consequence, MoveConsequence, ProfileRow, Retry};
 use crate::tests::{elsewhere, id, owner, row};
+
+#[test]
+fn only_the_matching_settlement_clears_a_pending_operation() {
+    let mut c = controller();
+    let mut b = row("Other", 'b');
+    b.position = 1;
+    c.adopt_rows(&[row("Notes", 'a'), b.clone()]);
+    c.perform(Action::TogglePinned(id('a')));
+    let first = *c.pending.keys().next().unwrap();
+    c.perform(Action::TogglePinned(id('a')));
+    assert_eq!(c.pending.len(), 1, "one pin per row");
+    c.perform(Action::TogglePinned(id('b')));
+    c.perform(Action::MoveDown(id('a')));
+    assert_eq!(c.pending.len(), 3, "different pins and an order coexist");
+    assert!(c.pending_order(owner()).is_some());
+    c.perform(Action::MoveDown(id('a')));
+    assert_eq!(c.pending.len(), 3, "one order per owner");
+    c.receive(Answer::Catalog(vec![row("Renamed elsewhere", 'a'), b]));
+    assert_eq!(c.pending_pin(id('a')), Some(true));
+    assert_eq!(
+        c.pending.len(),
+        3,
+        "catalog adoption cannot acknowledge a command"
+    );
+    assert!(!c.receive(Answer::Settled(
+        CommandId(999),
+        Box::new(Answer::Unavailable)
+    )));
+    assert_eq!(c.pending.len(), 3);
+    assert!(c.receive(Answer::Settled(
+        first,
+        Box::new(Answer::Refused(Notice {
+            text: crate::REFUSAL_UNAVAILABLE.into(),
+            retry: None,
+        }))
+    )));
+    assert_eq!(c.pending_pin(id('a')), None);
+    assert_eq!(c.pending_pin(id('b')), Some(true));
+    assert!(c.pending_order(owner()).is_some());
+    assert!(c.notice().is_some());
+    assert!(!c.receive(Answer::Settled(
+        first,
+        Box::new(Answer::Catalog(Vec::new()))
+    )));
+    assert_eq!(
+        c.rows.len(),
+        2,
+        "a duplicate terminal answer cannot overwrite the catalog"
+    );
+}
+
+#[test]
+fn a_pin_refusal_does_not_cancel_an_unrelated_lifecycle_question() {
+    let mut c = controller();
+    c.delete_workspace(id('a'));
+    c.receive(consequence(
+        id('a'),
+        WorkspaceLifecycleAction::SoftDelete,
+        &[],
+    ));
+    assert!(c.is_confirming());
+    c.perform(Action::TogglePinned(id('a')));
+    let command = *c.pending.keys().next().unwrap();
+    c.receive(Answer::Settled(
+        command,
+        Box::new(Answer::Refused(Notice {
+            text: crate::REFUSAL_UNAVAILABLE.into(),
+            retry: None,
+        })),
+    ));
+    assert!(c.is_confirming());
+    assert!(c.notice().is_some());
+    assert!(!c.has_pending());
+}
 
 // ------------------------------------------------------------------ fixtures
 
@@ -74,6 +335,9 @@ fn outcome(
         terminated_sessions: Vec::new(),
         sessions_closed: true,
         mutation_applied: applied,
+        authority_committed: None,
+        listing: None,
+        replacement: None,
     }
 }
 
@@ -86,6 +350,7 @@ fn moved(projects_rescoped: Option<Vec<String>>) -> Answer {
         sessions_closed: true,
         mutation_applied: true,
         projects_rescoped,
+        replacement: None,
     })
 }
 
@@ -818,6 +1083,78 @@ fn reason_for_the_controllers_own_controls_is_none() {
 }
 
 // ------------------------------------------------------------------ requests
+
+#[test]
+fn removal_marks_survive_transport_loss_and_block_previously_drawn_navigation() {
+    let mut controller = controller();
+    let mark = koru_store_core::profile_removal::RemovalMark {
+        attempt: koru_store_core::ids::RemovalAttemptId::new(),
+        kind: koru_store_core::profile_removal::RemovalKind::Local,
+        started_at: koru_store_core::Timestamp::from_millis(1),
+        last_step_at: koru_store_core::Timestamp::from_millis(1),
+        stopped: true,
+    };
+    assert!(controller.profile_removal_state(owner()).is_none());
+    controller.receive(Answer::CatalogState {
+        rows: vec![row("Notes", 'a')],
+        removals: [(owner(), mark.clone())].into(),
+    });
+    assert_eq!(
+        controller.profile_removal_state(owner()),
+        Some(Some(mark.clone()))
+    );
+    controller.perform(Action::Open(id('a')));
+    assert!(controller.take_requests().is_empty());
+    assert!(
+        controller
+            .reason_for(&Action::Open(id('a')), controller.row(id('a')).unwrap())
+            .is_some()
+    );
+    controller.receive(Answer::Unavailable);
+    assert_eq!(controller.profile_removal_state(owner()), Some(Some(mark)));
+    controller.receive(Answer::CatalogState {
+        rows: vec![row("Notes", 'a')],
+        removals: Default::default(),
+    });
+    assert_eq!(controller.profile_removal_state(owner()), Some(None));
+    controller.perform(Action::Open(id('a')));
+    assert_eq!(controller.take_requests(), vec![Request::Open(id('a'))]);
+}
+
+#[test]
+fn stale_navigation_actions_recheck_authority_and_connection() {
+    for new_window in [false, true] {
+        let action = if new_window {
+            Action::OpenInNewWindow(id('a'))
+        } else {
+            Action::Open(id('a'))
+        };
+        for state in 0..7 {
+            let mut controller = controller();
+            let mut changed = row("Notes", 'a');
+            match state {
+                0 => changed.authority = crate::Authority::Unknown,
+                1 => changed.authority = crate::Authority::Pending,
+                2 => {
+                    changed.authority = crate::Authority::Uncertain {
+                        cause: "storage_failed".into(),
+                        recovery: None,
+                    }
+                }
+                3 => changed.deleted = true,
+                4 => changed.archived = true,
+                5 => changed.listing_differs = true,
+                _ => {}
+            }
+            controller.adopt_rows(&[changed]);
+            if state == 6 {
+                controller.set_availability(Availability::Down);
+            }
+            controller.perform(action.clone());
+            assert!(controller.take_requests().is_empty(), "state {state}");
+        }
+    }
+}
 
 /// **Everything that needs a window is a request; everything else is not.**
 #[test]

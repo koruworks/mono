@@ -15,7 +15,11 @@ fn admission_drains_deferred_cancel_from_the_reused_form_without_another_click()
     });
     c.take_request();
     c.begin_profile_creation();
-    let form = c.profile_creation.as_mut().unwrap();
+    let form = c
+        .profile_creation
+        .as_mut()
+        .map(std::cell::RefCell::get_mut)
+        .unwrap();
     // Past the welcome screen's email form (address, password, its eye,
     // Continue) to the Google button, which is what this test is about.
     for _ in 0..4 {
@@ -26,11 +30,13 @@ fn admission_drains_deferred_cancel_from_the_reused_form_without_another_click()
     let (command, submission) = c.take_request_with_submission().unwrap();
     assert!(matches!(command, AccountCommand::StartGoogle { .. }));
     let submission = submission.unwrap();
-    assert!(c.profile_creation.as_mut().unwrap().key(
-        &Key::Named(NamedKey::Escape),
-        None,
-        ModifiersState::empty()
-    ));
+    assert!(
+        c.profile_creation
+            .as_mut()
+            .map(std::cell::RefCell::get_mut)
+            .unwrap()
+            .key(&Key::Named(NamedKey::Escape), None, ModifiersState::empty())
+    );
     c.drain_profile_creation_action();
     assert!(c.take_request().is_none());
     assert!(c.account_command_admitted(CommandAdmission {

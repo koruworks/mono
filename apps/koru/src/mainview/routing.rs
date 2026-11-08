@@ -214,7 +214,9 @@ impl MainView {
             Layer::Import => self.import_dialog.is_some(),
             Layer::Updates => self.updates_modal,
             Layer::UpdateNewer => self.update_newer_modal_open(),
-            Layer::Confirm => self.confirm.is_some(),
+            Layer::Confirm => {
+                self.confirm.is_some() || self.workspace_controller.borrow().is_confirming()
+            }
             Layer::NewDocument => self.new_document.is_some(),
             Layer::Snapshot => self.snapshot_prompt.is_some(),
             Layer::LinkDevice => self.link_device.is_some(),
@@ -276,6 +278,9 @@ impl MainView {
         if blockers.is_blocking() {
             return blockers.editable();
         }
+        if self.profile_wait_visible() {
+            return EditableTarget::None;
+        }
         // The AI composer, which sits below every chord and above the tab — the
         // same place `MainView::key` routes it.
         if self.ai_visible() && self.ai_focused {
@@ -283,14 +288,18 @@ impl MainView {
         }
         match &self.tabs().active_tab().view {
             TabView::Leaf(leaf) => leaf.editable_target(TabId(self.tabs().active())),
-            // The Tasks page's capture row is not a dictation surface this
-            // release; a wrong `None` merely declines a dictation.
+            // The note above a Tasks page is a document body while it has
+            // the keyboard; the capture row is not a dictation surface this
+            // release, and a `None` merely declines a dictation.
+            TabView::Tasks(t) => t
+                .focused_body_leaf()
+                .map(|leaf| leaf.editable_target(TabId(self.tabs().active())))
+                .unwrap_or(EditableTarget::None),
             TabView::Welcome(_)
             | TabView::Home(_)
             | TabView::Manage(_)
             | TabView::Settings(_)
             | TabView::Trash(_)
-            | TabView::Tasks(_)
             | TabView::Reminders(_)
             | TabView::Diff(_)
             | TabView::Feedback(_)
@@ -430,6 +439,13 @@ impl MainView {
             | EditableTarget::Field(FieldId::DocumentPrompt) => {
                 match self.tabs_mut().get_mut(tab).map(|t| &mut t.view) {
                     Some(TabView::Leaf(leaf)) => leaf.dictate(ws, action),
+                    // Through the paired boundary: only while the note has
+                    // the keyboard and `ws` is its document.
+                    Some(TabView::Tasks(t)) => {
+                        t.body_is_focused_in(ws)
+                            && t.body_leaf_mut()
+                                .is_some_and(|leaf| leaf.dictate(ws, action))
+                    }
                     _ => false,
                 }
             }

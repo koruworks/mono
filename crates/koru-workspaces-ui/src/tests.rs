@@ -35,5 +35,7 @@ pub(crate) fn row(name: &str, at: char) -> Row {
         deleted: false,
         position: 0,
         last_opened_at: None,
+        authority: crate::Authority::Verified,
+        listing_differs: false,
     }
 }

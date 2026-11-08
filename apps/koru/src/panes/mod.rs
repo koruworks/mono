@@ -77,6 +77,8 @@ pub enum Outcome {
     Search,
     /// The rail's `?`: the container opens the help popover beside the rail.
     OpenHelp,
+    Help(explore::help::Action),
+    OpenRailOverflow,
 
     // ---------------------------------------------------------------- panels
     /// A row in the explore tree, or a recent on the welcome screen.
@@ -296,6 +298,12 @@ pub enum Outcome {
     // and where a profile's folder lives are all the container's business.
     /// Show this workspace in **this** window, replacing what is open.
     SwitchWorkspace(WorkspaceId),
+    ToggleWorkspacePin(WorkspaceId),
+    RetryWorkspaceOperation,
+    ReorderWorkspace {
+        workspace: WorkspaceId,
+        before: Option<WorkspaceId>,
+    },
     /// A Profile row on the who/where popover's Profiles page: switch this
     /// window to that Profile, landing on the workspace it last had open.
     SwitchProfile(ProfileId),
@@ -312,22 +320,13 @@ pub enum Outcome {
     /// The gear on a workspace row: the Manage tab on the open Profile's
     /// page, scrolled to its Workspaces.
     ManageWorkspace(WorkspaceId),
+    ManageWorkspaces,
+    /// Global sync and the device channel: Manage's Linked devices page.
+    OpenSyncSettings,
     /// The gear on a Profile row: the Manage tab on that Profile's page.
     ManageProfile(ProfileId),
-    /// The Profiles page's devices button (the review's note): the Manage tab
-    /// on *Linked devices*.
-    ManageDevices,
-    /// The Profile popover's cloud status: the Manage tab on *Koru Cloud*.
+    /// The Cloud channel: Manage's Koru Cloud page.
     ManageCloud,
-    /// The who/where popover's heading import button: the container hangs
-    /// the import formats beside the page, which stays (the review's note:
-    /// the heading's ⋯ became a `+` and an import button).
-    /// The floor's `…` was pressed (the review's artboard): the workspace's
-    /// menu — New workspace, Import…, Invite people, Trash — hung from the
-    /// button's top-right corner, which `at` names.
-    FloorMenu {
-        at: (f32, f32),
-    },
     /// Home's Today row: the Home tab, a singleton.
     OpenHome,
     /// A recent document, from Home's nav.

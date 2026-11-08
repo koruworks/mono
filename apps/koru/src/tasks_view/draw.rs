@@ -43,7 +43,15 @@ const DOT_GAP: f32 = 6.0;
 const FRESHNESS_GAP: f32 = 10.0;
 
 impl TasksView {
+    /// The whole page, with no note — what the benchmarks draw.
+    #[cfg(test)]
     pub(super) fn paint(&mut self, scene: &mut Scene, root: Affine, caret_on: bool) {
+        self.paint_under(scene, root);
+        self.paint_over(scene, root, caret_on);
+    }
+
+    /// The sheet and the heading: everything under the note's band.
+    pub(super) fn paint_under(&mut self, scene: &mut Scene, root: Affine) {
         let p = theme::p();
         // `bg`, not `canvas`: this is a **sheet** you read a list on, the same
         // surface the Trash tab and the workspace manager use.
@@ -54,7 +62,13 @@ impl TasksView {
             &scene::rect(0.0, 0.0, self.viewport.0, self.viewport.1),
         );
         self.paint_header(scene, root);
+    }
+
+    /// The rows and every panel over them — over the note's band, so a menu
+    /// opened from a row is above the note too.
+    pub(super) fn paint_over(&mut self, scene: &mut Scene, root: Affine, caret_on: bool) {
         self.paint_lines(scene, root, caret_on);
+        self.paint_heading_rename(scene, root, caret_on);
         self.paint_overflow(scene, root);
         self.paint_picker(scene, root);
         // The capture row's `/` menu, over everything but a picker it opened.
@@ -122,8 +136,85 @@ impl TasksView {
         // element row (`heading.rs`): the swatch, the title, the date and the
         // count.
         self.paint_heading(scene, root);
+        self.paint_header_plus(scene, root);
         self.paint_freshness(scene, root);
         self.paint_header_dots(scene, root);
+        self.paint_lane(scene, root);
+    }
+
+    /// The `+` right of the heading's words: the page's menu — the note
+    /// inline, files as context. The icon button every control here is.
+    fn paint_header_plus(&mut self, scene: &mut Scene, root: Affine) {
+        // Only while the pointer is over the heading line.
+        if !self.plus_visible() {
+            return;
+        }
+        let lit = self.hover == Some(Hit::HeaderPlus);
+        let plus = self.plus_rect();
+        koru_ui::icon_button::draw_with(
+            scene,
+            root,
+            &mut self.engine,
+            plus,
+            koru_draw::icons::PLUS,
+            koru_ui::icon_button::State {
+                hovered: lit,
+                active: false,
+                disabled: false,
+            },
+            koru_ui::icon_button::Metrics::INLINE,
+        );
+    }
+
+    /// The lane painted alone, for the suite.
+    #[cfg(test)]
+    pub(super) fn paint_lane_for_test(&mut self, scene: &mut Scene) {
+        self.paint_lane(scene, Affine::IDENTITY);
+    }
+
+    /// The attachments lane under the heading: one chip per file, the file
+    /// glyph and its name, lit under the pointer as a control — and its own
+    /// `+` in the margin while the pointer is over the lane.
+    fn paint_lane(&mut self, scene: &mut Scene, root: Affine) {
+        if self.lane.is_empty() {
+            return;
+        }
+        if self.lane_plus_visible()
+            && let Some(plus) = self.lane_plus_rect()
+        {
+            koru_ui::icon_button::draw_with(
+                scene,
+                root,
+                &mut self.engine,
+                plus,
+                koru_draw::icons::PLUS,
+                koru_ui::icon_button::State {
+                    hovered: self.hover == Some(Hit::LanePlus),
+                    active: false,
+                    disabled: false,
+                },
+                koru_ui::icon_button::Metrics::INLINE,
+            );
+        }
+        let chips: Vec<(Rect, super::view::LaneItem)> = self
+            .lane
+            .iter()
+            .zip(self.attachments.iter())
+            .map(|(r, item)| (*r, item.clone()))
+            .collect();
+        for (i, (r, item)) in chips.iter().enumerate() {
+            let chip = TasksView::lane_chip(item);
+            chip.draw(
+                scene,
+                root,
+                &mut self.engine,
+                *r,
+                koru_ui::label_chip::State {
+                    hovered: self.hover == Some(Hit::Attachment(i)),
+                    reveal: false,
+                },
+            );
+        }
     }
 
     /// The **Updating…** chip.
@@ -196,7 +287,7 @@ impl TasksView {
             root,
             scene::rect(
                 0.0,
-                self.header_h,
+                self.rows_top(),
                 self.viewport.0,
                 (self.viewport.1 - self.header_h).max(0.0),
             ),

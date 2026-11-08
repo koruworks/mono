@@ -317,6 +317,7 @@ fn a_connection_is_read_from_the_account_in_one_place() {
         ),
     ] {
         account.cloud_profiles = vec![AccountProfileCloud {
+            discovery: None,
             profile_id: profile.into(),
             stage,
         }];

@@ -77,6 +77,7 @@ pub mod names {
     pub const API_REQUEST: &str = "api request";
     pub const DOCUMENT_OPEN: &str = "document open";
     pub const WORKSPACE_OPEN: &str = "workspace open";
+    pub const AUTHORITY_READ: &str = "authority read";
     pub const CHECKPOINT: &str = "checkpoint";
     pub const STORE_STARTUP: &str = "store startup";
     pub const COMMIT: &str = "commit";
@@ -88,6 +89,7 @@ pub mod names {
         API_REQUEST,
         DOCUMENT_OPEN,
         WORKSPACE_OPEN,
+        AUTHORITY_READ,
         CHECKPOINT,
         STORE_STARTUP,
         COMMIT,

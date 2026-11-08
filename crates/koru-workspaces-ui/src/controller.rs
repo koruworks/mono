@@ -29,6 +29,7 @@ use koru_ui::confirm::Outcome;
 
 use crate::action::{Action, Request};
 use crate::links::WorkspaceLinks;
+use crate::pending::{CommandId, Pending};
 use crate::state::{
     Answer, Authorization, Availability, Consequence, Group, MoveConsequence, Notice, ProfileRow,
     Retry, Row,
@@ -38,6 +39,7 @@ use crate::{
     REFUSAL_MOVE_NOT_PERMITTED, REFUSAL_MOVE_PARTIAL, REFUSAL_NOT_PERMITTED, REFUSAL_PARTIAL,
 };
 
+mod pins;
 #[cfg(test)]
 mod tests;
 
@@ -77,6 +79,9 @@ pub struct WorkspacesController {
     lang: Lang,
     links: WorkspaceLinks,
     rows: Vec<Row>,
+    catalog_received: bool,
+    removals_received: bool,
+    removals: std::collections::BTreeMap<ProfileId, koru_store_core::profile_removal::RemovalMark>,
     /// Every profile, so the picker has somewhere to send a workspace. A
     /// profile is only ever a destination here.
     profiles: Vec<ProfileRow>,
@@ -94,11 +99,16 @@ pub struct WorkspacesController {
 
     pub(crate) stage: Option<Stage>,
     notice: Option<Notice>,
+    notice_owner: Option<ProfileId>,
+    lifecycle_owner: Option<ProfileId>,
     /// A lifecycle verb chosen in a host-owned workspace menu. It waits for
     /// the catalog and authorization rather than falling back to the host's
     /// unscoped Store route.
     pending_host_action: Option<Action>,
     requests: Vec<Request>,
+    next_command: u64,
+    pending: std::collections::BTreeMap<CommandId, Pending>,
+    pin_repairs: std::collections::BTreeMap<WorkspaceId, pins::PinRepair>,
 }
 
 impl WorkspacesController {
@@ -114,6 +124,9 @@ impl WorkspacesController {
             lang: Lang::En,
             links,
             rows: Vec::new(),
+            catalog_received: false,
+            removals_received: false,
+            removals: std::collections::BTreeMap::new(),
             profiles: Vec::new(),
             availability: Availability::default(),
             authorization: Authorization::default(),
@@ -123,8 +136,13 @@ impl WorkspacesController {
             show_trash: false,
             stage: None,
             notice: None,
+            notice_owner: None,
+            lifecycle_owner: None,
             pending_host_action: None,
             requests: Vec::new(),
+            next_command: 0,
+            pending: std::collections::BTreeMap::new(),
+            pin_repairs: std::collections::BTreeMap::new(),
         };
         // **Both, at construction.** The catalog is what it presents and the
         // authorization is what it may offer, and a controller that asked for
@@ -148,6 +166,9 @@ impl WorkspacesController {
     /// reasons and the confirmation's text.
     pub fn set_lang(&mut self, lang: Lang) {
         self.lang = lang;
+        for repair in self.pin_repairs.values_mut() {
+            repair.notice.text = t(lang, Key::WorkspacePinListingPending).into();
+        }
     }
 
     pub fn lang(&self) -> Lang {
@@ -160,11 +181,114 @@ impl WorkspacesController {
         &self.links
     }
 
+    /// A changed pushed listing invalidates the catalog without doing I/O here.
+    pub fn invalidate(&self) {
+        self.links.invalidate();
+    }
+
+    pub fn has_pending(&self) -> bool {
+        !self.pending.is_empty()
+            || self
+                .pin_repairs
+                .values()
+                .any(|repair| repair.has_automatic_attempt())
+    }
+
+    pub fn keep_profile(
+        &mut self,
+        owner: ProfileId,
+        attempt: koru_store_core::ids::RemovalAttemptId,
+    ) {
+        if self
+            .pending
+            .values()
+            .any(|pending| matches!(pending, Pending::KeepProfile(id) if *id == owner))
+        {
+            return;
+        }
+        let id = self.start_command(Pending::KeepProfile(owner));
+        self.links.keep_profile(id, owner, attempt);
+    }
+
+    /// The embedded form's already validated draft uses this window's worker.
+    /// The host's template worker waits for this exact command's result.
+    pub fn create_profile(
+        &mut self,
+        request: koru_api_client::CreateProfileWithWorkspace,
+        reply: std::sync::mpsc::Sender<
+            koru_store_core::errors::Result<koru_api_client::CreatedProfile>,
+        >,
+    ) {
+        let id = self.start_command(Pending::CreateProfile(reply));
+        self.links.create_profile(id, request);
+    }
+
+    /// Availability resolution shares this window's worker and correlation.
+    /// The host owns the window/Profile attempt and decides whether to land.
+    pub fn ensure_live(
+        &mut self,
+        owner: ProfileId,
+        name: String,
+        attempt: u64,
+        reply: std::sync::mpsc::Sender<
+            koru_store_core::errors::Result<koru_api_client::EnsuredWorkspace>,
+        >,
+    ) {
+        let id = self.start_command(Pending::EnsureLive {
+            owner,
+            attempt,
+            reply,
+        });
+        self.links.ensure_live(id, owner, name, attempt);
+    }
+
+    pub fn pending_pin(&self, workspace: WorkspaceId) -> Option<bool> {
+        self.pending
+            .values()
+            .find_map(|pending| match pending {
+                Pending::Pin {
+                    workspace: id,
+                    pinned,
+                } if *id == workspace => Some(*pinned),
+                _ => None,
+            })
+            .or_else(|| self.pin_repairs.get(&workspace).map(|repair| repair.pinned))
+    }
+
+    pub fn pending_order(&self, owner: ProfileId) -> Option<&[WorkspaceId]> {
+        self.pending.values().find_map(|pending| match pending {
+            Pending::Order { owner: id, ids } if *id == owner => Some(ids.as_slice()),
+            _ => None,
+        })
+    }
+
+    fn start_command(&mut self, pending: Pending) -> CommandId {
+        // Availability may start after a committed retirement. Its read must
+        // not erase the lifecycle retry that still owes publication.
+        if !matches!(
+            pending,
+            Pending::EnsureLive { .. } | Pending::ReconcileListing(_)
+        ) {
+            self.notice = None;
+            self.notice_owner = None;
+        }
+        self.next_command = self
+            .next_command
+            .checked_add(1)
+            .expect("command id exhausted");
+        let id = CommandId(self.next_command);
+        self.pending.insert(id, pending);
+        id
+    }
+
     /// **Take a catalog the host read.** For a host that already holds a
     /// client; answers whether anything presented moved.
     pub fn adopt_rows(&mut self, rows: &[Row]) -> bool {
-        let moved = self.rows != rows;
+        let moved =
+            !self.catalog_received || self.rows != rows || self.availability != Availability::Live;
+        self.catalog_received = true;
         self.rows = rows.to_vec();
+        self.adopt_pin_repairs();
         self.availability = Availability::Live;
         // A selection that has left the list is dropped rather than moved: the
         // detail panel would otherwise describe a workspace that is not there.
@@ -221,6 +345,29 @@ impl WorkspacesController {
         self.notice.as_ref()
     }
 
+    /// A waiting Profile only presents failures belonging to that Profile.
+    pub fn notice_for(&self, owner: ProfileId) -> Option<&Notice> {
+        (self.notice_owner == Some(owner))
+            .then_some(self.notice.as_ref())
+            .flatten()
+            .or_else(|| {
+                self.pin_repairs.iter().find_map(|(id, repair)| {
+                    (!repair.awaiting_catalog
+                        && self.row(*id).is_some_and(|row| row.owner == owner))
+                    .then_some(&repair.notice)
+                })
+            })
+    }
+
+    /// Retry the notice actually displayed in this Profile's menu.
+    pub fn retry_for(&mut self, owner: ProfileId) {
+        if let Some(notice) = self.notice_for(owner).cloned() {
+            self.notice = Some(notice);
+            self.notice_owner = Some(owner);
+            self.perform(Action::Retry);
+        }
+    }
+
     /// Which workspace the details apply to.
     pub fn selected(&self) -> Option<WorkspaceId> {
         self.selected
@@ -233,6 +380,31 @@ impl WorkspacesController {
     /// The catalog row of one workspace, whatever group it is in.
     pub fn row(&self, workspace: WorkspaceId) -> Option<&Row> {
         self.rows.iter().find(|row| row.id == workspace)
+    }
+
+    /// The last complete catalog, independent of Manage's filters. `None`
+    /// means no answer yet; an empty answer is a real catalog. Transport
+    /// failure retains this snapshot while availability reports it stale.
+    pub fn catalog_rows(&self) -> Option<&[Row]> {
+        self.catalog_received.then_some(&self.rows)
+    }
+
+    pub fn profile_removal(
+        &self,
+        owner: ProfileId,
+    ) -> Option<&koru_store_core::profile_removal::RemovalMark> {
+        self.removals.get(&owner)
+    }
+
+    pub fn profile_removal_state(
+        &self,
+        owner: ProfileId,
+    ) -> Option<Option<koru_store_core::profile_removal::RemovalMark>> {
+        if let Some(mark) = self.removals.get(&owner) {
+            Some(Some(mark.clone()))
+        } else {
+            self.removals_received.then_some(None)
+        }
     }
 
     /// **Whether the archived group is open**, which a host persists.
@@ -361,21 +533,122 @@ impl WorkspacesController {
     /// when there is something to repaint.
     pub fn poll(&mut self) -> bool {
         let mut moved = false;
+        while let Some(answer) = self.links.take() {
+            moved |= self.receive(answer);
+        }
+        moved |= self.poll_pin_repairs_at(std::time::Instant::now());
         // Invalidate-on-event, fetch-on-poll. A committed fact from any window
         // — including this one's own operation — lands here, and two windows
         // converge because both are reading the same journal.
-        if self.links.take_stale() {
+        let workspaces_stale = self.links.take_stale();
+        let profiles_stale = self.links.take_profiles_stale();
+        if workspaces_stale || profiles_stale {
             self.links.fetch_catalog();
         }
-        while let Some(answer) = self.links.take() {
-            moved |= self.receive(answer);
+        if profiles_stale {
+            self.links.fetch_profiles();
         }
         moved
     }
 
     pub(crate) fn receive(&mut self, answer: Answer) -> bool {
         match answer {
+            Answer::Settled(id, answer) => {
+                let Some(pending) = self.pending.remove(&id) else {
+                    return false;
+                };
+                if let Pending::Pin { workspace, .. } = &pending {
+                    if let Answer::Pinned(result) = *answer {
+                        self.pin_settled(*workspace, result, std::time::Instant::now());
+                        return true;
+                    }
+                }
+                if let Pending::ReconcileListing(workspace) = pending {
+                    self.pin_repair_settled(workspace, *answer);
+                    return true;
+                }
+                if let Pending::KeepProfile(owner) = pending {
+                    if !matches!(*answer, Answer::ProfileKept(Ok(()))) {
+                        self.accept_notice(Notice {
+                            text: crate::REFUSAL_UNAVAILABLE.into(),
+                            retry: None,
+                        });
+                        self.notice_owner = Some(owner);
+                    }
+                    // A refusal may mean a newer removal replaced the shown
+                    // choice. Always read its current attempt before redraw.
+                    self.links.fetch_catalog();
+                    return true;
+                }
+                if let Pending::EnsureLive {
+                    owner,
+                    attempt,
+                    reply,
+                } = pending
+                {
+                    let result = match *answer {
+                        Answer::WorkspaceEnsured {
+                            attempt: answered,
+                            result,
+                        } if answered == attempt => result,
+                        _ => Err(koru_store_core::Error::new(
+                            koru_store_core::Code::StorageFailed,
+                            "Workspace preparation did not receive its Store acknowledgement",
+                        )),
+                    };
+                    if let Ok(koru_api_client::EnsuredWorkspace::Removing { mark }) = &result {
+                        self.removals.insert(owner, mark.clone());
+                        self.links.fetch_catalog();
+                    }
+                    if matches!(
+                        result,
+                        Ok(koru_api_client::EnsuredWorkspace::Active { .. }
+                            | koru_api_client::EnsuredWorkspace::Created { .. })
+                    ) {
+                        self.links.fetch_catalog();
+                    }
+                    let _ = reply.send(result);
+                    return true;
+                }
+                if let Pending::CreateProfile(reply) = pending {
+                    let result = match *answer {
+                        Answer::ProfileCreated(result) => result,
+                        _ => Err(koru_store_core::Error::new(
+                            koru_store_core::Code::StorageFailed,
+                            "Profile creation did not receive a Store acknowledgement",
+                        )),
+                    };
+                    if result.is_ok() {
+                        self.links.fetch_catalog();
+                        self.links.fetch_profiles();
+                    }
+                    let _ = reply.send(result);
+                    return true;
+                }
+                match *answer {
+                    Answer::Refused(notice) => {
+                        self.accept_notice(notice);
+                        self.notice_owner = None;
+                    }
+                    answer => {
+                        self.receive(answer);
+                    }
+                }
+                true
+            }
+            #[cfg(any(test, feature = "fixtures"))]
             Answer::Catalog(rows) => self.adopt_rows(&rows),
+            Answer::CatalogState { rows, removals } => {
+                let changed = !self.removals_received || self.removals != removals;
+                self.removals_received = true;
+                self.removals = removals;
+                self.adopt_rows(&rows) | changed
+            }
+            Answer::ProfileCreated(_)
+            | Answer::Pinned(_)
+            | Answer::ListingReconciled(_)
+            | Answer::ProfileKept(_)
+            | Answer::WorkspaceEnsured { .. } => false,
             Answer::Profiles(profiles) => self.adopt_profiles(&profiles),
             Answer::Authorization(authorization) => {
                 let moved = self.authorization != authorization;
@@ -404,7 +677,8 @@ impl WorkspacesController {
                 // Unarchive and restore: the token is fetched and spent without
                 // a question, because there is nothing to accept.
                 Some(Stage::Asking { confirm: false }) => {
-                    self.links.perform(&consequence);
+                    self.links
+                        .perform(&consequence, t(self.lang, Key::DefaultWorkspaceName));
                     self.stage = Some(Stage::Working);
                     true
                 }
@@ -422,6 +696,7 @@ impl WorkspacesController {
             },
             Answer::Moved(outcome) => {
                 self.stage = None;
+                self.notice_owner = self.lifecycle_owner.take();
                 // **The one success that still says something.** The workspace
                 // moved either way; `projects_rescoped: None` means the session
                 // host was not asked, so its terminal projects still name the
@@ -447,6 +722,8 @@ impl WorkspacesController {
             Answer::Completed(outcome) => {
                 self.stage = None;
                 self.notice = None;
+                self.notice_owner = None;
+                self.lifecycle_owner = None;
                 // **Follow the workspace to where it went.** Somebody who has
                 // just archived or trashed a workspace watched a row leave the
                 // list; opening the group it left for is the difference between
@@ -470,14 +747,8 @@ impl WorkspacesController {
             }
             Answer::Refused(notice) => {
                 self.stage = None;
-                self.notice = (!notice.text.is_empty()).then(|| Notice {
-                    text: self.refusal_text(&notice.text),
-                    retry: notice.retry,
-                });
-                // Whatever refused, the catalog may have moved underneath —
-                // another window removing the workspace first is one of the
-                // ways this happens.
-                self.links.invalidate();
+                self.accept_notice(notice);
+                self.notice_owner = self.lifecycle_owner.take();
                 true
             }
             Answer::Unavailable => {
@@ -489,11 +760,20 @@ impl WorkspacesController {
         }
     }
 
+    fn accept_notice(&mut self, notice: Notice) {
+        self.notice = (!notice.text.is_empty()).then(|| Notice {
+            text: self.refusal_text(&notice.text),
+            retry: notice.retry,
+        });
+        self.links.invalidate();
+    }
+
     fn refusal_text(&self, token: &str) -> String {
         t(
             self.lang,
             match token {
                 REFUSAL_PARTIAL => Key::WorkspacesPartialFailure,
+                crate::REFUSAL_LISTING_PENDING => Key::ProfileWaitListing,
                 REFUSAL_DOCUMENTS_OPEN => Key::WorkspacesDocumentsOpen,
                 REFUSAL_NOT_PERMITTED => Key::WorkspacesNotPermitted,
                 REFUSAL_MOVE_PARTIAL => Key::WorkspacesMovePartialFailure,
@@ -666,11 +946,13 @@ impl WorkspacesController {
             Outcome::Confirm => {
                 match self.stage.take() {
                     Some(Stage::Confirming(consequence, _)) => {
-                        self.links.perform(&consequence);
+                        self.links
+                            .perform(&consequence, t(self.lang, Key::DefaultWorkspaceName));
                         self.stage = Some(Stage::Working);
                     }
                     Some(Stage::ConfirmingMove(consequence, _)) => {
-                        self.links.perform_move(&consequence);
+                        self.links
+                            .perform_move(&consequence, t(self.lang, Key::DefaultWorkspaceName));
                         self.stage = Some(Stage::Working);
                     }
                     other => self.stage = other,
@@ -712,7 +994,7 @@ impl WorkspacesController {
         let mut rows: Vec<_> = self
             .rows
             .iter()
-            .map(|row| (row.group(), row))
+            .map(|row| (self.display_group(row), row))
             .filter(|(group, _)| match group {
                 Group::Archived => self.show_archived,
                 Group::Deleted => self.show_trash,
@@ -722,7 +1004,10 @@ impl WorkspacesController {
         rows.sort_by(|(left_group, left), (right_group, right)| {
             left_group
                 .cmp(right_group)
-                .then(left.position.cmp(&right.position))
+                .then(
+                    self.display_position(left)
+                        .cmp(&self.display_position(right)),
+                )
                 .then(left.name.cmp(&right.name))
         });
         rows
@@ -757,6 +1042,71 @@ impl WorkspacesController {
     /// nothing.
     pub fn can_step(&self, workspace: WorkspaceId, step: isize) -> bool {
         self.reordered_owner_ids(workspace, step).is_some()
+    }
+
+    fn display_position(&self, row: &Row) -> i64 {
+        self.pending_order(row.owner)
+            .and_then(|ids| ids.iter().position(|id| *id == row.id))
+            .map_or(row.position, |position| position as i64)
+    }
+
+    fn display_group(&self, row: &Row) -> Group {
+        if row.archived || row.deleted {
+            row.group()
+        } else if self.effective_pinned(row) {
+            Group::Pinned
+        } else {
+            Group::Active
+        }
+    }
+
+    /// Move a pin within the complete local permutation, retaining hidden rows.
+    /// `None` means immediately after the last other saved pin.
+    pub fn reorder_before(&mut self, workspace: WorkspaceId, before: Option<WorkspaceId>) -> bool {
+        let Some(row) = self.row(workspace) else {
+            return false;
+        };
+        let owner = row.owner;
+        if !row.verified_live()
+            || !self.effective_pinned(row)
+            || self.pending_order(owner).is_some()
+            || self.availability.is_down()
+            || self.removals.contains_key(&owner)
+        {
+            return false;
+        }
+        if before == Some(workspace) {
+            return false;
+        }
+        if let Some(before) = before {
+            if self.row(before).is_none_or(|row| {
+                row.owner != owner || !row.verified_live() || !self.effective_pinned(row)
+            }) {
+                return false;
+            }
+        }
+        let mut rows: Vec<_> = self.rows.iter().filter(|row| row.owner == owner).collect();
+        rows.sort_by_key(|row| (row.position, row.id));
+        let old: Vec<_> = rows.iter().map(|row| row.id).collect();
+        rows.retain(|row| row.id != workspace);
+        let at = match before {
+            Some(before) => rows.iter().position(|row| row.id == before).unwrap(),
+            None => rows
+                .iter()
+                .rposition(|row| row.verified_live() && self.effective_pinned(row))
+                .map_or(rows.len(), |i| i + 1),
+        };
+        let mut ids: Vec<_> = rows.iter().map(|row| row.id).collect();
+        ids.insert(at, workspace);
+        if ids == old {
+            return false;
+        }
+        let command = self.start_command(Pending::Order {
+            owner,
+            ids: ids.clone(),
+        });
+        self.links.reorder(command, owner, ids);
+        true
     }
 
     // --------------------------------------------------------------- reasons
@@ -810,13 +1160,24 @@ impl WorkspacesController {
             })
         };
         match action {
-            Action::Open(_)
-            | Action::OpenInNewWindow(_)
-            | Action::Rename(_)
-            | Action::Appearance(_)
-            | Action::TogglePinned(_)
-            | Action::MoveUp(_)
-            | Action::MoveDown(_) => unavailable.or_else(trashed),
+            Action::Open(_) | Action::OpenInNewWindow(_) => unavailable
+                .or_else(|| {
+                    self.removals
+                        .contains_key(&row.owner)
+                        .then(|| t(lang, Key::ProfileWaitRemoving).to_owned())
+                })
+                .or_else(trashed)
+                .or_else(|| {
+                    row.archived
+                        .then(|| t(lang, Key::WorkspaceArchivedUnavailable).to_owned())
+                })
+                .or_else(|| row.authority_reason(lang)),
+            Action::Rename(_) | Action::Appearance(_) | Action::MoveUp(_) | Action::MoveDown(_) => {
+                unavailable
+                    .or_else(trashed)
+                    .or_else(|| row.authority_reason(lang))
+            }
+            Action::TogglePinned(_) => unavailable.or_else(|| self.pin_reason(row)),
             Action::Create | Action::Import | Action::Export(_) => unavailable,
             Action::CopyId(_) => None,
             Action::Migrate(_) => unavailable
@@ -848,6 +1209,16 @@ impl WorkspacesController {
     /// may run — see the module documentation for why this does not ask
     /// [`Self::reason_for`] itself.
     pub fn perform(&mut self, action: Action) {
+        // A menu/accessibility action can outlive the row it was drawn from.
+        // Recheck navigation at dispatch against the most recent authority.
+        if let Action::Open(id) | Action::OpenInNewWindow(id) = &action
+            && (self.unavailable_reason().is_some()
+                || !self.row(*id).is_some_and(|row| {
+                    row.navigation_ready() && !self.removals.contains_key(&row.owner)
+                }))
+        {
+            return;
+        }
         match action {
             Action::Select(id) => self.selected = Some(id),
             Action::Open(id) => self.requests.push(Request::Open(id)),
@@ -869,6 +1240,7 @@ impl WorkspacesController {
             }
             Action::CancelMigrate => self.stage = None,
             Action::MigrateTo(workspace, to) => {
+                self.lifecycle_owner = self.row(workspace).map(|row| row.owner);
                 let name = self
                     .profiles
                     .iter()
@@ -881,8 +1253,17 @@ impl WorkspacesController {
             }
             Action::TogglePinned(id) => {
                 if let Some(row) = self.row(id).cloned() {
+                    if self.reason_for(&action, &row).is_some() {
+                        return;
+                    }
                     let pinned = !row.pinned;
-                    self.links.set_appearance(&row, pinned, row.archived);
+                    if self.pending_pin(row.id).is_none() {
+                        let command = self.start_command(Pending::Pin {
+                            workspace: row.id,
+                            pinned,
+                        });
+                        self.links.pin(command, row.id, pinned);
+                    }
                 }
             }
             Action::MoveUp(id) => self.reorder(id, -1),
@@ -903,7 +1284,8 @@ impl WorkspacesController {
             Action::Archive(id, false) => {
                 if let Some(row) = self.row(id).cloned() {
                     self.notice = None;
-                    self.links.set_appearance(&row, row.pinned, false);
+                    let command = self.start_command(Pending::Appearance);
+                    self.links.set_appearance(command, &row, row.pinned, false);
                 }
             }
             // Restore closes nothing either, but it *is* one of the three
@@ -913,6 +1295,7 @@ impl WorkspacesController {
             Action::ShowArchived => self.show_archived = !self.show_archived,
             Action::ShowTrash => self.show_trash = !self.show_trash,
             Action::Retry => match self.notice.take().and_then(|notice| notice.retry) {
+                Some(Retry::PinListing(workspace)) => self.retry_pin_listing(workspace),
                 // **A fresh confirmation, deliberately.** The first token
                 // was spent, and the consequence it named is a workspace
                 // whose terminals are already closed — asking again is what
@@ -951,7 +1334,13 @@ impl WorkspacesController {
         let Some((owner, order)) = self.reordered_owner_ids(workspace, step) else {
             return;
         };
-        self.links.reorder(owner, order);
+        if self.pending_order(owner).is_none() {
+            let command = self.start_command(Pending::Order {
+                owner,
+                ids: order.clone(),
+            });
+            self.links.reorder(command, owner, order);
+        }
     }
 
     pub(crate) fn reordered_owner_ids(
@@ -959,7 +1348,9 @@ impl WorkspacesController {
         workspace: WorkspaceId,
         step: isize,
     ) -> Option<(ProfileId, Vec<WorkspaceId>)> {
-        let (owner, group) = self.row(workspace).map(|row| (row.owner, row.group()))?;
+        let (owner, group) = self
+            .row(workspace)
+            .map(|row| (row.owner, self.display_group(row)))?;
         let visible_order: Vec<WorkspaceId> = self
             .rows_of(owner)
             .into_iter()
@@ -991,6 +1382,7 @@ impl WorkspacesController {
 
     fn begin(&mut self, workspace: WorkspaceId, action: WorkspaceLifecycleAction, confirm: bool) {
         self.notice = None;
+        self.lifecycle_owner = self.row(workspace).map(|row| row.owner);
         self.stage = Some(Stage::Asking { confirm });
         self.links.ask_consequence(workspace, action);
     }
@@ -1066,6 +1458,7 @@ impl WorkspacesController {
             sessions_closed: true,
             mutation_applied: true,
             projects_rescoped: Some(Vec::new()),
+            replacement: None,
         }))
     }
 

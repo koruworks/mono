@@ -10,10 +10,13 @@ mod delegate_folder;
 mod inspector_window;
 mod key_release;
 mod modifiers;
+mod profile_creation;
+mod profile_delivery;
 mod profile_removal;
+mod profile_switch;
+mod profile_wait;
 mod recording;
 mod trash;
-mod workspace_arrival;
 mod zoom;
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -867,10 +870,6 @@ fn document_count(kinds: &std::collections::BTreeMap<String, u64>, canvas: bool)
         .sum()
 }
 
-/// The name of the workspace made for a document that had nowhere to go
-/// (`App::ensure_live_workspace`). Renamable like any other.
-const DEFAULT_WORKSPACE_NAME: &str = "Workspace";
-
 /// The refusal a creation reports when even a default workspace could not be
 /// made — shaped as the store's own error so it settles through the same
 /// door as every other failed creation.
@@ -998,6 +997,8 @@ pub enum Wake {
     /// The spell worker finished a batch of checks. The results are already on
     /// each asking view's own reply channel; `maintain` drains them.
     Spelling,
+    /// Workspace answers or catalog invalidations are queued for the window.
+    Workspaces,
     /// The diagram worker laid a `mermaid` block out. The drawing is already
     /// on the asking view's reply channel; `maintain` lands it and asks for
     /// the redraw. Carries nothing, like `Spelling`.
@@ -1145,6 +1146,16 @@ enum ImportMessage {
         name: String,
         was_current: bool,
         result: Result<koru_store_core::model::Workspace, (koru_store_core::Code, String)>,
+    },
+    FileLocatedForSave {
+        id: koru_core::DocumentId,
+        result: Result<
+            (
+                koru_store_core::ids::WorkspaceId,
+                koru_store_core::model::DocumentEntry,
+            ),
+            String,
+        >,
     },
     FileSaved {
         name: String,
@@ -1608,6 +1619,36 @@ fn failed_import_documents(
             failed_import_document(workspace, parent, &source, intro, &messages)
         })
         .collect()
+}
+
+/// Resolve the stable id on the worker before reading bytes. The currently
+/// displayed workspace is not authority for a cross-workspace attachment.
+fn locate_workspace_file(
+    segment: &str,
+    root: Option<&std::path::Path>,
+    document: koru_store_core::ids::DocumentId,
+) -> Result<
+    (
+        koru_store_core::ids::WorkspaceId,
+        koru_store_core::model::DocumentEntry,
+    ),
+    String,
+> {
+    let client = match root {
+        Some(root) => koru_api_client::Client::open_at(segment, root),
+        None => koru_api_client::Client::open(segment),
+    }
+    .map_err(|error| error.to_string())?;
+    let location = client
+        .locate_document(document)
+        .map_err(|error| error.to_string())?;
+    let entry = client
+        .documents(location.workspace)
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .find(|entry| entry.id == document && entry.kind == koru_core::explore::KIND_FILE)
+        .ok_or_else(|| "the linked file is no longer listed in its workspace".to_owned())?;
+    Ok((location.workspace, entry))
 }
 
 /// Fetch the bytes behind an opaque workspace file. Both Save as and Open in
@@ -2437,6 +2478,7 @@ struct App<H: Host> {
     profile_cascade_tx: mpsc::Sender<ProfileCascadeCompletion>,
     profile_cascade_rx: mpsc::Receiver<ProfileCascadeCompletion>,
     profile_cascades_in_flight: HashSet<koru_core::ProfileId>,
+    profile_removal_attempts: HashMap<koru_core::ProfileId, koru_store_core::ids::RemovalAttemptId>,
     profile_removal_tx: mpsc::Sender<ProfileRemovalCleanup>,
     profile_removal_rx: mpsc::Receiver<ProfileRemovalCleanup>,
     profile_removals_in_flight: HashSet<koru_core::ProfileId>,
@@ -2447,6 +2489,10 @@ struct App<H: Host> {
     profile_bindings_in_flight: HashSet<koru_core::ProfileId>,
     connected_profile_creation_tx: mpsc::Sender<OnboardingCreation>,
     connected_profile_creation_rx: mpsc::Receiver<OnboardingCreation>,
+    profile_publication_tx: mpsc::Sender<EmbeddedProfilePublication>,
+    profile_publication_rx: mpsc::Receiver<EmbeddedProfilePublication>,
+    profile_waits: profile_wait::Waits,
+    profile_opening: Option<profile_switch::Opening>,
     pending_connected_profile_creation: Option<PendingConnectedProfileCreation>,
     embedded_profile_restore_tx: mpsc::Sender<EmbeddedProfileRestore>,
     embedded_profile_restore_rx: mpsc::Receiver<EmbeddedProfileRestore>,
@@ -2492,6 +2538,8 @@ struct App<H: Host> {
     deleting_workspaces: HashSet<WorkspaceId>,
     /// `/attach` waits for the generic file importer to publish its file entry.
     pending_attachment: Option<(WindowId, NodeId)>,
+    /// A Tasks page whose `+` chose files: attached once the import lands.
+    pending_page_attachment: Option<koru_core::ids::PageKey>,
     /// Importable paths coalesced from winit's one-event-per-file drop stream.
     /// Batches wait here while any other import is active rather than being
     /// silently discarded by `import_busy`.
@@ -2653,6 +2701,7 @@ struct OnboardingLive {
 /// ordinary fatal dialog; it never submits Profile creation again.
 enum OnboardingCreation {
     Opened(koru_workspace::fromstore::OpenedFromStore),
+    Conflict,
     Retryable { message: String },
     RestoreFailed { message: String },
     CommittedFailure { message: String },
@@ -2661,6 +2710,14 @@ enum OnboardingCreation {
 struct EmbeddedProfileRestore {
     source: WindowId,
     result: OnboardingCreation,
+}
+
+/// Template validation stays on its background worker. Only the actual Store
+/// publication is handed to the window's keyed workspace link.
+struct EmbeddedProfilePublication {
+    source: WindowId,
+    request: koru_api_client::CreateProfileWithWorkspace,
+    reply: mpsc::Sender<koru_store_core::errors::Result<koru_api_client::CreatedProfile>>,
 }
 
 struct OnboardingApp<H: Host> {
@@ -2710,6 +2767,7 @@ struct OnboardingApp<H: Host> {
     creation_rx: mpsc::Receiver<OnboardingCreation>,
     first_minutes: Option<(String, String, String)>,
     connect_created_profile: bool,
+    open_manage_after_creation: bool,
     pending_connected_open: Option<koru_workspace::fromstore::OpenedFromStore>,
     awaiting_hosted_profile: bool,
     connected_owner_scope: u64,
@@ -2766,9 +2824,7 @@ fn live_profile_ids_for_settings(
 #[derive(Clone, Copy)]
 enum OnboardingCheckpoint {
     BeforeProfile,
-    Profile {
-        profile: koru_core::ProfileId,
-    },
+    // Profile and first Workspace are now acknowledged by one atomic command.
     Workspace {
         profile: koru_core::ProfileId,
         workspace: koru_core::WorkspaceId,
@@ -2785,7 +2841,6 @@ impl OnboardingCheckpoint {
     ) -> T {
         match self {
             Self::BeforeProfile => retryable(),
-            Self::Profile { profile } => committed(profile, None),
             Self::Workspace { profile, workspace } => committed(profile, Some(workspace)),
         }
     }
@@ -2847,6 +2902,7 @@ impl<H: Host> ContentState<H> {
             slots,
             update_lease,
             first_minutes,
+            open_manage_after_creation,
             ..
         } = *app;
         // The window is going, and so is its provider. Anything a client had
@@ -2874,6 +2930,12 @@ impl<H: Host> ContentState<H> {
             slots,
         ) {
             Some(mut next) => {
+                if open_manage_after_creation
+                    && let Self::Open(app) = &mut next
+                    && let Some(view) = app.pending.as_mut()
+                {
+                    view.show_profile_manager(app.runtime.profile_id());
+                }
                 if let (Self::Open(app), Some((owner, profile, workspace))) =
                     (&mut next, first_minutes)
                     && let Some(view) = app.pending.as_mut()
@@ -2932,6 +2994,14 @@ impl<H: Host> ApplicationHandler<Wake> for ContentState<H> {
             OnboardingCreation::Retryable { message } => {
                 if let Self::Onboarding(app) = self {
                     app.view.creation_failed(message);
+                    app.request_redraw();
+                }
+            }
+            OnboardingCreation::Conflict => {
+                if let Self::Onboarding(app) = self {
+                    app.connect_created_profile = false;
+                    app.first_minutes = None;
+                    app.view.creation_conflict();
                     app.request_redraw();
                 }
             }
@@ -3104,6 +3174,7 @@ fn reconcile_onboarding_commit(
 
 fn create_onboarding_profile(
     root: Option<&Path>,
+    id: koru_core::ProfileId,
     profile_name: &str,
     workspace_name: &str,
     template: &str,
@@ -3111,6 +3182,9 @@ fn create_onboarding_profile(
     profile_color: Option<&str>,
     workspace_icon: Option<&str>,
     workspace_color: Option<&str>,
+    publish: impl FnOnce(
+        koru_api_client::CreateProfileWithWorkspace,
+    ) -> koru_store_core::errors::Result<koru_api_client::CreatedProfile>,
 ) -> OnboardingCreation {
     use koru_import::Importer;
 
@@ -3130,44 +3204,30 @@ fn create_onboarding_profile(
     };
 
     let segment = koru_workspace::fromstore::segment();
-    let profile = match koru_workspace::fromstore::create_local_profile_with_appearance(
-        segment,
-        root,
-        profile_name,
-        profile_icon,
-        profile_color,
-    ) {
-        Ok(profile) => profile,
+    let created = match publish(koru_api_client::CreateProfileWithWorkspace {
+        id: koru_store_core::ProfileId::from_uuid(id.as_uuid()),
+        name: profile_name.to_owned(),
+        locale: None,
+        purpose: None,
+        avatar: None,
+        icon: profile_icon.map(str::to_owned),
+        color: profile_color.map(str::to_owned),
+        workspace: koru_api_client::FirstWorkspace {
+            name: workspace_name.to_owned(),
+            icon: workspace_icon.map(str::to_owned),
+            color: workspace_color.map(str::to_owned),
+        },
+    }) {
+        Ok(created) => created,
+        Err(error) if error.code() == koru_store_core::Code::ProfileExists => {
+            return OnboardingCreation::Conflict;
+        }
         Err(error) => {
             return resolve_onboarding_failure(OnboardingCheckpoint::BeforeProfile, root, error);
         }
     };
-    let workspace =
-        match koru_workspace::fromstore::create_workspace(segment, root, profile, workspace_name) {
-            Ok(workspace) => workspace,
-            Err(error) => {
-                return resolve_onboarding_failure(
-                    OnboardingCheckpoint::Profile { profile },
-                    root,
-                    error,
-                );
-            }
-        };
-    if let Err(error) = koru_workspace::fromstore::set_workspace_appearance(
-        segment,
-        root,
-        workspace,
-        workspace_icon,
-        workspace_color,
-        false,
-        false,
-    ) {
-        return resolve_onboarding_failure(
-            OnboardingCheckpoint::Workspace { profile, workspace },
-            root,
-            error,
-        );
-    }
+    let profile = koru_core::ProfileId::from_uuid(created.profile.id.as_uuid());
+    let workspace = WorkspaceId::from_uuid(created.workspace.id.as_uuid());
     let client = match client_at(root) {
         Ok(client) => client,
         Err(error) => {
@@ -3284,6 +3344,17 @@ fn pane_profile_summary(
     }
     live.folder.clear();
     live
+}
+
+/// The localized name of an agenda bucket, for a note listed under its token.
+fn bucket_label_key(bucket: koru_core::tasks::Bucket) -> koru_i18n::Key {
+    match bucket {
+        koru_core::tasks::Bucket::Today => koru_i18n::Key::A11yTaskBucketToday,
+        koru_core::tasks::Bucket::Next => koru_i18n::Key::A11yTaskBucketNext,
+        koru_core::tasks::Bucket::Upcoming => koru_i18n::Key::A11yTaskBucketUpcoming,
+        koru_core::tasks::Bucket::Later => koru_i18n::Key::A11yTaskBucketLater,
+        koru_core::tasks::Bucket::Completed => koru_i18n::Key::A11yTaskBucketCompleted,
+    }
 }
 
 fn restore_onboarding_profile(root: Option<&Path>, raw_profile: &str) -> OnboardingCreation {
@@ -3582,6 +3653,7 @@ impl<H: Host> OnboardingApp<H> {
         while let Some(action) = self.view.take_action() {
             match action {
                 crate::onboarding::Action::Account(command) => self.submit_account_command(command),
+                crate::onboarding::Action::ManageProfiles => self.open_existing_profiles(),
                 crate::onboarding::Action::OpenCreatedProfile(_) => {
                     self.connected_paused = false;
                     self.finish_connected_profile();
@@ -3655,6 +3727,7 @@ impl<H: Host> OnboardingApp<H> {
                     koru_agent_wire::AccountCommand::CancelEnrollment,
                 ),
                 crate::onboarding::Action::CreateLocalProfile {
+                    id,
                     owner_display_name,
                     name,
                     workspace_name,
@@ -3677,6 +3750,7 @@ impl<H: Host> OnboardingApp<H> {
                         .spawn(move || {
                             let result = create_onboarding_profile(
                                 root.as_deref(),
+                                id,
                                 &name,
                                 &workspace_name,
                                 &template,
@@ -3684,6 +3758,13 @@ impl<H: Host> OnboardingApp<H> {
                                 profile_color.as_deref(),
                                 workspace_icon.as_deref(),
                                 workspace_color.as_deref(),
+                                |request| {
+                                    koru_workspace::fromstore::create_profile_with_workspace(
+                                        koru_workspace::fromstore::segment(),
+                                        root.as_deref(),
+                                        &request,
+                                    )
+                                },
                             );
                             let _ = tx.send(result);
                             let _ = proxy.send_event(Wake::Onboarding);
@@ -5064,6 +5145,7 @@ impl<H: Host> App<H> {
                         creation_rx,
                         first_minutes: None,
                         connect_created_profile: false,
+                        open_manage_after_creation: false,
                         pending_connected_open: None,
                         awaiting_hosted_profile: false,
                         connected_owner_scope: 0,
@@ -5342,6 +5424,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
         let (profile_removal_tx, profile_removal_rx) = mpsc::channel();
         let (profile_offline_tx, profile_offline_rx) = mpsc::channel();
         let (connected_profile_creation_tx, connected_profile_creation_rx) = mpsc::channel();
+        let (profile_publication_tx, profile_publication_rx) = mpsc::channel();
         let (embedded_profile_restore_tx, embedded_profile_restore_rx) = mpsc::channel();
         let (profile_refresh_tx, profile_refresh_requests) = mpsc::sync_channel(1);
         let (profile_refresh_results, profile_refresh_rx) = mpsc::channel();
@@ -5479,6 +5562,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
             profile_cascade_tx,
             profile_cascade_rx,
             profile_cascades_in_flight: HashSet::new(),
+            profile_removal_attempts: HashMap::new(),
             profile_removal_tx,
             profile_removal_rx,
             profile_removals_in_flight: HashSet::new(),
@@ -5489,6 +5573,10 @@ Nothing was written. The store starts on demand, so this usually means it could 
             profile_bindings_in_flight: HashSet::new(),
             connected_profile_creation_tx,
             connected_profile_creation_rx,
+            profile_publication_tx,
+            profile_publication_rx,
+            profile_waits: profile_wait::Waits::default(),
+            profile_opening: None,
             pending_connected_profile_creation: None,
             embedded_profile_restore_tx,
             embedded_profile_restore_rx,
@@ -5511,6 +5599,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
             pending_import: None,
             deleting_workspaces: HashSet::new(),
             pending_attachment: None,
+            pending_page_attachment: None,
             pending_content_drops: VecDeque::new(),
             // Due once at startup: the share that opened this window was
             // staged before the process existed, so nothing will focus-event
@@ -6331,6 +6420,72 @@ Nothing was written. The store starts on demand, so this usually means it could 
         for edit in edits {
             edited |= crate::tasks::serve_list_edit(&mut self.runtime.workspace, &edit);
         }
+        // The notes above Tasks pages: every page a pane shows gets its
+        // document made, opened or registered by the workspace, and is told
+        // where that stands. Idempotent per turn; the registry does the work
+        // off this thread.
+        let retries: Vec<koru_core::ids::PageKey> = self
+            .panes
+            .iter_mut()
+            .flat_map(|(_, pane)| pane.view.take_wants_page_retry())
+            .collect();
+        for page in retries {
+            self.runtime.workspace.retry_page(page);
+        }
+        let wanted_pages: Vec<(WindowId, koru_core::ids::PageKey)> = self
+            .panes
+            .iter_mut()
+            .flat_map(|(id, pane)| {
+                pane.view
+                    .take_wants_page_documents()
+                    .into_iter()
+                    .map(move |page| (*id, page))
+            })
+            .collect();
+        for (id, page) in wanted_pages {
+            if let Some(state) = self.runtime.workspace.ensure_page(page)
+                && let Some(pane) = self.panes.get_mut(&id)
+                && pane.view.set_page_state(&state)
+            {
+                pane.window.request_redraw();
+            }
+        }
+        // A note opened in a tab of its own: which page it is the note of,
+        // so a task made there joins the list the way it does in the band.
+        let wanted_page_of: Vec<(WindowId, koru_core::DocumentId)> = self
+            .panes
+            .iter_mut()
+            .flat_map(|(id, pane)| {
+                pane.view
+                    .take_wants_page_of()
+                    .into_iter()
+                    .map(move |document| (*id, document))
+            })
+            .collect();
+        for (id, document) in wanted_page_of {
+            let page = self.runtime.workspace.page_of_document(document);
+            if let Some(pane) = self.panes.get_mut(&id)
+                && pane.view.set_page_of(document, page)
+            {
+                pane.window.request_redraw();
+            }
+        }
+        // A note's deletion conflict answered: Keep deleted or Recover.
+        let decisions: Vec<(koru_core::ids::PageKey, koru_workspace::pages::PageDecision)> = self
+            .panes
+            .iter_mut()
+            .flat_map(|(_, pane)| pane.view.take_wants_page_decisions())
+            .collect();
+        for (page, decision) in decisions {
+            match decision {
+                koru_workspace::pages::PageDecision::Keep => {
+                    self.runtime.workspace.keep_page_deleted(page);
+                }
+                koru_workspace::pages::PageDecision::Recover => {
+                    self.runtime.workspace.recover_page(page);
+                }
+            }
+        }
         // The Tasks surface's ticks, removals and captures. Collected first for
         // the borrow, then served one at a time — `crate::tasks::serve` owns the
         // ordering and the activity attempt, so this stays a sweep rather than a
@@ -6572,6 +6727,31 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 pane.view
                     .attachment_cancelled(&mut self.runtime.workspace.ws, node);
             }
+        }
+        // A Tasks page's `+` → *Attachment*: the same picker and the same
+        // import as `/attach` — the files become the workspace's — and then
+        // the page takes references to them. Skipped, not queued, while
+        // another import runs, exactly as `/attach` is.
+        let page_asks: Vec<(WindowId, koru_core::ids::PageKey)> = self
+            .panes
+            .iter_mut()
+            .flat_map(|(id, pane)| {
+                pane.view
+                    .take_wants_page_attachments()
+                    .into_iter()
+                    .map(move |page| (*id, page))
+            })
+            .collect();
+        for (id, page) in page_asks {
+            if self.import_busy {
+                continue;
+            }
+            let Some(paths) = crate::dialogs::pick_open_files("Attach files", &[], None, None)
+            else {
+                continue;
+            };
+            self.pending_page_attachment = Some(page);
+            self.import_content(id, "files", crate::ImportSourceSelection::Files(paths));
         }
         let requests: Vec<(WindowId, NodeId)> = self
             .panes
@@ -7639,23 +7819,10 @@ Nothing was written. The store starts on demand, so this usually means it could 
     /// thread. Only the newest queued result matters.
     fn drain_profile_catalog(&mut self) {
         if self.runtime.drain_catalog() {
-            let current = self.runtime.current;
-            let current_was_deleted = self.runtime.live_workspace
-                && self.runtime.catalog_workspaces.iter().any(|workspace| {
-                    workspace.id.as_uuid() == current.as_uuid() && workspace.deleted_at.is_some()
-                });
-            if current_was_deleted && let Err(error) = self.leave_current_workspace(current) {
-                self.report(ErrorReport::new(
-                    "Couldn't leave the deleted workspace",
-                    error,
-                ));
-            }
-            if let Some(workspace) = workspace_arrival::first_workspace_when_empty(
-                self.runtime.live_workspace,
-                &self.runtime.profile.workspaces(),
-            ) {
-                self.switch_workspace(workspace);
-            }
+            self.profile_waits.catalog_changed();
+            // Window links refresh durable authority on this invalidation.
+            // service_profile_waits closes retired content after their answers
+            // have drained; a stale catalog alone does not choose a replacement.
             self.sync_pane_context();
         }
     }
@@ -7895,7 +8062,22 @@ Nothing was written. The store starts on demand, so this usually means it could 
     /// takes for a document created in another window to appear here without
     /// anyone clicking anything.
     fn push_entries(&mut self) -> bool {
-        let (entries, trashed) = self.runtime.workspace.entries_and_trashed();
+        let (mut entries, mut trashed) = self.runtime.workspace.entries_and_trashed();
+        // A bucket's note is listed under its token; a person reads it in
+        // their language (plan §6.6: the manifest holds a semantic value and
+        // every reader localizes).
+        let pages = self.runtime.workspace.page_documents();
+        if !pages.is_empty() {
+            let lang = crate::accessibility::ui_lang();
+            for entry in entries.iter_mut().chain(trashed.iter_mut()) {
+                if let Some((_, koru_core::ids::PageKey::Bucket(bucket), _)) =
+                    pages.iter().find(|(id, _, _)| *id == entry.id)
+                    && entry.title == bucket.as_str()
+                {
+                    entry.title = koru_i18n::t(lang, bucket_label_key(*bucket)).to_owned();
+                }
+            }
+        }
         // Which of them is open, from the workspace rather than left to the pane
         // to work out: a row is keyed by `DocumentId` and a tab's root is a
         // `NodeId` inside a document, and only this side holds both.
@@ -8781,6 +8963,15 @@ Nothing was written. The store starts on demand, so this usually means it could 
         let Some((source, request)) = request else {
             return false;
         };
+        self.serve_pane_request(source, request, event_loop)
+    }
+
+    fn serve_pane_request(
+        &mut self,
+        source: WindowId,
+        request: PaneRequest,
+        event_loop: &ActiveEventLoop,
+    ) -> bool {
         let _stall = timing::Watch::start(request.stall_name());
         match request {
             PaneRequest::Account(command) => self.host.account_command(command),
@@ -8811,6 +9002,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
                     stage: ConnectedProfileCreationStage::CreatingLocally,
                 });
                 let tx = self.connected_profile_creation_tx.clone();
+                let publication = self.profile_publication_tx.clone();
                 let proxy = self.wake_proxy.clone();
                 let root = self.gateway_root.clone();
                 let started = std::thread::Builder::new()
@@ -8818,6 +9010,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
                     .spawn(move || {
                         let result = create_onboarding_profile(
                             root.as_deref(),
+                            draft.id,
                             &draft.profile_name,
                             &draft.workspace_name,
                             &draft.template,
@@ -8825,6 +9018,24 @@ Nothing was written. The store starts on demand, so this usually means it could 
                             draft.profile_color.as_deref(),
                             draft.workspace_icon.as_deref(),
                             draft.workspace_color.as_deref(),
+                            |request| {
+                                let (reply, answer) = mpsc::channel();
+                                let closed = || {
+                                    koru_store_core::Error::new(
+                                        koru_store_core::Code::StorageFailed,
+                                        "the creating window closed before Profile acknowledgement",
+                                    )
+                                };
+                                publication
+                                    .send(EmbeddedProfilePublication {
+                                        source,
+                                        request,
+                                        reply,
+                                    })
+                                    .map_err(|_| closed())?;
+                                let _ = proxy.send_event(Wake::Onboarding);
+                                answer.recv().map_err(|_| closed())?
+                            },
                         );
                         let _ = tx.send(result);
                         let _ = proxy.send_event(Wake::Onboarding);
@@ -8864,13 +9075,9 @@ Nothing was written. The store starts on demand, so this usually means it could 
             }
             PaneRequest::RemoveLocalProfile {
                 profile,
-                delete_workspaces,
+                delete_workspaces: _,
             } => {
-                if delete_workspaces {
-                    self.start_profile_cascade(profile);
-                } else {
-                    self.host.remove_local_profile(profile);
-                }
+                self.start_profile_cascade(profile);
             }
             PaneRequest::FinishHostedProfileDeletion {
                 profile,
@@ -8948,6 +9155,15 @@ Nothing was written. The store starts on demand, so this usually means it could 
             }
             PaneRequest::NewWorkspace(name) => self.new_workspace(&name),
             PaneRequest::CreateDocument(title) => self.create_document(source, &title, false),
+            PaneRequest::RenameDocument { document, title } => {
+                if let Err(error) = self.runtime.workspace.rename_document(document, &title) {
+                    self.report(
+                        ErrorReport::new("Couldn't rename that note", "Its name is unchanged.")
+                            .with_details(error),
+                    );
+                }
+                self.push_entries();
+            }
             PaneRequest::CreateDocumentIn { parent, title } => {
                 self.create_child_document(source, parent, &title)
             }
@@ -9113,13 +9329,53 @@ Nothing was written. The store starts on demand, so this usually means it could 
             // a thread and a socket, and those cost nothing to look at.
             PaneRequest::CloseDocument(id) => self.release_document(id),
             PaneRequest::SwitchProfile(id) => {
-                self.switch_profile(id);
+                self.begin_profile_switch(source, id, None);
+            }
+            PaneRequest::LandIn {
+                profile,
+                workspace,
+                attempt,
+            } => {
+                if attempt.window == source
+                    && attempt.profile == profile
+                    && self.runtime.profile.id() == Some(profile)
+                    && self.panes.contains_key(&source)
+                    && self.profile_waits.is_current(attempt)
+                {
+                    self.switch_workspace(workspace);
+                    if !self.runtime.live_workspace || self.runtime.current != workspace {
+                        self.profile_waits.landing_failed(attempt);
+                    }
+                }
+            }
+            PaneRequest::CancelProfileWait(attempt) => {
+                if attempt.window == source {
+                    self.cancel_profile_wait(attempt, event_loop);
+                }
+            }
+            PaneRequest::RetryProfileWait(attempt) => {
+                if attempt.window == source && self.profile_waits.is_current(attempt) {
+                    if self.profile_waits.get(source).is_some_and(|wait| {
+                        matches!(
+                            wait.presentation.reading,
+                            crate::profile_wait::WaitReading::EnrollmentFailed { .. }
+                        )
+                    }) {
+                        self.host.account_command(
+                            koru_agent_wire::AccountCommand::RetryEnrollment {
+                                profile_id: Some(attempt.profile.to_storage()),
+                            },
+                        );
+                    } else {
+                        self.profile_waits.retry(attempt);
+                    }
+                }
             }
             PaneRequest::SwitchToWorkspaceIn(profile, workspace) => {
                 if self.runtime.profile.id() == Some(profile) {
                     self.switch_workspace(workspace);
                 } else {
-                    self.switch_profile_inner(profile, Some(workspace), true);
+                    self.begin_profile_switch(source, profile, Some(workspace));
                 }
             }
             PaneRequest::AddProfile => {
@@ -9223,9 +9479,6 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 }
             }
             PaneRequest::DownloadFile(id) => self.download_file(id),
-            PaneRequest::PinWorkspace(id, on) => {
-                self.set_workspace_flag(id, WorkspaceFlag::Pinned(on));
-            }
             PaneRequest::ReorderWorkspaces(ids) => self.reorder_workspaces(&ids),
             PaneRequest::ArchiveWorkspace(id, on) => {
                 self.archive_workspace(id, on);
@@ -9986,6 +10239,13 @@ Nothing was written. The store starts on demand, so this usually means it could 
                     let _ = self.runtime.workspace.take_entries_changed();
                     self.push_entries();
                 }
+                if let Some(page) = self.pending_page_attachment.take() {
+                    let ids: Vec<koru_core::DocumentId> =
+                        files.iter().map(|(id, _)| *id).collect();
+                    if !ids.is_empty() {
+                        self.runtime.workspace.attach_files_to_page(page, &ids);
+                    }
+                }
                 if let Some((window, node)) = self.pending_attachment.take()
                     && let Some(pane) = self.panes.get_mut(&window)
                 {
@@ -10143,6 +10403,10 @@ Nothing was written. The store starts on demand, so this usually means it could 
                     }
                 }
             }
+            ImportMessage::FileLocatedForSave { id, result } => match result {
+                Ok((workspace, entry)) => self.save_located_file(id, workspace, entry.title),
+                Err(error) => self.report(ErrorReport::new("File not found", "It may have been removed in another window.").with_details(error)),
+            },
             ImportMessage::FileSaved {
                 name,
                 destination,
@@ -10269,29 +10533,32 @@ Nothing was written. The store starts on demand, so this usually means it could 
     /// native picker stays on the event thread; snapshot and blob reads happen
     /// on a worker because an attachment may be gigabytes large.
     fn save_file(&mut self, id: koru_core::DocumentId) {
-        crate::attach_debug!("shell save_file id={}", id.to_storage());
-        let Some(workspace_id) = self.runtime.workspace.current() else {
-            crate::attach_debug!("shell save_file abort: no current workspace");
-            return;
-        };
-        let entries = self.runtime.workspace.entries();
-        let name = entries
-            .iter()
-            .find(|entry| entry.id == id && entry.kind == koru_core::explore::KIND_FILE)
-            .or_else(|| entries.iter().find(|entry| entry.id == id))
-            .map(|entry| entry.title.clone());
-        let Some(name) = name else {
-            crate::attach_debug!(
-                "shell save_file abort: id not in entries (n={})",
-                entries.len()
+        let tx = self.import_tx.clone();
+        let proxy = self.wake_proxy.clone();
+        let root = self.gateway_root.clone();
+        let segment = koru_workspace::fromstore::segment().to_owned();
+        let store_id = koru_store_core::ids::DocumentId::from_uuid(id.as_uuid());
+        if let Err(error) = std::thread::Builder::new()
+            .name("koru-locate-save-file".into())
+            .spawn(move || {
+                let result = locate_workspace_file(&segment, root.as_deref(), store_id);
+                let _ = tx.send(ImportMessage::FileLocatedForSave { id, result });
+                let _ = proxy.send_event(Wake::Import);
+            })
+        {
+            self.report(
+                ErrorReport::new("Couldn't start saving the file", "Nothing was written.")
+                    .with_details(error),
             );
-            self.report(ErrorReport::new(
-                "File not found",
-                "It may have been removed in another window.",
-            ));
-            return;
-        };
-        crate::attach_debug!("shell save_file opening picker name={name}");
+        }
+    }
+
+    fn save_located_file(
+        &mut self,
+        id: koru_core::DocumentId,
+        store_ws: koru_store_core::ids::WorkspaceId,
+        name: String,
+    ) {
         // No parent window — same reason as /attach and /image pickers.
         let Some(destination) = crate::dialogs::pick_save_file(
             "Save workspace file",
@@ -10313,7 +10580,6 @@ Nothing was written. The store starts on demand, so this usually means it could 
         let proxy = self.wake_proxy.clone();
         let root = self.gateway_root.clone();
         let segment = koru_workspace::fromstore::segment().to_owned();
-        let store_ws = koru_store_core::ids::WorkspaceId::from_uuid(workspace_id.as_uuid());
         let store_id = koru_store_core::ids::DocumentId::from_uuid(id.as_uuid());
         let worker_name = name.clone();
         let worker_destination = destination.clone();
@@ -10559,66 +10825,27 @@ Nothing was written. The store starts on demand, so this usually means it could 
     /// and disk write stay off the event thread; the cache keeps one bounded
     /// copy per stable file id rather than leaking a new temp file per click.
     fn open_file(&mut self, id: koru_core::DocumentId) {
-        crate::attach_debug!("shell open_file id={}", id.to_storage());
-        let Some(workspace_id) = self.runtime.workspace.current() else {
-            crate::attach_debug!("shell open_file abort: no current workspace");
-            return;
-        };
-        // Prefer a file-kind entry; fall back to any entry with this id so an
-        // attachment whose manifest row is still settling can still open.
-        let entries = self.runtime.workspace.entries();
-        let listed = entries
-            .iter()
-            .find(|entry| entry.id == id && entry.kind == koru_core::explore::KIND_FILE)
-            .or_else(|| entries.iter().find(|entry| entry.id == id));
-        let Some((name, mime)) = listed.map(|entry| (entry.title.clone(), entry.mime.clone()))
-        else {
-            crate::attach_debug!(
-                "shell open_file abort: id not in entries (n={})",
-                entries.len()
-            );
-            self.report(ErrorReport::new(
-                "File not found",
-                "It may have been removed in another window.",
-            ));
-            return;
-        };
-        crate::attach_debug!(
-            "shell open_file spawning worker name={name} workspace={}",
-            workspace_id.to_storage()
-        );
         let tx = self.import_tx.clone();
         let proxy = self.wake_proxy.clone();
         let root = self.gateway_root.clone();
         let segment = koru_workspace::fromstore::segment().to_owned();
-        let store_ws = koru_store_core::ids::WorkspaceId::from_uuid(workspace_id.as_uuid());
         let store_id = koru_store_core::ids::DocumentId::from_uuid(id.as_uuid());
-        let worker_name = name.clone();
         if let Err(error) = std::thread::Builder::new()
             .name("koru-open-file".into())
             .spawn(move || {
+                let mut name = id.to_storage();
                 let result = (|| {
+                    let (workspace, entry) =
+                        locate_workspace_file(&segment, root.as_deref(), store_id)?;
+                    name = entry.title;
                     let bytes =
-                        workspace_file_bytes(&segment, root.as_deref(), store_ws, store_id)?;
-                    crate::attach_debug!(
-                        "shell open_file worker got {} bytes for {worker_name}",
-                        bytes.len()
-                    );
-                    open_file_bytes(store_id, &worker_name, mime.as_deref(), &bytes)
+                        workspace_file_bytes(&segment, root.as_deref(), workspace, store_id)?;
+                    open_file_bytes(store_id, &name, entry.mime.as_deref(), &bytes)
                 })();
-                if let Err(ref e) = result {
-                    crate::attach_debug!("shell open_file worker failed: {e}");
-                } else {
-                    crate::attach_debug!("shell open_file worker ok for {worker_name}");
-                }
-                let _ = tx.send(ImportMessage::FileOpened {
-                    name: worker_name,
-                    result,
-                });
+                let _ = tx.send(ImportMessage::FileOpened { name, result });
                 let _ = proxy.send_event(Wake::Import);
             })
         {
-            crate::attach_debug!("shell open_file spawn failed: {error}");
             self.report(
                 ErrorReport::new("Couldn't start opening the file", "Nothing was changed.")
                     .with_details(error),
@@ -11444,6 +11671,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
     /// Clear a pending `/attach`. When `cancelled`, restore the trigger row so
     /// the literal `/attach` text is not left behind.
     fn finish_pending_attachment(&mut self, cancelled: bool) {
+        self.pending_page_attachment = None;
         let Some((window, node)) = self.pending_attachment.take() else {
             return;
         };
@@ -11685,10 +11913,21 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 if !canvas && let Some(pane) = self.panes.get_mut(&source) {
                     pane.view.create_document_failed();
                 }
-                self.report(
+                // *Nothing was changed* is only true when the store never
+                // made the document. When it did and only the open failed,
+                // the document is listed and the message has to say so.
+                let report = if e
+                    .to_string()
+                    .contains(koru_workspace::CREATED_BUT_NOT_OPENED)
+                {
+                    ErrorReport::new(
+                        "Made the document, but couldn't open it",
+                        "It is in the sidebar.",
+                    )
+                } else {
                     ErrorReport::new("Couldn't create that document", "Nothing was changed.")
-                        .with_details(e),
-                );
+                };
+                self.report(report.with_details(e));
             }
         }
     }
@@ -12809,40 +13048,13 @@ Nothing was written. The store starts on demand, so this usually means it could 
         Ok(id)
     }
 
-    /// Make sure a document has somewhere to go: when the open Profile has no
-    /// workspace on the store, create one named [`DEFAULT_WORKSPACE_NAME`] and
-    /// switch to it. True when a live workspace is open afterwards.
-    ///
-    /// **Why a document asks for a workspace and not the person.** A Profile
-    /// can open with no workspace at all — provisioned by an account before
-    /// any content existed, restored from one, or left by an onboarding that
-    /// stopped between the Profile and its first workspace — and onboarding
-    /// only runs when there is no Profile. The window then sits on an
-    /// in-memory placeholder that no document can be registered in, and
-    /// every way of making a page (a draft's first keystroke, the command
-    /// bar, the `@` picker, a canvas) failed with "this workspace is not open
-    /// on a store", once per keystroke for a draft. Someone who asked for a
-    /// document asked for a place to put it; naming that place can wait.
-    ///
-    /// The store calls are blocking and `switch_workspace` keeps draft tabs,
-    /// so the creation that follows in the same request lands in the new
-    /// workspace with nothing to wait for.
+    /// Availability resolves on the window worker. A first-document
+    /// request cannot bypass Cloud delivery, durable inspection or removal.
     fn ensure_live_workspace(&mut self) -> Result<(), String> {
-        if self.runtime.live_workspace {
+        if self.runtime.live_workspace && self.profile_opening.is_none() {
             return Ok(());
         }
-        let owner = self
-            .runtime
-            .profile
-            .id()
-            .ok_or_else(|| "This profile has no identity.".to_owned())?;
-        let id = self.create_workspace_in_open_profile(owner, DEFAULT_WORKSPACE_NAME)?;
-        self.switch_workspace(id);
-        if self.runtime.live_workspace {
-            Ok(())
-        } else {
-            Err("The new workspace could not be opened.".to_owned())
-        }
+        Err(koru_i18n::t(koru_i18n::current(), koru_i18n::Key::ProfileWaitPreparing).to_owned())
     }
 
     fn reconcile_pending_profile_bindings(
@@ -12970,13 +13182,49 @@ Nothing was written. The store starts on demand, so this usually means it could 
                         pane.window.request_redraw();
                     }
                 }
+                OnboardingCreation::Conflict => {
+                    if let Some(pane) = self.panes.get_mut(&source) {
+                        pane.view.connected_profile_creation_conflict();
+                        pane.window.request_redraw();
+                    }
+                }
             }
         }
     }
 
     fn service_connected_profile_creation(&mut self, event_loop: &ActiveEventLoop) {
+        while let Ok(publication) = self.profile_publication_rx.try_recv() {
+            if self
+                .pending_connected_profile_creation
+                .as_ref()
+                .is_some_and(|pending| {
+                    pending.source == publication.source
+                        && matches!(
+                            pending.stage,
+                            ConnectedProfileCreationStage::CreatingLocally
+                        )
+                })
+                && let Some(pane) = self.panes.get_mut(&publication.source)
+            {
+                pane.view
+                    .create_profile_with_workspace(publication.request, publication.reply);
+                pane.window.request_redraw();
+            }
+            // Dropping an unowned reply wakes the worker with a closed-window
+            // error. A late request cannot publish through a different window.
+        }
         while let Ok(result) = self.connected_profile_creation_rx.try_recv() {
             match result {
+                OnboardingCreation::Conflict => {
+                    let source = self
+                        .pending_connected_profile_creation
+                        .take()
+                        .map(|pending| pending.source);
+                    if let Some(pane) = source.and_then(|source| self.panes.get_mut(&source)) {
+                        pane.view.connected_profile_creation_conflict();
+                        pane.window.request_redraw();
+                    }
+                }
                 OnboardingCreation::Opened(opened) => {
                     let Some(profile) = opened.profile.id() else {
                         startup::fatal(
@@ -13198,11 +13446,6 @@ Nothing was written. The store starts on demand, so this usually means it could 
         self.switch_profile_inner(id, None, true);
     }
 
-    fn switch_profile_after_removal(&mut self, id: koru_core::ProfileId) -> bool {
-        self.switch_profile_inner(id, None, false);
-        self.runtime.profile_id() == id
-    }
-
     /// `wanted` is the workspace to open in the incoming Profile; `None` keeps
     /// the remembered one. A stale id falls back the same way a remembered one
     /// does, so a row that vanished mid-click still lands somewhere real.
@@ -13238,6 +13481,16 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 return;
             }
         };
+        self.adopt_opened_profile(opened, persist_outgoing, began, None);
+    }
+
+    fn adopt_opened_profile(
+        &mut self,
+        opened: koru_workspace::fromstore::OpenedFromStore,
+        persist_outgoing: bool,
+        began: Instant,
+        inherited_origin: Option<profile_wait::Place>,
+    ) {
         let koru_workspace::fromstore::OpenedFromStore {
             profiles,
             profile,
@@ -13268,6 +13521,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
         let outgoing_workspace = self.runtime.current;
         let outgoing_was_live = self.runtime.live_workspace;
 
+        self.clear_profile_waits();
         workspace.set_store_waker(self.store_waker.clone());
         workspace.set_actor(koru_workspace::actor_label(
             profile.name().as_deref(),
@@ -13283,6 +13537,20 @@ Nothing was written. The store starts on demand, so this usually means it could 
         self.runtime.workspace = workspace;
         self.runtime.current = current;
         self.runtime.live_workspace = has_workspace;
+        if !has_workspace {
+            let origin = outgoing_profile
+                .filter(|_| outgoing_was_live)
+                .map(|profile| profile_wait::Place {
+                    profile,
+                    workspace: outgoing_workspace,
+                })
+                .or(inherited_origin);
+            for (window, pane) in &self.panes {
+                if profile_wait::full_window(&pane.view) {
+                    self.profile_waits.begin(*window, incoming_profile, origin);
+                }
+            }
+        }
         self.runtime.rebind_activation(incoming_profile);
         startup::remember_store_profile(incoming_profile);
         self.runtime.settings.remember_profile(incoming_profile);
@@ -13333,6 +13601,9 @@ Nothing was written. The store starts on demand, so this usually means it could 
     /// "no in-memory fall-back" bug wearing a new hat: a workspace that cannot
     /// save looks exactly like one that can until it is closed.
     fn switch_workspace(&mut self, id: koru_core::WorkspaceId) {
+        if self.profile_opening.is_some() {
+            self.clear_profile_waits();
+        }
         if self.runtime.live_workspace && self.runtime.current == id {
             crate::search_debug!(
                 "[Koru][workspace-switch][pid={}] skipped: profile={} workspace={} already_current=true",
@@ -13435,6 +13706,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
         let outgoing_was_live = self.runtime.live_workspace;
         self.runtime.current = id;
         self.runtime.live_workspace = true;
+        self.clear_profile_waits();
         if outgoing_was_live && let Some(profile_id) = profile_id {
             self.host.workspace_closed(profile_id, outgoing);
         }
@@ -13851,6 +14123,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
     }
 
     fn close_pane(&mut self, event_loop: &ActiveEventLoop, id: WindowId) {
+        self.profile_waits.leave(id);
         if self
             .panes
             .get(&id)
@@ -18578,6 +18851,8 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
         for id in maintained {
             self.request_redraw(id);
         }
+        self.service_profile_opening();
+        self.service_profile_waits(event_loop);
         // **Window requests a maintain pass raised** — presses drain their own
         // inside the press, but a maintain-raised request (the recording
         // countdown's `StartRecording`, a close re-asked after a finalize) has
@@ -18974,7 +19249,7 @@ fn queue_agent_snooze(queue: &mut Vec<PaneRequest>, intent: crate::ReminderSnooz
     queue.insert(0, PaneRequest::ReminderSnooze(intent));
 }
 
-/// One change to a workspace's switcher appearance — the three verbs that
+/// One change to a workspace's switcher appearance — the two verbs that
 /// share `set_workspace_flag`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum WorkspaceFlag {
@@ -18982,7 +19257,6 @@ enum WorkspaceFlag {
         icon: Option<String>,
         color: Option<String>,
     },
-    Pinned(bool),
     Archived(bool),
 }
 
@@ -19010,7 +19284,6 @@ impl WorkspaceFlag {
                 profile.set_workspace_icon(id, icon.as_deref())?;
                 profile.set_workspace_color(id, color.as_deref())
             }
-            Self::Pinned(on) => profile.set_workspace_pinned(id, *on),
             Self::Archived(on) => profile.set_workspace_archived(id, *on),
         }
     }
@@ -19031,7 +19304,6 @@ impl WorkspaceFlag {
                 values.icon = icon.clone();
                 values.color = color.clone();
             }
-            Self::Pinned(on) => values.pinned = *on,
             Self::Archived(on) => values.archived = *on,
         }
         values
@@ -19200,13 +19472,6 @@ mod tests {
             }
         );
         assert_eq!(
-            WorkspaceFlag::Pinned(false).applied_to(&workspace),
-            WorkspaceAppearance {
-                pinned: false,
-                ..base.clone()
-            }
-        );
-        assert_eq!(
             WorkspaceFlag::Archived(true).applied_to(&workspace),
             WorkspaceAppearance {
                 archived: true,
@@ -19229,13 +19494,12 @@ mod tests {
         }
         .apply(&mut profile, id)
         .unwrap();
-        WorkspaceFlag::Pinned(true).apply(&mut profile, id).unwrap();
         let entry = profile.workspace(id).unwrap();
         assert_eq!(entry.icon.as_deref(), Some("📚"));
         assert_eq!(entry.color.as_deref(), Some("blue"));
-        assert!(entry.pinned);
+        assert!(!entry.pinned);
         assert!(
-            WorkspaceFlag::Pinned(true)
+            WorkspaceFlag::Archived(true)
                 .apply(&mut profile, WorkspaceId::new())
                 .is_err(),
             "an id the profile does not hold is still an error on this path"
@@ -19717,16 +19981,6 @@ mod tests {
             !called.get(),
             "pre-commit failure must not attempt a strict reopen"
         );
-    }
-
-    #[test]
-    fn failure_after_profile_acknowledgement_reopens_that_profile() {
-        let profile = koru_core::ProfileId::new();
-        let target = OnboardingCheckpoint::Profile { profile }.resolve(
-            || None,
-            |reopened_profile, workspace| Some((reopened_profile, workspace)),
-        );
-        assert_eq!(target, Some((profile, None)));
     }
 
     #[test]

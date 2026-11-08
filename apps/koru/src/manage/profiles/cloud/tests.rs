@@ -114,6 +114,7 @@ fn cloud_startup_and_outage_leave_local_profile_details_accessible() {
     }];
     // No subscription inspection or hosted sync command has answered yet.
     c.account.cloud_profiles = vec![AccountProfileCloud {
+        discovery: None,
         profile_id: work.id.to_string(),
         stage: CloudConnectionStage::Connecting,
     }];

@@ -626,3 +626,397 @@ fn open_or_create_opens_what_exists_and_creates_otherwise() {
     let fresh = SystemDoc::open_or_create(None).unwrap();
     assert!(fresh.tags().is_empty());
 }
+
+// ------------------------------------------------------------ pages
+
+/// A page's generations are a grow-only set on its record, and the current
+/// one is the numeric maximum (page-document plan §6.2).
+#[test]
+fn a_lists_page_generations_grow_and_the_current_one_is_the_numeric_maximum() {
+    let mut sys = SystemDoc::create().unwrap();
+    let list = sys.create_list("Bike", None, 1).unwrap();
+    let page = PageKey::List(list);
+    assert_eq!(sys.page_generations(page), Vec::<u64>::new());
+    assert_eq!(sys.current_page_generation(page), None);
+
+    assert!(sys.add_page_generation(page, 0).unwrap());
+    assert!(
+        sys.add_page_generation(page, 0).unwrap(),
+        "a repeat is a no-op"
+    );
+    for n in [1, 10, 9] {
+        assert!(sys.add_page_generation(page, n).unwrap());
+    }
+    assert_eq!(sys.page_generations(page), vec![0, 1, 9, 10]);
+    assert_eq!(
+        sys.current_page_generation(page),
+        Some(10),
+        "numeric, not lexical"
+    );
+}
+
+/// A deleted list keeps its document (D4), so its page record still reads
+/// and still takes a generation; a list the table never held is refused.
+#[test]
+fn a_deleted_list_still_has_its_page_and_an_unknown_list_has_none() {
+    let mut sys = SystemDoc::create().unwrap();
+    let list = sys.create_list("Bike", None, 1).unwrap();
+    let page = PageKey::List(list);
+    assert!(sys.add_page_generation(page, 0).unwrap());
+    assert!(sys.delete_list(list, 2).unwrap());
+    assert_eq!(sys.page_generations(page), vec![0]);
+    assert!(sys.add_page_generation(page, 1).unwrap());
+    assert_eq!(sys.current_page_generation(page), Some(1));
+
+    let ghost = PageKey::List(ListId::new());
+    assert!(!sys.add_page_generation(ghost, 0).unwrap());
+    assert_eq!(sys.page_generations(ghost), Vec::<u64>::new());
+}
+
+/// Buckets keep their page records under the `pages` root, one per token,
+/// created on first use; nothing else in the document moves.
+#[test]
+fn a_buckets_page_record_is_its_own() {
+    let mut sys = SystemDoc::create().unwrap();
+    let today = PageKey::Bucket(crate::tasks::Bucket::Today);
+    let next = PageKey::Bucket(crate::tasks::Bucket::Next);
+    assert_eq!(sys.current_page_generation(today), None);
+    assert!(sys.add_page_generation(today, 0).unwrap());
+    assert_eq!(sys.page_generations(today), vec![0]);
+    assert_eq!(sys.page_generations(next), Vec::<u64>::new(), "per bucket");
+    assert!(sys.lists().is_empty(), "a bucket's page is not a list");
+}
+
+/// Two devices replacing a page's document offline converge on the union of
+/// their generations, and both then agree on the current one.
+#[test]
+fn two_peers_adding_generations_offline_converge_on_the_union() {
+    let mut a = SystemDoc::create().unwrap();
+    let list = a.create_list("Bike", None, 1).unwrap();
+    let page = PageKey::List(list);
+    a.add_page_generation(page, 0).unwrap();
+    let mut b = SystemDoc::from_snapshot(&a.export_snapshot().unwrap()).unwrap();
+
+    a.add_page_generation(page, 1).unwrap();
+    b.add_page_generation(page, 2).unwrap();
+    let from_a = a.export_all_updates().unwrap();
+    let from_b = b.export_all_updates().unwrap();
+    a.import(&from_b).unwrap();
+    b.import(&from_a).unwrap();
+
+    assert_eq!(a.page_generations(page), vec![0, 1, 2]);
+    assert_eq!(b.page_generations(page), vec![0, 1, 2]);
+    assert_eq!(a.current_page_generation(page), Some(2));
+    assert_eq!(b.current_page_generation(page), Some(2));
+}
+
+// ------------------------------------------------------------ titles
+
+fn sync(a: &mut SystemDoc, b: &mut SystemDoc) {
+    let from_a = a.export_all_updates().unwrap();
+    let from_b = b.export_all_updates().unwrap();
+    a.import(&from_b).unwrap();
+    b.import(&from_a).unwrap();
+}
+
+/// §6.6: the current generation reads the list's name; a direct rename
+/// overrides it; a list rename takes the override back (Q5, Q10).
+#[test]
+fn a_lists_note_follows_the_list_until_renamed_directly_and_again_after() {
+    let mut sys = SystemDoc::create().unwrap();
+    let list = sys.create_list("Bike", None, 1).unwrap();
+    let page = PageKey::List(list);
+    sys.add_page_generation(page, 0).unwrap();
+    assert_eq!(sys.page_title(page, 0), PageTitle::Text("Bike".into()));
+
+    assert!(
+        sys.set_page_override(page, 0, Some("Old research"))
+            .unwrap()
+    );
+    assert_eq!(
+        sys.page_title(page, 0),
+        PageTitle::Text("Old research".into())
+    );
+    assert!(sys.rename_list(list, "Bike Build").unwrap());
+    assert_eq!(
+        sys.page_override(page, 0),
+        None,
+        "the list rename took it back"
+    );
+    assert_eq!(
+        sys.page_title(page, 0),
+        PageTitle::Text("Bike Build".into())
+    );
+
+    sys.delete_list(list, 2).unwrap();
+    assert_eq!(
+        sys.page_title(page, 0),
+        PageTitle::Text("Bike Build".into()),
+        "a deleted list's note keeps its last name (D4)"
+    );
+    assert_eq!(sys.all_lists().len(), 1, "tombstones included");
+    assert!(sys.lists().is_empty());
+}
+
+/// §6.6: a replacement freezes the superseded generation's name in the
+/// same commit, so a later list rename moves only the new document — and
+/// a concurrent rename cannot erase it, because the renaming replica never
+/// wrote the frozen key.
+#[test]
+fn a_replacement_freezes_the_old_notes_name_and_a_concurrent_list_rename_moves_only_the_new() {
+    let mut a = SystemDoc::create().unwrap();
+    let list = a.create_list("Bike", None, 1).unwrap();
+    let page = PageKey::List(list);
+    a.add_page_generation(page, 0).unwrap();
+    a.set_page_override(page, 0, Some("Old research")).unwrap();
+    let mut b = SystemDoc::from_snapshot(&a.export_snapshot().unwrap()).unwrap();
+
+    a.add_page_generation(page, 1).unwrap();
+    assert_eq!(
+        a.page_frozen(page, 0),
+        Some(FrozenTitle::Text("Old research".into()))
+    );
+    b.rename_list(list, "Bike Build").unwrap();
+    sync(&mut a, &mut b);
+    for (who, sys) in [("a", &a), ("b", &b)] {
+        assert_eq!(sys.page_generations(page), vec![0, 1], "{who}");
+        assert_eq!(sys.page_override(page, 0), None, "{who}: B removed it");
+        assert_eq!(
+            sys.page_title(page, 0),
+            PageTitle::Text("Old research".into()),
+            "{who}: generation 0 is superseded and keeps its frozen name"
+        );
+        assert_eq!(
+            sys.page_title(page, 1),
+            PageTitle::Text("Bike Build".into()),
+            "{who}: generation 1 follows the list"
+        );
+    }
+}
+
+/// §6.6: a replaced bucket note freezes the bucket, not a label, so every
+/// reader localizes it; a literal title `bucket:today` stays literal.
+#[test]
+fn a_replaced_bucket_note_freezes_the_bucket_and_a_literal_title_stays_literal() {
+    let mut sys = SystemDoc::create().unwrap();
+    let today = PageKey::Bucket(crate::tasks::Bucket::Today);
+    sys.add_page_generation(today, 0).unwrap();
+    assert_eq!(
+        sys.page_title(today, 0),
+        PageTitle::Bucket(crate::tasks::Bucket::Today)
+    );
+    sys.add_page_generation(today, 1).unwrap();
+    assert_eq!(
+        sys.page_frozen(today, 0),
+        Some(FrozenTitle::Bucket("today".into()))
+    );
+    assert_eq!(
+        sys.page_title(today, 0),
+        PageTitle::Bucket(crate::tasks::Bucket::Today)
+    );
+
+    sys.set_page_override(today, 1, Some("bucket:today"))
+        .unwrap();
+    sys.add_page_generation(today, 2).unwrap();
+    assert_eq!(
+        sys.page_frozen(today, 1),
+        Some(FrozenTitle::Text("bucket:today".into()))
+    );
+    assert_eq!(
+        sys.page_title(today, 1),
+        PageTitle::Text("bucket:today".into())
+    );
+    assert_eq!(
+        sys.page_title(today, 2),
+        PageTitle::Bucket(crate::tasks::Bucket::Today)
+    );
+}
+
+/// §6.6: a direct rename of a superseded generation is its frozen name too,
+/// and two writers freezing one generation concurrently with different
+/// kinds converge on one whole value — never a kind from one and a value
+/// from the other.
+#[test]
+fn frozen_names_are_whole_values() {
+    let mut a = SystemDoc::create().unwrap();
+    let today = PageKey::Bucket(crate::tasks::Bucket::Today);
+    a.add_page_generation(today, 0).unwrap();
+    let mut b = SystemDoc::from_snapshot(&a.export_snapshot().unwrap()).unwrap();
+
+    // A replaces Today (freezing the bucket); B, not seeing that, renames
+    // generation 0 directly and then replaces it too (freezing text).
+    a.add_page_generation(today, 1).unwrap();
+    b.set_page_override(today, 0, Some("Monday's plan"))
+        .unwrap();
+    b.add_page_generation(today, 1).unwrap();
+    sync(&mut a, &mut b);
+    let frozen = a.page_frozen(today, 0).expect("frozen");
+    assert_eq!(frozen, b.page_frozen(today, 0).unwrap(), "converged");
+    assert!(
+        matches!(
+            &frozen,
+            FrozenTitle::Bucket(t) if t == "today"
+        ) || matches!(&frozen, FrozenTitle::Text(t) if t == "Monday's plan"),
+        "one of the two whole values: {frozen:?}"
+    );
+
+    // Renaming a superseded generation afterwards is a frozen name as well.
+    a.set_page_override(today, 0, Some("Archived")).unwrap();
+    assert_eq!(
+        a.page_frozen(today, 0),
+        Some(FrozenTitle::Text("Archived".into()))
+    );
+    assert_eq!(a.page_title(today, 0), PageTitle::Text("Archived".into()));
+}
+
+// ------------------------------------------------------ deletion events
+
+/// The four deletion tables round-trip through the system document and
+/// resolve the same as the pure model: a deletion with writing outside it
+/// is a conflict, a Keep closes it, a Recover ends it.
+#[test]
+fn the_deletion_protocol_round_trips_through_the_page_record() {
+    use crate::pages::deletion::{DecisionId, EventId, Keep, Resolution};
+
+    fn vv(entries: &[(u64, i32)]) -> loro::VersionVector {
+        let mut out = loro::VersionVector::new();
+        for &(peer, counter) in entries {
+            out.insert(peer, counter);
+        }
+        out
+    }
+
+    let mut sys = SystemDoc::create().unwrap();
+    let list = sys.create_list("Bike", None, 1).unwrap();
+    let page = PageKey::List(list);
+    sys.add_page_generation(page, 0).unwrap();
+
+    // Nothing deleted: live.
+    assert_eq!(sys.deletion_record(page, 0).resolve(), Resolution::Live);
+
+    // A deletion covering (A5,B3), and writing on B at (B6) outside it.
+    let event = EventId::new();
+    sys.write_deletion(page, 0, event, &vv(&[(1, 5), (2, 3)]), 1_000)
+        .unwrap();
+    sys.report_uncovered(page, 0, 2, event, &vv(&[(2, 6)]))
+        .unwrap();
+    let record = sys.deletion_record(page, 0);
+    assert_eq!(record.resolve(), Resolution::Conflict(vec![event]));
+
+    // A monotone join: an older report does not shrink it.
+    sys.report_uncovered(page, 0, 2, event, &vv(&[(2, 4)]))
+        .unwrap();
+    assert_eq!(
+        sys.deletion_record(page, 0).uncovered(2, event).cloned(),
+        Some(vv(&[(2, 6)])),
+        "evidence only grows"
+    );
+
+    // Keep covering (B6) closes it.
+    sys.write_keep(
+        page,
+        0,
+        event,
+        DecisionId::new(),
+        &Keep {
+            replica: 2,
+            covers: vv(&[(2, 6)]),
+        },
+    )
+    .unwrap();
+    assert_eq!(sys.deletion_record(page, 0).resolve(), Resolution::Deleted);
+
+    // A Recover ends it.
+    sys.write_recover(page, 0, 2, [event]).unwrap();
+    assert_eq!(sys.deletion_record(page, 0).resolve(), Resolution::Live);
+    assert!(sys.deletion_record(page, 0).is_recovered(event));
+
+    // Converges across replicas whatever order the keys arrived in.
+    let mut a = SystemDoc::create().unwrap();
+    let la = a.create_list("X", None, 1).unwrap();
+    let pa = PageKey::List(la);
+    a.add_page_generation(pa, 0).unwrap();
+    let e = EventId::new();
+    a.write_deletion(pa, 0, e, &vv(&[(1, 2)]), 9).unwrap();
+    let mut b = SystemDoc::from_snapshot(&a.export_snapshot().unwrap()).unwrap();
+    a.report_uncovered(pa, 0, 1, e, &vv(&[(1, 9)])).unwrap();
+    b.write_keep(
+        pa,
+        0,
+        e,
+        DecisionId::new(),
+        &Keep {
+            replica: 1,
+            covers: vv(&[(1, 9)]),
+        },
+    )
+    .unwrap();
+    sync(&mut a, &mut b);
+    assert_eq!(
+        a.deletion_record(pa, 0).resolve(),
+        b.deletion_record(pa, 0).resolve()
+    );
+    assert_eq!(a.deletion_record(pa, 0).resolve(), Resolution::Deleted);
+}
+
+/// Plus-menu decisions 1 and 2: whether a page shows its note is on the
+/// page's record, so every device agrees; absent, a page shows its note
+/// exactly when it has ever had a document, so nobody's words go behind a
+/// default and an empty page shows no band until asked.
+#[test]
+fn a_pages_note_is_shown_once_it_has_a_document_and_otherwise_by_hand() {
+    let mut sys = SystemDoc::create().unwrap();
+    let list = sys.create_list("Bike", None, 1).unwrap();
+    let page = PageKey::List(list);
+    assert!(!sys.page_note_shown(page), "nothing written: no band");
+    sys.add_page_generation(page, 0).unwrap();
+    assert!(sys.page_note_shown(page), "a document exists: shown");
+    assert!(sys.set_page_note_shown(page, false).unwrap());
+    assert!(!sys.page_note_shown(page), "hidden by hand");
+    assert!(sys.set_page_note_shown(page, true).unwrap());
+    assert!(sys.page_note_shown(page));
+
+    let today = PageKey::Bucket(crate::tasks::Bucket::Today);
+    assert!(!sys.page_note_shown(today));
+    assert!(
+        sys.set_page_note_shown(today, true).unwrap(),
+        "a bucket's record is made on first use"
+    );
+    assert!(sys.page_note_shown(today));
+
+    let gone = PageKey::List(ListId::new());
+    assert!(
+        !sys.set_page_note_shown(gone, true).unwrap(),
+        "no such list"
+    );
+}
+
+/// Plus-menu decisions 3 and 4: a page's attachments are a set of file
+/// references in attached order — attaching twice keeps the place, two
+/// replicas attaching different files both keep theirs, and removing takes
+/// only the reference.
+#[test]
+fn a_pages_attachments_are_references_in_attached_order() {
+    let mut sys = SystemDoc::create().unwrap();
+    let list = sys.create_list("Bike", None, 1).unwrap();
+    let page = PageKey::List(list);
+    let (a, b, c) = (DocumentId::new(), DocumentId::new(), DocumentId::new());
+    assert!(sys.page_attachments(page).is_empty());
+    assert!(sys.attach_to_page(page, b, 20).unwrap());
+    assert!(sys.attach_to_page(page, a, 10).unwrap());
+    assert!(
+        sys.attach_to_page(page, b, 30).unwrap(),
+        "again: keeps its place"
+    );
+    assert_eq!(sys.page_attachments(page), vec![a, b]);
+
+    let mut other = SystemDoc::create().unwrap();
+    other.import(&sys.export_all_updates().unwrap()).unwrap();
+    assert!(other.attach_to_page(page, c, 40).unwrap());
+    assert!(sys.detach_from_page(page, a).unwrap());
+    assert!(!sys.detach_from_page(page, a).unwrap(), "already gone");
+    sys.import(&other.export_all_updates().unwrap()).unwrap();
+    other.import(&sys.export_all_updates().unwrap()).unwrap();
+    assert_eq!(sys.page_attachments(page), vec![b, c], "both kept theirs");
+    assert_eq!(other.page_attachments(page), sys.page_attachments(page));
+}
