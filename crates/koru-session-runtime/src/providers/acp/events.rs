@@ -96,6 +96,9 @@ impl AcpControl {
         // The agent's mode moves with or without a turn: Claude leaving plan
         // mode once its plan is approved, or answering a set (koru-ai D7).
         match update["sessionUpdate"].as_str() {
+            Some("available_commands_update") => {
+                return self.command_update(params);
+            }
             Some("current_mode_update") => {
                 let reported = update["currentModeId"]
                     .as_str()

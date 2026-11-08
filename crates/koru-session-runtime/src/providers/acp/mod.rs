@@ -2,6 +2,7 @@
 
 mod antigravity;
 mod claude;
+mod commands;
 mod config;
 mod diagnostics;
 mod elicitation;
@@ -52,6 +53,14 @@ pub struct AcpControl {
     /// What the session advertised under its `model` config option, for
     /// discovery; empty where the route advertises none.
     model_options: Vec<koru_session_protocol::ProviderModel>,
+    /// An ACP listing is per native session. `Some([])` means the agent
+    /// explicitly reported no commands; absence permits bootstrap discovery.
+    live_commands: Option<Vec<koru_session_protocol::AgentCommand>>,
+    /// Notifications can precede `session/new`'s answer. Keep only one for
+    /// that native id until the answer confirms which session Koru started.
+    early_commands: Option<(String, Vec<koru_session_protocol::AgentCommand>)>,
+    /// A catalog probe's single wall-clock budget across every request.
+    probe_deadline: Option<Instant>,
     /// The approval modes the session advertised, with the one it is in
     /// (koru-ai D7); `None` where it advertised none.
     modes: Option<koru_session_protocol::AgentModes>,
@@ -157,6 +166,9 @@ impl AcpControl {
             wrapper_auth: None,
             grok_inventory: None,
             model_options: Vec::new(),
+            live_commands: None,
+            early_commands: None,
+            probe_deadline: None,
             modes: None,
             mode_config: None,
             unreported_mode: None,
@@ -395,7 +407,9 @@ impl AcpControl {
 
     fn call(&mut self, method: &str, params: Value) -> Result<Value, ProviderFailure> {
         let id = self.send_request(method, params)?;
-        let deadline = Instant::now() + self.config.request_timeout;
+        let deadline = self
+            .probe_deadline
+            .unwrap_or_else(|| Instant::now() + self.config.request_timeout);
         loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
@@ -963,6 +977,12 @@ impl AcpControl {
             .filter(|value| valid_native_id(value))
             .ok_or_else(handshake_rejected)?
             .to_owned();
+        if let Some((early_session, commands)) = self.early_commands.take()
+            && early_session == native_session
+        {
+            self.live_commands = Some(commands.clone());
+            self.queue(AgentEvent::CommandsUpdated { commands })?;
+        }
         self.model_options = models::config_models(&session, self.config.route.provider.as_str());
         if let Some(read) = modes::read(&session) {
             self.modes = Some(read.modes);

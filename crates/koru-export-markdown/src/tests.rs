@@ -499,6 +499,39 @@ fn command_chip_and_literal_link_have_distinct_export() {
     );
 }
 
+#[test]
+fn invalid_selected_name_keeps_its_visible_words_as_literal_text() {
+    let (mut ws, root) = with_doc("");
+    let row = ws
+        .insert(Parent::Node(root), Node::paragraph("Use  and ").unwrap())
+        .unwrap();
+    ws.insert_pill(
+        row,
+        4,
+        &Attr::labelled(
+            koru_core::attributes::ROLE_SKILL,
+            AttrValue::Text("two words".to_owned()),
+            "Two words",
+        ),
+    )
+    .unwrap();
+    let at = ws.read(row).unwrap().content.as_text().unwrap().len();
+    ws.insert_pill(
+        row,
+        at,
+        &Attr::labelled(
+            koru_core::attributes::ROLE_COMMAND,
+            AttrValue::Text("bad command".to_owned()),
+            "Bad command",
+        ),
+    )
+    .unwrap();
+    assert_eq!(
+        message_text(&ws, root).unwrap(),
+        "Use Two words and Bad command"
+    );
+}
+
 /// Mixed right-to-left and left-to-right text is bytes to the exporter: a
 /// message in Arabic with a Latin word round-trips exactly.
 #[test]

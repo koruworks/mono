@@ -204,6 +204,10 @@ pub struct ChatTranscript {
     /// chip can read and set it; `None` where the model advertises none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_control: Option<koru_ai_core::ReasoningControl>,
+    /// The live session's current command listing; an empty list is authoritative.
+    /// `None` lets the composer use its short-lived bootstrap catalog.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_commands: Option<Vec<AgentCommandView>>,
     /// Every attachment of the chat: those sent with a message, in message
     /// and ordinal order, then the staged ones not yet sent.
     #[serde(default)]
@@ -544,6 +548,12 @@ pub enum PublicAiEvent {
         attempt_id: InferenceAttemptId,
         notice: koru_ai_core::AgentNotice,
     },
+    /// A local agent changed the current session's command listing.
+    AgentCommands {
+        attempt_id: InferenceAttemptId,
+        chat: ChatId,
+        commands: Vec<AgentCommandView>,
+    },
     /// A one-line fact about the attempt the surface shows and nothing
     /// stores: a local agent could not be reattached and a replacement was
     /// started with the conversation so far.
@@ -589,6 +599,7 @@ impl PublicAiEvent {
             | Self::Usage { attempt_id, .. }
             | Self::ToolActivity { attempt_id, .. }
             | Self::AgentNotice { attempt_id, .. }
+            | Self::AgentCommands { attempt_id, .. }
             | Self::WebSearch { attempt_id, .. }
             | Self::Citation { attempt_id, .. }
             | Self::Completed { attempt_id, .. }
@@ -811,6 +822,8 @@ pub struct AgentCommandView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
     pub kind: AgentCommandKindView,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_hint: Option<String>,
 }
 
 /// Where an entry comes from, in the order a picker lists them.
@@ -819,6 +832,8 @@ pub struct AgentCommandView {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum AgentCommandKindView {
+    /// A provider command invoked by `/name`.
+    Command,
     /// A skill of the folder the agent works in.
     RepoSkill,
     /// A skill of the person's own.
@@ -1033,6 +1048,7 @@ mod tests {
             usage: Vec::new(),
             sources: Vec::new(),
             reasoning_control: None,
+            agent_commands: None,
             attachments: Vec::new(),
         }
     }

@@ -420,9 +420,18 @@ impl ProviderCatalogCache {
             .registry
             .discover_commands(kind, working_directory)
             .map_err(|failure| failure.code);
+        let skill_count = result.as_ref().map_or(0, |commands| {
+            commands
+                .iter()
+                .filter(|command| command.kind.is_skill())
+                .count()
+        });
+        let command_count = result
+            .as_ref()
+            .map_or(0, |commands| commands.len().saturating_sub(skill_count));
         tracing::info!(target: "koru::provider_models", event = "commands.listing.finished",
-            provider = %kind, success = result.is_ok(),
-            count = result.as_ref().map_or(0, Vec::len),
+            source = "bootstrap", provider = %kind, success = result.is_ok(),
+            skills = skill_count, commands = command_count,
             elapsed_ms = started.elapsed().as_millis() as u64);
         result
     }

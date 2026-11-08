@@ -14,6 +14,11 @@ use crate::{
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SessionEvent {
+    /// Protocol v23. The live session's current command listing, including an
+    /// authoritative empty listing.
+    CommandsUpdated {
+        commands: Vec<crate::AgentCommand>,
+    },
     Output {
         byte_count: u64,
     },
@@ -62,6 +67,7 @@ impl SessionEvent {
     /// end the subscriber's connection, not one event.
     pub fn minimum_protocol_version(&self) -> u32 {
         match self {
+            Self::CommandsUpdated { .. } => crate::PATH_REFERENCES_PROTOCOL_VERSION,
             Self::HandoverChanged { .. } => crate::DELEGATION_PROTOCOL_VERSION,
             _ => 1,
         }
@@ -131,6 +137,10 @@ pub struct AgentUsage {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AgentEvent {
+    /// Protocol v23. The provider's live listing, independent of any turn.
+    CommandsUpdated {
+        commands: Vec<crate::AgentCommand>,
+    },
     TurnStarted {
         turn_id: AgentTurnId,
     },
@@ -318,6 +328,7 @@ impl AgentEvent {
     /// end the subscriber's connection, not one event.
     pub fn minimum_protocol_version(&self) -> u32 {
         match self {
+            Self::CommandsUpdated { .. } => crate::PATH_REFERENCES_PROTOCOL_VERSION,
             Self::ModeChanged { .. } => crate::AGENT_MODES_PROTOCOL_VERSION,
             Self::Notice { .. } => crate::AGENT_NOTICES_PROTOCOL_VERSION,
             Self::QuestionsRequired { .. } | Self::QuestionsResolved { .. } => {
@@ -343,11 +354,18 @@ pub struct AgentEventObservation {
     pub events: Vec<SequencedAgentEvent>,
     pub cursor: StreamSequence,
     pub earlier_truncated: bool,
+    /// The current session listing survives eviction from the bounded event tail.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commands: Option<Vec<crate::AgentCommand>>,
+    /// The matching lifecycle-event cursor for an atomic command-list watch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_cursor: Option<StreamSequence>,
 }
 
 impl std::fmt::Debug for AgentEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let (kind, turn) = match self {
+            Self::CommandsUpdated { .. } => ("CommandsUpdated", None),
             Self::TurnStarted { turn_id } => ("TurnStarted", Some(turn_id)),
             Self::MessageDelta { turn_id, .. } => ("MessageDelta", Some(turn_id)),
             Self::ToolStarted { turn_id, .. } => ("ToolStarted", Some(turn_id)),

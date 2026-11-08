@@ -3725,6 +3725,14 @@ impl ChatSurface {
                     PublicAiEvent::AgentNotice { notice, .. } => {
                         self.upsert_agent_notice(notice.clone());
                     }
+                    PublicAiEvent::AgentCommands { chat, commands, .. } => {
+                        if let Some(transcript) = self.transcript.as_mut()
+                            && transcript.chat.id == *chat
+                        {
+                            transcript.agent_commands = Some(commands.clone());
+                            self.sync_skill_list();
+                        }
+                    }
                     PublicAiEvent::Notice { notice, .. } => {
                         self.status = Some(match notice {
                             koru_ai_core::AttemptNotice::FreshStart => {
@@ -9934,6 +9942,7 @@ fn unmade_transcript(model: ModelSelection) -> ChatTranscript {
         usage: Vec::new(),
         sources: Vec::new(),
         reasoning_control: None,
+        agent_commands: None,
         attachments: Vec::new(),
     }
 }
@@ -10158,6 +10167,7 @@ mod tests {
             feedback: Vec::new(),
             usage: Vec::new(),
             reasoning_control: None,
+            agent_commands: None,
             attachments: Vec::new(),
         }
     }

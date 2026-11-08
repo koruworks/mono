@@ -253,12 +253,16 @@ pub fn message_text(ws: &WorkspaceDoc, root: NodeId) -> Result<String, ExportErr
                             line.push_str("[[");
                             line.push_str(&link);
                             line.push_str("]]");
+                        } else {
+                            line.push_str(&serialize_pill(attr));
                         }
                     } else if let Some(name) = command_name(attr) {
                         if let Ok(link) = koru_link::command_link(name) {
                             line.push_str("[[");
                             line.push_str(&link);
                             line.push_str("]]");
+                        } else {
+                            line.push_str(&serialize_pill(attr));
                         }
                     } else {
                         line.push_str(&serialize_pill(attr));

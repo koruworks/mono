@@ -1391,6 +1391,33 @@ struct StreamState {
     next_sequence: u64,
 }
 
+type CommandListing = (
+    koru_session_protocol::SessionId,
+    u64,
+    Option<Vec<koru_ai_wire::AgentCommandView>>,
+);
+
+fn accept_command_listing(
+    listings: &mut HashMap<ChatId, CommandListing>,
+    update: koru_ai_provider_agent::CommandListingUpdate,
+) -> Option<(ChatId, Option<Vec<koru_ai_wire::AgentCommandView>>)> {
+    if listings
+        .get(&update.chat)
+        .is_some_and(|(session, generation, _)| {
+            update.generation < *generation
+                || (update.generation == *generation && update.session != *session)
+        })
+    {
+        return None;
+    }
+    let commands = update.commands.map(agents::command_views);
+    listings.insert(
+        update.chat,
+        (update.session, update.generation, commands.clone()),
+    );
+    Some((update.chat, commands))
+}
+
 struct WorkerState {
     repository: Repository,
     /// The worker's stop flag, the one the pools' threads watch too.
@@ -1412,6 +1439,9 @@ struct WorkerState {
     /// Local agents, when the worker has a session host to drive them
     /// through.
     agents: Option<AgentSessions>,
+    /// Session-scoped command listings. Generation tombstones reject stale
+    /// updates after a chat's agent session changes or ends.
+    agent_commands: HashMap<ChatId, CommandListing>,
     /// The work registry: what deletion and clearing read (never `streams`).
     active_work: HashMap<InferenceAttemptId, AttemptWork>,
     closing: HashMap<ChatId, ClosingChat>,
@@ -1631,6 +1661,7 @@ fn run_worker(
         cancellations: HashMap::new(),
         info,
         agents,
+        agent_commands: HashMap::new(),
         active_work: HashMap::new(),
         closing: HashMap::new(),
         clearing: None,
@@ -1661,6 +1692,7 @@ fn run_worker(
     // them for the next pass.
     state.place_unplaced_chats();
     while !shutdown.load(Ordering::Acquire) {
+        state.drain_agent_commands();
         match receiver.recv_timeout(LOOP_INTERVAL) {
             Ok(Envelope::Command(command)) => {
                 let command_name = command.diagnostic_name();
@@ -2568,6 +2600,10 @@ impl WorkerState {
             usage,
             sources,
             reasoning_control,
+            agent_commands: self
+                .agent_commands
+                .get(&chat_id)
+                .and_then(|(_, _, commands)| commands.clone()),
             attachments: self
                 .repository
                 .attachments_for_chat(chat_id)
@@ -4334,7 +4370,7 @@ impl WorkerState {
             Vec::new()
         };
         if matches!(event, AiEvent::Completed { .. }) {
-            tracing::debug!(
+            tracing::info!(
                 target: "koru_ai::markdown",
                 attempt = %attempt_id,
                 block_count = finalized.len(),
@@ -4846,12 +4882,16 @@ impl WorkerState {
     }
 
     fn publish(&mut self, event: AiEvent) {
-        let attempt_id = event.attempt_id();
-        let terminal = event.is_terminal();
         let Ok(event) = PublicAiEvent::try_from(event) else {
             debug_assert!(false, "provider tool calls must remain worker-internal");
             return;
         };
+        self.publish_public(event);
+    }
+
+    fn publish_public(&mut self, event: PublicAiEvent) {
+        let attempt_id = event.attempt_id();
+        let terminal = event.is_terminal();
         let mut remove = terminal;
         if let Some(stream) = self.streams.get_mut(&attempt_id) {
             let public = StreamEvent {
@@ -4873,6 +4913,49 @@ impl WorkerState {
         }
         if remove {
             self.streams.remove(&attempt_id);
+        }
+    }
+
+    fn drain_agent_commands(&mut self) {
+        let Some(agents) = self.agents.as_ref() else {
+            return;
+        };
+        for update in agents.take_command_updates() {
+            let Some((chat, commands)) = accept_command_listing(&mut self.agent_commands, update)
+            else {
+                continue;
+            };
+            tracing::debug!(
+                target: "koru_ai::agent",
+                event = "commands.listing.finished",
+                source = "live",
+                chat = %chat,
+                skills = commands.as_ref().map_or(0, |rows| rows.iter().filter(|row| row.kind != koru_ai_wire::AgentCommandKindView::Command).count()),
+                commands = commands.as_ref().map_or(0, |rows| rows.iter().filter(|row| row.kind == koru_ai_wire::AgentCommandKindView::Command).count()),
+                active = commands.is_some(),
+                "agent command listing changed"
+            );
+            if let Some(commands) = commands {
+                let attempts: Vec<_> = self
+                    .streams
+                    .keys()
+                    .copied()
+                    .filter(|attempt| {
+                        self.repository
+                            .attempt(*attempt)
+                            .ok()
+                            .flatten()
+                            .is_some_and(|row| row.chat_id == Some(chat))
+                    })
+                    .collect();
+                for attempt_id in attempts {
+                    self.publish_public(PublicAiEvent::AgentCommands {
+                        attempt_id,
+                        chat,
+                        commands: commands.clone(),
+                    });
+                }
+            }
         }
     }
 

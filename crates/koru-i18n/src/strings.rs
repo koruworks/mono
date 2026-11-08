@@ -352,6 +352,8 @@ pub enum Key {
     AiComposerAgentPlaceholder,
     AiComposerAddContext,
     AiComposerKoruContext,
+    AiComposerCommands,
+    AiComposerSkills,
     AiComposerNoRecent,
     AiComposerPlusHint,
     AiComposerThisComputer,
@@ -2943,7 +2945,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2055] = [
+    pub const ALL: [Key; 2057] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -3187,6 +3189,8 @@ impl Key {
         Key::AiComposerAgentPlaceholder,
         Key::AiComposerAddContext,
         Key::AiComposerKoruContext,
+        Key::AiComposerCommands,
+        Key::AiComposerSkills,
         Key::AiComposerNoRecent,
         Key::AiComposerPlusHint,
         Key::AiComposerThisComputer,
@@ -7766,6 +7770,8 @@ pub const ROWS: &[Row] = &[
     },
     Row { key: Key::AiComposerAddContext, en: "Add context", es: "Añadir contexto", pt_br: "Adicionar contexto", de: "Kontext hinzufügen", fr: "Ajouter du contexte", ar: "إضافة سياق", zh_hans: "添加上下文", ja: "コンテキストを追加" },
     Row { key: Key::AiComposerKoruContext, en: "Koru context", es: "Contexto de Koru", pt_br: "Contexto do Koru", de: "Koru-Kontext", fr: "Contexte Koru", ar: "سياق Koru", zh_hans: "Koru 上下文", ja: "Koru コンテキスト" },
+    Row { key: Key::AiComposerCommands, en: "Commands", es: "Comandos", pt_br: "Comandos", de: "Befehle", fr: "Commandes", ar: "الأوامر", zh_hans: "命令", ja: "コマンド" },
+    Row { key: Key::AiComposerSkills, en: "Skills", es: "Habilidades", pt_br: "Habilidades", de: "Fähigkeiten", fr: "Compétences", ar: "المهارات", zh_hans: "技能", ja: "スキル" },
     Row { key: Key::AiComposerNoRecent, en: "No recent documents", es: "No hay documentos recientes", pt_br: "Nenhum documento recente", de: "Keine zuletzt geöffneten Dokumente", fr: "Aucun document récent", ar: "لا توجد مستندات حديثة", zh_hans: "没有最近的文档", ja: "最近の文書はありません" },
     Row { key: Key::AiComposerPlusHint, en: "Or type @ $ / in the message", es: "O escribe @ $ / en el mensaje", pt_br: "Ou digite @ $ / na mensagem", de: "Oder @ $ / in der Nachricht eingeben", fr: "Ou tapez @ $ / dans le message", ar: "أو اكتب @ $ / في الرسالة", zh_hans: "也可以在消息中输入 @ $ /", ja: "またはメッセージに @ $ / を入力" },
     Row { key: Key::AiComposerThisComputer, en: "This computer", es: "Este equipo", pt_br: "Este computador", de: "Dieser Computer", fr: "Cet ordinateur", ar: "هذا الكمبيوتر", zh_hans: "此电脑", ja: "このコンピューター" },

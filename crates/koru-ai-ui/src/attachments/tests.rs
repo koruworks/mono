@@ -45,6 +45,7 @@ fn agent_transcript(provider: &str) -> ChatTranscript {
         usage: Vec::new(),
         sources: Vec::new(),
         reasoning_control: None,
+        agent_commands: None,
         attachments: Vec::new(),
     }
 }

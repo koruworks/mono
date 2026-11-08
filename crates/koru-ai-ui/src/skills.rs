@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! **An agent's skills under `$`** (koru-ai D121).
+//! **An agent's skills under `$` and commands under `/`**.
 //!
 //! ```text
 //!   ┌─────────────────────────────────────────────┐
@@ -18,14 +18,14 @@
 //! what follows the `$` first, then the ones that contain it, each group in
 //! the agent's order. Up and Down move, Enter or Tab picks, Escape closes
 //! (and the list stays shut for that `$`); a press on a row picks it. A
-//! picked skill becomes a chip in the message ([`ChatComposer::insert_skill`]),
-//! which is sent as `$name` in the text and the skill's name beside it.
+//! picked entry becomes a skill or command pill at the trigger's position;
+//! the provider sees `$name` or `/name` there when it receives the prompt.
 //!
 //! ## Where the list comes from
 //!
-//! **Nothing here reads a skill from disk.** The list is the agent's own
+//! **Nothing here reads a command from disk.** The list is the agent's own
 //! (`Command::DiscoverCommands`, the session host's `skills/list` for the
-//! chat's folder), asked for off the window thread when a `$` is typed and
+//! chat's folder), asked for off the window thread when `$` or `/` is typed and
 //! the one held is older than [`STALE_AFTER`] — the one held is shown
 //! meanwhile, so a skill added or removed shows on the next `$`. A chat
 //! whose agent lists none, or that has no local agent, never opens the list:
@@ -83,7 +83,7 @@ pub(crate) struct SkillList {
     /// An ask on its way, for which source and since when.
     asked: Option<(SkillSource, Instant)>,
     /// The `$` the caret is in — its row and offset — while there is one.
-    following: Option<(koru_core::NodeId, usize)>,
+    following: Option<(koru_core::NodeId, usize, char)>,
     /// Escape shut the list for the `$` being followed.
     dismissed: bool,
     /// The open list's token; `None` while it is shut.
@@ -102,6 +102,10 @@ pub(crate) struct SkillList {
 /// then those that contain it, each group in the agent's order. Every skill
 /// for an empty query.
 pub(crate) fn matches(skills: &[AgentCommandView], query: &str) -> Vec<usize> {
+    matches_for(skills, query, '$')
+}
+
+fn matches_for(skills: &[AgentCommandView], query: &str, marker: char) -> Vec<usize> {
     let query = query.to_lowercase();
     let words = |skill: &AgentCommandView| {
         let mut words = vec![skill.name.to_lowercase()];
@@ -113,6 +117,9 @@ pub(crate) fn matches(skills: &[AgentCommandView], query: &str) -> Vec<usize> {
     let mut prefix = Vec::new();
     let mut within = Vec::new();
     for (index, skill) in skills.iter().enumerate() {
+        if marker == '$' && skill.kind == koru_ai_wire::AgentCommandKindView::Command {
+            continue;
+        }
         let words = words(skill);
         if words.iter().any(|word| word.starts_with(&query)) {
             prefix.push(index);
@@ -150,6 +157,13 @@ impl ChatSurface {
     /// The skills listed for the chat's agent and folder; none until it
     /// answers.
     fn listed_skills(&self) -> &[AgentCommandView] {
+        if let Some(commands) = self
+            .transcript
+            .as_ref()
+            .and_then(|transcript| transcript.agent_commands.as_ref())
+        {
+            return commands;
+        }
         match (&self.skills.listed, self.skill_source()) {
             (Some(listed), Some(source)) if listed.source == source => &listed.skills,
             _ => &[],
@@ -159,7 +173,7 @@ impl ChatSurface {
     /// The open list's matches, in its order; none while it is shut.
     fn skill_rows(&self) -> Vec<usize> {
         match &self.skills.open {
-            Some(token) => matches(self.listed_skills(), &token.query),
+            Some(token) => matches_for(self.listed_skills(), &token.query, token.marker),
             None => Vec::new(),
         }
     }
@@ -179,6 +193,13 @@ impl ChatSurface {
     /// list held is fresh or an ask is already on its way. Straight to the
     /// reader: a background ask is not something the person waits on.
     fn ask_skills(&mut self, source: &SkillSource) {
+        if self
+            .transcript
+            .as_ref()
+            .is_some_and(|transcript| transcript.agent_commands.is_some())
+        {
+            return;
+        }
         let now = Instant::now();
         let fresh = self.skills.listed.as_ref().is_some_and(|listed| {
             listed.source == *source && now.saturating_duration_since(listed.at) < STALE_AFTER
@@ -238,7 +259,10 @@ impl ChatSurface {
     /// Answers whether what is drawn changed.
     pub(crate) fn sync_skill_list(&mut self) -> bool {
         let was = self.skills.open.clone();
-        let token = self.composer.dollar_token();
+        let token = self
+            .composer
+            .dollar_token()
+            .or_else(|| self.composer.slash_token());
         let source = self.skill_source();
         let (Some(token), Some(source)) = (token, source) else {
             self.skills.following = None;
@@ -247,7 +271,7 @@ impl ChatSurface {
             self.skills.tooltip.clear();
             return was.is_some();
         };
-        let at = (token.row, token.start);
+        let at = (token.row, token.start, token.marker);
         if self.skills.following != Some(at) {
             self.skills.following = Some(at);
             self.skills.dismissed = false;
@@ -260,7 +284,7 @@ impl ChatSurface {
             self.skills.tooltip.clear();
             return was.is_some();
         }
-        let count = matches(self.listed_skills(), &token.query).len();
+        let count = matches_for(self.listed_skills(), &token.query, token.marker).len();
         if count == 0 {
             self.skills.open = None;
             self.skills.tooltip.clear();
@@ -304,9 +328,13 @@ impl ChatSurface {
         };
         self.skills.open = None;
         self.skills.following = None;
-        let picked = self
-            .composer
-            .insert_skill(&token, &skill.name, title(&skill));
+        let picked = if skill.kind == koru_ai_wire::AgentCommandKindView::Command {
+            self.composer
+                .insert_command(&token, &skill.name, title(&skill))
+        } else {
+            self.composer
+                .insert_skill(&token, &skill.name, title(&skill))
+        };
         self.sync_skill_list();
         picked
     }
@@ -319,7 +347,12 @@ impl ChatSurface {
             return None;
         }
         // A list left open over a token the caret has since left is shut.
-        if self.composer.dollar_token() != self.skills.open {
+        if self
+            .composer
+            .dollar_token()
+            .or_else(|| self.composer.slash_token())
+            != self.skills.open
+        {
             self.sync_skill_list();
             if self.skills.open.is_none() {
                 return None;
@@ -376,7 +409,13 @@ impl ChatSurface {
         // Only over the token it was opened for: a message sent, cleared or
         // put away takes the list with it.
         let open = self.skills.open.as_ref()?;
-        if self.composer.dollar_token().as_ref() != Some(open) {
+        if self
+            .composer
+            .dollar_token()
+            .or_else(|| self.composer.slash_token())
+            .as_ref()
+            != Some(open)
+        {
             return None;
         }
         let shown = self

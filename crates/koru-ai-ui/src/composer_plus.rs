@@ -36,6 +36,8 @@ pub(super) enum PlusItem {
     Recent(&'static str),
     KoruContext(&'static str),
     ThisComputer(&'static str),
+    Commands(&'static str),
+    Skills(&'static str),
     ComputerFile(&'static str),
     ComputerFolder(&'static str),
     SearchWeb(&'static str, bool),
@@ -51,6 +53,8 @@ impl MenuItem for PlusItem {
             Self::Recent(label)
             | Self::KoruContext(label)
             | Self::ThisComputer(label)
+            | Self::Commands(label)
+            | Self::Skills(label)
             | Self::ComputerFile(label)
             | Self::ComputerFolder(label)
             | Self::SearchWeb(label, _)
@@ -68,6 +72,7 @@ impl MenuItem for PlusItem {
                 Some(icons::DOCUMENT)
             }
             Self::ThisComputer(_) | Self::ComputerFolder(_) => Some(icons::FOLDER),
+            Self::Commands(_) | Self::Skills(_) => Some(icons::SPARKLE),
             Self::SearchWeb(_, on) => Some(if *on { icons::CHECK } else { icons::GLOBE }),
             Self::Back(_) | Self::Empty(_) | Self::Hint(_) => None,
         }
@@ -112,6 +117,11 @@ impl ChatSurface {
                 self.lang,
                 TextKey::AiComposerThisComputer,
             )));
+            items.push(PlusItem::Commands(t(
+                self.lang,
+                TextKey::AiComposerCommands,
+            )));
+            items.push(PlusItem::Skills(t(self.lang, TextKey::AiComposerSkills)));
         }
         if self.web_search_available() {
             items.push(PlusItem::SearchWeb(
@@ -169,6 +179,22 @@ impl ChatSurface {
             PlusItem::SearchWeb(_, _) => {
                 self.web_search_armed = !self.web_search_armed;
                 self.open_plus_menu();
+            }
+            PlusItem::Commands(_) | PlusItem::Skills(_) => {
+                let marker = if matches!(item, PlusItem::Commands(_)) {
+                    "/"
+                } else {
+                    "$"
+                };
+                self.plus_menu = None;
+                self.focus = Focus::Composer;
+                self.composer.set_focused(true);
+                self.composer.key(
+                    &Key::Character(marker.into()),
+                    Some(marker),
+                    ModifiersState::empty(),
+                );
+                self.sync_skill_list();
             }
             PlusItem::KoruContext(_) => {
                 self.plus_menu = None;

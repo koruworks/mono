@@ -44,4 +44,13 @@ mod tests {
             "literal $review-pr then $review-pr and [[koru://skill/review-pr]] then /issue#42"
         );
     }
+
+    #[test]
+    fn multiple_selected_commands_keep_order_around_literal_text() {
+        let stored = "First [[koru://command/one]] then literal /one and [[koru://command/two]]";
+        assert_eq!(
+            render_prompt_text(stored),
+            "First /one then literal /one and /two"
+        );
+    }
 }

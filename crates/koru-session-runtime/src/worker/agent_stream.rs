@@ -102,6 +102,8 @@ impl AgentStreamState {
                 .replay
                 .front()
                 .is_some_and(|event| event.sequence.get() > 2),
+            commands: None,
+            session_cursor: None,
         }
     }
 
@@ -187,6 +189,15 @@ fn event_bytes(event: &AgentEvent) -> usize {
     const FIXED: usize = 128;
     FIXED
         + match event {
+            AgentEvent::CommandsUpdated { commands } => {
+                commands.iter().fold(0usize, |bytes, command| {
+                    bytes
+                        .saturating_add(command.name.len())
+                        .saturating_add(command.description.len())
+                        .saturating_add(command.display_name.as_ref().map_or(0, String::len))
+                        .saturating_add(command.input_hint.as_ref().map_or(0, String::len))
+                })
+            }
             AgentEvent::MessageDelta { text, .. } => text.len(),
             AgentEvent::ToolStarted { label, .. } => label.len(),
             AgentEvent::ApprovalRequired {

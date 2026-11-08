@@ -260,6 +260,7 @@ mod tests {
             feedback: Vec::new(),
             usage: Vec::new(),
             reasoning_control: None,
+            agent_commands: None,
             attachments: Vec::new(),
         }
     }

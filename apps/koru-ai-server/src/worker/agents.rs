@@ -1739,25 +1739,33 @@ pub(super) fn agent_commands(
             )
         }
     })?;
-    use koru_ai_wire::AgentCommandKindView as Kind;
-    use koru_session_protocol::AgentCommandKind;
     Ok(koru_ai_wire::AgentCommandsResponse {
         provider,
-        commands: commands
-            .into_iter()
-            .map(|command| koru_ai_wire::AgentCommandView {
-                kind: match command.kind {
-                    AgentCommandKind::RepoSkill => Kind::RepoSkill,
-                    AgentCommandKind::UserSkill => Kind::UserSkill,
-                    AgentCommandKind::SystemSkill => Kind::SystemSkill,
-                    AgentCommandKind::AdminSkill => Kind::AdminSkill,
-                },
-                name: command.name,
-                description: command.description,
-                display_name: command.display_name,
-            })
-            .collect(),
+        commands: command_views(commands),
     })
+}
+
+pub(super) fn command_views(
+    commands: Vec<koru_session_protocol::AgentCommand>,
+) -> Vec<koru_ai_wire::AgentCommandView> {
+    use koru_ai_wire::AgentCommandKindView as Kind;
+    use koru_session_protocol::AgentCommandKind;
+    commands
+        .into_iter()
+        .map(|command| koru_ai_wire::AgentCommandView {
+            kind: match command.kind {
+                AgentCommandKind::Command => Kind::Command,
+                AgentCommandKind::RepoSkill => Kind::RepoSkill,
+                AgentCommandKind::UserSkill => Kind::UserSkill,
+                AgentCommandKind::SystemSkill => Kind::SystemSkill,
+                AgentCommandKind::AdminSkill => Kind::AdminSkill,
+            },
+            name: command.name,
+            description: command.description,
+            display_name: command.display_name,
+            input_hint: command.input_hint,
+        })
+        .collect()
 }
 
 /// The models an agent lists, in the picker's shape. An agent that lists

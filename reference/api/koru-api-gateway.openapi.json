@@ -365,9 +365,84 @@
           }
         ]
       },
+      "AgentCommand": {
+        "description": "**One entry an agent offers.** `name` is what the person's message says\nand what goes back; `description` is one line about it, empty when the\nagent gave none; `display_name` is the agent's own name to show, when it\ngives one.",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "display_name": {
+            "nullable": true,
+            "type": "string"
+          },
+          "input_hint": {
+            "description": "What the entry takes after its name, in the agent's words, when it\nsays. No skill has one; it is the ACP command's `input.hint`.",
+            "nullable": true,
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/AgentCommandKind"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "kind"
+        ],
+        "type": "object"
+      },
+      "AgentCommandKind": {
+        "description": "**Where an entry comes from**: the folder's own, the person's, what the\nagent ships, what an administrator set. A picker lists the first two\ngroups first and the last two together ([`AgentCommandKind::group`]).",
+        "oneOf": [
+          {
+            "description": "An ACP `available_commands_update` entry invoked by `/name`.",
+            "enum": [
+              "command"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "A skill of the folder the agent works in (Codex's `repo` scope).",
+            "enum": [
+              "repo_skill"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "A skill of the person's own (`user`).",
+            "enum": [
+              "user_skill"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "A skill the agent ships with (`system`).",
+            "enum": [
+              "system_skill"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "A skill an administrator installed (`admin`).",
+            "enum": [
+              "admin_skill"
+            ],
+            "type": "string"
+          }
+        ]
+      },
       "AgentCommandKindView": {
         "description": "Where an entry comes from, in the order a picker lists them.",
         "oneOf": [
+          {
+            "description": "A provider command invoked by `/name`.",
+            "enum": [
+              "command"
+            ],
+            "type": "string"
+          },
           {
             "description": "A skill of the folder the agent works in.",
             "enum": [
@@ -405,6 +480,10 @@
             "type": "string"
           },
           "display_name": {
+            "nullable": true,
+            "type": "string"
+          },
+          "input_hint": {
             "nullable": true,
             "type": "string"
           },
@@ -3234,6 +3313,14 @@
       },
       "ChatTranscript": {
         "properties": {
+          "agent_commands": {
+            "description": "The live session's current command listing; an empty list is authoritative.\n`None` lets the composer use its short-lived bootstrap catalog.",
+            "items": {
+              "$ref": "#/components/schemas/AgentCommandView"
+            },
+            "nullable": true,
+            "type": "array"
+          },
           "attachments": {
             "default": [],
             "description": "Every attachment of the chat: those sent with a message, in message\nand ordinal order, then the staged ones not yet sent.",
@@ -9088,6 +9175,36 @@
             "type": "object"
           },
           {
+            "description": "A local agent changed the current session's command listing.",
+            "properties": {
+              "attempt_id": {
+                "$ref": "#/components/schemas/InferenceAttemptId"
+              },
+              "chat": {
+                "$ref": "#/components/schemas/ChatId"
+              },
+              "commands": {
+                "items": {
+                  "$ref": "#/components/schemas/AgentCommandView"
+                },
+                "type": "array"
+              },
+              "type": {
+                "enum": [
+                  "agent_commands"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "attempt_id",
+              "chat",
+              "commands"
+            ],
+            "type": "object"
+          },
+          {
             "description": "A one-line fact about the attempt the surface shows and nothing\nstores: a local agent could not be reattached and a replacement was\nstarted with the conversation so far.",
             "properties": {
               "at": {
@@ -12623,6 +12740,28 @@
       "SessionEvent": {
         "description": "Lifecycle and low-volume facts for one session. Render content has its own\nbounded [`crate::RenderUpdate`] stream.",
         "oneOf": [
+          {
+            "description": "Protocol v23. The live session's current command listing, including an\nauthoritative empty listing.",
+            "properties": {
+              "commands": {
+                "items": {
+                  "$ref": "#/components/schemas/AgentCommand"
+                },
+                "type": "array"
+              },
+              "kind": {
+                "enum": [
+                  "commands_updated"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "commands"
+            ],
+            "type": "object"
+          },
           {
             "properties": {
               "byte_count": {

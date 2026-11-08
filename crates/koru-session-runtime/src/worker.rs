@@ -318,6 +318,7 @@ struct State {
     event_sequence: StreamSequence,
     output_sequence: StreamSequence,
     agent_stream: AgentStreamState,
+    agent_commands: Option<Vec<koru_session_protocol::AgentCommand>>,
     managed_attention: Option<ManagedAttention>,
     controller: Option<Controller>,
     had_controller: bool,
@@ -483,6 +484,7 @@ impl SessionOwner {
                 event_sequence: counter(1),
                 output_sequence: counter(1),
                 agent_stream: AgentStreamState::new(counter(1)),
+                agent_commands: None,
                 managed_attention: None,
                 controller: None,
                 had_controller: false,
@@ -634,6 +636,7 @@ impl SessionOwner {
                 event_sequence: counter(1),
                 output_sequence: counter(1),
                 agent_stream: AgentStreamState::new(counter(1)),
+                agent_commands: None,
                 managed_attention: None,
                 controller: None,
                 had_controller: false,
@@ -1633,7 +1636,10 @@ impl SessionHandle {
         if !matches!(state.summary.mode, SessionMode::Managed { .. }) {
             return Err(ErrorCode::CapabilityNotNegotiated);
         }
-        Ok(state.agent_stream.observe())
+        let mut observation = state.agent_stream.observe();
+        observation.commands = state.agent_commands.clone();
+        observation.session_cursor = Some(state.event_sequence);
+        Ok(observation)
     }
 
     pub fn agent_event_sequence(&self) -> StreamSequence {
@@ -1715,6 +1721,17 @@ impl Shared {
             _ => None,
         };
         match &event {
+            AgentEvent::CommandsUpdated { commands } => {
+                state.agent_commands = Some(commands.clone());
+                publish_event_locked(
+                    &mut state,
+                    self.id,
+                    SessionEvent::CommandsUpdated {
+                        commands: commands.clone(),
+                    },
+                    &self.stats,
+                );
+            }
             AgentEvent::TurnStarted { turn_id } => {
                 state.summary.active_turn_id = Some(*turn_id);
                 state.summary.managed = Some(koru_session_protocol::ManagedState::Running);

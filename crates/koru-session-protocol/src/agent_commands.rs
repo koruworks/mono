@@ -41,6 +41,8 @@ pub const MAX_INPUT_SKILLS: usize = 16;
 )]
 #[serde(rename_all = "snake_case")]
 pub enum AgentCommandKind {
+    /// An ACP `available_commands_update` entry invoked by `/name`.
+    Command,
     /// A skill of the folder the agent works in (Codex's `repo` scope).
     RepoSkill,
     /// A skill of the person's own (`user`).
@@ -66,6 +68,7 @@ impl AgentCommandKind {
     /// each (the user's order, 2026-11-03).
     pub fn group(self) -> u8 {
         match self {
+            Self::Command => 0,
             Self::RepoSkill => 0,
             Self::UserSkill => 1,
             Self::SystemSkill | Self::AdminSkill => 2,

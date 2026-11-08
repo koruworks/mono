@@ -3819,3 +3819,60 @@ fn a_missing_route_with_the_agent_present_is_a_missing_adapter() {
         Some("agent_checking")
     );
 }
+#[test]
+fn live_command_listings_keep_chat_and_session_generations_separate() {
+    use koru_ai_provider_agent::CommandListingUpdate;
+    use koru_session_protocol::{AgentCommand, AgentCommandKind, SessionId};
+
+    let first_chat = ChatId::new();
+    let second_chat = ChatId::new();
+    let first_session = SessionId::mint();
+    let replacement = SessionId::mint();
+    let command = |name: &str| AgentCommand {
+        name: name.to_owned(),
+        description: String::new(),
+        display_name: None,
+        input_hint: None,
+        kind: AgentCommandKind::Command,
+    };
+    let update = |chat, session, generation, commands| CommandListingUpdate {
+        chat,
+        session,
+        generation,
+        commands,
+    };
+    let mut listings = HashMap::new();
+    accept_command_listing(
+        &mut listings,
+        update(first_chat, first_session, 1, Some(vec![command("first")])),
+    )
+    .unwrap();
+    accept_command_listing(
+        &mut listings,
+        update(
+            second_chat,
+            SessionId::mint(),
+            2,
+            Some(vec![command("other")]),
+        ),
+    )
+    .unwrap();
+    assert_eq!(listings[&first_chat].2.as_ref().unwrap()[0].name, "first");
+    accept_command_listing(
+        &mut listings,
+        update(first_chat, first_session, 1, Some(Vec::new())),
+    )
+    .unwrap();
+    assert!(listings[&first_chat].2.as_ref().unwrap().is_empty());
+    accept_command_listing(&mut listings, update(first_chat, replacement, 3, None)).unwrap();
+    assert!(listings[&first_chat].2.is_none());
+    assert!(
+        accept_command_listing(
+            &mut listings,
+            update(first_chat, first_session, 1, Some(vec![command("stale")])),
+        )
+        .is_none()
+    );
+    assert!(listings[&first_chat].2.is_none());
+    assert_eq!(listings[&second_chat].2.as_ref().unwrap()[0].name, "other");
+}

@@ -35,14 +35,15 @@
 //! (`koru_export_markdown::message_text`); a recalled or queued message
 //! brings its quotes back as chips.
 //!
-//! ## Skills
+//! ## Agent skills and commands
 //!
 //! A skill of the chat's agent picked under `$` (koru-ai D121, [`crate::skills`])
 //! is a **skill chip** where the `$` was typed — the editor's pill under
 //! [`koru_core::attributes::ROLE_SKILL`], holding the skill's name. At send
-//! it is `$name` in the text and its name in [`ComposedMessage::skills`]. A
-//! recalled message brings `$name` back as text, not as a chip: nothing
-//! stores which words were chips.
+//! its selected name is stored as a durable skill link and in
+//! [`ComposedMessage::skills`]. A command selected under `/` is a command
+//! pill and link at the same position. Recall restores both kinds as pills;
+//! typed `$name` and `/name` words keep their literal meaning.
 //!
 //! ## Where it is drawn
 //!
@@ -112,7 +113,7 @@ pub struct ComposedMessage {
     /// UC15 a turn sends the whole document.
     pub documents: Vec<(koru_ai_core::DocumentId, String)>,
     /// Every skill chip's name (koru-ai D121), in reading order, each once;
-    /// the text says `$name` where each is.
+    /// Markdown keeps its selected-link identity until prompt rendering.
     pub skills: Vec<String>,
 }
 
@@ -121,6 +122,7 @@ pub struct ComposedMessage {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DollarToken {
     pub(crate) row: NodeId,
+    pub(crate) marker: char,
     /// The `$`'s byte offset in the row's text.
     pub(crate) start: usize,
     /// The caret's: where the token ends.
@@ -139,9 +141,17 @@ fn name_char(character: char) -> bool {
 /// byte offset and what follows it; `None` when the caret is not in one —
 /// `a$b`, `$$`, or a price like `5$` is not a token.
 pub(crate) fn dollar_before(text: &str, caret: usize) -> Option<(usize, &str)> {
+    trigger_before(text, caret, '$')
+}
+
+pub(crate) fn slash_before(text: &str, caret: usize) -> Option<(usize, &str)> {
+    trigger_before(text, caret, '/')
+}
+
+fn trigger_before(text: &str, caret: usize, marker: char) -> Option<(usize, &str)> {
     let head = text.get(..caret)?;
     let start = head.rfind(|character: char| !name_char(character))?;
-    if !head[start..].starts_with('$') {
+    if !head[start..].starts_with(marker) {
         return None;
     }
     if head[..start]
@@ -272,6 +282,14 @@ impl ChatComposer {
     /// **The `$` the caret is in, if any** (koru-ai D121): not while a
     /// dictation is provisional, and not across a selection.
     pub(crate) fn dollar_token(&self) -> Option<DollarToken> {
+        self.name_token('$')
+    }
+
+    pub(crate) fn slash_token(&self) -> Option<DollarToken> {
+        self.name_token('/')
+    }
+
+    fn name_token(&self, marker: char) -> Option<DollarToken> {
         if self.composing() {
             return None;
         }
@@ -280,9 +298,10 @@ impl ChatComposer {
             return None;
         }
         let caret = paragraph.caret();
-        let (start, query) = dollar_before(&paragraph.text, caret)?;
+        let (start, query) = trigger_before(&paragraph.text, caret, marker)?;
         Some(DollarToken {
             row: paragraph.id,
+            marker,
             start,
             end: caret,
             query: query.to_owned(),
@@ -295,6 +314,27 @@ impl ChatComposer {
     /// Backspace takes the chip back whole. `false` when the token is no
     /// longer there.
     pub(crate) fn insert_skill(&mut self, token: &DollarToken, name: &str, label: &str) -> bool {
+        if token.marker != '$' && token.marker != '/' {
+            return false;
+        }
+        self.insert_named(token, skill_attr(name, label))
+    }
+
+    pub(crate) fn insert_command(&mut self, token: &DollarToken, name: &str, label: &str) -> bool {
+        if token.marker != '/' {
+            return false;
+        }
+        self.insert_named(
+            token,
+            Attr::labelled(
+                koru_core::attributes::ROLE_COMMAND,
+                AttrValue::Text(name.to_owned()),
+                label.to_owned(),
+            ),
+        )
+    }
+
+    fn insert_named(&mut self, token: &DollarToken, attr: Attr) -> bool {
         let current = self
             .ws
             .read(token.row)
@@ -302,7 +342,7 @@ impl ChatComposer {
             .and_then(|node| node.content.as_text().map(str::to_owned));
         if current
             .as_deref()
-            .and_then(|text| dollar_before(text, token.end))
+            .and_then(|text| trigger_before(text, token.end, token.marker))
             .is_none_or(|(start, _)| start != token.start)
         {
             return false;
@@ -313,10 +353,7 @@ impl ChatComposer {
             .ws
             .delete_text(token.row, token.start..token.end)
             .is_err()
-            || self
-                .ws
-                .insert_pill(token.row, token.start, &skill_attr(name, label))
-                .is_err()
+            || self.ws.insert_pill(token.row, token.start, &attr).is_err()
         {
             self.ws.checkpoint();
             return false;

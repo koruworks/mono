@@ -15,10 +15,10 @@
 //! it draws, and the dispatcher that asks never waits on the wire — it
 //! hands a reply channel over and carries on.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::str::FromStr;
-use std::sync::Arc;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use koru_ai_core::{AiError, AiErrorClass, AiProvider, AiProviderId, ChatId};
@@ -96,6 +96,17 @@ pub struct AgentSessions {
     /// The manual refreshes under way, one per agent: a second joins the
     /// first rather than asking the host to re-probe again.
     refreshes: Arc<crate::joined::Joined<ProviderKind, Result<AgentCatalog, ErrorCode>>>,
+    command_updates: Arc<Mutex<VecDeque<CommandListingUpdate>>>,
+}
+
+/// One session generation's current command listing. `None` clears a list
+/// when that session ended or the host connection was lost.
+#[derive(Clone, Debug)]
+pub struct CommandListingUpdate {
+    pub chat: ChatId,
+    pub session: SessionId,
+    pub generation: u64,
+    pub commands: Option<Vec<koru_session_protocol::AgentCommand>>,
 }
 
 /// What an agent offers a picker: its models and, beside them, its approval
@@ -250,16 +261,27 @@ impl AgentSessions {
     pub fn spawn(endpoint: koru_ipc::Endpoint) -> Result<Self, String> {
         let (commands, receiver) = sync_channel(COMMAND_CAPACITY);
         let thread_endpoint = endpoint.clone();
+        let command_updates = Arc::new(Mutex::new(VecDeque::new()));
+        let thread_updates = Arc::clone(&command_updates);
         std::thread::Builder::new()
             .name("koru-ai-agent-control".into())
-            .spawn(move || Control::new(thread_endpoint).run(receiver))
+            .spawn(move || Control::new(thread_endpoint, thread_updates).run(receiver))
             .map_err(|error| error.to_string())?;
         Ok(Self {
             commands,
             endpoint,
             live: Arc::new(LiveTurns::default()),
             refreshes: Arc::new(crate::joined::Joined::new()),
+            command_updates,
         })
+    }
+
+    pub fn take_command_updates(&self) -> Vec<CommandListingUpdate> {
+        self.command_updates
+            .lock()
+            .unwrap_or_else(|held| held.into_inner())
+            .drain(..)
+            .collect()
     }
 
     /// One chat provider per managed agent kind the host registers.
@@ -492,22 +514,155 @@ struct Control {
     /// When each kind was last asked to re-probe, so a row that keeps
     /// failing is re-probed once per window, not on every picker open.
     refreshed: HashMap<ProviderKind, Instant>,
+    command_watchers: HashMap<ChatId, CommandWatcher>,
+    command_updates: Arc<Mutex<VecDeque<CommandListingUpdate>>>,
+    next_command_generation: u64,
+}
+
+struct CommandWatcher {
+    session: SessionId,
+    generation: u64,
+    events: Subscription,
 }
 
 impl Control {
-    fn new(endpoint: koru_ipc::Endpoint) -> Self {
+    fn enqueue_commands(&self, update: CommandListingUpdate) {
+        let mut pending = self
+            .command_updates
+            .lock()
+            .unwrap_or_else(|held| held.into_inner());
+        pending.retain(|older| older.chat != update.chat);
+        pending.push_back(update);
+    }
+
+    fn watch_commands(&mut self, origin: SessionOrigin, session: SessionId) {
+        let Some(chat) = origin.chat().and_then(|id| ChatId::parse(&id.to_string())) else {
+            return;
+        };
+        if self
+            .command_watchers
+            .get(&chat)
+            .is_some_and(|watcher| watcher.session == session)
+        {
+            return;
+        }
+        let Some(client) = self.client.as_ref() else {
+            return;
+        };
+        let Ok(observation) = client.observe_agent_events(session) else {
+            return;
+        };
+        let Some(session_cursor) = observation.session_cursor else {
+            return;
+        };
+        let Ok(events) = client.subscribe_events_from(session, Some(session_cursor)) else {
+            return;
+        };
+        self.next_command_generation = self.next_command_generation.saturating_add(1);
+        let generation = self.next_command_generation;
+        self.command_watchers.insert(
+            chat,
+            CommandWatcher {
+                session,
+                generation,
+                events,
+            },
+        );
+        self.enqueue_commands(CommandListingUpdate {
+            chat,
+            session,
+            generation,
+            commands: observation.commands,
+        });
+    }
+
+    fn forget_commands(&mut self, origin: SessionOrigin) {
+        let Some(chat) = origin.chat().and_then(|id| ChatId::parse(&id.to_string())) else {
+            return;
+        };
+        if let Some(watcher) = self.command_watchers.remove(&chat) {
+            self.enqueue_commands(CommandListingUpdate {
+                chat,
+                session: watcher.session,
+                generation: watcher.generation,
+                commands: None,
+            });
+        }
+    }
+
+    fn poll_commands(&mut self) {
+        let mut retry = Vec::new();
+        let mut ended = Vec::new();
+        let mut updates = Vec::new();
+        for (&chat, watcher) in &self.command_watchers {
+            for _ in 0..64 {
+                match watcher.events.recv_timeout(Duration::ZERO) {
+                    Ok(SubscriptionUpdate::Event { event }) => {
+                        if event.session_id == watcher.session
+                            && let koru_session_protocol::SessionEvent::CommandsUpdated { commands } =
+                                event.event
+                        {
+                            updates.push(CommandListingUpdate {
+                                chat,
+                                session: watcher.session,
+                                generation: watcher.generation,
+                                commands: Some(commands),
+                            });
+                        }
+                    }
+                    Ok(SubscriptionUpdate::EventGap { .. }) => {
+                        retry.push((chat, watcher.session));
+                        break;
+                    }
+                    Ok(SubscriptionUpdate::Closed { .. }) | Err(ClientError::Disconnected) => {
+                        ended.push(chat);
+                        break;
+                    }
+                    Err(ClientError::TimedOut) => break,
+                    Ok(_) | Err(_) => break,
+                }
+            }
+        }
+        for update in updates {
+            self.enqueue_commands(update);
+        }
+        for chat in ended {
+            if let Some(watcher) = self.command_watchers.remove(&chat) {
+                self.enqueue_commands(CommandListingUpdate {
+                    chat,
+                    session: watcher.session,
+                    generation: watcher.generation,
+                    commands: None,
+                });
+            }
+        }
+        for (chat, session) in retry {
+            self.command_watchers.remove(&chat);
+            if let Ok(origin) = chat_origin(chat) {
+                self.watch_commands(origin, session);
+            }
+        }
+    }
+
+    fn new(
+        endpoint: koru_ipc::Endpoint,
+        command_updates: Arc<Mutex<VecDeque<CommandListingUpdate>>>,
+    ) -> Self {
         Self {
             endpoint,
             client: None,
             readiness: Vec::new(),
             readiness_subscription: None,
             refreshed: HashMap::new(),
+            command_watchers: HashMap::new(),
+            command_updates,
+            next_command_generation: 0,
         }
     }
 
     fn run(mut self, receiver: Receiver<Command>) {
         loop {
-            match receiver.recv_timeout(Duration::from_secs(1)) {
+            match receiver.recv_timeout(POLL) {
                 Ok(Command::Ensure {
                     origin,
                     kind,
@@ -515,10 +670,18 @@ impl Control {
                     cwd,
                     reply,
                 }) => {
-                    let _ = reply.send(self.ensure(origin, &kind, selection, cwd));
+                    let result = self.ensure(origin, &kind, selection, cwd);
+                    if let Ok(ensured) = &result {
+                        self.watch_commands(origin, ensured.session);
+                    }
+                    let _ = reply.send(result);
                 }
                 Ok(Command::End { origin, on_done }) => {
-                    on_done(self.end(origin));
+                    let outcome = self.end(origin);
+                    if outcome == EndOutcome::Ended {
+                        self.forget_commands(origin);
+                    }
+                    on_done(outcome);
                 }
                 Ok(Command::Readiness { kind, reply }) => {
                     let _ = reply.send(self.readiness(&kind));
@@ -526,6 +689,7 @@ impl Control {
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => return,
             }
+            self.poll_commands();
         }
     }
 
@@ -539,6 +703,9 @@ impl Control {
             .is_some_and(|client| client.state() == koru_session_client::ConnectionState::Connected)
         {
             return Ok(self.client.as_ref().expect("checked"));
+        }
+        if self.client.is_some() {
+            self.drop_client();
         }
         self.readiness.clear();
         self.readiness_subscription = None;
@@ -564,6 +731,17 @@ impl Control {
         self.client = None;
         self.readiness.clear();
         self.readiness_subscription = None;
+        for (chat, watcher) in self.command_watchers.drain() {
+            self.command_updates
+                .lock()
+                .unwrap_or_else(|held| held.into_inner())
+                .push_back(CommandListingUpdate {
+                    chat,
+                    session: watcher.session,
+                    generation: watcher.generation,
+                    commands: None,
+                });
+        }
     }
 
     fn ensure(

@@ -5,6 +5,11 @@
         "description": "**Where an entry comes from**: the folder's own, the person's, what the\nagent ships, what an administrator set. A picker lists the first two\ngroups first and the last two together ([`AgentCommandKind::group`]).",
         "oneOf": [
           {
+            "const": "command",
+            "description": "An ACP `available_commands_update` entry invoked by `/name`.",
+            "type": "string"
+          },
+          {
             "const": "repo_skill",
             "description": "A skill of the folder the agent works in (Codex's `repo` scope).",
             "type": "string"
@@ -65,6 +70,11 @@
     "description": "**Where an entry comes from**: the folder's own, the person's, what the\nagent ships, what an administrator set. A picker lists the first two\ngroups first and the last two together ([`AgentCommandKind::group`]).",
     "oneOf": [
       {
+        "const": "command",
+        "description": "An ACP `available_commands_update` entry invoked by `/name`.",
+        "type": "string"
+      },
+      {
         "const": "repo_skill",
         "description": "A skill of the folder the agent works in (Codex's `repo` scope).",
         "type": "string"
@@ -89,6 +99,68 @@
   },
   "AgentEvent": {
     "$defs": {
+      "AgentCommand": {
+        "description": "**One entry an agent offers.** `name` is what the person's message says\nand what goes back; `description` is one line about it, empty when the\nagent gave none; `display_name` is the agent's own name to show, when it\ngives one.",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "input_hint": {
+            "description": "What the entry takes after its name, in the agent's words, when it\nsays. No skill has one; it is the ACP command's `input.hint`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "$ref": "#/$defs/AgentCommandKind"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "kind"
+        ],
+        "type": "object"
+      },
+      "AgentCommandKind": {
+        "description": "**Where an entry comes from**: the folder's own, the person's, what the\nagent ships, what an administrator set. A picker lists the first two\ngroups first and the last two together ([`AgentCommandKind::group`]).",
+        "oneOf": [
+          {
+            "const": "command",
+            "description": "An ACP `available_commands_update` entry invoked by `/name`.",
+            "type": "string"
+          },
+          {
+            "const": "repo_skill",
+            "description": "A skill of the folder the agent works in (Codex's `repo` scope).",
+            "type": "string"
+          },
+          {
+            "const": "user_skill",
+            "description": "A skill of the person's own (`user`).",
+            "type": "string"
+          },
+          {
+            "const": "system_skill",
+            "description": "A skill the agent ships with (`system`).",
+            "type": "string"
+          },
+          {
+            "const": "admin_skill",
+            "description": "A skill an administrator installed (`admin`).",
+            "type": "string"
+          }
+        ]
+      },
       "AgentModeId": {
         "description": "One agent's own id for one of its modes: printable ASCII with no space,\nat most [`MAX_AGENT_MODE_ID_BYTES`].",
         "type": "string"
@@ -544,6 +616,26 @@
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "description": "Provider-neutral managed-session facts. Provider IDs and native wire values\nnever cross this boundary.",
     "oneOf": [
+      {
+        "description": "Protocol v23. The provider's live listing, independent of any turn.",
+        "properties": {
+          "commands": {
+            "items": {
+              "$ref": "#/$defs/AgentCommand"
+            },
+            "type": "array"
+          },
+          "kind": {
+            "const": "commands_updated",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "commands"
+        ],
+        "type": "object"
+      },
       {
         "properties": {
           "kind": {
@@ -1039,9 +1131,91 @@
   },
   "AgentEventObservation": {
     "$defs": {
+      "AgentCommand": {
+        "description": "**One entry an agent offers.** `name` is what the person's message says\nand what goes back; `description` is one line about it, empty when the\nagent gave none; `display_name` is the agent's own name to show, when it\ngives one.",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "input_hint": {
+            "description": "What the entry takes after its name, in the agent's words, when it\nsays. No skill has one; it is the ACP command's `input.hint`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "$ref": "#/$defs/AgentCommandKind"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "kind"
+        ],
+        "type": "object"
+      },
+      "AgentCommandKind": {
+        "description": "**Where an entry comes from**: the folder's own, the person's, what the\nagent ships, what an administrator set. A picker lists the first two\ngroups first and the last two together ([`AgentCommandKind::group`]).",
+        "oneOf": [
+          {
+            "const": "command",
+            "description": "An ACP `available_commands_update` entry invoked by `/name`.",
+            "type": "string"
+          },
+          {
+            "const": "repo_skill",
+            "description": "A skill of the folder the agent works in (Codex's `repo` scope).",
+            "type": "string"
+          },
+          {
+            "const": "user_skill",
+            "description": "A skill of the person's own (`user`).",
+            "type": "string"
+          },
+          {
+            "const": "system_skill",
+            "description": "A skill the agent ships with (`system`).",
+            "type": "string"
+          },
+          {
+            "const": "admin_skill",
+            "description": "A skill an administrator installed (`admin`).",
+            "type": "string"
+          }
+        ]
+      },
       "AgentEvent": {
         "description": "Provider-neutral managed-session facts. Provider IDs and native wire values\nnever cross this boundary.",
         "oneOf": [
+          {
+            "description": "Protocol v23. The provider's live listing, independent of any turn.",
+            "properties": {
+              "commands": {
+                "items": {
+                  "$ref": "#/$defs/AgentCommand"
+                },
+                "type": "array"
+              },
+              "kind": {
+                "const": "commands_updated",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "commands"
+            ],
+            "type": "object"
+          },
           {
             "properties": {
               "kind": {
@@ -2013,6 +2187,16 @@
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "description": "Atomic bounded recovery point for a managed transcript. `events` is the\nretained normalized tail ending at `cursor`; `earlier_truncated` makes\neviction explicit instead of pretending the tail is complete.",
     "properties": {
+      "commands": {
+        "description": "The current session listing survives eviction from the bounded event tail.",
+        "items": {
+          "$ref": "#/$defs/AgentCommand"
+        },
+        "type": [
+          "array",
+          "null"
+        ]
+      },
       "cursor": {
         "$ref": "#/$defs/StreamSequence"
       },
@@ -2024,6 +2208,17 @@
           "$ref": "#/$defs/SequencedAgentEvent"
         },
         "type": "array"
+      },
+      "session_cursor": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/StreamSequence"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "The matching lifecycle-event cursor for an atomic command-list watch."
       }
     },
     "required": [
@@ -9674,9 +9869,91 @@
   },
   "SequencedAgentEvent": {
     "$defs": {
+      "AgentCommand": {
+        "description": "**One entry an agent offers.** `name` is what the person's message says\nand what goes back; `description` is one line about it, empty when the\nagent gave none; `display_name` is the agent's own name to show, when it\ngives one.",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "input_hint": {
+            "description": "What the entry takes after its name, in the agent's words, when it\nsays. No skill has one; it is the ACP command's `input.hint`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "$ref": "#/$defs/AgentCommandKind"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "kind"
+        ],
+        "type": "object"
+      },
+      "AgentCommandKind": {
+        "description": "**Where an entry comes from**: the folder's own, the person's, what the\nagent ships, what an administrator set. A picker lists the first two\ngroups first and the last two together ([`AgentCommandKind::group`]).",
+        "oneOf": [
+          {
+            "const": "command",
+            "description": "An ACP `available_commands_update` entry invoked by `/name`.",
+            "type": "string"
+          },
+          {
+            "const": "repo_skill",
+            "description": "A skill of the folder the agent works in (Codex's `repo` scope).",
+            "type": "string"
+          },
+          {
+            "const": "user_skill",
+            "description": "A skill of the person's own (`user`).",
+            "type": "string"
+          },
+          {
+            "const": "system_skill",
+            "description": "A skill the agent ships with (`system`).",
+            "type": "string"
+          },
+          {
+            "const": "admin_skill",
+            "description": "A skill an administrator installed (`admin`).",
+            "type": "string"
+          }
+        ]
+      },
       "AgentEvent": {
         "description": "Provider-neutral managed-session facts. Provider IDs and native wire values\nnever cross this boundary.",
         "oneOf": [
+          {
+            "description": "Protocol v23. The provider's live listing, independent of any turn.",
+            "properties": {
+              "commands": {
+                "items": {
+                  "$ref": "#/$defs/AgentCommand"
+                },
+                "type": "array"
+              },
+              "kind": {
+                "const": "commands_updated",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "commands"
+            ],
+            "type": "object"
+          },
           {
             "properties": {
               "kind": {
@@ -10648,6 +10925,68 @@
   },
   "SequencedSessionEvent": {
     "$defs": {
+      "AgentCommand": {
+        "description": "**One entry an agent offers.** `name` is what the person's message says\nand what goes back; `description` is one line about it, empty when the\nagent gave none; `display_name` is the agent's own name to show, when it\ngives one.",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "input_hint": {
+            "description": "What the entry takes after its name, in the agent's words, when it\nsays. No skill has one; it is the ACP command's `input.hint`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "$ref": "#/$defs/AgentCommandKind"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "kind"
+        ],
+        "type": "object"
+      },
+      "AgentCommandKind": {
+        "description": "**Where an entry comes from**: the folder's own, the person's, what the\nagent ships, what an administrator set. A picker lists the first two\ngroups first and the last two together ([`AgentCommandKind::group`]).",
+        "oneOf": [
+          {
+            "const": "command",
+            "description": "An ACP `available_commands_update` entry invoked by `/name`.",
+            "type": "string"
+          },
+          {
+            "const": "repo_skill",
+            "description": "A skill of the folder the agent works in (Codex's `repo` scope).",
+            "type": "string"
+          },
+          {
+            "const": "user_skill",
+            "description": "A skill of the person's own (`user`).",
+            "type": "string"
+          },
+          {
+            "const": "system_skill",
+            "description": "A skill the agent ships with (`system`).",
+            "type": "string"
+          },
+          {
+            "const": "admin_skill",
+            "description": "A skill an administrator installed (`admin`).",
+            "type": "string"
+          }
+        ]
+      },
       "AgentTurnId": {
         "format": "uuid",
         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
@@ -10738,6 +11077,26 @@
       "SessionEvent": {
         "description": "Lifecycle and low-volume facts for one session. Render content has its own\nbounded [`crate::RenderUpdate`] stream.",
         "oneOf": [
+          {
+            "description": "Protocol v23. The live session's current command listing, including an\nauthoritative empty listing.",
+            "properties": {
+              "commands": {
+                "items": {
+                  "$ref": "#/$defs/AgentCommand"
+                },
+                "type": "array"
+              },
+              "kind": {
+                "const": "commands_updated",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "commands"
+            ],
+            "type": "object"
+          },
           {
             "properties": {
               "byte_count": {
@@ -11524,6 +11883,68 @@
   },
   "SessionEvent": {
     "$defs": {
+      "AgentCommand": {
+        "description": "**One entry an agent offers.** `name` is what the person's message says\nand what goes back; `description` is one line about it, empty when the\nagent gave none; `display_name` is the agent's own name to show, when it\ngives one.",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "input_hint": {
+            "description": "What the entry takes after its name, in the agent's words, when it\nsays. No skill has one; it is the ACP command's `input.hint`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "$ref": "#/$defs/AgentCommandKind"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "kind"
+        ],
+        "type": "object"
+      },
+      "AgentCommandKind": {
+        "description": "**Where an entry comes from**: the folder's own, the person's, what the\nagent ships, what an administrator set. A picker lists the first two\ngroups first and the last two together ([`AgentCommandKind::group`]).",
+        "oneOf": [
+          {
+            "const": "command",
+            "description": "An ACP `available_commands_update` entry invoked by `/name`.",
+            "type": "string"
+          },
+          {
+            "const": "repo_skill",
+            "description": "A skill of the folder the agent works in (Codex's `repo` scope).",
+            "type": "string"
+          },
+          {
+            "const": "user_skill",
+            "description": "A skill of the person's own (`user`).",
+            "type": "string"
+          },
+          {
+            "const": "system_skill",
+            "description": "A skill the agent ships with (`system`).",
+            "type": "string"
+          },
+          {
+            "const": "admin_skill",
+            "description": "A skill an administrator installed (`admin`).",
+            "type": "string"
+          }
+        ]
+      },
       "AgentTurnId": {
         "format": "uuid",
         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
@@ -11631,6 +12052,26 @@
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "description": "Lifecycle and low-volume facts for one session. Render content has its own\nbounded [`crate::RenderUpdate`] stream.",
     "oneOf": [
+      {
+        "description": "Protocol v23. The live session's current command listing, including an\nauthoritative empty listing.",
+        "properties": {
+          "commands": {
+            "items": {
+              "$ref": "#/$defs/AgentCommand"
+            },
+            "type": "array"
+          },
+          "kind": {
+            "const": "commands_updated",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "commands"
+        ],
+        "type": "object"
+      },
       {
         "properties": {
           "byte_count": {

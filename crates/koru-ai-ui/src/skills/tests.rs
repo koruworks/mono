@@ -13,7 +13,7 @@ use koru_i18n::Lang;
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 
 use super::*;
-use crate::composer::dollar_before;
+use crate::composer::{dollar_before, slash_before};
 use crate::reader::{Command, Reader, Update};
 
 fn transcript(provider: &str, folder: Option<&str>) -> ChatTranscript {
@@ -52,6 +52,7 @@ fn transcript(provider: &str, folder: Option<&str>) -> ChatTranscript {
         usage: Vec::new(),
         sources: Vec::new(),
         reasoning_control: None,
+        agent_commands: None,
         attachments: Vec::new(),
     }
 }
@@ -67,6 +68,7 @@ fn skill(
         description: line.into(),
         display_name: display.map(str::to_owned),
         kind,
+        input_hint: None,
     }
 }
 
@@ -161,6 +163,169 @@ fn a_dollar_token_starts_a_line_or_follows_a_space() {
     assert_eq!(dollar_before("$$", 2), None);
     assert_eq!(dollar_before("$re now", 7), None, "the caret left it");
     assert_eq!(dollar_before("plain", 5), None);
+}
+
+#[test]
+fn slash_token_starts_a_line_or_follows_a_space() {
+    assert_eq!(slash_before("/", 1), Some((0, "")));
+    assert_eq!(slash_before("Use /review-pr", 14), Some((4, "review-pr")));
+    assert_eq!(slash_before("a/b", 3), None);
+    assert_eq!(slash_before("https://example", 15), None);
+    assert_eq!(slash_before("/review now", 11), None);
+}
+
+#[test]
+fn slash_lists_commands_and_skills_and_keeps_selection_at_its_position() {
+    let (mut surface, commands) = surface();
+    type_text(&mut surface, "Use /rev");
+    answer(
+        &mut surface,
+        vec![
+            skill("review-pr", None, "Review", AgentCommandKindView::Command),
+            skill("revise", None, "Revise", AgentCommandKindView::RepoSkill),
+        ],
+    );
+    assert_eq!(shown(&surface), ["review-pr", "revise"]);
+    assert!(press(&mut surface, NamedKey::Enter));
+    let message = surface.composer.message();
+    assert_eq!(message.markdown, "Use [[koru://command/review-pr]] ");
+    assert!(message.skills.is_empty());
+
+    type_text(&mut surface, "Use $rev");
+    assert_eq!(shown(&surface), ["revise"], "dollar excludes commands");
+    assert!(press(&mut surface, NamedKey::Enter));
+    assert_eq!(surface.composer.message().skills, ["revise"]);
+    let _ = asks(&commands);
+}
+
+#[test]
+fn plus_menu_command_and_skill_doors_open_the_same_picker() {
+    use crate::composer_plus::PlusItem;
+
+    let (mut surface, _commands) = surface();
+    surface.open_plus_menu();
+    let command_index = surface
+        .plus_menu
+        .as_ref()
+        .unwrap()
+        .items()
+        .iter()
+        .position(|item| matches!(item, PlusItem::Commands(_)))
+        .unwrap();
+    assert!(surface.choose_plus_item(command_index));
+    assert_eq!(surface.composer.text(), "/");
+    answer(
+        &mut surface,
+        vec![skill(
+            "review-pr",
+            None,
+            "Review",
+            AgentCommandKindView::Command,
+        )],
+    );
+    assert_eq!(shown(&surface), ["review-pr"]);
+
+    surface.composer.set_text("Then ");
+    surface.open_plus_menu();
+    let skill_index = surface
+        .plus_menu
+        .as_ref()
+        .unwrap()
+        .items()
+        .iter()
+        .position(|item| matches!(item, PlusItem::Skills(_)))
+        .unwrap();
+    assert!(surface.choose_plus_item(skill_index));
+    assert_eq!(surface.composer.text(), "Then $");
+}
+
+#[test]
+fn transcript_live_listing_overrides_bootstrap_and_empty_is_authoritative() {
+    let (mut surface, commands) = surface();
+    answer(
+        &mut surface,
+        vec![skill(
+            "old-skill",
+            None,
+            "",
+            AgentCommandKindView::RepoSkill,
+        )],
+    );
+    surface.transcript.as_mut().unwrap().agent_commands = Some(vec![skill(
+        "current-command",
+        None,
+        "",
+        AgentCommandKindView::Command,
+    )]);
+    type_text(&mut surface, "/");
+    assert_eq!(shown(&surface), ["current-command"]);
+    assert!(asks(&commands).is_empty(), "a live list needs no probe");
+
+    surface.transcript.as_mut().unwrap().agent_commands = Some(Vec::new());
+    surface.sync_skill_list();
+    assert!(
+        !surface.skill_list_open(),
+        "empty live list replaces bootstrap"
+    );
+    surface.transcript.as_mut().unwrap().agent_commands = None;
+    surface.sync_skill_list();
+    assert_eq!(shown(&surface), ["old-skill"]);
+}
+
+#[test]
+fn second_surface_loads_live_listing_and_stream_updates_it() {
+    let (mut first, _commands) = surface();
+    first.transcript.as_mut().unwrap().agent_commands = Some(vec![skill(
+        "first",
+        None,
+        "",
+        AgentCommandKindView::Command,
+    )]);
+    let wire = serde_json::to_value(first.transcript.as_ref().unwrap()).unwrap();
+    let (mut second, _commands) = surface();
+    second.transcript = Some(serde_json::from_value(wire).unwrap());
+    type_text(&mut second, "/");
+    assert_eq!(shown(&second), ["first"]);
+
+    let chat = second.transcript.as_ref().unwrap().chat.id;
+    second.apply_update(Update::Event(koru_ai_wire::StreamEvent {
+        version: koru_ai_wire::AI_STREAM_VERSION,
+        sequence: 1,
+        event: koru_ai_wire::PublicAiEvent::AgentCommands {
+            attempt_id: koru_ai_core::InferenceAttemptId::new(),
+            chat,
+            commands: vec![skill("second", None, "", AgentCommandKindView::Command)],
+        },
+    }));
+    assert_eq!(shown(&second), ["second"]);
+}
+
+#[test]
+fn two_selected_commands_keep_their_mid_message_order() {
+    let (mut surface, _commands) = surface();
+    type_text(&mut surface, "First /one");
+    answer(
+        &mut surface,
+        vec![
+            skill("one", None, "", AgentCommandKindView::Command),
+            skill("two", None, "", AgentCommandKindView::Command),
+        ],
+    );
+    assert!(press(&mut surface, NamedKey::Enter));
+    for character in "then /two".chars() {
+        let typed = character.to_string();
+        surface.key(
+            &Key::Character(typed.as_str().into()),
+            Some(&typed),
+            ModifiersState::empty(),
+        );
+    }
+    assert_eq!(shown(&surface), ["two"]);
+    assert!(press(&mut surface, NamedKey::Enter));
+    assert_eq!(
+        surface.composer.message().markdown,
+        "First [[koru://command/one]] then [[koru://command/two]] "
+    );
 }
 
 /// **The filter**: name or display name, ignoring case; those that start

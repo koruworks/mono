@@ -174,6 +174,8 @@ async fn written_frames(dynamic: bool) -> Vec<serde_json::Value> {
                         events: retained.clone(),
                         cursor: StreamSequence::new(11).unwrap(),
                         earlier_truncated: true,
+                        commands: None,
+                        session_cursor: None,
                     },
                 }),
             },
