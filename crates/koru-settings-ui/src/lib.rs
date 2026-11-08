@@ -2206,7 +2206,10 @@ impl SettingsSurface {
             Action::IconPack(choice) => {
                 icons::set_icon_pack(icons::IconPack::parse(choice.token()))
             }
-            Action::PinnedShowTitle(show) => self.pinned_show_title = show,
+            Action::PinnedShowTitle(show) => {
+                self.pinned_show_title = show;
+                self.requests.push(Request::SetPinnedShowTitle(show));
+            }
             Action::Font(role, family) => role.set(family),
             Action::DocTextSize(px) => theme::set_doc_text_size(Some(px)),
             Action::BaseColor(dark, rgb) => theme::set_base_color(dark, rgb),

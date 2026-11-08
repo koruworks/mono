@@ -630,8 +630,6 @@ pub struct MainView {
     /// is sized to what *it* draws.
     engine: TextEngine,
 
-    /// Welcome default copied onto a newly pinned tab.
-    pinned_show_title: bool,
     /// Active split preview while a tab is being dragged over a group view.
     split_intent: Option<panes::SplitIntent>,
     /// A tab being dragged between groups, or out for a tear-off/pop-out.
@@ -1774,7 +1772,6 @@ impl MainView {
             viewport: (900.0, 560.0),
             regions: regions::solve(900.0, 560.0, 0.0, 0.0),
             engine: TextEngine::new(),
-            pinned_show_title: false,
             split_intent: None,
             pane_drag: None,
             drop_slot: None,
@@ -3881,14 +3878,7 @@ impl MainView {
         let Some(home) = home else {
             return false;
         };
-        let show_title = self
-            .tabs()
-            .iter()
-            .find_map(|t| match &t.view {
-                TabView::Welcome(w) => Some(w.pinned_show_title()),
-                _ => None,
-            })
-            .unwrap_or(self.pinned_show_title);
+        let show_title = self.preferences.pinned_show_title;
         if !self.tabs_mut().pin(i, home.as_uuid(), show_title) {
             return false;
         }
@@ -3955,6 +3945,27 @@ impl MainView {
         self.mark_tab_widths_stale();
         self.ensure_tab_visible(self.tabs().active());
         true
+    }
+
+    /// A Settings choice applies to every open pin. A later per-tab menu
+    /// choice can still override it until a Settings option is selected again.
+    fn apply_pinned_title_preference(&mut self, show: bool) {
+        self.preferences.pinned_show_title = show;
+        let mut changed = false;
+        for (_, group) in self.panes.iter_groups_mut() {
+            let mut group_changed = false;
+            for i in 0..group.tabs().pinned_count() {
+                group_changed |= group.tabs_mut().set_show_title(i, show);
+            }
+            if group_changed {
+                group.mark_widths_stale();
+            }
+            changed |= group_changed;
+        }
+        if changed {
+            self.mark_tab_widths_stale();
+            self.ensure_tab_visible(self.tabs().active());
+        }
     }
 
     fn pop_out(&mut self, i: usize) -> bool {
@@ -9146,6 +9157,7 @@ impl MainView {
         use koru_settings_ui::Request;
         match request {
             Request::ApplyLayoutToAllDocuments => self.apply_layout_to_all_documents(),
+            Request::SetPinnedShowTitle(show) => self.apply_pinned_title_preference(show),
             Request::MoreFonts(role) => {
                 self.open_role_font_picker(role);
             }
@@ -10254,28 +10266,34 @@ fn set_tab_layout(t: &mut Tab, shown: bool, mode: theme::ViewMode, canvas: Optio
     t.invalidate_size();
 }
 
-impl View for MainView {
-    /// **A preference changed elsewhere.** Deliberately *not* `restore`, which
-    /// reopens the session: a theme change in another window is not a reason to
-    /// rebuild a tab strip. What it does reach is the emoji picker's two pieces
-    /// of remembered state and every Settings tab in this window, which are the
-    /// only things here holding a copy rather than reading a global.
-    fn adopt_preferences(&mut self, settings: &Settings) {
+impl MainView {
+    fn adopt_preferences_inner(&mut self, settings: &Settings, update_pins: bool) {
         koru_editor::emoji::restore_usage(&settings.emoji_recents);
         koru_editor::emoji::set_preferred_skin_tone(koru_editor::emoji::parse_skin_tone(
             &settings.emoji_skin_tone,
         ));
+        if update_pins && self.preferences.pinned_show_title != settings.pinned_show_title {
+            self.apply_pinned_title_preference(settings.pinned_show_title);
+        }
         // Held as well as fanned out, because a Settings tab opened *later*
         // has to start from the same place the open ones were just moved to.
         self.preferences = settings.clone();
         self.each_tab_mut(|tab| {
-            match &mut tab.view {
-                TabView::Welcome(w) => View::adopt_preferences(w, settings),
-                TabView::Settings(s) => View::adopt_preferences(s, settings),
-                _ => {}
+            if let TabView::Settings(s) = &mut tab.view {
+                View::adopt_preferences(s, settings);
             }
             false
         });
+    }
+}
+
+impl View for MainView {
+    /// **A preference changed elsewhere.** Deliberately *not* `restore`, which
+    /// reopens the session: a theme change in another window is not a reason to
+    /// rebuild a tab strip. It updates open pins when their title preference
+    /// changes and reaches the Settings tabs that hold their own copies.
+    fn adopt_preferences(&mut self, settings: &Settings) {
+        self.adopt_preferences_inner(settings, true);
     }
 
     /// **The authority's first answer.** `restore` laid every document out
@@ -10286,7 +10304,9 @@ impl View for MainView {
     /// here rather than through each leaf's own hook so that only the shown
     /// tab pays for a reflow.
     fn adopt_startup_preferences(&mut self, settings: &Settings) {
-        self.adopt_preferences(settings);
+        // Restored pins carry individual title choices. The first preference
+        // answer seeds the default for new pins without replacing those choices.
+        self.adopt_preferences_inner(settings, false);
         for (_, group) in self.panes.iter_groups_mut() {
             let active = group.active();
             for (i, t) in group.iter_tabs_mut().enumerate() {

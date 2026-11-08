@@ -602,9 +602,12 @@ fn draw_tab(
     } else {
         pill.y
     };
-    let label_bl = label
-        .as_ref()
-        .and_then(|l| l.lines().next().map(|line| y + line.metrics().baseline));
+    let label_centre_y = label.as_ref().and_then(|l| {
+        l.lines().next().map(|line| {
+            let m = line.metrics();
+            y + m.baseline - (m.ascent - m.descent) * 0.5
+        })
+    });
     // A working chat's ring, and a waiting chat's question mark, take the
     // icon's slot; the icon comes back when the work ends or the question
     // is answered (koru-ai D83).
@@ -625,7 +628,7 @@ fn draw_tab(
     }
     match tab.icon.filter(|_| !replaced) {
         Some(TabIcon::Emoji(icon)) => {
-            crate::draw_page_emoji(scene, root, engine, icon, icon_x, pill, label_bl)
+            crate::draw_page_emoji(scene, root, engine, icon, icon_x, pill, label_centre_y)
         }
         Some(TabIcon::Glyph(glyph)) => draw_icon(
             scene,

@@ -519,8 +519,22 @@ fn the_pinned_tabs_row_moves_the_value_the_host_captures() {
     let mut surface = koru();
     assert!(press(&mut surface, "Icon and title"));
     assert!(surface.pinned_show_title());
+    assert_eq!(
+        surface.take_requests(),
+        vec![Request::SetPinnedShowTitle(true)]
+    );
+    assert!(press(&mut surface, "Icon and title"));
+    assert_eq!(
+        surface.take_requests(),
+        vec![Request::SetPinnedShowTitle(true)],
+        "the chosen option re-applies to existing pins"
+    );
     assert!(press(&mut surface, "Icon only"));
     assert!(!surface.pinned_show_title());
+    assert_eq!(
+        surface.take_requests(),
+        vec![Request::SetPinnedShowTitle(false)]
+    );
 }
 
 #[test]
