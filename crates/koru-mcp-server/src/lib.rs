@@ -73,8 +73,8 @@ pub mod tasks;
 mod tool_pages;
 mod toolsets;
 pub use image_upload::{
-    DocumentClaims, ImageBlobStore, ImageUploadGrant, ImageUploads, VerifiedImage, bind_loopback,
-    spawn_upload_server,
+    DocumentClaims, ImageBlobStore, ImageUploadGrant, ImageUploads, UploadScope, VerifiedImage,
+    bind_loopback, spawn_upload_server,
 };
 pub use toolsets::{Toolset, Toolsets};
 
@@ -1079,8 +1079,10 @@ impl WorkspaceToolExecutor {
                 .document_claims
                 .enforce(workspace_id, document_id, &claim_ids)?;
         }
-        if let Some(object) = arguments.as_object_mut() {
-            object.remove("claim_ids");
+        if context.capabilities.is_device() || !hosted::CLAIMING_TOOLS.contains(&tool) {
+            if let Some(object) = arguments.as_object_mut() {
+                object.remove("claim_ids");
+            }
         }
 
         let result = if tool == "get_documentation" {
@@ -1511,6 +1513,14 @@ impl LocalBackend {
     /// must use [`LocalBackend::uploads`].
     pub fn with_upload_origin(mut self, origin: impl Into<String>) -> Self {
         self.upload_origin = Some(origin.into());
+        self
+    }
+
+    /// Share a bounded upload registry across hosted tool calls. The host
+    /// serves the byte route and installs an origin; its embedded Store still
+    /// owns document writes.
+    pub fn with_uploads(mut self, uploads: ImageUploads) -> Self {
+        self.uploads = uploads;
         self
     }
 
@@ -2508,7 +2518,10 @@ impl LocalBackend {
         a: CreateImageUploadRequest,
     ) -> Result<Value, ToolError> {
         let ws = workspace(&a.workspace_id)?;
-        if let Some(store) = &self.embedded {
+        if self.upload_origin.is_none() {
+            let Some(store) = &self.embedded else {
+                return Err(image_upload::image_upload_unavailable());
+            };
             let grant = store.create_image_upload(
                 ws,
                 &context.tenant,
@@ -2652,7 +2665,9 @@ impl LocalBackend {
         upload_id: &str,
     ) -> Result<VerifiedImage, ToolError> {
         let ws = workspace(workspace_id)?;
-        if let Some(store) = &self.embedded {
+        if self.upload_origin.is_none()
+            && let Some(store) = &self.embedded
+        {
             return store.verified_image_upload(ws, &context.tenant, &context.principal, upload_id);
         }
         self.uploads.verified(

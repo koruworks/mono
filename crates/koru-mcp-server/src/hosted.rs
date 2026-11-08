@@ -5,7 +5,7 @@
 //!
 //! A claim is an exclusive, expiring lease one hosted agent holds on one
 //! document. The two claim tools and the `claim_ids` handles on
-//! `edit_document` and `extract_to_document` exist only where the server is
+//! `edit_document`, `extract_to_document`, `add_image` and `replace_image` exist only where the server is
 //! the hosted one: a claim is held by Koru Cloud, and nothing a device does
 //! is ever blocked by one. **The local catalog is unchanged**: these tools are
 //! not in the shared router, a local host refuses them by name as

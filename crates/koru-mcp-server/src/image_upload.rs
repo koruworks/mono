@@ -16,11 +16,9 @@
 //! are `upload_conflict`. Another workspace, or another principal, cannot place
 //! the reference.
 //!
-//! This module does not fetch URLs. The hosted worker
-//! (`koru-public-api --worker mcp`, not in this repository) has to mount the
-//! same `PUT` and implement [`ImageBlobStore`] against Cloud blob storage.
-//! Until it does, a hosted call gets `image_upload_unavailable` or
-//! `claims_unavailable` and writes nothing.
+//! This module does not fetch URLs. The hosted worker in the private repository
+//! mounts the same `PUT` and implements [`ImageBlobStore`] with the existing
+//! Cloud blob control and object planes.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -29,7 +27,9 @@ use std::time::Duration;
 use koru_core::{Content, Kind, Node, WorkspaceDoc};
 #[cfg(test)]
 use koru_core::{NodeId, Parent};
-use koru_store_core::model::{Blob, BlobHash, Timestamp};
+#[cfg(test)]
+use koru_store_core::model::BlobHash;
+use koru_store_core::model::{Blob, Timestamp};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::{ToolError, after_index, node, parent, revision, validate_base};
@@ -50,6 +50,9 @@ const MAX_FILENAME_BYTES: usize = 255;
 const MAX_HEADER_BYTES: usize = 8 * 1024;
 const HEADER_TIMEOUT: Duration = Duration::from_secs(15);
 const BODY_TIMEOUT: Duration = Duration::from_secs(60);
+/// Bounded even when a caller mints uploads continuously without completing
+/// them. Expired grants are retired at the next creation.
+const MAX_LIVE_UPLOADS: usize = 4096;
 
 /// Who an upload belongs to. All three are compared on place.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -92,6 +95,7 @@ struct Record {
     filename: Option<String>,
     expires_at_ms: i64,
     verified: Option<VerifiedImage>,
+    uploading: bool,
 }
 
 /// In-memory uploads. A restart drops them; the TTL is shorter than a process
@@ -121,7 +125,16 @@ impl ImageUploads {
         let upload_id = uuid::Uuid::new_v4().to_string();
         let token = mint_token();
         let expires_at_ms = now_ms.saturating_add(IMAGE_UPLOAD_TTL_MS);
-        self.lock().insert(
+        let mut records = self.lock();
+        records.retain(|_, record| now_ms < record.expires_at_ms);
+        if records.len() >= MAX_LIVE_UPLOADS {
+            return Err(ToolError {
+                code: "image_upload_busy".into(),
+                message: "too many image uploads are pending; retry shortly".into(),
+                details: None,
+            });
+        }
+        records.insert(
             upload_id.clone(),
             Record {
                 token_hash: token_hash(&token),
@@ -129,6 +142,7 @@ impl ImageUploads {
                 filename,
                 expires_at_ms,
                 verified: None,
+                uploading: false,
             },
         );
         Ok(ImageUploadGrant {
@@ -152,8 +166,8 @@ impl ImageUploads {
         store: &dyn ImageBlobStore,
     ) -> Result<VerifiedImage, ToolError> {
         let (scope, filename, expires_at_ms) = {
-            let guard = self.lock();
-            let record = guard.get(upload_id).ok_or_else(|| upload_not_found())?;
+            let mut guard = self.lock();
+            let record = guard.get_mut(upload_id).ok_or_else(|| upload_not_found())?;
             if !tokens_match(&record.token_hash, token) {
                 return Err(ToolError::invalid("the upload token was not recognised"));
             }
@@ -167,6 +181,14 @@ impl ImageUploads {
                     Err(upload_conflict())
                 };
             }
+            if record.uploading {
+                return Err(ToolError {
+                    code: "image_upload_busy".into(),
+                    message: "this image is already uploading".into(),
+                    details: None,
+                });
+            }
+            record.uploading = true;
             (
                 record.scope.clone(),
                 record.filename.clone(),
@@ -174,28 +196,32 @@ impl ImageUploads {
             )
         };
 
-        let sniffed = crate::sniff_image(bytes)?;
-        let blob = store.put_image(
-            &scope.workspace_id,
-            bytes.to_vec(),
-            sniffed.mime,
-            filename.as_deref(),
-        )?;
-        let verified = VerifiedImage {
-            upload_id: upload_id.to_owned(),
-            hash: blob.hash.as_str().to_owned(),
-            mime: sniffed.mime.to_owned(),
-            width: sniffed.width,
-            height: sniffed.height,
-            size: blob.size,
-            filename,
-            expires_at_ms,
-        };
+        let result = (|| {
+            let sniffed = crate::sniff_image(bytes)?;
+            let blob = store.put_image(
+                &scope.workspace_id,
+                bytes.to_vec(),
+                sniffed.mime,
+                filename.as_deref(),
+            )?;
+            Ok::<_, ToolError>(VerifiedImage {
+                upload_id: upload_id.to_owned(),
+                hash: blob.hash.as_str().to_owned(),
+                mime: sniffed.mime.to_owned(),
+                width: sniffed.width,
+                height: sniffed.height,
+                size: blob.size,
+                filename,
+                expires_at_ms,
+            })
+        })();
 
         let mut guard = self.lock();
         let Some(record) = guard.get_mut(upload_id) else {
             return Err(upload_not_found());
         };
+        record.uploading = false;
+        let verified = result?;
         if now_ms >= record.expires_at_ms {
             return Err(upload_expired());
         }
@@ -208,6 +234,25 @@ impl ImageUploads {
         }
         record.verified = Some(verified.clone());
         Ok(verified)
+    }
+
+    /// Check the opaque byte grant before a hosted route borrows the original
+    /// MCP token. The upload token never authorizes Cloud access by itself.
+    pub fn scope(
+        &self,
+        upload_id: &str,
+        token: &str,
+        now_ms: i64,
+    ) -> Result<UploadScope, ToolError> {
+        let guard = self.lock();
+        let record = guard.get(upload_id).ok_or_else(upload_not_found)?;
+        if !tokens_match(&record.token_hash, token) {
+            return Err(ToolError::invalid("the upload token was not recognised"));
+        }
+        if now_ms >= record.expires_at_ms {
+            return Err(upload_expired());
+        }
+        Ok(record.scope.clone())
     }
 
     /// The reference `add_image` / `replace_image` may use.
@@ -835,6 +880,67 @@ fn story() -> (WorkspaceDoc, NodeId) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn one_grant_allows_only_one_in_flight_put() {
+        use std::sync::Barrier;
+        struct SlowStore(Arc<Barrier>, Arc<Barrier>);
+        impl ImageBlobStore for SlowStore {
+            fn put_image(
+                &self,
+                _: &str,
+                bytes: Vec<u8>,
+                mime: &str,
+                filename: Option<&str>,
+            ) -> Result<Blob, ToolError> {
+                self.0.wait();
+                self.1.wait();
+                Ok(content_addressed_blob(&bytes, mime, filename))
+            }
+        }
+        let uploads = ImageUploads::new();
+        let grant = uploads.create(scope("ws-1"), None, 1).unwrap();
+        let entered = Arc::new(Barrier::new(2));
+        let release = Arc::new(Barrier::new(2));
+        let store = SlowStore(Arc::clone(&entered), Arc::clone(&release));
+        let started = uploads.clone();
+        let id = grant.upload_id.clone();
+        let token = grant.token.clone();
+        let bytes = png(1, 1);
+        let pending = bytes.clone();
+        let worker = std::thread::spawn(move || started.complete(&id, &token, &pending, 1, &store));
+        entered.wait();
+        assert_eq!(
+            uploads
+                .complete(&grant.upload_id, &grant.token, &bytes, 1, &MapStore)
+                .unwrap_err()
+                .code,
+            "image_upload_busy"
+        );
+        release.wait();
+        assert!(worker.join().unwrap().is_ok());
+        assert!(
+            uploads
+                .verified(&scope("ws-1"), &grant.upload_id, 1)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn pending_uploads_have_a_bound_and_expired_grants_free_capacity() {
+        let uploads = ImageUploads::new();
+        for _ in 0..MAX_LIVE_UPLOADS {
+            uploads.create(scope("ws-1"), None, 1).unwrap();
+        }
+        assert_eq!(
+            uploads.create(scope("ws-1"), None, 1).unwrap_err().code,
+            "image_upload_busy"
+        );
+        uploads
+            .create(scope("ws-1"), None, 1 + IMAGE_UPLOAD_TTL_MS)
+            .unwrap();
+        assert_eq!(uploads.lock().len(), 1);
+    }
 
     #[test]
     fn a_completed_upload_verifies_and_a_repeat_of_the_same_bytes_does_not_conflict() {

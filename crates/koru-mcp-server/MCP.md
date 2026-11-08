@@ -730,7 +730,7 @@ the name; omit it to leave the name.
   `upload_conflict`. An upload that has not been `PUT` is `upload_not_complete`.
   An expired one is `upload_expired`. Another workspace is
   `upload_workspace_mismatch`. Another principal is `permission_denied`.
-  A hosted host with no upload route answers `image_upload_unavailable`.
+  A host that cannot accept bytes answers `image_upload_unavailable`.
 - **The document holds a hash, not the bytes.** The bytes go to the workspace's
   blob store, addressed by their content
   ([ADR-12](../../docs/decisions/ADR-001-025.md#adr-12--blob-bytes-never-enter-the-crdt)),
@@ -741,6 +741,11 @@ the name; omit it to leave the name.
   carries, so a due on an image reads back. The tool answer is that metadata.
   It does not prove a device has drawn the pixels; that happens when the blob
   is on the viewing device.
+- **Hosted Cloud storage.** Hosted MCP sends the same content hash through
+  Cloud's blob allocation, byte upload and durable mapping used by devices.
+  The API checks the live app connection and its workspace write access on the
+  private control route. The `PUT` succeeds only after Cloud reports the blob
+  durable, so another device can fetch the image by the document's hash.
 - **Caption.** `caption` is `metadata.name`, the label a view shows instead of
   "Image N". It is not the blob filename (`name` on `create_image_upload`).
 - **It is an edit.** It takes `base_revision`, and `add_image` places the block
