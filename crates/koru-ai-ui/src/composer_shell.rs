@@ -92,8 +92,22 @@ pub(crate) fn layout(
         )
         .child(spacer());
     if let Some(name) = microphone_name {
+        toolbar = toolbar.child(
+            boxed("ComposerMicrophone")
+                .w(Length::Runtime(BUTTON_H, "action button height"))
+                .h(Length::Runtime(BUTTON_H, "action button height"))
+                .id(MICROPHONE)
+                .hit()
+                .action(Action::Click)
+                .semantics(Role::Button)
+                .name_text(name),
+        );
         if let Some(choice_name) = microphone_choice_name {
             toolbar = toolbar
+                .child(boxed("ComposerMicrophoneChoiceGap").w(Length::Runtime(
+                    Space::S0_5.px(Profile::Desktop),
+                    "choice gap",
+                )))
                 .child(
                     boxed("ComposerMicrophoneChoice")
                         .w(Length::Runtime(
@@ -106,27 +120,12 @@ pub(crate) fn layout(
                         .action(Action::Click)
                         .semantics(Role::Button)
                         .name_text(choice_name),
-                )
-                .child(boxed("ComposerMicrophoneChoiceGap").w(Length::Runtime(
-                    Space::S0_5.px(Profile::Desktop),
-                    "choice gap",
-                )));
+                );
         }
-        toolbar = toolbar
-            .child(
-                boxed("ComposerMicrophone")
-                    .w(Length::Runtime(BUTTON_H, "action button height"))
-                    .h(Length::Runtime(BUTTON_H, "action button height"))
-                    .id(MICROPHONE)
-                    .hit()
-                    .action(Action::Click)
-                    .semantics(Role::Button)
-                    .name_text(name),
-            )
-            .child(
-                boxed("ComposerMicrophoneGap")
-                    .w(Length::Runtime(Space::S2.px(Profile::Desktop), "send gap")),
-            );
+        toolbar = toolbar.child(
+            boxed("ComposerMicrophoneGap")
+                .w(Length::Runtime(Space::S2.px(Profile::Desktop), "send gap")),
+        );
     }
     let send = boxed("ComposerSend")
         .w(Length::Runtime(BUTTON_H, "action button height"))
@@ -257,8 +256,8 @@ mod tests {
         let chooser = shell.microphone_choice().unwrap();
         let microphone = shell.microphone().unwrap();
         let send = shell.send();
-        assert!(chooser.x + chooser.w < microphone.x);
-        assert!(microphone.x + microphone.w < send.x);
+        assert!(microphone.x + microphone.w < chooser.x);
+        assert!(chooser.x + chooser.w < send.x);
         assert_eq!(
             shell.frame.hit_at(microphone.x + 1.0, microphone.y + 1.0),
             Some(MICROPHONE)

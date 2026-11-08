@@ -6094,13 +6094,9 @@ impl ChatSurface {
     /// button.
     fn composer_toolbar_rect(&self) -> Rect {
         let composer = self.composer_hit_rect;
-        // Left of the microphone's chevron where the host offers a choice of
-        // microphone (D103) — its slot is kept whether or not it shows —
-        // else of the microphone, else of send.
-        let send = self
-            .mic_chooser_slot()
-            .or_else(|| self.mic_button())
-            .unwrap_or_else(|| self.send_button());
+        // Left of the fixed microphone. Its chooser reserves the lane after
+        // it, so revealing the chevron moves neither the model nor send.
+        let send = self.mic_button().unwrap_or_else(|| self.send_button());
         let x = composer.x + COMPOSER_PAD_X;
         Rect::new(
             x,

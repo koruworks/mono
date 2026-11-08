@@ -41,6 +41,8 @@ pub struct SplitButton {
 impl SplitButton {
     pub const ACTION_W: f32 = crate::button::ActionButton::H;
     pub const MENU_W: f32 = 36.0;
+    /// The mode badge's resting lane; the chevron occupies the reserved right end on hover.
+    pub const RESTING_MENU_W: f32 = 22.0;
     pub const H: f32 = crate::button::ActionButton::H;
     pub const W: f32 = Self::ACTION_W + Self::MENU_W;
 
@@ -53,6 +55,24 @@ impl SplitButton {
             self.rect.x + Self::ACTION_W,
             self.rect.y,
             self.rect.w - Self::ACTION_W,
+            self.rect.h,
+        )
+    }
+
+    fn show_chevron(self) -> bool {
+        self.menu_hot || self.menu_focused || self.menu_open
+    }
+
+    /// The painted pill grows to the right without moving either icon.
+    pub fn painted_rect(self) -> Rect {
+        Rect::new(
+            self.rect.x,
+            self.rect.y,
+            if self.show_chevron() {
+                self.rect.w
+            } else {
+                Self::ACTION_W + Self::RESTING_MENU_W
+            },
             self.rect.h,
         )
     }
@@ -100,13 +120,8 @@ impl SplitButton {
             SplitTone::Neutral => p.row_selected,
             SplitTone::Warning => p.notice_fg,
         };
-        let shape = scene::rrect(
-            self.rect.x,
-            self.rect.y,
-            self.rect.w,
-            self.rect.h,
-            self.rect.h * 0.5,
-        );
+        let painted = self.painted_rect();
+        let shape = scene::rrect(painted.x, painted.y, painted.w, painted.h, painted.h * 0.5);
         scene::fill(canvas, root, fill, &shape);
         let action = self.action_rect();
         let menu = self.menu_rect();
@@ -155,7 +170,9 @@ impl SplitButton {
         } else {
             p.on_accent
         };
-        let action_ink = if self.action_enabled { ink } else { p.text_dim };
+        // An unavailable send is already inert and has no action hover. Keep
+        // its glyph legible against the filled tone even with an empty draft.
+        let action_ink = ink;
         let action_icon = engine.icon_layout(glyph, 15.0);
         scene::draw_layout_first_line(
             canvas,
@@ -166,12 +183,8 @@ impl SplitButton {
             Some(action_ink),
         );
         let badge_icon = engine.icon_layout(badge, 12.0);
-        let show_chevron = self.menu_hot || self.menu_focused || self.menu_open;
-        let badge_x = if show_chevron {
-            menu.x + 5.0
-        } else {
-            menu.x + (menu.w - badge_icon.width()) * 0.5
-        };
+        let show_chevron = self.show_chevron();
+        let badge_x = menu.x + 5.0;
         scene::draw_layout_first_line(
             canvas,
             root,
@@ -220,5 +233,28 @@ mod tests {
             button.menu_rect().x + button.menu_rect().w,
             button.rect.x + button.rect.w
         );
+    }
+
+    #[test]
+    fn hover_extends_the_pill_right_without_moving_its_targets() {
+        let idle = SplitButton {
+            rect: Rect::new(10.0, 20.0, SplitButton::W, SplitButton::H),
+            tone: SplitTone::Warning,
+            action_enabled: false,
+            action_hot: false,
+            action_focused: false,
+            menu_hot: false,
+            menu_focused: false,
+            menu_open: false,
+        };
+        let hot = SplitButton {
+            menu_hot: true,
+            ..idle
+        };
+        assert_eq!(idle.action_rect(), hot.action_rect());
+        assert_eq!(idle.menu_rect(), hot.menu_rect());
+        assert_eq!(idle.painted_rect().x, hot.painted_rect().x);
+        assert!(idle.painted_rect().w < hot.painted_rect().w);
+        assert_eq!(hot.painted_rect().w, SplitButton::W);
     }
 }

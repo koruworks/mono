@@ -215,8 +215,8 @@ impl ChatSurface {
         shown
     }
 
-    /// The chevron's slot, just left of the microphone, while nothing
-    /// records. The toolbar ends before it whether or not it shows.
+    /// The chevron's reserved slot to the right of the microphone. Showing it
+    /// changes only paint, never the microphone or send target positions.
     pub(crate) fn mic_chooser_slot(&self) -> Option<Rect> {
         if !self.dictation.microphone.offered {
             return None;
@@ -227,7 +227,7 @@ impl ChatSurface {
         let mic = self.mic_button()?;
         let width = Metrics::COMPACT.control_width();
         let gap = Space::S0_5.px(Profile::Desktop);
-        Some(Rect::new(mic.x - gap - width, mic.y, width, mic.h))
+        Some(Rect::new(mic.x + mic.w + gap, mic.y, width, mic.h))
     }
 
     /// **The chevron**, where it shows: while the pointer is on it or on the
@@ -244,12 +244,12 @@ impl ChatSurface {
         shown.then_some(slot)
     }
 
-    /// Where the pointer shows the chevron: on it, on the microphone, or
-    /// between them.
+    /// Where the pointer shows the chevron: on the fixed microphone or in
+    /// its reserved lane to the right.
     pub(crate) fn mic_chooser_zone(&self) -> Option<Rect> {
         let slot = self.mic_chooser_slot()?;
         let mic = self.mic_button()?;
-        Some(Rect::new(slot.x, mic.y, mic.x + mic.w - slot.x, mic.h))
+        Some(Rect::new(mic.x, mic.y, slot.x + slot.w - mic.x, mic.h))
     }
 
     /// The panel's rows, in order: *Default*, a row a device, *Hold to
@@ -326,7 +326,8 @@ impl ChatSurface {
         let hold = measured.rect_of(elements::HOLD_ROW)?;
         let top = measured.rect_of(elements::LEVEL_ROW)?.y;
         let height = hold.y + hold.h + top;
-        Some(self.above_composer(mic.x + mic.w - width, width, height))
+        let anchor = self.mic_chooser_slot().unwrap_or(mic);
+        Some(self.above_composer(anchor.x + anchor.w - width, width, height))
     }
 
     /// **The open panel's frame**: where a press lands and which row it is

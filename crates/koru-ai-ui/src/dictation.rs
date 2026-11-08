@@ -374,7 +374,17 @@ impl ChatSurface {
         }
         let send = self.send_button();
         let gap = Space::S2.px(Profile::Desktop);
-        Some(Rect::new(send.x - gap - send.w, send.y, send.w, send.h))
+        let choice_width = if self.dictation.microphone.offered {
+            Metrics::COMPACT.control_width() + Space::S0_5.px(Profile::Desktop)
+        } else {
+            0.0
+        };
+        Some(Rect::new(
+            send.x - gap - choice_width - send.w,
+            send.y,
+            send.w,
+            send.h,
+        ))
     }
 
     /// The recording row: the footer's whole width inside the composer's
