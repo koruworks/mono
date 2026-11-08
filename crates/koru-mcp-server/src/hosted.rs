@@ -27,7 +27,12 @@ pub const RELEASE_DOCUMENT: &str = "release_document";
 pub const HOSTED_ONLY_TOOLS: &[&str] = &[CLAIM_DOCUMENT, RELEASE_DOCUMENT];
 
 /// The mutating tools that take `claim_ids` on a hosted catalog.
-pub const CLAIMING_TOOLS: &[&str] = &["edit_document", "extract_to_document"];
+pub const CLAIMING_TOOLS: &[&str] = &[
+    "edit_document",
+    "extract_to_document",
+    "add_image",
+    "replace_image",
+];
 
 /// The handles one call may present: an extraction's source and destination.
 pub const MAX_CLAIM_IDS: usize = 2;

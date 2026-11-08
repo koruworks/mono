@@ -79,7 +79,9 @@ impl Toolset {
                 "read_document",
                 "create_document",
                 "edit_document",
+                "create_image_upload",
                 "add_image",
+                "replace_image",
                 "extract_to_document",
             ],
             Toolset::Files => &[
@@ -245,14 +247,13 @@ impl fmt::Display for Toolsets {
 /// Each toolset's share of the `tools/list` reply, in bytes: the sum of its
 /// tools as each is published (compacted), plus one separator each. Set at
 /// the size measured on 2026-11-02 plus about 10% (measured: core 697, docs
-/// 11,939 once `edit_document`'s and `create_document`'s descriptions were
-/// trimmed, files 2,266, versions 2,036, tasks 3,099 with `update_task`, chat
-/// 1,369). Growth past one is a decision to record in MCP.md's table, not a
-/// number to bump.
+/// measured again when `create_image_upload` and `replace_image` joined `docs`
+/// (see MCP.md). Growth past one is a decision to record in MCP.md's table,
+/// not a number to bump.
 #[cfg(test)]
 pub(crate) const BUDGETS: [(Toolset, usize); 6] = [
     (Toolset::Core, 770),
-    (Toolset::Docs, 13_130),
+    (Toolset::Docs, 15_010),
     (Toolset::Files, 2_500),
     (Toolset::Versions, 2_250),
     (Toolset::Tasks, 3_410),

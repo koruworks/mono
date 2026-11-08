@@ -122,6 +122,7 @@ fn edit_slots(operation: &mut EditOperation) -> Slots<'_> {
             after_node_id,
             ..
         } => Slots::inserts(NewId::Required(node_id), parent_id, after_node_id),
+        Op::ReplaceImage { node_id, .. } => Slots::names(node_id),
         Op::Move {
             node_id,
             parent_id,

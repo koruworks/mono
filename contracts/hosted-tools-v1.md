@@ -108,11 +108,42 @@ no tool that looks one up; the assistant checks content, as the message says.
   keep it.
 - **The catalog is the capability set.** Rung 1 serves
   `get_documentation`, `list_workspaces`, `list_documents`, `search_documents`,
-  `read_document`, `create_document`, `edit_document`, `extract_to_document`,
+  `read_document`, `create_document`, `edit_document`, `create_image_upload`,
+  `add_image`, `replace_image`, `extract_to_document`,
   `list_tasks`, `claim_document` and `release_document`. Capabilities are
   checked before scope and before any backend call, and the published catalog
   is built from the same set, so any other tool called by name answers
   `tool_not_available` with no backend work.
+
+### Image uploads
+
+`create_image_upload`, `add_image` and `replace_image` are in this catalog.
+They do not accept image bytes. `create_image_upload` returns `upload_id`,
+`expires_at` and `upload.url` / `upload.headers.authorization`
+(`Upload <token>`, ten minutes). The uploader `PUT`s the raw file to that
+URL. `add_image` inserts the completed upload; `replace_image` replaces one
+existing image's bytes. Both take `claim_ids` like `edit_document`.
+
+The byte route is not implemented by an in-process replica in this
+repository. Until the hosted worker mounts `PUT /v1/image-uploads/{upload_id}`
+and implements blob storage for that route, `create_image_upload` answers
+`image_upload_unavailable` and the place tools answer
+`image_upload_unavailable` or `claims_unavailable`. Neither writes a
+document. A caller-supplied hash is not a reference. The server does not
+fetch URLs.
+
+Place refusals that must not mutate the document: `upload_not_found`,
+`upload_not_complete`, `upload_expired`, `upload_conflict`,
+`upload_workspace_mismatch`, `permission_denied` (another principal),
+`revision_conflict`, `duplicate_node_id`, `document_claimed`,
+`claims_unavailable`, `invalid_request` (not an image, too large, bad
+caption). A retry whose `node_id` already shows that upload's hash answers
+success with `replayed: true` and does not insert a second block.
+
+`mcp.tool.called`'s `tool` vocabulary includes the three image tools. Its
+`code` vocabulary is capped at 32 reviewed tokens, so the image-upload
+refusals above that are not already in that list are recorded as `other`.
+The tool result still carries the specific code.
 
 ## 4. Claims
 
@@ -153,13 +184,14 @@ same.
 
 ### Handles on mutating calls
 
-The hosted `edit_document` and `extract_to_document` gain an optional
-`claim_ids: string[]`, at most 2 items. Each handle names its own document on
+The hosted `edit_document`, `extract_to_document`, `add_image` and
+`replace_image` gain an optional `claim_ids: string[]`, at most 2 items. Each handle names its own document on
 the server, so an extraction whose source and destination are claimed
 separately presents both. A handle for a document the call does not change is
 ignored.
 
 The documents a call changes are its **targets**: `edit_document`'s document;
+`add_image`'s and `replace_image`'s document;
 `extract_to_document`'s source and, when it extracts into one, its existing
 destination. A new document is never a target. Before the first effect, every
 target under a live claim needs that claim's handle; the server checks again
