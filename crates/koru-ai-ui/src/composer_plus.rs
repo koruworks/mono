@@ -92,8 +92,18 @@ impl ChatSurface {
     /// title updates the next open of the menu; a menu already under the
     /// pointer keeps the rows it was opened with.
     pub fn set_recent_documents(&mut self, documents: Vec<(DocumentId, String)>) -> bool {
+        let picker_documents = documents
+            .iter()
+            .map(|(document, title)| {
+                (
+                    koru_core::DocumentId::from_uuid(document.as_uuid()),
+                    title.clone(),
+                )
+            })
+            .collect();
+        let picker_changed = self.composer.set_recent_documents(picker_documents);
         if self.recent_documents == documents {
-            return false;
+            return picker_changed;
         }
         self.recent_documents = documents;
         true

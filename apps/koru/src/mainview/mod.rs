@@ -16288,7 +16288,7 @@ impl MainView {
         if let Some((target, where_)) = open {
             self.open_document_target(target, where_);
         }
-        // A move picker with nothing typed lists this window's recents, not
+        // A picker with nothing typed lists this window's recents, not
         // the search service's idea of them — the service only remembers
         // search-driven navigations, so its empty-query answer is not what a
         // person means by "recent". Its request is dropped; the container's
@@ -16509,7 +16509,11 @@ impl MainView {
             TabView::Leaf(leaf) => {
                 let context =
                     current.is_some_and(|current| leaf.set_entity_context(current, choices));
-                leaf.set_entity_search_results(hits, update.unavailable) || context
+                if leaf.entity_wants_recents() {
+                    context
+                } else {
+                    leaf.set_entity_search_results(hits, update.unavailable) || context
+                }
             }
             _ => false,
         };

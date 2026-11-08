@@ -77,6 +77,48 @@ fn escape_closes_the_picker_and_leaves_the_text() {
 }
 
 #[test]
+fn chat_picker_shows_window_recents_and_keeps_query_when_scope_widens() {
+    let current = koru_ai_core::WorkspaceId::new();
+    let other = koru_core::WorkspaceId::new();
+    let profile = koru_core::ProfileId::new();
+    let document = koru_core::DocumentId::new();
+    let mut composer = ChatComposer::new(None);
+    composer.set_context(Some(current), None);
+    composer.workspaces = vec![
+        WorkspaceChoice {
+            profile,
+            profile_name: String::new(),
+            id: koru_core::WorkspaceId::from_uuid(current.as_uuid()),
+            name: "Current".into(),
+        },
+        WorkspaceChoice {
+            profile,
+            profile_name: String::new(),
+            id: other,
+            name: "Other".into(),
+        },
+    ];
+    composer.set_recent_documents(vec![(document, "Recent plan".into())]);
+    typed(&mut composer, "@");
+    let Overlay::Entity(picker) = &composer.editor.view.overlay else {
+        panic!("@ picker open");
+    };
+    assert_eq!(picker.hits[0].target.document, document);
+    assert_eq!(
+        picker.selected_workspaces,
+        [koru_core::WorkspaceId::from_uuid(current.as_uuid())]
+    );
+
+    typed(&mut composer, "plan");
+    assert!(composer.key(&Key::Named(NamedKey::Space), None, ModifiersState::CONTROL));
+    let Overlay::Entity(picker) = &composer.editor.view.overlay else {
+        panic!("@ picker remains open");
+    };
+    assert_eq!(picker.query, "plan");
+    assert_eq!(picker.selected_workspaces.len(), 2);
+}
+
+#[test]
 fn a_chip_survives_an_edit_and_undo_and_redo() {
     let mut composer = ChatComposer::new(None);
     let document = chip(&mut composer, "Plan");

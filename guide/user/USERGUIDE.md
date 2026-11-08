@@ -4293,10 +4293,11 @@ for you.
 
 Type `@` and start writing a document title. The text beside the caret filters
 the shared search index while the popover lists every matching document as a
-separate row. It searches every active workspace by default; archived and
-deleted workspaces stay out of both the filter and its results. Use the workspace
-filter to narrow the scope, then pick a result to insert the pill. **Clicking that
-pill opens the document.** The default list shows recent documents and always
+separate row. It starts in the current workspace. Press **Ctrl+Space** while the
+picker is open to include every active workspace without clearing your query;
+archived and deleted workspaces stay out of the results. Pick a result to insert
+the pill. **Clicking that pill opens the document.** The empty-query list shows
+this window's recent documents and always
 offers **Add new document**. With a typed query, that action creates the page with
 the query as its title, replaces the authored `@query` with its pill, and opens
 the new page.
@@ -6338,6 +6339,12 @@ list follows what you type, Up and Down move through it, Enter or Tab picks,
 and Escape closes it and leaves what you typed. While the list is open, Enter
 chooses rather than sends. Type `#` after a document's name to link one of its
 headings. `@` inside a word — an email address — is just text.
+
+The empty chat picker shows this window's recent documents. Search starts in
+the current workspace; **Ctrl+Space** widens it to all active workspaces and
+keeps the query. A file selected through the chat's attachment menu is copied
+into the chat before sending, so it remains available if the workspace file
+moves.
 
 When you send, each document you mentioned goes with the message and stays
 pinned to the chat, and your message shows it by its title as a link; click it

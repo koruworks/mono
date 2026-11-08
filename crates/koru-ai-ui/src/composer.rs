@@ -201,6 +201,7 @@ pub struct ChatComposer {
     current_workspace: Option<WorkspaceId>,
     /// The document the host is showing, offered to a bare `@#`.
     current_document: Option<(koru_core::DocumentId, String)>,
+    recent_documents: Vec<(koru_core::DocumentId, String)>,
     /// The box the text sits in, in host coordinates, padding included.
     text: Rect,
     /// Where host coordinates put the editor's view origin.
@@ -222,6 +223,7 @@ impl ChatComposer {
             catalog_known: false,
             current_workspace: None,
             current_document: None,
+            recent_documents: Vec::new(),
             text: Rect::new(0.0, 0.0, 1.0, 1.0),
             origin: (0.0, 0.0),
             open_request: None,
@@ -734,6 +736,35 @@ impl ChatComposer {
             document.map(|(id, title)| (koru_core::DocumentId::from_uuid(id.as_uuid()), title));
     }
 
+    pub(crate) fn set_recent_documents(
+        &mut self,
+        documents: Vec<(koru_core::DocumentId, String)>,
+    ) -> bool {
+        if self.recent_documents == documents {
+            return false;
+        }
+        self.recent_documents = documents;
+        if matches!(&self.editor.view.overlay, Overlay::Entity(picker) if picker.document_query.trim().is_empty())
+        {
+            let hits = self
+                .recent_documents
+                .iter()
+                .map(|(document, title)| DocumentChoice {
+                    target: DocumentTarget {
+                        document: *document,
+                        node: None,
+                    },
+                    title: title.clone(),
+                    breadcrumb: String::new(),
+                    is_file: false,
+                })
+                .collect();
+            self.editor.set_entity_recents(hits)
+        } else {
+            false
+        }
+    }
+
     /// A chip was clicked, in the composer or in a sent message: the document
     /// the host should open.
     /// A paste found no text: the surface reads the clipboard's picture or
@@ -1005,8 +1036,27 @@ impl ChatComposer {
                 is_file: false,
             });
         changed |= self.editor.set_entity_current_document(here);
+        if matches!(&self.editor.view.overlay, Overlay::Entity(picker) if picker.document_query.trim().is_empty())
+        {
+            let hits = self
+                .recent_documents
+                .iter()
+                .map(|(document, title)| DocumentChoice {
+                    target: DocumentTarget {
+                        document: *document,
+                        node: None,
+                    },
+                    title: title.clone(),
+                    breadcrumb: String::new(),
+                    is_file: false,
+                })
+                .collect();
+            changed |= self.editor.set_entity_recents(hits);
+        }
         let search = self.search.as_mut().expect("started above");
-        if let Some(request) = self.editor.take_entity_search_request() {
+        if let Some(request) = self.editor.take_entity_search_request()
+            && !request.query.trim().is_empty()
+        {
             let scope = request
                 .workspaces
                 .into_iter()
@@ -1071,9 +1121,12 @@ impl ChatComposer {
                     is_file: false,
                 })
                 .collect();
-            changed |= self
-                .editor
-                .set_entity_search_results(hits, update.unavailable);
+            if !matches!(&self.editor.view.overlay, Overlay::Entity(picker) if picker.document_query.trim().is_empty())
+            {
+                changed |= self
+                    .editor
+                    .set_entity_search_results(hits, update.unavailable);
+            }
             changed |= self.sync();
         }
         changed

@@ -1101,7 +1101,7 @@ pub trait Editing {
         self.view_mut().wants_move_selection.take()
     }
 
-    /// Whether the open picker is a move-mode one with nothing typed — the
+    /// Whether the open picker has nothing typed — the
     /// state whose result list is the window's **recents**, fed by the
     /// container. The store's search service only remembers search-driven
     /// navigations, so its empty-query answer is not the list a person means
@@ -1109,11 +1109,11 @@ pub trait Editing {
     fn entity_wants_recents(&self) -> bool {
         matches!(
             &self.view().overlay,
-            Overlay::Entity(picker) if picker.move_mode && picker.document_query.trim().is_empty()
+            Overlay::Entity(picker) if picker.document_query.trim().is_empty()
         )
     }
 
-    /// Feed the window's recents into a move-mode picker with an empty query.
+    /// Feed the window's recents into a picker with an empty query.
     /// `false` when nothing changed — the caller runs per gesture, and an
     /// unconditional "changed" would spin the redraw loop.
     fn set_entity_recents(

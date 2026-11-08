@@ -867,9 +867,6 @@ fn draw_entity_picker(
         return;
     };
     let scope = picker.scope_label();
-    let filter_open = picker.filter_open();
-    let selected = picker.selected_workspaces.clone();
-    let workspaces = picker.workspaces.clone();
     let hits = picker.hits.clone();
     let sel = picker.sel;
     let loading = picker.loading;
@@ -879,12 +876,6 @@ fn draw_entity_picker(
     let chip_x = px + theme::PANEL_PAD;
     let chip_y = py + band + theme::PANEL_PAD + 3.0;
     let chip_w = pw - theme::PANEL_PAD * 2.0;
-    fill(
-        scene,
-        root,
-        theme::p().hover_tint,
-        &rrect(chip_x, chip_y, chip_w, HEADER_H - 6.0, 7.0),
-    );
     let icon = view.engine.icon_layout(icons::LIST_CHECKS, 15.0);
     draw_layout(
         scene,
@@ -894,7 +885,20 @@ fn draw_entity_picker(
         chip_y + (HEADER_H - 6.0 - icon.height()) * 0.5,
         Some(theme::p().accent),
     );
-    let fitted = view.engine.elided(&scope, theme::role::ui(), chip_w - 42.0);
+    let hint = (!picker.widened_scope && picker.headings().is_none())
+        .then(|| {
+            koru_keys::show_hint(
+                koru_keys::ShortcutId::WidenEntityScope,
+                koru_keys::Section::Heading,
+            )
+        })
+        .flatten();
+    let hint_width = hint.as_ref().map_or(0.0, |hint| {
+        view.engine.simple_layout(hint, theme::role::ui()).width() + 12.0
+    });
+    let fitted = view
+        .engine
+        .elided(&scope, theme::role::ui(), chip_w - 42.0 - hint_width);
     let label = view.engine.simple_layout(&fitted, theme::role::ui());
     draw_layout(
         scene,
@@ -904,6 +908,17 @@ fn draw_entity_picker(
         chip_y + (HEADER_H - 6.0 - label.height()) * 0.5,
         Some(theme::p().text),
     );
+    if let Some(hint) = hint {
+        let hint = view.engine.simple_layout(&hint, theme::role::ui());
+        draw_layout(
+            scene,
+            root,
+            &hint,
+            chip_x + chip_w - hint.width() - 9.0,
+            chip_y + (HEADER_H - 6.0 - hint.height()) * 0.5,
+            Some(theme::p().row_hint),
+        );
+    }
 
     let rows_y = py + band + theme::PANEL_PAD + HEADER_H;
     if let Some(headings) = picker.headings() {
@@ -976,51 +991,6 @@ fn draw_entity_picker(
                 "No matching heading"
             };
             draw_entity_status(scene, root, view, px, rows_y, message);
-        }
-        if let Some(thumb) = scrollbar {
-            draw_entity_scrollbar(scene, root, px, py, thumb);
-        }
-        return;
-    }
-    if filter_open {
-        let first = match &view.overlay {
-            Overlay::Entity(p) => p.first,
-            _ => 0,
-        };
-        for (i, workspace) in workspaces.iter().skip(first).take(MAX_ROWS).enumerate() {
-            let index = first + i;
-            let ry = rows_y + i as f32 * theme::ROW_H;
-            let on = index == sel || hovered_row == Some(index);
-            draw_row_bg(scene, root, px, ry, pw, on);
-            if selected.contains(&workspace.id) {
-                let check = view.engine.icon_layout(icons::CHECK, 14.0);
-                draw_layout(
-                    scene,
-                    root,
-                    &check,
-                    px + 10.0,
-                    ry + 7.0,
-                    Some(theme::p().text),
-                );
-            }
-            let context = if workspace.profile_name.is_empty() {
-                workspace.name.clone()
-            } else {
-                format!("{} — {}", workspace.name, workspace.profile_name)
-            };
-            let fitted = view.engine.elided(&context, theme::role::ui(), pw - 42.0);
-            let row = view.engine.simple_layout(&fitted, theme::role::ui());
-            draw_layout(
-                scene,
-                root,
-                &row,
-                px + 32.0,
-                ry + 4.0,
-                Some(theme::p().text),
-            );
-        }
-        if workspaces.is_empty() {
-            draw_entity_status(scene, root, view, px, rows_y, "Loading workspaces…");
         }
         if let Some(thumb) = scrollbar {
             draw_entity_scrollbar(scene, root, px, py, thumb);
