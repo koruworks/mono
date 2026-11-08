@@ -264,9 +264,10 @@ fn transcript_live_listing_overrides_bootstrap_and_empty_is_authoritative() {
     surface.transcript.as_mut().unwrap().agent_commands = Some(Vec::new());
     surface.sync_skill_list();
     assert!(
-        !surface.skill_list_open(),
-        "empty live list replaces bootstrap"
+        surface.skill_list_open(),
+        "empty live list has an empty state"
     );
+    assert_eq!(surface.skill_content_state(), elements::ContentState::Empty);
     surface.transcript.as_mut().unwrap().agent_commands = None;
     surface.sync_skill_list();
     assert_eq!(shown(&surface), ["old-skill"]);
@@ -351,17 +352,32 @@ fn matches_put_prefixes_first_then_the_rest_in_the_agents_order() {
     assert_eq!(title(&skills[0]), "review-pr");
 }
 
-/// **`$` asks the agent and opens when it answers**: the chat's agent and
-/// folder are asked once; the list opens, filtered, as the person types,
-/// and shuts when nothing matches or the caret leaves the token.
+/// **`$` opens immediately**: the chat's agent and folder are asked once;
+/// placeholders give way to filtered rows, and the list shuts when the caret
+/// leaves the token.
 #[test]
-fn a_dollar_asks_for_the_list_and_opens_on_the_answer() {
+fn a_dollar_opens_while_the_list_is_loading() {
     let (mut surface, commands) = surface();
     type_text(&mut surface, "Use $");
-    assert!(
-        !surface.skill_list_open(),
-        "nothing listed yet: just a character"
+    assert!(surface.skill_list_open());
+    assert_eq!(
+        surface.skill_content_state(),
+        elements::ContentState::Loading
     );
+    let (panel, specs, frame) = surface.skill_frame().unwrap();
+    assert!(specs.is_empty());
+    assert_eq!(frame.named(elements::LOADING_ROW).count(), 3);
+    assert!(
+        frame
+            .named(elements::LOADING_ROW)
+            .all(|row| panel.contains(row.rect.x, row.rect.y))
+    );
+    assert_eq!(surface.skill_row_at(panel.x + 30.0, panel.y + 30.0), None);
+    assert!(
+        press(&mut surface, NamedKey::Enter),
+        "loading does not send"
+    );
+    assert_eq!(surface.composer.text(), "Use $");
     assert_eq!(
         asks(&commands),
         vec![("agent-codex".to_owned(), Some("D:/work".to_owned()))]
@@ -384,7 +400,8 @@ fn a_dollar_asks_for_the_list_and_opens_on_the_answer() {
     assert!(asks(&commands).is_empty(), "the same $ asks once");
 
     type_text(&mut surface, "Use $zzz");
-    assert!(!surface.skill_list_open(), "nothing matches");
+    assert!(surface.skill_list_open(), "an unmatched query has feedback");
+    assert_eq!(surface.skill_content_state(), elements::ContentState::Empty);
     type_text(&mut surface, "Use $pr and");
     assert!(!surface.skill_list_open(), "the caret left the token");
     assert!(surface.skill_panel().is_none());
@@ -490,14 +507,15 @@ fn the_keyboard_moves_through_more_skills_than_fit() {
     assert!(surface.skill_specs()[0].lit);
 }
 
-/// **No list, no list**: a chat whose agent lists no skills, and a chat
-/// with no local agent, keep `$` a character — the second never asks.
+/// **An empty list has feedback**. A chat with no local agent leaves `$` as a
+/// character and never asks.
 #[test]
-fn without_skills_a_dollar_is_only_a_character() {
+fn without_skills_the_panel_reports_empty() {
     let (mut surface, commands) = surface();
     type_text(&mut surface, "$");
     answer(&mut surface, Vec::new());
-    assert!(!surface.skill_list_open());
+    assert!(surface.skill_list_open());
+    assert_eq!(surface.skill_content_state(), elements::ContentState::Empty);
     assert!(press(&mut surface, NamedKey::Escape) || !surface.skill_list_open());
 
     let (mut plain, commands_plain) = {
@@ -511,6 +529,73 @@ fn without_skills_a_dollar_is_only_a_character() {
     assert!(!plain.skill_list_open());
     assert!(asks(&commands_plain).is_empty(), "no local agent, no ask");
     drop(commands);
+}
+
+#[test]
+fn a_slash_opens_while_commands_are_loading_and_escape_closes_it() {
+    let (mut surface, commands) = surface();
+    type_text(&mut surface, "/");
+    assert!(surface.skill_list_open());
+    assert_eq!(
+        surface.skill_content_state(),
+        elements::ContentState::Loading
+    );
+    assert!(surface.skill_panel().is_some());
+    assert!(press(&mut surface, NamedKey::Escape));
+    assert!(!surface.skill_list_open());
+    assert_eq!(asks(&commands).len(), 1);
+}
+
+#[test]
+fn priming_warms_the_list_without_a_trigger() {
+    let (mut surface, commands) = surface();
+    surface.prime_skill_list();
+    assert_eq!(asks(&commands).len(), 1);
+    answer(&mut surface, listing());
+    type_text(&mut surface, "$");
+    assert_eq!(surface.skill_content_state(), elements::ContentState::Rows);
+    assert_eq!(shown(&surface).len(), 4);
+    assert!(asks(&commands).is_empty(), "fresh cached list is reused");
+}
+
+#[test]
+fn switching_agent_sources_drops_the_old_list_and_primes_the_new_one() {
+    let (mut surface, commands) = surface();
+    type_text(&mut surface, "$");
+    answer(&mut surface, listing());
+    let mut chat = surface.transcript.as_ref().unwrap().chat.clone();
+    chat.current_model.provider = AiProviderId::parse("agent-claude").unwrap();
+    surface.apply_update(Update::ModelUpdated(chat, None));
+    assert!(surface.skill_list_open());
+    assert!(shown(&surface).is_empty());
+    assert_eq!(
+        surface.skill_content_state(),
+        elements::ContentState::Loading
+    );
+    answer(&mut surface, listing());
+    assert_eq!(
+        surface.skill_content_state(),
+        elements::ContentState::Loading,
+        "late Codex answer cannot replace Claude's list"
+    );
+    surface.apply_update(Update::AgentCommands {
+        provider: AiProviderId::parse("agent-claude").unwrap(),
+        folder: Some("D:/work".into()),
+        commands: Some(vec![skill(
+            "claude-only",
+            None,
+            "",
+            AgentCommandKindView::UserSkill,
+        )]),
+    });
+    assert_eq!(shown(&surface), ["claude-only"]);
+    assert_eq!(
+        asks(&commands),
+        vec![
+            ("agent-codex".to_owned(), Some("D:/work".to_owned())),
+            ("agent-claude".to_owned(), Some("D:/work".to_owned())),
+        ]
+    );
 }
 
 /// **A press on a row picks it**; a press elsewhere shuts the list and goes

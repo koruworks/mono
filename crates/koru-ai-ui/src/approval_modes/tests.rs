@@ -504,10 +504,10 @@ fn a_new_chat_starts_from_the_default_not_the_last_mode_used() {
         "an explicit Yolo carries into a new chat"
     );
     assert!(surface.make_unmade_chat());
-    assert!(matches!(
-        commands.recv_timeout(Duration::from_millis(50)).unwrap(),
-        Command::Create(_)
-    ));
+    let created = std::iter::from_fn(|| commands.try_recv().ok())
+        .find(|command| !matches!(command, Command::DiscoverCommands(..)))
+        .or_else(|| commands.recv_timeout(Duration::from_millis(50)).ok());
+    assert!(matches!(created, Some(Command::Create(_))));
     assert_eq!(chosen(&commands).as_deref(), Some("bypassPermissions"));
     // Shift+Tab still never steps to it.
     let rows = surface.approval_mode_rows();

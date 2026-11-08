@@ -405,6 +405,7 @@ pub enum Key {
     AiMicrophoneHoldToRecord,
     // The agent's skills offered under `$` in the composer (koru-ai D121).
     AiSkills,
+    AiSkillListEmpty,
     // Esc twice to stop a turn, and the empty chat's greetings.
     AiPressEscAgainToStop,
     AiGreeting01,
@@ -3042,7 +3043,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2142] = [
+    pub const ALL: [Key; 2143] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -3335,6 +3336,7 @@ impl Key {
         Key::AiMicrophoneDefaultNamed,
         Key::AiMicrophoneHoldToRecord,
         Key::AiSkills,
+        Key::AiSkillListEmpty,
         Key::AiPressEscAgainToStop,
         Key::AiGreeting01,
         Key::AiGreeting02,
@@ -8258,6 +8260,7 @@ pub const ROWS: &[Row] = &[
         zh_hans: "技能",
         ja: "スキル",
     },
+    Row { key: Key::AiSkillListEmpty, en: "No matching skills or commands", es: "No hay habilidades ni comandos coincidentes", pt_br: "Nenhuma habilidade ou comando correspondente", de: "Keine passenden Skills oder Befehle", fr: "Aucune compétence ni commande correspondante", ar: "لا توجد مهارات أو أوامر مطابقة", zh_hans: "没有匹配的技能或命令", ja: "一致するスキルやコマンドはありません" },
     // Esc twice to stop a turn, and the empty chat's greetings.
     Row {
         key: Key::AiPressEscAgainToStop,

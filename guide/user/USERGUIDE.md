@@ -1566,14 +1566,15 @@ line walks forward again, back to whatever you were typing, and `Esc` takes you
 straight back to it. A message you steered into a reply is in the list; one
 still waiting in the queue is not.
 
-**Use a Codex skill.** In a chat with Codex, type `$` to list the skills Codex
-has for this workspace — yours, the project's and its own — and keep typing to
-narrow the list. `Enter` or `Tab` picks one and it becomes a chip in your
-message; `Esc` closes the list and leaves the `$` as text, and `Backspace`
-removes a chip whole. Send as usual: Codex is told exactly which skill you
-meant. A message with a skill is not slipped into a reply that is still being
-written; it waits and goes when the reply ends. With other agents `$` is just a
-character.
+**Use an agent skill or command.** In an agent chat, type `$` to list its
+skills, or `/` to list its commands and skills. The list opens as soon as you
+type the trigger; placeholder rows appear while the agent's list loads, and
+an empty list says when nothing matches. Keep typing to narrow the list.
+`Enter` or `Tab` picks an entry and it becomes a chip in your message; `Esc`
+closes the list and leaves the trigger as text, and `Backspace` removes a chip
+whole. Send as usual: the agent is told exactly which skill or command you
+meant. A message with a skill waits for a running reply to finish before it
+is sent. With a provider that has no local agent, `$` and `/` are characters.
 
 **Dictate a message.** Click the microphone beside the send button, or press
 `Ctrl+Shift+D` (hold it, or press once if you set dictation to toggle). The

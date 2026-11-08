@@ -3270,6 +3270,7 @@ impl ChatSurface {
                     .min(self.destinations.len().saturating_sub(1));
                 self.scroll_loaded_chat_to_bottom = transcript.is_some();
                 self.transcript = transcript;
+                self.prime_skill_list();
                 self.messages_dirty = true;
                 // A saved OpenAI credential is enough to discover the
                 // account-scoped model catalog, even when another provider is
@@ -3315,6 +3316,7 @@ impl ChatSurface {
                 let chat = transcript.chat.id;
                 self.remember_chat(&transcript.chat, true);
                 self.transcript = Some(transcript);
+                self.prime_skill_list();
                 self.usage_report = None;
                 self.question_navigation = None;
                 self.question_navigation_anchor = None;
@@ -3391,6 +3393,7 @@ impl ChatSurface {
                     self.web_search_armed = true;
                 }
                 self.transcript = Some(transcript);
+                self.prime_skill_list();
                 self.usage_report = None;
                 self.question_navigation = None;
                 self.question_navigation_anchor = None;
@@ -3418,6 +3421,7 @@ impl ChatSurface {
                 }
             }
             Update::ModelUpdated(chat, reasoning_control) => {
+                let previous_skill_source = self.skill_source();
                 let chat_id = chat.id;
                 self.waiting = false;
                 // The picker stays open over a model chosen in it (D66): its
@@ -3431,6 +3435,13 @@ impl ChatSurface {
                 {
                     transcript.chat = chat;
                     transcript.reasoning_control = reasoning_control;
+                }
+                if self.skill_source() != previous_skill_source {
+                    if let Some(transcript) = &mut self.transcript {
+                        transcript.agent_commands = None;
+                    }
+                    self.prime_skill_list();
+                    self.sync_skill_list();
                 }
                 self.settle_after_choice();
                 self.status =
@@ -3678,6 +3689,7 @@ impl ChatSurface {
                 }
                 self.chats = chats;
                 self.transcript = transcript;
+                self.prime_skill_list();
                 self.usage_report = None;
                 self.question_navigation = None;
                 self.question_navigation_anchor = None;
@@ -4383,6 +4395,7 @@ impl ChatSurface {
         self.scroll_to_pending_question = false;
         self.scroll_loaded_chat_to_bottom = false;
         self.transcript = Some(chat);
+        self.prime_skill_list();
         self.unmade_chat = Some(id);
         self.messages_dirty = true;
     }
@@ -11063,13 +11076,19 @@ mod tests {
     fn picking_an_agent_with_no_chat_waits_for_the_first_message() {
         let (surface, commands, _updates) = unmade_claude_chat();
         let claude = AiProviderId::parse("agent-claude").unwrap();
-        let Command::SelectProvider(selected) =
-            commands.recv_timeout(Duration::from_millis(50)).unwrap()
-        else {
-            panic!("the choice is remembered, and nothing is made");
+        let selected = loop {
+            match commands.recv_timeout(Duration::from_millis(50)).unwrap() {
+                Command::DiscoverCommands(..) => continue,
+                Command::SelectProvider(selected) => break selected,
+                _ => panic!("the choice is remembered, and nothing is made"),
+            }
         };
         assert_eq!(selected.provider, claude);
-        assert!(commands.try_recv().is_err(), "no chat is made by a pick");
+        assert!(
+            std::iter::from_fn(|| commands.try_recv().ok())
+                .all(|command| matches!(command, Command::DiscoverCommands(..))),
+            "no chat is made by a pick"
+        );
         assert!(surface.chat_unmade());
         assert_eq!(
             surface
