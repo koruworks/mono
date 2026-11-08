@@ -1,0 +1,203 @@
+{
+  "format": "cloud-transfer-v1-claim-amendment",
+  "claim_handle_fixture": "koru vector claim handle 1",
+  "claim_sha256_base64url": "JzomhI4fYtHhBmBKPVjHUc4Dr-uugiqwVtWl6Dce1eI",
+  "cases": [
+    {
+      "id": "C01",
+      "kind": "control",
+      "receiver": "worker_device_session",
+      "json": "{\"kind\":\"transfer_start\",\"version\":1,\"policy_generation\":1,\"unit\":{\"kind\":\"document\",\"workspace_id\":\"11111111-1111-4111-8111-111111111111\",\"document_id\":\"22222222-2222-4222-8222-222222222222\"},\"batch_id\":[0,1,2,3,4,5,6,7],\"total_length\":6,\"fragment_count\":1,\"sha256\":\"vvV-x_U6bUC-tkCngKY5yDvCmsipgW8fxsXG3Nk8RyE\"}",
+      "code": "ok",
+      "today": "ok",
+      "note": "A device's start: T12's bytes, unchanged.",
+      "byte_identical_to": "T12",
+      "record_hex": "0000013a017b226b696e64223a227472616e736665725f7374617274222c2276657273696f6e223a312c22706f6c6963795f67656e65726174696f6e223a312c22756e6974223a7b226b696e64223a22646f63756d656e74222c22776f726b73706163655f6964223a2231313131313131312d313131312d343131312d383131312d313131313131313131313131222c22646f63756d656e745f6964223a2232323232323232322d323232322d343232322d383232322d323232323232323232323232227d2c2262617463685f6964223a5b302c312c322c332c342c352c362c375d2c22746f74616c5f6c656e677468223a362c22667261676d656e745f636f756e74223a312c22736861323536223a227676562d785f55366255432d746b436e674b5935794476436d7369706757386678735847334e6b38527945227d"
+    },
+    {
+      "id": "C02",
+      "kind": "control",
+      "receiver": "worker_app_connection_session",
+      "json": "{\"kind\":\"transfer_start\",\"version\":1,\"policy_generation\":1,\"unit\":{\"kind\":\"document\",\"workspace_id\":\"11111111-1111-4111-8111-111111111111\",\"document_id\":\"22222222-2222-4222-8222-222222222222\"},\"batch_id\":[0,1,2,3,4,5,6,7],\"total_length\":6,\"fragment_count\":1,\"sha256\":\"vvV-x_U6bUC-tkCngKY5yDvCmsipgW8fxsXG3Nk8RyE\"}",
+      "code": "ok",
+      "today": "ok",
+      "note": "A connection's upload of an unclaimed document carries no claim.",
+      "byte_identical_to": "T12"
+    },
+    {
+      "id": "C03",
+      "kind": "control",
+      "receiver": "worker_app_connection_session",
+      "json": "{\"kind\":\"transfer_start\",\"version\":1,\"policy_generation\":1,\"unit\":{\"kind\":\"document\",\"workspace_id\":\"11111111-1111-4111-8111-111111111111\",\"document_id\":\"22222222-2222-4222-8222-222222222222\"},\"batch_id\":[0,1,2,3,4,5,6,7],\"total_length\":6,\"fragment_count\":1,\"sha256\":\"vvV-x_U6bUC-tkCngKY5yDvCmsipgW8fxsXG3Nk8RyE\",\"claim\":\"JzomhI4fYtHhBmBKPVjHUc4Dr-uugiqwVtWl6Dce1eI\"}",
+      "code": "ok",
+      "today": "sync_transfer_invalid",
+      "note": "A connection's upload under a claim: claim is the last property, as an encoder writes it.",
+      "record_hex": "00000170017b226b696e64223a227472616e736665725f7374617274222c2276657273696f6e223a312c22706f6c6963795f67656e65726174696f6e223a312c22756e6974223a7b226b696e64223a22646f63756d656e74222c22776f726b73706163655f6964223a2231313131313131312d313131312d343131312d383131312d313131313131313131313131222c22646f63756d656e745f6964223a2232323232323232322d323232322d343232322d383232322d323232323232323232323232227d2c2262617463685f6964223a5b302c312c322c332c342c352c362c375d2c22746f74616c5f6c656e677468223a362c22667261676d656e745f636f756e74223a312c22736861323536223a227676562d785f55366255432d746b436e674b5935794476436d7369706757386678735847334e6b38527945222c22636c61696d223a224a7a6f6d6849346659744868426d424b50566a4855633444722d7575676971775674576c36446365316549227d"
+    },
+    {
+      "id": "C04",
+      "kind": "control",
+      "receiver": "worker_device_session",
+      "json": "{\"kind\":\"transfer_start\",\"version\":1,\"policy_generation\":1,\"unit\":{\"kind\":\"document\",\"workspace_id\":\"11111111-1111-4111-8111-111111111111\",\"document_id\":\"22222222-2222-4222-8222-222222222222\"},\"batch_id\":[0,1,2,3,4,5,6,7],\"total_length\":6,\"fragment_count\":1,\"sha256\":\"vvV-x_U6bUC-tkCngKY5yDvCmsipgW8fxsXG3Nk8RyE\",\"claim\":\"JzomhI4fYtHhBmBKPVjHUc4Dr-uugiqwVtWl6Dce1eI\"}",
+      "code": "sync_transfer_invalid",
+      "today": "sync_transfer_invalid",
+      "note": "A device session carrying a claim."
+    },
+    {
+      "id": "C05",
+      "kind": "control",
+      "receiver": "client",
+      "json": "{\"kind\":\"transfer_start\",\"version\":1,\"policy_generation\":1,\"unit\":{\"kind\":\"document\",\"workspace_id\":\"11111111-1111-4111-8111-111111111111\",\"document_id\":\"22222222-2222-4222-8222-222222222222\"},\"batch_id\":[0,1,2,3,4,5,6,7],\"total_length\":6,\"fragment_count\":1,\"sha256\":\"vvV-x_U6bUC-tkCngKY5yDvCmsipgW8fxsXG3Nk8RyE\",\"claim\":\"JzomhI4fYtHhBmBKPVjHUc4Dr-uugiqwVtWl6Dce1eI\"}",
+      "code": "sync_transfer_invalid",
+      "today": "sync_transfer_invalid",
+      "note": "A worker never sends a claim; a client refuses one on a download start."
+    },
+    {
+      "id": "C06",
+      "kind": "control",
+      "receiver": "worker_app_connection_session",
+      "json": "{\"kind\":\"transfer_start\",\"version\":1,\"policy_generation\":1,\"unit\":{\"kind\":\"document\",\"workspace_id\":\"11111111-1111-4111-8111-111111111111\",\"document_id\":\"22222222-2222-4222-8222-222222222222\"},\"batch_id\":[0,1,2,3,4,5,6,7],\"total_length\":6,\"fragment_count\":1,\"sha256\":\"vvV-x_U6bUC-tkCngKY5yDvCmsipgW8fxsXG3Nk8RyE\",\"claim\":null}",
+      "code": "sync_transfer_invalid",
+      "today": "sync_transfer_invalid",
+      "note": "Null is forbidden; absence is the only way to say none."
+    },
+    {
+      "id": "C07",
+      "kind": "control",
+      "receiver": "worker_app_connection_session",
+      "json": "{\"kind\":\"transfer_start\",\"version\":1,\"policy_generation\":1,\"unit\":{\"kind\":\"document\",\"workspace_id\":\"11111111-1111-4111-8111-111111111111\",\"document_id\":\"22222222-2222-4222-8222-222222222222\"},\"batch_id\":[0,1,2,3,4,5,6,7],\"total_length\":6,\"fragment_count\":1,\"sha256\":\"vvV-x_U6bUC-tkCngKY5yDvCmsipgW8fxsXG3Nk8RyE\",\"claim\":\"JzomhI4fYtHhBmBKPVjHUc4Dr-uugiqwVtWl6Dce1Q\"}",
+      "code": "sync_transfer_invalid",
+      "today": "sync_transfer_invalid",
+      "note": "31 bytes."
+    },
+    {
+      "id": "C08",
+      "kind": "control",
+      "receiver": "worker_app_connection_session",
+      "json": "{\"kind\":\"transfer_start\",\"version\":1,\"policy_generation\":1,\"unit\":{\"kind\":\"document\",\"workspace_id\":\"11111111-1111-4111-8111-111111111111\",\"document_id\":\"22222222-2222-4222-8222-222222222222\"},\"batch_id\":[0,1,2,3,4,5,6,7],\"total_length\":6,\"fragment_count\":1,\"sha256\":\"vvV-x_U6bUC-tkCngKY5yDvCmsipgW8fxsXG3Nk8RyE\",\"claim\":\"JzomhI4fYtHhBmBKPVjHUc4Dr-uugiqwVtWl6Dce1eIh\"}",
+      "code": "sync_transfer_invalid",
+      "today": "sync_transfer_invalid",
+      "note": "33 bytes."
+    },
+    {
+      "id": "C09",
+      "kind": "control",
+      "receiver": "worker_app_connection_session",
+      "json": "{\"kind\":\"transfer_start\",\"version\":1,\"policy_generation\":1,\"unit\":{\"kind\":\"document\",\"workspace_id\":\"11111111-1111-4111-8111-111111111111\",\"document_id\":\"22222222-2222-4222-8222-222222222222\"},\"batch_id\":[0,1,2,3,4,5,6,7],\"total_length\":6,\"fragment_count\":1,\"sha256\":\"vvV-x_U6bUC-tkCngKY5yDvCmsipgW8fxsXG3Nk8RyE\",\"claim\":\"JzomhI4fYtHhBmBKPVjHUc4Dr-uugiqwVtWl6Dce1eI=\"}",
+      "code": "sync_transfer_invalid",
+      "today": "sync_transfer_invalid",
+      "note": "Padded base64url."
+    },
+    {
+      "id": "C10",
+      "kind": "control",
+      "receiver": "worker_app_connection_session",
+      "json": "{\"kind\":\"transfer_start\",\"version\":1,\"policy_generation\":1,\"unit\":{\"kind\":\"document\",\"workspace_id\":\"11111111-1111-4111-8111-111111111111\",\"document_id\":\"22222222-2222-4222-8222-222222222222\"},\"batch_id\":[0,1,2,3,4,5,6,7],\"total_length\":6,\"fragment_count\":1,\"sha256\":\"vvV-x_U6bUC-tkCngKY5yDvCmsipgW8fxsXG3Nk8RyE\",\"claim\":\"JzomhI4fYtHhBmBKPVjHUc4Dr-uugiqwVtWl6Dce1eJ\"}",
+      "code": "sync_transfer_invalid",
+      "today": "sync_transfer_invalid",
+      "note": "Noncanonical: the last character's unused bits are set."
+    },
+    {
+      "id": "C11",
+      "kind": "control",
+      "receiver": "worker_app_connection_session",
+      "json": "{\"kind\":\"transfer_start\",\"version\":1,\"policy_generation\":1,\"unit\":{\"kind\":\"document\",\"workspace_id\":\"11111111-1111-4111-8111-111111111111\",\"document_id\":\"22222222-2222-4222-8222-222222222222\"},\"batch_id\":[0,1,2,3,4,5,6,7],\"total_length\":6,\"fragment_count\":1,\"sha256\":\"vvV-x_U6bUC-tkCngKY5yDvCmsipgW8fxsXG3Nk8RyE\",\"claim\":\"+//+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v4\"}",
+      "code": "sync_transfer_invalid",
+      "today": "sync_transfer_invalid",
+      "note": "The standard base64 alphabet, not base64url."
+    },
+    {
+      "id": "C12",
+      "kind": "control",
+      "receiver": "worker_app_connection_session",
+      "json": "{\"kind\":\"transfer_start\",\"version\":1,\"policy_generation\":1,\"unit\":{\"kind\":\"document\",\"workspace_id\":\"11111111-1111-4111-8111-111111111111\",\"document_id\":\"22222222-2222-4222-8222-222222222222\"},\"batch_id\":[0,1,2,3,4,5,6,7],\"total_length\":6,\"fragment_count\":1,\"sha256\":\"vvV-x_U6bUC-tkCngKY5yDvCmsipgW8fxsXG3Nk8RyE\",\"claim\":\"JzomhI4fYtHhBmBKPVjHUc4Dr-uugiqwVtWl6Dce1eI\",\"claim\":\"JzomhI4fYtHhBmBKPVjHUc4Dr-uugiqwVtWl6Dce1eI\"}",
+      "code": "sync_transfer_invalid",
+      "today": "sync_transfer_invalid",
+      "note": "A duplicated claim, even with an equal value."
+    },
+    {
+      "id": "C13",
+      "kind": "control",
+      "receiver": "worker_app_connection_session",
+      "json": "{\"kind\":\"transfer_start\",\"version\":1,\"policy_generation\":1,\"unit\":{\"kind\":\"document\",\"workspace_id\":\"11111111-1111-4111-8111-111111111111\",\"document_id\":\"22222222-2222-4222-8222-222222222222\"},\"batch_id\":[0,1,2,3,4,5,6,7],\"total_length\":6,\"fragment_count\":1,\"sha256\":\"vvV-x_U6bUC-tkCngKY5yDvCmsipgW8fxsXG3Nk8RyE\",\"claim\":[39,58,38,132,142,31,98,209,225,6,96,74,61,88,199,81,206,3,175,235,174,130,42,176,86,213,165,232,55,30,213,226]}",
+      "code": "sync_transfer_invalid",
+      "today": "sync_transfer_invalid",
+      "note": "An integer array is batch_id's spelling, not claim's."
+    },
+    {
+      "id": "C14",
+      "kind": "control",
+      "receiver": "worker_app_connection_session",
+      "json": "{\"kind\":\"transfer_start\",\"version\":1,\"policy_generation\":1,\"unit\":{\"kind\":\"document\",\"workspace_id\":\"11111111-1111-4111-8111-111111111111\",\"document_id\":\"22222222-2222-4222-8222-222222222222\"},\"batch_id\":[0,1,2,3,4,5,6,7],\"total_length\":6,\"fragment_count\":1,\"sha256\":\"vvV-x_U6bUC-tkCngKY5yDvCmsipgW8fxsXG3Nk8RyE\",\"claim\":\"\"}",
+      "code": "sync_transfer_invalid",
+      "today": "sync_transfer_invalid",
+      "note": "Empty."
+    },
+    {
+      "id": "C15",
+      "kind": "control",
+      "receiver": "worker_app_connection_session",
+      "json": "{\"kind\":\"transfer_start\",\"version\":1,\"policy_generation\":1,\"unit\":{\"kind\":\"document\",\"workspace_id\":\"11111111-1111-4111-8111-111111111111\",\"document_id\":\"22222222-2222-4222-8222-222222222222\"},\"batch_id\":[0,1,2,3,4,5,6,7],\"total_length\":6,\"fragment_count\":1,\"claim\":\"JzomhI4fYtHhBmBKPVjHUc4Dr-uugiqwVtWl6Dce1eI\",\"sha256\":\"vvV-x_U6bUC-tkCngKY5yDvCmsipgW8fxsXG3Nk8RyE\"}",
+      "code": "ok",
+      "today": "sync_transfer_invalid",
+      "note": "Property order is not significant to a decoder."
+    },
+    {
+      "id": "C16",
+      "kind": "control",
+      "receiver": "worker_app_connection_session",
+      "json": "{\"kind\":\"transfer_start\",\"version\":1,\"policy_generation\":1,\"unit\":{\"kind\":\"identity\",\"profile_id\":\"11111111-1111-4111-8111-111111111111\"},\"batch_id\":[0,1,2,3,4,5,6,7],\"total_length\":6,\"fragment_count\":1,\"sha256\":\"vvV-x_U6bUC-tkCngKY5yDvCmsipgW8fxsXG3Nk8RyE\",\"claim\":\"JzomhI4fYtHhBmBKPVjHUc4Dr-uugiqwVtWl6Dce1eI\"}",
+      "code": "ok",
+      "today": "sync_transfer_invalid",
+      "note": "The decoder checks the session, not the unit kind; the worker refuses a connection's Identity upload by stage and direction."
+    },
+    {
+      "id": "C17",
+      "kind": "control",
+      "receiver": "worker_app_connection_session",
+      "json": "{\"kind\":\"transfer_decision\",\"version\":1,\"policy_generation\":1,\"unit\":{\"kind\":\"document\",\"workspace_id\":\"11111111-1111-4111-8111-111111111111\",\"document_id\":\"22222222-2222-4222-8222-222222222222\"},\"batch_id\":[0,1,2,3,4,5,6,7],\"sha256\":\"vvV-x_U6bUC-tkCngKY5yDvCmsipgW8fxsXG3Nk8RyE\",\"decision\":\"accept\",\"claim\":\"JzomhI4fYtHhBmBKPVjHUc4Dr-uugiqwVtWl6Dce1eI\"}",
+      "code": "sync_transfer_invalid",
+      "today": "sync_transfer_invalid",
+      "note": "A decision never carries a claim."
+    },
+    {
+      "id": "C18",
+      "kind": "control",
+      "receiver": "worker_app_connection_session",
+      "json": "{\"kind\":\"transfer_policy\",\"version\":1,\"policy_generation\":1,\"automatic_limit_bytes\":200000,\"claim\":\"JzomhI4fYtHhBmBKPVjHUc4Dr-uugiqwVtWl6Dce1eI\"}",
+      "code": "sync_transfer_invalid",
+      "today": "sync_transfer_invalid",
+      "note": "A policy never carries a claim."
+    },
+    {
+      "id": "C19",
+      "kind": "control",
+      "receiver": "worker_device_session",
+      "json": "{\"kind\":\"transfer_start\",\"version\":1,\"policy_generation\":1,\"unit\":{\"kind\":\"identity\",\"profile_id\":\"11111111-1111-4111-8111-111111111111\"},\"batch_id\":[0,1,2,3,4,5,6,7],\"total_length\":6,\"fragment_count\":1,\"sha256\":\"vvV-x_U6bUC-tkCngKY5yDvCmsipgW8fxsXG3Nk8RyE\"}",
+      "code": "ok",
+      "today": "ok",
+      "note": "Every unit arm of a device start is unchanged.",
+      "byte_identical_to": "T38"
+    },
+    {
+      "id": "C20",
+      "kind": "peer",
+      "receiver": "client",
+      "json": "{\"kind\":\"error\",\"code\":\"sync_unit_exists\"}",
+      "code": "sync_unit_exists",
+      "today": "handshake_malformed",
+      "note": "Sent only on a connection's session, for one of its uploads; the unit head did not move.",
+      "record_hex": "0000002b007b226b696e64223a226572726f72222c22636f6465223a2273796e635f756e69745f657869737473227d"
+    },
+    {
+      "id": "C21",
+      "kind": "peer",
+      "receiver": "client",
+      "json": "{\"kind\":\"error\",\"code\":\"sync_document_claimed\"}",
+      "code": "sync_document_claimed",
+      "today": "handshake_malformed",
+      "note": "Sent only on a connection's session, for one of its uploads; the unit head did not move.",
+      "record_hex": "00000030007b226b696e64223a226572726f72222c22636f6465223a2273796e635f646f63756d656e745f636c61696d6564227d"
+    }
+  ]
+}

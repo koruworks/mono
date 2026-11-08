@@ -191,6 +191,14 @@ impl Projections {
         Self::over(Connection::open_in_memory()?)
     }
 
+    /// The read model in this process's memory, under a name every reader of
+    /// it opens too: the projector's writer and the query ports' readers share
+    /// one database, as they share `projection.db` on disk, and no file is
+    /// written for it ([`koru_sqlite::open_memory`]).
+    pub fn in_named_memory(name: &koru_sqlite::MemoryName) -> Result<Self> {
+        Self::over(koru_sqlite::open_memory(name)?)
+    }
+
     fn over(db: Connection) -> Result<Self> {
         // WAL so a reader is never blocked by the writer, and `NORMAL` rather
         // than `FULL`: this is a rebuildable cache, and paying an fsync per

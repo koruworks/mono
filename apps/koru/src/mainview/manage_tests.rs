@@ -75,6 +75,10 @@ fn manage_is_one_tab_brought_forward_on_the_asked_page() {
     assert_eq!(v.tabs().len(), count, "no second Manage tab");
     assert_eq!(v.tabs().active(), at, "the existing one came forward");
     assert_eq!(manage_tabs(&v), 1);
+    assert!(v.apply(&w.ws, crate::panes::Outcome::ManageCloud));
+    assert_eq!(active_manage(&mut v).page(), Some(Page::Cloud));
+    assert_eq!(v.tabs().active(), at);
+    assert_eq!(manage_tabs(&v), 1, "Cloud reuses the existing Manage tab");
     assert!(v.open_manage(Page::Profile(personal.id)));
     assert_eq!(
         active_manage(&mut v).page(),

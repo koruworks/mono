@@ -698,6 +698,12 @@ pub enum Key {
     SettingsGlobal,
     SettingsTerminal,
     SettingsStartOnLogin,
+    /// Linux only: the switch that adds Koru's entry to the desktop's app menu.
+    SettingsShowInAppMenu,
+    SettingsShowInAppMenuHint,
+    WelcomeAppMenu,
+    AppMenuAddFailed,
+    AppMenuRemoveFailed,
     SettingsZoom,
     /// Why the rows are dimmed and refusing edits: the authority is not
     /// answering, so what is on screen is the last thing it said.
@@ -740,7 +746,8 @@ pub enum Key {
     /// Takes the number of terminals. Empty is a different sentence, below.
     WorkspacesTerminalsWillClose,
     WorkspacesNoTerminals,
-    /// Not vouched for: this window may not remove a workspace at all.
+    /// Not vouched for: the Agent could not confirm this window is the Koru
+    /// app beside it (ADR-267), so it may not remove a workspace at all.
     WorkspacesNotPermitted,
     /// The Store refuses while the workspace's documents are open, and this
     /// says what would release it. Surfaced rather than worked around — see
@@ -2922,13 +2929,30 @@ pub enum Key {
     PageKeepDeleted,
     /// Its *Recover* action.
     PageRecover,
+    PageShowInline,
+    PageHideInline,
+    PageAttachFile,
+    PageLinkExisting,
+    PageDetach,
+    // ---- removing a Profile from this device (Profiles page notices)
+    /// Done: the Profile is gone from this device, and the hosted listing is
+    /// what brings it back.
+    ProfilesRemovedFromDevice,
+    /// The Workspace cascade stopped part-way. Retrying continues from where
+    /// it got to, which is why this one says to try again.
+    ProfilesRemoveCascadeIncomplete,
+    /// The cascade was refused before it touched anything: this window holds
+    /// no first-party grant (ADR-267). Retrying cannot change that, so unlike
+    /// the sentence above it does not suggest it. Worded as
+    /// `WorkspacesNotPermitted` is, because it is the same refusal.
+    ProfilesRemoveNotPermitted,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2039] = [
+    pub const ALL: [Key; 2052] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -3464,6 +3488,11 @@ impl Key {
         Key::SettingsGlobal,
         Key::SettingsTerminal,
         Key::SettingsStartOnLogin,
+        Key::SettingsShowInAppMenu,
+        Key::SettingsShowInAppMenuHint,
+        Key::WelcomeAppMenu,
+        Key::AppMenuAddFailed,
+        Key::AppMenuRemoveFailed,
         Key::SettingsZoom,
         Key::SettingsUnavailableReadOnly,
         Key::SettingsNotSaved,
@@ -4968,6 +4997,14 @@ impl Key {
         Key::PageDeletedElsewhere,
         Key::PageKeepDeleted,
         Key::PageRecover,
+        Key::PageShowInline,
+        Key::PageHideInline,
+        Key::PageAttachFile,
+        Key::PageLinkExisting,
+        Key::PageDetach,
+        Key::ProfilesRemovedFromDevice,
+        Key::ProfilesRemoveCascadeIncomplete,
+        Key::ProfilesRemoveNotPermitted,
     ];
 }
 
@@ -9676,6 +9713,11 @@ pub const ROWS: &[Row] = &[
     Row { key: Key::SettingsGlobal, en: "Global", es: "General", pt_br: "Geral", de: "Allgemein", fr: "Général", ar: "عام", zh_hans: "通用", ja: "全般" },
     Row { key: Key::SettingsTerminal, en: "Terminal", es: "Terminal", pt_br: "Terminal", de: "Terminal", fr: "Terminal", ar: "الطرفية", zh_hans: "终端", ja: "ターミナル" },
     Row { key: Key::SettingsStartOnLogin, en: "Start Koru when you log in", es: "Iniciar Koru al iniciar sesión", pt_br: "Iniciar o Koru ao entrar", de: "Koru bei der Anmeldung starten", fr: "Lancer Koru à l'ouverture de session", ar: "تشغيل Koru عند تسجيل الدخول", zh_hans: "登录时启动 Koru", ja: "ログイン時に Koru を起動" },
+    Row { key: Key::SettingsShowInAppMenu, en: "Show Koru in the app menu", es: "Mostrar Koru en el menú de aplicaciones", pt_br: "Mostrar o Koru no menu de aplicativos", de: "Koru im Anwendungsmenü anzeigen", fr: "Afficher Koru dans le menu des applications", ar: "إظهار Koru في قائمة التطبيقات", zh_hans: "在应用菜单中显示 Koru", ja: "アプリメニューに Koru を表示" },
+    Row { key: Key::SettingsShowInAppMenuHint, en: "Adds Koru to your desktop's app list, with its own icon in the dock.", es: "Añade Koru a la lista de aplicaciones del escritorio, con su propio icono en el dock.", pt_br: "Adiciona o Koru à lista de aplicativos da área de trabalho, com seu próprio ícone no dock.", de: "Fügt Koru der App-Liste Ihres Desktops hinzu, mit eigenem Symbol im Dock.", fr: "Ajoute Koru à la liste des applications de votre bureau, avec sa propre icône dans le dock.", ar: "يضيف Koru إلى قائمة التطبيقات في سطح المكتب، مع أيقونته الخاصة في شريط التطبيقات.", zh_hans: "将 Koru 添加到桌面的应用列表，并在程序坞中显示其图标。", ja: "デスクトップのアプリ一覧に Koru を追加し、ドックに専用のアイコンを表示します。" },
+    Row { key: Key::WelcomeAppMenu, en: "Add Koru to your app menu", es: "Añadir Koru al menú de aplicaciones", pt_br: "Adicionar o Koru ao menu de aplicativos", de: "Koru zum Anwendungsmenü hinzufügen", fr: "Ajouter Koru au menu des applications", ar: "إضافة Koru إلى قائمة التطبيقات", zh_hans: "将 Koru 添加到应用菜单", ja: "Koru をアプリメニューに追加" },
+    Row { key: Key::AppMenuAddFailed, en: "Koru could not add itself to the app menu.", es: "No se pudo añadir Koru al menú de aplicaciones.", pt_br: "Não foi possível adicionar o Koru ao menu de aplicativos.", de: "Koru konnte nicht zum Anwendungsmenü hinzugefügt werden.", fr: "Impossible d’ajouter Koru au menu des applications.", ar: "تعذرت إضافة Koru إلى قائمة التطبيقات.", zh_hans: "无法将 Koru 添加到应用菜单。", ja: "Koru をアプリメニューに追加できませんでした。" },
+    Row { key: Key::AppMenuRemoveFailed, en: "Koru could not remove itself from the app menu.", es: "No se pudo quitar Koru del menú de aplicaciones.", pt_br: "Não foi possível remover o Koru do menu de aplicativos.", de: "Koru konnte nicht aus dem Anwendungsmenü entfernt werden.", fr: "Impossible de retirer Koru du menu des applications.", ar: "تعذرت إزالة Koru من قائمة التطبيقات.", zh_hans: "无法从应用菜单中移除 Koru。", ja: "Koru をアプリメニューから削除できませんでした。" },
     Row { key: Key::SettingsZoom, en: "Zoom", es: "Zoom", pt_br: "Zoom", de: "Zoom", fr: "Zoom", ar: "التكبير", zh_hans: "缩放", ja: "ズーム" },
     Row { key: Key::SettingsUnavailableReadOnly, en: "Settings are read-only: the Koru service is not answering. These are the last values it confirmed.", es: "Los ajustes son de solo lectura: el servicio de Koru no responde. Estos son los últimos valores confirmados.", pt_br: "As configurações estão somente para leitura: o serviço do Koru não está respondendo. Estes são os últimos valores confirmados.", de: "Einstellungen sind schreibgeschützt: Der Koru-Dienst antwortet nicht. Dies sind die zuletzt bestätigten Werte.", fr: "Les réglages sont en lecture seule : le service Koru ne répond pas. Voici les dernières valeurs confirmées.", ar: "الإعدادات للقراءة فقط: خدمة Koru لا تستجيب. هذه آخر القيم المؤكدة.", zh_hans: "设置为只读：Koru 服务未响应。以下是它最后确认的值。", ja: "設定は読み取り専用です。Koru サービスが応答していません。以下は最後に確認された値です。" },
     Row { key: Key::SettingsNotSaved, en: "That change was not saved. The setting has been put back to the stored value.", es: "Ese cambio no se guardó. El ajuste ha vuelto al valor almacenado.", pt_br: "Essa alteração não foi salva. A configuração voltou ao valor armazenado.", de: "Diese Änderung wurde nicht gespeichert. Die Einstellung steht wieder auf dem gespeicherten Wert.", fr: "Cette modification n'a pas été enregistrée. Le réglage a été rétabli à la valeur stockée.", ar: "لم يُحفَظ هذا التغيير. أُعيد الإعداد إلى القيمة المخزَّنة.", zh_hans: "该更改未保存。设置已恢复为已存储的值。", ja: "この変更は保存されませんでした。設定は保存済みの値に戻されました。" },
@@ -9695,13 +9737,13 @@ pub const ROWS: &[Row] = &[
     Row { key: Key::WorkspacesDeleteBody, en: "It stays in the trash and can be restored from there. Nothing is erased.", es: "Permanecerá en la papelera y podrás restaurarlo desde allí. No se borra nada.", pt_br: "Ele fica na lixeira e pode ser restaurado de lá. Nada é apagado.", de: "Er bleibt im Papierkorb und lässt sich von dort wiederherstellen. Nichts wird gelöscht.", fr: "Il reste dans la corbeille et peut être restauré de là. Rien n'est effacé.", ar: "ستبقى في المهملات ويمكن استعادتها من هناك. لا يُمحى شيء.", zh_hans: "它会留在回收站，可从那里还原。不会抹除任何内容。", ja: "ゴミ箱に残り、そこから復元できます。消去はされません。" },
     Row { key: Key::WorkspacesTerminalsWillClose, en: "{} open terminal(s) will be closed first.", es: "Primero se cerrarán {} terminal(es) abiertas.", pt_br: "Primeiro serão fechados {} terminal(is) aberto(s).", de: "Zuerst werden {} geöffnete Terminal(s) geschlossen.", fr: "{} terminal(aux) ouvert(s) seront fermés d'abord.", ar: "ستُغلق أولاً {} طرفية مفتوحة.", zh_hans: "将先关闭 {} 个打开的终端。", ja: "先に開いているターミナル {} 個を閉じます。" },
     Row { key: Key::WorkspacesNoTerminals, en: "No terminals are open in it.", es: "No hay terminales abiertas en él.", pt_br: "Nenhum terminal está aberto nele.", de: "Darin ist kein Terminal geöffnet.", fr: "Aucun terminal n'y est ouvert.", ar: "لا توجد طرفيات مفتوحة فيها.", zh_hans: "其中没有打开的终端。", ja: "開いているターミナルはありません。" },
-    Row { key: Key::WorkspacesNotPermitted, en: "This window was not started by Koru, so it cannot archive or remove workspaces.", es: "Koru no inició esta ventana, por lo que no puede archivar ni eliminar espacios de trabajo.", pt_br: "Esta janela não foi iniciada pelo Koru, portanto não pode arquivar nem remover espaços de trabalho.", de: "Dieses Fenster wurde nicht von Koru gestartet und kann daher keine Arbeitsbereiche archivieren oder entfernen.", fr: "Cette fenêtre n'a pas été lancée par Koru : elle ne peut ni archiver ni supprimer d'espace de travail.", ar: "لم يشغّل Koru هذه النافذة، لذا لا يمكنها أرشفة مساحات العمل أو إزالتها.", zh_hans: "此窗口不是由 Koru 启动的，因此无法归档或删除工作区。", ja: "このウィンドウは Koru が起動したものではないため、ワークスペースをアーカイブや削除できません。" },
+    Row { key: Key::WorkspacesNotPermitted, en: "Koru could not confirm that this window is part of this Koru installation, so it cannot archive or remove workspaces.", es: "Koru no pudo confirmar que esta ventana forma parte de esta instalación de Koru, por lo que no puede archivar ni eliminar espacios de trabajo.", pt_br: "O Koru não conseguiu confirmar que esta janela faz parte desta instalação do Koru, portanto ela não pode arquivar nem remover espaços de trabalho.", de: "Koru konnte nicht bestätigen, dass dieses Fenster zu dieser Koru-Installation gehört. Daher kann es keine Arbeitsbereiche archivieren oder entfernen.", fr: "Koru n'a pas pu confirmer que cette fenêtre fait partie de cette installation de Koru : elle ne peut ni archiver ni supprimer d'espace de travail.", ar: "تعذّر على Koru التأكد من أن هذه النافذة جزء من تثبيت Koru هذا، لذا لا يمكنها أرشفة مساحات العمل أو إزالتها.", zh_hans: "Koru 无法确认此窗口属于此 Koru 安装，因此无法归档或删除工作区。", ja: "Koru はこのウィンドウがこのインストールの一部であることを確認できなかったため、ワークスペースをアーカイブや削除できません。" },
     Row { key: Key::WorkspacesDocumentsOpen, en: "This workspace still has open documents. Close them, then try again.", es: "Este espacio aún tiene documentos abiertos. Ciérralos y vuelve a intentarlo.", pt_br: "Este espaço ainda tem documentos abertos. Feche-os e tente novamente.", de: "In diesem Arbeitsbereich sind noch Dokumente geöffnet. Schließen Sie sie und versuchen Sie es erneut.", fr: "Cet espace a encore des documents ouverts. Fermez-les, puis réessayez.", ar: "لا تزال هناك مستندات مفتوحة في مساحة العمل هذه. أغلقها ثم أعد المحاولة.", zh_hans: "该工作区仍有打开的文档。请先关闭它们，然后重试。", ja: "このワークスペースにはまだ開いているドキュメントがあります。閉じてからやり直してください。" },
     Row { key: Key::WorkspacesPartialFailure, en: "Its terminals were closed, but the change did not save. The workspace is where it was.", es: "Sus terminales se cerraron, pero el cambio no se guardó. El espacio sigue donde estaba.", pt_br: "Os terminais foram fechados, mas a alteração não foi salva. O espaço continua onde estava.", de: "Die Terminals wurden geschlossen, die Änderung wurde aber nicht gespeichert. Der Arbeitsbereich ist unverändert.", fr: "Ses terminaux ont été fermés, mais la modification n'a pas été enregistrée. L'espace est resté où il était.", ar: "أُغلقت طرفياتها، لكن التغيير لم يُحفظ. مساحة العمل كما كانت.", zh_hans: "它的终端已关闭，但更改未保存。工作区仍在原处。", ja: "ターミナルは閉じられましたが、変更は保存されませんでした。ワークスペースは元のままです。" },
     Row { key: Key::WorkspacesMoveNoProfiles, en: "There is no other profile to move it to.", es: "No hay otro perfil al que moverlo.", pt_br: "Não há outro perfil para onde movê-lo.", de: "Es gibt kein anderes Profil, in das er verschoben werden könnte.", fr: "Il n'y a aucun autre profil vers lequel le déplacer.", ar: "لا يوجد ملف تعريف آخر لنقلها إليه.", zh_hans: "没有其他配置文件可供移动。", ja: "移動先となる別のプロファイルがありません。" },
     Row { key: Key::WorkspacesMoveTitle, en: "Move {} to {}?", es: "¿Mover {} a {}?", pt_br: "Mover {} para {}?", de: "{} nach {} verschieben?", fr: "Déplacer {} vers {} ?", ar: "نقل {} إلى {}؟", zh_hans: "将 {} 移动到 {}？", ja: "{} を {} に移しますか？" },
     Row { key: Key::WorkspacesMoveBody, en: "Its documents and its history are unchanged, and you can move it back.", es: "Sus documentos y su historial no cambian, y puedes devolverlo.", pt_br: "Seus documentos e seu histórico não mudam, e você pode movê-lo de volta.", de: "Seine Dokumente und sein Verlauf bleiben unverändert, und du kannst ihn zurück verschieben.", fr: "Ses documents et son historique ne changent pas, et vous pouvez le ramener.", ar: "لا تتغير مستنداتها ولا سجلّها، ويمكنك إعادتها.", zh_hans: "其中的文档和历史不会改变，你可以再移回来。", ja: "ドキュメントと履歴はそのままで、元に戻すこともできます。" },
-    Row { key: Key::WorkspacesMoveNotPermitted, en: "This window was not started by Koru, so it cannot move workspaces between profiles.", es: "Koru no inició esta ventana, así que no puede mover espacios entre perfiles.", pt_br: "Esta janela não foi iniciada pelo Koru, então não pode mover espaços entre perfis.", de: "Dieses Fenster wurde nicht von Koru gestartet und kann daher keine Arbeitsbereiche zwischen Profilen verschieben.", fr: "Cette fenêtre n'a pas été lancée par Koru : elle ne peut pas déplacer d'espaces entre profils.", ar: "لم يبدأ Koru هذه النافذة، لذا لا يمكنها نقل مساحات العمل بين ملفات التعريف.", zh_hans: "此窗口不是由 Koru 启动的，因此无法在配置文件之间移动工作区。", ja: "このウィンドウは Koru が起動したものではないため、ワークスペースをプロファイル間で移せません。" },
+    Row { key: Key::WorkspacesMoveNotPermitted, en: "Koru could not confirm that this window is part of this Koru installation, so it cannot move workspaces between profiles.", es: "Koru no pudo confirmar que esta ventana forma parte de esta instalación de Koru, así que no puede mover espacios entre perfiles.", pt_br: "O Koru não conseguiu confirmar que esta janela faz parte desta instalação do Koru, então ela não pode mover espaços entre perfis.", de: "Koru konnte nicht bestätigen, dass dieses Fenster zu dieser Koru-Installation gehört. Daher kann es keine Arbeitsbereiche zwischen Profilen verschieben.", fr: "Koru n'a pas pu confirmer que cette fenêtre fait partie de cette installation de Koru : elle ne peut pas déplacer d'espaces entre profils.", ar: "تعذّر على Koru التأكد من أن هذه النافذة جزء من تثبيت Koru هذا، لذا لا يمكنها نقل مساحات العمل بين ملفات التعريف.", zh_hans: "Koru 无法确认此窗口属于此 Koru 安装，因此无法在配置文件之间移动工作区。", ja: "Koru はこのウィンドウがこのインストールの一部であることを確認できなかったため、ワークスペースをプロファイル間で移せません。" },
     Row { key: Key::WorkspacesMoveNoSuchProfile, en: "That profile is no longer there. Choose another one.", es: "Ese perfil ya no está. Elige otro.", pt_br: "Esse perfil não existe mais. Escolha outro.", de: "Dieses Profil gibt es nicht mehr. Wähle ein anderes.", fr: "Ce profil n'existe plus. Choisissez-en un autre.", ar: "لم يعد ذلك الملف موجودًا. اختر ملفًا آخر.", zh_hans: "该配置文件已不存在。请另选一个。", ja: "そのプロファイルはもうありません。別のものを選んでください。" },
     Row { key: Key::WorkspacesMovePartialFailure, en: "Its terminals were closed, but it did not move. The workspace is where it was.", es: "Sus terminales se cerraron, pero no se movió. El espacio sigue donde estaba.", pt_br: "Os terminais foram fechados, mas ele não foi movido. O espaço continua onde estava.", de: "Die Terminals wurden geschlossen, verschoben wurde er aber nicht. Der Arbeitsbereich ist unverändert.", fr: "Ses terminaux ont été fermés, mais il n'a pas été déplacé. L'espace est resté où il était.", ar: "أُغلقت طرفياتها، لكنها لم تُنقل. مساحة العمل كما كانت.", zh_hans: "它的终端已关闭，但并未移动。工作区仍在原处。", ja: "ターミナルは閉じられましたが、移動はされませんでした。ワークスペースは元のままです。" },
     Row { key: Key::WorkspacesMoveProjectsPending, en: "It moved, but its terminal projects have not caught up yet. Move it again to repair them.", es: "Se movió, pero sus proyectos de terminal aún no se han puesto al día. Muévelo otra vez para repararlos.", pt_br: "Ele foi movido, mas seus projetos de terminal ainda não acompanharam. Mova-o de novo para repará-los.", de: "Er wurde verschoben, aber seine Terminal-Projekte sind noch nicht nachgezogen. Verschiebe ihn erneut, um sie zu reparieren.", fr: "Il a été déplacé, mais ses projets de terminal n'ont pas encore suivi. Déplacez-le à nouveau pour les réparer.", ar: "تم نقلها، لكن مشاريع الطرفية الخاصة بها لم تلحق بها بعد. انقلها مرة أخرى لإصلاحها.", zh_hans: "它已移动，但终端项目还没跟上。再移动一次即可修复。", ja: "移動は完了しましたが、ターミナルのプロジェクトがまだ追いついていません。もう一度移すと修復されます。" },
@@ -15950,5 +15992,43 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
         ar: "استرجاع",
         zh_hans: "恢复",
         ja: "復元",
+    },
+    Row { key: Key::PageShowInline, en: "Inline description", es: "Descripción en línea", pt_br: "Descrição em linha", de: "Inline-Beschreibung", fr: "Description intégrée", ar: "وصف مضمّن", zh_hans: "内联描述", ja: "インライン説明" },
+    Row { key: Key::PageHideInline, en: "Hide inline description", es: "Ocultar descripción en línea", pt_br: "Ocultar descrição em linha", de: "Inline-Beschreibung ausblenden", fr: "Masquer la description intégrée", ar: "إخفاء الوصف المضمّن", zh_hans: "隐藏内联描述", ja: "インライン説明を非表示" },
+    Row { key: Key::PageAttachFile, en: "Attachment…", es: "Adjunto…", pt_br: "Anexo…", de: "Anhang…", fr: "Pièce jointe…", ar: "مرفق…", zh_hans: "附件…", ja: "添付ファイル…" },
+    Row { key: Key::PageLinkExisting, en: "Add existing document or file…", es: "Añadir documento o archivo existente…", pt_br: "Adicionar documento ou arquivo existente…", de: "Vorhandenes Dokument oder vorhandene Datei hinzufügen…", fr: "Ajouter un document ou fichier existant…", ar: "إضافة مستند أو ملف موجود…", zh_hans: "添加现有文档或文件…", ja: "既存のドキュメントやファイルを追加…" },
+    Row { key: Key::PageDetach, en: "Remove attachment", es: "Quitar adjunto", pt_br: "Remover anexo", de: "Anhang entfernen", fr: "Retirer la pièce jointe", ar: "إزالة المرفق", zh_hans: "移除附件", ja: "添付を解除" },
+    Row {
+        key: Key::ProfilesRemovedFromDevice,
+        en: "Profile removed from this device. Its hosted recovery listing remains available after sign-in.",
+        es: "Perfil eliminado de este dispositivo. Su registro de recuperación alojado sigue disponible después de iniciar sesión.",
+        pt_br: "Perfil removido deste dispositivo. O registro de recuperação hospedado continua disponível depois de entrar.",
+        de: "Profil von diesem Gerät entfernt. Sein gehosteter Wiederherstellungseintrag bleibt nach der Anmeldung verfügbar.",
+        fr: "Profil supprimé de cet appareil. Sa fiche de récupération hébergée reste disponible après connexion.",
+        ar: "تمت إزالة الملف الشخصي من هذا الجهاز. يظل سجل الاسترداد المستضاف الخاص به متاحًا بعد تسجيل الدخول.",
+        zh_hans: "已从此设备移除配置。登录后仍可使用其托管的恢复记录。",
+        ja: "このデバイスからプロフィールを削除しました。ホストされた復元用の一覧は、サインイン後も引き続き利用できます。",
+    },
+    Row {
+        key: Key::ProfilesRemoveCascadeIncomplete,
+        en: "Some Workspaces may already be in Trash. The Profile remains on this device. Try again to continue from the current Store state.",
+        es: "Es posible que algunos espacios de trabajo ya estén en la Papelera. El perfil sigue en este dispositivo. Vuelve a intentarlo para continuar desde el estado actual del almacén.",
+        pt_br: "Alguns espaços de trabalho podem já estar na Lixeira. O perfil continua neste dispositivo. Tente novamente para continuar a partir do estado atual do armazenamento.",
+        de: "Einige Arbeitsbereiche befinden sich möglicherweise bereits im Papierkorb. Das Profil bleibt auf diesem Gerät. Versuche es erneut, um vom aktuellen Stand des Speichers aus fortzufahren.",
+        fr: "Certains espaces de travail sont peut-être déjà dans la corbeille. Le profil reste sur cet appareil. Réessayez pour reprendre à partir de l'état actuel du stockage.",
+        ar: "قد تكون بعض مساحات العمل في سلة المهملات بالفعل. يظل الملف الشخصي على هذا الجهاز. أعد المحاولة للمتابعة من الحالة الحالية للمخزن.",
+        zh_hans: "部分工作区可能已在回收站中。该配置仍保留在此设备上。请重试，以便从存储的当前状态继续。",
+        ja: "一部のワークスペースはすでにゴミ箱に移動している可能性があります。プロフィールはこのデバイスに残っています。もう一度試すと、ストアの現在の状態から続行します。",
+    },
+    Row {
+        key: Key::ProfilesRemoveNotPermitted,
+        en: "Koru could not confirm that this window is part of this Koru installation, so it cannot remove this Profile's Workspaces. Nothing was deleted, and the Profile remains on this device.",
+        es: "Koru no pudo confirmar que esta ventana forma parte de esta instalación de Koru, por lo que no puede eliminar los espacios de trabajo de este perfil. No se eliminó nada y el perfil sigue en este dispositivo.",
+        pt_br: "O Koru não conseguiu confirmar que esta janela faz parte desta instalação do Koru, portanto ela não pode remover os espaços de trabalho deste perfil. Nada foi excluído, e o perfil continua neste dispositivo.",
+        de: "Koru konnte nicht bestätigen, dass dieses Fenster zu dieser Koru-Installation gehört. Daher kann es die Arbeitsbereiche dieses Profils nicht entfernen. Es wurde nichts gelöscht, und das Profil bleibt auf diesem Gerät.",
+        fr: "Koru n'a pas pu confirmer que cette fenêtre fait partie de cette installation de Koru : elle ne peut pas supprimer les espaces de travail de ce profil. Rien n'a été supprimé et le profil reste sur cet appareil.",
+        ar: "تعذّر على Koru التأكد من أن هذه النافذة جزء من تثبيت Koru هذا، لذا لا يمكنها إزالة مساحات العمل الخاصة بهذا الملف الشخصي. لم يُحذف أي شيء، ويظل الملف الشخصي على هذا الجهاز.",
+        zh_hans: "Koru 无法确认此窗口属于此 Koru 安装，因此无法删除此配置的工作区。没有删除任何内容，该配置仍保留在此设备上。",
+        ja: "Koru はこのウィンドウがこのインストールの一部であることを確認できなかったため、このプロフィールのワークスペースを削除できません。何も削除されておらず、プロフィールはこのデバイスに残っています。",
     },
 ];

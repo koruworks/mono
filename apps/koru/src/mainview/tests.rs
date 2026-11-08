@@ -7961,12 +7961,9 @@ fn search_modal_keeps_a_margin_in_a_small_window() {
     assert_eq!(bounds, Rect::new(16.0, 16.0, 468.0, 268.0));
 }
 
-/// **What the typed text could become** leads the bar: *New task "…"* and
-/// *New document "…"*. Enter on the task row queues the undated, unlisted
-/// task the model files in Later and closes the bar; the document row asks
-/// the shell for a document of that name, where the `+` menu's lands.
+/// Search text and result navigation never create a task or document.
 #[test]
-fn the_command_bar_offers_new_task_and_new_document_from_the_typed_text() {
+fn search_with_no_results_does_not_create_from_the_typed_text() {
     use winit::keyboard::{Key, ModifiersState, NamedKey};
     let (mut view, mut workspace) = container();
     assert!(view.open_search());
@@ -7982,8 +7979,7 @@ fn the_command_bar_offers_new_task_and_new_document_from_the_typed_text() {
                 ModifiersState::empty(),
             );
         }
-        // Up from the (empty) hits: the last CREATE row, New document; Up
-        // again: New task.
+        // The old creation shortcuts were reachable by moving above the hits.
         View::key(
             search,
             &mut workspace.ws,
@@ -8008,76 +8004,17 @@ fn the_command_bar_offers_new_task_and_new_document_from_the_typed_text() {
     }
     view.service_search_outputs();
     assert!(
-        view.search.is_none(),
-        "a CREATE row is a destination: the bar closes"
+        view.search.is_some(),
+        "Enter without a result leaves search open"
     );
     let commands = view.take_wants_task_commands();
-    let created = commands.iter().find_map(|c| match c {
-        koru_workspace_host::tasks::TaskCommand::Create {
-            title,
-            due,
-            list,
-            priority,
-            ..
-        } => Some((
-            title.clone(),
-            due.is_none(),
-            list.is_none(),
-            priority.is_none(),
-        )),
-        _ => None,
-    });
-    assert_eq!(
-        created,
-        Some(("fix login".to_owned(), true, true, true)),
-        "an undated, unlisted task of the typed text"
-    );
-
-    // The document row: the shell is asked for a document of that name.
-    assert!(view.open_search());
-    {
-        let search = view.search.as_mut().expect("open");
-        // The bar keeps its text across a reopen; clear it the way a person
-        // would before typing the next thing.
-        for _ in 0.."fix login".len() {
-            View::key(
-                search,
-                &mut workspace.ws,
-                &Key::Named(NamedKey::Backspace),
-                None,
-                ModifiersState::empty(),
-            );
-        }
-        for ch in "notes".chars() {
-            let s = ch.to_string();
-            View::key(
-                search,
-                &mut workspace.ws,
-                &Key::Character(s.clone().into()),
-                Some(&s),
-                ModifiersState::empty(),
-            );
-        }
-        View::key(
-            search,
-            &mut workspace.ws,
-            &Key::Named(NamedKey::ArrowUp),
-            None,
-            ModifiersState::empty(),
-        );
-        View::key(
-            search,
-            &mut workspace.ws,
-            &Key::Named(NamedKey::Enter),
-            None,
-            ModifiersState::empty(),
-        );
-    }
-    view.service_search_outputs();
-    assert!(view.search.is_none());
+    assert!(!commands.iter().any(|command| matches!(
+        command,
+        koru_workspace_host::tasks::TaskCommand::Create { .. }
+    )));
     let asked = std::iter::from_fn(|| View::take_pane_request(&mut view))
-        .any(|r| matches!(r, koru_workspace_host::PaneRequest::CreateDocument(t) if t == "notes"));
-    assert!(asked, "New document \"notes\" went to the shell");
+        .any(|r| matches!(r, koru_workspace_host::PaneRequest::CreateDocument(_)));
+    assert!(!asked, "search never asks the shell to create a document");
 }
 
 #[test]
@@ -14827,4 +14764,56 @@ fn the_lane_plus_menu_leaves_out_the_inline_description() {
         3,
         "the heading's three"
     );
+}
+
+#[test]
+fn foreign_file_attachment_allows_reads_and_detach_but_rejects_mutation() {
+    let (mut v, _w) = on_tasks();
+    let file = koru_core::DocumentId::new();
+    let page = koru_core::ids::PageKey::Bucket(koru_core::tasks::Bucket::Today);
+    v.entity_file_kinds.insert(file, true);
+    let items = context_menu::page_attachment_items(v.local_attachment_note(file));
+    assert_eq!(
+        items,
+        vec![
+            MenuAction::OpenFileInApp,
+            MenuAction::SaveFileAs,
+            MenuAction::Divider,
+            MenuAction::DetachFromPage
+        ]
+    );
+    // Dispatch must also reject stale/forged mutation actions, not just hide them.
+    for action in [
+        MenuAction::Rename,
+        MenuAction::MoveToTrash,
+        MenuAction::AddNote,
+        MenuAction::OpenNote,
+    ] {
+        assert!(!v.run_menu_action_for_test(MenuSubject::PageAttachment { page, file }, action));
+    }
+    let _ = drain_pane_requests(&mut v);
+    assert!(v.run_menu_action_for_test(
+        MenuSubject::PageAttachment { page, file },
+        MenuAction::OpenFileInApp
+    ));
+    assert!(
+        matches!(View::take_pane_request(&mut v), Some(koru_workspace_host::PaneRequest::OpenFile(id)) if id == file)
+    );
+    assert!(v.run_menu_action_for_test(
+        MenuSubject::PageAttachment { page, file },
+        MenuAction::SaveFileAs
+    ));
+    assert!(
+        matches!(View::take_pane_request(&mut v), Some(koru_workspace_host::PaneRequest::SaveFile(id)) if id == file)
+    );
+    assert!(v.run_menu_action_for_test(
+        MenuSubject::PageAttachment { page, file },
+        MenuAction::DetachFromPage
+    ));
+    assert!(View::take_wants_list_edits(&mut v).iter().any(|edit| matches!(edit,
+        koru_workspace_host::tasks::ListEdit::Detach { page: p, file: f } if *p == page && *f == file)));
+    let local = context_menu::page_attachment_items(Some(false));
+    assert!(local.contains(&MenuAction::Rename));
+    assert!(local.contains(&MenuAction::MoveToTrash));
+    assert!(local.contains(&MenuAction::AddNote));
 }

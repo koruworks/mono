@@ -40,6 +40,19 @@ class AccountPresentationTest {
     private fun result(kind: String, generation: Long, sequence: Long) = MobileAccountResult.newBuilder()
         .setRequester(2).setGeneration(generation).setSequence(sequence).setKind(kind).build()
 
+    @Test fun emailSignInIsNotOfferedWhileGoogleAndAppleAre() = runTest {
+        for (offered in listOf(AccountIntent.SignIn, AccountIntent.SignInWithApple)) {
+            val port = Port()
+            port.presentation.observe(status("signed_out"), emptyList())
+            assertTrue(port.presentation.state.value.canSignIn)
+            port.presentation.act(AccountIntent.SignInWithEmail)
+            assertTrue(port.calls.isEmpty())
+            assertNull(port.presentation.state.value.pending)
+            port.presentation.act(offered)
+            assertEquals(offered, port.calls.single().first)
+        }
+    }
+
     @Test fun missingConfigurationLeavesOfflineEntryAndDoesNotSubmit() = runTest {
         val port = Port()
         port.presentation.observe(AndroidAccountStatus(adapterFailure = "account_configuration_missing"), emptyList())

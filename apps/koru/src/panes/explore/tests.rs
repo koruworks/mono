@@ -1689,9 +1689,8 @@ fn the_arrows_walk_the_profiles_and_the_foot() {
 }
 
 /// **The foot's three buttons** (the review's artboard): the sync state's
-/// words lead to Settings — or, with no cloud set up, to the subscription
-/// (the review's note: the option re-enabled); the devices open the Manage tab
-/// on *Linked devices*; the `+` creates.
+/// words lead to Koru Cloud, including when Cloud is not set up; the devices
+/// open the Manage tab on *Linked devices*; the `+` creates.
 #[test]
 fn the_foot_offers_the_cloud_the_devices_and_a_new_profile() {
     let (mut v, profiles, _) = with_context(0);
@@ -1705,8 +1704,8 @@ fn the_foot_offers_the_cloud_the_devices_and_a_new_profile() {
     let (x, y) = button(&v, HeadButton::Status);
     assert_eq!(
         v.mouse_down(a, VIEW, x, y, false),
-        Outcome::SubscribeCloud,
-        "nothing set up: the words are the offer"
+        Outcome::ManageCloud,
+        "nothing set up: open Koru Cloud for setup and subscription"
     );
     assert!(!v.popover_open());
     v.advance_popover(Instant::now() + Duration::from_secs(1));
@@ -1715,8 +1714,8 @@ fn the_foot_offers_the_cloud_the_devices_and_a_new_profile() {
     let (x, y) = button(&v, HeadButton::Status);
     assert_eq!(
         v.mouse_down(a, VIEW, x, y, false),
-        Outcome::OpenSettings,
-        "set up: the words lead to Settings"
+        Outcome::ManageCloud,
+        "set up: open Koru Cloud for sync status"
     );
     v.advance_popover(Instant::now() + Duration::from_secs(1));
     v.toggle_profile_popover();
@@ -3607,6 +3606,35 @@ fn a_documents_rows_slot_folds_it_and_its_plus_asks_for_a_child() {
     let mut file = row.clone();
     file.kind = Kind::File;
     assert_eq!(v.row_parts(&file, r).plus.w, 0.0);
+}
+
+#[test]
+fn document_priority_sits_between_icon_and_title_and_clear_reclaims_space() {
+    let mut view = with_rows(3);
+    let (index, band) = view.row_rects(area())[0];
+    let row = view.rows[index].clone();
+    let plain = view.row_parts(&row, band);
+    view.set_document_appearance(
+        row.node,
+        DocumentAppearance {
+            color: Some("purple".into()),
+            priority: Some(koru_core::attributes::Priority::Urgent),
+        },
+    );
+    let flagged = view.row_parts(&row, band);
+    assert!(flagged.icon.x + flagged.icon.w <= flagged.priority.x);
+    assert!(flagged.priority.x + flagged.priority.w < flagged.label.x);
+    assert!(flagged.label.x + flagged.label.w <= flagged.plus.x);
+    assert_eq!(flagged.dots, plain.dots);
+    assert!(flagged.label.w < plain.label.w);
+    assert_eq!(
+        view.document_appearance(&row).unwrap().color.as_deref(),
+        Some("purple")
+    );
+    view.set_document_appearance(row.node, DocumentAppearance::default());
+    let cleared = view.row_parts(&row, band);
+    assert_eq!(cleared.priority.w, 0.0);
+    assert_eq!(cleared.label, plain.label);
 }
 
 /// **The reflow guard.** The label's width must not depend on whether the

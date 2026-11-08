@@ -1,0 +1,45 @@
+title = "Delete workspaces from any window, and agents that start wherever Koru does"
+
+summary = [
+  "Archive, delete and move workspaces from any Koru window, however you opened it: Finder, the Dock, the Start menu, a taskbar pin or the tray.",
+  "A Koru opened from Finder or the Dock finds your coding agents, and Codex releases newer than the last one Koru reviewed are accepted.",
+]
+
+body = """
+## Workspaces and Profiles
+
+**Every window can delete.** Archive, Delete and moving a workspace to
+another Profile used to work only in a window Koru itself had started, so
+a window opened from Finder, the Dock, the Start menu, a taskbar pin or the
+tray, or one opened while Koru was already running, showed them greyed out.
+Every window of this Koru installation can now do them. Deleting a Profile
+that still has workspaces works the same way.
+
+**Clearer Profile messages.** If a Profile's workspaces can't be removed,
+the Profiles page says that nothing was deleted, instead of asking you to
+try again. A "Profile removed" notice no longer follows you to the next
+Profile you select, and the page no longer shows the raw code
+"hosted_cleanup_failed".
+
+## Agents
+
+**Codex keeps working after it updates.** Koru now accepts Codex 0.166.0
+and every newer release, like the other agents, so updating Codex no
+longer stops your Codex chats until Koru catches up.
+
+## Mac and Linux
+
+**Agents are found when Koru isn't started from a terminal.** A Koru opened
+from Finder, the Dock or a login item showed most coding agents as "Not
+installed", and Claude couldn't start. Koru now also looks where your
+login shell and the agents' installers put programs, such as
+/opt/homebrew/bin and ~/.local/bin, and passes the same search path to
+every program it starts, so an agent that needs Node finds it. An agent you
+install from Settings shows as ready as soon as the install finishes.
+
+## Windows
+
+**Agents installed with npm start.** An agent installed through npm after
+Koru started could fail because it couldn't find Node. The programs Koru
+starts now get the current system search path.
+"""

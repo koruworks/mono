@@ -2,9 +2,9 @@
 
 //! **Which product surfaces this build shows.**
 //!
-//! Koru's next release shows documents, files, terminal/shell sessions and
-//! agent sessions; seven larger surfaces are built, tested and *hidden* until
-//! they are switched on, and agents can be switched off:
+//! Koru shows documents, files and terminal/shell sessions. Cloud sync, agent
+//! sessions, Tasks and Koru AI are on by default; agent views, reminders,
+//! canvases and Socials are hidden until switched on. Each flag can be overridden:
 //!
 //! | Flag | Env var | Hides |
 //! | --- | --- | --- |
@@ -22,12 +22,11 @@
 //! ## Baked in, with an environment override
 //!
 //! A flag's default is decided when *this crate* is compiled, from
-//! `option_env!` on each `KORU_ENABLE_*` name: unset is **off** — except
-//! agents, which are **on** when unset (maintainers, 2026-10-15) — so a release
-//! built with nothing set ships documents, files, shells and agents. The release
+//! `option_env!` on each `KORU_ENABLE_*` name: Cloud sync, agents, Tasks and
+//! Koru AI are **on** when unset; the other four flags are **off**. The release
 //! tool forwards each of the eight that is set, as `1` or `0`, to
 //! `cargo build` (`koru-release::package::run_cargo`), so a release bakes a
-//! surface on, or agents off, by setting it in its environment or in
+//! surface on or off by setting it in its environment or in
 //! `.env.production`.
 //!
 //! At run time a variable that is **set** wins over the baked default in both
@@ -189,11 +188,11 @@ pub mod env {
     ];
 }
 
-/// Koru Cloud / OAuth sign-in, as baked into this build.
-pub const ENABLE_CLOUD_SYNC: bool = switch_value(option_env!("KORU_ENABLE_CLOUD_SYNC"));
+/// Koru Cloud / OAuth sign-in, as baked into this build. **On when unset**;
+/// `KORU_ENABLE_CLOUD_SYNC=0` bakes it off.
+pub const ENABLE_CLOUD_SYNC: bool = switch_value_or(option_env!("KORU_ENABLE_CLOUD_SYNC"), true);
 /// Agent sessions and artifacts, as baked into this build. **On when unset**
-/// — the one flag whose surface ships by default (ADR-450's 2026-10-15
-/// amendment); `KORU_ENABLE_AGENTS=0` bakes it off.
+/// (ADR-450's 2026-10-15 amendment); `KORU_ENABLE_AGENTS=0` bakes it off.
 pub const ENABLE_AGENTS: bool = switch_value_or(option_env!("KORU_ENABLE_AGENTS"), true);
 /// Explore's Agents and Artifacts views, as baked into this build. Off when
 /// unset: agent *tabs* ship, the views over their runs and results do not

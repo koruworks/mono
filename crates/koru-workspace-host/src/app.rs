@@ -1146,6 +1146,16 @@ enum ImportMessage {
         was_current: bool,
         result: Result<koru_store_core::model::Workspace, (koru_store_core::Code, String)>,
     },
+    FileLocatedForSave {
+        id: koru_core::DocumentId,
+        result: Result<
+            (
+                koru_store_core::ids::WorkspaceId,
+                koru_store_core::model::DocumentEntry,
+            ),
+            String,
+        >,
+    },
     FileSaved {
         name: String,
         destination: PathBuf,
@@ -1608,6 +1618,36 @@ fn failed_import_documents(
             failed_import_document(workspace, parent, &source, intro, &messages)
         })
         .collect()
+}
+
+/// Resolve the stable id on the worker before reading bytes. The currently
+/// displayed workspace is not authority for a cross-workspace attachment.
+fn locate_workspace_file(
+    segment: &str,
+    root: Option<&std::path::Path>,
+    document: koru_store_core::ids::DocumentId,
+) -> Result<
+    (
+        koru_store_core::ids::WorkspaceId,
+        koru_store_core::model::DocumentEntry,
+    ),
+    String,
+> {
+    let client = match root {
+        Some(root) => koru_api_client::Client::open_at(segment, root),
+        None => koru_api_client::Client::open(segment),
+    }
+    .map_err(|error| error.to_string())?;
+    let location = client
+        .locate_document(document)
+        .map_err(|error| error.to_string())?;
+    let entry = client
+        .documents(location.workspace)
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .find(|entry| entry.id == document && entry.kind == koru_core::explore::KIND_FILE)
+        .ok_or_else(|| "the linked file is no longer listed in its workspace".to_owned())?;
+    Ok((location.workspace, entry))
 }
 
 /// Fetch the bytes behind an opaque workspace file. Both Save as and Open in
@@ -10279,6 +10319,10 @@ Nothing was written. The store starts on demand, so this usually means it could 
                     }
                 }
             }
+            ImportMessage::FileLocatedForSave { id, result } => match result {
+                Ok((workspace, entry)) => self.save_located_file(id, workspace, entry.title),
+                Err(error) => self.report(ErrorReport::new("File not found", "It may have been removed in another window.").with_details(error)),
+            },
             ImportMessage::FileSaved {
                 name,
                 destination,
@@ -10405,29 +10449,32 @@ Nothing was written. The store starts on demand, so this usually means it could 
     /// native picker stays on the event thread; snapshot and blob reads happen
     /// on a worker because an attachment may be gigabytes large.
     fn save_file(&mut self, id: koru_core::DocumentId) {
-        crate::attach_debug!("shell save_file id={}", id.to_storage());
-        let Some(workspace_id) = self.runtime.workspace.current() else {
-            crate::attach_debug!("shell save_file abort: no current workspace");
-            return;
-        };
-        let entries = self.runtime.workspace.entries();
-        let name = entries
-            .iter()
-            .find(|entry| entry.id == id && entry.kind == koru_core::explore::KIND_FILE)
-            .or_else(|| entries.iter().find(|entry| entry.id == id))
-            .map(|entry| entry.title.clone());
-        let Some(name) = name else {
-            crate::attach_debug!(
-                "shell save_file abort: id not in entries (n={})",
-                entries.len()
+        let tx = self.import_tx.clone();
+        let proxy = self.wake_proxy.clone();
+        let root = self.gateway_root.clone();
+        let segment = koru_workspace::fromstore::segment().to_owned();
+        let store_id = koru_store_core::ids::DocumentId::from_uuid(id.as_uuid());
+        if let Err(error) = std::thread::Builder::new()
+            .name("koru-locate-save-file".into())
+            .spawn(move || {
+                let result = locate_workspace_file(&segment, root.as_deref(), store_id);
+                let _ = tx.send(ImportMessage::FileLocatedForSave { id, result });
+                let _ = proxy.send_event(Wake::Import);
+            })
+        {
+            self.report(
+                ErrorReport::new("Couldn't start saving the file", "Nothing was written.")
+                    .with_details(error),
             );
-            self.report(ErrorReport::new(
-                "File not found",
-                "It may have been removed in another window.",
-            ));
-            return;
-        };
-        crate::attach_debug!("shell save_file opening picker name={name}");
+        }
+    }
+
+    fn save_located_file(
+        &mut self,
+        id: koru_core::DocumentId,
+        store_ws: koru_store_core::ids::WorkspaceId,
+        name: String,
+    ) {
         // No parent window — same reason as /attach and /image pickers.
         let Some(destination) = crate::dialogs::pick_save_file(
             "Save workspace file",
@@ -10449,7 +10496,6 @@ Nothing was written. The store starts on demand, so this usually means it could 
         let proxy = self.wake_proxy.clone();
         let root = self.gateway_root.clone();
         let segment = koru_workspace::fromstore::segment().to_owned();
-        let store_ws = koru_store_core::ids::WorkspaceId::from_uuid(workspace_id.as_uuid());
         let store_id = koru_store_core::ids::DocumentId::from_uuid(id.as_uuid());
         let worker_name = name.clone();
         let worker_destination = destination.clone();
@@ -10695,66 +10741,27 @@ Nothing was written. The store starts on demand, so this usually means it could 
     /// and disk write stay off the event thread; the cache keeps one bounded
     /// copy per stable file id rather than leaking a new temp file per click.
     fn open_file(&mut self, id: koru_core::DocumentId) {
-        crate::attach_debug!("shell open_file id={}", id.to_storage());
-        let Some(workspace_id) = self.runtime.workspace.current() else {
-            crate::attach_debug!("shell open_file abort: no current workspace");
-            return;
-        };
-        // Prefer a file-kind entry; fall back to any entry with this id so an
-        // attachment whose manifest row is still settling can still open.
-        let entries = self.runtime.workspace.entries();
-        let listed = entries
-            .iter()
-            .find(|entry| entry.id == id && entry.kind == koru_core::explore::KIND_FILE)
-            .or_else(|| entries.iter().find(|entry| entry.id == id));
-        let Some((name, mime)) = listed.map(|entry| (entry.title.clone(), entry.mime.clone()))
-        else {
-            crate::attach_debug!(
-                "shell open_file abort: id not in entries (n={})",
-                entries.len()
-            );
-            self.report(ErrorReport::new(
-                "File not found",
-                "It may have been removed in another window.",
-            ));
-            return;
-        };
-        crate::attach_debug!(
-            "shell open_file spawning worker name={name} workspace={}",
-            workspace_id.to_storage()
-        );
         let tx = self.import_tx.clone();
         let proxy = self.wake_proxy.clone();
         let root = self.gateway_root.clone();
         let segment = koru_workspace::fromstore::segment().to_owned();
-        let store_ws = koru_store_core::ids::WorkspaceId::from_uuid(workspace_id.as_uuid());
         let store_id = koru_store_core::ids::DocumentId::from_uuid(id.as_uuid());
-        let worker_name = name.clone();
         if let Err(error) = std::thread::Builder::new()
             .name("koru-open-file".into())
             .spawn(move || {
+                let mut name = id.to_storage();
                 let result = (|| {
+                    let (workspace, entry) =
+                        locate_workspace_file(&segment, root.as_deref(), store_id)?;
+                    name = entry.title;
                     let bytes =
-                        workspace_file_bytes(&segment, root.as_deref(), store_ws, store_id)?;
-                    crate::attach_debug!(
-                        "shell open_file worker got {} bytes for {worker_name}",
-                        bytes.len()
-                    );
-                    open_file_bytes(store_id, &worker_name, mime.as_deref(), &bytes)
+                        workspace_file_bytes(&segment, root.as_deref(), workspace, store_id)?;
+                    open_file_bytes(store_id, &name, entry.mime.as_deref(), &bytes)
                 })();
-                if let Err(ref e) = result {
-                    crate::attach_debug!("shell open_file worker failed: {e}");
-                } else {
-                    crate::attach_debug!("shell open_file worker ok for {worker_name}");
-                }
-                let _ = tx.send(ImportMessage::FileOpened {
-                    name: worker_name,
-                    result,
-                });
+                let _ = tx.send(ImportMessage::FileOpened { name, result });
                 let _ = proxy.send_event(Wake::Import);
             })
         {
-            crate::attach_debug!("shell open_file spawn failed: {error}");
             self.report(
                 ErrorReport::new("Couldn't start opening the file", "Nothing was changed.")
                     .with_details(error),

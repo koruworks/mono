@@ -520,12 +520,7 @@ impl MainView {
                 }) else {
                     return;
                 };
-                let note = self.entries.as_ref().and_then(|entries| {
-                    entries
-                        .iter()
-                        .find(|entry| entry.id == file)
-                        .map(|entry| entry.note.is_some())
-                });
+                let note = self.local_attachment_note(file);
                 let items = if self.linked_is_file(file) {
                     super::context_menu::page_attachment_items(note)
                 } else {

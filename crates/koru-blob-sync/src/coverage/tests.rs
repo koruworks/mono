@@ -274,9 +274,7 @@ fn the_corpus_case_for_a_blob_that_is_not_durable_is_not_covered() {
     assert!(!report.is_current());
 }
 
-/// A mapping with no verified size is not a mapping. The length is what the
-/// object worker proved before the API claimed durability; a zero is the
-/// absence of that proof, never a small file.
+/// Zero cannot establish coverage for a nonempty content address.
 #[test]
 fn a_durable_mapping_without_a_verified_size_is_not_coverage() {
     let (sample, _) = sample_from("09-blob-referenced-once");
@@ -288,6 +286,29 @@ fn a_durable_mapping_without_a_verified_size_is_not_coverage() {
     assert_eq!(report.blobs_durable, 0);
     assert_eq!(report.blobs_missing, 1);
     assert!(!report.is_current());
+}
+
+#[test]
+fn a_verified_empty_file_counts_toward_coverage() {
+    let sample = DocumentSample::new(vec![SampledDocument {
+        document: DocumentId::new(),
+        state: Some(state(1)),
+        content: WalkDocument {
+            durable: true,
+            trashed: false,
+            nodes: vec![crate::referenced::WalkNode {
+                blob: Some(koru_cloud_blob::EMPTY_BLOB_HASH.to_owned()),
+                mime: Some("application/octet-stream".into()),
+            }],
+        },
+    }]);
+    let report = compute(
+        &request(workspace(), all_covered(&sample)),
+        &sample,
+        &durable(&sample, 0),
+    );
+    assert_eq!(report.blobs_durable, 1);
+    assert!(report.is_current());
 }
 
 /// A picture halfway up is not missing and is not durable. Two different

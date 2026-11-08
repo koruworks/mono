@@ -361,8 +361,7 @@ fn backdating_shortens_the_window_and_covers_a_worker_running_behind() {
     assert!(blob_capability_expiry(0).is_some());
 }
 
-/// A zero length is not an object anybody can address, and a capability that
-/// binds one cannot be minted.
+/// Zero length at a nonempty content address is still refused.
 #[test]
 fn a_zero_length_capability_cannot_be_minted() {
     let mut value = claims(BlobPurpose::Write);
@@ -371,6 +370,18 @@ fn a_zero_length_capability_cannot_be_minted() {
         ring()
             .sign_blob_capability("https://us.example.invalid", &value)
             .is_err()
+    );
+}
+
+#[test]
+fn the_empty_file_has_a_signed_capability() {
+    let mut value = claims(BlobPurpose::Write);
+    value.len = 0;
+    value.bh = EMPTY_BLOB_HASH.to_owned();
+    assert!(
+        ring()
+            .sign_blob_capability("https://us.example.invalid", &value)
+            .is_ok()
     );
 }
 

@@ -134,6 +134,9 @@ pub(crate) struct PageEntry {
     /// What the last written revision covered, and when.
     written: Option<loro::VersionVector>,
     written_at: Option<Instant>,
+    revision_write: Option<mpsc::Receiver<Result<(RevisionName, loro::VersionVector), String>>>,
+    revision_release: Option<mpsc::Receiver<Vec<RevisionName>>>,
+    release_started: Option<Instant>,
     /// Why the last revision could not be written, if it could not — the
     /// difference between *saved on this computer* and *saved nowhere*.
     pub revision_failure: Option<String>,
@@ -170,6 +173,9 @@ impl PageEntry {
             next_rev: 1,
             written: None,
             written_at: None,
+            revision_write: None,
+            revision_release: None,
+            release_started: None,
             revision_failure: None,
             pending: Vec::new(),
             kept: Vec::new(),
@@ -191,14 +197,27 @@ impl PageEntry {
     /// Whether this entry still has anything to do — a request to run or
     /// await, or writing the store has not confirmed.
     fn owes(&self) -> bool {
-        self.phase != PagePhase::Ready || !self.pending.is_empty() || !self.kept.is_empty()
+        self.phase != PagePhase::Ready
+            || !self.pending.is_empty()
+            || !self.kept.is_empty()
+            || self.revision_write.is_some()
+            || self.revision_release.is_some()
+            || self.revision_failure.is_some()
     }
 }
 
 /// Every page document this process is responsible for, by id.
 #[derive(Default)]
 pub struct PageRegistry {
+    last_deletion_scan: Option<(
+        Option<WorkspaceId>,
+        Option<loro::VersionVector>,
+        Option<loro::VersionVector>,
+    )>,
     entries: HashMap<DocumentId, PageEntry>,
+    /// Requested roots and the exact events they must not outlive. An empty
+    /// list means classification is waiting for the system document to open.
+    pending_purges: HashMap<DocumentId, Vec<(PageKey, u64, koru_core::pages::deletion::EventId)>>,
 }
 
 impl PageRegistry {

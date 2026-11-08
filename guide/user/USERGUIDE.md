@@ -143,7 +143,9 @@ connection progress for these Profiles. “Syncing via Koru Cloud” describes t
 path, not confirmation that every document is up to date. Turning Cloud sync off
 returns the Profile to its existing device-to-device connection behavior.
 
-**The Koru Cloud page.** In the **Manage** tab, **Koru Cloud** under *This
+**The Koru Cloud page.** Click the cloud status at the bottom of the Profile
+popover to open **Manage › Koru Cloud** directly, including when Cloud is not
+set up yet. In the **Manage** tab, **Koru Cloud** under *This
 computer* in the nav (its *On* / *Off* says whether you subscribe) shows the
 subscription for your signed-in Koru account, from top to bottom:
 
@@ -692,7 +694,10 @@ the one place Koru's Ctrl does not become Cmd. The global shortcut opens a dedic
 search window. Drag the small rail above the query to reposition it; Koru
 remembers that location on this computer. Drag its top or bottom edge to
 increase its height; Koru remembers that height too. The in-app entries remain a fixed
-620-by-400 modal over your current window. Clicking outside either search closes
+640-by-400 modal over your current window, shrinking to fit smaller windows.
+The modal lists matching results without New task or New document actions.
+Each result's selection box includes its title, location and matching excerpt.
+Clicking outside either search closes
 it. If Koru is waiting in the notification area, the shortcut opens only search;
 workspace windows stay hidden until you choose a result. On Windows, a left
 click on the tray icon brings back the workspace window you used last, and
@@ -895,12 +900,9 @@ observed different searchable content, not an authored or shared modification
 date — and it is what puts a relative age (`2h ago`) beside each result.
 “Last used workspace” is based on machine-local navigation. The selected
 sort remains active when search is closed and reopened during the current Koru
-session. The More menu
-can show keyboard hints and opens clearly labelled, read-only **Help preview**
-and **Feedback preview** screens. More remains available from either preview so
-the user can move between them without first returning to results. Feedback is
-not sent, stored, or measured in
-this phase. Search uses Koru's current theme, font roles, and global density;
+session. The search header contains the query, filter control and sort control;
+there is no More menu or Help/Feedback preview. Search uses Koru's current theme,
+font roles, and global density;
 there is no separate search appearance preference.
 Rest an intentional hover on an icon-only control for 400 ms to see its tooltip.
 It fades and settles toward the control over 100 ms; moving away fades it over
@@ -971,6 +973,11 @@ Hide the sidebar and the lane's buttons fold into the title bar's left end; the 
 `Ctrl+Alt+W` / `Ctrl+Alt+P` still open the switcher. `F6` walks the
 keyboard over the lane, the apps row and the floor; the arrows move within
 each, Enter presses, Escape returns to the page.
+
+In the desktop **Documents** list, a document's chosen color tints its outline
+icon. A priority flag (Urgent, High, Medium or Low) appears after the icon and
+before the title, using the same color as the priority picker. Custom emoji
+icons keep their original colors. Clearing priority removes the flag.
 
 ### With a screen reader
 
@@ -2958,6 +2965,11 @@ the workspaces in your current profile; `doc:` and `file:` narrow the results.
 The link shows the item's title and opens the original. You can remove the link
 without deleting the document or file.
 
+Files attached from another workspace offer Open, Save As, and Remove attachment.
+Rename, trash, and note editing are available in the file's owning workspace.
+Files owned by the current workspace retain their full file menu. Removing an
+attachment removes only the reference from the Tasks page, leaving the file intact.
+
 Each row carries:
 
 | | |
@@ -3488,11 +3500,10 @@ isn't on PATH.*); or **Needs attention**, with the reason Koru already knows —
 a version Koru does not support yet, signed out, the program a chat runs the
 agent through missing (Claude's `claude-agent-acp`, say), the agent's program
 not starting, or a check that failed. A version row names the version found
-and the one Koru needs: *Found 1.18.25; Koru needs 1.18.27 or newer.* for an
-agent Koru accepts from a release onwards, and *Found 0.167.0; Koru has only
-checked up to 0.166.0 so far.* for Codex, which Koru accepts only at the
-releases it has checked — there, updating does not help until a later Koru
-admits the new one. When the agent's `--version` fails or prints nothing,
+and the one Koru needs: *Found 1.18.25; Koru needs 1.18.27 or newer.* Every
+agent is accepted from a checked release onwards, so a newer release of the
+agent works without waiting for a Koru update; only a release older than the
+one Koru names is refused, and updating the agent fixes it. When the agent's `--version` fails or prints nothing,
 the row says so instead — *`kimi --version` failed, so the agent can't start
 on this computer. Run it in a terminal to see why.* — because the version was
 never the problem (Kimi's CLI under a Node.js too old for it is one way to
@@ -3528,12 +3539,22 @@ row reads **Ready** without restarting Koru. Closing the tab early leaves the
 installer running, and Koru checks again when it ends. Pressing **Install**
 again while its tab is open brings that tab forward.
 
-Koru looks for an agent's program on your `PATH` — on Windows the `PATH` as it
-is now, so a program installed while Koru is running is found without
-restarting Koru — and where the agent's installer puts it: for Claude Code,
-`~/.local/bin` (`%USERPROFILE%\.local\bin` on Windows), npm's global folder
-(`%APPDATA%\npm` on Windows; Homebrew's or `/usr/local/bin` on a Mac), and
-WinGet's links. `claude-agent-acp` is looked for in npm's global folder. The
+Koru looks for an agent's program on the `PATH` a new terminal would have,
+even when Koru itself was started from Finder, the Dock or a login item, which
+on a Mac get only `/usr/bin:/bin:/usr/sbin:/sbin`. On a Mac or Linux that is
+Koru's own `PATH`, then the `PATH` your login shell sets up (`$SHELL -l`,
+asked once when Koru starts looking), then the folders the agents' installers
+use — `~/.local/bin` (Claude Code, Codex, Muse, Devin), `~/.opencode/bin`,
+`~/.grok/bin`, and on a Mac Homebrew's `/opt/homebrew/bin` and
+`/usr/local/bin`, where npm puts `node` and the npm-installed agents. On
+Windows it is Koru's `PATH` and the `PATH` as Windows holds it now, so a
+program installed while Koru is running is found without restarting Koru.
+Claude Code is also looked for in `~/.claude/local`, npm's global folder
+(`%APPDATA%\npm` on Windows) and WinGet's links. Everything Koru starts — an
+agent's chat, its version check, a terminal tab, an **Install** tab — runs
+with that same `PATH`, so a program that needs `node` finds it. A folder only
+your interactive shell adds (`~/.zshrc`, `~/.bashrc`) beyond those is not
+seen; put it in your login profile (`~/.zprofile`, `~/.profile`) instead. The
 chat model picker uses the same words: an agent whose chat program is missing
 reads **Needs attention** there too, not **Not installed**, and the picker
 checks a missing agent again when you next open it.
@@ -5810,9 +5831,13 @@ profile you did not start it from. Nothing else changes: the workspace keeps
 its id, its documents and its history, and its projects follow it in Koru
 Terminal. Moving it back is the same action with the other profile chosen.
 
-If a row says *this window was not started by Koru*, the window was launched
-outside the app — a `cargo run`, or a build Koru did not start — and it holds no
-permission to archive, delete or move workspaces. If it says its terminal
+Every Koru window on this computer can archive, delete and move workspaces,
+however you opened it. If a row says *Koru could not confirm that this window
+is part of this Koru installation*, the window is a Koru from a different
+installation than the one running in the background — a second copy of the app,
+or a build from another folder — or your system would not say which program the
+window is; it holds no permission to archive, delete or move workspaces. Open
+Koru from the installation you use and try again there. If it says its terminal
 projects have not caught up, the workspace moved but Koru Terminal was not
 answering at the time; choosing the same profile again repairs them.
 
@@ -5916,6 +5941,24 @@ turning it on tells us what matters most to you.
 Turning it off takes effect at once and deletes anything not yet sent. Nothing
 recorded while it was off is ever sent, even after you turn it on. The choice belongs to this device: another computer of yours has
 its own switch. The phone apps send no usage data.
+
+## Koru in the app menu on Linux
+
+The Linux download is a folder with nothing to install, so Koru adds itself to
+your desktop's app list when you ask. **Add Koru to your app menu** on Welcome,
+or **Settings → System → Show Koru in the app menu**, writes one launcher entry
+for your user (in `~/.local/share/applications`), naming the `koru` you are
+running and its icon. Koru appears in the app list at once, with its own icon
+in the dock. No administrator rights are needed, and updates keep it working.
+
+If you move Koru's folder, the entry points at the new place the next time you
+start Koru from there. Turning the switch off removes the entry. The nightly
+has its own entry, *Koru Nightly*, beside the stable one.
+
+**Start Koru when you log in** works on Linux too: it adds an entry to
+`~/.config/autostart`, which GNOME, KDE and most other desktops start at
+sign-in. Koru starts in the background, without opening a window, as it does
+on Windows and macOS.
 
 ## Document history
 

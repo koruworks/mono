@@ -343,12 +343,12 @@ impl Workspace {
     /// threads answered, start what is owed, write and release revisions.
     /// Answers whether a document changed under a view.
     pub(crate) fn tick_pages(&mut self) -> bool {
-        let mut changed = false;
+        let mut changed = self.tick_page_purges();
         let ids: Vec<DocumentId> = self.pages.entries.keys().copied().collect();
         for id in ids {
             changed |= self.poll_page(id);
-            self.advance_page(id);
             self.write_page_revision(id, false);
+            self.advance_page(id);
             self.release_page_revisions(id);
             if let Some(entry) = self.pages.entries.get(&id)
                 && !entry.owes()
@@ -499,7 +499,15 @@ impl Workspace {
             }
             let (page, generation) = (entry.page, entry.generation);
             // The revision first, before anything is sent (§6.5).
-            self.write_page_revision(id, true);
+            self.write_page_revision(id, false);
+            if self
+                .pages
+                .entries
+                .get(&id)
+                .is_none_or(|entry| entry.written.is_none())
+            {
+                return;
+            }
             if let Some(entry) = self.pages.entries.get_mut(&id) {
                 entry.phase = PagePhase::Registering;
             }
@@ -523,18 +531,10 @@ impl Workspace {
             return;
         };
         let seed = if entry.seed {
-            match self.page_doc(id).map(WorkspaceDoc::export_all_updates) {
-                Some(Ok(bytes)) => Some(bytes),
-                _ => {
-                    if let Some(entry) = self.pages.entries.get_mut(&id) {
-                        entry.phase = PagePhase::Failed {
-                            why: "the note could not be exported".into(),
-                            opening: !entry.seed,
-                        };
-                    }
-                    return;
-                }
-            }
+            let Some(doc) = self.page_doc(id) else {
+                return;
+            };
+            Some((doc.doc().clone(), doc.doc().oplog_frontiers()))
         } else {
             None
         };
@@ -544,7 +544,17 @@ impl Workspace {
         let spawned = std::thread::Builder::new()
             .name("koru-page-register".into())
             .spawn(move || {
-                let outcome = register(&segment, root.as_deref(), workspace, id, &title, seed);
+                let outcome = (|| {
+                    let seed = seed
+                        .map(|(doc, frontier)| {
+                            doc.fork_at(&frontier)
+                                .map_err(|e| e.to_string())?
+                                .export(loro::ExportMode::all_updates())
+                                .map_err(|e| e.to_string())
+                        })
+                        .transpose()?;
+                    register(&segment, root.as_deref(), workspace, id, &title, seed)
+                })();
                 let _ = send.send(outcome);
                 if let Some(waker) = waker {
                     waker.wake();
@@ -563,13 +573,50 @@ impl Workspace {
         }
     }
 
-    /// Write the page's pending revision when its writing moved — at most
-    /// once a second unless `force`, which is the way out of the process.
+    /// Poll a worker without waiting. Only the explicit shutdown flush waits
+    /// for its outstanding write; typing and maintenance never wait on disk.
+    fn poll_page_revision(&mut self, id: DocumentId, wait: bool) {
+        let Some(entry) = self.pages.entries.get_mut(&id) else {
+            return;
+        };
+        let Some(reply) = &entry.revision_write else {
+            return;
+        };
+        let outcome = if wait {
+            Some(
+                reply
+                    .recv()
+                    .unwrap_or_else(|_| Err("revision worker disconnected".into())),
+            )
+        } else {
+            match reply.try_recv() {
+                Ok(outcome) => Some(outcome),
+                Err(mpsc::TryRecvError::Empty) => None,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    Some(Err("revision worker disconnected".into()))
+                }
+            }
+        };
+        let Some(outcome) = outcome else {
+            return;
+        };
+        entry.revision_write = None;
+        match outcome {
+            Ok((name, version)) => {
+                entry.written = Some(version.clone());
+                entry.pending.push((name, version));
+                entry.revision_failure = None;
+            }
+            Err(why) => entry.revision_failure = Some(why),
+        }
+    }
+
     fn write_page_revision(&mut self, id: DocumentId, force: bool) {
+        self.poll_page_revision(id, force);
         let Some(entry) = self.pages.entries.get(&id) else {
             return;
         };
-        if entry.phase == PagePhase::Empty || entry.phase == PagePhase::Loading {
+        if entry.phase == PagePhase::Loading || entry.revision_write.is_some() {
             return;
         }
         let Some(doc) = self.page_doc(id) else {
@@ -586,56 +633,89 @@ impl Workspace {
         {
             return;
         }
+        // Clone only the shared handle and capture an exact frontier. The fork
+        // and export happen on the worker and cannot include later keystrokes.
+        let doc = doc.doc().clone();
+        let frontier = doc.oplog_frontiers();
         let root = self.store.as_ref().and_then(|(_, root)| root.clone());
         let listed = self
             .manifest
             .as_ref()
             .is_some_and(|m| m.contains_document(explore::store_document(id)));
-        let written = (|| -> Result<RevisionName, String> {
-            let dir = document_dir(root.as_deref(), entry.workspace, id).ok_or_else(|| {
-                "this platform has no local application-data directory".to_owned()
-            })?;
-            let updates = doc.export_all_updates().map_err(|e| e.to_string())?;
-            let name = RevisionName {
-                replica: entry.replica,
-                rev: entry.next_rev,
-            };
-            let record = Record {
-                workspace: entry.workspace.to_storage(),
-                document: id.to_storage(),
-                page: entry.page.to_storage(),
-                generation: entry.generation,
-                state: phase_token(&entry.phase).to_owned(),
-                seen_listed: listed,
-                blobs: Vec::new(),
-                version: version.encode(),
-            };
-            WriteRevision::new(&dir, name, &part_token(), updates, Vec::new(), &record)
-                .run(&mut DiskFs)
-                .map_err(|e| e.to_string())?;
-            Ok(name)
-        })();
-        let Some(entry) = self.pages.entries.get_mut(&id) else {
-            return;
+        let name = RevisionName {
+            replica: entry.replica,
+            rev: entry.next_rev,
         };
+        let workspace = entry.workspace;
+        let record = Record {
+            workspace: workspace.to_storage(),
+            document: id.to_storage(),
+            page: entry.page.to_storage(),
+            generation: entry.generation,
+            state: phase_token(&entry.phase).to_owned(),
+            seen_listed: listed,
+            blobs: Vec::new(),
+            version: version.encode(),
+        };
+        let waker = self.waker.clone();
+        let (send, receive) = mpsc::channel();
+        let spawned = std::thread::Builder::new()
+            .name("koru-page-revision".into())
+            .spawn(move || {
+                let outcome = (|| -> Result<_, String> {
+                    let dir = document_dir(root.as_deref(), workspace, id)
+                        .ok_or_else(|| "no local application-data directory".to_owned())?;
+                    let frozen = doc.fork_at(&frontier).map_err(|e| e.to_string())?;
+                    let updates = frozen
+                        .export(loro::ExportMode::all_updates())
+                        .map_err(|e| e.to_string())?;
+                    WriteRevision::new(&dir, name, &part_token(), updates, Vec::new(), &record)
+                        .run(&mut DiskFs)
+                        .map_err(|e| e.to_string())?;
+                    Ok((name, version))
+                })();
+                let _ = send.send(outcome);
+                if let Some(waker) = waker {
+                    waker.wake();
+                }
+            });
+        let entry = self.pages.entries.get_mut(&id).expect("page still present");
         entry.written_at = Some(Instant::now());
-        match written {
-            Ok(name) => {
+        match spawned {
+            Ok(_) => {
                 entry.next_rev += 1;
-                entry.written = Some(version.clone());
-                entry.pending.push((name, version));
-                entry.revision_failure = None;
+                entry.revision_write = Some(receive);
             }
-            Err(why) => entry.revision_failure = Some(why),
+            Err(error) => entry.revision_failure = Some(error.to_string()),
+        }
+        if force {
+            self.poll_page_revision(id, true);
         }
     }
 
-    /// Delete the revisions the store's durable acknowledgement now covers
-    /// (§6.3's release rule).
+    /// Only acknowledged immutable revisions can enter the cleanup worker.
     fn release_page_revisions(&mut self, id: DocumentId) {
-        let Some(entry) = self.pages.entries.get(&id) else {
+        let Some(entry) = self.pages.entries.get_mut(&id) else {
             return;
         };
+        if let Some(reply) = &entry.revision_release {
+            match reply.try_recv() {
+                Ok(released) => {
+                    entry.pending.retain(|(name, _)| !released.contains(name));
+                    entry.revision_release = None;
+                }
+                Err(mpsc::TryRecvError::Empty) => return,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    entry.revision_release = None;
+                }
+            }
+        }
+        if entry
+            .release_started
+            .is_some_and(|at| at.elapsed() < REVISION_INTERVAL)
+        {
+            return;
+        }
         if entry.pending.is_empty() {
             return;
         }
@@ -647,26 +727,41 @@ impl Workspace {
         let Some(acked) = acked else {
             return;
         };
-        let root = self.store.as_ref().and_then(|(_, root)| root.clone());
-        let Some(dir) = document_dir(root.as_deref(), entry.workspace, id) else {
-            return;
-        };
-        let covered: Vec<RevisionName> = entry
+        let covered: Vec<_> = entry
             .pending
             .iter()
-            .filter(|(_, version)| acked.includes_vv(version))
+            .filter(|(_, vv)| acked.includes_vv(vv))
             .map(|(name, _)| *name)
             .collect();
-        let mut released = Vec::new();
-        for name in covered {
-            let done = ReleaseRevision::of_name(&DiskFs, &dir, name)
-                .and_then(|mut release| release.run(&mut DiskFs));
-            if done.is_ok() {
-                released.push(name);
-            }
+        if covered.is_empty() {
+            return;
         }
-        if let Some(entry) = self.pages.entries.get_mut(&id) {
-            entry.pending.retain(|(name, _)| !released.contains(name));
+        entry.release_started = Some(Instant::now());
+        let workspace = entry.workspace;
+        let root = self.store.as_ref().and_then(|(_, root)| root.clone());
+        let waker = self.waker.clone();
+        let (send, receive) = mpsc::channel();
+        match std::thread::Builder::new()
+            .name("koru-page-release".into())
+            .spawn(move || {
+                let mut released = Vec::new();
+                if let Some(dir) = document_dir(root.as_deref(), workspace, id) {
+                    for name in covered {
+                        if ReleaseRevision::of_name(&DiskFs, &dir, name)
+                            .and_then(|mut release| release.run(&mut DiskFs))
+                            .is_ok()
+                        {
+                            released.push(name);
+                        }
+                    }
+                }
+                let _ = send.send(released);
+                if let Some(waker) = waker {
+                    waker.wake();
+                }
+            }) {
+            Ok(_) => entry.revision_release = Some(receive),
+            Err(error) => tracing::warn!(%error, "could not start page revision cleanup"),
         }
     }
 
@@ -783,6 +878,7 @@ impl Workspace {
                 .page_doc(*id)
                 .is_some_and(|doc| doc.version() != entry.baseline);
             if (moved && entry.phase != PagePhase::Ready)
+                || entry.revision_write.is_some()
                 || !entry.pending.is_empty()
                 || !entry.kept.is_empty()
             {
@@ -809,7 +905,7 @@ impl Workspace {
             .entries
             .iter()
             .filter(|(id, entry)| {
-                entry.phase != PagePhase::Empty
+                entry.revision_write.is_none()
                     && self.page_doc(**id).is_some_and(|doc| {
                         doc.version() != entry.baseline
                             && entry.written.as_ref() != Some(&doc.version())
@@ -827,7 +923,7 @@ impl Workspace {
     /// Whether any page still has a request or unconfirmed writing — part of
     /// what keeps the store watchdog awake.
     pub(crate) fn pages_busy(&self) -> bool {
-        self.pages.entries.values().any(PageEntry::owes)
+        !self.pages.pending_purges.is_empty() || self.pages.entries.values().any(PageEntry::owes)
     }
 
     /// A tab let go of `id`: when the registry still owes something for it,
@@ -892,38 +988,6 @@ impl Workspace {
     fn page_local_version(&self, document: DocumentId) -> Option<(u64, loro::VersionVector)> {
         self.page_doc(document)
             .map(|doc| (doc.peer_id(), doc.version()))
-    }
-
-    /// Mint a deletion event for a page document being permanently deleted
-    /// (plan §6.2, §6.4). The body stays retained — the manifest only
-    /// unregisters — so this records *that* it was deleted, with the coverage
-    /// this device can vouch for: its own version of the document when it
-    /// holds a copy, else the empty vector (conservative: a peer's concurrent
-    /// writing then shows as a conflict until the version route lets a
-    /// not-open deleter read coverage, §6.7).
-    fn mint_page_deletion(&mut self, document: DocumentId, deleted_ms: i64) {
-        let Some((page, generation)) = self
-            .page_documents()
-            .into_iter()
-            .find(|(id, _, _)| *id == document)
-            .map(|(_, page, generation)| (page, generation))
-        else {
-            return;
-        };
-        let covers = self
-            .page_local_version(document)
-            .map(|(_, vv)| vv)
-            .unwrap_or_default();
-        if let Some(system) = &mut self.system {
-            system.write_deletion(
-                page,
-                generation,
-                koru_core::pages::deletion::EventId::new(),
-                &covers,
-                deleted_ms,
-            );
-            self.lists_changed = true;
-        }
     }
 
     /// Report, for every in-force event of `page`'s current generation, this
@@ -1063,29 +1127,201 @@ impl Workspace {
     /// this device observed (plan §6.4, owner Q2): with no replacement, the
     /// page reconnects to it.
     pub(crate) fn recover_on_restore(&mut self, document: DocumentId) {
-        if let Some((_, page, _)) = self
-            .page_documents()
-            .into_iter()
-            .find(|(id, _, _)| *id == document)
-        {
-            self.recover_page(page);
+        let mut restored = std::collections::HashSet::from([explore::store_document(document)]);
+        if let Some(manifest) = &self.manifest {
+            let entries = manifest.entries();
+            loop {
+                let before = restored.len();
+                for entry in &entries {
+                    if entry
+                        .parent
+                        .is_some_and(|parent| restored.contains(&parent))
+                    {
+                        restored.insert(entry.id);
+                    }
+                }
+                if before == restored.len() {
+                    break;
+                }
+            }
+        }
+        for id in &restored {
+            self.pages
+                .pending_purges
+                .remove(&explore::koru_document(*id));
+        }
+        for (id, page, generation) in self.page_documents() {
+            if !restored.contains(&explore::store_document(id)) {
+                continue;
+            }
+            let replica = self.page_replica(page, generation);
+            if let Some(system) = &mut self.system
+                && let Some(record) = system.deletion_record(page, generation)
+            {
+                let observed = record.events().collect();
+                system.write_recover(page, generation, replica, observed);
+                self.lists_changed = true;
+            }
         }
     }
 
-    /// Mint a deletion event for every page document a permanent deletion is
-    /// about to unregister — called from the trash sweep and the named purge
-    /// before the manifest row goes.
-    pub(crate) fn mint_page_deletions(&mut self, ids: &[DocumentId], now_ms: i64) {
-        let pages: std::collections::HashSet<DocumentId> = self
-            .page_documents()
-            .into_iter()
-            .map(|(id, _, _)| id)
-            .collect();
-        for id in ids {
-            if pages.contains(id) {
-                self.mint_page_deletion(*id, now_ms);
+    pub(crate) fn request_page_purge(&mut self, root: DocumentId) {
+        self.pages.pending_purges.entry(root).or_default();
+    }
+
+    /// Classify the entire subtree before removing anything. The guard stays
+    /// closed while system-document identity or durability is unknown.
+    pub(crate) fn prove_page_purge(&mut self, root: DocumentId) -> Option<TombstoneDurable> {
+        self.ensure_system(false);
+        if self.system.as_ref().is_some_and(|s| !s.pages_loaded()) {
+            return None;
+        }
+        let entries = self.manifest.as_ref()?.entries();
+        let store_root = explore::store_document(root);
+        let mut subtree = std::collections::HashSet::from([store_root]);
+        loop {
+            let before = subtree.len();
+            for entry in &entries {
+                if entry.parent.is_some_and(|parent| subtree.contains(&parent)) {
+                    subtree.insert(entry.id);
+                }
+            }
+            if before == subtree.len() {
+                break;
             }
         }
+        // Recovery of an event this request observed cancels that request.
+        // Never mint a replacement event as part of retrying it.
+        let previous = self.pages.pending_purges.get(&root)?.clone();
+        for (page, generation, event) in &previous {
+            let record = self.system.as_ref()?.deletion_record(*page, *generation)?;
+            if !record.events_in_force().contains(event) {
+                self.pages.pending_purges.remove(&root);
+                return None;
+            }
+        }
+        let mut events = previous;
+        for (document, page, generation) in self.page_documents() {
+            if !subtree.contains(&explore::store_document(document)) {
+                continue;
+            }
+            let record = self.system.as_ref()?.deletion_record(page, generation)?;
+            let mut in_force = record.events_in_force();
+            if in_force.is_empty() {
+                let event = koru_core::pages::deletion::EventId::new();
+                let covers = self
+                    .page_local_version(document)
+                    .map(|(_, v)| v)
+                    .unwrap_or_default();
+                if !self.system.as_mut()?.write_deletion(
+                    page,
+                    generation,
+                    event,
+                    &covers,
+                    crate::open::now_ms(),
+                ) {
+                    return None;
+                }
+                in_force.push(event);
+                self.lists_changed = true;
+            }
+            for event in in_force {
+                let item = (page, generation, event);
+                if !events.contains(&item) {
+                    events.push(item);
+                }
+            }
+        }
+        self.pages.pending_purges.insert(root, events.clone());
+        if !events.is_empty() {
+            let system = self.system.as_ref()?;
+            if !system.pages_durable() {
+                return None;
+            }
+            for (page, generation, _) in &events {
+                if system.deletion_record(*page, *generation)?.resolve()
+                    != koru_core::pages::deletion::Resolution::Deleted
+                {
+                    return None;
+                }
+            }
+        }
+        Some(TombstoneDurable { root })
+    }
+
+    /// The only manifest-removal path: proof and removal occur in the same
+    /// event-loop turn, with no opportunity to apply a recovery between them.
+    pub(crate) fn remove_durable_page_tree(
+        &mut self,
+        proof: TombstoneDurable,
+    ) -> Result<bool, koru_store_core::errors::Error> {
+        let root = proof.root;
+        let Some(manifest) = &mut self.manifest else {
+            return Ok(false);
+        };
+        let removed = manifest.remove_document(explore::store_document(root))?;
+        for id in removed {
+            self.pages
+                .pending_purges
+                .remove(&explore::koru_document(id));
+        }
+        self.publish_manifest();
+        self.entries_changed = true;
+        Ok(true)
+    }
+
+    fn tick_page_purges(&mut self) -> bool {
+        let version = (
+            self.current,
+            self.manifest.as_ref().map(|m| m.version()),
+            self.system.as_ref().and_then(|s| s.pages_version()),
+        );
+        if self.pages.last_deletion_scan.as_ref() != Some(&version) {
+            self.pages.last_deletion_scan = Some(version);
+            // The persisted deletion events also carry intent after a restart.
+            // Re-publishing and acknowledging the system document is still required.
+            for (document, page, generation) in self.page_documents() {
+                if self
+                    .manifest
+                    .as_ref()
+                    .is_some_and(|m| m.is_trashed(explore::store_document(document)))
+                    && let Some(record) = self
+                        .system
+                        .as_ref()
+                        .and_then(|s| s.deletion_record(page, generation))
+                    && !record.events_in_force().is_empty()
+                {
+                    self.pages
+                        .pending_purges
+                        .entry(document)
+                        .or_insert_with(|| {
+                            record
+                                .events_in_force()
+                                .into_iter()
+                                .map(|event| (page, generation, event))
+                                .collect()
+                        });
+                }
+            }
+        }
+        let roots: Vec<_> = self.pages.pending_purges.keys().copied().collect();
+        let mut changed = false;
+        for root in roots {
+            if self.manifest.as_ref().is_none_or(|m| {
+                !m.contains(explore::store_document(root))
+                    || !m.is_trashed(explore::store_document(root))
+            }) {
+                self.pages.pending_purges.remove(&root);
+                continue;
+            }
+            if let Some(proof) = self.prove_page_purge(root) {
+                match self.remove_durable_page_tree(proof) {
+                    Ok(removed) => changed |= removed,
+                    Err(error) => tracing::warn!(%error, "could not finish durable page deletion"),
+                }
+            }
+        }
+        changed
     }
 }
 
@@ -1097,4 +1333,9 @@ fn phase_token(phase: &PagePhase) -> &'static str {
         PagePhase::Ready => "ready",
         PagePhase::Failed { .. } => "failed",
     }
+}
+
+/// Constructed only after every page event in a removal subtree is durable.
+pub(crate) struct TombstoneDurable {
+    root: DocumentId,
 }

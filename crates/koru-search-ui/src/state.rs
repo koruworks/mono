@@ -293,14 +293,6 @@ pub(super) fn remember_selection(selection: Option<SearchSessionSelection>) {
 }
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-pub(super) enum SearchView {
-    #[default]
-    Results,
-    HelpPreview,
-    FeedbackPreview,
-}
-
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub(super) enum SearchMenu {
     #[default]
     None,
@@ -309,7 +301,6 @@ pub(super) enum SearchMenu {
     /// scope and refreshes against only the workspaces that profile owns.
     Profiles,
     Workspaces,
-    App,
     /// The query box's `#tag` completion.
     ///
     /// **A menu rather than a surface of its own**, so it inherits everything

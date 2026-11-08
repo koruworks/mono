@@ -1969,27 +1969,11 @@ impl Workspace {
     /// them is destroying the wrong thing.
     pub fn empty_trashed_documents(&mut self) -> Result<usize, koru_store_core::errors::Error> {
         let doomed: Vec<_> = self.trashed_entries().into_iter().map(|e| e.id).collect();
-        // A permanently-deleted page document keeps its body (the manifest
-        // only unregisters); minting a deletion event here records *that* it
-        // went, so a device that wrote concurrently sees the conflict and can
-        // Recover (page-document plan §6.2). Before the unregister, while the
-        // document is still listed.
-        self.mint_page_deletions(&doomed, crate::open::now_ms());
-        // **Roots first, and children only if they were not swept with one.**
-        // `remove_document` takes a subtree, so a child named after its parent
-        // has already gone and asking again is an error about a document nobody
-        // is missing.
-        for id in &doomed {
-            let store_id = explore::store_document(*id);
-            let Some(manifest) = &mut self.manifest else {
-                break;
-            };
-            if manifest.contains(store_id) {
-                let _ = manifest.remove_document(store_id);
-            }
+        let mut removed = 0;
+        for id in doomed {
+            removed += usize::from(self.purge_document(id)?);
         }
-        self.publish_manifest();
-        Ok(doomed.len())
+        Ok(removed)
     }
 
     /// **Destroy one trashed document**, named rather than swept.
@@ -2017,12 +2001,11 @@ impl Workspace {
         {
             return Ok(false);
         }
-        // A page document keeps its body; record that it was deleted (§6.2).
-        self.mint_page_deletions(&[id], crate::open::now_ms());
-        let manifest = self.manifest.as_mut().expect("checked contains above");
-        manifest.remove_document(store_id)?;
-        self.publish_manifest();
-        Ok(true)
+        self.request_page_purge(id);
+        let Some(proof) = self.prove_page_purge(id) else {
+            return Ok(false);
+        };
+        self.remove_durable_page_tree(proof)
     }
 
     /// Change the manifest and get the change on its way at once.

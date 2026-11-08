@@ -104,6 +104,7 @@ jobs:
     with:
       platform: linux
       channel: nightly
+      with-cloud: true
       build: ${{ needs.plan.outputs.build }}
       version: ${{ needs.plan.outputs.version }}
       download-base: https://github.com/${{ github.repository }}/releases/download/nightly
@@ -120,6 +121,7 @@ jobs:
     with:
       platform: windows
       channel: nightly
+      with-cloud: true
       build: ${{ needs.plan.outputs.build }}
       version: ${{ needs.plan.outputs.version }}
       download-base: https://github.com/${{ github.repository }}/releases/download/nightly
@@ -138,6 +140,7 @@ jobs:
     with:
       platform: macos
       channel: nightly
+      with-cloud: true
       build: ${{ needs.plan.outputs.build }}
       version: ${{ needs.plan.outputs.version }}
       download-base: https://github.com/${{ github.repository }}/releases/download/nightly
@@ -157,6 +160,7 @@ jobs:
     with:
       platform: android
       channel: nightly
+      with-cloud: true
       build: ${{ needs.plan.outputs.build }}
       version: ${{ needs.plan.outputs.version }}
       download-base: https://github.com/${{ github.repository }}/releases/download/nightly
@@ -183,6 +187,7 @@ jobs:
     with:
       platform: ios
       channel: nightly
+      with-cloud: true
       build: ${{ needs.plan.outputs.build }}
       version: ${{ needs.plan.outputs.version }}
       download-base: https://github.com/${{ github.repository }}/releases/download/nightly

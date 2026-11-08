@@ -27,6 +27,8 @@ fn settle(ws: &mut Workspace, document: DocumentId) -> PagePhase {
     let started = Instant::now();
     loop {
         ws.tick_pages();
+        ws.buffer_pages_now();
+        ws.tick_pages();
         let phase = ws.pages.phase(document).expect("the entry stays");
         if phase != PagePhase::Registering || started.elapsed() > Duration::from_secs(20) {
             return phase;
@@ -56,6 +58,8 @@ fn an_empty_page_is_a_genesis_document_parked_under_its_derived_id_and_nothing_e
     // Asked again: the same answer, no second document.
     assert_eq!(ws.ensure_page(page), Some(state.clone()));
     ws.tick_pages();
+    ws.buffer_pages_now();
+    ws.tick_pages();
     assert_eq!(ws.pages.phase(state.document), Some(PagePhase::Empty));
     assert!(!root.path().join("outbox").exists(), "nothing on disk");
     assert_eq!(ws.unconfirmed().documents, 0);
@@ -80,6 +84,8 @@ fn the_first_write_leaves_a_revision_on_disk_and_a_failed_registration_keeps_it(
         .set_text(genesis_seed_id(document), "Bike project notes")
         .unwrap();
 
+    ws.tick_pages();
+    ws.buffer_pages_now();
     ws.tick_pages();
     let phase = ws.pages.phase(document).unwrap();
     assert!(
@@ -132,6 +138,8 @@ fn a_closed_pending_page_is_held_and_a_restart_finds_its_writing() {
             .unwrap()
             .set_text(genesis_seed_id(document), "kept")
             .unwrap();
+        ws.tick_pages();
+        ws.buffer_pages_now();
         ws.tick_pages();
         let _ = settle(&mut ws, document);
 
@@ -227,6 +235,8 @@ fn a_buckets_page_is_per_workspace_and_the_first_input_records_its_generation() 
         .set_text(genesis_seed_id(a_today.document), "today's note")
         .unwrap();
     a.tick_pages();
+    a.buffer_pages_now();
+    a.tick_pages();
     let gens = a
         .system
         .as_ref()
@@ -267,6 +277,8 @@ fn a_notes_title_is_resolved_from_the_list_and_a_direct_rename_overrides_it() {
         .unwrap()
         .set_text(genesis_seed_id(document), "notes")
         .unwrap();
+    ws.tick_pages();
+    ws.buffer_pages_now();
     ws.tick_pages();
     assert_eq!(
         ws.page_title_of(document),
@@ -319,11 +331,20 @@ fn a_permanent_delete_is_a_recoverable_tombstone_and_a_concurrent_write_is_a_con
         .set_text(genesis_seed_id(document), "notes")
         .unwrap();
     ws.tick_pages();
+    ws.buffer_pages_now();
+    ws.tick_pages();
     assert_eq!(ws.page_resolution(page), Resolution::Live);
 
     // The device holds a copy, so the deletion's coverage includes its
     // version: deleting is a plain tombstone, no conflict.
-    ws.mint_page_deletions(&[document], 1_000);
+    let covers = ws.document(document).unwrap().version();
+    assert!(ws.system.as_mut().unwrap().write_deletion(
+        page,
+        0,
+        koru_core::pages::deletion::EventId::new(),
+        &covers,
+        1_000,
+    ));
     assert_eq!(ws.page_resolution(page), Resolution::Deleted);
 
     // A peer wrote past that coverage: now a conflict, shown on this device.
@@ -384,4 +405,143 @@ fn a_pages_note_and_attachments_ride_on_its_state() {
     assert_eq!(ws.ensure_page(page).unwrap().attachments, vec![a, b]);
     assert!(ws.detach_file_from_page(page, a));
     assert_eq!(ws.ensure_page(page).unwrap().attachments, vec![b]);
+}
+
+/// No disk or real store: a parent purge must wait for its page child's
+/// deletion event to be durably acknowledged by the system room.
+#[test]
+fn parent_purge_waits_for_page_tombstone_acknowledgment() {
+    let (mut ws, root, page_doc, system_id, store) = deletion_fixture();
+    assert!(!ws.purge_document(root).unwrap());
+    assert!(
+        ws.manifest
+            .as_ref()
+            .unwrap()
+            .contains(explore::store_document(page_doc))
+    );
+    let link = store.link(system_id);
+    let batch = loro_protocol::BatchId((link.sent().len() as u64).to_le_bytes());
+    link.acks(batch, loro_protocol::UpdateStatusCode::Ok);
+    ws.system.as_mut().unwrap().tick();
+    assert!(ws.purge_document(root).unwrap());
+    assert!(
+        !ws.manifest
+            .as_ref()
+            .unwrap()
+            .contains(explore::store_document(page_doc))
+    );
+}
+
+#[test]
+fn restoring_a_parent_cancels_its_childs_queued_deletion() {
+    let (mut ws, root, page_doc, system_id, store) = deletion_fixture();
+    assert!(!ws.purge_document(root).unwrap());
+    ws.manifest
+        .as_mut()
+        .unwrap()
+        .restore_document(explore::store_document(root))
+        .unwrap();
+    ws.recover_on_restore(root);
+    let link = store.link(system_id);
+    link.acks(
+        loro_protocol::BatchId((link.sent().len() as u64).to_le_bytes()),
+        loro_protocol::UpdateStatusCode::Ok,
+    );
+    ws.system.as_mut().unwrap().tick();
+    ws.tick_pages();
+    assert!(
+        ws.manifest
+            .as_ref()
+            .unwrap()
+            .contains(explore::store_document(page_doc))
+    );
+    assert!(ws.pages.pending_purges.is_empty());
+}
+
+fn deletion_fixture() -> (
+    Workspace,
+    DocumentId,
+    DocumentId,
+    DocumentId,
+    std::sync::Arc<crate::system::tests::FakeStore>,
+) {
+    use crate::system::tests::FakeStore;
+    let workspace = WorkspaceId::new();
+    let mut ws = Workspace::new(WorkspaceDoc::create(workspace, "fixture").unwrap());
+    ws.current = Some(workspace);
+    let system_id = DocumentId::new();
+    let parent = DocumentId::new();
+    let page = PageKey::Bucket(koru_core::tasks::Bucket::Today);
+    let page_doc = page_document_id(workspace, page, 0);
+    let mut system = koru_core::system::SystemDoc::create().unwrap();
+    system.add_page_generation(page, 0).unwrap();
+    let store = std::sync::Arc::new(FakeStore::new([(system_id, system)]));
+    ws.system_store_for_tests = Some(store.clone());
+    let mut manifest = koru_store_core::manifest::Manifest::create(
+        explore::store_workspace(workspace),
+        "fixture",
+        koru_store_core::model::Timestamp::from_millis(1),
+    )
+    .unwrap();
+    manifest
+        .add_document(
+            explore::store_document(system_id),
+            "",
+            koru_core::explore::KIND_SYSTEM,
+            None,
+        )
+        .unwrap();
+    manifest
+        .add_document(
+            explore::store_document(parent),
+            "parent",
+            koru_core::explore::KIND_DOCUMENT,
+            None,
+        )
+        .unwrap();
+    manifest
+        .add_document(
+            explore::store_document(page_doc),
+            "note",
+            koru_core::explore::KIND_DOCUMENT,
+            Some(explore::store_document(parent)),
+        )
+        .unwrap();
+    manifest
+        .trash_document(
+            explore::store_document(parent),
+            koru_store_core::model::Timestamp::from_millis(2),
+            None,
+        )
+        .unwrap();
+    ws.manifest = Some(manifest);
+    ws.ensure_system(false);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !ws.system.as_ref().unwrap().pages_loaded() {
+        assert!(Instant::now() < deadline);
+        ws.system.as_mut().unwrap().tick();
+        std::thread::yield_now();
+    }
+    (ws, parent, page_doc, system_id, store)
+}
+
+#[test]
+fn a_revision_reply_is_required_before_registration_can_start() {
+    let workspace = WorkspaceId::new();
+    let mut ws = Workspace::new(WorkspaceDoc::create(workspace, "fixture").unwrap());
+    ws.current = Some(workspace);
+    let page = PageKey::Bucket(koru_core::tasks::Bucket::Today);
+    let state = ws.ensure_page(page).unwrap();
+    let id = state.document;
+    ws.others
+        .get_mut(&id)
+        .unwrap()
+        .set_text(genesis_seed_id(id), "unsaved")
+        .unwrap();
+    let (_sender, receiver) = mpsc::channel();
+    ws.pages.entries.get_mut(&id).unwrap().revision_write = Some(receiver);
+    ws.tick_pages();
+    assert_eq!(ws.pages.phase(id), Some(PagePhase::Empty));
+    assert!(ws.pages.entries[&id].request.is_none());
+    assert!(ws.pages.entries[&id].written.is_none());
 }

@@ -528,6 +528,29 @@ impl SystemSession {
         Some(doc.deletion_record(page, generation))
     }
 
+    /// Page identity cannot be inferred from an unopened system document.
+    pub(crate) fn pages_loaded(&self) -> bool {
+        self.active.is_some() && self.pending.is_none() && self.local.is_none()
+    }
+
+    pub(crate) fn pages_version(&self) -> Option<loro::VersionVector> {
+        self.active
+            .as_ref()
+            .map(|live| live.doc.version())
+            .or_else(|| self.local.as_ref().map(SystemDoc::version))
+    }
+
+    /// A containing acknowledged version proves every event and decision we
+    /// just read is durable. Joining a room does not advance `acked`.
+    pub(crate) fn pages_durable(&self) -> bool {
+        self.pages_loaded()
+            && self.active.as_ref().is_some_and(|live| {
+                live.session
+                    .acked()
+                    .is_some_and(|acked| acked.includes_vv(&live.doc.version()))
+            })
+    }
+
     pub(crate) fn write_deletion(
         &mut self,
         page: PageKey,

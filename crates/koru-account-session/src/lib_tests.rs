@@ -857,6 +857,11 @@ fn jwt_has_only_frozen_claims_and_rotation_ready_jwks() {
 #[test]
 fn symbolic_returns_csrf_redirect_and_rate_policies_fail_closed() {
     assert!(SymbolicReturnTarget::parse("https://evil.invalid").is_err());
+    assert_eq!(
+        SymbolicReturnTarget::parse("connection_authorize"),
+        Ok(SymbolicReturnTarget::ConnectionAuthorize)
+    );
+    assert!(SymbolicReturnTarget::parse("connection_authorize/../x").is_err());
     assert_eq!(PROVIDER_REDIRECT_POLICY, ProviderRedirectPolicy::Disabled);
     assert!(
         validate_web_request(Some("https://koru.do"), "https://koru.do", b"csrf", b"csrf").is_ok()

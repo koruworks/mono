@@ -1430,11 +1430,21 @@ impl MenuAction {
             MenuAction::TaskList => "List",
             MenuAction::ListColor => "Color",
             MenuAction::ListDelete => "Delete list\u{2026}",
-            MenuAction::PageDescription { shown: false } => "Inline description",
-            MenuAction::PageDescription { shown: true } => "Hide inline description",
-            MenuAction::PageAttach => "Attachment\u{2026}",
-            MenuAction::PageAddExisting => "Add existing document or file\u{2026}",
-            MenuAction::DetachFromPage => "Remove attachment",
+            MenuAction::PageDescription { shown: false } => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::PageShowInline)
+            }
+            MenuAction::PageDescription { shown: true } => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::PageHideInline)
+            }
+            MenuAction::PageAttach => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::PageAttachFile)
+            }
+            MenuAction::PageAddExisting => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::PageLinkExisting)
+            }
+            MenuAction::DetachFromPage => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::PageDetach)
+            }
             MenuAction::TaskRemove => "Remove from Tasks",
             MenuAction::WindowAlwaysOnTop => "Always on Top",
             MenuAction::WindowUnpinTop => "Turn Off Always on Top",
@@ -2521,10 +2531,15 @@ pub fn page_link_items() -> Vec<MenuAction> {
     ]
 }
 
-/// A file attached to a Tasks page: everything a file's own row offers,
-/// then taking it off the page — which leaves the file where it is.
+/// A local file offers its file-row actions; a foreign file offers Open and
+/// Save As. Both can be detached without removing the file.
 pub fn page_attachment_items(note: Option<bool>) -> Vec<MenuAction> {
-    let mut items = file_items(1, note);
+    // No local manifest row means the file belongs elsewhere (or its
+    // ownership is still unknown). Only reads and detaching are available.
+    let mut items = match note {
+        Some(_) => file_items(1, note),
+        None => vec![MenuAction::OpenFileInApp, MenuAction::SaveFileAs],
+    };
     items.push(MenuAction::Divider);
     items.push(MenuAction::DetachFromPage);
     items

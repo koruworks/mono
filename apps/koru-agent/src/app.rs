@@ -4143,11 +4143,11 @@ impl Agent {
                 profile,
                 inherit_stdio,
             } => {
-                // The Agent must own this spawn so the new Koru process is
-                // entered in the first-party launch table before it asks for
-                // workspace lifecycle scopes. The rooted development launcher
-                // uses this exact route instead of starting `koru.exe` beside
-                // the Agent and producing an inevitably unvouched window.
+                // The Agent spawns the `koru` beside it, so the window it
+                // opens is one it will vouch for: grants go to whichever
+                // process is running that binary (`grants::identity`), however
+                // it was started. The rooted development launchers use this
+                // route so the window gets the launchers' root and console.
                 let response = match self.open_workspace(profile.as_deref(), inherit_stdio) {
                     Ok(pid) => Response::WorkspaceOpened { pid },
                     Err(error) => Response::Failed {
@@ -4548,18 +4548,21 @@ impl Agent {
                 // handed to a self-reported pid is a grant handed to whoever
                 // guessed one.
                 let pid = self.peer_pids.get(&connection).copied().flatten();
-                let body = match crate::grants::mint(pid) {
+                // The image that pid is running is the other half, read
+                // inside `mint`: it must be the `koru` beside this Agent.
+                let minted = crate::grants::mint(pid);
+                self.routing_log.event(format_args!(
+                    "first-party grant connection={} pid={pid:?} refused={:?}",
+                    connection.0,
+                    minted.as_ref().err()
+                ));
+                let body = match minted {
                     Ok(grant) => Response::FirstPartyGrant { grant },
-                    Err(crate::grants::Refusal::NotLaunchedHere) => Response::Failed {
+                    Err(_) => Response::Failed {
                         code: "not_first_party".into(),
-                        message: "this Agent did not launch the process asking".into(),
+                        message: "the process asking is not this installation's Koru app".into(),
                     },
                 };
-                self.routing_log.event(format_args!(
-                    "first-party grant connection={} pid={pid:?} minted={}",
-                    connection.0,
-                    matches!(body, Response::FirstPartyGrant { .. })
-                ));
                 self.reply(connection, id, body);
             }
             Request::ValidateFirstPartyGrant { grant } => {
@@ -6467,10 +6470,8 @@ fn spawn_koru_with_stdio(args: &[String], inherit_stdio: bool) -> std::io::Resul
         ));
     }
     let exe = std::env::current_exe()?;
-    let dir = exe
-        .parent()
+    let candidate = koru_beside(&exe)
         .ok_or_else(|| std::io::Error::other("this executable has no directory"))?;
-    let candidate = dir.join(if cfg!(windows) { "koru.exe" } else { "koru" });
     if !candidate.exists() {
         return Err(std::io::Error::other(format!(
             "{} is not beside this executable",
@@ -6487,22 +6488,22 @@ fn spawn_koru_with_stdio(args: &[String], inherit_stdio: bool) -> std::io::Resul
             .stderr(std::process::Stdio::null());
         detach(&mut command);
     }
-    Ok(remember_launch(command.spawn()?))
+    Ok(command.spawn()?.id())
 }
 
-/// **Where a launch becomes a fact.** Every window this Agent starts passes
-/// through here, so the first-party grant table is a record of `spawn` return
-/// values rather than of intentions — and a caller that later asks for a grant
-/// is matched against the operating system's own answer for its pid, never
-/// against anything it said about itself.
+/// The `koru` executable that belongs with the Agent at `agent_exe`: its
+/// sibling, never a `PATH` lookup.
 ///
-/// It takes the whole `Child` so the pid is read from the handle rather than
-/// passed alongside it: a call site that produced one and recorded the other
-/// would compile.
-pub(crate) fn remember_launch(child: std::process::Child) -> u32 {
-    let pid = child.id();
-    crate::grants::record_launch(pid);
-    pid
+/// One function for both questions the Agent asks about it — which window to
+/// start ([`spawn_koru`]) and whether a connection is the Koru app
+/// (`grants::identity`) — so the binary it vouches for can never be a
+/// different one from the binary it would have launched.
+pub(crate) fn koru_beside(agent_exe: &std::path::Path) -> Option<std::path::PathBuf> {
+    Some(
+        agent_exe
+            .parent()?
+            .join(if cfg!(windows) { "koru.exe" } else { "koru" }),
+    )
 }
 
 /// Start `koru.exe` and let it decide what to open.

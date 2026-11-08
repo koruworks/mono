@@ -684,3 +684,88 @@ fn a_creation_draft_leaves_with_its_owner_scope() {
         Some(Effect::CreateConnectedProfile { owner_scope: 4, .. })
     ));
 }
+
+/// A cascade refused for want of a first-party grant fails the same way on
+/// every retry, so it must not say "try again" — the sentence a cascade that
+/// stopped part-way rightly says. The two codes are two sentences.
+#[test]
+fn a_cascade_this_window_may_not_run_does_not_ask_for_a_retry() {
+    let mut c = ProfilesController::new();
+    let profile = offline_profile("Work");
+    let id = profile.id;
+    c.profiles = vec![profile];
+    c.selected = Some(id);
+    let lang = crate::format::lang();
+
+    assert!(c.local_profile_remove_failed_for(id, "profile_cascade_not_permitted"));
+    assert_eq!(
+        c.notice(),
+        Some(koru_i18n::t(
+            lang,
+            koru_i18n::Key::ProfilesRemoveNotPermitted
+        ))
+    );
+
+    assert!(c.local_profile_remove_failed_for(id, "profile_cascade_incomplete"));
+    assert_eq!(
+        c.notice(),
+        Some(koru_i18n::t(
+            lang,
+            koru_i18n::Key::ProfilesRemoveCascadeIncomplete
+        ))
+    );
+
+    let refused = koru_i18n::t(
+        koru_i18n::Lang::En,
+        koru_i18n::Key::ProfilesRemoveNotPermitted,
+    );
+    assert!(!refused.contains("Try again"), "{refused}");
+    assert!(refused.contains("Nothing was deleted"), "{refused}");
+    assert!(
+        koru_i18n::t(
+            koru_i18n::Lang::En,
+            koru_i18n::Key::ProfilesRemoveCascadeIncomplete
+        )
+        .contains("Try again")
+    );
+}
+
+/// The notice is drawn under the selected Profile's header. "Profile removed
+/// from this device" stays while the page settles on its own, and goes as soon
+/// as the person picks a different Profile — under which it would read as that
+/// Profile's news.
+#[test]
+fn the_removal_notice_does_not_follow_the_person_to_another_profile() {
+    let mut c = ProfilesController::new();
+    let profiles = vec![
+        offline_profile("Gone"),
+        offline_profile("First"),
+        offline_profile("Other"),
+    ];
+    let (gone, first, other) = (profiles[0].id, profiles[1].id, profiles[2].id);
+    c.profiles = profiles;
+    c.selected = Some(gone);
+
+    assert!(c.local_profile_removed(gone));
+    let removed = koru_i18n::t(
+        crate::format::lang(),
+        koru_i18n::Key::ProfilesRemovedFromDevice,
+    );
+    assert_eq!(c.selected(), Some(first));
+    assert_eq!(c.notice(), Some(removed));
+
+    // The page falling back by itself, and re-selecting the same row, are not
+    // the person moving on.
+    c.follow_page(other);
+    assert_eq!(c.notice(), Some(removed), "a settling page lost the result");
+    c.perform(Intent::Select(other));
+    assert_eq!(c.notice(), Some(removed), "re-selecting cleared the result");
+
+    c.perform(Intent::Select(first));
+    assert_eq!(c.selected(), Some(first));
+    assert_eq!(
+        c.notice(),
+        None,
+        "the last Profile's notice stayed under a different one"
+    );
+}

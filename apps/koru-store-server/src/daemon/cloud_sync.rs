@@ -46,11 +46,29 @@ use tokio::{
     time::Instant,
 };
 
-use super::StoreWorkerClient;
+use super::StoreJobs;
 mod comparison;
+pub mod driver;
 mod live;
 mod rooms;
 pub use live::subscribe_dataset;
+
+/// Which units a Workspace session carries.
+///
+/// The stage is a fact of the session's credential, not of the pass: a
+/// connection's replica is admitted at the manifest stage first and at the
+/// full stage once a call names its documents (TECHNICAL §5.3), and the worker
+/// refuses a unit its credential's stage does not admit. A device is always
+/// `Full`. A Profile plan carries its own units at either stage.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stage {
+    /// The Workspace manifest alone: what the Workspace is called and which
+    /// documents it holds, and none of their bodies.
+    Manifest,
+    /// The manifest, then every document: digest comparison, then exchange, in
+    /// the bounded order a device uses.
+    Full,
+}
 
 /// One admitted dataset session's facts, as the host established them at
 /// installation. `accepted` carries the handshake result the transport owner
@@ -119,6 +137,22 @@ pub enum Progress {
     },
     /// Authenticated, content-free: the caller should schedule another pass.
     RemoteHint,
+    /// **Cloud holds at least `version` of this unit**, the encoded version
+    /// vector the pass last read for it: the unit settled with its upload
+    /// acknowledged, or with nothing to upload, and no local change since.
+    /// It is what a host that waits for an edit's acknowledgement reads
+    /// (Cloud MCP TECHNICAL §5.5): an edit is saved once a confirmed version
+    /// includes the frontier its local write produced.
+    Confirmed {
+        unit: Unit,
+        version: Vec<u8>,
+    },
+    /// The session ended on this carrier error, and the driver opens the next
+    /// one. A host with a submission in flight reads it: a refusal defined to
+    /// leave the unit unmoved (`sync_unit_exists`) proves the submission had
+    /// no effect, any other end leaves it unknown. Emitted by the
+    /// [`driver`] only; a single pass returns its error instead.
+    SessionEnded(Error),
 }
 
 /// One document unit's half of the coverage sample.
@@ -355,12 +389,12 @@ impl Downloads for NoDownloads {
 /// being refused stops being a private fact of one pass and becomes something
 /// the host says out loud. See [`Deferrals`].
 #[allow(clippy::too_many_arguments)]
-pub async fn reconcile_dataset<R, W, P, F>(
+pub async fn reconcile_dataset<R, W, J, P, F>(
     reader: R,
     writer: W,
     session: Session,
     plan: Plan,
-    worker: StoreWorkerClient,
+    worker: J,
     authorize: Authorize,
     downloads: Arc<dyn Downloads>,
     deferrals: DeferralLedger,
@@ -370,33 +404,113 @@ pub async fn reconcile_dataset<R, W, P, F>(
 where
     R: AsyncRead + Unpin + Send + 'static,
     W: AsyncWrite + Unpin + Send + 'static,
+    J: StoreJobs,
     P: FnMut(&Start) -> Decision + Send + 'static,
     F: FnMut(Progress),
 {
     run_dataset(
-        reader, writer, session, plan, worker, authorize, downloads, deferrals, permission,
-        progress, None,
+        reader,
+        writer,
+        session,
+        plan,
+        worker,
+        authorize,
+        downloads,
+        deferrals,
+        permission,
+        progress,
+        None,
+        Hooks::device(),
     )
     .await
+    .map(Ended::into_outcome)
+}
+
+/// What the driver adds to a session: the stage it was admitted at, and the
+/// channel its caller asks through. A device's session has neither — it is
+/// `Full` and nobody asks it anything.
+pub(super) struct Hooks<'h> {
+    pub stage: Stage,
+    pub commands: Option<&'h mut tokio::sync::mpsc::Receiver<driver::Command>>,
+    /// Which units may be uploaded at the full stage; `None` is every unit.
+    pub uploads: Option<Uploads>,
+}
+
+impl Hooks<'_> {
+    fn device() -> Self {
+        Self {
+            stage: Stage::Full,
+            commands: None,
+            uploads: None,
+        }
+    }
+}
+
+/// Which units a session may upload. A device uploads every unit it holds; a
+/// connection's replica never uploads Identity, and nothing at all under read
+/// access, and says so here so not even a refused upload is attempted.
+pub type Uploads = Arc<dyn Fn(Unit) -> bool + Send + Sync>;
+
+/// The export port's answer: a Store job's, or nothing to send.
+enum Either<F> {
+    Export(F),
+    Held,
+}
+
+impl<F, T> std::future::Future for Either<std::pin::Pin<Box<F>>>
+where
+    F: std::future::Future<Output = Result<Answer<Option<T>>, Error>> + ?Sized,
+{
+    type Output = Result<Answer<Option<T>>, Error>;
+    fn poll(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        match self.get_mut() {
+            Either::Export(future) => future.as_mut().poll(cx),
+            Either::Held => std::task::Poll::Ready(Ok(Answer::Ready(None))),
+        }
+    }
+}
+
+/// How one session ended without an error.
+pub(super) enum Ended {
+    /// A single pass, with no live subscription: what `reconcile_dataset`
+    /// answers.
+    Finished(Outcome),
+    /// The driver was asked for another stage. The session's credential
+    /// admits only its own, so the session ends and the driver opens the next
+    /// one at the new stage.
+    Advance(Stage, Outcome),
+}
+
+impl Ended {
+    fn into_outcome(self) -> Outcome {
+        match self {
+            Self::Finished(outcome) | Self::Advance(_, outcome) => outcome,
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn run_dataset<R, W, P, F>(
+pub(super) async fn run_dataset<R, W, J, P, F>(
     reader: R,
     writer: W,
     session: Session,
     plan: Plan,
-    worker: StoreWorkerClient,
+    worker: J,
     authorize: Authorize,
     downloads: Arc<dyn Downloads>,
     deferrals: DeferralLedger,
     permission: P,
     mut progress: F,
     mut live: Option<koru_store_api::cloud_changes::Subscription>,
-) -> Result<Outcome, Error>
+    mut hooks: Hooks<'_>,
+) -> Result<Ended, Error>
 where
     R: AsyncRead + Unpin + Send + 'static,
     W: AsyncWrite + Unpin + Send + 'static,
+    J: StoreJobs,
     P: FnMut(&Start) -> Decision + Send + 'static,
     F: FnMut(Progress),
 {
@@ -468,6 +582,12 @@ where
     let read_versions = Arc::clone(&versions);
     let export_worker = worker.clone();
     let export_authorize = Arc::clone(&authorize);
+    // At the manifest stage nothing is uploaded: the stage admits downloads
+    // only (TECHNICAL §5.3). At the full stage the driver's caller decides.
+    let export_gate: Option<Uploads> = match hooks.stage {
+        Stage::Manifest => Some(Arc::new(|_| false)),
+        Stage::Full => hooks.uploads.clone(),
+    };
     let mut sync = Reconciler::new(
         client,
         move |unit| {
@@ -496,16 +616,26 @@ where
             })
         },
         move |request| {
+            // A unit this session may not upload answers that there is nothing
+            // to send, before any Store work: the request — and the
+            // reservation it holds — is dropped here.
+            if export_gate.as_ref().is_some_and(|may| !may(request.unit())) {
+                return Ok(Either::Held);
+            }
             let authorize = Arc::clone(&export_authorize);
             let reply = export_worker
                 .submit_cloud_export(request, Timestamp::now(), move |_, _, unit| authorize(unit))
                 .map_err(|_| Error::Unavailable)?;
-            Ok(async move { store_answer(store_result(Ok(reply)).await?) })
+            Ok(Either::Export(Box::pin(async move {
+                store_answer(store_result(Ok(reply)).await?)
+            })))
         },
     );
 
-    let mut rooms = match (&plan, live.is_some()) {
-        (Plan::Workspace { workspace_id }, true) => Some(rooms::Rooms::new(
+    // Viewer rooms carry document bodies, which a manifest-stage credential
+    // does not admit.
+    let mut rooms = match (&plan, live.is_some(), hooks.stage) {
+        (Plan::Workspace { workspace_id }, true, Stage::Full) => Some(rooms::Rooms::new(
             *workspace_id,
             priority.clone(),
             worker.clone(),
@@ -520,7 +650,7 @@ where
         progress(Progress::PassStarted);
         let mut outcome = Outcome::default();
         match plan.clone() {
-            Plan::Workspace { workspace_id } => {
+            Plan::Workspace { workspace_id } => 'workspace: {
                 let workspace = cloud(workspace_id.as_uuid());
                 let manifest = Unit::Document {
                     workspace_id: workspace,
@@ -535,6 +665,11 @@ where
                     &mut progress,
                 )
                 .await?;
+                if hooks.stage == Stage::Manifest {
+                    // The manifest names the documents; their bodies wait for
+                    // the full stage's credential.
+                    break 'workspace;
+                }
                 // The committed manifest is the authority for which documents
                 // exist. Read it back through the Store, never from the remote.
                 let mut entries = store_result(worker.submit_store(move |store| {
@@ -621,29 +756,199 @@ where
             }
         }
         progress(Progress::PassFinished(Box::new(outcome.clone())));
-        let Some(watch) = &mut live else {
-            return Ok(outcome);
+        let workspace = match &plan {
+            Plan::Workspace { workspace_id } => Some(*workspace_id),
+            Plan::Profile { .. } => None,
         };
-        live::wait_for_change(
+        match wait_or_serve(
             &mut sync,
-            watch,
-            outcome.remote_hint,
+            &mut live,
+            &outcome,
             &authorize,
             scope,
             &mut rooms,
             &deferrals,
             &versions,
             &mut progress,
+            &mut hooks,
+            &worker,
+            workspace,
         )
-        .await?;
+        .await?
+        {
+            Next::Pass => {}
+            Next::Done => return Ok(Ended::Finished(outcome)),
+            Next::Advance(stage) => return Ok(Ended::Advance(stage, outcome)),
+        }
     }
+}
+
+/// What a session does after a pass.
+enum Next {
+    Pass,
+    Done,
+    Advance(Stage),
+}
+
+/// Between passes: wait for a change, and answer what the driver is asked
+/// meanwhile — a unit to fetch now, or another stage.
+///
+/// **A fetch runs here, on the session's own carrier, between passes**, so it
+/// never interleaves with a unit already in flight. A request made during a
+/// long pass waits for that pass to finish.
+#[allow(clippy::too_many_arguments)]
+async fn wait_or_serve<'a, R, W, J, F>(
+    sync: &mut Reconciler<'a, R, W>,
+    live: &mut Option<koru_store_api::cloud_changes::Subscription>,
+    outcome: &Outcome,
+    authorize: &Authorize,
+    scope: Scope,
+    rooms: &mut Option<rooms::Rooms<J>>,
+    deferrals: &DeferralLedger,
+    versions: &Versions,
+    progress: &mut F,
+    hooks: &mut Hooks<'_>,
+    worker: &J,
+    workspace: Option<WorkspaceId>,
+) -> Result<Next, Error>
+where
+    R: AsyncRead + Unpin + Send + 'a,
+    W: AsyncWrite + Unpin + Send + 'a,
+    J: StoreJobs,
+    F: FnMut(Progress),
+{
+    let Some(watch) = live else {
+        return Ok(Next::Done);
+    };
+    let mut hinted = outcome.remote_hint;
+    loop {
+        let command = match live::wait_for_change(
+            sync,
+            watch,
+            hinted,
+            authorize,
+            scope,
+            rooms,
+            deferrals,
+            versions,
+            progress,
+            hooks.commands.as_deref_mut(),
+        )
+        .await?
+        {
+            live::Wake::Changed => return Ok(Next::Pass),
+            live::Wake::Command(command) => command,
+        };
+        // Whatever was pending before the command still is.
+        hinted = true;
+        match command {
+            driver::Command::Advance(stage) if stage != hooks.stage => {
+                return Ok(Next::Advance(stage));
+            }
+            driver::Command::Advance(_) => {}
+            driver::Command::Fetch { unit, reply } => {
+                let answer = fetch(
+                    sync,
+                    worker,
+                    workspace,
+                    scope,
+                    hooks.stage,
+                    unit,
+                    deferrals,
+                    versions,
+                    progress,
+                )
+                .await;
+                // A carrier failure ends the session as any other unit's
+                // would; the caller hears why before it does.
+                let ended = match &answer {
+                    Err(driver::FetchError::Transfer(error)) => Some(*error),
+                    _ => None,
+                };
+                let _ = reply.send(answer);
+                if let Some(error) = ended {
+                    return Err(error);
+                }
+            }
+        }
+    }
+}
+
+/// Reconcile one document unit **the manifest does not name** (TECHNICAL
+/// §5.6): a hosted creation's candidate, looked up in Cloud by id before it is
+/// seeded.
+///
+/// The unit is provisioned as any document a pass meets, then driven through
+/// the same carrier. Cloud resolves a scoped download without a manifest check,
+/// and an absent unit is an empty version rather than an error, so the answer
+/// is read back from the Store afterwards: content arrived, or nothing did.
+#[allow(clippy::too_many_arguments)]
+async fn fetch<'a, R, W, J, F>(
+    sync: &mut Reconciler<'a, R, W>,
+    worker: &J,
+    workspace: Option<WorkspaceId>,
+    scope: Scope,
+    stage: Stage,
+    unit: Unit,
+    deferrals: &DeferralLedger,
+    versions: &Versions,
+    progress: &mut F,
+) -> Result<driver::Fetched, driver::FetchError>
+where
+    R: AsyncRead + Unpin + Send + 'a,
+    W: AsyncWrite + Unpin + Send + 'a,
+    J: StoreJobs,
+    F: FnMut(Progress),
+{
+    let (Some(workspace_id), Unit::Document { document_id, .. }) = (workspace, unit) else {
+        return Err(driver::FetchError::NotADocument);
+    };
+    if scope.room(unit).is_err() || document_id.as_bytes() == scope.manifest.as_uuid().as_bytes() {
+        return Err(driver::FetchError::NotADocument);
+    }
+    if stage != Stage::Full {
+        return Err(driver::FetchError::ManifestStage);
+    }
+    let document = DocumentId::from_uuid(document_id.as_uuid());
+    ensure_document(worker, workspace_id, document)
+        .await
+        .map_err(driver::FetchError::Transfer)?;
+    let mut outcome = Outcome::default();
+    drive_unit(sync, unit, deferrals, versions, &mut outcome, progress)
+        .await
+        .map_err(driver::FetchError::Transfer)?;
+    if let Some((_, code)) = outcome.refused.first() {
+        return Err(driver::FetchError::Refused(*code));
+    }
+    let empty = store_result(worker.submit_store(move |store| {
+        store
+            .version(workspace_id, document)
+            .map(|version| version.is_empty())
+    }))
+    .await
+    .map_err(driver::FetchError::Transfer)?
+    .map_err(|error| driver::FetchError::Refused(error.code()))?;
+    if !empty {
+        return Ok(driver::Fetched::Present);
+    }
+    // Absent: take the empty container back out, so the lookup leaves the
+    // Store as it found it and a seed under this id is not a duplicate.
+    store_result(
+        worker.submit_store(move |store| {
+            store.discard_empty_replica_document(workspace_id, document)
+        }),
+    )
+    .await
+    .map_err(driver::FetchError::Transfer)?
+    .map_err(|error| driver::FetchError::Refused(error.code()))?;
+    Ok(driver::Fetched::Absent)
 }
 
 /// A document the manifest names but this Store does not hold yet gets its
 /// empty bootstrap container through the existing bounded path, exactly as
 /// the peer path provisions an advertised document before pulling it.
-async fn ensure_document(
-    worker: &StoreWorkerClient,
+async fn ensure_document<J: StoreJobs>(
+    worker: &J,
     workspace: WorkspaceId,
     document: DocumentId,
 ) -> Result<(), Error> {
@@ -674,7 +979,15 @@ where
     W: AsyncWrite + Unpin + Send + 'a,
     F: FnMut(Progress),
 {
-    sync.start(unit)?;
+    sync.start(unit).map_err(|error| {
+        tracing::warn!(
+            ?unit,
+            code = error.code(),
+            status = ?sync.status(),
+            "cloud session: unit admission ended the pass"
+        );
+        error
+    })?;
     progress(Progress::Started(unit));
     // Named on the way out, because the carrier cannot carry it: which unit
     // ended a pass is a fact the worker will never see, and a pass that ends
@@ -745,6 +1058,18 @@ where
                 // uninterrupted run counts towards the bound.
                 if !refused {
                     ledger(deferrals, |held| held.cleared(unit));
+                }
+                // The version read last is the verify read, and with no local
+                // change Cloud's confirmed version includes it.
+                if !refused && !upload_deferred && !local_changed {
+                    let version = versions
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner())
+                        .get(&unit)
+                        .cloned();
+                    if let Some(version) = version {
+                        progress(Progress::Confirmed { unit, version });
+                    }
                 }
                 progress(Progress::Settled {
                     unit,

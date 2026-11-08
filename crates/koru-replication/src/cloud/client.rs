@@ -5,7 +5,7 @@ use koru_device::DeviceSigningKey;
 
 /// Owned client-side handshake state for one stream, never persisted or reused.
 pub struct ClientHandshake {
-    credential: VerifiedTokenCapability<SyncCredentialClaimsV1>,
+    credential: VerifiedTokenCapability<SessionClaims>,
     compact: String,
     dataset: CloudReplicaPrincipalV1,
     client: ReplicationEndpointId,
@@ -35,7 +35,7 @@ impl ClientHandshake {
         if route_endpoint != worker {
             return Err(Refusal::EndpointMismatch);
         }
-        let credential = verify_credential(verifier, compact.as_bytes(), now_millis)?;
+        let credential = verify_session_credential(verifier, compact.as_bytes(), now_millis)?;
         if credential.claims().client_endpoint_id != client {
             return Err(Refusal::EndpointMismatch);
         }
@@ -63,6 +63,10 @@ impl ClientHandshake {
     /// two-nonce transcript over its own credential and nothing the worker
     /// asserts about itself. Whether this worker may serve the dataset is the
     /// worker's own live lease and authority check, not a claim the device reads.
+    ///
+    /// `device_key` is the device's signing key. An app connection's replica,
+    /// which has no device key, passes its endpoint's key: the one its
+    /// credential names as `client_endpoint_id`.
     pub fn challenge(
         self,
         challenge: HandshakeV1,
@@ -112,7 +116,7 @@ impl ClientHandshake {
 /// credential expiry so a worker cannot advertise a later one in its receipt.
 pub struct ClientReceipt {
     dataset: CloudReplicaPrincipalV1,
-    credential: VerifiedTokenCapability<SyncCredentialClaimsV1>,
+    credential: VerifiedTokenCapability<SessionClaims>,
 }
 
 impl ClientReceipt {
@@ -155,6 +159,9 @@ impl ClientReceipt {
             principal: self.dataset,
             generation: *generation,
             expires_at_seconds: *expires_at_seconds,
+            claim_references: transfer::ClaimReferences::client(
+                &self.credential.claims().principal,
+            ),
             accepted,
         })
     }

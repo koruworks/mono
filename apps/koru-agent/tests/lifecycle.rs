@@ -2142,15 +2142,17 @@ fn a_target_with_an_unreadable_id_is_refused() {
 ///
 /// This gate speaks the protocol exactly as a shell does — a `ShellHello` at
 /// the current version and nothing privileged — and that is the point: it is a
-/// well-behaved local caller that the Agent did not start. It is welcomed, it
-/// may say `Hello`, and it is refused a first-party grant, because the only
-/// thing the Agent can honestly say about a caller is whether it launched it.
+/// well-behaved local caller that is not the Koru app. It is welcomed, it may
+/// say `Hello`, and it is refused a first-party grant, because the operating
+/// system says this process is running a test binary rather than the `koru`
+/// beside the Agent — and what the process is running is the one thing the
+/// Agent asks.
 ///
 /// A test binary is a fair stand-in for the population the grant exists to
 /// stop: an MCP server, a plugin, a script — something that asks politely and
 /// would otherwise have nothing say no to it.
 #[test]
-fn a_caller_the_agent_did_not_launch_is_refused_a_first_party_grant() {
+fn a_caller_that_is_not_the_koru_app_is_refused_a_first_party_grant() {
     let agent = Agent::start();
     let mut shell = agent.shell();
     assert!(matches!(
@@ -2159,7 +2161,7 @@ fn a_caller_the_agent_did_not_launch_is_refused_a_first_party_grant() {
     ));
     match shell.ask(Request::RequestFirstPartyGrant) {
         Response::Failed { code, .. } => assert_eq!(code, "not_first_party"),
-        other => panic!("a grant was minted for a process nobody launched: {other:?}"),
+        other => panic!("a grant was minted for a process that is not Koru: {other:?}"),
     }
     // And a token nobody minted is not a token: validation answers one bit,
     // and the bit is false.

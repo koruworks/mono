@@ -301,6 +301,12 @@ impl SqliteWorkspace {
         Self::from_connection(db::open_in_memory()?)
     }
 
+    /// The named database in this process's memory: the same `workspace.db`
+    /// every time the name is opened, for as long as one connection holds it.
+    pub fn in_named_memory(name: &koru_sqlite::MemoryName) -> Result<Self> {
+        Self::from_connection(db::open_named_memory(name)?)
+    }
+
     fn from_connection(mut connection: Connection) -> Result<Self> {
         let before = db::user_version(&connection)?;
         let after = db::migrate(
@@ -416,6 +422,25 @@ impl WorkspaceRepo for SqliteWorkspace {
             .optional()
             .map_err(sql_failed)?
             .transpose()
+    }
+
+    fn repair_missing_position(
+        &mut self,
+        id: DocumentId,
+        version: &[u8],
+        frontiers: &[u8],
+    ) -> Result<bool> {
+        if version.is_empty() || frontiers.is_empty() {
+            return Ok(false);
+        }
+        self.connection
+            .execute(
+                "UPDATE loro_documents SET version_vector = ?2, frontiers = ?3
+                 WHERE id = ?1 AND length(version_vector) = 0",
+                params![id.to_storage(), version, frontiers],
+            )
+            .map(|rows| rows != 0)
+            .map_err(sql_failed)
     }
 
     fn create_document(&mut self, id: DocumentId, kind: DocumentKind, at: Timestamp) -> Result<()> {

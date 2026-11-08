@@ -75,6 +75,7 @@ pub(crate) mod cloud_sync;
 pub(crate) mod context_menu;
 mod delegate;
 pub(crate) mod dictation;
+mod document_appearance;
 pub(crate) mod draw;
 mod error_dialog;
 mod font_picker;
@@ -429,23 +430,12 @@ fn context_has_sections() -> bool {
     !crate::panes::context::Section::visible().is_empty()
 }
 
-/// The command bar's place (workspace foundation frame 2): 640 wide, up to
-/// 400 tall, hung 96 px from the top rather than centred — a bar that opens
-/// where the eye already is, under the caption, not in the middle of the
-/// page it is about to leave.
-const SEARCH_MODAL_W: f32 = 640.0;
-const SEARCH_MODAL_H: f32 = 400.0;
-const SEARCH_MODAL_TOP: f32 = 96.0;
 const SEARCH_MODAL_MARGIN: f32 = 16.0;
 const MOVE_TO_MODAL_W: f32 = 420.0;
 const MOVE_TO_MODAL_H: f32 = 360.0;
 
 fn search_modal_bounds(viewport: (f32, f32)) -> Rect {
-    let w = SEARCH_MODAL_W.min((viewport.0 - SEARCH_MODAL_MARGIN * 2.0).max(1.0));
-    let h = SEARCH_MODAL_H.min((viewport.1 - SEARCH_MODAL_MARGIN * 2.0).max(1.0));
-    // 96 px down, or as high as the margin allows in a short window.
-    let y = SEARCH_MODAL_TOP.min((viewport.1 - h - SEARCH_MODAL_MARGIN).max(SEARCH_MODAL_MARGIN));
-    Rect::new((viewport.0 - w) * 0.5, y, w, h)
+    koru_search_ui::SearchModal::new(viewport).bounds()
 }
 
 fn move_to_modal_bounds(viewport: (f32, f32)) -> Rect {
@@ -713,6 +703,7 @@ pub struct MainView {
     /// What the tasks rail's numbers come from — one query per refresh on a
     /// worker thread, and nothing at all while the rail is not showing.
     task_counts: taskcounts::TaskCountsPanel,
+    document_appearances: document_appearance::DocumentAppearances,
     /// **The one place the local date is watched.** Every bucket is a function
     /// of *today*, so midnight — and waking on the other side of one — makes all
     /// five wrong at the same instant and nothing else announces it. Compared on
@@ -908,6 +899,7 @@ pub struct MainView {
     welcome_workspace_hint: Option<String>,
     /// The Welcome page's machine-wide ticks, read from and written to the Store.
     welcome_progress: welcome_progress::WelcomeProgress,
+    app_menu_changes: Vec<(bool, std::sync::mpsc::Receiver<crate::app_menu::Outcome>)>,
     /// Renaming a workspace in its switcher row.
     ///
     /// **The field lives here, not in the pane.** The pane was built in a chrome
@@ -1861,6 +1853,7 @@ impl MainView {
             cloud_images_due: true,
             cloud_images: (0, Vec::new()),
             task_counts: taskcounts::TaskCountsPanel::default(),
+            document_appearances: document_appearance::DocumentAppearances::default(),
             tasks_day: crate::tasks_view::query::DayWatch::default(),
             context_tasks_stale: true,
             context_tasks_doc: None,
@@ -1916,6 +1909,7 @@ impl MainView {
             welcome_owner: None,
             welcome_workspace_hint: None,
             welcome_progress: welcome_progress::WelcomeProgress::default(),
+            app_menu_changes: Vec::new(),
             workspace_rename: None,
             sidebar_drag: None,
             ai_drag: None,
@@ -2550,11 +2544,7 @@ impl MainView {
         };
         let bounds = self.search_bounds();
         View::set_viewport(&mut search, bounds.w, bounds.h);
-        search.make_command_bar(
-            self.command_bar_rows(),
-            Self::command_bar_chips(),
-            koru_i18n::t(crate::format::lang(), koru_i18n::Key::SearchOrTypeACommand).to_owned(),
-        );
+        search.configure_modal(Self::command_bar_chips());
         self.search = Some(search);
         // The observation, not the work: one channel send, a no-op under
         // `cargo test` (nothing starts the host there).
@@ -2562,47 +2552,6 @@ impl MainView {
             koru_workspace_host::events_host::SearchSurface::InApp,
         );
         true
-    }
-
-    /// **The CREATE rows this host offers** (TECHNICAL.final §5.9): *New
-    /// task "…"* — undated and unlisted, which the model files in Later — and
-    /// *New document "…"*, landing where the `+` menu's *New document* lands
-    /// today. The rows are built when the bar opens, so the subtitle names
-    /// this workspace; `apply_create` answers them by index.
-    fn command_bar_rows(&self) -> Vec<koru_search_ui::CreateRow> {
-        use koru_i18n::{Key, t};
-        let lang = crate::format::lang();
-        let mut rows = Vec::new();
-        if koru_features::tasks() {
-            rows.push(koru_search_ui::CreateRow {
-                icon: koru_draw::icons::CHECK_SQUARE,
-                title: t(lang, Key::NewTask).to_owned(),
-                subtitle: format!(
-                    "{} · {}",
-                    t(lang, Key::A11yTasksHeading),
-                    t(lang, Key::A11yTaskBucketLater)
-                ),
-            });
-        }
-        let workspace = self
-            .pane_context
-            .as_ref()
-            .and_then(|(_, _, workspaces, current)| {
-                let current = (*current)?;
-                workspaces
-                    .iter()
-                    .find(|w| w.id == current)
-                    .map(|w| w.name.clone())
-            });
-        rows.push(koru_search_ui::CreateRow {
-            icon: koru_draw::icons::DOCUMENT,
-            title: t(lang, Key::NewDocument).to_owned(),
-            subtitle: match workspace {
-                Some(name) => format!("{} · {name}", t(lang, Key::DocumentsHeading)),
-                None => t(lang, Key::DocumentsHeading).to_owned(),
-            },
-        });
-        rows
     }
 
     /// The footer's chips: ↑↓ move · ↵ open · Ctrl+↵ open in window. The `/`
@@ -2634,45 +2583,6 @@ impl MainView {
         ]
     }
 
-    /// Answer a CREATE row: make the thing and open it (`↵` creates *and*
-    /// opens, Q-B). The surface closes the way it does for a chosen result.
-    fn apply_create(&mut self, create: koru_search_ui::Create) -> bool {
-        let tasks = koru_features::tasks();
-        let row = if tasks { create.row } else { create.row + 1 };
-        chrome_debug::chrome_debug!("command bar create row {} for {:?}", row, create.query);
-        match row {
-            0 => {
-                if create.query.is_empty() {
-                    return false;
-                }
-                self.queue_task_command(
-                    koru_workspace_host::tasks::TaskCommand::Create {
-                        title: create.query,
-                        due: None,
-                        list: None,
-                        priority: None,
-                        rank: None,
-                    },
-                    false,
-                );
-                // Where it landed: the Tasks page on Later (Q3).
-                self.open_tasks_tab(
-                    crate::panes::explore::rail::RailTarget::Bucket(
-                        koru_core::tasks::Bucket::Later,
-                    ),
-                    create.disposition == koru_search_ui::Disposition::NewWindow,
-                );
-                true
-            }
-            _ => {
-                self.ask_pane(koru_workspace_host::PaneRequest::CreateDocument(
-                    create.query,
-                ));
-                true
-            }
-        }
-    }
-
     fn service_search_outputs(&mut self) {
         let Some(search) = self.search.as_mut() else {
             return;
@@ -2683,15 +2593,7 @@ impl MainView {
         while let Some(request) = View::take_pane_request(search) {
             requests.push(request);
         }
-        let create = search.take_create();
         let window_request = View::take_window_request(search);
-        if let Some(create) = create {
-            // A CREATE row is a destination like a result: the bar closes
-            // and the thing opens.
-            self.search = None;
-            self.apply_create(create);
-            return;
-        }
         // Forwarded rather than replacing: the search panel's ask joins
         // whatever this view has already queued. A same-window target records
         // *here* — the shell landing that follows must not, or a workspace
@@ -3155,6 +3057,16 @@ impl MainView {
             .map(|entry| entry.kind == koru_core::explore::KIND_FILE)
             .or_else(|| self.entity_file_kinds.get(&id).copied())
             .unwrap_or(true)
+    }
+
+    /// Note state only for files owned by the displayed workspace. Missing
+    /// ownership never grants the attachment menu permission to mutate.
+    pub(super) fn local_attachment_note(&self, id: koru_core::DocumentId) -> Option<bool> {
+        self.entries
+            .as_ref()?
+            .iter()
+            .find(|entry| entry.id == id && entry.kind == koru_core::explore::KIND_FILE)
+            .map(|entry| entry.note.is_some())
     }
 
     /// A page's attachments as the lane shows them, including linked entries
@@ -4612,6 +4524,10 @@ impl MainView {
             ),
             // A file's own rows, as its Files row offers them for one file,
             // and taking it off the page.
+            MenuSubject::PageAttachment { file, .. } if self.linked_is_file(*file) => {
+                context_menu::page_attachment_items(self.local_attachment_note(*file))
+                    .contains(&action)
+            }
             MenuSubject::PageAttachment { .. } => matches!(
                 action,
                 MenuAction::DetachFromPage
@@ -5191,6 +5107,11 @@ impl MainView {
                 other => {
                     let node = NodeId::from_uuid(file.as_uuid());
                     let subject = if self.linked_is_file(file) {
+                        if !context_menu::page_attachment_items(self.local_attachment_note(file))
+                            .contains(&other)
+                        {
+                            return false;
+                        }
                         MenuSubject::Files(vec![node])
                     } else {
                         MenuSubject::Nodes(vec![node])
@@ -8084,6 +8005,7 @@ impl MainView {
                 self.open_manage(crate::manage::Page::Profile(profile))
             }
             Outcome::ManageDevices => self.open_manage(crate::manage::Page::Devices),
+            Outcome::ManageCloud => self.open_manage(crate::manage::Page::Cloud),
             Outcome::FloorMenu { at } => self.open_floor_menu(at),
             Outcome::WorkspaceMenu { workspace, at } => {
                 self.open_workspace_menu(workspace, at, false)
@@ -8696,6 +8618,23 @@ impl MainView {
     /// sidebar still tracks that the tree is stale — it just does not pay to
     /// build rows nobody can see, and builds them when it opens.
     fn refresh_explore(&mut self, ws: &WorkspaceDoc, visible: bool) {
+        if self
+            .document_appearances
+            .set_workspace(self.current_workspace())
+        {
+            self.explore.set_document_appearances(Default::default());
+        }
+        if self.entries.is_some()
+            && let Some(document) = self.active_document
+            && ws.own_document_id() == Some(document)
+            && let Some(root) = koru_workspace::document_root(ws)
+            && let Ok(node) = ws.read(root)
+        {
+            let id = NodeId::from_uuid(document.as_uuid());
+            let appearance = crate::panes::explore::DocumentAppearance::from_node(&node);
+            self.document_appearances.observe(id, appearance.clone());
+            self.explore.set_document_appearance(id, appearance);
+        }
         // A structural change in the active tab — a row added, deleted or moved,
         // local or remote — changes what the explore tree shows. `rebuild` sets
         // the body's flag; drain it here so a deleted code block disappears from
@@ -9348,8 +9287,69 @@ impl MainView {
                 WelcomeWant::Agents => {
                     self.open_agents_menu();
                 }
+                WelcomeWant::AddToAppMenu => self.set_app_menu_entry(true),
             }
         }
+    }
+
+    /// Queue the desktop entry change; the UI only receives its result.
+    fn set_app_menu_entry(&mut self, on: bool) {
+        self.app_menu_changes.push((on, crate::app_menu::set(on)));
+    }
+
+    fn maintain_app_menu(&mut self) -> bool {
+        let mut completed = Vec::new();
+        self.app_menu_changes
+            .retain(|(on, reply)| match reply.try_recv() {
+                Ok(outcome) => {
+                    completed.push((*on, outcome));
+                    false
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => true,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    completed.push((
+                        *on,
+                        crate::app_menu::Outcome {
+                            added: None,
+                            error: Some("app menu worker disconnected".into()),
+                        },
+                    ));
+                    false
+                }
+            });
+        let changed = !completed.is_empty();
+        for (on, outcome) in completed {
+            if outcome.error.is_some() {
+                let key = if on {
+                    koru_i18n::Key::AppMenuAddFailed
+                } else {
+                    koru_i18n::Key::AppMenuRemoveFailed
+                };
+                self.toast = Some((
+                    koru_ui::Toast::new(
+                        koru_i18n::t(crate::format::lang(), key).to_owned(),
+                        None,
+                        Instant::now(),
+                    ),
+                    ToastPayload::None,
+                ));
+            }
+            for (_, group) in self.panes.iter_groups_mut() {
+                for tab in group.tabs_mut().iter_mut() {
+                    if let TabView::Settings(settings) = &mut tab.view {
+                        settings.set_app_menu_entry(outcome.added);
+                    }
+                }
+            }
+            if outcome.added == Some(true)
+                && self
+                    .welcome_progress
+                    .mark(vec![crate::welcome::RowId::AppMenu.key()])
+            {
+                self.sync_welcome_lists();
+            }
+        }
+        changed
     }
 
     /// **Perform what the Settings surface asked for.**
@@ -9588,6 +9588,7 @@ impl MainView {
             Request::SetTelemetryConsent(on) => {
                 koru_workspace_host::telemetry_consent::set(on);
             }
+            Request::SetAppMenuEntry(on) => self.set_app_menu_entry(on),
             // **The way in, not a second copy of the rows.** The provider rows
             // are Koru AI's and stay there; Settings names the section and
             // opens the panel that owns them.
@@ -12168,53 +12169,8 @@ impl View for MainView {
         self.draw_update_banner(scene, root);
         self.draw_agent_cli_cards(scene, root);
         self.poll_agent_mcp();
-        if self.search.is_some() {
-            let bounds = self.search_bounds();
-            draw_scene::fill(
-                scene,
-                root,
-                theme::p().scrim,
-                &draw_scene::rect(0.0, 0.0, self.viewport.0, self.viewport.1),
-            );
-            draw_scene::floating_panel(
-                scene,
-                root,
-                bounds.x,
-                bounds.y,
-                bounds.w,
-                bounds.h,
-                &draw_scene::Panel::popover(crate::search::SURFACE_RADIUS),
-            );
-            let local_pointer = (pointer.0 - bounds.x, pointer.1 - bounds.y);
-            let modal_root = root * Affine::translate((f64::from(bounds.x), f64::from(bounds.y)));
-            scene.push_clip_layer(
-                Fill::NonZero,
-                modal_root,
-                &draw_scene::rrect(0.0, 0.0, bounds.w, bounds.h, crate::search::SURFACE_RADIUS),
-            );
-            View::draw(
-                self.search.as_mut().unwrap(),
-                scene,
-                workspace,
-                images,
-                modal_root,
-                caret_on,
-                local_pointer,
-            );
-            scene.pop_layer();
-            draw_scene::stroke(
-                scene,
-                root,
-                theme::p().panel_border,
-                theme::BORDER_W,
-                &draw_scene::rrect(
-                    bounds.x,
-                    bounds.y,
-                    bounds.w,
-                    bounds.h,
-                    crate::search::SURFACE_RADIUS,
-                ),
-            );
+        if let Some(search) = self.search.as_mut() {
+            search.draw_modal(scene, root, self.viewport, caret_on, pointer);
         }
         self.draw_font_picker(scene, root);
         if self.move_to.is_some() {
@@ -12491,11 +12447,18 @@ impl View for MainView {
     }
 
     fn background_deadline(&self) -> Option<Instant> {
-        self.support.as_ref().and_then(|s| s.maintenance_deadline())
+        [
+            self.support.as_ref().and_then(|s| s.maintenance_deadline()),
+            (!self.app_menu_changes.is_empty())
+                .then(|| Instant::now() + std::time::Duration::from_millis(50)),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
     }
 
     fn background_maintain(&mut self, now: Instant, app_hidden: bool) -> bool {
-        let mut changed = false;
+        let mut changed = self.maintain_app_menu();
         if let Some(support) = self.support.as_mut() {
             changed |= support.background_maintain(now, app_hidden);
         }
@@ -14708,6 +14671,7 @@ impl View for MainView {
             // has no clock, which is the same bargain History keeps.
             self.cloud_sync.deadline(),
             self.task_counts.deadline(),
+            self.document_appearances.deadline(),
             self.welcome_progress.deadline(),
             // Only the tab in front has one: a Tasks tab in the background
             // contributes no clock and therefore no wake.
@@ -14920,6 +14884,15 @@ impl View for MainView {
         // The rail's numbers. Visible means *the tasks mode is on screen*: a
         // sidebar showing documents, or shut, makes no task traffic at all.
         let rail_visible = self.sidebar.is_open() && self.explore.showing_tasks();
+        let appearances_changed = self.document_appearances.maintain(
+            self.sidebar.is_open()
+                && self.explore.navigator_mode() == crate::panes::explore::NavigatorMode::Documents,
+            now,
+        );
+        if appearances_changed {
+            self.explore
+                .set_document_appearances(self.document_appearances.rows.clone());
+        }
         let counts_changed = self
             .task_counts
             .maintain(self.current_workspace(), rail_visible, now);
@@ -15208,6 +15181,7 @@ impl View for MainView {
             || entity_changed
             || history_changed
             || counts_changed
+            || appearances_changed
             || context_tasks_changed
             || rolled
             || page_changed

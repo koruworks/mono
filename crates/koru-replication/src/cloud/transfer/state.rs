@@ -2,8 +2,8 @@
 
 use super::fragments::Incoming;
 use super::{
-    CONTROL_WAIT_MS, Control, Decision, Error, MAX_PAYLOAD, MemoryBudget, Outgoing,
-    RESTRICTED_LIMIT, Record, Reservation, Start, Unit, budget_millis,
+    CONTROL_WAIT_MS, ClaimReferences, Control, Decision, Error, MAX_PAYLOAD, MemoryBudget,
+    Outgoing, RESTRICTED_LIMIT, Record, Reservation, Start, Unit, UploadContext, budget_millis,
 };
 use crate::{
     cloud::{PreparedSession, Refusal},
@@ -230,6 +230,11 @@ pub struct Completed {
     pub bytes: Vec<u8>,
     pub batch_id: [u8; 8],
     pub origin: koru_store_core::ports::UpdateOrigin,
+    /// The claim reference the transfer's start carried, retained with the
+    /// rest of the upload for as long as its work is (TECHNICAL §5.7, S2).
+    /// Only a worker serving an app connection ever holds one: every other
+    /// session refuses a start that carries it.
+    pub claim: Option<[u8; 32]>,
     _reservation: Reservation,
 }
 struct Sending {
@@ -252,6 +257,7 @@ pub struct Stream {
     outgoing: Option<Sending>,
     waiting: Option<(Start, u64, u64)>,
     budget: MemoryBudget,
+    claims: ClaimReferences,
     draining: bool,
     closed: Option<Error>,
 }
@@ -297,6 +303,7 @@ impl Stream {
             outgoing: None,
             waiting: None,
             budget,
+            claims: accepted.claim_references,
             draining: false,
             closed: None,
         })
@@ -487,6 +494,12 @@ impl Stream {
             }
             Control::TransferStart(start) => {
                 if self.draining || self.incoming.is_some() || self.waiting.is_some() {
+                    return Err(Error::Invalid);
+                }
+                // The session, not the unit, decides (DS-D46): a reference
+                // crosses only from an app connection to the worker that
+                // admitted it. Checked before the start can bind anything.
+                if start.claim.is_some() && self.claims != ClaimReferences::Received {
                     return Err(Error::Invalid);
                 }
                 if start.policy_generation < self.local.0 {
@@ -699,6 +712,7 @@ impl Stream {
                 bytes: incoming.bytes,
                 batch_id: incoming.start.batch_id,
                 origin: self.scope.principal.update_origin(),
+                claim: incoming.start.claim.map(|claim| claim.0),
                 _reservation: incoming.reservation,
             })
         })();
@@ -716,9 +730,38 @@ impl Stream {
         now: u64,
         authorize: impl FnOnce(Unit) -> Result<(), Refusal>,
     ) -> Result<(Control, Admission), Error> {
+        self.begin_upload(
+            unit,
+            batch,
+            bytes,
+            UploadContext::default(),
+            first,
+            now,
+            authorize,
+        )
+    }
+    /// [`Stream::begin_outgoing`] with what the Store said about the upload:
+    /// its start carries `context.claim`. A reference on a session that may
+    /// not send one (a device's, or the worker's own starts) is refused
+    /// before anything is written, and ends the stream like any other
+    /// invalid transfer.
+    #[allow(clippy::too_many_arguments)]
+    pub fn begin_upload(
+        &mut self,
+        unit: Unit,
+        batch: [u8; 8],
+        bytes: Vec<u8>,
+        context: UploadContext,
+        first: u64,
+        now: u64,
+        authorize: impl FnOnce(Unit) -> Result<(), Refusal>,
+    ) -> Result<(Control, Admission), Error> {
         let result = (|| {
             self.check(now)?;
             if self.draining || !self.local_sent || self.outgoing.is_some() {
+                return Err(Error::Invalid);
+            }
+            if context.claim.is_some() && self.claims != ClaimReferences::Sent {
                 return Err(Error::Invalid);
             }
             let (generation, limit) = self.peer.ok_or(Error::Invalid)?;
@@ -740,6 +783,7 @@ impl Stream {
                 generation,
                 batch,
                 bytes,
+                context.claim,
                 &self.budget,
             )?;
             let deadline = self.deadline(&export.start, first, now)?;

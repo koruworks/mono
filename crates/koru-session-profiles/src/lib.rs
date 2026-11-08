@@ -16,6 +16,7 @@ use std::str::FromStr as _;
 mod managed;
 mod search_path;
 pub use managed::*;
+pub use search_path::{effective_path, with_effective_path};
 
 use koru_session_protocol::{
     AttachmentDeliveryPolicy, BuiltInProfileKey, ErrorCode, ExecutableAvailability, ProfileKind,
@@ -429,8 +430,10 @@ pub fn probe(profiles: Vec<LaunchProfile>) -> Vec<ProfileRow> {
 /// The session host calls this only after selecting an authored profile; it is
 /// not root discovery and never searches for user content.
 ///
-/// `PATH` first — on Windows also the registry's current `Path`, which a
-/// long-lived process's copy lags behind — then, for the few CLIs whose
+/// The effective search path first ([`effective_path`]: the inherited `PATH`,
+/// then on Windows the registry's current `Path`, which a long-lived
+/// process's copy lags behind, and on macOS and Linux the login shell's
+/// `PATH` and the agent installers' directories) — then, for the few CLIs whose
 /// installers leave them off it, the places those installers put them
 /// ([`known_locations`]), so a tab and a chat find the same program the
 /// person installed.
@@ -559,8 +562,8 @@ fn resolve_on_path(program: &str) -> Option<PathBuf> {
         return path.is_file().then(|| absolute(path)).flatten();
     }
     // Not `PATH` alone: on Windows the inherited copy is stale for as long as
-    // the process lives, so the registry's current `Path` is searched after
-    // it (`search_path`).
+    // the process lives, and a Mac app opened from Finder has launchd's four
+    // directories, so the effective search path is used (`search_path`).
     let directories = search_path::directories();
     #[cfg(windows)]
     if program.eq_ignore_ascii_case("bash") {
@@ -573,15 +576,23 @@ fn resolve_on_path(program: &str) -> Option<PathBuf> {
         }
         return None;
     }
-    for directory in directories {
-        for name in executable_candidates(program) {
-            let candidate = directory.join(name);
-            if candidate.is_file() {
-                return absolute(&candidate);
-            }
-        }
-    }
-    None
+    first_in(program, &directories, |candidate| candidate.is_file())
+        .and_then(|candidate| absolute(&candidate))
+}
+
+/// The first `directory/name` that `exists`, over `directories` in order and
+/// each directory's [`executable_candidates`]. Pure over `exists`, so the
+/// search order is tested without a file.
+fn first_in(
+    program: &str,
+    directories: &[PathBuf],
+    exists: impl Fn(&Path) -> bool,
+) -> Option<PathBuf> {
+    directories.iter().find_map(|directory| {
+        executable_candidates(program)
+            .map(|name| directory.join(name))
+            .find(|candidate| exists(candidate))
+    })
 }
 
 /// The arguments that make a raw agent continue its **most recent
@@ -1026,6 +1037,40 @@ mod tests {
         assert_eq!(
             resolve(&SessionProfileKey::Custom(SessionProfileId::mint())),
             Err(ErrorCode::ProfileNotFound)
+        );
+    }
+
+    /// **A program only the extra directories hold is found**, and one on
+    /// the inherited `PATH` still wins over a copy in an extra directory —
+    /// the Finder case: launchd's four directories inherited, `codex` in
+    /// `~/.local/bin`. The directories are injected and the file system is
+    /// a closure, so nothing is spawned or read.
+    #[cfg(unix)]
+    #[test]
+    fn a_program_in_an_extra_directory_is_found_after_the_inherited_path() {
+        let inherited = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+            .map(PathBuf::from)
+            .to_vec();
+        let extra = PathBuf::from("/Users/x/.local/bin");
+        let directories = search_path::merge_unix(inherited.clone(), vec![extra.clone()]);
+        let in_extra = |candidate: &Path| {
+            candidate.parent() == Some(extra.as_path())
+                && candidate.file_stem().is_some_and(|stem| stem == "codex")
+        };
+        let found = first_in("codex", &directories, in_extra).expect("found in the extra dir");
+        assert_eq!(found.parent(), Some(extra.as_path()));
+        assert_eq!(
+            first_in("codex", &inherited, in_extra),
+            None,
+            "the inherited PATH alone does not have it"
+        );
+        let everywhere =
+            |candidate: &Path| candidate.file_stem().is_some_and(|stem| stem == "codex");
+        assert_eq!(
+            first_in("codex", &directories, everywhere)
+                .and_then(|found| found.parent().map(Path::to_path_buf)),
+            Some(PathBuf::from("/usr/bin")),
+            "the inherited PATH keeps its precedence"
         );
     }
 

@@ -153,6 +153,10 @@ pub fn static_code(code: &str) -> &'static str {
         "sync_policy_changed",
         "sync_update_too_large",
         "sync_unavailable",
+        // An app connection's creation of a unit Cloud already holds (the
+        // admission contract's amendment, DS-D44): the hosted MCP server's
+        // creation refusal, never a device's.
+        "sync_unit_exists",
         "replica_fenced",
         "manifest_mismatch",
         "manifest_unavailable",

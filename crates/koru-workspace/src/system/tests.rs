@@ -39,7 +39,7 @@ impl FakeStore {
             .insert(id, doc.export_snapshot().expect("snapshot"));
     }
 
-    fn link(&self, id: DocumentId) -> Arc<FakeLink> {
+    pub(crate) fn link(&self, id: DocumentId) -> Arc<FakeLink> {
         self.links.lock().expect("links")[&id].clone()
     }
 

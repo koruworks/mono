@@ -25,6 +25,10 @@ use crate::{
 /// The compact JWS header type, frozen by the contract's §6.
 pub const BLOB_CAPABILITY_TYPE: &str = "koru-blob-cap+jws";
 
+/// The content address of an empty file. Zero length is valid only here.
+pub const EMPTY_BLOB_HASH: &str =
+    "b3:af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262";
+
 /// `CAPABILITY_LIFETIME` — five minutes (D250). It is also the post-revocation
 /// byte window: an admitted read capability is the authorization for reads for
 /// as long as it lives, because the object worker holds no account database.
@@ -234,7 +238,7 @@ pub(crate) fn validate_signing_claims(
             .any(|c| c.is_whitespace() || c.is_control())
         || claims.nbf < 0
         || !(1..=BLOB_CAPABILITY_DEFAULT_SECONDS).contains(&lifetime)
-        || claims.len == 0
+        || (claims.len == 0 && claims.bh != EMPTY_BLOB_HASH)
         || (claims.pur == BlobPurpose::Read.as_str() && claims.loc != claims.sub)
         || claims.nbf.checked_mul(1_000).is_none()
         || claims.exp.checked_mul(1_000).is_none()

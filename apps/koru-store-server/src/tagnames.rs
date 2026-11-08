@@ -16,7 +16,6 @@
 //! is the one thing that was ever this file's — which question to ask the
 //! document once it is open.
 
-use std::path::Path;
 use std::sync::{Arc, Mutex, Weak};
 
 use koru_projection::Projections;
@@ -38,8 +37,11 @@ pub struct TagSource {
 
 /// Build the source, or `None` — in which case the index carries on writing the
 /// ids it always wrote, which is a stale word rather than a lost document.
-pub fn tag_source(root: &Path, state: &Arc<AppState>) -> Option<Box<dyn TagNames>> {
-    match Projections::open(root) {
+pub fn tag_source(
+    derived: &crate::derived::Derived,
+    state: &Arc<AppState>,
+) -> Option<Box<dyn TagNames>> {
+    match derived.projections() {
         Ok(projections) => Some(Box::new(TagSource {
             projections: Mutex::new(projections),
             state: Arc::downgrade(state),

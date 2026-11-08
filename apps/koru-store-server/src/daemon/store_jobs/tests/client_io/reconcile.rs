@@ -11,6 +11,7 @@ use loro::{ExportMode, LoroDoc, VersionVector};
 
 type SyncClient = Reconciler<'static, ReadHalf<DuplexStream>, WriteHalf<DuplexStream>>;
 
+mod claim;
 mod live;
 
 fn map_failure<T>(result: Result<T, Failure>) -> Result<Answer<T>, Error> {
@@ -613,6 +614,7 @@ async fn dataset_driver_settles_a_profile_plan_and_reports_the_remote_hint() {
             generation: 1,
             expires_at_seconds: 600,
         },
+        claim_references: koru_replication::cloud::transfer::ClaimReferences::None,
     };
     let server = Stream::new(
         &accepted,
@@ -785,6 +787,7 @@ async fn agreeing_pass(
             generation: 1,
             expires_at_seconds: 600,
         },
+        claim_references: koru_replication::cloud::transfer::ClaimReferences::None,
     };
     let server = Stream::new(
         &accepted,

@@ -40,8 +40,9 @@
 //!   with how the process was launched is the same failure one level up: two
 //!   identical-looking windows, one of which quietly has fewer actions.
 //! - A missing control teaches nothing. Somebody who cannot find Archive
-//!   concludes the app cannot archive; somebody who sees it greyed with *this
-//!   window was not started by Koru* knows what to do about it.
+//!   concludes the app cannot archive; somebody who sees it greyed with *Koru
+//!   could not confirm that this window is part of this Koru installation*
+//!   knows the action exists and why this window does not have it.
 //! - Hiding is also the more expensive answer to get right: the same rows are
 //!   reachable from a context menu the host builds, and a surface that hid them
 //!   would have to teach every host to hide them too.

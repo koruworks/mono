@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 
 use schemars::Schema;
 
+use crate::app_connections::*;
 use crate::*;
 
 macro_rules! define_catalogue {
@@ -131,4 +132,25 @@ define_catalogue!(
     CompleteWorkspaceCloudActivationRequestV1,
     MutateWorkspaceCloudRequestV1,
     WorkspaceCloudLifecycleResponseV1,
+    AppConnectionAccessV1,
+    ProfileAccessV1,
+    AppConnectionProfileV1,
+    AppConnectionRevokedReasonV1,
+    OAuthClientSummaryV1,
+    CloudSubscriptionStateV1,
+    OAuthConsentQueryV1,
+    OAuthConsentViewV1,
+    OAuthConsentProfileV1,
+    OAuthConsentDecisionV1,
+    OAuthConsentDecisionRequestV1,
+    OAuthConsentDecisionResponseV1,
+    AppConnectionSummaryV1,
+    AppConnectionListResponseV1,
+    UpdateAppConnectionRequestV1,
+    AuthorizationServerMetadata,
+    ClientRegistrationRequest,
+    ClientRegistrationResponse,
+    ClientMetadataDocument,
+    OAuthTokenResponse,
+    OAuthErrorResponse,
 );

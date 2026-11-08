@@ -14,6 +14,25 @@ impl StagedObject {
     }
 }
 
+/// Whether an incoming Loro blob is rooted at the empty document: no change
+/// it carries depends on a change it does not carry.
+///
+/// That is what a client's creation of a unit looks like. A client that
+/// joins a unit Cloud does not hold sends a snapshot of its whole history
+/// (`client_store::export`), and a client whose fresh document joins a unit
+/// another attempt has just created sends updates since that attempt's
+/// version, which are still every change of its own fresh history. Both are
+/// rooted at the empty document. An edit is not: its first change depends on
+/// changes already in Cloud. A shallow snapshot is not either: it starts at
+/// its shallow root. A blob with no change in it creates nothing.
+///
+/// This reads the blob's header and change metadata only. It is not a
+/// validation: staging still checks the content.
+pub fn starts_from_empty(payload: &[u8]) -> Result<bool, Error> {
+    let meta = LoroDoc::decode_import_blob_meta(payload, true).map_err(|_| Error::Loro)?;
+    Ok(meta.change_num > 0 && meta.start_frontiers.is_empty())
+}
+
 /// A first full-history checkpoint from actual received content, never an
 /// empty fallback. Existing-unit conflicts are still resolved by SQL reserve.
 pub fn stage_initial_checkpoint(

@@ -11,10 +11,18 @@ description = "The Koru Store daemon: the only component that persists Koru's CR
 name = "koru-store-server"
 path = "src/main.rs"
 
+[features]
+# `fake_cloud`, the in-memory Cloud worker this crate's own driver tests use,
+# for a host's tests in another crate (the hosted MCP server's, Cloud MCP Plan
+# 1.6). Off in every product build: it serves every unit its scope names.
+test-support = []
+
 [dependencies]
 koru-env = { path = "../../crates/koru-env" }
 koru-store-core = { path = "../../crates/koru-store-core" }
 koru-store-sqlite = { path = "../../crates/koru-store-sqlite" }
+# Databases in memory with no file behind them, for the in-memory composition.
+koru-sqlite = { path = "../../crates/koru-sqlite" }
 # Channel identity and the per-channel data root. A leaf crate with no
 # dependencies of its own — this used to be `koru-update`, which dragged
 # reqwest, zip and minisign-verify in behind a four-variant enum.
@@ -146,3 +154,6 @@ koru-store-wire = { path = "../../crates/koru-store-wire" }
 # store and asserts the projector neither forks it nor enrols it in history.
 koru-delegate-document = { path = "../../crates/koru-delegate-document" }
 koru-delegate-core = { path = "../../crates/koru-delegate-core" }
+# The hosted creation candidate's id is a SHA-256 of its key (TECHNICAL §5.6);
+# the driver's test derives one exactly so, to show the Store accepts it.
+sha2.workspace = true

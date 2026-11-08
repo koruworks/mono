@@ -11,7 +11,9 @@ use koru_store_core::WorkspaceId;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{AccountSessionId, DeviceId, KoruIdentityId, OpaqueSecret, PortFuture};
+use crate::{
+    AccountSessionId, AppConnectionId, DeviceId, KoruIdentityId, OpaqueSecret, PortFuture,
+};
 
 /// Residency is explicit even when only the US service is deployed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -22,7 +24,8 @@ pub enum Region {
 }
 
 /// Audit identity, not a credential. Constructing this value grants nothing.
-/// Service and replica identities cannot masquerade as a registered device.
+/// Service, replica and connection identities cannot masquerade as a
+/// registered device.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Principal {
     UserSession {
@@ -40,21 +43,30 @@ pub enum Principal {
     KoruService {
         service_id: Uuid,
     },
+    /// A third-party application's approved connection to one account, such
+    /// as an AI assistant reaching the account's synced workspaces through
+    /// Koru's hosted MCP server. It is not a device: it has no `DeviceId`, no
+    /// pairing and no trust. What it may reach is the connection's own
+    /// resolved workspace set, which the authority port reads live.
+    AppConnection {
+        account_id: KoruIdentityId,
+        connection_id: AppConnectionId,
+    },
 }
 
 impl Principal {
     pub fn account_id(self) -> Option<KoruIdentityId> {
         match self {
-            Self::UserSession { account_id, .. } | Self::Device { account_id, .. } => {
-                Some(account_id)
-            }
+            Self::UserSession { account_id, .. }
+            | Self::Device { account_id, .. }
+            | Self::AppConnection { account_id, .. } => Some(account_id),
             Self::CloudReplica { .. } | Self::KoruService { .. } => None,
         }
     }
 }
 
 /// Purpose-specific scopes; admin and write do not implicitly include read.
-/// Object, comment, PAT and MCP permissions arrive with their consumers.
+/// Object, comment and PAT permissions arrive with their consumers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WorkspaceScope {
     #[serde(rename = "workspace:read")]
@@ -112,6 +124,37 @@ impl WorkspaceAction {
             self,
             Self::EnableCloud | Self::DisableCloud | Self::DeleteCloud
         )
+    }
+}
+
+/// What a person approved for one app connection: read, or read and edit.
+/// The spelling is the connection row's and the connection sync credential's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AppConnectionAccess {
+    Read,
+    ReadWrite,
+}
+
+impl AppConnectionAccess {
+    /// The workspace scopes an app connection's evidence and grant carry for
+    /// its non-replication actions. Tasks follow the document scopes: a
+    /// connection that may read documents may read tasks, and one that may
+    /// edit documents may change tasks. Write never implies read here either;
+    /// `ReadWrite` lists both. Replication is authorized by the connection's
+    /// sync credential (`workspace:sync`), not by these.
+    pub const fn scopes(self) -> &'static [WorkspaceScope] {
+        use WorkspaceScope::*;
+        match self {
+            Self::Read => &[WorkspaceRead, DocumentsRead, TasksRead],
+            Self::ReadWrite => &[
+                WorkspaceRead,
+                DocumentsRead,
+                TasksRead,
+                DocumentsWrite,
+                TasksWrite,
+            ],
+        }
     }
 }
 
@@ -285,6 +328,17 @@ pub fn decide_workspace_access(
             Principal::CloudReplica { .. } => request.action == WorkspaceAction::Replicate,
             // No rung-1 service consumer has a workspace permission yet.
             Principal::KoruService { .. } => false,
+            // Reads, edits and replication of its own resolved set. Never
+            // workspace metadata changes and never the Cloud lifecycle. Which
+            // of its writes go through is the connection's access, carried in
+            // its scopes ([`AppConnectionAccess::scopes`]).
+            Principal::AppConnection { .. } => !matches!(
+                request.action,
+                WorkspaceAction::UpdateWorkspace
+                    | WorkspaceAction::EnableCloud
+                    | WorkspaceAction::DisableCloud
+                    | WorkspaceAction::DeleteCloud
+            ),
         };
         if !principal_allowed {
             return Err(WorkspaceRefusal::PrincipalNotAllowed);

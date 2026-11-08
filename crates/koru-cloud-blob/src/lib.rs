@@ -62,6 +62,13 @@ pub const CHUNK: u64 = 2 * 1024 * 1024;
 /// raises the Cloud limit in the same commit.
 pub const MAX_BLOB_SIZE: u64 = koru_store_core::ports::BLOB_UPLOAD_BODY_LIMIT;
 
+pub use koru_account_session::cloud::blob::EMPTY_BLOB_HASH;
+
+/// A verified length can be zero only for the address of the empty file.
+pub fn valid_blob_size(hash: &str, size: u64) -> bool {
+    size <= MAX_BLOB_SIZE && (size != 0 || hash == EMPTY_BLOB_HASH)
+}
+
 /// A nonterminal session must outlive the longest interruption a person expects
 /// to resume across — a laptop shut for a weekend — and must not outlive the
 /// operator's willingness to hold staging bytes. Every acknowledged chunk

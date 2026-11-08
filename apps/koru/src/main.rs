@@ -29,6 +29,7 @@
 
 mod agent;
 mod ai_chat_view;
+mod app_menu;
 mod build_stamp;
 mod canvas_view;
 mod console;
@@ -778,6 +779,12 @@ fn main() {
         // that may register a machine-wide shortcut; asking any earlier would
     }
     span.stop();
+    // **Linux's app-menu entry follows the folder.** An entry naming a `koru`
+    // that is gone, because the folder moved, is pointed at this one; an
+    // entry that is fine, or none at all, is left alone. Queued off the main thread.
+    if run && koru_autostart::app_menu::SUPPORTED {
+        app_menu::repair();
+    }
     // ------------------------------------------------------------- the agent
     //
     // **Before the shell, because the store depends on it.** `koru_workspace_host::run`
