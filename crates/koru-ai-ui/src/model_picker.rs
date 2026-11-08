@@ -1312,9 +1312,8 @@ impl crate::ChatSurface {
         }
     }
 
-    /// The picker's parts, while it is open: **above the composer**, end
-    /// aligned with the chip, where the workspace and tool-approval panels
-    /// open; anchored below the chip only when there is no room above.
+    /// The picker's parts: below an empty centered composer when it fits,
+    /// otherwise above it. A cramped viewport falls back to the chip anchor.
     pub(crate) fn picker_geometry(&self) -> Option<Geometry> {
         if !self.chat_model_open {
             return None;
@@ -1325,7 +1324,9 @@ impl crate::ChatSurface {
         let rail_h = rail_height(marks, rail_dividers(&rail).len());
         let (w, h) = size(self.composer_hit_rect.w, rail_h);
         let chip = self.chat_model_button();
-        let panel = if self.fits_above_composer(h) {
+        let panel = if self.chat_is_empty() && self.fits_below_composer(h) {
+            self.toolbar_panel(chip.x + chip.w - w, w, h)
+        } else if self.fits_above_composer(h) {
             self.above_composer(chip.x + chip.w - w, w, h)
         } else {
             PopoverShell::anchored(chip, self.viewport, w, h, PopoverAlign::End).rect

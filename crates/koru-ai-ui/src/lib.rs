@@ -51,6 +51,7 @@ use koru_ui::choice::{Choice, ChoiceOutcome};
 use koru_ui::confirm::{Confirm, Outcome as ConfirmOutcome};
 use koru_ui::context_chip::{ContextChip, ContextState};
 use koru_ui::icon_button::{IconButton, State as IconButtonState};
+use koru_ui::logo::KoruLogo;
 use koru_ui::split_button::SplitButton;
 use koru_ui::text_input::{InputStyle, TextInput};
 use koru_ui::tooltip::{Tooltip, TooltipContent};
@@ -6870,23 +6871,35 @@ impl ChatSurface {
         self.draw_skill_list(canvas, root);
     }
 
-    /// An empty chat's greeting: one line at the title size, centred over
-    /// the composer — at the foot of the (empty) conversation, so it sits
-    /// above the pills and the status line like the messages would.
+    /// An empty chat's greeting: the Koru mark and question at the same
+    /// title size, centered together above the composer.
     fn draw_greeting(&mut self, canvas: &mut Scene, root: Affine) {
         let Some(key) = self.greeting() else {
             return;
         };
         let area = self.conversation_rect();
-        let mut layout =
-            self.engine
-                .simple_layout_wrapped(koru_i18n::t(self.lang, key), role::title(), area.w);
-        layout.align(
-            parley::Alignment::Center,
-            parley::AlignmentOptions::default(),
-        );
+        let title = role::title();
+        let logo_size = title.metrics.size;
+        let gap = theme::Space::S2.px(theme::Profile::Desktop);
+        let text_max = (area.w - logo_size - gap).max(1.0);
+        let greeting = koru_i18n::t(self.lang, key);
+        let natural = self.engine.simple_layout(greeting, title);
+        let text_width = natural.width().min(text_max);
+        let layout = if natural.width() <= text_max {
+            natural
+        } else {
+            self.engine.simple_layout_wrapped(greeting, title, text_max)
+        };
+        let x = area.x + (area.w - logo_size - gap - text_width).max(0.0) * 0.5;
         let y = (area.y + area.h - GREETING_GAP - layout.height()).max(area.y);
-        scene::draw_layout(canvas, root, &layout, area.x, y, Some(theme::p().text));
+        let logo_y = y + (layout.height() - logo_size) * 0.5;
+        let (logo_x, text_x) = if self.lang.is_rtl() {
+            (x + text_width + gap, x)
+        } else {
+            (x, x + logo_size + gap)
+        };
+        KoruLogo::new(logo_size).draw(canvas, root, logo_x, logo_y);
+        scene::draw_layout(canvas, root, &layout, text_x, y, Some(theme::p().text));
     }
 
     /// **Where an agent chat moved to another of its agent's models**: the
@@ -15009,6 +15022,53 @@ mod tests {
             None,
             "a chat still loading is not empty"
         );
+    }
+
+    #[test]
+    fn the_empty_chat_greeting_draws_the_title_sized_koru_mark() {
+        let mut surface = ChatSurface::new();
+        surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 700.0));
+        surface.composer_rect();
+        let capture = koru_draw::inspect::Frame::begin(
+            1,
+            Affine::IDENTITY,
+            scene::rect(0.0, 0.0, 900.0, 700.0),
+        );
+        surface.draw_greeting(&mut Scene::new(), Affine::IDENTITY);
+        let snapshot = capture.finish();
+        let logo = snapshot
+            .records
+            .iter()
+            .find(|record| record.name == "KoruLogo")
+            .unwrap();
+        let rect = logo.rect();
+        assert_eq!(rect.width() as f32, role::title().metrics.size);
+        assert!(rect.y1 <= surface.composer_hit_rect.y as f64);
+    }
+
+    #[test]
+    fn the_plus_menu_opens_below_an_empty_chat_and_above_a_begun_one() {
+        let mut surface = ChatSurface::new();
+        surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 900.0));
+        surface.transcript = Some(transcript());
+        surface.composer_rect();
+        surface.open_plus_menu();
+        let empty_panel = surface
+            .plus_menu
+            .as_ref()
+            .unwrap()
+            .panel(surface.menu_viewport());
+        assert!(empty_panel.y >= surface.composer_hit_rect.y + surface.composer_hit_rect.h);
+
+        surface.pending_user = Some("Plan the launch".into());
+        surface.composer_rect();
+        surface.open_plus_menu();
+        let begun_panel = surface
+            .plus_menu
+            .as_ref()
+            .unwrap()
+            .panel(surface.menu_viewport());
+        assert!(begun_panel.y + begun_panel.h <= surface.composer_hit_rect.y);
     }
 
     /// **The composer starts in the middle, then moves to the bottom.** While

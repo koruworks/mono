@@ -111,7 +111,9 @@ impl ChatSurface {
 
     fn plus_menu_at(&mut self, items: Vec<PlusItem>) {
         let button = self.plus_button();
-        self.plus_menu = Some(Menu::new(&mut self.engine, (button.x, button.y), items));
+        let mut menu = Menu::new(&mut self.engine, (button.x, button.y), items);
+        menu.set_anchor((button.x, self.toolbar_panel_y(menu.height())));
+        self.plus_menu = Some(menu);
     }
 
     pub(super) fn open_plus_menu(&mut self) {

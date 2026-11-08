@@ -575,7 +575,8 @@ impl crate::ChatSurface {
         self.composer_shell.as_ref()?.mode()
     }
 
-    /// The open list: above the composer, aligned with the menu target.
+    /// The open list: below an empty centered composer when it fits, and
+    /// above the composer once the chat has begun.
     pub(crate) fn approval_mode_panel(&self) -> Option<Rect> {
         if !self.approval_mode_open {
             return None;
@@ -584,7 +585,7 @@ impl crate::ChatSurface {
         let count = self.approval_mode_rows().len();
         let width = self.composer_hit_rect.w.min(340.0).max(1.0);
         let height = count as f32 * MODE_ROW_H + PANEL_PAD * 2.0 + FOOTER_H;
-        Some(self.above_composer(chip.x + chip.w - width, width, height))
+        Some(self.toolbar_panel(chip.x + chip.w - width, width, height))
     }
 
     fn approval_mode_footer_rect(&self) -> Option<Rect> {

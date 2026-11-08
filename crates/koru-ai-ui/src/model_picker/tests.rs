@@ -347,11 +347,10 @@ fn the_context_is_read_only_once_the_chat_has_begun() {
         Some(t(koru_i18n::Lang::En, Key::AiModelContextLockedAfterStart))
     );
 }
-// D12: the picker opens upward, above the composer and end-aligned with
-/// the chip, as the workspace and tool-approval panels do — and below the
-/// chip only when the window has no room above.
+/// A centered empty chat opens the model picker below when it fits. Once
+/// the chat begins it rises above; a cramped viewport still keeps it visible.
 #[test]
-fn the_picker_opens_above_the_composer_unless_there_is_no_room() {
+fn the_picker_follows_the_composers_empty_and_begun_positions() {
     let mut surface = surface();
     on_agent(
         &mut surface,
@@ -359,6 +358,18 @@ fn the_picker_opens_above_the_composer_unless_there_is_no_room() {
         "sonnet",
         ReasoningChoice::Default,
     );
+    surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 1400.0));
+    surface.composer_rect();
+    open(&mut surface);
+    let centered = surface.picker_geometry().unwrap().panel;
+    let composer = surface.composer_hit_rect;
+    assert!(
+        centered.y >= composer.y + composer.h,
+        "below an empty composer"
+    );
+    assert!(centered.y + centered.h <= surface.viewport.y + surface.viewport.h);
+    surface.close_picker();
+
     // A chat under way: the composer at the window's foot.
     surface.pending_user = Some("Plan the launch".into());
     surface.composer_rect();

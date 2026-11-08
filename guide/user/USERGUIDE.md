@@ -1557,8 +1557,11 @@ terminal. Those records include authored chat/document content and provider
 output, but never the provider credential; leave
 the switch off outside a trusted development session.
 
-A new chat opens on a short greeting with the composer in the middle; once the
-first message is sent the composer moves to the bottom and stays there. In the
+A new chat opens on a short greeting with the Koru logo beside it, both at
+the title size, and the composer in the middle. The +, model and permission
+menus open below the composer when they fit. Once the first message is sent,
+the composer moves to the bottom and those menus open above it. The `@`, `/`
+and `$` pickers always open above the composer. In the
 composer, `Up` on its first line brings back the messages you sent in this chat,
 newest first; keep pressing `Up` to go further back. Each comes back with the
 caret at its start and with its document chips and quotes. `Down` on its last

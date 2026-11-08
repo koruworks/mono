@@ -792,6 +792,21 @@ fn open_list() -> ChatSurface {
     surface
 }
 
+#[test]
+fn permission_list_opens_below_an_empty_chat_and_above_a_begun_one() {
+    let (mut surface, _commands) = surface();
+    surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 1100.0));
+    surface.composer_rect();
+    surface.approval_mode_open = true;
+    let empty_panel = surface.approval_mode_panel().unwrap();
+    assert!(empty_panel.y >= surface.composer_hit_rect.y + surface.composer_hit_rect.h);
+
+    surface.pending_user = Some("Plan the launch".into());
+    surface.composer_rect();
+    let begun_panel = surface.approval_mode_panel().unwrap();
+    assert!(begun_panel.y + begun_panel.h <= surface.composer_hit_rect.y);
+}
+
 /// The frame node at `index`'s first descendant named `name`.
 fn descendant<'a>(
     frame: &'a koru_draw::el::Frame,
