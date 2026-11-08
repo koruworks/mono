@@ -44,7 +44,6 @@ pub(super) enum PlusItem {
     Back(&'static str),
     Document(DocumentId, String),
     Empty(&'static str),
-    Hint(&'static str),
 }
 
 impl MenuItem for PlusItem {
@@ -59,8 +58,7 @@ impl MenuItem for PlusItem {
             | Self::ComputerFolder(label)
             | Self::SearchWeb(label, _)
             | Self::Back(label)
-            | Self::Empty(label)
-            | Self::Hint(label) => Cow::Borrowed(label),
+            | Self::Empty(label) => Cow::Borrowed(label),
             Self::Document(_, title) => Cow::Borrowed(title),
         }
     }
@@ -74,7 +72,7 @@ impl MenuItem for PlusItem {
             Self::ThisComputer(_) | Self::ComputerFolder(_) => Some(icons::FOLDER),
             Self::Commands(_) | Self::Skills(_) => Some(icons::SPARKLE),
             Self::SearchWeb(_, on) => Some(if *on { icons::CHECK } else { icons::GLOBE }),
-            Self::Back(_) | Self::Empty(_) | Self::Hint(_) => None,
+            Self::Back(_) | Self::Empty(_) => None,
         }
     }
 
@@ -82,8 +80,17 @@ impl MenuItem for PlusItem {
         matches!(self, Self::Recent(_) | Self::ThisComputer(_))
     }
 
+    fn shortcut(&self) -> Option<String> {
+        match self {
+            Self::KoruContext(_) => Some("@".into()),
+            Self::Commands(_) => Some("/".into()),
+            Self::Skills(_) => Some("$".into()),
+            _ => None,
+        }
+    }
+
     fn selectable(&self) -> bool {
-        !matches!(self, Self::Empty(_) | Self::Hint(_))
+        !matches!(self, Self::Empty(_))
     }
 }
 
@@ -141,7 +148,6 @@ impl ChatSurface {
                 self.web_search_armed,
             ));
         }
-        items.push(PlusItem::Hint(t(self.lang, TextKey::AiComposerPlusHint)));
         self.plus_menu_at(items);
     }
 
@@ -223,7 +229,7 @@ impl ChatSurface {
                 self.focus = Focus::Composer;
                 self.composer.insert_document(id, &title);
             }
-            PlusItem::Empty(_) | PlusItem::Hint(_) => return false,
+            PlusItem::Empty(_) => return false,
         }
         true
     }

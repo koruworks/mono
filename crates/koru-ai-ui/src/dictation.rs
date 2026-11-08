@@ -158,7 +158,7 @@ pub(crate) struct ComposerDictation {
     /// The host can dictate into this composer — it owns a controller and
     /// voice is available on this installation. Without it there is no
     /// microphone, though a dictation the host routes here is still shown.
-    offered: bool,
+    pub(crate) offered: bool,
     /// The microphone was pressed; the host begins a dictation and takes it.
     wants: bool,
     live: Option<Recording>,
@@ -369,6 +369,9 @@ impl ChatSurface {
         if !self.dictation.offered {
             return None;
         }
+        if let Some(shell) = &self.composer_shell {
+            return shell.microphone();
+        }
         let send = self.send_button();
         let gap = Space::S2.px(Profile::Desktop);
         Some(Rect::new(send.x - gap - send.w, send.y, send.w, send.h))
@@ -480,7 +483,6 @@ impl ChatSurface {
                 disabled: false,
             })
             .draw(canvas, root, &mut self.engine);
-        self.draw_mic_chooser(canvas, root);
     }
 
     /// The tooltip over the microphone, ✕ or ■.

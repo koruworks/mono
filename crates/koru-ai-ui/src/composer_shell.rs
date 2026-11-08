@@ -10,7 +10,8 @@ use koru_draw::el::{
 };
 use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
-use koru_draw::theme::tokens::Space;
+use koru_draw::theme::tokens::{Profile, Space};
+use koru_ui::icon_button::Metrics;
 use koru_ui::split_button::SplitButton;
 
 use crate::{BUTTON_H, COMPOSER_PAD_TOP, COMPOSER_TEXT_GAP};
@@ -18,6 +19,8 @@ use crate::{BUTTON_H, COMPOSER_PAD_TOP, COMPOSER_TEXT_GAP};
 pub(crate) const PLUS: Key = Key::surface("KoruComposer", "add-context");
 pub(crate) const SEND: Key = Key::surface("KoruComposer", "send");
 pub(crate) const MODE: Key = Key::surface("KoruComposer", "mode");
+pub(crate) const MICROPHONE: Key = Key::surface("KoruComposer", "microphone");
+pub(crate) const MICROPHONE_CHOICE: Key = Key::surface("KoruComposer", "microphone-choice");
 
 pub(crate) struct Shell {
     pub(crate) tree: El,
@@ -48,6 +51,14 @@ impl Shell {
     pub(crate) fn mode(&self) -> Option<Rect> {
         self.frame.rect_of("ComposerModeChevron")
     }
+
+    pub(crate) fn microphone(&self) -> Option<Rect> {
+        self.frame.rect_of("ComposerMicrophone")
+    }
+
+    pub(crate) fn microphone_choice(&self) -> Option<Rect> {
+        self.frame.rect_of("ComposerMicrophoneChoice")
+    }
 }
 
 thread_local! {
@@ -61,6 +72,8 @@ pub(crate) fn layout(
     plus_name: &str,
     send_name: &str,
     mode_name: Option<&str>,
+    microphone_name: Option<&str>,
+    microphone_choice_name: Option<&str>,
 ) -> Shell {
     let text_region = COMPOSER_PAD_TOP + text_height + COMPOSER_TEXT_GAP;
     let mut toolbar = row("ComposerToolbar")
@@ -78,6 +91,43 @@ pub(crate) fn layout(
                 .name_text(plus_name),
         )
         .child(spacer());
+    if let Some(name) = microphone_name {
+        if let Some(choice_name) = microphone_choice_name {
+            toolbar = toolbar
+                .child(
+                    boxed("ComposerMicrophoneChoice")
+                        .w(Length::Runtime(
+                            Metrics::COMPACT.control_width(),
+                            "microphone choice width",
+                        ))
+                        .h(Length::Runtime(BUTTON_H, "action button height"))
+                        .id(MICROPHONE_CHOICE)
+                        .hit()
+                        .action(Action::Click)
+                        .semantics(Role::Button)
+                        .name_text(choice_name),
+                )
+                .child(boxed("ComposerMicrophoneChoiceGap").w(Length::Runtime(
+                    Space::S0_5.px(Profile::Desktop),
+                    "choice gap",
+                )));
+        }
+        toolbar = toolbar
+            .child(
+                boxed("ComposerMicrophone")
+                    .w(Length::Runtime(BUTTON_H, "action button height"))
+                    .h(Length::Runtime(BUTTON_H, "action button height"))
+                    .id(MICROPHONE)
+                    .hit()
+                    .action(Action::Click)
+                    .semantics(Role::Button)
+                    .name_text(name),
+            )
+            .child(
+                boxed("ComposerMicrophoneGap")
+                    .w(Length::Runtime(Space::S2.px(Profile::Desktop), "send gap")),
+            );
+    }
     let send = boxed("ComposerSend")
         .w(Length::Runtime(BUTTON_H, "action button height"))
         .h(Length::Runtime(BUTTON_H, "action button height"))
@@ -133,7 +183,7 @@ mod tests {
     #[test]
     fn shell_parts_share_frame_geometry_and_ancestry() {
         let rect = Rect::new(10.0, 20.0, 360.0, 130.0);
-        let shell = layout(rect, 46.0, 28.0, "Add context", "Send", None);
+        let shell = layout(rect, 46.0, 28.0, "Add context", "Send", None, None, None);
         assert!(
             shell.frame.diagnostics.is_empty(),
             "{:?}",
@@ -178,6 +228,8 @@ mod tests {
             "Add context",
             "Send",
             Some("Approval mode"),
+            None,
+            None,
         );
         assert!(shell.frame.diagnostics.is_empty());
         let send = shell.send();
@@ -188,5 +240,32 @@ mod tests {
         assert_eq!(send.w, SplitButton::ACTION_W);
         assert_eq!(send.x + send.w, mode.x);
         assert_eq!(shell.frame.hit_at(mode.x + 1.0, mode.y + 1.0), Some(MODE));
+    }
+
+    #[test]
+    fn microphone_and_chooser_have_their_own_space_before_send() {
+        let shell = layout(
+            Rect::new(10.0, 20.0, 360.0, 130.0),
+            0.0,
+            74.0,
+            "Add context",
+            "Send",
+            Some("Approval mode"),
+            Some("Dictate"),
+            Some("Choose microphone"),
+        );
+        let chooser = shell.microphone_choice().unwrap();
+        let microphone = shell.microphone().unwrap();
+        let send = shell.send();
+        assert!(chooser.x + chooser.w < microphone.x);
+        assert!(microphone.x + microphone.w < send.x);
+        assert_eq!(
+            shell.frame.hit_at(microphone.x + 1.0, microphone.y + 1.0),
+            Some(MICROPHONE)
+        );
+        assert_eq!(
+            shell.frame.hit_at(chooser.x + 1.0, chooser.y + 1.0),
+            Some(MICROPHONE_CHOICE)
+        );
     }
 }

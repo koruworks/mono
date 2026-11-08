@@ -140,7 +140,7 @@ pub enum MicrophoneAsk {
 #[derive(Default)]
 pub(crate) struct Panel {
     /// The host can read the devices and keep a choice: the chevron shows.
-    offered: bool,
+    pub(crate) offered: bool,
     open: bool,
     /// The row the keyboard is on.
     focus: Option<usize>,
@@ -220,6 +220,9 @@ impl ChatSurface {
     pub(crate) fn mic_chooser_slot(&self) -> Option<Rect> {
         if !self.dictation.microphone.offered {
             return None;
+        }
+        if let Some(shell) = &self.composer_shell {
+            return shell.microphone_choice();
         }
         let mic = self.mic_button()?;
         let width = Metrics::COMPACT.control_width();

@@ -51,3 +51,17 @@ fn koru_context_door_opens_the_existing_entity_picker() {
     assert!(surface.plus_menu.is_none());
     assert!(surface.composer.picker_open());
 }
+
+#[test]
+fn plus_menu_shows_trigger_hints_on_the_matching_rows() {
+    let mut surface = ChatSurface::new();
+    surface.open_plus_menu();
+    let items = surface.plus_menu.as_ref().unwrap().items();
+    assert_eq!(items.len(), 2, "trigger hints replace the old footer row");
+    assert_eq!(items[1].shortcut().as_deref(), Some("@"));
+    assert_eq!(
+        PlusItem::Commands("Commands").shortcut().as_deref(),
+        Some("/")
+    );
+    assert_eq!(PlusItem::Skills("Skills").shortcut().as_deref(), Some("$"));
+}

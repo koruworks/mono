@@ -5660,6 +5660,13 @@ impl ChatSurface {
             koru_i18n::t(self.lang, koru_i18n::Key::AiComposerAddContext),
             self.send_button_name(),
             mode_name.as_deref(),
+            self.dictation
+                .offered
+                .then(|| koru_i18n::t(self.lang, koru_i18n::Key::AiDictate)),
+            self.dictation
+                .microphone
+                .offered
+                .then(|| koru_i18n::t(self.lang, koru_i18n::Key::AiMicrophoneChoose)),
         ));
         if below > 0.0 {
             // The folder control is as wide as what it shows.
@@ -6649,7 +6656,6 @@ impl ChatSurface {
             self.draw_reasoning_drawer(canvas, root, composer);
             return true;
         }
-        self.draw_mic(canvas, root);
         let chip_label = self.chip_label();
         self.chip_label_w = self.engine.simple_layout(&chip_label, role::row()).width();
         if let Some(mode_button) = self.tool_mode_button() {
@@ -6817,6 +6823,8 @@ impl ChatSurface {
                     "ComposerToolbar" => {
                         recording = self.paint_composer_toolbar_content(canvas, root, composer);
                     }
+                    "ComposerMicrophoneChoice" if !recording => self.draw_mic_chooser(canvas, root),
+                    "ComposerMicrophone" if !recording => self.draw_mic(canvas, root),
                     "ComposerAddContext" if !recording => {
                         self.paint_composer_plus(canvas, root, node.rect);
                     }
