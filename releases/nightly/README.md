@@ -7,9 +7,12 @@ holds the descriptor's three fields (`title`, `summary`, `body`), text only.
 
 Official nightlies enable Cloud sync and build with the `nightly` environment's
 production API configuration. Desktop packaging uses `--with-cloud` and requires
-the complete baked configuration; Android and iOS inherit the public API origin,
-issuer and credential rollout in their native build steps. Community builds can
-still omit Cloud configuration or explicitly disable the feature.
+the complete baked configuration. The Android job passes that same origin,
+issuer and credential rollout through as its existing Gradle account properties,
+plus the public web client id `KORU_PUBLIC_API_GOOGLE_CLIENT_ID` and the
+`nightly` credential channel, so sign-in and Cloud sync attach together.
+A build that does not ask for Cloud leaves those properties unset. Community
+builds can still omit Cloud configuration or explicitly disable the feature.
 
 `./koru.sh nightly-notes` drafts the next file from the commits since the
 `nightly` tag. Edit it, commit it, then move and push the tag; the build takes

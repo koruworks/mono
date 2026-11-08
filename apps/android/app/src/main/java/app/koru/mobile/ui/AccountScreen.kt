@@ -112,11 +112,6 @@ fun AccountScreen(
                 Text(stringResource(R.string.account_sign_in_again))
                 Button(onClick = { onAction(AccountIntent.SignIn, null) }) { Text(stringResource(R.string.account_google)) }
                 SignInWithAppleButton(onClick = { onAction(AccountIntent.SignInWithApple, null) })
-                // Same screen, second way in. Both open a Custom Tab and come
-                // back through the app link; only the page differs.
-                Button(onClick = { onAction(AccountIntent.SignInWithEmail, null) }) {
-                    Text(stringResource(R.string.account_email))
-                }
             }
             if (state.phase == AccountPhase.AwaitingCreation) item {
                 Column(verticalArrangement = Arrangement.spacedBy(KoruSpacing.sm),
