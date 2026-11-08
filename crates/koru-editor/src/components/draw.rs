@@ -1147,53 +1147,37 @@ fn draw_entity_footer(
         || picker.scope_label(),
         |headings| headings.anchor.title.clone(),
     );
-    let line = koru_i18n::fill(
+    let mut line = koru_i18n::fill(
         koru_i18n::t(lang, koru_i18n::Key::EntitySearchingIn),
         &[&scope],
     );
+    if !picker.widened_scope && !picker.link_mode && picker.headings().is_none() {
+        if let Some(chord) = koru_keys::show_hint(
+            koru_keys::ShortcutId::WidenEntityScope,
+            koru_keys::Section::Heading,
+        ) {
+            let hint = koru_i18n::fill(
+                koru_i18n::t(lang, koru_i18n::Key::EntitySearchAllHint),
+                &[&chord],
+            );
+            line.push_str(" · ");
+            line.push_str(&hint);
+        }
+    }
     let fitted = engine.elided(
         &line,
         theme::role::meta(),
         pw - 2.0 * theme::PANEL_PAD - 4.0,
     );
     let label = engine.simple_layout(&fitted, theme::role::meta());
-    let hint = (!picker.widened_scope && !picker.link_mode && picker.headings().is_none())
-        .then(|| {
-            koru_keys::show_hint(
-                koru_keys::ShortcutId::WidenEntityScope,
-                koru_keys::Section::Heading,
-            )
-        })
-        .flatten();
-    let label_y = if hint.is_some() { y + 3.0 } else { y + 12.0 };
     draw_layout(
         scene,
         root,
         &label,
         px + theme::PANEL_PAD + 2.0,
-        label_y,
+        y + (FOOTER_H - label.height()) * 0.5,
         Some(theme::p().row_hint),
     );
-    if let Some(chord) = hint {
-        let line = koru_i18n::fill(
-            koru_i18n::t(lang, koru_i18n::Key::EntitySearchAllHint),
-            &[&chord],
-        );
-        let fitted = engine.elided(
-            &line,
-            theme::role::meta(),
-            pw - 2.0 * theme::PANEL_PAD - 4.0,
-        );
-        let label = engine.simple_layout(&fitted, theme::role::meta());
-        draw_layout(
-            scene,
-            root,
-            &label,
-            px + theme::PANEL_PAD + 2.0,
-            y + 21.0,
-            Some(theme::p().row_hint),
-        );
-    }
 }
 
 fn draw_entity_scrollbar(

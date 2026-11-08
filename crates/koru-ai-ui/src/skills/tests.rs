@@ -407,6 +407,22 @@ fn a_dollar_opens_while_the_list_is_loading() {
     assert!(surface.skill_panel().is_none());
 }
 
+#[test]
+fn opening_plus_closes_the_command_panel_under_it() {
+    let (mut surface, _commands) = surface();
+    type_text(&mut surface, "Use $");
+    assert!(surface.skill_list_open());
+    let plus = surface.plus_button();
+    assert_eq!(
+        surface.plus_menu_mouse_down(plus.x + plus.w * 0.5, plus.y + plus.h * 0.5),
+        Some(true)
+    );
+    assert!(surface.plus_menu.is_some());
+    assert!(!surface.skill_list_open());
+    surface.sync_skill_list();
+    assert!(!surface.skill_list_open(), "the same token stays dismissed");
+}
+
 /// **Enter picks while the list is open, and sends once it is shut**: the
 /// pick is a chip that is sent as `$name`, with the skill's name beside the
 /// text, and Backspace takes the chip back whole.

@@ -1167,7 +1167,7 @@ impl ChatSurface {
             DraftState::Storing => koru_i18n::t(self.lang, Key::AiAttachmentAddingOne).into(),
             DraftState::Failed { .. } => koru_i18n::t(self.lang, Key::AiAttachmentFailed).into(),
             DraftState::Stored if draft.source == AttachmentSource::Path => {
-                koru_i18n::t(self.lang, Key::AiComposerThisComputer).into()
+                koru_i18n::t(self.lang, Key::AiComposerFilesAndFolders).into()
             }
             DraftState::Stored if draft.byte_count > 0 => {
                 koru_i18n::number::bytes(self.lang, draft.byte_count)

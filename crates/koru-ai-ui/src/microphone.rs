@@ -461,10 +461,16 @@ impl ChatSurface {
     }
 
     /// The chevron, beside the microphone, while it shows.
-    pub(crate) fn draw_mic_chooser(&mut self, canvas: &mut Scene, root: Affine) {
-        let Some(chevron) = self.mic_chooser_button() else {
+    pub(crate) fn draw_mic_chooser(
+        &mut self,
+        canvas: &mut Scene,
+        root: Affine,
+        chevron: Rect,
+        shown: bool,
+    ) {
+        if !shown {
             return;
-        };
+        }
         icon_button::draw_with(
             canvas,
             root,

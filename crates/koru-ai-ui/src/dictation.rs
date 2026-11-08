@@ -469,13 +469,10 @@ impl ChatSurface {
     }
 
     /// The microphone, beside the send button, while nothing is recording.
-    pub(crate) fn draw_mic(&mut self, canvas: &mut Scene, root: Affine) {
+    pub(crate) fn draw_mic(&mut self, canvas: &mut Scene, root: Affine, mic: Rect) {
         if self.dictation.live.is_some() {
             return;
         }
-        let Some(mic) = self.mic_button() else {
-            return;
-        };
         IconButton::new(icons::MICROPHONE, mic)
             .with_state(IconButtonState {
                 hovered: mic.contains(self.pointer.0, self.pointer.1),

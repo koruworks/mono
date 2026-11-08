@@ -16,7 +16,7 @@ use super::text_field::TextField;
 use crate::trigger::{DocumentTarget, PillSpec, Trigger};
 
 /// Quiet scope guidance below the selectable rows.
-pub const FOOTER_H: f32 = 42.0;
+pub const FOOTER_H: f32 = 28.0;
 pub const MAX_ROWS: usize = 7;
 /// The height of the own-query band a move-mode picker adds above the rows.
 pub const FIELD_H: f32 = 36.0;

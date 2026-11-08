@@ -2647,6 +2647,9 @@ impl ChatSurface {
         if self.plus_menu.take().is_some() {
             changed = true;
         }
+        if self.skill_list_open() {
+            changed |= self.dismiss_skill_list();
+        }
         if self.computer_file_choice.take().is_some() {
             changed = true;
         }
@@ -6651,14 +6654,14 @@ impl ChatSurface {
         canvas: &mut Scene,
         root: Affine,
         composer: Rect,
+        model_button: Rect,
+        mode_button: Option<Rect>,
     ) -> bool {
         if self.draw_dictation_row(canvas, root) {
             self.draw_reasoning_drawer(canvas, root, composer);
             return true;
         }
-        let chip_label = self.chip_label();
-        self.chip_label_w = self.engine.simple_layout(&chip_label, role::row()).width();
-        if let Some(mode_button) = self.tool_mode_button() {
+        if let Some(mode_button) = mode_button {
             ActionButton::new(
                 self.tool_mode_label(),
                 ActionStyle::Ghost,
@@ -6695,12 +6698,23 @@ impl ChatSurface {
                 .draw(canvas, root, &mut self.engine);
         }
         self.draw_reasoning_drawer(canvas, root, composer);
-        let model_button = self.chat_model_button();
         let koru_chat = self.koru_chat();
         let model_label = self.chip_label();
         let model_caret =
             (!koru_chat || self.effort_control().is_some()).then_some(icons::CARET_DOWN);
-        ActionButton::new(&model_label, ActionStyle::Ghost, model_caret).draw(
+        let caret_width = model_caret.map_or(0.0, |caret| {
+            ActionButton::GAP
+                + self
+                    .engine
+                    .icon_layout(caret, ActionButton::ICON_SIZE)
+                    .width()
+        });
+        let shown_label = self.engine.elided(
+            &model_label,
+            role::row(),
+            (model_button.w - ActionButton::PAD_X * 2.0 - caret_width).max(0.0),
+        );
+        ActionButton::new(&shown_label, ActionStyle::Ghost, model_caret).draw(
             canvas,
             root,
             &mut self.engine,
@@ -6811,6 +6825,11 @@ impl ChatSurface {
         // The shell frame resolves the box, band, editor and toolbar from
         // current state. Its ancestry stays open while each mutable host part
         // paints, so F12 sees the editor and every control under KoruComposer.
+        let chip_label = self.chip_label();
+        self.chip_label_w = self.engine.simple_layout(&chip_label, role::row()).width();
+        let model_button = self.chat_model_button();
+        let mode_button = self.tool_mode_button();
+        let microphone_choice_shown = self.mic_chooser_button().is_some();
         let shell = self.composer_shell.take().expect("composer was laid out");
         let mut recording = false;
         shell
@@ -6821,10 +6840,18 @@ impl ChatSurface {
                     "ComposerContextBand" => self.draw_strip(canvas, root, node.rect),
                     "ComposerText" => self.paint_composer_text(canvas, root),
                     "ComposerToolbar" => {
-                        recording = self.paint_composer_toolbar_content(canvas, root, composer);
+                        recording = self.paint_composer_toolbar_content(
+                            canvas,
+                            root,
+                            composer,
+                            model_button,
+                            mode_button,
+                        );
                     }
-                    "ComposerMicrophoneChoice" if !recording => self.draw_mic_chooser(canvas, root),
-                    "ComposerMicrophone" if !recording => self.draw_mic(canvas, root),
+                    "ComposerMicrophoneChoice" if !recording => {
+                        self.draw_mic_chooser(canvas, root, node.rect, microphone_choice_shown);
+                    }
+                    "ComposerMicrophone" if !recording => self.draw_mic(canvas, root, node.rect),
                     "ComposerAddContext" if !recording => {
                         self.paint_composer_plus(canvas, root, node.rect);
                     }
@@ -15192,6 +15219,49 @@ mod tests {
             "the box's fill and stroke are inside it"
         );
         assert!(primitives.into_iter().all(under));
+    }
+
+    #[test]
+    fn painted_model_stays_left_of_the_microphone() {
+        use koru_draw::inspect;
+        let mut surface = ChatSurface::new();
+        surface.set_viewport(Rect::new(0.0, 0.0, 560.0, 600.0));
+        let mut chat = transcript();
+        chat.chat.current_model.requested_model = "a-long-model-name-for-layout".into();
+        surface.transcript = Some(chat);
+        surface.validated_ready = true;
+        surface.offer_dictation(true);
+        surface.offer_microphone_choice(true);
+        let capture =
+            inspect::Frame::begin(1, Affine::IDENTITY, scene::rect(0.0, 0.0, 560.0, 600.0));
+        surface.draw(&mut Scene::new(), Affine::IDENTITY);
+        let records = capture.finish().records;
+        let microphone = records
+            .iter()
+            .find(|record| record.name == "ComposerMicrophone")
+            .expect("microphone in the composer frame")
+            .rect();
+        let (model_index, model_record) = records
+            .iter()
+            .enumerate()
+            .filter(|record| {
+                record.1.name == "KoruButton"
+                    && record.1.rect().y0 >= microphone.y0
+                    && record.1.rect().y1 <= microphone.y1
+            })
+            .max_by(|a, b| a.1.rect().x1.total_cmp(&b.1.rect().x1))
+            .expect("model control painted in the toolbar");
+        let model = model_record.rect();
+        let label = records
+            .iter()
+            .find(|record| record.name == "Button label" && record.parent == Some(model_index))
+            .expect("model label painted inside the control")
+            .rect();
+        assert!(
+            model.x1 <= microphone.x0,
+            "model control overlaps microphone"
+        );
+        assert!(label.x1 <= microphone.x0, "model text overlaps microphone");
     }
 
     /// **What a chat is doing, for the marks outside it** (D83): working

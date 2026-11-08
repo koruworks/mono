@@ -225,6 +225,12 @@ impl ChatSurface {
         self.skills.open.take().is_some()
     }
 
+    /// Dismiss the current trigger until its token changes.
+    pub(crate) fn dismiss_skill_list(&mut self) -> bool {
+        self.skills.dismissed = true;
+        self.close_skill_list()
+    }
+
     /// **Ask the agent for its skills**, off the window thread, unless the
     /// list held is fresh or an ask is already on its way. Straight to the
     /// reader: a background ask is not something the person waits on.
@@ -398,10 +404,7 @@ impl ChatSurface {
         }
         let count = self.skill_rows().len();
         match key {
-            Key::Named(NamedKey::Escape) => {
-                self.skills.dismissed = true;
-                Some(self.close_skill_list())
-            }
+            Key::Named(NamedKey::Escape) => Some(self.dismiss_skill_list()),
             Key::Named(NamedKey::ArrowDown) if count > 0 => {
                 self.skills.focus = (self.skills.focus + 1) % count;
                 self.keep_skill_focus_shown(count);
@@ -509,8 +512,7 @@ impl ChatSurface {
         if self.skill_panel().is_some_and(|panel| panel.contains(x, y)) {
             return Some(false);
         }
-        self.skills.dismissed = true;
-        self.close_skill_list();
+        self.dismiss_skill_list();
         None
     }
 

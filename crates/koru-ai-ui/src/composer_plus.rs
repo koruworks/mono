@@ -13,7 +13,7 @@ use winit::keyboard::{Key, ModifiersState, NamedKey};
 
 use crate::{ChatSurface, Choice, ChoiceOutcome, Focus, Menu, attachments, icons, reader::Command};
 
-/// Which native picker the containing window should show for This computer.
+/// Which native picker the containing window should show for Files and folders.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ComputerPickerKind {
     File,
@@ -134,7 +134,7 @@ impl ChatSurface {
         }) {
             items.push(PlusItem::ThisComputer(t(
                 self.lang,
-                TextKey::AiComposerThisComputer,
+                TextKey::AiComposerFilesAndFolders,
             )));
             items.push(PlusItem::Commands(t(
                 self.lang,
