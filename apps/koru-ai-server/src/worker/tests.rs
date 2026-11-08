@@ -2665,11 +2665,12 @@ fn picked_skills_ride_an_agent_message_and_nothing_else() {
     .spawn()
     .unwrap();
     let client = worker.client();
-    let with_skills = |chat_id: ChatId, skills: &[&str]| SendTurnRequest {
+    let with_skills = |chat_id: ChatId, skills: &[&str]| {
+        SendTurnRequest {
         operation_id: Uuid::new_v4(),
         chat_id,
         surface: AiSurface::Standalone,
-        markdown: "Use $review-pr".into(),
+        markdown: r"Use [[koru://skill/review-pr]] with \[[koru://skill/review-pr]] and literal $review-pr".into(),
         explicit_refs: Vec::new(),
         web_search: false,
         reasoning_override: None,
@@ -2678,6 +2679,7 @@ fn picked_skills_ride_an_agent_message_and_nothing_else() {
         attachment_ids: Vec::new(),
         answers: None,
         skills: skills.iter().map(|name| (*name).to_owned()).collect(),
+    }
     };
 
     let plain = create_chat(&client);
@@ -2716,8 +2718,21 @@ fn picked_skills_ride_an_agent_message_and_nothing_else() {
     assert_eq!(request.options.agent_skills, vec!["review-pr".to_owned()]);
     assert_eq!(
         request.messages.last().unwrap().markdown,
-        "Use $review-pr",
-        "the message keeps its $name text"
+        "Use $review-pr with [[koru://skill/review-pr]] and literal $review-pr",
+        "only the selected link renders as invocation text"
+    );
+    assert_eq!(
+        wait_for_terminal(&client, stream.accepted.attempt_id),
+        AttemptStatus::Complete
+    );
+    let mut followup = with_skills(agent, &[]);
+    followup.markdown = "Then [[koru://command/issue%2342]] now".into();
+    let stream = client.send_turn(context(), followup).unwrap();
+    let replayed = requests.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert_eq!(replayed.messages[0].markdown, request.messages[0].markdown);
+    assert_eq!(
+        replayed.messages.last().unwrap().markdown,
+        "Then /issue#42 now"
     );
     assert_eq!(
         wait_for_terminal(&client, stream.accepted.attempt_id),

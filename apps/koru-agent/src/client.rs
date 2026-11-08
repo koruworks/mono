@@ -324,7 +324,9 @@ pub fn open_link(paths: &Paths, link: koru_link::KoruLink) -> Result<bool, Strin
         },
         // A bare node names no document, so there is nothing the catalog could
         // place. Refused here rather than sent for the agent to refuse.
-        koru_link::KoruLink::Node(_) => {
+        koru_link::KoruLink::Node(_)
+        | koru_link::KoruLink::Skill { .. }
+        | koru_link::KoruLink::Command { .. } => {
             return Err("a Koru link must name a document or chat".to_owned());
         }
     };

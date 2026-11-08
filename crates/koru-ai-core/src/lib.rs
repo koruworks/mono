@@ -16,6 +16,7 @@ pub mod inference;
 pub mod model;
 pub mod ports;
 pub mod profiles;
+pub mod prompt_links;
 pub mod provider;
 pub mod questions;
 pub mod reading_order;
@@ -43,6 +44,7 @@ pub use ports::{
     WorkspaceFileData,
 };
 pub use profiles::{ChatPlacementEvidence, ChatRead, ProfileCatalog, place_chat};
+pub use prompt_links::render_prompt_text;
 pub use provider::*;
 pub use questions::{
     AgentAnswer, AgentAnswerValue, AgentQuestion, AgentQuestionOption, AnswersRecord,

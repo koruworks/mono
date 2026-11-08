@@ -428,19 +428,27 @@ impl ChatComposer {
             };
             let mut from = 0;
             for found in koru_link::wrapped(line) {
-                let koru_link::KoruLink::Document { document, node } = found.link else {
-                    continue;
+                let attr = match found.link {
+                    koru_link::KoruLink::Document { document, node } => {
+                        let reference = koru_core::DocumentReference {
+                            document: koru_core::DocumentId::from_uuid(document),
+                            node: node.map(NodeId::from_uuid),
+                        };
+                        Attr::labelled(
+                            "document",
+                            AttrValue::Document(reference),
+                            title(koru_ai_core::DocumentId::from_uuid(document)),
+                        )
+                    }
+                    koru_link::KoruLink::Skill { name } => skill_attr(&name, &name),
+                    koru_link::KoruLink::Command { name } => Attr::labelled(
+                        koru_core::attributes::ROLE_COMMAND,
+                        AttrValue::Text(name.clone()),
+                        name,
+                    ),
+                    _ => continue,
                 };
                 at += insert_text(&mut self.ws, row, at, &line[from..found.range.start]);
-                let reference = koru_core::DocumentReference {
-                    document: koru_core::DocumentId::from_uuid(document),
-                    node: node.map(NodeId::from_uuid),
-                };
-                let attr = Attr::labelled(
-                    "document",
-                    AttrValue::Document(reference),
-                    title(koru_ai_core::DocumentId::from_uuid(document)),
-                );
                 if self.ws.insert_pill(row, at, &attr).is_ok() {
                     at += koru_core::ANCHOR.len_utf8();
                 }
@@ -1133,8 +1141,9 @@ pub(crate) fn recalled_rows(markdown: &str) -> Vec<Recalled<'_>> {
 /// Insert `text` into `row` at `at`: the bytes it added, none for an empty
 /// piece or a refusal.
 fn insert_text(ws: &mut WorkspaceDoc, row: NodeId, at: usize, text: &str) -> usize {
-    if !text.is_empty() && ws.insert_text(row, at, text).is_ok() {
-        text.len()
+    let plain = koru_link::unescape_literal_links(text);
+    if !plain.is_empty() && ws.insert_text(row, at, &plain).is_ok() {
+        plain.len()
     } else {
         0
     }

@@ -237,7 +237,7 @@ fn enter_picks_a_chip_that_is_sent_as_its_name() {
     assert!(press(&mut surface, NamedKey::Enter), "picks, never sends");
     assert!(!surface.skill_list_open());
     let message = surface.composer.message();
-    assert_eq!(message.markdown, "Use $release-notes ");
+    assert_eq!(message.markdown, "Use [[koru://skill/release-notes]] ");
     assert_eq!(message.skills, vec!["release-notes".to_owned()]);
 
     // Backspace: the space, then the chip whole.
@@ -263,7 +263,7 @@ fn enter_picks_a_chip_that_is_sent_as_its_name() {
             _ => continue,
         }
     };
-    assert_eq!(request.markdown, "Use $review-pr");
+    assert_eq!(request.markdown, "Use [[koru://skill/review-pr]]");
     assert_eq!(request.skills, vec!["review-pr".to_owned()]);
 }
 
@@ -538,6 +538,6 @@ fn a_queued_message_with_a_skill_is_not_text_only() {
     assert!(surface.queue_composer());
     let chat = surface.transcript.as_ref().unwrap().chat.id;
     let queue = surface.queues.get(chat).expect("queued");
-    assert_eq!(queue.items[0].markdown, "Use $review-pr");
+    assert_eq!(queue.items[0].markdown, "Use [[koru://skill/review-pr]]");
     assert!(!queue.items[0].text_only());
 }

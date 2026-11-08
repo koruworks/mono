@@ -102,9 +102,8 @@ impl std::fmt::Debug for AgentCommand {
 }
 
 /// Whether `name` may be offered and sent back: not empty, within
-/// [`AGENT_COMMAND_NAME_BYTES`], with no whitespace or control character —
-/// it is written into the person's message as `$name`, and must read back
-/// as one token.
+/// [`AGENT_COMMAND_NAME_BYTES`], with no whitespace or control character.
+/// It is written into the person's message as one `$name` or `/name` token.
 pub fn valid_command_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= AGENT_COMMAND_NAME_BYTES

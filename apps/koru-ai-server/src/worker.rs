@@ -3656,13 +3656,17 @@ impl WorkerState {
             .filter(|message| message.state == MessageState::Complete)
             .map(|message| AiRequestMessage {
                 role: message.role,
-                markdown: message.markdown.clone(),
+                markdown: if message.role == ChatRole::User {
+                    koru_ai_core::render_prompt_text(&message.markdown)
+                } else {
+                    message.markdown.clone()
+                },
                 attachments: history_attachments.remove(&message.id).unwrap_or_default(),
             })
             .collect();
         provider_messages.push(AiRequestMessage {
             role: ChatRole::User,
-            markdown: request.markdown,
+            markdown: koru_ai_core::render_prompt_text(&request.markdown),
             attachments: self.attachment_inputs(&attachments),
         });
         let attempt = InferenceAttempt {
@@ -3871,7 +3875,11 @@ impl WorkerState {
             .filter(|message| message.state == MessageState::Complete)
             .map(|message| AiRequestMessage {
                 role: message.role,
-                markdown: message.markdown.clone(),
+                markdown: if message.role == ChatRole::User {
+                    koru_ai_core::render_prompt_text(&message.markdown)
+                } else {
+                    message.markdown.clone()
+                },
                 attachments: retried_attachments.remove(&message.id).unwrap_or_default(),
             })
             .collect();

@@ -1240,7 +1240,11 @@ impl WorkerState {
             .filter(|message| message.state == MessageState::Complete)
             .map(|message| AiRequestMessage {
                 role: message.role,
-                markdown: message.markdown.clone(),
+                markdown: if message.role == ChatRole::User {
+                    koru_ai_core::render_prompt_text(&message.markdown)
+                } else {
+                    message.markdown.clone()
+                },
                 attachments: Vec::new(),
             })
             .collect();

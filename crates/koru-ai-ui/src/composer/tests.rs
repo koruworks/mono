@@ -336,18 +336,55 @@ fn a_sent_message_comes_back_with_its_chips() {
     });
 
     let message = composer.message();
-    assert_eq!(message.markdown, sent, "it leaves as it was sent");
+    let canonical = sent.replace("[[koru://chat/", r"\[[koru://chat/");
+    assert_eq!(message.markdown, canonical, "a text link stays literal");
     assert_eq!(
         message.documents,
         vec![(budget, "Budget".to_owned()), (plan, "Plan".to_owned())]
     );
     typed(&mut composer, "!");
-    assert_eq!(composer.text(), format!("{sent}!"), "edited at its end");
+    assert_eq!(
+        composer.text(),
+        format!("{canonical}!"),
+        "edited at its end"
+    );
 
     // Undo takes the whole recall back in one step.
     assert!(ctrl(&mut composer, "z"));
     assert!(ctrl(&mut composer, "z"));
     assert!(composer.is_blank());
+}
+
+#[test]
+fn selected_agent_pills_and_literal_marker_recall_without_reclassification() {
+    let mut composer = ChatComposer::new(None);
+    let sent = r"literal $review-pr and \[[koru://skill/review-pr]] then [[koru://skill/review-pr]] with [[koru://command/issue%2342]]";
+    composer.set_message(sent, |_| String::new());
+    let message = composer.message();
+    assert_eq!(message.markdown, sent);
+    assert_eq!(message.skills, vec!["review-pr"]);
+    let row = composer.ws.children(Parent::Node(composer.root)).unwrap()[0];
+    let node = composer.ws.read(row).unwrap();
+    let roles: Vec<_> = node
+        .content
+        .attrs()
+        .iter()
+        .map(|attr| attr.role.as_str())
+        .collect();
+    assert_eq!(
+        roles
+            .iter()
+            .filter(|role| **role == koru_core::attributes::ROLE_SKILL)
+            .count(),
+        1,
+    );
+    assert_eq!(
+        roles
+            .iter()
+            .filter(|role| **role == koru_core::attributes::ROLE_COMMAND)
+            .count(),
+        1,
+    );
 }
 
 // ----- quotes (koru-ai D88) ---------------------------------------------------
