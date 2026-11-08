@@ -4808,7 +4808,17 @@ impl<C: Catalog, B: Backend> Store<C, B> {
                 recovery.problem
             ));
         }
+        let replay_complete = matches!(&opened, Opened::Normal(_));
         let live = opened.into_value();
+        if replay_complete
+            && open.repo.repair_missing_position(
+                document,
+                &live.encoded_version(),
+                &live.encoded_frontiers(),
+            )?
+        {
+            tracing::info!(%workspace, %document, "repaired absent durable document position after replay");
+        }
         live.set_peer_id(self.peer_id)?;
         open.documents.insert(document, live);
         // Same repair as the manifest's at workspace open: the journal was

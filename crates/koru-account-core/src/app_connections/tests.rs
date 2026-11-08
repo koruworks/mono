@@ -30,6 +30,7 @@ fn candidate(profile_n: u8, workspace_n: u8) -> CloudWorkspaceCandidate {
             workspace_n,
         ])),
         workspace_incarnation_id: Uuid::from_u128(u128::from(workspace_n)),
+        documents_write: true,
         authorization_version: 1,
         membership_epoch: 1,
         cloud_access_epoch: 1,

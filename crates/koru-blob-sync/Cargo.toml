@@ -29,6 +29,7 @@ blake3.workspace = true
 koru-free-space = { path = "../koru-free-space" }
 futures-util.workspace = true
 koru-account-core = { path = "../koru-account-core" }
+koru-account-wire = { path = "../koru-account-wire" }
 # The wire contract, reused rather than restated: the constants, the stable
 # codes, the range admission and every JSON body on both planes.
 koru-cloud-blob = { path = "../koru-cloud-blob" }
@@ -51,6 +52,7 @@ tokio.workspace = true
 tracing.workspace = true
 url.workspace = true
 uuid.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 # Turning this crate's own `test-support` on for its tests. A dev-dependency

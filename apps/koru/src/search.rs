@@ -31,11 +31,7 @@ use koru_core::{NodeId, ProfileId, WorkspaceId};
 use koru_window::WindowRequest;
 use koru_workspace_host::{PaneRequest, SearchTargetDisposition, View};
 
-pub(crate) use koru_search_ui::SURFACE_RADIUS;
-
-/// The radius the app's own chrome rounds the overlay to. Named here so
-/// `mainview` does not reach across a crate boundary for a number that is the
-/// surface's own idea of its shape.
+/// Host adapter for the shared search surface.
 pub(crate) struct SearchSurface(koru_search_ui::SearchSurface);
 
 impl SearchSurface {
@@ -85,24 +81,26 @@ impl SearchSurface {
         self.0.resume();
     }
 
-    /// **This host's command bar** (PLAN.final P13): the CREATE rows the
-    /// typed text could become, the footer's chips and the box's words. The
-    /// surface draws them; what a row makes is answered in `mainview` when
-    /// the surface hands back a `Create`.
-    pub(crate) fn make_command_bar(
-        &mut self,
-        rows: Vec<koru_search_ui::CreateRow>,
-        chips: Vec<koru_search_ui::FooterChip>,
-        placeholder: String,
-    ) {
-        self.0.set_create_rows(rows);
+    /// In-app search offers result navigation, with its keyboard hints below.
+    pub(crate) fn configure_modal(&mut self, chips: Vec<koru_search_ui::FooterChip>) {
         self.0.set_footer_chips(chips);
-        self.0.set_placeholder(Some(placeholder));
     }
 
-    /// What `↵` on a CREATE row asked for, once.
-    pub(crate) fn take_create(&mut self) -> Option<koru_search_ui::Create> {
-        self.0.take_create()
+    pub(crate) fn draw_modal(
+        &mut self,
+        scene: &mut vello::Scene,
+        root: vello::kurbo::Affine,
+        viewport: (f32, f32),
+        caret_on: bool,
+        pointer: (f32, f32),
+    ) {
+        koru_search_ui::SearchModal::new(viewport).draw(
+            &mut self.0,
+            scene,
+            root,
+            caret_on,
+            pointer,
+        );
     }
 
     pub(crate) fn resume_in_workspace(

@@ -834,14 +834,17 @@ jobs:
       # default to; the code is the build time in minutes since 2026
       # (mobile.rs). The signing properties reach Gradle as
       # ORG_GRADLE_PROJECT_* — empty, and Gradle treats them as absent and
-      # builds the APK unsigned. No account settings: like the desktop
-      # nightly, the APK is built without Koru Cloud (NIGHTLY N5). A signed
+      # builds the APK unsigned. Cloud-enabled builds inherit the environment's
+      # public API settings through Gradle into the Rust build. A signed
       # nightly also gets the feed it checks for its next build and the key
       # that build must verify against; Gradle ignores both outside the
       # nightly app, which is the only one that offers updates (D21).
       - name: Build the APK
         id: apk
         env:
+          KORU_PUBLIC_API_ORIGIN: ${{ inputs.with-cloud && vars.KORU_PUBLIC_API_ORIGIN || '' }}
+          KORU_PUBLIC_API_ISSUER: ${{ inputs.with-cloud && vars.KORU_PUBLIC_API_ISSUER || '' }}
+          KORU_PUBLIC_API_CREDENTIAL_ROLLOUT: ${{ inputs.with-cloud && vars.KORU_PUBLIC_API_CREDENTIAL_ROLLOUT || '' }}
           CHANNEL: ${{ inputs.channel }}
           VERSION: ${{ inputs.version }}
           BUILD: ${{ inputs.build }}
@@ -1041,6 +1044,9 @@ jobs:
       # ids, versions, display name, and the App Group in both signatures.
       - name: Archive Koru Nightly and upload it to TestFlight
         env:
+          KORU_PUBLIC_API_ORIGIN: ${{ inputs.with-cloud && vars.KORU_PUBLIC_API_ORIGIN || '' }}
+          KORU_PUBLIC_API_ISSUER: ${{ inputs.with-cloud && vars.KORU_PUBLIC_API_ISSUER || '' }}
+          KORU_PUBLIC_API_CREDENTIAL_ROLLOUT: ${{ inputs.with-cloud && vars.KORU_PUBLIC_API_CREDENTIAL_ROLLOUT || '' }}
           UPLOAD: ${{ steps.upload.outputs.uploaded }}
           VERSION: ${{ inputs.version }}
           BUILD: ${{ inputs.build }}

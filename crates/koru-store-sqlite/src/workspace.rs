@@ -424,6 +424,25 @@ impl WorkspaceRepo for SqliteWorkspace {
             .transpose()
     }
 
+    fn repair_missing_position(
+        &mut self,
+        id: DocumentId,
+        version: &[u8],
+        frontiers: &[u8],
+    ) -> Result<bool> {
+        if version.is_empty() || frontiers.is_empty() {
+            return Ok(false);
+        }
+        self.connection
+            .execute(
+                "UPDATE loro_documents SET version_vector = ?2, frontiers = ?3
+                 WHERE id = ?1 AND length(version_vector) = 0",
+                params![id.to_storage(), version, frontiers],
+            )
+            .map(|rows| rows != 0)
+            .map_err(sql_failed)
+    }
+
     fn create_document(&mut self, id: DocumentId, kind: DocumentKind, at: Timestamp) -> Result<()> {
         let n = self
             .connection

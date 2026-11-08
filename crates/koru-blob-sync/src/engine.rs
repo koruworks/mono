@@ -719,9 +719,9 @@ impl BlobEngine {
     /// which of those files each one references.
     ///
     /// The engine already knows the files: every blob parked on
-    /// `object_missing`, which is Cloud's own answer for *nobody has uploaded
-    /// these bytes*. What it does not keep is which document named them, and
-    /// that is the canonical walk's job — asked here per document
+    /// `object_missing`, plus addresses coverage confirmed missing even when
+    /// no download was requested. Mapping them to documents is the canonical
+    /// walk's job — asked here per document
     /// ([`crate::referenced::document_blobs`]) so a document the walk would
     /// skip is skipped here too.
     ///
@@ -732,8 +732,7 @@ impl BlobEngine {
     /// wait has run out is still listed — it is the newest answer anyone has
     /// until the next pass asks again.
     ///
-    /// A Workspace with no such park answers without a walk, which is every
-    /// Workspace that is not waiting on another device.
+    /// A Workspace with no known missing address answers without a walk.
     pub async fn waiting(
         &self,
         workspace: WorkspaceId,
@@ -742,14 +741,18 @@ impl BlobEngine {
             .state()
             .get(&workspace)
             .map(|state| {
-                state
+                let mut missing: BTreeSet<String> = state
                     .parks
                     .iter()
                     .filter(|(_, park)| {
                         park.code == koru_cloud_blob::BlobCode::ObjectMissing.as_str()
                     })
                     .map(|(hash, _)| hash.clone())
-                    .collect()
+                    .collect();
+                missing.extend(state.presence.iter().filter_map(|(hash, presence)| {
+                    matches!(presence, BlobPresence::Missing).then(|| hash.clone())
+                }));
+                missing
             })
             .unwrap_or_default();
         if missing.is_empty() {

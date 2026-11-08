@@ -143,7 +143,9 @@ connection progress for these Profiles. “Syncing via Koru Cloud” describes t
 path, not confirmation that every document is up to date. Turning Cloud sync off
 returns the Profile to its existing device-to-device connection behavior.
 
-**The Koru Cloud page.** In the **Manage** tab, **Koru Cloud** under *This
+**The Koru Cloud page.** Click the cloud status at the bottom of the Profile
+popover to open **Manage › Koru Cloud** directly, including when Cloud is not
+set up yet. In the **Manage** tab, **Koru Cloud** under *This
 computer* in the nav (its *On* / *Off* says whether you subscribe) shows the
 subscription for your signed-in Koru account, from top to bottom:
 
@@ -692,7 +694,10 @@ the one place Koru's Ctrl does not become Cmd. The global shortcut opens a dedic
 search window. Drag the small rail above the query to reposition it; Koru
 remembers that location on this computer. Drag its top or bottom edge to
 increase its height; Koru remembers that height too. The in-app entries remain a fixed
-620-by-400 modal over your current window. Clicking outside either search closes
+640-by-400 modal over your current window, shrinking to fit smaller windows.
+The modal lists matching results without New task or New document actions.
+Each result's selection box includes its title, location and matching excerpt.
+Clicking outside either search closes
 it. If Koru is waiting in the notification area, the shortcut opens only search;
 workspace windows stay hidden until you choose a result. On Windows, a left
 click on the tray icon brings back the workspace window you used last, and
@@ -895,12 +900,9 @@ observed different searchable content, not an authored or shared modification
 date — and it is what puts a relative age (`2h ago`) beside each result.
 “Last used workspace” is based on machine-local navigation. The selected
 sort remains active when search is closed and reopened during the current Koru
-session. The More menu
-can show keyboard hints and opens clearly labelled, read-only **Help preview**
-and **Feedback preview** screens. More remains available from either preview so
-the user can move between them without first returning to results. Feedback is
-not sent, stored, or measured in
-this phase. Search uses Koru's current theme, font roles, and global density;
+session. The search header contains the query, filter control and sort control;
+there is no More menu or Help/Feedback preview. Search uses Koru's current theme,
+font roles, and global density;
 there is no separate search appearance preference.
 Rest an intentional hover on an icon-only control for 400 ms to see its tooltip.
 It fades and settles toward the control over 100 ms; moving away fades it over
@@ -971,6 +973,11 @@ Hide the sidebar and the lane's buttons fold into the title bar's left end; the 
 `Ctrl+Alt+W` / `Ctrl+Alt+P` still open the switcher. `F6` walks the
 keyboard over the lane, the apps row and the floor; the arrows move within
 each, Enter presses, Escape returns to the page.
+
+In the desktop **Documents** list, a document's chosen color tints its outline
+icon. A priority flag (Urgent, High, Medium or Low) appears after the icon and
+before the title, using the same color as the priority picker. Custom emoji
+icons keep their original colors. Clearing priority removes the flag.
 
 ### With a screen reader
 

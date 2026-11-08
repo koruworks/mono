@@ -5,6 +5,12 @@ tag of koruworks/mono — one file per build, named for its UTC date:
 `2026-10-24.toml`, then `2026-10-24-2.toml` for a second build that day. Each
 holds the descriptor's three fields (`title`, `summary`, `body`), text only.
 
+Official nightlies enable Cloud sync and build with the `nightly` environment's
+production API configuration. Desktop packaging uses `--with-cloud` and requires
+the complete baked configuration; Android and iOS inherit the public API origin,
+issuer and credential rollout in their native build steps. Community builds can
+still omit Cloud configuration or explicitly disable the feature.
+
 `./koru.sh nightly-notes` drafts the next file from the commits since the
 `nightly` tag. Edit it, commit it, then move and push the tag; the build takes
 the one file the push added (`koru-release nightly-notes --select`).

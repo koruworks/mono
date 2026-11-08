@@ -55,10 +55,24 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             // (`koru_api_discovery::gateway_endpoint_at`), the same value the
             // Agent and the app were given; the store root is one level
             // down and names only the logs above.
-            let backend = Arc::new(LocalBackend::connect(
-                koru_channel::segment(),
-                root.as_deref(),
-            )?);
+            let backend = LocalBackend::connect(koru_channel::segment(), root.as_deref())?;
+            let upload_listener = match koru_mcp_server::bind_loopback() {
+                Ok(listener) => Some(listener),
+                Err(error) => {
+                    tracing::warn!(%error, "image upload listener did not bind; create_image_upload will refuse");
+                    None
+                }
+            };
+            let backend = match &upload_listener {
+                Some(listener) => {
+                    let origin = format!("http://{}", listener.local_addr()?);
+                    tracing::info!(%origin, "image upload endpoint");
+                    backend.with_upload_origin(origin)
+                }
+                None => backend,
+            };
+            let backend = Arc::new(backend);
+            let upload_backend = backend.clone();
             tracing::info!(
                 version = env!("CARGO_PKG_VERSION"),
                 pid = std::process::id(),
@@ -87,6 +101,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 .enable_all()
                 .build()?;
             let served: Result<(), String> = runtime.block_on(async move {
+                if let Some(listener) = upload_listener {
+                    koru_mcp_server::spawn_upload_server(
+                        listener,
+                        upload_backend.uploads(),
+                        upload_backend,
+                    )
+                    .map_err(|error| error.to_string())?;
+                }
                 let service = KoruMcp::new(service_backend, RequestContext::local())
                     .with_paged_tools(paged_tools)
                     .with_toolsets(toolsets)

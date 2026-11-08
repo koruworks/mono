@@ -317,6 +317,8 @@ pub enum Outcome {
     /// The Profiles page's devices button (the review's note): the Manage tab
     /// on *Linked devices*.
     ManageDevices,
+    /// The Profile popover's cloud status: the Manage tab on *Koru Cloud*.
+    ManageCloud,
     /// The who/where popover's heading import button: the container hangs
     /// the import formats beside the page, which stays (the review's note:
     /// the heading's ⋯ became a `+` and an import button).

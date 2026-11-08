@@ -123,12 +123,23 @@ struct Client {
 
 impl Client {
     fn apply(&mut self, update: &TreeUpdate) {
+        let known: std::collections::HashSet<_> = self.nodes.keys().copied().collect();
         for (id, node) in &update.nodes {
             self.nodes.insert(*id, node.clone());
         }
         if let Some(tree) = &update.tree {
             self.root = Some(tree.root);
         }
+        let reachable: std::collections::HashSet<_> = self.reachable().into_iter().collect();
+        for (id, _) in &update.nodes {
+            assert!(
+                known.contains(id) || reachable.contains(id),
+                "new accessibility node {id:?} has no parent in the current tree"
+            );
+        }
+        // AccessKit removes disconnected subtrees. Keeping them in this mock
+        // hid updates that tried to reuse a body after a modal removed it.
+        self.nodes.retain(|id, _| reachable.contains(id));
         self.sizes.push(update.nodes.len());
         self.last = update
             .nodes
@@ -789,6 +800,13 @@ fn a_document_vanishes_beneath_a_modal_and_comes_back() {
         !window.client.holds(&paragraph.locator()),
         "a paragraph of the document was still reachable beneath an open menu"
     );
+    window.pane.invalidate();
+    assert_eq!(window.service(), Some(Scope::Delta));
+    assert_eq!(
+        window.client.last_size(),
+        0,
+        "a standing menu leaked body nodes"
+    );
     let refused = window.pane.counters().actions_refused;
     window.adapter.queue(paragraph.node_id(), Action::Focus);
     window.service();
@@ -815,6 +833,95 @@ fn a_document_vanishes_beneath_a_modal_and_comes_back() {
         "the caret is not where it was left"
     );
     assert_eq!(window.pane.counters().unresolved_focus, 0);
+}
+
+/// The reported Move to crash was a second publish while the same modal was
+/// standing: its first publish had already removed the document body.
+#[test]
+fn move_to_withholds_the_body_on_repeated_publishes_until_cancel_or_confirm() {
+    use koru_core::explore::{ExploreEntry, KIND_DOCUMENT};
+    use koru_core::{ProfileId, WorkspaceEntry, WorkspaceId};
+
+    for confirm in [false, true] {
+        let (mut w, doc) = workspace_with(&["Move this document"]);
+        let mut slots = Slots::default();
+        let mut window = Window::open(&mut w, &mut slots, doc);
+        let document = w.ws.document_id(doc);
+        let current = w.ws.id().expect("workspace identity");
+        let target = WorkspaceId::new();
+        View::set_pane_context(
+            &mut window.v,
+            Vec::new(),
+            ProfileId::new(),
+            vec![
+                WorkspaceEntry::new(current, "Source", 0),
+                WorkspaceEntry::new(target, "Target", 1),
+            ],
+            Some(current),
+        );
+        View::set_entries(
+            &mut window.v,
+            vec![ExploreEntry {
+                id: document,
+                parent: None,
+                ordinal: 0,
+                title: "Move this document".into(),
+                kind: KIND_DOCUMENT.into(),
+                mime: None,
+                note: None,
+                trashed_at: None,
+                trashed_by: None,
+            }],
+            Some(document),
+        );
+        window.service();
+        assert!(window.v.open_move_to(vec![document]));
+        assert_eq!(window.service(), Some(Scope::Delta));
+        let body = window.shell().surface("body", super::parts::ROOT);
+        let modal = window.shell().surface(
+            "shell",
+            koru_workspace_host::accessibility::ControlPart::new("move-to"),
+        );
+        assert!(window.client.holds(&modal.locator()));
+        assert!(!window.client.nodes.contains_key(&body.node_id()));
+
+        for _ in 0..3 {
+            window.pane.invalidate();
+            assert_eq!(window.service(), Some(Scope::Delta));
+            assert_eq!(window.client.last_size(), 0);
+            assert!(window.client.holds(&modal.locator()));
+            assert!(!window.client.nodes.contains_key(&body.node_id()));
+        }
+
+        if confirm {
+            assert!(
+                window
+                    .v
+                    .confirm_move_to(crate::mainview::move_to::Destination {
+                        workspace: target,
+                        parent: None,
+                        index: usize::MAX,
+                        path_label: "Target".into(),
+                        follow: false,
+                    })
+            );
+            assert!(matches!(View::take_pane_request(&mut window.v),
+                Some(koru_workspace_host::PaneRequest::TransferDocument { id, source, target: to, .. })
+                    if id == document && source == current && to == target));
+        } else {
+            assert!(dismiss(&mut window.v, &mut w.ws));
+        }
+        assert_eq!(window.service(), Some(Scope::Delta));
+        assert!(!window.client.holds(&modal.locator()));
+        assert_eq!(window.pane.counters().unresolved_focus, 0);
+        assert_eq!(window.pane.counters().duplicate_ids, 0);
+        if !confirm {
+            assert!(
+                window.client.holds(&body.locator()),
+                "cancel must restore the body"
+            );
+        }
+    }
 }
 
 // ================================ 2.1's Tasks page inside 1a.2's container ====
