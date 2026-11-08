@@ -37,3 +37,8 @@ chrono.workspace = true
 # `koru-search` and `koru-store-core` both link it — so this adds nothing new
 # to the tree, and the *casing* half needs no crate at all (see `tags.rs`).
 unicode-normalization.workspace = true
+
+[dev-dependencies]
+# The page-genesis golden file (`tests/page_genesis.rs`) compares decoded
+# Loro changes as JSON, not export bytes.
+serde_json.workspace = true

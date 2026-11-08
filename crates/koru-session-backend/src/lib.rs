@@ -1241,9 +1241,8 @@ fn launch<S: BackendSink>(
     };
     let project_id = request.project_id;
     if request.resume {
-        // A continuation is a raw agent in a folder: no managed attempt and no
-        // fallback, because falling back to a fresh conversation is exactly
-        // what the person declined by pressing *Resume*.
+        // A continuation is a raw agent in a folder. Report its failure to
+        // the caller, which owns the fresh-session retry and its user notice.
         let summary = client.create_profile_resumed(
             IdempotencyKey::mint(),
             request.profile.id.clone(),

@@ -10,7 +10,7 @@
 use crate::panes::explore::rail::{Bucket, RailTarget};
 use chrono::NaiveDate;
 use koru_core::attributes::Priority;
-use koru_core::ids::ListId;
+use koru_core::ids::{ListId, PageKey};
 use koru_core::schema::WorkspaceDoc;
 use koru_core::{DocumentId, NodeId, WorkspaceId};
 use koru_draw::chip::ChipKind;
@@ -18,11 +18,13 @@ use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
 use koru_draw::theme;
 use koru_editor::utils::when::{self, Parsed, Reference};
+use koru_i18n::{fill, t};
 use koru_store_wire::tasks::TaskSort;
 use koru_ui::date_grid::DateGrid;
 use koru_ui::label_chip::LabelChip;
 use koru_ui::menu::{Anchor, Menu};
 use koru_ui::table::{Band, Metrics, Table};
+use koru_workspace::pages::{PagePhase, PageState};
 use koru_workspace_host::{Settings, View};
 use vello::Scene;
 use vello::kurbo::Affine;
@@ -30,6 +32,7 @@ use winit::event::MouseScrollDelta;
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::CursorIcon;
 
+use super::body::PageBody;
 use super::capture::{Capture, SlashRow, Typed};
 use super::echo::{self, Echo, Patch};
 use super::menu::ColorPick;
@@ -40,11 +43,15 @@ use super::pickers::{
 };
 use super::query::{Due, DueWindow, Filters, TaskEntry, TaskListPanel};
 use super::states::{self, Empty};
+use crate::leaf::Leaf;
 
 /// The page's own margin — the Trash tab's, because this is the same kind of
 /// page: a list read on a wide sheet, which pinned to the window's edges reads
 /// as a spreadsheet.
 pub(super) const PAD: f32 = 40.0;
+/// How long typing on a task's line in the note is left to settle before the
+/// rows are asked again — one re-ask per burst, never one per keystroke.
+const TASK_TOUCH_SETTLE: std::time::Duration = std::time::Duration::from_millis(250);
 /// Between the title and the row area.
 pub(super) const HEADER_GAP: f32 = 22.0;
 /// The complete control's square, at the head of every row: the press
@@ -52,6 +59,10 @@ pub(super) const HEADER_GAP: f32 = 22.0;
 pub(super) const CONTROL_W: f32 = 18.0;
 /// Between the control and the text column.
 pub(super) const CONTROL_GAP: f32 = 10.0;
+/// Between the attachments lane's chips, and under the lane.
+pub(super) const LANE_GAP: f32 = 8.0;
+/// Between the page's `+` and the margin's edge of the content column.
+pub(super) const PLUS_GAP: f32 = 4.0;
 /// The `…` at a row's right end.
 pub(super) const DOTS_W: f32 = 24.0;
 /// The lane the `…` sits in, **reserved on every row** whether or not it is
@@ -73,8 +84,8 @@ const FLASH: std::time::Duration = std::time::Duration::from_millis(1200);
 /// and the round swatch already means *this node's colour*.
 pub(super) const HEADER_SWATCH: f32 = 11.0;
 /// Between that square and the name — `heading::SWATCH_STEP` now; kept as
-/// the number the suite holds the step to.
-#[cfg(test)]
+/// the number the suite holds the step to, and what the heading's press
+/// targets (the square, the title's field) are placed by.
 pub(super) const SWATCH_GAP: f32 = 10.0;
 /// The most trailing words the capture row will try to read as a date.
 ///
@@ -117,6 +128,39 @@ pub(super) enum Hit {
     /// **A value chip on a row** — its due, its priority or its colour —
     /// which opens that value's picker at the pointer. The row and the kind.
     ValueChip(usize, ChipKind),
+    /// The list's colour square ahead of the heading, which opens the
+    /// list's colour menu — the rail row's *Color*, one press nearer.
+    Swatch,
+    /// The note's *open in a new tab* control, at its band's top-right.
+    NoteOpen,
+    /// The note's grip, along its band's bottom edge: a drag sizes the band.
+    NoteGrip,
+    /// The `+` left of the heading's colour square, which opens the page's
+    /// menu. Drawn only while the pointer is over the heading line.
+    HeaderPlus,
+    /// The `+` left of the attachments lane: *Attachment…* and *Add
+    /// existing…*, the heading's menu without the note. Drawn only while
+    /// the pointer is over the lane.
+    LanePlus,
+    /// The heading's line, away from its controls: not a control, but what
+    /// reveals the `+` — hovering it is what the `+` waits for.
+    Heading,
+    /// The attachments lane's rows, away from its chips: likewise reveals
+    /// the lane's `+`.
+    Lane,
+    /// A file in the attachments lane under the heading, by lane order.
+    Attachment(usize),
+}
+
+/// One reference on a page's lane: a workspace file or a document the page
+/// holds as context, named from the library's listing.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct LaneItem {
+    pub id: DocumentId,
+    pub name: String,
+    /// A file wears the file glyph and opens as a file; a document wears the
+    /// page glyph and opens as a page.
+    pub is_file: bool,
 }
 
 /// A drag of rows, from the press on a row of a list ordered by hand to the
@@ -278,6 +322,26 @@ pub enum Request {
     /// Delete on the selection: take these tasks off Tasks, which the
     /// container asks about once for the set.
     RemoveTasks { tasks: Vec<(DocumentId, NodeId)> },
+    /// The note's corner control: open the page's document in a tab of
+    /// its own. The container owns the tabs, so it is asked.
+    OpenNote { document: DocumentId },
+    /// The heading's colour square was pressed: the list's colour menu at
+    /// `at` (this page's coordinates) — the container's one menu vocabulary,
+    /// so the square and the rail row offer the same rows.
+    ListColor { list: ListId, at: (f32, f32) },
+    /// The heading's words, renamed in place (a double click on the title).
+    RenameList { list: ListId, name: String },
+    /// The heading's `+` was pressed: the page's menu at `at` — the note
+    /// inline, files as context. The container's one menu vocabulary.
+    /// `lane` is the lane's own `+`, whose menu leaves out the note.
+    PageMenu { at: (f32, f32), lane: bool },
+    /// A right-click on a file in the lane: its menu at `at`.
+    AttachmentMenu { file: DocumentId, at: (f32, f32) },
+    /// A press on a file in the lane: open it, as a file pill does.
+    OpenAttachment { file: DocumentId },
+    /// The page's *Add existing document or file* picker chose one: attach
+    /// the reference to this page.
+    LinkExisting { document: DocumentId },
 }
 
 /// One list, as the header and the membership chip need it. Pushed by the
@@ -379,6 +443,56 @@ pub struct TasksView {
     /// What this window has changed that the store's rows do not show yet —
     /// drawn over them until the wait ends. See [`super::echo`].
     echoes: Vec<Echo>,
+    /// The page's document and where it stands, as the shell last said.
+    page: Option<PageState>,
+    /// The note above the rows, once its document is the one handed in.
+    pub(super) body: Option<PageBody>,
+    /// *Try again* was pressed on a note that failed; drained by the container.
+    wants_retry: bool,
+    /// Where the conflict band's *Keep deleted* and *Recover* were drawn
+    /// this frame, and the person's answer once they press one.
+    conflict_actions: Option<(Rect, Rect)>,
+    wants_decision: Option<koru_workspace::pages::PageDecision>,
+    /// Where the band's notice and its *Try again* were drawn this frame.
+    pub(super) notice: Option<(Rect, Rect)>,
+    /// The band's height this frame — what the rows move down by.
+    band_h: f32,
+    /// The height a person dragged the band to, kept across the note being
+    /// rebuilt; `None` while it follows its content.
+    band_fixed_h: Option<f32>,
+    /// A drag of the band's grip while the button is down: the distance
+    /// from the pointer to the band's bottom edge at the press, so the edge
+    /// does not jump under the pointer.
+    band_resize: Option<f32>,
+    /// **The heading's words being renamed in place** (a double click on
+    /// the title of a list page): the field standing where the title was.
+    pub(super) heading_rename: Option<koru_editor::components::text_input::TextInput>,
+    /// Where the pointer last was, so a wheel over the note scrolls the note.
+    pointer: (f32, f32),
+    /// Typing landed on a task's line in the note: when, and the write the
+    /// rows have to show. Coalesced — one re-ask per quarter second of
+    /// typing, not one per keystroke — and flushed by `maintain`.
+    task_touch: Option<(std::time::Instant, super::query::WriteRequirement)>,
+    /// The files attached to the page as context, with their names from the
+    /// listing — what the lane under the heading shows, in attached order.
+    pub(super) attachments: Vec<LaneItem>,
+    /// **The page's *Add existing* picker**, while it is up: the `@` list in
+    /// a popover under the `+`, with a field of its own to type into — the
+    /// page has no body to type `@…` in. The container feeds it the search
+    /// service's answers.
+    pub(super) link: Option<koru_editor::components::entity_picker::EntityPicker>,
+    /// The row of the link picker under the pointer.
+    link_hover: Option<usize>,
+    /// Where each lane chip was laid out this frame, in lane order.
+    pub(super) lane: Vec<Rect>,
+    /// The lane's height this frame — what the band and the rows move down
+    /// by; zero with nothing attached.
+    lane_h: f32,
+    /// Where the heading's words ended when last painted, so the `+` sits
+    /// right of them.
+    /// Whether the last page menu came from the lane's `+` — where the
+    /// *Add existing* picker hangs when that menu opens it.
+    menu_from_lane: bool,
 }
 
 impl TasksView {
@@ -417,6 +531,24 @@ impl TasksView {
             stale: true,
             pending: None,
             echoes: Vec::new(),
+            page: None,
+            body: None,
+            wants_retry: false,
+            conflict_actions: None,
+            wants_decision: None,
+            notice: None,
+            band_h: 0.0,
+            band_fixed_h: None,
+            band_resize: None,
+            heading_rename: None,
+            pointer: (-1.0, -1.0),
+            task_touch: None,
+            attachments: Vec::new(),
+            link: None,
+            link_hover: None,
+            lane: Vec::new(),
+            lane_h: 0.0,
+            menu_from_lane: false,
         }
     }
 
@@ -429,6 +561,8 @@ impl TasksView {
         if self.target == target {
             return false;
         }
+        // A picker opened for the page left behind is not this page's.
+        self.link = None;
         self.target = target;
         self.scroll = 0.0;
         self.hover = None;
@@ -447,6 +581,12 @@ impl TasksView {
         // An echo is a change to *this* page's rows; another page starts from
         // the store's answer.
         self.echoes.clear();
+        // The note belongs to the page it was written above. Another page has
+        // its own document, which the shell names on the next turn.
+        self.page = None;
+        self.body = None;
+        self.notice = None;
+        self.band_h = 0.0;
         // **A filter the new page cannot show is a filter the new page must not
         // apply.** The due dimension is offered on a list and on nothing else,
         // so carrying a list's *Overdue* across to a queue would go on
@@ -655,7 +795,14 @@ impl TasksView {
             | Request::ChoosePlace { .. }
             | Request::RowMenu { .. }
             | Request::RowsMenu { .. }
-            | Request::RemoveTasks { .. } => return,
+            | Request::RemoveTasks { .. }
+            | Request::OpenNote { .. }
+            | Request::ListColor { .. }
+            | Request::RenameList { .. }
+            | Request::PageMenu { .. }
+            | Request::AttachmentMenu { .. }
+            | Request::OpenAttachment { .. }
+            | Request::LinkExisting { .. } => return,
             Request::Many(_) => unreachable!("taken apart above"),
         };
         crate::tasks::debug_line(format_args!(
@@ -1031,8 +1178,11 @@ impl TasksView {
     /// guess. A false *absence* is quiet; a false *presence* would be a warning
     /// about nothing.
     pub fn catch_up(&mut self, ws: &WorkspaceDoc) -> bool {
+        // The note settles first: it is a leaf over `ws` when `ws` is the
+        // page's document, and nothing else about the page depends on it.
+        let note = self.settle_body(ws);
         if !std::mem::take(&mut self.stale) {
-            return false;
+            return note;
         }
         self.today = self
             .panel
@@ -1819,7 +1969,7 @@ impl TasksView {
             Metrics::manager()
                 .with_pad(PAD)
                 .with_row_h(self.row_h())
-                .with_header(self.header_h)
+                .with_header(self.rows_top())
                 .with_footer(0.0)
                 .roomy(),
             self.scroll,
@@ -1866,6 +2016,29 @@ impl TasksView {
         // in one place rather than in the table's arithmetic.
         if self.header_dots().contains(x, y) {
             return Some(Hit::HeaderDots);
+        }
+        if self.plus_rect().contains(x, y) {
+            return Some(Hit::HeaderPlus);
+        }
+        if self.lane_plus_rect().is_some_and(|r| r.contains(x, y)) {
+            return Some(Hit::LanePlus);
+        }
+        if self.swatch_rect().is_some_and(|r| r.contains(x, y)) {
+            return Some(Hit::Swatch);
+        }
+        if let Some(i) = self.lane.iter().position(|r| r.contains(x, y)) {
+            return Some(Hit::Attachment(i));
+        }
+        // The two lines the `+`s wait on, across the whole page width so
+        // that approaching one from the margin keeps it there.
+        if self.heading_band().contains(x, y) {
+            return Some(Hit::Heading);
+        }
+        if self.lane_band().contains(x, y) {
+            return Some(Hit::Lane);
+        }
+        if let Some(hit) = self.band_hit(x, y) {
+            return Some(hit);
         }
         let bands = self.bands();
         let i = self.table().row_at(&bands, x, y)?;
@@ -2960,6 +3133,47 @@ impl TasksView {
         }
         match self.hit_at(x, y) {
             Some(Hit::HeaderDots) => self.open_overflow(),
+            Some(Hit::HeaderPlus) => {
+                self.menu_from_lane = false;
+                self.pending = Some(Request::PageMenu {
+                    at: (x, y),
+                    lane: false,
+                });
+                true
+            }
+            Some(Hit::LanePlus) => {
+                self.menu_from_lane = true;
+                self.pending = Some(Request::PageMenu {
+                    at: (x, y),
+                    lane: true,
+                });
+                true
+            }
+            Some(Hit::Attachment(i)) => match self.attachments.get(i) {
+                Some(item) => {
+                    self.pending = Some(Request::OpenAttachment { file: item.id });
+                    true
+                }
+                None => false,
+            },
+            // The colour square: the list's colour menu, at the press.
+            Some(Hit::Swatch) => match self.target {
+                RailTarget::List(list) => {
+                    self.pending = Some(Request::ListColor { list, at: (x, y) });
+                    true
+                }
+                _ => false,
+            },
+            // Both are the band's, taken in `mouse_down` before the note
+            // could claim the press; named here so the match stays whole.
+            Some(Hit::NoteOpen | Hit::NoteGrip) => false,
+            // The heading and the lane away from their controls are the
+            // page's empty space, as far as a press goes.
+            Some(Hit::Heading | Hit::Lane) => {
+                let had = self.selected.is_some() || !self.also.is_empty();
+                self.clear_selection();
+                had
+            }
             Some(Hit::Capture) => {
                 self.begin_capture();
                 let rect = super::capture::input_rect(self.capture_rect());
@@ -3256,11 +3470,42 @@ pub(super) fn due_label(due: Option<Due>, today: NaiveDate) -> String {
 impl View for TasksView {
     fn key(
         &mut self,
-        _ws: &mut WorkspaceDoc,
+        ws: &mut WorkspaceDoc,
         key: &Key,
         text: Option<&str>,
         mods: ModifiersState,
     ) -> bool {
+        // The *Add existing* picker has the keyboard while it is up: it
+        // types in its own field, arrows and Enter are the list's, Escape
+        // closes it.
+        if self.link.is_some() {
+            return self.link_key(key, text, mods);
+        }
+        // The heading's rename field has the keyboard while it stands:
+        // Enter keeps the words, Escape puts the old ones back.
+        if self.heading_rename.is_some() {
+            return self.heading_rename_key(key, text, mods);
+        }
+        // The note has the keyboard while it is focused and the document
+        // handed in is its own; Escape hands the keyboard back to the table.
+        if let Some(body) = &mut self.body
+            && body.focused
+        {
+            if !body.is_in(ws) {
+                body.blur();
+            } else if matches!(key, Key::Named(NamedKey::Escape)) {
+                body.key(ws, key, text, mods);
+                body.blur();
+                return true;
+            } else {
+                let took = body.key(ws, key, text, mods);
+                let on_task = took && body.caret_on_task(ws);
+                if on_task {
+                    self.note_task_touch(ws);
+                }
+                return took;
+            }
+        }
         // The rename field has the keyboard while it stands: Enter keeps
         // the words, Escape puts the old ones back.
         if self.rename.is_some() {
@@ -3373,7 +3618,92 @@ impl View for TasksView {
         }
     }
 
-    fn mouse_down(&mut self, _ws: &mut WorkspaceDoc, x: f32, y: f32, ctrl: bool) -> bool {
+    fn mouse_down(&mut self, ws: &mut WorkspaceDoc, x: f32, y: f32, ctrl: bool) -> bool {
+        self.pointer = (x, y);
+        // The picker is above everything on the page: a press in it is its
+        // own, a press anywhere else closes it and is not acted on.
+        if self.link.is_some() {
+            return self.link_mouse_down(x, y);
+        }
+        // The heading's rename field: a press in it moves the caret;
+        // anywhere else keeps the words and lets the press land where it
+        // was aimed — the rule every field in this app follows.
+        if self.heading_rename.is_some() {
+            let field = self.heading_field();
+            if field.contains(x, y) {
+                if let Some(input) = self.heading_rename.as_mut() {
+                    input.click(&mut self.engine, field, x, y);
+                }
+                return true;
+            }
+            self.commit_heading_rename();
+        }
+        if let Some((_, retry)) = self.notice
+            && retry.contains(x, y)
+        {
+            self.wants_retry = true;
+            return true;
+        }
+        if let Some((keep, recover)) = self.conflict_actions {
+            if keep.contains(x, y) {
+                self.wants_decision = Some(koru_workspace::pages::PageDecision::Keep);
+                return true;
+            }
+            if recover.contains(x, y) {
+                self.wants_decision = Some(koru_workspace::pages::PageDecision::Recover);
+                return true;
+            }
+        }
+        // The note's open picker is above everything on the page: the press
+        // is its to answer wherever it lands.
+        if let Some(body) = &mut self.body
+            && body.overlay_open()
+            && body.is_in(ws)
+        {
+            return body.mouse_down_on_overlay(ws, x, y, ctrl);
+        }
+        // The band's own controls, ahead of the note they sit on: the grip
+        // along its bottom edge and the corner's *open in a new tab*.
+        if let Some(body) = &self.body
+            && body.is_in(ws)
+        {
+            if body.grip_rect().contains(x, y) {
+                self.band_resize = Some(body.band.y + body.band.h - y);
+                return true;
+            }
+            if body.open_rect().contains(x, y) {
+                self.pending = Some(Request::OpenNote {
+                    document: body.document,
+                });
+                return true;
+            }
+        }
+        if self
+            .body
+            .as_ref()
+            .is_some_and(|body| body.contains(x, y) && body.is_in(ws))
+        {
+            // A press in the note commits whatever field was open below it,
+            // the rule every field in this app follows, and takes the caret.
+            if self.rename.is_some() {
+                self.commit_rename();
+            }
+            if self.capture.is_some() {
+                self.commit_capture();
+                self.end_capture();
+            }
+            self.clear_selection();
+            let body = self.body.as_mut().expect("checked above");
+            body.focus();
+            body.mouse_down(ws, x, y, ctrl);
+            return true;
+        }
+        // A press on the table hands the keyboard back.
+        if let Some(body) = &mut self.body
+            && body.focused
+        {
+            body.blur();
+        }
         // Alt with nothing else is the place chooser's press (ADR-58); Alt
         // with Ctrl or Shift is that key's press, as in a document.
         let asks_where = self.mods.alt_key()
@@ -3387,8 +3717,37 @@ impl View for TasksView {
     }
 
     fn mouse_move(&mut self, x: f32, y: f32) -> bool {
+        self.pointer = (x, y);
+        if self.link.is_some() {
+            return self.link_mouse_move(x, y);
+        }
         if self.drag.is_some() {
             return self.drag_to(y);
+        }
+        // The grip's drag: the band's bottom edge follows the pointer, the
+        // offset taken at the press kept. Laid out on the next frame.
+        if let Some(offset) = self.band_resize {
+            self.band_fixed_h = Some(y + offset - self.header_h);
+            if let Some(body) = &mut self.body {
+                body.mark_dirty();
+            }
+            return true;
+        }
+        let heading_field = self.heading_field();
+        if let Some(input) = self.heading_rename.as_mut()
+            && input.drag(&mut self.engine, heading_field, x)
+        {
+            return true;
+        }
+        if let Some(body) = &mut self.body
+            && (body.is_dragging() || body.overlay_open() || body.contains(x, y))
+        {
+            let moved = body.mouse_move(x, y);
+            let was = self.hover.take();
+            // The band's own controls light under the pointer, as the
+            // header's `…` does.
+            self.hover = self.band_hit(x, y);
+            return moved || was != self.hover;
         }
         let viewport = self.viewport;
         if let Some(picker) = &mut self.picker {
@@ -3446,7 +3805,26 @@ impl View for TasksView {
         was != self.hover
     }
 
-    fn mouse_up(&mut self, _ws: &mut WorkspaceDoc) -> bool {
+    fn mouse_up(&mut self, ws: &mut WorkspaceDoc) -> bool {
+        if let Some(picker) = self.link.as_mut() {
+            return picker.stop_scrollbar_drag();
+        }
+        if self.band_resize.take().is_some() {
+            return true;
+        }
+        if let Some(input) = self.heading_rename.as_mut() {
+            input.release();
+        }
+        if let Some(body) = &mut self.body
+            && body.focused
+        {
+            let took = body.mouse_up(ws);
+            let on_task = took && body.caret_on_task(ws);
+            if on_task {
+                self.note_task_touch(ws);
+            }
+            return took;
+        }
         if self.drag.is_some() {
             return self.drop_drag();
         }
@@ -3476,14 +3854,39 @@ impl View for TasksView {
     /// **It renames** (the owner's ask, 2026-11-05): a page-made task lives
     /// in the hidden tasks document, and opening that is a look at storage,
     /// not at the task. Opening is the row menu's *Open document*.
-    fn mouse_double_click(&mut self, _ws: &WorkspaceDoc, x: f32, y: f32) -> bool {
+    fn mouse_double_click(&mut self, ws: &WorkspaceDoc, x: f32, y: f32) -> bool {
+        // A double click on the grip gives the band back to its content —
+        // the way back from a size given by hand.
+        if self
+            .body
+            .as_ref()
+            .is_some_and(|body| body.is_in(ws) && body.grip_rect().contains(x, y))
+        {
+            self.band_fixed_h = None;
+            self.band_resize = None;
+            if let Some(body) = &mut self.body {
+                body.mark_dirty();
+            }
+            return true;
+        }
+        if let Some(body) = &mut self.body
+            && body.contains(x, y)
+            && body.is_in(ws)
+        {
+            return body.mouse_double_click(ws, x, y);
+        }
+        // A double click on a list's title renames the list in place, as
+        // one on a row's words renames the task.
+        if self.title_rect().is_some_and(|r| r.contains(x, y)) {
+            return self.begin_heading_rename();
+        }
         let Some(Hit::Row(i)) = self.hit_at(x, y) else {
             return false;
         };
         self.begin_rename(i)
     }
 
-    fn context_menu(&mut self, _ws: &mut WorkspaceDoc, x: f32, y: f32) -> bool {
+    fn context_menu(&mut self, ws: &mut WorkspaceDoc, x: f32, y: f32) -> bool {
         // One panel at a time: a right-click while a panel is up dismisses it,
         // the way a press anywhere else does, rather than stacking a second
         // menu over the first.
@@ -3491,6 +3894,28 @@ impl View for TasksView {
             self.overflow = None;
             self.picker = None;
             return true;
+        }
+        // A file in the lane: its own menu, the page's one addition on it.
+        if let Some(Hit::Attachment(i)) = self.hit_at(x, y)
+            && let Some(item) = self.attachments.get(i)
+        {
+            self.pending = Some(Request::AttachmentMenu {
+                file: item.id,
+                at: (x, y),
+            });
+            return true;
+        }
+        // A right-click in the note is the note's: the editor's menu, as in
+        // a document tab, and the keyboard goes with it.
+        if self
+            .body
+            .as_ref()
+            .is_some_and(|body| body.contains(x, y) && body.is_in(ws))
+        {
+            self.clear_selection();
+            let body = self.body.as_mut().expect("checked above");
+            body.focus();
+            return body.context_menu(ws, x, y);
         }
         let Some(
             Hit::Row(i) | Hit::Complete(i) | Hit::Dots(i) | Hit::ListChip(i) | Hit::ValueChip(i, _),
@@ -3506,6 +3931,21 @@ impl View for TasksView {
     }
 
     fn scroll_by(&mut self, delta: MouseScrollDelta) {
+        // The wheel over the picker scrolls its list, and nothing under it.
+        if let Some(picker) = self.link.as_mut() {
+            let rows = match delta {
+                MouseScrollDelta::LineDelta(_, y) => -(y.signum() as isize) * 2,
+                MouseScrollDelta::PixelDelta(p) => -(p.y.signum() as isize),
+            };
+            picker.scroll_rows(rows);
+            return;
+        }
+        if let Some(body) = &mut self.body
+            && body.contains(self.pointer.0, self.pointer.1)
+        {
+            body.scroll_by(delta);
+            return;
+        }
         let dy = match delta {
             MouseScrollDelta::LineDelta(_, y) => y * self.row_h(),
             MouseScrollDelta::PixelDelta(p) => p.y as f32,
@@ -3519,11 +3959,18 @@ impl View for TasksView {
         // Also the moment the font role or the density could have moved under
         // us, which is what the heading's height depends on.
         self.measure_header();
+        self.layout_lane();
+        if let Some(body) = &mut self.body {
+            body.mark_dirty();
+        }
         self.clamp_scroll();
     }
 
     fn set_mods(&mut self, mods: ModifiersState) {
         self.mods = mods;
+        if let Some(body) = &mut self.body {
+            body.set_mods(mods);
+        }
     }
 
     /// **Every hit is [`PRESS`], which is the plain arrow** ([ADR-215]): a
@@ -3533,6 +3980,19 @@ impl View for TasksView {
     /// [PRESS]: koru_ui::cursor::PRESS
     /// [ADR-215]: ../../../docs/decisions/ADR-201-225.md#adr-215-nohandcursor--koru-does-not-use-the-hand-cursor-a-press-target-is-identified-by-its-own-appearance
     fn cursor_icon(&self) -> CursorIcon {
+        // The grip is the one control with a cursor of its own: a drag
+        // along an edge is what the resize arrows say, as on a pane divider.
+        if self.band_resize.is_some() || self.hover == Some(Hit::NoteGrip) {
+            return CursorIcon::RowResize;
+        }
+        if self.hover == Some(Hit::NoteOpen) {
+            return koru_ui::cursor::PRESS;
+        }
+        if let Some(body) = &self.body
+            && body.contains(self.pointer.0, self.pointer.1)
+        {
+            return body.cursor_icon();
+        }
         match self.hover {
             Some(
                 Hit::Complete(_)
@@ -3541,16 +4001,24 @@ impl View for TasksView {
                 | Hit::ListChip(_)
                 | Hit::ValueChip(..)
                 | Hit::Capture
-                | Hit::HeaderDots,
+                | Hit::HeaderDots
+                | Hit::Swatch
+                | Hit::NoteOpen
+                | Hit::HeaderPlus
+                | Hit::LanePlus
+                | Hit::Attachment(_),
             ) => koru_ui::cursor::PRESS,
+            Some(Hit::Heading | Hit::Lane) => koru_ui::cursor::IDLE,
+            Some(Hit::NoteGrip) => CursorIcon::RowResize,
             None => koru_ui::cursor::IDLE,
         }
     }
 
     /// Only a flag. The page is read in `catch_up`, which runs for the tab
     /// about to be drawn and not for the ones that are not.
-    fn adopt(&mut self, _ws: &WorkspaceDoc) {
+    fn adopt(&mut self, ws: &WorkspaceDoc) {
         self.stale = true;
+        self.adopt_body(ws);
     }
 
     fn reseat(&mut self, _ws: &WorkspaceDoc) {
@@ -3567,18 +4035,33 @@ impl View for TasksView {
     fn animating(&self) -> bool {
         self.flash
             .is_some_and(|(_, until)| std::time::Instant::now() < until)
+            || self.body.as_ref().is_some_and(PageBody::is_animating)
     }
 
     fn draw(
         &mut self,
         scene: &mut Scene,
-        _workspace: &koru_workspace::Workspace,
-        _images: &koru_draw::ImageCache,
+        workspace: &koru_workspace::Workspace,
+        images: &koru_draw::ImageCache,
         root: Affine,
         caret_on: bool,
-        _pointer: (f32, f32),
+        pointer: (f32, f32),
     ) {
-        self.paint(scene, root, caret_on);
+        self.layout_lane();
+        self.layout_band();
+        self.paint_under(scene, root);
+        if let Some(body) = &mut self.body {
+            body.draw(scene, workspace, images, root, caret_on, pointer);
+        }
+        self.paint_band_chrome(scene, root);
+        self.paint_notice(scene, root);
+        self.paint_over(scene, root, caret_on);
+        // The note's picker floats over the rows and the page's own panels.
+        if let Some(body) = &mut self.body {
+            body.draw_panels(scene, root, &workspace.ws);
+        }
+        // And the *Add existing* picker over all of it.
+        self.paint_link(scene, root);
     }
 
     fn restore(&mut self, _ws: &koru_workspace::Workspace, _settings: &Settings) {}
@@ -3600,5 +4083,873 @@ fn menu_anchor(dots: Rect, at: Option<(f32, f32)>) -> ((f32, f32), Anchor) {
     match at {
         Some(point) => (point, Anchor::Cursor),
         None => ((dots.x + dots.w, dots.y + dots.h), Anchor::ButtonRight),
+    }
+}
+
+// ------------------------------------------------------------ the note
+
+impl TasksView {
+    /// Which page this view is, as the system document keys it.
+    pub fn page_key(&self) -> Option<PageKey> {
+        match self.target {
+            RailTarget::Bucket(bucket) => Some(PageKey::Bucket(bucket)),
+            RailTarget::List(id) => Some(PageKey::List(id)),
+            RailTarget::Reminders => None,
+        }
+    }
+
+    /// The page's document, once the shell has said which it is — what this
+    /// tab edits (`Tab::edits`, D7).
+    pub fn page_document(&self) -> Option<DocumentId> {
+        self.page.as_ref().map(|page| page.document)
+    }
+
+    /// Whether the page's document exists in this process to be activated:
+    /// every phase but one still being opened.
+    pub fn page_is_local(&self) -> bool {
+        self.page
+            .as_ref()
+            .is_some_and(|page| page.phase != PagePhase::Loading)
+    }
+
+    /// Whether the page shows its note inline — the `+` menu's *Inline
+    /// description*, from the page's record. Hidden until the shell has
+    /// said.
+    pub fn note_shown(&self) -> bool {
+        self.page.as_ref().is_some_and(|page| page.note_shown)
+    }
+
+    /// The files attached to the page, in attached order, as the shell
+    /// last said.
+    pub fn attachment_ids(&self) -> Vec<DocumentId> {
+        self.page
+            .as_ref()
+            .map(|page| page.attachments.clone())
+            .unwrap_or_default()
+    }
+
+    /// The lane's files with their names, from the container, which reads
+    /// the listing. Compare-first: pushed on every turn the listing moves.
+    pub fn set_attachment_faces(&mut self, faces: Vec<LaneItem>) -> bool {
+        if self.attachments == faces {
+            return false;
+        }
+        self.attachments = faces;
+        self.layout_lane();
+        true
+    }
+
+    /// Where the page's document stands, from the shell. Answers whether
+    /// anything on screen changed.
+    pub fn set_page_state(&mut self, state: &PageState) -> bool {
+        if Some(state.page) != self.page_key() || self.page.as_ref() == Some(state) {
+            return false;
+        }
+        let other_document = self.page_document() != Some(state.document);
+        self.page = Some(state.clone());
+        // A note hidden by the `+` menu has no band: the body goes with it,
+        // and comes back on the next catch-up when it is shown again.
+        if other_document || !state.note_shown {
+            self.body = None;
+            self.band_h = 0.0;
+        }
+        self.notice = None;
+        self.conflict_actions = None;
+        true
+    }
+
+    pub fn take_wants_retry(&mut self) -> bool {
+        std::mem::take(&mut self.wants_retry)
+    }
+
+    /// Whether this page's note is in a deletion conflict — the band with
+    /// *Keep deleted* / *Recover* (plan §6.2).
+    fn in_conflict(&self) -> bool {
+        self.page.as_ref().is_some_and(|page| page.conflict)
+    }
+
+    pub fn take_wants_decision(&mut self) -> Option<koru_workspace::pages::PageDecision> {
+        self.wants_decision.take()
+    }
+
+    /// The conflict band's (Keep, Recover) rects, for a test to press.
+    #[cfg(test)]
+    pub(super) fn conflict_actions_for_test(&self) -> Option<(Rect, Rect)> {
+        self.conflict_actions
+    }
+
+    /// The note's leaf, while the note has the keyboard and `ws` is its
+    /// document — where a paste or a dictation lands then.
+    pub fn body_leaf_in(&mut self, ws: &WorkspaceDoc) -> Option<&mut Leaf> {
+        let body = self.body.as_mut()?;
+        (body.focused && body.is_in(ws)).then(|| body.leaf_mut())
+    }
+
+    /// The note's leaf, whatever has the keyboard, to read.
+    pub fn body_leaf(&self) -> Option<&Leaf> {
+        self.body.as_ref().map(PageBody::leaf)
+    }
+
+    /// The note's leaf, whatever has the keyboard — for an image import the
+    /// note itself asked for.
+    pub fn body_leaf_mut(&mut self) -> Option<&mut Leaf> {
+        self.body.as_mut().map(PageBody::leaf_mut)
+    }
+
+    /// The note's leaf when it was just built and has not been fed the
+    /// container's caches yet — once per body.
+    pub fn fresh_body_leaf(&mut self) -> Option<&mut Leaf> {
+        let body = self.body.as_mut()?;
+        body.take_fresh().then(|| body.leaf_mut())
+    }
+
+    /// The note's leaf while the note has the keyboard — what dictation and
+    /// the editable-target routing ask about.
+    pub fn focused_body_leaf(&self) -> Option<&Leaf> {
+        self.body
+            .as_ref()
+            .filter(|body| body.focused)
+            .map(PageBody::leaf)
+    }
+
+    /// Whether the note has the keyboard and `ws` is its document.
+    pub fn body_is_focused_in(&self, ws: &WorkspaceDoc) -> bool {
+        self.body
+            .as_ref()
+            .is_some_and(|body| body.focused && body.is_in(ws))
+    }
+
+    /// *Write about {page}…*, in the reader's language.
+    fn placeholder(&self) -> String {
+        fill(
+            t(crate::format::lang(), koru_i18n::Key::PagePlaceholder),
+            &[&self.title()],
+        )
+    }
+
+    /// Build or settle the note over `ws`, when `ws` is the page's document.
+    /// Answers whether it changed.
+    fn settle_body(&mut self, ws: &WorkspaceDoc) -> bool {
+        let Some(document) = self.page_document() else {
+            return false;
+        };
+        if !self.note_shown() {
+            return false;
+        }
+        if let Some(body) = &mut self.body
+            && body.document == document
+        {
+            return body.catch_up(ws);
+        }
+        if ws.own_document_id() != Some(document) {
+            return false;
+        }
+        let placeholder = self.placeholder();
+        let default_list = match self.target {
+            RailTarget::List(list) => Some(list),
+            _ => None,
+        };
+        match PageBody::open(ws, document, placeholder, default_list) {
+            Some(body) => {
+                self.body = Some(body);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Typing in the note touched a task: the rows below are asked again
+    /// once the typing settles (plan §6.9, *rows right, page fast*). Prose
+    /// never comes here, so the table is not remeasured for it.
+    fn note_task_touch(&mut self, ws: &WorkspaceDoc) {
+        if let Some(requirement) = super::query::WriteRequirement::of_document(ws) {
+            self.task_touch = Some((std::time::Instant::now(), requirement));
+        }
+    }
+
+    /// When the coalesced re-ask is due, if typing touched a task.
+    pub fn task_touch_deadline(&self) -> Option<std::time::Instant> {
+        self.task_touch
+            .as_ref()
+            .map(|(at, _)| *at + TASK_TOUCH_SETTLE)
+    }
+
+    /// Ask the rows for the touched task's write, once the typing settled.
+    /// Answers whether it asked.
+    pub fn flush_task_touch(&mut self, now: std::time::Instant) -> bool {
+        let due = self
+            .task_touch
+            .as_ref()
+            .is_some_and(|(at, _)| now >= *at + TASK_TOUCH_SETTLE);
+        if !due {
+            return false;
+        }
+        let Some((_, requirement)) = self.task_touch.take() else {
+            return false;
+        };
+        self.panel.require(requirement);
+        self.mark_stale();
+        true
+    }
+
+    #[cfg(test)]
+    pub(super) fn is_stale(&self) -> bool {
+        self.stale
+    }
+
+    pub(super) fn adopt_body(&mut self, ws: &WorkspaceDoc) {
+        if let Some(body) = &mut self.body {
+            body.adopt(ws);
+        }
+    }
+
+    /// The failure the band shows, if the note failed to register or open.
+    fn failure(&self) -> Option<bool> {
+        match self.page.as_ref().map(|page| &page.phase) {
+            Some(PagePhase::Failed { opening, .. }) => Some(*opening),
+            _ => None,
+        }
+    }
+
+    fn notice_h(&self) -> f32 {
+        let mut h = 0.0;
+        if self.in_conflict() {
+            h += self.row_h();
+        }
+        if self.failure().is_some() {
+            h += self.row_h();
+        }
+        h
+    }
+
+    /// Where the rows start: under the heading, the note's band and its
+    /// notice when there is one.
+    pub(super) fn rows_top(&self) -> f32 {
+        self.header_h + self.lane_h + self.band_h + self.notice_h()
+    }
+
+    /// The page's `+`, in the left margin **left of the colour square** (or
+    /// of the title, on a queue): the header's `…` size, on the heading's
+    /// line, drawn only while the pointer is over that line.
+    pub(super) fn plus_rect(&self) -> Rect {
+        let size = HEADER_DOTS;
+        Rect::new(
+            PAD - size - PLUS_GAP,
+            self.title_top() + (super::draw::TITLE.metrics.line_height - size) * 0.5,
+            size,
+            size,
+        )
+    }
+
+    /// The lane's own `+`, left of its first row in the same margin; `None`
+    /// while nothing is attached.
+    pub(super) fn lane_plus_rect(&self) -> Option<Rect> {
+        let first = self.lane.first()?;
+        let size = HEADER_DOTS;
+        Some(Rect::new(
+            PAD - size - PLUS_GAP,
+            first.y + (first.h - size) * 0.5,
+            size,
+            size,
+        ))
+    }
+
+    /// The heading's line across the page: what reveals the page's `+`.
+    fn heading_band(&self) -> Rect {
+        Rect::new(
+            0.0,
+            self.title_top(),
+            self.viewport.0,
+            super::draw::TITLE.metrics.line_height,
+        )
+    }
+
+    /// The lane's rows across the page: what reveals the lane's `+`. Empty
+    /// while nothing is attached.
+    fn lane_band(&self) -> Rect {
+        if self.lane.is_empty() {
+            return Rect::new(0.0, 0.0, 0.0, 0.0);
+        }
+        Rect::new(0.0, self.header_h, self.viewport.0, self.lane_h)
+    }
+
+    /// Whether the pointer is over the heading line, on or off its controls
+    /// — the page's `+` shows then, and only then.
+    pub(super) fn plus_visible(&self) -> bool {
+        matches!(
+            self.hover,
+            Some(Hit::Heading | Hit::HeaderPlus | Hit::Swatch | Hit::HeaderDots)
+        ) || self.link.is_some() && !self.menu_from_lane
+    }
+
+    /// Whether the pointer is over the lane — its `+` shows then.
+    pub(super) fn lane_plus_visible(&self) -> bool {
+        matches!(
+            self.hover,
+            Some(Hit::Lane | Hit::LanePlus | Hit::Attachment(_))
+        ) || self.link.is_some() && self.menu_from_lane
+    }
+
+    /// The lane's chip for one attachment: the file glyph and its name.
+    pub(super) fn lane_chip(item: &LaneItem) -> LabelChip<'_> {
+        LabelChip::new(&item.name)
+            .size(koru_ui::label_chip::Size::Regular)
+            .lead(koru_ui::label_chip::Lead::Glyph(if item.is_file {
+                koru_draw::icons::FILE
+            } else {
+                koru_draw::icons::DOCUMENT
+            }))
+    }
+
+    /// Lay the attachments lane out under the heading: chips left to right
+    /// from the page margin, wrapping to the next row when one would run
+    /// past the margin. Nothing attached, no lane.
+    pub(super) fn layout_lane(&mut self) {
+        self.lane.clear();
+        if self.attachments.is_empty() {
+            self.lane_h = 0.0;
+            return;
+        }
+        let right = (self.viewport.0 - PAD).max(PAD + 1.0);
+        let (mut x, mut y) = (PAD, self.header_h);
+        let mut row_h = 0.0_f32;
+        for item in &self.attachments {
+            let chip = Self::lane_chip(item);
+            let (w, h) = (chip.width(&mut self.engine), chip.height());
+            if x > PAD && x + w > right {
+                x = PAD;
+                y += row_h + LANE_GAP;
+                row_h = 0.0;
+            }
+            self.lane.push(Rect::new(x, y, w, h));
+            x += w + LANE_GAP;
+            row_h = row_h.max(h);
+        }
+        self.lane_h = (y + row_h + LANE_GAP) - self.header_h;
+    }
+
+    /// The lane's chips, for the suite.
+    #[cfg(test)]
+    pub(super) fn lane_for_test(&self) -> &[Rect] {
+        &self.lane
+    }
+
+    // ------------------------------------------------ the Add existing picker
+
+    /// Open the *Add existing document or file* picker under the `+`: the
+    /// `@` list with a field of its own. Any other panel or field on the
+    /// page goes, and the keyboard is the picker's.
+    pub fn open_link_picker(&mut self) {
+        self.picker = None;
+        self.overflow = None;
+        self.end_capture();
+        self.commit_rename();
+        self.commit_heading_rename();
+        if let Some(body) = &mut self.body
+            && body.focused
+        {
+            body.blur();
+        }
+        self.link =
+            Some(koru_editor::components::entity_picker::EntityPicker::for_link(&mut self.engine));
+        self.link_hover = None;
+    }
+
+    /// Whether the picker is up.
+    pub fn link_open(&self) -> bool {
+        self.link.is_some()
+    }
+
+    fn close_link(&mut self) {
+        self.link = None;
+        self.link_hover = None;
+    }
+
+    /// The picker's panel: under the `+`, kept inside the page.
+    fn link_origin(&self) -> (f32, f32) {
+        let plus = match (self.menu_from_lane, self.lane_plus_rect()) {
+            (true, Some(lane)) => lane,
+            _ => self.plus_rect(),
+        };
+        let height = self.link.as_ref().map_or(0.0, |p| p.height());
+        let x = plus
+            .x
+            .min(self.viewport.0 - theme::PANEL_W - CONTROL_GAP)
+            .max(CONTROL_GAP);
+        let y = (plus.y + plus.h + 4.0)
+            .min(self.viewport.1 - height - CONTROL_GAP)
+            .max(CONTROL_GAP);
+        (x, y)
+    }
+
+    fn link_rect(&self) -> Rect {
+        let (x, y) = self.link_origin();
+        let height = self.link.as_ref().map_or(0.0, |p| p.height());
+        Rect::new(x, y, theme::PANEL_W, height)
+    }
+
+    /// The workspace the page is in and the catalog, from the container —
+    /// the scope the picker searches. `true` when it changed what is owed.
+    pub fn set_link_context(
+        &mut self,
+        current: WorkspaceId,
+        workspaces: Vec<koru_editor::components::entity_picker::WorkspaceChoice>,
+    ) -> bool {
+        self.link
+            .as_mut()
+            .is_some_and(|picker| picker.set_context(current, workspaces))
+    }
+
+    /// The window's recents, while nothing is typed. Compare-first.
+    pub fn feed_link_recents(
+        &mut self,
+        hits: Vec<koru_editor::components::entity_picker::DocumentChoice>,
+    ) -> bool {
+        let hits = self.link_hits(hits);
+        self.link
+            .as_mut()
+            .is_some_and(|picker| picker.set_recent_results(hits))
+    }
+
+    /// The search the picker owes, if any: what is typed and where.
+    pub fn take_link_request(
+        &mut self,
+    ) -> Option<koru_editor::components::entity_picker::EntitySearchRequest> {
+        self.link.as_mut().and_then(|picker| picker.take_request())
+    }
+
+    /// The search service's answer for what was typed.
+    pub fn set_link_results(
+        &mut self,
+        hits: Vec<koru_editor::components::entity_picker::DocumentChoice>,
+        unavailable: bool,
+    ) -> bool {
+        let hits = self.link_hits(hits);
+        match self.link.as_mut() {
+            Some(picker) => {
+                picker.set_results(hits, unavailable);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// What the picker offers: not what the page already holds, and not the
+    /// page's own note — linking a page to itself is no use to anyone.
+    fn link_hits(
+        &self,
+        hits: Vec<koru_editor::components::entity_picker::DocumentChoice>,
+    ) -> Vec<koru_editor::components::entity_picker::DocumentChoice> {
+        let own = self.page_document();
+        hits.into_iter()
+            .filter(|hit| {
+                let id = hit.target.document;
+                Some(id) != own && !self.attachments.iter().any(|item| item.id == id)
+            })
+            .collect()
+    }
+
+    fn link_key(&mut self, key: &Key, text: Option<&str>, mods: ModifiersState) -> bool {
+        if matches!(key, Key::Named(NamedKey::Escape)) {
+            self.close_link();
+            return true;
+        }
+        let Some(picker) = self.link.as_mut() else {
+            return false;
+        };
+        let outcome = picker.key_full(&mut self.engine, key, text, mods);
+        self.finish_link(outcome);
+        true
+    }
+
+    fn link_mouse_down(&mut self, x: f32, y: f32) -> bool {
+        let panel = self.link_rect();
+        if !panel.contains(x, y) {
+            self.close_link();
+            return true;
+        }
+        let (lx, ly) = (x - panel.x, y - panel.y);
+        let Some(picker) = self.link.as_mut() else {
+            return false;
+        };
+        // The query field: a press puts the caret there.
+        if ly < picker.field_band() {
+            picker.click_field(&mut self.engine, lx, panel.w);
+            return true;
+        }
+        if picker.scrolls() && picker.scrollbar_track(panel.w).contains(lx, ly) {
+            picker.press_scrollbar(panel.w, ly);
+            return true;
+        }
+        let outcome = picker.click(lx, ly, panel.w);
+        self.finish_link(outcome);
+        true
+    }
+
+    fn link_mouse_move(&mut self, x: f32, y: f32) -> bool {
+        let panel = self.link_rect();
+        let Some(picker) = self.link.as_mut() else {
+            return false;
+        };
+        if picker.is_dragging_scrollbar() {
+            picker.drag_scrollbar(panel.w, y - panel.y);
+            return true;
+        }
+        let hover = panel
+            .contains(x, y)
+            .then(|| picker.item_at(y - panel.y))
+            .flatten();
+        let changed = hover != self.link_hover;
+        self.link_hover = hover;
+        changed
+    }
+
+    /// What the picker said: a pick is the page's request, and the picker
+    /// goes; anything else leaves it up.
+    fn finish_link(&mut self, outcome: koru_editor::components::Outcome) {
+        use koru_editor::components::Outcome;
+        if let Outcome::Commit(spec) = outcome
+            && let Some(target) = spec.document
+        {
+            self.pending = Some(Request::LinkExisting {
+                document: target.document,
+            });
+            self.close_link();
+        }
+    }
+
+    /// The picker panel's rect while it is up, for the suite.
+    #[cfg(test)]
+    pub(super) fn link_rect_for_test(&self) -> Rect {
+        self.link_rect()
+    }
+
+    /// Paint the picker, over everything else on the page.
+    pub(super) fn paint_link(&mut self, scene: &mut Scene, root: Affine) {
+        if self.link.is_none() {
+            return;
+        }
+        let at = self.link_origin();
+        let hover = self.link_hover;
+        if let Some(picker) = self.link.as_mut() {
+            koru_editor::components::draw::draw_standalone_entity_picker(
+                scene,
+                root,
+                &mut self.engine,
+                picker,
+                at,
+                hover,
+            );
+        }
+    }
+
+    /// Lay the band out for this frame: the note's content up to its share
+    /// of the page (D8). The rows move down by it.
+    pub(super) fn layout_band(&mut self) {
+        let before = self.band_h;
+        let (top, w, h) = (
+            self.header_h + self.lane_h,
+            self.viewport.0,
+            self.viewport.1,
+        );
+        let fixed = self.band_fixed_h;
+        self.band_h = match &mut self.body {
+            Some(body) => body.layout(PAD, top, w, h, fixed),
+            None => 0.0,
+        };
+        if (before - self.band_h).abs() > 0.5 {
+            self.clamp_scroll();
+        }
+    }
+
+    /// The band's own controls under the pointer: the corner's *open in a
+    /// new tab*, or the grip along the bottom edge. The grip is asked last,
+    /// since its lane straddles the edge the corner control sits above.
+    fn band_hit(&self, x: f32, y: f32) -> Option<Hit> {
+        let body = self.body.as_ref()?;
+        if body.band.h <= 0.0 {
+            return None;
+        }
+        if body.open_rect().contains(x, y) {
+            return Some(Hit::NoteOpen);
+        }
+        if body.grip_rect().contains(x, y) {
+            return Some(Hit::NoteGrip);
+        }
+        None
+    }
+
+    /// The band's height as a person left it, for the suite.
+    #[cfg(test)]
+    pub(super) fn band_fixed_h_for_test(&self) -> Option<f32> {
+        self.band_fixed_h
+    }
+
+    /// The *open in a new tab* control and the grip's corner mark, over the
+    /// note and under its notice. Nothing while there is no band.
+    pub(super) fn paint_band_chrome(&mut self, scene: &mut Scene, root: Affine) {
+        let Some(body) = self.body.as_ref() else {
+            return;
+        };
+        if body.band.h <= 0.0 {
+            return;
+        }
+        let (open, mark) = (body.open_rect(), body.grip_mark());
+        let p = theme::p();
+        // **The icon button every corner control in the app is.** The hover
+        // state is the whole affordance (ADR-215).
+        koru_ui::icon_button::draw_with(
+            scene,
+            root,
+            &mut self.engine,
+            open,
+            koru_draw::icons::POP_OUT,
+            koru_ui::icon_button::State {
+                hovered: self.hover == Some(Hit::NoteOpen),
+                active: false,
+                disabled: false,
+            },
+            koru_ui::icon_button::Metrics::INLINE,
+        );
+        // The corner mark an HTML text area wears: two short diagonals in
+        // the bottom-right, in the dim ink, so the band says it can be
+        // dragged without a track or a rule across the page.
+        let lit = self.band_resize.is_some() || self.hover == Some(Hit::NoteGrip);
+        let ink = if lit { p.text } else { p.text_dim };
+        let (x1, y1) = (mark.x + mark.w, mark.y + mark.h);
+        for inset in [0.0_f32, mark.w * 0.5] {
+            let line = vello::kurbo::Line::new(
+                ((mark.x + inset) as f64, y1 as f64),
+                (x1 as f64, (mark.y + inset) as f64),
+            );
+            koru_draw::scene::stroke(scene, root, ink, 1.0, &line);
+        }
+    }
+
+    // ---------------------------------------------------- the heading's own
+
+    /// The list's colour square ahead of the heading, as a press target:
+    /// the heading's whole line height, so a press beside the square is
+    /// still the square's. `None` off a list page.
+    pub(super) fn swatch_rect(&self) -> Option<Rect> {
+        self.title_swatch().map(|_| {
+            Rect::new(
+                PAD,
+                self.title_top(),
+                HEADER_SWATCH + SWATCH_GAP * 0.5,
+                super::draw::TITLE.metrics.line_height,
+            )
+        })
+    }
+
+    /// Where the title's words are, on a list page — what a double click
+    /// renames. `None` on a queue, whose name is nobody's to change.
+    pub(super) fn title_rect(&mut self) -> Option<Rect> {
+        let RailTarget::List(_) = self.target else {
+            return None;
+        };
+        let x = match self.title_swatch() {
+            Some(_) => PAD + HEADER_SWATCH + SWATCH_GAP,
+            None => PAD,
+        };
+        // Measured, not estimated: a list's name may carry an emoji.
+        let title = self.title();
+        let width = self
+            .engine
+            .simple_layout(&title, super::draw::TITLE)
+            .width()
+            .min((self.header_dots().x - CONTROL_GAP - x).max(0.0));
+        Some(Rect::new(
+            x,
+            self.title_top(),
+            width,
+            super::draw::TITLE.metrics.line_height,
+        ))
+    }
+
+    /// Where the rename field stands: over the title, out to the header's
+    /// own controls, so the new words have the line to grow into.
+    pub(super) fn heading_field(&self) -> Rect {
+        let x = match self.title_swatch() {
+            Some(_) => PAD + HEADER_SWATCH + SWATCH_GAP,
+            None => PAD,
+        };
+        Rect::new(
+            x,
+            self.title_top(),
+            (self.header_dots().x - CONTROL_GAP - x).max(0.0),
+            super::draw::TITLE.metrics.line_height,
+        )
+    }
+
+    /// Put the rename field over a list page's title, holding the list's
+    /// name selected whole — a double click means *change this*. Any other
+    /// field or panel goes. Nothing on a queue.
+    pub(super) fn begin_heading_rename(&mut self) -> bool {
+        let RailTarget::List(id) = self.target else {
+            return false;
+        };
+        let Some(name) = self.list_face(id).map(|face| face.name.clone()) else {
+            return false;
+        };
+        self.end_capture();
+        self.commit_rename();
+        self.picker = None;
+        self.overflow = None;
+        self.drag = None;
+        if let Some(body) = &mut self.body
+            && body.focused
+        {
+            body.blur();
+        }
+        let mut input = koru_editor::components::text_input::TextInput::new(
+            &mut self.engine,
+            super::draw::TITLE,
+        );
+        input.set_text(&mut self.engine, &name);
+        input.select_all(&mut self.engine);
+        self.heading_rename = Some(input);
+        true
+    }
+
+    /// Keep the field's words: a request when they changed, are not empty
+    /// and name no other list — an empty name is a slip, a sibling's name a
+    /// collision the rail's field refuses too — and the field goes either
+    /// way.
+    pub(super) fn commit_heading_rename(&mut self) -> bool {
+        let Some(input) = self.heading_rename.take() else {
+            return false;
+        };
+        let RailTarget::List(list) = self.target else {
+            return true;
+        };
+        let name = input.value().trim().to_owned();
+        let before = self.list_face(list).map(|face| face.name.as_str());
+        if name.is_empty() || Some(name.as_str()) == before {
+            return true;
+        }
+        if self
+            .lists
+            .iter()
+            .any(|face| face.id != list && face.name == name)
+        {
+            return true;
+        }
+        self.pending = Some(Request::RenameList { list, name });
+        true
+    }
+
+    fn heading_rename_key(&mut self, key: &Key, text: Option<&str>, mods: ModifiersState) -> bool {
+        match key {
+            Key::Named(NamedKey::Enter) => self.commit_heading_rename(),
+            Key::Named(NamedKey::Escape) => {
+                self.heading_rename = None;
+                true
+            }
+            _ => {
+                if let Some(input) = self.heading_rename.as_mut() {
+                    input.key(&mut self.engine, key, text, mods);
+                }
+                true
+            }
+        }
+    }
+
+    /// The heading's rename field, with the caret — drawn with the rows'
+    /// panels so it blinks with them.
+    pub(super) fn paint_heading_rename(&mut self, scene: &mut Scene, root: Affine, caret_on: bool) {
+        let field = self.heading_field();
+        if let Some(input) = self.heading_rename.as_mut() {
+            input.draw(
+                scene,
+                root,
+                &mut self.engine,
+                super::capture::input_rect(field),
+                koru_editor::components::text_input::InputStyle::bare(super::draw::TITLE),
+                None,
+                caret_on,
+            );
+        }
+    }
+
+    /// The band's notice when the note could not be saved or opened, and
+    /// *Try again* beside it (plan Q8).
+    pub(super) fn paint_notice(&mut self, scene: &mut Scene, root: Affine) {
+        self.notice = None;
+        self.conflict_actions = None;
+        let lang = crate::format::lang();
+        let p = theme::p();
+        let mut top = self.header_h + self.lane_h + self.band_h;
+        // The deletion conflict first: its own row, with two answers.
+        if self.in_conflict() {
+            let message = t(lang, koru_i18n::Key::PageDeletedElsewhere);
+            let keep = t(lang, koru_i18n::Key::PageKeepDeleted);
+            let recover = t(lang, koru_i18n::Key::PageRecover);
+            let line = Rect::new(
+                PAD,
+                top,
+                (self.viewport.0 - 2.0 * PAD).max(0.0),
+                self.row_h(),
+            );
+            let layout = self.engine.simple_layout(message, theme::role::row());
+            let y = koru_draw::scene::centre_y_in(&layout, line);
+            koru_draw::scene::draw_layout_first_line(
+                scene,
+                root,
+                &layout,
+                PAD,
+                y,
+                Some(p.text_dim),
+            );
+            let mut x = PAD + layout.width() + CONTROL_GAP * 2.0;
+            let recover_layout = self.engine.simple_layout(recover, theme::role::row());
+            koru_draw::scene::draw_layout_first_line(
+                scene,
+                root,
+                &recover_layout,
+                x,
+                y,
+                Some(p.accent),
+            );
+            let recover_rect = Rect::new(x, top, recover_layout.width(), self.row_h());
+            x += recover_layout.width() + CONTROL_GAP * 2.0;
+            let keep_layout = self.engine.simple_layout(keep, theme::role::row());
+            koru_draw::scene::draw_layout_first_line(
+                scene,
+                root,
+                &keep_layout,
+                x,
+                y,
+                Some(p.text_dim),
+            );
+            let keep_rect = Rect::new(x, top, keep_layout.width(), self.row_h());
+            self.conflict_actions = Some((keep_rect, recover_rect));
+            top += self.row_h();
+        }
+        let Some(opening) = self.failure() else {
+            return;
+        };
+        let text = t(
+            lang,
+            if opening {
+                koru_i18n::Key::PageOpenFailed
+            } else {
+                koru_i18n::Key::PageSaveFailed
+            },
+        );
+        let retry = t(lang, koru_i18n::Key::TryAgain);
+        let line = Rect::new(
+            PAD,
+            top,
+            (self.viewport.0 - 2.0 * PAD).max(0.0),
+            self.row_h(),
+        );
+        let layout = self.engine.simple_layout(text, theme::role::row());
+        let y = koru_draw::scene::centre_y_in(&layout, line);
+        koru_draw::scene::draw_layout_first_line(scene, root, &layout, PAD, y, Some(p.text_dim));
+        let x = PAD + layout.width() + CONTROL_GAP * 2.0;
+        let action = self.engine.simple_layout(retry, theme::role::row());
+        koru_draw::scene::draw_layout_first_line(scene, root, &action, x, y, Some(p.accent));
+        self.notice = Some((line, Rect::new(x, top, action.width(), self.row_h())));
     }
 }

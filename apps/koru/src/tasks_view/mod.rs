@@ -62,6 +62,7 @@
 //! [ADR-285]: ../../../docs/decisions/ADR-276-300.md#adr-285-taskmodel--a-task-is-a-marked-node-and-the-marker-or-a-due-date-is-the-whole-derivation
 
 pub mod accessibility;
+mod body;
 mod capture;
 mod draw;
 pub mod echo;
@@ -76,7 +77,7 @@ mod view;
 
 pub use menu::{row_menu, rows_menu};
 pub use query::TaskEntry;
-pub use view::{ListFace, Request, TasksView, due_sentence};
+pub use view::{LaneItem, ListFace, Request, TasksView, due_sentence};
 
 // The pure rules the suite drives directly: how a typed line splits into a
 // title and a date word, and which rule-label a dated row falls under. Public

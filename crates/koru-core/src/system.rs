@@ -14,7 +14,8 @@
 //! ├── meta          LoroMap   system_schema_version
 //! ├── definitions   LoroMap   definition id -> { key, label, type, … }
 //! ├── tags          LoroMap   TagId -> { name, color, created, alias }
-//! └── lists         LoroMap   ListId -> { name, color, order, created, deleted }
+//! ├── lists         LoroMap   ListId -> { name, color, order, created, deleted, page_gens }
+//! └── pages         LoroMap   bucket token -> { page_gens }
 //! ```
 //!
 //! **The seam** ([ADR-176]): this module owns the document's *content* and
@@ -66,16 +67,18 @@
 //! [`DocumentId`]: crate::ids::DocumentId
 //! [`TagId`]: crate::ids::TagId
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use loro::{LoroDoc, LoroMap, LoroValue, ValueOrContainer};
 
 use crate::attributes::{
     AttributeDefinition, AttributeScope, Cardinality, ValueType, system_definition,
 };
-use crate::ids::{DocumentId, ListId, TagId};
+use crate::ids::{DocumentId, ListId, PageKey, TagId};
+use crate::pages::deletion::{DecisionId, DeletionRecord, EventId, Keep, Replica};
 use crate::schema::{Result, StoreError};
 use crate::tags;
+use crate::tasks::Bucket;
 use crate::time::TimeZoneName;
 
 // Root containers.
@@ -90,6 +93,12 @@ const C_LISTS: &str = "lists";
 /// D3). Unlike spelling *issues*, these words are workspace configuration and
 /// deliberately sync.
 const C_DICTIONARY: &str = "dictionary";
+/// The agenda buckets' page records: bucket token → the same page keys a
+/// list record carries (page-document plan §6.2, §6.8). A root container
+/// beside the others, additive like the dictionary; a list's page keys live
+/// on the list's own record instead, so a page record is found from its
+/// [`PageKey`] either way ([`SystemDoc::page_generations`]).
+const C_PAGES: &str = "pages";
 
 // Meta keys.
 const K_SYSTEM_SCHEMA: &str = "system_schema_version";
@@ -132,6 +141,47 @@ const K_LIST_ORDER: &str = "order";
 /// what tells a reader holding a stale `koru.list` value that the list is gone
 /// rather than merely unknown — and [`SystemDoc::lists`] omits it.
 const K_LIST_DELETED: &str = "deleted";
+/// On a page record: the generations of the page's document, a grow-only
+/// set spelled as a map of decimal keys → `true`. The current generation is
+/// the numeric maximum; a replacement after a deletion adds the next key.
+/// Absent on a page that has never had a document.
+const K_PAGE_GENS: &str = "page_gens";
+/// On a page record: a direct rename of generation *n*'s document — a
+/// person's title, last-writer-wins, always text. `page_override.<n>`.
+/// A list rename removes the current generation's (plan Q10).
+const K_PAGE_OVERRIDE: &str = "page_override";
+/// On a page record: a superseded generation's own name, frozen when its
+/// replacement was made — **one tagged value** `{kind, value}` written by one
+/// insert, so two concurrent writers can never leave a kind from one and a
+/// value from the other. `page_frozen.<n>`.
+const K_PAGE_FROZEN: &str = "page_frozen";
+const F_FROZEN_KIND: &str = "kind";
+const F_FROZEN_VALUE: &str = "value";
+const FROZEN_TEXT: &str = "text";
+const FROZEN_BUCKET: &str = "bucket";
+/// On a page record: whether the page shows its note inline above the
+/// rows. `page_note`, a bool, last-writer-wins. **Absent means "shown once
+/// the page has a document"**: a note somebody wrote is never hidden by
+/// default, and a page nobody wrote on shows no band until asked.
+const K_PAGE_NOTE: &str = "page_note";
+/// On a page record: the files **and documents** the page holds as context —
+/// `page_files.<DocumentId>` → the millisecond it was attached (a file the
+/// page's `+` imported, or a document or file it linked from the workspace;
+/// the library's listing says which each is). A set:
+/// attaching is one key insert, removing deletes the key, so two devices
+/// attaching different files both keep theirs. Read in attached order.
+const K_PAGE_FILES: &str = "page_files";
+/// On a page record: the deletion protocol of each generation
+/// ([`crate::pages::deletion`]), keyed by generation then by the protocol's
+/// own keys. The persisted shape of a [`DeletionRecord`]; grow-only sets and
+/// a monotone join, so writing the one new key converges.
+const K_PAGE_DELETIONS: &str = "page_deletions";
+const K_PAGE_RECOVERS: &str = "page_recovers";
+const K_PAGE_KEEPS: &str = "page_keeps";
+const K_PAGE_UNCOVERED: &str = "page_uncovered";
+const F_COVERS: &str = "covers";
+const F_DELETED_MS: &str = "deleted_ms";
+const F_KEEP_REPLICA: &str = "replica";
 
 /// One tag, as the table knows it.
 #[derive(Clone, PartialEq, Debug)]
@@ -198,6 +248,36 @@ impl ListEntry {
     /// as two rows of the same rail.
     pub fn fold_key(&self) -> String {
         tags::fold_key(&self.name)
+    }
+}
+
+/// A superseded page document's own name, frozen when its replacement was
+/// made (page-document plan §6.6). A person's title or a list's name is
+/// shown literally; a bucket's token is localized by every reader, so a
+/// Spanish device replacing *Today* leaves an archived note that reads *Hoy*
+/// there and *Today* here.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum FrozenTitle {
+    Text(String),
+    Bucket(String),
+}
+
+/// A page document's resolved title: a semantic value, never a localized
+/// label. The manifest caches [`semantic`](Self::semantic); a reader shows
+/// a bucket in its own language.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum PageTitle {
+    Text(String),
+    Bucket(Bucket),
+}
+
+impl PageTitle {
+    /// The stored form: the text itself, or a bucket's token.
+    pub fn semantic(&self) -> String {
+        match self {
+            Self::Text(text) => text.clone(),
+            Self::Bucket(bucket) => bucket.as_str().to_owned(),
+        }
     }
 }
 
@@ -826,6 +906,16 @@ impl SystemDoc {
             return Ok(false);
         };
         record.insert(K_LIST_NAME, name)?;
+        // The list's note follows the list again (plan Q5, Q10): a direct
+        // rename of the current generation's document is taken back in the
+        // same commit, as this replica sees the current generation. A
+        // superseded generation keeps its own name.
+        if let Some(current) = self.current_page_generation(PageKey::List(list))
+            && let Some(overrides) = record_map(&record, K_PAGE_OVERRIDE)
+            && overrides.get(&current.to_string()).is_some()
+        {
+            overrides.delete(&current.to_string())?;
+        }
         self.doc.commit();
         Ok(true)
     }
@@ -928,6 +1018,495 @@ impl SystemDoc {
             .min()
     }
 
+    // ------------------------------------------------------------ pages
+
+    /// The record a page's keys live on.
+    ///
+    /// For a list, the list's own record — **tombstones included**, because a
+    /// deleted list keeps its document (page-document plan D4) and the map
+    /// from a document id back to its page has to find it. For a bucket, the
+    /// entry under the `pages` root map, keyed by the bucket's token.
+    fn page_record(&self, page: PageKey) -> Option<LoroMap> {
+        match page {
+            PageKey::List(list) => self.list_record(list),
+            PageKey::Bucket(bucket) => match self.doc.get_map(C_PAGES).get(bucket.as_str())? {
+                ValueOrContainer::Container(c) => c.into_map().ok(),
+                _ => None,
+            },
+        }
+    }
+
+    /// The record to write a page's keys into: a bucket's is created on first
+    /// use; a list's must exist, in any state. `None` for a list the table
+    /// has never held.
+    fn page_record_for_write(&self, page: PageKey) -> Result<Option<LoroMap>> {
+        Ok(match page {
+            PageKey::List(list) => self.list_record(list),
+            PageKey::Bucket(bucket) => Some(
+                self.doc
+                    .get_map(C_PAGES)
+                    .ensure_mergeable_map(bucket.as_str())?,
+            ),
+        })
+    }
+
+    /// Every generation a page has had, as written — unsorted, tombstones
+    /// none because the set only grows. Empty for a page that never had a
+    /// document.
+    pub fn page_generations(&self, page: PageKey) -> Vec<u64> {
+        let Some(record) = self.page_record(page) else {
+            return Vec::new();
+        };
+        let Some(ValueOrContainer::Container(c)) = record.get(K_PAGE_GENS) else {
+            return Vec::new();
+        };
+        let Ok(gens) = c.into_map() else {
+            return Vec::new();
+        };
+        let keys: Vec<String> = gens.keys().map(|k| k.to_string()).collect();
+        crate::pages::generations(keys.iter().map(String::as_str))
+    }
+
+    /// The page's current generation — the numeric maximum of its keys
+    /// ([`crate::pages::current_generation`]) — or `None` for a page that has
+    /// never had a document.
+    pub fn current_page_generation(&self, page: PageKey) -> Option<u64> {
+        crate::pages::current_generation(
+            self.page_generations(page)
+                .iter()
+                .map(|g| g.to_string())
+                .collect::<Vec<_>>()
+                .iter()
+                .map(String::as_str),
+        )
+    }
+
+    /// Record that `page` has a document of generation `generation`.
+    ///
+    /// **Grow-only.** The key is added and never removed; two devices adding
+    /// generations offline converge on the union, and the current one is the
+    /// numeric maximum whichever order the keys arrive in. Adding a
+    /// generation the page already has is a no-op. Answers `false` only for a
+    /// list the table has never held; a deleted list still takes the write,
+    /// because its document outlives it.
+    pub fn add_page_generation(&mut self, page: PageKey, generation: u64) -> Result<bool> {
+        let Some(record) = self.page_record_for_write(page)? else {
+            return Ok(false);
+        };
+        let known = self.page_generations(page);
+        if known.contains(&generation) {
+            return Ok(true);
+        }
+        // **A replacement freezes the names it supersedes**, in the same
+        // commit (§6.6): each older generation keeps the name it had — its
+        // own title if it was renamed, else the list's name as it stands, else
+        // the bucket's token — so a later list rename moves only the new one.
+        for older in known.into_iter().filter(|g| *g < generation) {
+            if self.page_frozen(page, older).is_none() {
+                let frozen = self.frozen_name(page, older);
+                write_frozen(&record, older, &frozen)?;
+            }
+        }
+        record
+            .ensure_mergeable_map(K_PAGE_GENS)?
+            .insert(&generation.to_string(), true)?;
+        self.doc.commit();
+        Ok(true)
+    }
+
+    // ---------------------------------------------- the note and the files
+
+    /// Whether the page shows its note inline: as written by hand, else
+    /// shown exactly when the page has ever had a document (plus-menu
+    /// decision 2: a note with words is never hidden by default).
+    pub fn page_note_shown(&self, page: PageKey) -> bool {
+        let written = self
+            .page_record(page)
+            .and_then(|record| match record.get(K_PAGE_NOTE)? {
+                ValueOrContainer::Value(LoroValue::Bool(shown)) => Some(shown),
+                _ => None,
+            });
+        written.unwrap_or_else(|| !self.page_generations(page).is_empty())
+    }
+
+    /// Show or hide the page's note. Answers whether the page exists to
+    /// write on; a deleted list's does not change.
+    pub fn set_page_note_shown(&mut self, page: PageKey, shown: bool) -> Result<bool> {
+        let Some(record) = self.page_record_for_write(page)? else {
+            return Ok(false);
+        };
+        record.insert(K_PAGE_NOTE, shown)?;
+        self.doc.commit();
+        Ok(true)
+    }
+
+    /// The files attached to the page, in the order they were attached
+    /// (ties by id, so every replica agrees). Empty for a page with none.
+    pub fn page_attachments(&self, page: PageKey) -> Vec<DocumentId> {
+        let Some(record) = self.page_record(page) else {
+            return Vec::new();
+        };
+        let Some(files) = record_map(&record, K_PAGE_FILES) else {
+            return Vec::new();
+        };
+        let mut out: Vec<(i64, DocumentId)> = files
+            .keys()
+            .filter_map(|key| {
+                let key = key.to_string();
+                let id = DocumentId::parse(&key)?;
+                let at = match files.get(&key)? {
+                    ValueOrContainer::Value(LoroValue::I64(ms)) => ms,
+                    _ => 0,
+                };
+                Some((at, id))
+            })
+            .collect();
+        out.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+        out.into_iter().map(|(_, id)| id).collect()
+    }
+
+    /// Attach a file to the page as context. Attaching one already there
+    /// keeps its place. Answers whether the page exists to write on.
+    pub fn attach_to_page(&mut self, page: PageKey, file: DocumentId, now_ms: i64) -> Result<bool> {
+        let Some(record) = self.page_record_for_write(page)? else {
+            return Ok(false);
+        };
+        let files = record.ensure_mergeable_map(K_PAGE_FILES)?;
+        let key = file.to_storage();
+        if files.get(&key).is_some() {
+            return Ok(true);
+        }
+        files.insert(&key, now_ms)?;
+        self.doc.commit();
+        Ok(true)
+    }
+
+    /// Take a file off the page. Only the reference goes — the file stays
+    /// in the workspace, where it was stored. Answers whether it was there.
+    pub fn detach_from_page(&mut self, page: PageKey, file: DocumentId) -> Result<bool> {
+        let Some(record) = self.page_record(page) else {
+            return Ok(false);
+        };
+        let Some(files) = record_map(&record, K_PAGE_FILES) else {
+            return Ok(false);
+        };
+        let key = file.to_storage();
+        if files.get(&key).is_none() {
+            return Ok(false);
+        }
+        files.delete(&key)?;
+        self.doc.commit();
+        Ok(true)
+    }
+
+    // ----------------------------------------------------- deletion events
+
+    /// The deletion protocol of one page-document generation, read whole
+    /// (page-document plan §6.2). The persisted keys are grow-only and the
+    /// uncovered values are monotone joins, so this reconstructs the same
+    /// [`DeletionRecord`] on every replica whatever order they arrived in.
+    pub fn deletion_record(&self, page: PageKey, generation: u64) -> DeletionRecord {
+        let mut record = DeletionRecord::new();
+        let Some(page_record) = self.page_record(page) else {
+            return record;
+        };
+        let gen_key = generation.to_string();
+        // deletions.<gen>.<event> -> { covers, deleted_ms }
+        if let Some(by_gen) = record_map(&page_record, K_PAGE_DELETIONS)
+            && let Some(events) = record_map(&by_gen, &gen_key)
+        {
+            for event_key in events.keys() {
+                let Some(event) = parse_event(&event_key) else {
+                    continue;
+                };
+                let Some(fields) = record_map(&events, &event_key) else {
+                    continue;
+                };
+                let covers = read_vv(&fields, F_COVERS).unwrap_or_default();
+                let deleted_ms = fields
+                    .get(F_DELETED_MS)
+                    .and_then(crate::schema::as_i64)
+                    .unwrap_or(0);
+                record.delete(event, covers, deleted_ms);
+            }
+        }
+        // recovers.<gen>.<replica|event> -> true
+        if let Some(by_gen) = record_map(&page_record, K_PAGE_RECOVERS)
+            && let Some(recovers) = record_map(&by_gen, &gen_key)
+        {
+            for key in recovers.keys() {
+                if let Some((replica, event)) = parse_replica_event(&key) {
+                    record.recover(replica, [event]);
+                }
+            }
+        }
+        // keeps.<gen>.<event>.<decision> -> { replica, covers }
+        if let Some(by_gen) = record_map(&page_record, K_PAGE_KEEPS)
+            && let Some(events) = record_map(&by_gen, &gen_key)
+        {
+            for event_key in events.keys() {
+                let Some(event) = parse_event(&event_key) else {
+                    continue;
+                };
+                let Some(decisions) = record_map(&events, &event_key) else {
+                    continue;
+                };
+                for decision_key in decisions.keys() {
+                    let Some(decision) = parse_decision(&decision_key) else {
+                        continue;
+                    };
+                    let Some(fields) = record_map(&decisions, &decision_key) else {
+                        continue;
+                    };
+                    let replica = fields
+                        .get(F_KEEP_REPLICA)
+                        .and_then(crate::schema::as_string)
+                        .and_then(|s| u64::from_str_radix(&s, 16).ok())
+                        .unwrap_or(0);
+                    let covers = read_vv(&fields, F_COVERS).unwrap_or_default();
+                    record.keep(event, decision, Keep { replica, covers });
+                }
+            }
+        }
+        // uncovered.<gen>.<replica|event> -> covers
+        if let Some(by_gen) = record_map(&page_record, K_PAGE_UNCOVERED)
+            && let Some(uncovered) = record_map(&by_gen, &gen_key)
+        {
+            for key in uncovered.keys() {
+                if let Some((replica, event)) = parse_replica_event(&key)
+                    && let Some(covers) = read_vv(&uncovered, &key)
+                {
+                    record.report_uncovered(replica, event, &covers);
+                }
+            }
+        }
+        record
+    }
+
+    /// Write one deletion event (§6.4 step 1): a fresh id, its coverage and
+    /// when it happened. Grow-only — a repeat is a no-op.
+    pub fn write_deletion(
+        &mut self,
+        page: PageKey,
+        generation: u64,
+        event: EventId,
+        covers: &loro::VersionVector,
+        deleted_ms: i64,
+    ) -> Result<bool> {
+        let Some(record) = self.page_record_for_write(page)? else {
+            return Ok(false);
+        };
+        let events = record
+            .ensure_mergeable_map(K_PAGE_DELETIONS)?
+            .ensure_mergeable_map(&generation.to_string())?;
+        let fields = events.ensure_mergeable_map(&event.to_string())?;
+        if fields.get(F_COVERS).is_none() {
+            fields.insert(F_COVERS, LoroValue::Binary(covers.encode().into()))?;
+            fields.insert(F_DELETED_MS, deleted_ms)?;
+        }
+        self.doc.commit();
+        Ok(true)
+    }
+
+    /// Record a *Recover* by `replica` of every event it has observed (§6.3):
+    /// one key each, so an event it never saw stays in force.
+    pub fn write_recover(
+        &mut self,
+        page: PageKey,
+        generation: u64,
+        replica: Replica,
+        observed: impl IntoIterator<Item = EventId>,
+    ) -> Result<bool> {
+        let Some(record) = self.page_record_for_write(page)? else {
+            return Ok(false);
+        };
+        let recovers = record
+            .ensure_mergeable_map(K_PAGE_RECOVERS)?
+            .ensure_mergeable_map(&generation.to_string())?;
+        for event in observed {
+            recovers.insert(&replica_event_key(replica, event), true)?;
+        }
+        self.doc.commit();
+        Ok(true)
+    }
+
+    /// Record one *Keep deleted* decision under its own id (§6.3): grow-only,
+    /// written once.
+    pub fn write_keep(
+        &mut self,
+        page: PageKey,
+        generation: u64,
+        event: EventId,
+        decision: DecisionId,
+        keep: &Keep,
+    ) -> Result<bool> {
+        let Some(record) = self.page_record_for_write(page)? else {
+            return Ok(false);
+        };
+        let decisions = record
+            .ensure_mergeable_map(K_PAGE_KEEPS)?
+            .ensure_mergeable_map(&generation.to_string())?
+            .ensure_mergeable_map(&event.to_string())?;
+        let fields = decisions.ensure_mergeable_map(&decision.to_string())?;
+        if fields.get(F_COVERS).is_none() {
+            fields.insert(F_KEEP_REPLICA, format!("{:016x}", keep.replica))?;
+            fields.insert(F_COVERS, LoroValue::Binary(keep.covers.encode().into()))?;
+        }
+        self.doc.commit();
+        Ok(true)
+    }
+
+    /// Join `version` into `replica`'s record of writing outside `event`'s
+    /// coverage (§6.2, *evidence only grows*). The stored value is replaced
+    /// by the join, which is monotone, so a smaller or concurrent report
+    /// never shrinks it.
+    pub fn report_uncovered(
+        &mut self,
+        page: PageKey,
+        generation: u64,
+        replica: Replica,
+        event: EventId,
+        version: &loro::VersionVector,
+    ) -> Result<bool> {
+        let Some(record) = self.page_record_for_write(page)? else {
+            return Ok(false);
+        };
+        let uncovered = record
+            .ensure_mergeable_map(K_PAGE_UNCOVERED)?
+            .ensure_mergeable_map(&generation.to_string())?;
+        let key = replica_event_key(replica, event);
+        let joined = match read_vv(&uncovered, &key) {
+            Some(previous) => crate::pages::join(&previous, version),
+            None => version.clone(),
+        };
+        uncovered.insert(&key, LoroValue::Binary(joined.encode().into()))?;
+        self.doc.commit();
+        Ok(true)
+    }
+
+    /// Every list record, **tombstones included**, in rail order — what the
+    /// map from a page document back to its page needs, since a deleted
+    /// list keeps its document.
+    pub fn all_lists(&self) -> Vec<ListEntry> {
+        let lists = self.doc.get_map(C_LISTS);
+        let mut out = Vec::new();
+        let keys: Vec<String> = lists.keys().map(|k| k.to_string()).collect();
+        for key in keys {
+            let Some(id) = ListId::parse(&key) else {
+                continue;
+            };
+            let Some(ValueOrContainer::Container(c)) = lists.get(&key) else {
+                continue;
+            };
+            let Ok(record) = c.into_map() else { continue };
+            out.push(read_list(id, &record));
+        }
+        out.sort_by(|a, b| {
+            a.order
+                .is_none()
+                .cmp(&b.order.is_none())
+                .then(a.order.cmp(&b.order))
+                .then(a.name.cmp(&b.name))
+                .then(a.id.cmp(&b.id))
+        });
+        out
+    }
+
+    /// A direct rename of generation `generation`'s document, if one stands.
+    pub fn page_override(&self, page: PageKey, generation: u64) -> Option<String> {
+        let record = self.page_record(page)?;
+        let overrides = record_map(&record, K_PAGE_OVERRIDE)?;
+        overrides
+            .get(&generation.to_string())
+            .and_then(crate::schema::as_string)
+    }
+
+    /// Rename generation `generation`'s document directly — Explore's
+    /// *Rename*, MCP's — or take the rename back with `None`. A superseded
+    /// generation's rename is also its frozen name: for one, `frozen` *is*
+    /// its name. Answers `false` for a page record that does not exist.
+    pub fn set_page_override(
+        &mut self,
+        page: PageKey,
+        generation: u64,
+        title: Option<&str>,
+    ) -> Result<bool> {
+        let Some(record) = self.page_record_for_write(page)? else {
+            return Ok(false);
+        };
+        let key = generation.to_string();
+        let overrides = record.ensure_mergeable_map(K_PAGE_OVERRIDE)?;
+        match title {
+            Some(title) => overrides.insert(&key, title)?,
+            None if overrides.get(&key).is_some() => overrides.delete(&key)?,
+            None => {}
+        }
+        let superseded = self
+            .current_page_generation(page)
+            .is_some_and(|current| generation < current);
+        if superseded && let Some(title) = title {
+            write_frozen(&record, generation, &FrozenTitle::Text(title.to_owned()))?;
+        }
+        self.doc.commit();
+        Ok(true)
+    }
+
+    /// A superseded generation's frozen name, if its replacement froze one.
+    pub fn page_frozen(&self, page: PageKey, generation: u64) -> Option<FrozenTitle> {
+        let record = self.page_record(page)?;
+        let frozen = record_map(&record, K_PAGE_FROZEN)?;
+        let ValueOrContainer::Value(value) = frozen.get(&generation.to_string())? else {
+            return None;
+        };
+        read_frozen(&value)
+    }
+
+    /// What generation `generation`'s name would freeze as right now.
+    fn frozen_name(&self, page: PageKey, generation: u64) -> FrozenTitle {
+        if let Some(title) = self.page_override(page, generation) {
+            return FrozenTitle::Text(title);
+        }
+        match page {
+            PageKey::List(list) => FrozenTitle::Text(
+                self.list_entry(list)
+                    .map(|entry| entry.name)
+                    .unwrap_or_default(),
+            ),
+            PageKey::Bucket(bucket) => FrozenTitle::Bucket(bucket.as_str().to_owned()),
+        }
+    }
+
+    /// **The title of generation `generation`'s document** (plan §6.6): the
+    /// current generation is its override, else the list's name as it stands
+    /// (a deleted list's last name) or the bucket; a superseded one is its
+    /// frozen name, else its override, else the same. Never root text.
+    pub fn page_title(&self, page: PageKey, generation: u64) -> PageTitle {
+        let superseded = self
+            .current_page_generation(page)
+            .is_some_and(|current| generation < current);
+        if superseded && let Some(frozen) = self.page_frozen(page, generation) {
+            return match frozen {
+                FrozenTitle::Text(text) => PageTitle::Text(text),
+                FrozenTitle::Bucket(token) => Bucket::ALL
+                    .into_iter()
+                    .find(|b| b.as_str() == token)
+                    .map(PageTitle::Bucket)
+                    .unwrap_or(PageTitle::Text(token)),
+            };
+        }
+        if let Some(title) = self.page_override(page, generation) {
+            return PageTitle::Text(title);
+        }
+        match page {
+            PageKey::List(list) => PageTitle::Text(
+                self.list_entry(list)
+                    .map(|entry| entry.name)
+                    .unwrap_or_default(),
+            ),
+            PageKey::Bucket(bucket) => PageTitle::Bucket(bucket),
+        }
+    }
+
     fn list_record(&self, list: ListId) -> Option<LoroMap> {
         match self.doc.get_map(C_LISTS).get(&list.to_storage())? {
             ValueOrContainer::Container(c) => c.into_map().ok(),
@@ -945,6 +1524,76 @@ impl SystemDoc {
             .is_none()
             .then_some(record)
     }
+}
+
+/// A mergeable map under a record, if it exists.
+fn record_map(record: &LoroMap, key: &str) -> Option<LoroMap> {
+    match record.get(key)? {
+        ValueOrContainer::Container(c) => c.into_map().ok(),
+        _ => None,
+    }
+}
+
+/// One frozen name as its stored value: a whole map, one insert.
+fn write_frozen(record: &LoroMap, generation: u64, frozen: &FrozenTitle) -> Result<()> {
+    let (kind, value) = match frozen {
+        FrozenTitle::Text(text) => (FROZEN_TEXT, text.as_str()),
+        FrozenTitle::Bucket(token) => (FROZEN_BUCKET, token.as_str()),
+    };
+    let stored = LoroValue::from(HashMap::from([
+        (F_FROZEN_KIND.to_string(), LoroValue::from(kind)),
+        (F_FROZEN_VALUE.to_string(), LoroValue::from(value)),
+    ]));
+    record
+        .ensure_mergeable_map(K_PAGE_FROZEN)?
+        .insert(&generation.to_string(), stored)?;
+    Ok(())
+}
+
+fn parse_event(key: &str) -> Option<EventId> {
+    uuid::Uuid::parse_str(key).ok().map(EventId::from_uuid)
+}
+
+fn parse_decision(key: &str) -> Option<DecisionId> {
+    uuid::Uuid::parse_str(key).ok().map(DecisionId::from_uuid)
+}
+
+fn parse_replica_event(key: &str) -> Option<(Replica, EventId)> {
+    let (replica, event) = key.split_once('|')?;
+    Some((u64::from_str_radix(replica, 16).ok()?, parse_event(event)?))
+}
+
+fn read_frozen(value: &LoroValue) -> Option<FrozenTitle> {
+    let LoroValue::Map(map) = value else {
+        return None;
+    };
+    let text = |key: &str| match map.get(key)? {
+        LoroValue::String(s) => Some(s.to_string()),
+        _ => None,
+    };
+    let (kind, value) = (text(F_FROZEN_KIND)?, text(F_FROZEN_VALUE)?);
+    match kind.as_str() {
+        FROZEN_TEXT => Some(FrozenTitle::Text(value)),
+        FROZEN_BUCKET => Some(FrozenTitle::Bucket(value)),
+        _ => None,
+    }
+}
+
+/// A raw binary value under `key`, if present.
+fn as_binary(map: &LoroMap, key: &str) -> Option<Vec<u8>> {
+    match map.get(key)?.as_value()? {
+        LoroValue::Binary(b) => Some(b.to_vec()),
+        _ => None,
+    }
+}
+
+fn read_vv(map: &LoroMap, key: &str) -> Option<loro::VersionVector> {
+    loro::VersionVector::decode(&as_binary(map, key)?).ok()
+}
+
+/// The join key a replica writes a per-event record under.
+fn replica_event_key(replica: Replica, event: EventId) -> String {
+    format!("{replica:016x}|{event}")
 }
 
 fn read_tag(id: TagId, record: &LoroMap) -> TagEntry {

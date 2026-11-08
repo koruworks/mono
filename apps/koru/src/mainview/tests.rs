@@ -10176,6 +10176,30 @@ fn revealing_a_tasks_tab_opens_the_rail_on_its_queue() {
     );
 }
 
+/// **`Ctrl+Shift+E` on a document tab shows the Documents view**, whatever
+/// view the column was on. From the Tasks rail it used to select the row in
+/// the hidden list and leave the rail on screen (acceptance round 2).
+#[test]
+fn revealing_a_document_tab_from_the_tasks_rail_shows_the_documents_view() {
+    use crate::panes::explore::NavigatorMode;
+    let (mut v, w) = on_tasks();
+    assert!(v.explore.showing_tasks(), "the column is on the rail");
+    // The document tab in front is a listed document, as every real one is.
+    v.tabs_mut().active_mut().document = Some(koru_core::DocumentId::new());
+    assert!(matches!(v.tabs().active_tab().view, TabView::Leaf(_)));
+
+    assert!(v.focus_or_toggle_sidebar(&w.ws), "the shortcut is answered");
+    assert_eq!(
+        v.explore.navigator_mode(),
+        NavigatorMode::Documents,
+        "the document's own view, not the rail it was behind"
+    );
+    assert!(
+        v.pending_explore_reveal.is_some(),
+        "and the row is to be revealed"
+    );
+}
+
 /// **Every task the Tasks page queues leaves through `ManagerView`.**
 ///
 /// This is the test that was missing, and its absence is acceptance findings 1,
@@ -14302,4 +14326,504 @@ fn opening_a_document_from_tasks_keeps_the_tasks_view() {
         view.explore.navigator_mode(),
         crate::panes::explore::NavigatorMode::Tasks
     );
+}
+
+/// Acceptance round 2: pressing one list after another on the rail opened an
+/// untitled document tab per press. Two causes, both held here: the Tasks tab
+/// was selected *before* it was re-pointed, so selecting it asked the shell
+/// to activate the old list's note; and the window remembered only its
+/// latest ask, so the earlier answer failed the "a Tasks tab asked for this"
+/// guard and landed as a document tab — untitled, the note not being listed
+/// yet. A note a Tasks tab asked for is never a tab, however many asks are
+/// out, and re-pointing asks for nothing stale.
+#[test]
+fn repointing_the_tasks_tab_never_lands_the_old_note_as_a_tab() {
+    use crate::panes::explore::rail::RailTarget;
+    use koru_core::ids::{PageKey, page_document_id};
+    use koru_core::schema::WorkspaceDoc;
+    use koru_workspace::pages::{PagePhase, PageState};
+    use koru_workspace_host::PaneRequest;
+    fn drain(v: &mut MainView) -> Vec<PaneRequest> {
+        let mut out = Vec::new();
+        while let Some(request) = View::take_pane_request(v) {
+            out.push(request);
+        }
+        out
+    }
+    fn activates(asked: &[PaneRequest], document: koru_core::DocumentId) -> bool {
+        asked.iter().any(
+            |r| matches!(r, PaneRequest::ActivateDocument { document: d, .. } if *d == document),
+        )
+    }
+    let (mut v, _w) = on_tasks();
+    let workspace = koru_core::WorkspaceId::new();
+    let (a, b) = (koru_core::ids::ListId::new(), koru_core::ids::ListId::new());
+    let doc_a = page_document_id(workspace, PageKey::List(a), 0);
+    let doc_b = page_document_id(workspace, PageKey::List(b), 0);
+    let state = |page, document| PageState {
+        page,
+        document,
+        generation: 0,
+        phase: PagePhase::Empty,
+        conflict: false,
+        note_shown: true,
+        attachments: Vec::new(),
+    };
+
+    assert!(v.open_tasks_tab(RailTarget::List(a), false));
+    let _ = drain(&mut v);
+    let tabs = v.tabs().len();
+    // The shell names A's note; the tab in front asks to activate it.
+    assert!(View::set_page_state(
+        &mut v,
+        &state(PageKey::List(a), doc_a)
+    ));
+    assert!(
+        activates(&drain(&mut v), doc_a),
+        "the Tasks tab activates its note"
+    );
+
+    // Away to the document tab, then the rail is pressed on B — before the
+    // shell has answered for A.
+    assert!(v.select(0));
+    let _ = drain(&mut v);
+    assert!(v.open_tasks_tab(RailTarget::List(b), false));
+    let asked = drain(&mut v);
+    assert!(
+        !activates(&asked, doc_a),
+        "re-pointing asks for nothing stale: {asked:?}"
+    );
+    assert!(View::set_page_state(
+        &mut v,
+        &state(PageKey::List(b), doc_b)
+    ));
+    assert!(activates(&drain(&mut v), doc_b));
+    // The next sweep answers the same page again before the shell has
+    // activated the note: no second ask. The shell answers a request for a
+    // document it already has active with a second announcement, and that
+    // is where the untitled tabs came from.
+    View::set_page_state(&mut v, &state(PageKey::List(b), doc_b));
+    assert!(!activates(&drain(&mut v), doc_b), "asked once");
+
+    // The shell answers A first — the earlier ask — then B.
+    let ws_a = WorkspaceDoc::page_genesis(workspace, doc_a).unwrap();
+    View::show_active_document(&mut v, &ws_a, Some(doc_a));
+    assert_eq!(v.tabs().len(), tabs, "the old note is nobody's tab");
+    let ws_b = WorkspaceDoc::page_genesis(workspace, doc_b).unwrap();
+    View::show_active_document(&mut v, &ws_b, Some(doc_b));
+    assert_eq!(
+        v.tabs().len(),
+        tabs,
+        "and the new one is the Tasks tab's own"
+    );
+    assert!(matches!(v.tabs().active_tab().view, TabView::Tasks(_)));
+    // And announced again, with the Tasks tab still showing it: still
+    // nobody's tab.
+    View::show_active_document(&mut v, &ws_b, Some(doc_b));
+    assert_eq!(
+        v.tabs().len(),
+        tabs,
+        "a repeated announcement lands nowhere"
+    );
+    assert!(matches!(v.tabs().active_tab().view, TabView::Tasks(_)));
+
+    // Any other way of activating a note — one the Tasks tab in front is
+    // not showing — still opens it in a tab of its own.
+    View::show_active_document(&mut v, &ws_a, Some(doc_a));
+    assert_eq!(v.tabs().len(), tabs + 1, "Explore, a pill, Back: a tab");
+}
+
+/// Acceptance round 2: a note opened in a tab of its own showed an empty
+/// *Title* row and an *Untitled* tab. Its name is resolved, never its root
+/// text, so once the shell says which page it is the note of, the title row
+/// goes and the listing's name stands where the row was — and names the tab.
+#[test]
+fn a_note_in_its_own_tab_shows_its_resolved_name_as_its_title() {
+    use koru_core::explore::ExploreEntry;
+    use koru_core::ids::PageKey;
+    let (mut v, mut workspace) = container();
+    let note = koru_core::DocumentId::new();
+    let root = a_document(&mut workspace.ws, "");
+    v.tabs_mut().push(tab::Tab::document_of(
+        Leaf::document(&workspace.ws, root),
+        "Untitled",
+        Some(note),
+    ));
+    View::set_entries(
+        &mut v,
+        vec![ExploreEntry {
+            id: note,
+            parent: None,
+            ordinal: 0,
+            title: "Next Features".to_owned(),
+            kind: koru_core::explore::KIND_DOCUMENT.to_owned(),
+            mime: None,
+            note: None,
+            trashed_at: None,
+            trashed_by: None,
+        }],
+        Some(note),
+    );
+    let leaf = |v: &MainView| match &v.tabs().active_tab().view {
+        TabView::Leaf(leaf) => leaf.title_display().map(str::to_owned),
+        _ => panic!("a document tab"),
+    };
+    assert_eq!(leaf(&v), None, "an ordinary document shows its row");
+    assert!(
+        View::take_wants_page_of(&mut v).contains(&note),
+        "the window asks which page it is the note of"
+    );
+
+    View::set_page_of(
+        &mut v,
+        note,
+        Some(PageKey::List(koru_core::ids::ListId::new())),
+    );
+    v.catch_up_active(&workspace.ws);
+    v.refresh_labels(&workspace.ws);
+    let TabView::Leaf(l) = &v.tabs().active_tab().view else {
+        panic!("a document tab")
+    };
+    assert!(!l.has_title_row(), "the row holding empty root text goes");
+    assert_eq!(
+        leaf(&v).as_deref(),
+        Some("Next Features"),
+        "the listing's name stands in"
+    );
+    assert_eq!(v.tabs().active_tab().label, "Next Features");
+    assert!(
+        !View::take_wants_page_of(&mut v).contains(&note),
+        "a known note is not asked about again"
+    );
+}
+
+/// ...and a document the shell called nobody's note is asked about again
+/// when the library moves: a note that arrived from a peer may have been
+/// asked before its page's record did.
+#[test]
+fn a_document_called_nobodys_note_is_asked_again_when_the_library_moves() {
+    use koru_core::explore::ExploreEntry;
+    let (mut v, mut workspace) = container();
+    let id = koru_core::DocumentId::new();
+    let root = a_document(&mut workspace.ws, "Plain");
+    v.tabs_mut().push(tab::Tab::document_of(
+        Leaf::document(&workspace.ws, root),
+        "Plain",
+        Some(id),
+    ));
+    assert!(View::take_wants_page_of(&mut v).contains(&id));
+    View::set_page_of(&mut v, id, None);
+    assert!(!View::take_wants_page_of(&mut v).contains(&id), "answered");
+    View::set_entries(
+        &mut v,
+        vec![ExploreEntry {
+            id,
+            parent: None,
+            ordinal: 0,
+            title: "Plain".to_owned(),
+            kind: koru_core::explore::KIND_DOCUMENT.to_owned(),
+            mime: None,
+            note: None,
+            trashed_at: None,
+            trashed_by: None,
+        }],
+        Some(id),
+    );
+    assert!(
+        View::take_wants_page_of(&mut v).contains(&id),
+        "asked again once the library moved"
+    );
+}
+
+/// A Tasks page's `+` menu and a lane file's menu go up to the shell as page
+/// edits — the band's state is the page record's, files are the shell's to
+/// pick — and a file's own verbs take the Files row's door.
+#[test]
+fn the_page_plus_menu_and_an_attachments_menu_leave_as_page_edits() {
+    use koru_core::ids::PageKey;
+    use koru_workspace_host::tasks::ListEdit;
+    let (mut v, _w) = on_tasks();
+    let page = PageKey::List(koru_core::ids::ListId::new());
+    let file = koru_core::DocumentId::new();
+
+    assert!(v.run_menu_action_for_test(
+        MenuSubject::Page(page),
+        MenuAction::PageDescription { shown: false }
+    ));
+    assert!(v.run_menu_action_for_test(MenuSubject::Page(page), MenuAction::PageAttach));
+    assert_eq!(
+        View::take_wants_page_attachments(&mut v),
+        vec![page],
+        "the shell is asked to pick files for the page"
+    );
+    assert!(
+        View::take_wants_page_attachments(&mut v).is_empty(),
+        "drained"
+    );
+
+    assert!(v.run_menu_action_for_test(
+        MenuSubject::PageAttachment { page, file },
+        MenuAction::DetachFromPage
+    ));
+    let edits = View::take_wants_list_edits(&mut v);
+    assert!(
+        matches!(edits[0], ListEdit::NoteShown { page: p, shown: true } if p == page),
+        "showing the note is a page edit: {edits:?}"
+    );
+    assert!(
+        matches!(edits[1], ListEdit::Detach { page: p, file: f } if p == page && f == file),
+        "removing an attachment is a page edit: {edits:?}"
+    );
+
+    // A file's own verb on the lane's menu takes the Files row's door.
+    let _ = drain_pane_requests(&mut v);
+    assert!(v.run_menu_action_for_test(
+        MenuSubject::PageAttachment { page, file },
+        MenuAction::OpenFileInApp
+    ));
+    assert!(matches!(
+        View::take_pane_request(&mut v),
+        Some(koru_workspace_host::PaneRequest::OpenFile(f)) if f == file
+    ));
+}
+
+fn drain_pane_requests(v: &mut MainView) -> Vec<koru_workspace_host::PaneRequest> {
+    let mut out = Vec::new();
+    while let Some(request) = View::take_pane_request(v) {
+        out.push(request);
+    }
+    out
+}
+
+/// The page's `+` offers *Add existing document or file…* third, and
+/// choosing it opens the `@` picker on the Tasks page in front — it is not a
+/// page edit, so nothing goes up to the shell until something is picked.
+#[test]
+fn add_existing_opens_the_link_picker_on_the_page_in_front() {
+    use koru_core::ids::PageKey;
+    let (mut v, _w) = on_tasks();
+    let items = context_menu::page_plus_items(false);
+    assert_eq!(items.len(), 3);
+    assert_eq!(items[2], MenuAction::PageAddExisting);
+    assert_eq!(items[2].label(), "Add existing document or file\u{2026}");
+
+    let list = koru_core::ids::ListId::new();
+    let page = PageKey::List(list);
+    assert!(
+        !v.run_menu_action_for_test(MenuSubject::Page(page), MenuAction::PageAddExisting),
+        "no Tasks page in front, nothing to open the picker on"
+    );
+    v.open_tasks_tab(crate::panes::explore::rail::RailTarget::List(list), false);
+    assert!(v.run_menu_action_for_test(MenuSubject::Page(page), MenuAction::PageAddExisting));
+    let TabView::Tasks(t) = &v.tabs().active_tab().view else {
+        panic!("a Tasks tab")
+    };
+    assert!(t.link_open(), "the picker is up on the page in front");
+    assert!(View::take_wants_list_edits(&mut v).is_empty());
+    assert!(View::take_wants_page_attachments(&mut v).is_empty());
+}
+
+/// A lane reference opens as what it is, and its menu is that kind's: a
+/// file's own verbs (the Files row's) or a document's, then *Remove
+/// attachment* either way. The kind is the listing's.
+#[test]
+fn a_lane_reference_opens_and_menus_as_its_kind() {
+    use koru_core::explore::ExploreEntry;
+    let (mut v, _w) = on_tasks();
+    let (file, page) = (koru_core::DocumentId::new(), koru_core::DocumentId::new());
+    let entry = |id, title: &str, kind: &str| ExploreEntry {
+        id,
+        parent: None,
+        ordinal: 0,
+        title: title.to_owned(),
+        kind: kind.to_owned(),
+        mime: None,
+        note: None,
+        trashed_at: None,
+        trashed_by: None,
+    };
+    View::set_entries(
+        &mut v,
+        vec![
+            entry(file, "brief.pdf", koru_core::explore::KIND_FILE),
+            entry(page, "Plan", koru_core::explore::KIND_DOCUMENT),
+        ],
+        None,
+    );
+    assert!(v.linked_is_file(file));
+    assert!(!v.linked_is_file(page));
+    let faces = v.attachment_faces(&[file, page]);
+    assert_eq!(
+        faces
+            .iter()
+            .map(|f| (f.name.as_str(), f.is_file))
+            .collect::<Vec<_>>(),
+        vec![("brief.pdf", true), ("Plan", false)]
+    );
+
+    // Opening: a file through the file route, a document through Navigate.
+    let _ = drain_pane_requests(&mut v);
+    v.handle_tasks_request_for_test(crate::tasks_view::Request::OpenAttachment { file });
+    assert!(matches!(
+        View::take_pane_request(&mut v),
+        Some(koru_workspace_host::PaneRequest::OpenFile(f)) if f == file
+    ));
+    v.handle_tasks_request_for_test(crate::tasks_view::Request::OpenAttachment { file: page });
+    assert!(matches!(
+        View::take_pane_request(&mut v),
+        Some(koru_workspace_host::PaneRequest::Navigate {
+            target: koru_workspace_host::NavigationTarget::Document { document, .. },
+            ..
+        }) if document == page
+    ));
+
+    // Their menus.
+    let items = context_menu::page_link_items();
+    assert_eq!(items.last(), Some(&MenuAction::DetachFromPage));
+    assert!(items.contains(&MenuAction::OpenInNewTab));
+    assert!(
+        !items.contains(&MenuAction::OpenFileInApp),
+        "a page is not a file"
+    );
+    let items = context_menu::page_attachment_items(Some(false));
+    assert!(items.contains(&MenuAction::OpenFileInApp));
+    assert_eq!(items.last(), Some(&MenuAction::DetachFromPage));
+}
+
+#[test]
+fn links_outside_the_current_workspace_use_resolved_titles_and_kinds() {
+    let (mut v, _w) = on_tasks();
+    let document = koru_core::DocumentId::new();
+    let file = koru_core::DocumentId::new();
+    v.entity_titles
+        .insert(document.to_storage(), "Project plan".into());
+    v.entity_titles
+        .insert(file.to_storage(), "reference.pdf".into());
+    v.entity_file_kinds.insert(document, false);
+    v.entity_file_kinds.insert(file, true);
+
+    let faces = v.attachment_faces(&[document, file]);
+    assert_eq!(
+        faces
+            .iter()
+            .map(|face| (face.name.as_str(), face.is_file))
+            .collect::<Vec<_>>(),
+        vec![("Project plan", false), ("reference.pdf", true)]
+    );
+    assert!(!v.linked_is_file(document));
+    assert!(v.linked_is_file(file));
+}
+
+/// A pick from the page's picker leaves as the same edit an attached file
+/// does, so the page holds it and the lane shows it.
+#[test]
+fn a_linked_pick_leaves_as_an_attach_edit() {
+    use koru_core::ids::PageKey;
+    use koru_workspace_host::tasks::ListEdit;
+    let (mut v, w) = on_tasks();
+    let list = koru_core::ids::ListId::new();
+    v.open_tasks_tab(crate::panes::explore::rail::RailTarget::List(list), false);
+    let picked = koru_core::DocumentId::new();
+    v.handle_tasks_request_for_test(crate::tasks_view::Request::LinkExisting { document: picked });
+    let edits = View::take_wants_list_edits(&mut v);
+    assert!(
+        matches!(&edits[0], ListEdit::Attach { page, files }
+            if *page == PageKey::List(list) && files == &vec![picked]),
+        "{edits:?}"
+    );
+    let _ = w;
+}
+
+/// The lane's `+` offers the page's menu without the note: attaching and
+/// linking only. The heading's keeps all three.
+#[test]
+fn the_lane_plus_menu_leaves_out_the_inline_description() {
+    use koru_core::ids::{ListId, PageKey};
+    let (mut v, _w) = on_tasks();
+    let list = ListId::new();
+    v.open_tasks_tab(crate::panes::explore::rail::RailTarget::List(list), false);
+    let page = PageKey::List(list);
+
+    let lane = context_menu::page_lane_items();
+    assert_eq!(
+        lane,
+        vec![MenuAction::PageAttach, MenuAction::PageAddExisting]
+    );
+    assert!(
+        !lane
+            .iter()
+            .any(|a| matches!(a, MenuAction::PageDescription { .. })),
+        "no description row"
+    );
+    assert_eq!(context_menu::page_plus_items(false).len(), 3);
+
+    v.handle_tasks_request_for_test(crate::tasks_view::Request::PageMenu {
+        at: (50.0, 90.0),
+        lane: true,
+    });
+    let menu = v.menu.as_ref().expect("the menu opened");
+    assert_eq!(menu.subject, MenuSubject::Page(page));
+    assert_eq!(menu.items().len(), 2, "the lane's two rows");
+    v.menu = None;
+    v.handle_tasks_request_for_test(crate::tasks_view::Request::PageMenu {
+        at: (50.0, 30.0),
+        lane: false,
+    });
+    assert_eq!(
+        v.menu.as_ref().unwrap().items().len(),
+        3,
+        "the heading's three"
+    );
+}
+
+#[test]
+fn foreign_file_attachment_allows_reads_and_detach_but_rejects_mutation() {
+    let (mut v, _w) = on_tasks();
+    let file = koru_core::DocumentId::new();
+    let page = koru_core::ids::PageKey::Bucket(koru_core::tasks::Bucket::Today);
+    v.entity_file_kinds.insert(file, true);
+    let items = context_menu::page_attachment_items(v.local_attachment_note(file));
+    assert_eq!(
+        items,
+        vec![
+            MenuAction::OpenFileInApp,
+            MenuAction::SaveFileAs,
+            MenuAction::Divider,
+            MenuAction::DetachFromPage
+        ]
+    );
+    // Dispatch must also reject stale/forged mutation actions, not just hide them.
+    for action in [
+        MenuAction::Rename,
+        MenuAction::MoveToTrash,
+        MenuAction::AddNote,
+        MenuAction::OpenNote,
+    ] {
+        assert!(!v.run_menu_action_for_test(MenuSubject::PageAttachment { page, file }, action));
+    }
+    let _ = drain_pane_requests(&mut v);
+    assert!(v.run_menu_action_for_test(
+        MenuSubject::PageAttachment { page, file },
+        MenuAction::OpenFileInApp
+    ));
+    assert!(
+        matches!(View::take_pane_request(&mut v), Some(koru_workspace_host::PaneRequest::OpenFile(id)) if id == file)
+    );
+    assert!(v.run_menu_action_for_test(
+        MenuSubject::PageAttachment { page, file },
+        MenuAction::SaveFileAs
+    ));
+    assert!(
+        matches!(View::take_pane_request(&mut v), Some(koru_workspace_host::PaneRequest::SaveFile(id)) if id == file)
+    );
+    assert!(v.run_menu_action_for_test(
+        MenuSubject::PageAttachment { page, file },
+        MenuAction::DetachFromPage
+    ));
+    assert!(View::take_wants_list_edits(&mut v).iter().any(|edit| matches!(edit,
+        koru_workspace_host::tasks::ListEdit::Detach { page: p, file: f } if *p == page && *f == file)));
+    let local = context_menu::page_attachment_items(Some(false));
+    assert!(local.contains(&MenuAction::Rename));
+    assert!(local.contains(&MenuAction::MoveToTrash));
+    assert!(local.contains(&MenuAction::AddNote));
 }

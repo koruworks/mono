@@ -155,6 +155,15 @@ pub enum MenuSubject {
     /// index into it could act on whatever row slid into that position while it
     /// was open.
     List(ListId),
+    /// A Tasks page's `+` — the page (a list or a queue) and its two offers:
+    /// the note inline, and files as context.
+    Page(koru_core::ids::PageKey),
+    /// One file attached to a Tasks page, with the page it is on: a file's
+    /// own rows, plus taking it off the page.
+    PageAttachment {
+        page: koru_core::ids::PageKey,
+        file: koru_core::DocumentId,
+    },
     /// The Trash tab's own `…`. One row, and it empties the bin.
     Trash,
     /// The window itself — what the caption's overflow button opens. Window
@@ -536,6 +545,18 @@ pub enum MenuAction {
     /// memberships go with it and the tasks do not — which is a sentence worth
     /// reading before it happens rather than after.
     ListDelete,
+    /// The page's `+`: show the note inline — or hide it, when `shown`. The
+    /// words stay either way; this is the band, not the document.
+    PageDescription {
+        shown: bool,
+    },
+    /// The page's `+`: attach files from the computer as context.
+    PageAttach,
+    /// The page's `+`: link a document or file the workspace already has,
+    /// picked with the `@` list.
+    PageAddExisting,
+    /// Take the file off the page. The file stays in the workspace's Files.
+    DetachFromPage,
 
     /// Take the row off the Tasks list. **Behind the E-3 confirm**, because it
     /// clears the due date and the marker on somebody's paragraph and the
@@ -1016,6 +1037,10 @@ impl MenuAction {
             | Self::ListColor
             | Self::ListSwatch(_)
             | Self::ListDelete
+            | Self::PageDescription { .. }
+            | Self::PageAttach
+            | Self::PageAddExisting
+            | Self::DetachFromPage
             | Self::AttributePriority => f::tasks(),
             // Canvases: the `+` flyout and its rows. A recent canvas is an
             // `OpenRecentDocument`, listed only inside this flyout.
@@ -1330,6 +1355,21 @@ impl MenuAction {
             MenuAction::TaskList => "List",
             MenuAction::ListColor => "Color",
             MenuAction::ListDelete => "Delete list\u{2026}",
+            MenuAction::PageDescription { shown: false } => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::PageShowInline)
+            }
+            MenuAction::PageDescription { shown: true } => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::PageHideInline)
+            }
+            MenuAction::PageAttach => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::PageAttachFile)
+            }
+            MenuAction::PageAddExisting => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::PageLinkExisting)
+            }
+            MenuAction::DetachFromPage => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::PageDetach)
+            }
             MenuAction::TaskRemove => "Remove from Tasks",
             MenuAction::WindowAlwaysOnTop => "Always on Top",
             MenuAction::WindowUnpinTop => "Turn Off Always on Top",
@@ -1513,6 +1553,9 @@ impl MenuAction {
             MenuAction::TaskGoToList => Some(koru_draw::icons::LIST),
             MenuAction::TaskCreateDocument => Some(koru_draw::icons::DOCUMENT),
             MenuAction::ListColor => Some(koru_draw::icons::PALETTE),
+            MenuAction::PageDescription { .. } => Some(koru_draw::icons::NOTE),
+            MenuAction::PageAttach => Some(koru_draw::icons::PAPERCLIP),
+            MenuAction::PageAddExisting => Some(koru_draw::icons::LINK),
             MenuAction::ListDelete | MenuAction::DeleteAiChat => Some(koru_draw::icons::TRASH),
             MenuAction::Attributes => Some(koru_draw::icons::FADERS),
             MenuAction::AttributeTags => Some(koru_draw::icons::TAG),
@@ -1622,6 +1665,16 @@ impl koru_ui::MenuItem for MenuAction {
 
     fn brand_icon(&self) -> Option<&'static koru_draw::brand::BrandIcon> {
         (*self).brand_icon()
+    }
+
+    /// A colour row shows its colour: the rail's swatch at the row's scale,
+    /// from the same accent token the list stores (acceptance round 2 —
+    /// the rows were names alone).
+    fn swatch(&self) -> Option<Option<&str>> {
+        match self {
+            MenuAction::ListSwatch(token) => Some(Some(token)),
+            _ => None,
+        }
     }
 
     fn shortcut(&self) -> Option<String> {
@@ -2331,19 +2384,56 @@ pub fn rail_bucket_items() -> Vec<MenuAction> {
     vec![MenuAction::RailOpenInNewTab]
 }
 
-/// The swatches behind *Color*, one row per token in the shared accent set.
-///
-/// **Named rather than painted**, which is the one place this menu falls short
-/// of the design's swatch strip: `koru_ui::Menu` draws a row's glyph in the
-/// row's own ink, so a circle here would come out grey nine times. The colour
-/// itself is a few pixels away on the row the menu opened over, and inventing a
-/// tenth `Palette` field to tint a menu glyph is the trade the standing rule
-/// refuses.
+/// The swatches behind *Color*, one row per token in the shared accent set,
+/// each wearing its colour (`MenuItem::swatch`) ahead of its name.
 pub fn list_color_items() -> Vec<MenuAction> {
     koru_draw::theme::ACCENT_TOKENS
         .into_iter()
         .map(MenuAction::ListSwatch)
         .collect()
+}
+
+/// A Tasks page's `+`: the note inline (or hidden, when it is shown), and
+/// files as context.
+pub fn page_plus_items(shown: bool) -> Vec<MenuAction> {
+    vec![
+        MenuAction::PageDescription { shown },
+        MenuAction::PageAttach,
+        MenuAction::PageAddExisting,
+    ]
+}
+
+/// The attachments lane's `+`: the page's menu without the note — the lane
+/// is about what the page holds, not what it says.
+pub fn page_lane_items() -> Vec<MenuAction> {
+    vec![MenuAction::PageAttach, MenuAction::PageAddExisting]
+}
+
+/// A document linked to a Tasks page: what a document's own row offers to
+/// open it, then taking it off the page — which leaves the document where
+/// it is.
+pub fn page_link_items() -> Vec<MenuAction> {
+    vec![
+        MenuAction::OpenInNewTab,
+        MenuAction::OpenDocumentInNewWindow,
+        MenuAction::Rename,
+        MenuAction::Divider,
+        MenuAction::DetachFromPage,
+    ]
+}
+
+/// A local file offers its file-row actions; a foreign file offers Open and
+/// Save As. Both can be detached without removing the file.
+pub fn page_attachment_items(note: Option<bool>) -> Vec<MenuAction> {
+    // No local manifest row means the file belongs elsewhere (or its
+    // ownership is still unknown). Only reads and detaching are available.
+    let mut items = match note {
+        Some(_) => file_items(1, note),
+        None => vec![MenuAction::OpenFileInApp, MenuAction::SaveFileAs],
+    };
+    items.push(MenuAction::Divider);
+    items.push(MenuAction::DetachFromPage);
+    items
 }
 
 /// `"teal"` → `"Teal"`. ASCII, because the tokens are.

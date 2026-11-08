@@ -829,11 +829,53 @@ fn draw_entity_picker(
     pw: f32,
     hovered_row: Option<usize>,
 ) {
-    use crate::components::entity_picker::{self, HEADER_H, MAX_ROWS};
-    let band = match &view.overlay {
-        Overlay::Entity(picker) => picker.field_band(),
-        _ => return,
+    let (engine, overlay) = (&mut view.engine, &mut view.overlay);
+    let Overlay::Entity(picker) = overlay else {
+        return;
     };
+    draw_entity_panel(scene, root, engine, picker, px, py, pw, hovered_row);
+}
+
+/// **The `@` picker as a popover of its own**, over a page that is not a
+/// document: the frame and the list, at `at`, `PANEL_W` wide, with `engine`
+/// the host's. For a host with no body to type `@…` into, which is why it
+/// pairs with [`EntityPicker::for_link`]'s own query field. Returns the
+/// panel's rect, for the host's hit-testing.
+pub fn draw_standalone_entity_picker(
+    scene: &mut Scene,
+    root: Affine,
+    engine: &mut koru_draw::text::TextEngine,
+    picker: &mut crate::components::entity_picker::EntityPicker,
+    at: (f32, f32),
+    hovered_row: Option<usize>,
+) -> koru_draw::geometry::Rect {
+    let (pw, ph) = (theme::PANEL_W, picker.height());
+    koru_draw::scene::floating_panel(
+        scene,
+        root,
+        at.0,
+        at.1,
+        pw,
+        ph,
+        &koru_draw::scene::Panel::popover(8.0),
+    );
+    draw_entity_panel(scene, root, engine, picker, at.0, at.1, pw, hovered_row);
+    koru_draw::geometry::Rect::new(at.0, at.1, pw, ph)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_entity_panel(
+    scene: &mut Scene,
+    root: Affine,
+    engine: &mut koru_draw::text::TextEngine,
+    picker: &mut crate::components::entity_picker::EntityPicker,
+    px: f32,
+    py: f32,
+    pw: f32,
+    hovered_row: Option<usize>,
+) {
+    use crate::components::entity_picker::{self, HEADER_H, MAX_ROWS};
+    let band = picker.field_band();
     // The move-mode query field, above everything: the mention picker's query
     // is the `@…` text in the document, but a move opens over a selection, so
     // the typing has to land — and be visible — in the panel itself. Drawn
@@ -844,10 +886,8 @@ fn draw_entity_picker(
         let shape = rrect(px + r.x, py + r.y, r.w, r.h, 6.0);
         fill(scene, root, theme::p().bg, &shape);
         stroke(scene, root, theme::p().focus_ring, theme::BORDER_W, &shape);
-        let ghost = view.engine.simple_layout("Move to…", theme::role::ui());
-        if let Overlay::Entity(picker) = &mut view.overlay
-            && let Some(field) = &mut picker.own_query
-        {
+        let ghost = engine.simple_layout(picker.own_hint, theme::role::ui());
+        if let Some(field) = &mut picker.own_query {
             // `shows_placeholder`, never `is_empty`: an authored-empty field
             // holding a dictation transcript is still empty, and the ghost would
             // be drawn underneath the words (ADR-272).
@@ -856,22 +896,21 @@ fn draw_entity_picker(
                 scene,
                 root,
                 field,
-                &mut view.engine,
+                engine,
                 empty.then_some(&ghost),
                 (px + r.x, py + r.y, r.w, r.h),
                 true,
             );
         }
     }
-    let Overlay::Entity(picker) = &view.overlay else {
-        return;
-    };
     let scope = picker.scope_label();
     let filter_open = picker.filter_open();
     let selected = picker.selected_workspaces.clone();
     let workspaces = picker.workspaces.clone();
     let hits = picker.hits.clone();
     let sel = picker.sel;
+    let doc_capacity = picker.doc_capacity();
+    let has_create_row = picker.has_create_row();
     let loading = picker.loading;
     let unavailable = picker.unavailable;
     let scrollbar = picker.scrolls().then(|| picker.scrollbar_thumb(pw));
@@ -885,7 +924,7 @@ fn draw_entity_picker(
         theme::p().hover_tint,
         &rrect(chip_x, chip_y, chip_w, HEADER_H - 6.0, 7.0),
     );
-    let icon = view.engine.icon_layout(icons::LIST_CHECKS, 15.0);
+    let icon = engine.icon_layout(icons::LIST_CHECKS, 15.0);
     draw_layout(
         scene,
         root,
@@ -894,8 +933,8 @@ fn draw_entity_picker(
         chip_y + (HEADER_H - 6.0 - icon.height()) * 0.5,
         Some(theme::p().accent),
     );
-    let fitted = view.engine.elided(&scope, theme::role::ui(), chip_w - 42.0);
-    let label = view.engine.simple_layout(&fitted, theme::role::ui());
+    let fitted = engine.elided(&scope, theme::role::ui(), chip_w - 42.0);
+    let label = engine.simple_layout(&fitted, theme::role::ui());
     draw_layout(
         scene,
         root,
@@ -908,16 +947,13 @@ fn draw_entity_picker(
     let rows_y = py + band + theme::PANEL_PAD + HEADER_H;
     if let Some(headings) = picker.headings() {
         let headings = headings.clone();
-        let first = match &view.overlay {
-            Overlay::Entity(p) => p.first,
-            _ => 0,
-        };
+        let first = picker.first;
         for (i, heading) in headings.shown.iter().skip(first).take(MAX_ROWS).enumerate() {
             let index = first + i;
             let ry = rows_y + i as f32 * theme::ROW_H;
             let on = index == sel || hovered_row == Some(index);
             draw_row_bg(scene, root, px, ry, pw, on);
-            let glyph = view.engine.icon_layout(
+            let glyph = engine.icon_layout(
                 match heading.level {
                     1 => icons::HEADING_1,
                     2 => icons::HEADING_2,
@@ -943,10 +979,8 @@ fn draw_entity_picker(
             } else {
                 heading.text.clone()
             };
-            let fitted = view
-                .engine
-                .elided(&text, theme::role::ui(), pw - indent - 12.0);
-            let row = view.engine.simple_layout(
+            let fitted = engine.elided(&text, theme::role::ui(), pw - indent - 12.0);
+            let row = engine.simple_layout(
                 &fitted,
                 theme::role::ui().with_weight(if on {
                     theme::FontWeight::SemiBold
@@ -975,7 +1009,7 @@ fn draw_entity_picker(
             } else {
                 "No matching heading"
             };
-            draw_entity_status(scene, root, view, px, rows_y, message);
+            draw_entity_status(scene, root, engine, px, rows_y, message);
         }
         if let Some(thumb) = scrollbar {
             draw_entity_scrollbar(scene, root, px, py, thumb);
@@ -983,17 +1017,14 @@ fn draw_entity_picker(
         return;
     }
     if filter_open {
-        let first = match &view.overlay {
-            Overlay::Entity(p) => p.first,
-            _ => 0,
-        };
+        let first = picker.first;
         for (i, workspace) in workspaces.iter().skip(first).take(MAX_ROWS).enumerate() {
             let index = first + i;
             let ry = rows_y + i as f32 * theme::ROW_H;
             let on = index == sel || hovered_row == Some(index);
             draw_row_bg(scene, root, px, ry, pw, on);
             if selected.contains(&workspace.id) {
-                let check = view.engine.icon_layout(icons::CHECK, 14.0);
+                let check = engine.icon_layout(icons::CHECK, 14.0);
                 draw_layout(
                     scene,
                     root,
@@ -1008,8 +1039,8 @@ fn draw_entity_picker(
             } else {
                 format!("{} — {}", workspace.name, workspace.profile_name)
             };
-            let fitted = view.engine.elided(&context, theme::role::ui(), pw - 42.0);
-            let row = view.engine.simple_layout(&fitted, theme::role::ui());
+            let fitted = engine.elided(&context, theme::role::ui(), pw - 42.0);
+            let row = engine.simple_layout(&fitted, theme::role::ui());
             draw_layout(
                 scene,
                 root,
@@ -1020,7 +1051,7 @@ fn draw_entity_picker(
             );
         }
         if workspaces.is_empty() {
-            draw_entity_status(scene, root, view, px, rows_y, "Loading workspaces…");
+            draw_entity_status(scene, root, engine, px, rows_y, "Loading workspaces…");
         }
         if let Some(thumb) = scrollbar {
             draw_entity_scrollbar(scene, root, px, py, thumb);
@@ -1028,21 +1059,22 @@ fn draw_entity_picker(
         return;
     }
 
-    let first = match &view.overlay {
-        Overlay::Entity(p) => p.first,
-        _ => 0,
-    };
-    for (i, hit) in hits
-        .iter()
-        .skip(first)
-        .take(MAX_ROWS.saturating_sub(1))
-        .enumerate()
-    {
+    let first = picker.first;
+    for (i, hit) in hits.iter().skip(first).take(doc_capacity).enumerate() {
         let index = first + i;
         let ry = rows_y + i as f32 * theme::ROW_H;
         let on = index == sel || hovered_row == Some(index);
         draw_row_bg(scene, root, px, ry, pw, on);
-        let glyph = view.engine.icon_layout(icons::DOCUMENT, 15.0);
+        // A file is a file in the list: the `@` search has always returned
+        // both, and the same page icon on every row hid it.
+        let glyph = engine.icon_layout(
+            if hit.is_file {
+                icons::FILE
+            } else {
+                icons::DOCUMENT
+            },
+            15.0,
+        );
         draw_layout(
             scene,
             root,
@@ -1051,10 +1083,8 @@ fn draw_entity_picker(
             ry + 7.0,
             Some(theme::p().row_hint),
         );
-        let fitted = view
-            .engine
-            .elided(&hit.title, theme::role::ui(), pw - 118.0);
-        let title = view.engine.simple_layout(
+        let fitted = engine.elided(&hit.title, theme::role::ui(), pw - 118.0);
+        let title = engine.simple_layout(
             &fitted,
             theme::role::ui().with_weight(if on {
                 theme::FontWeight::SemiBold
@@ -1070,10 +1100,8 @@ fn draw_entity_picker(
             ry + 4.0,
             Some(theme::p().text),
         );
-        let crumb = view
-            .engine
-            .elided(&hit.breadcrumb, theme::role::meta(), 76.0);
-        let crumb = view.engine.simple_layout(&crumb, theme::role::meta());
+        let crumb = engine.elided(&hit.breadcrumb, theme::role::meta(), 76.0);
+        let crumb = engine.simple_layout(&crumb, theme::role::meta());
         draw_layout(
             scene,
             root,
@@ -1084,12 +1112,30 @@ fn draw_entity_picker(
         );
     }
 
+    if !has_create_row {
+        // The standalone link list pins nothing: the status stands on the
+        // first row, where the results would be.
+        if hits.is_empty() {
+            let message = if unavailable {
+                "Search unavailable"
+            } else if loading {
+                "Searching\u{2026}"
+            } else {
+                "No matches"
+            };
+            draw_entity_status(scene, root, engine, px, rows_y, message);
+        }
+        if let Some(thumb) = scrollbar {
+            draw_entity_scrollbar(scene, root, px, py, thumb);
+        }
+        return;
+    }
     let create_index = hits.len();
     let create_i = hits.len().saturating_sub(first).min(MAX_ROWS - 1);
     let ry = rows_y + create_i as f32 * theme::ROW_H;
     let on = create_index == sel || hovered_row == Some(create_index);
     draw_row_bg(scene, root, px, ry, pw, on);
-    let plus = view.engine.icon_layout(icons::PLUS, 15.0);
+    let plus = engine.icon_layout(icons::PLUS, 15.0);
     draw_layout(
         scene,
         root,
@@ -1098,9 +1144,7 @@ fn draw_entity_picker(
         ry + 7.0,
         Some(theme::p().accent),
     );
-    let add = view
-        .engine
-        .simple_layout("Add new document", theme::role::ui());
+    let add = engine.simple_layout("Add new document", theme::role::ui());
     draw_layout(
         scene,
         root,
@@ -1117,7 +1161,7 @@ fn draw_entity_picker(
             "Searching…"
         };
         // Put status at the right without replacing the always-available action.
-        let status = view.engine.simple_layout(message, theme::role::meta());
+        let status = engine.simple_layout(message, theme::role::meta());
         draw_layout(
             scene,
             root,
@@ -1150,12 +1194,12 @@ fn draw_entity_scrollbar(
 fn draw_entity_status(
     scene: &mut Scene,
     root: Affine,
-    view: &mut ViewState,
+    engine: &mut koru_draw::text::TextEngine,
     px: f32,
     y: f32,
     text: &str,
 ) {
-    let row = view.engine.simple_layout(text, theme::role::meta());
+    let row = engine.simple_layout(text, theme::role::meta());
     draw_layout(
         scene,
         root,

@@ -64,6 +64,8 @@ pub(super) enum BackgroundWork {
     /// rather than a request kind for exactly the reason above: it needs doing
     /// once, and coalescing would drop it behind the next two keystrokes.
     Outline(DocumentId),
+    /// Resolve saved page links without opening their documents on the UI thread.
+    DocumentFaces(Vec<DocumentId>),
     /// Both tables the query box completes against — every live tag in these
     /// workspaces, and every filterable attribute definition in scope.
     ///
@@ -117,6 +119,7 @@ pub(super) enum SearchReadResult {
         headings: Vec<koru_api_client::OutlineHeading>,
         projected: bool,
     },
+    DocumentFaces(Vec<super::entity_search::EntityDocumentFace>),
     /// The scoped workspaces' tags — name, colour and live usage, ready to
     /// complete a half-typed `#tag` — and the filterable attribute definitions
     /// the `/key` chooser is built from. Both empty on failure: a box that
@@ -276,6 +279,47 @@ impl SearchReader {
                                 break;
                             }
                         }
+                        BackgroundWork::DocumentFaces(documents) => {
+                            let mut faces = Vec::new();
+                            let mut by_workspace: std::collections::HashMap<
+                                WorkspaceId,
+                                std::collections::HashSet<DocumentId>,
+                            > = std::collections::HashMap::new();
+                            for document in documents {
+                                if let Ok(location) = history_store
+                                    .call(|client| client.store().locate_document(document))
+                                {
+                                    by_workspace
+                                        .entry(location.workspace)
+                                        .or_default()
+                                        .insert(document);
+                                }
+                            }
+                            for (workspace, wanted) in by_workspace {
+                                if let Ok(entries) =
+                                    history_store.call(|client| client.store().documents(workspace))
+                                {
+                                    faces.extend(entries.into_iter().filter_map(|entry| {
+                                        wanted.contains(&entry.id).then_some(
+                                            super::entity_search::EntityDocumentFace {
+                                                document: entry.id,
+                                                title: entry.title,
+                                                is_file: entry.kind == "file",
+                                            },
+                                        )
+                                    }));
+                                }
+                            }
+                            if catalog_tx
+                                .send(SearchReadResponse {
+                                    seq: 0,
+                                    result: SearchReadResult::DocumentFaces(faces),
+                                })
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
                         BackgroundWork::ScopeTables(workspaces) => {
                             // `scope_tables` is the adapter's, not the
                             // client's: it does the folding, the ordering and
@@ -345,6 +389,12 @@ impl SearchReader {
     pub(super) fn request_outline(&self, document: DocumentId) -> bool {
         self.background
             .send(BackgroundWork::Outline(document))
+            .is_ok()
+    }
+
+    pub(super) fn request_document_faces(&self, documents: Vec<DocumentId>) -> bool {
+        self.background
+            .send(BackgroundWork::DocumentFaces(documents))
             .is_ok()
     }
 

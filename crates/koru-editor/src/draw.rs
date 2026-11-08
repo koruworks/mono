@@ -2023,6 +2023,32 @@ pub fn frame(
             Some(theme::p().placeholder),
         );
     }
+    // A display title, where the title row would be: a document whose name
+    // is resolved rather than written shows it in the title's own step and
+    // face, in the text ink — a name, not a prompt — and scrolls with the
+    // rows as the row it stands in for would. The band it takes is the
+    // body's top inset, so the first row is already below it.
+    let band = body.title_band();
+    if band > 0.0
+        && let Some(name) = body.title_display.as_deref()
+    {
+        let metrics = body.metrics();
+        let font = theme::headings_font();
+        let layout = view.engine.placeholder_layout(
+            name,
+            metrics.step(Some(theme::TITLE_LEVEL)),
+            font.stack(),
+            font.weight_for(Some(theme::TITLE_LEVEL)),
+        );
+        draw_layout(
+            scene,
+            content_root,
+            &layout,
+            koru_draw::geometry::text_x_in(&metrics, 0u32, false),
+            top - band - view.scroll,
+            Some(theme::p().text),
+        );
+    }
     scene.pop_layer();
     view.copy.draw_tooltip(
         scene,

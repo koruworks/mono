@@ -757,8 +757,10 @@ impl TabView {
             | Self::Run(_)
             | Self::Result(_)
             // Home's panel is driven by the frame, as the Tasks page's is.
-            | Self::Home(_)
-            | Self::Tasks(_) => None,
+            | Self::Home(_) => None,
+            // Only while typing in the note touched a task and the rows are
+            // owed a re-ask once it settles; `None` otherwise.
+            Self::Tasks(t) => t.task_touch_deadline(),
             // **Only while a transport-mode write it started is unanswered.**
             // This view sat in the group above until B10 gave it background
             // work, and nothing moved it: the prompt wrote its answer into a
@@ -789,8 +791,8 @@ impl TabView {
             | Self::Diff(_)
             | Self::Run(_)
             | Self::Result(_)
-            | Self::Home(_)
-            | Self::Tasks(_) => false,
+            | Self::Home(_) => false,
+            Self::Tasks(t) => t.flush_task_touch(now),
             // The other half of the deadline above: without this the answer
             // is put on the wire and its reply never collected.
             Self::Manage(m) => View::maintain(m, ws, now),
@@ -1578,6 +1580,20 @@ impl Tab {
                 self.view,
                 TabView::Welcome(_) | TabView::Socials(_) | TabView::Session(_)
             )
+    }
+
+    /// The document this tab **edits**: its own for a document tab, the
+    /// page's document for a Tasks tab whose page has one in this process
+    /// (page-document plan D7). What selecting the tab activates, what a
+    /// release counts, and what *showing a document* means — while
+    /// [`document`](Self::document) keeps meaning *this tab is that document*.
+    pub fn edits(&self) -> Option<koru_core::DocumentId> {
+        self.document.or_else(|| match &self.view {
+            // Only while the note is shown: a hidden note is not edited
+            // here, so its document need not be activated for the tab.
+            TabView::Tasks(t) if t.page_is_local() && t.note_shown() => t.page_document(),
+            _ => None,
+        })
     }
 
     /// **The workspace this tab's view must be talked to through.**

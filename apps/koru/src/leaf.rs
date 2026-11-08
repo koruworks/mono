@@ -202,6 +202,53 @@ impl Leaf {
         d.editor.body.focus = d.editor.body.first_body_row();
     }
 
+    /// Whether the document's title is the first row.
+    pub fn has_title_row(&self) -> bool {
+        let Self::Document(d) = self;
+        d.editor.body.title_row
+    }
+
+    /// What the first empty paragraph reads, in place of *Start typing…*.
+    pub fn set_body_placeholder(&mut self, placeholder: String) {
+        let Self::Document(d) = self;
+        d.set_body_placeholder(placeholder);
+    }
+
+    /// The name drawn where the title row would be, once that row is hidden:
+    /// a note's resolved title in a tab of its own. Answers whether it
+    /// changed.
+    pub fn set_title_display(&mut self, name: Option<String>) -> bool {
+        let Self::Document(d) = self;
+        d.set_title_display(name)
+    }
+
+    /// Whether the document's own menu — a right-click's, the page menu — is
+    /// open.
+    #[cfg(test)]
+    pub fn menu_open(&self) -> bool {
+        let Self::Document(d) = self;
+        d.menu_open()
+    }
+
+    /// Draw the document's own open menu, for a host that embeds the leaf
+    /// and draws its floating panels after everything else on the page.
+    pub fn draw_menu(
+        &mut self,
+        scene: &mut vello::Scene,
+        root: vello::kurbo::Affine,
+        ws: &WorkspaceDoc,
+    ) {
+        let Self::Document(d) = self;
+        d.draw_menu(scene, root, ws);
+    }
+
+    /// The name the leaf draws for its title, if one stands in for the row.
+    #[cfg(test)]
+    pub fn title_display(&self) -> Option<&str> {
+        let Self::Document(d) = self;
+        d.editor.body.title_display.as_deref()
+    }
+
     /// Where the caret is: which row, and how many bytes into it.
     ///
     /// **The offset is the half that gets forgotten.** `focus` alone names a

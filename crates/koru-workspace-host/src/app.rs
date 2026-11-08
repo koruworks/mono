@@ -1147,6 +1147,16 @@ enum ImportMessage {
         was_current: bool,
         result: Result<koru_store_core::model::Workspace, (koru_store_core::Code, String)>,
     },
+    FileLocatedForSave {
+        id: koru_core::DocumentId,
+        result: Result<
+            (
+                koru_store_core::ids::WorkspaceId,
+                koru_store_core::model::DocumentEntry,
+            ),
+            String,
+        >,
+    },
     FileSaved {
         name: String,
         destination: PathBuf,
@@ -1609,6 +1619,36 @@ fn failed_import_documents(
             failed_import_document(workspace, parent, &source, intro, &messages)
         })
         .collect()
+}
+
+/// Resolve the stable id on the worker before reading bytes. The currently
+/// displayed workspace is not authority for a cross-workspace attachment.
+fn locate_workspace_file(
+    segment: &str,
+    root: Option<&std::path::Path>,
+    document: koru_store_core::ids::DocumentId,
+) -> Result<
+    (
+        koru_store_core::ids::WorkspaceId,
+        koru_store_core::model::DocumentEntry,
+    ),
+    String,
+> {
+    let client = match root {
+        Some(root) => koru_api_client::Client::open_at(segment, root),
+        None => koru_api_client::Client::open(segment),
+    }
+    .map_err(|error| error.to_string())?;
+    let location = client
+        .locate_document(document)
+        .map_err(|error| error.to_string())?;
+    let entry = client
+        .documents(location.workspace)
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .find(|entry| entry.id == document && entry.kind == koru_core::explore::KIND_FILE)
+        .ok_or_else(|| "the linked file is no longer listed in its workspace".to_owned())?;
+    Ok((location.workspace, entry))
 }
 
 /// Fetch the bytes behind an opaque workspace file. Both Save as and Open in
@@ -2498,6 +2538,8 @@ struct App<H: Host> {
     deleting_workspaces: HashSet<WorkspaceId>,
     /// `/attach` waits for the generic file importer to publish its file entry.
     pending_attachment: Option<(WindowId, NodeId)>,
+    /// A Tasks page whose `+` chose files: attached once the import lands.
+    pending_page_attachment: Option<koru_core::ids::PageKey>,
     /// Importable paths coalesced from winit's one-event-per-file drop stream.
     /// Batches wait here while any other import is active rather than being
     /// silently discarded by `import_busy`.
@@ -3302,6 +3344,17 @@ fn pane_profile_summary(
     }
     live.folder.clear();
     live
+}
+
+/// The localized name of an agenda bucket, for a note listed under its token.
+fn bucket_label_key(bucket: koru_core::tasks::Bucket) -> koru_i18n::Key {
+    match bucket {
+        koru_core::tasks::Bucket::Today => koru_i18n::Key::A11yTaskBucketToday,
+        koru_core::tasks::Bucket::Next => koru_i18n::Key::A11yTaskBucketNext,
+        koru_core::tasks::Bucket::Upcoming => koru_i18n::Key::A11yTaskBucketUpcoming,
+        koru_core::tasks::Bucket::Later => koru_i18n::Key::A11yTaskBucketLater,
+        koru_core::tasks::Bucket::Completed => koru_i18n::Key::A11yTaskBucketCompleted,
+    }
 }
 
 fn restore_onboarding_profile(root: Option<&Path>, raw_profile: &str) -> OnboardingCreation {
@@ -5546,6 +5599,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
             pending_import: None,
             deleting_workspaces: HashSet::new(),
             pending_attachment: None,
+            pending_page_attachment: None,
             pending_content_drops: VecDeque::new(),
             // Due once at startup: the share that opened this window was
             // staged before the process existed, so nothing will focus-event
@@ -6366,6 +6420,72 @@ Nothing was written. The store starts on demand, so this usually means it could 
         for edit in edits {
             edited |= crate::tasks::serve_list_edit(&mut self.runtime.workspace, &edit);
         }
+        // The notes above Tasks pages: every page a pane shows gets its
+        // document made, opened or registered by the workspace, and is told
+        // where that stands. Idempotent per turn; the registry does the work
+        // off this thread.
+        let retries: Vec<koru_core::ids::PageKey> = self
+            .panes
+            .iter_mut()
+            .flat_map(|(_, pane)| pane.view.take_wants_page_retry())
+            .collect();
+        for page in retries {
+            self.runtime.workspace.retry_page(page);
+        }
+        let wanted_pages: Vec<(WindowId, koru_core::ids::PageKey)> = self
+            .panes
+            .iter_mut()
+            .flat_map(|(id, pane)| {
+                pane.view
+                    .take_wants_page_documents()
+                    .into_iter()
+                    .map(move |page| (*id, page))
+            })
+            .collect();
+        for (id, page) in wanted_pages {
+            if let Some(state) = self.runtime.workspace.ensure_page(page)
+                && let Some(pane) = self.panes.get_mut(&id)
+                && pane.view.set_page_state(&state)
+            {
+                pane.window.request_redraw();
+            }
+        }
+        // A note opened in a tab of its own: which page it is the note of,
+        // so a task made there joins the list the way it does in the band.
+        let wanted_page_of: Vec<(WindowId, koru_core::DocumentId)> = self
+            .panes
+            .iter_mut()
+            .flat_map(|(id, pane)| {
+                pane.view
+                    .take_wants_page_of()
+                    .into_iter()
+                    .map(move |document| (*id, document))
+            })
+            .collect();
+        for (id, document) in wanted_page_of {
+            let page = self.runtime.workspace.page_of_document(document);
+            if let Some(pane) = self.panes.get_mut(&id)
+                && pane.view.set_page_of(document, page)
+            {
+                pane.window.request_redraw();
+            }
+        }
+        // A note's deletion conflict answered: Keep deleted or Recover.
+        let decisions: Vec<(koru_core::ids::PageKey, koru_workspace::pages::PageDecision)> = self
+            .panes
+            .iter_mut()
+            .flat_map(|(_, pane)| pane.view.take_wants_page_decisions())
+            .collect();
+        for (page, decision) in decisions {
+            match decision {
+                koru_workspace::pages::PageDecision::Keep => {
+                    self.runtime.workspace.keep_page_deleted(page);
+                }
+                koru_workspace::pages::PageDecision::Recover => {
+                    self.runtime.workspace.recover_page(page);
+                }
+            }
+        }
         // The Tasks surface's ticks, removals and captures. Collected first for
         // the borrow, then served one at a time — `crate::tasks::serve` owns the
         // ordering and the activity attempt, so this stays a sweep rather than a
@@ -6607,6 +6727,31 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 pane.view
                     .attachment_cancelled(&mut self.runtime.workspace.ws, node);
             }
+        }
+        // A Tasks page's `+` → *Attachment*: the same picker and the same
+        // import as `/attach` — the files become the workspace's — and then
+        // the page takes references to them. Skipped, not queued, while
+        // another import runs, exactly as `/attach` is.
+        let page_asks: Vec<(WindowId, koru_core::ids::PageKey)> = self
+            .panes
+            .iter_mut()
+            .flat_map(|(id, pane)| {
+                pane.view
+                    .take_wants_page_attachments()
+                    .into_iter()
+                    .map(move |page| (*id, page))
+            })
+            .collect();
+        for (id, page) in page_asks {
+            if self.import_busy {
+                continue;
+            }
+            let Some(paths) = crate::dialogs::pick_open_files("Attach files", &[], None, None)
+            else {
+                continue;
+            };
+            self.pending_page_attachment = Some(page);
+            self.import_content(id, "files", crate::ImportSourceSelection::Files(paths));
         }
         let requests: Vec<(WindowId, NodeId)> = self
             .panes
@@ -7917,7 +8062,22 @@ Nothing was written. The store starts on demand, so this usually means it could 
     /// takes for a document created in another window to appear here without
     /// anyone clicking anything.
     fn push_entries(&mut self) -> bool {
-        let (entries, trashed) = self.runtime.workspace.entries_and_trashed();
+        let (mut entries, mut trashed) = self.runtime.workspace.entries_and_trashed();
+        // A bucket's note is listed under its token; a person reads it in
+        // their language (plan §6.6: the manifest holds a semantic value and
+        // every reader localizes).
+        let pages = self.runtime.workspace.page_documents();
+        if !pages.is_empty() {
+            let lang = crate::accessibility::ui_lang();
+            for entry in entries.iter_mut().chain(trashed.iter_mut()) {
+                if let Some((_, koru_core::ids::PageKey::Bucket(bucket), _)) =
+                    pages.iter().find(|(id, _, _)| *id == entry.id)
+                    && entry.title == bucket.as_str()
+                {
+                    entry.title = koru_i18n::t(lang, bucket_label_key(*bucket)).to_owned();
+                }
+            }
+        }
         // Which of them is open, from the workspace rather than left to the pane
         // to work out: a row is keyed by `DocumentId` and a tab's root is a
         // `NodeId` inside a document, and only this side holds both.
@@ -8995,6 +9155,15 @@ Nothing was written. The store starts on demand, so this usually means it could 
             }
             PaneRequest::NewWorkspace(name) => self.new_workspace(&name),
             PaneRequest::CreateDocument(title) => self.create_document(source, &title, false),
+            PaneRequest::RenameDocument { document, title } => {
+                if let Err(error) = self.runtime.workspace.rename_document(document, &title) {
+                    self.report(
+                        ErrorReport::new("Couldn't rename that note", "Its name is unchanged.")
+                            .with_details(error),
+                    );
+                }
+                self.push_entries();
+            }
             PaneRequest::CreateDocumentIn { parent, title } => {
                 self.create_child_document(source, parent, &title)
             }
@@ -10070,6 +10239,13 @@ Nothing was written. The store starts on demand, so this usually means it could 
                     let _ = self.runtime.workspace.take_entries_changed();
                     self.push_entries();
                 }
+                if let Some(page) = self.pending_page_attachment.take() {
+                    let ids: Vec<koru_core::DocumentId> =
+                        files.iter().map(|(id, _)| *id).collect();
+                    if !ids.is_empty() {
+                        self.runtime.workspace.attach_files_to_page(page, &ids);
+                    }
+                }
                 if let Some((window, node)) = self.pending_attachment.take()
                     && let Some(pane) = self.panes.get_mut(&window)
                 {
@@ -10227,6 +10403,10 @@ Nothing was written. The store starts on demand, so this usually means it could 
                     }
                 }
             }
+            ImportMessage::FileLocatedForSave { id, result } => match result {
+                Ok((workspace, entry)) => self.save_located_file(id, workspace, entry.title),
+                Err(error) => self.report(ErrorReport::new("File not found", "It may have been removed in another window.").with_details(error)),
+            },
             ImportMessage::FileSaved {
                 name,
                 destination,
@@ -10353,29 +10533,32 @@ Nothing was written. The store starts on demand, so this usually means it could 
     /// native picker stays on the event thread; snapshot and blob reads happen
     /// on a worker because an attachment may be gigabytes large.
     fn save_file(&mut self, id: koru_core::DocumentId) {
-        crate::attach_debug!("shell save_file id={}", id.to_storage());
-        let Some(workspace_id) = self.runtime.workspace.current() else {
-            crate::attach_debug!("shell save_file abort: no current workspace");
-            return;
-        };
-        let entries = self.runtime.workspace.entries();
-        let name = entries
-            .iter()
-            .find(|entry| entry.id == id && entry.kind == koru_core::explore::KIND_FILE)
-            .or_else(|| entries.iter().find(|entry| entry.id == id))
-            .map(|entry| entry.title.clone());
-        let Some(name) = name else {
-            crate::attach_debug!(
-                "shell save_file abort: id not in entries (n={})",
-                entries.len()
+        let tx = self.import_tx.clone();
+        let proxy = self.wake_proxy.clone();
+        let root = self.gateway_root.clone();
+        let segment = koru_workspace::fromstore::segment().to_owned();
+        let store_id = koru_store_core::ids::DocumentId::from_uuid(id.as_uuid());
+        if let Err(error) = std::thread::Builder::new()
+            .name("koru-locate-save-file".into())
+            .spawn(move || {
+                let result = locate_workspace_file(&segment, root.as_deref(), store_id);
+                let _ = tx.send(ImportMessage::FileLocatedForSave { id, result });
+                let _ = proxy.send_event(Wake::Import);
+            })
+        {
+            self.report(
+                ErrorReport::new("Couldn't start saving the file", "Nothing was written.")
+                    .with_details(error),
             );
-            self.report(ErrorReport::new(
-                "File not found",
-                "It may have been removed in another window.",
-            ));
-            return;
-        };
-        crate::attach_debug!("shell save_file opening picker name={name}");
+        }
+    }
+
+    fn save_located_file(
+        &mut self,
+        id: koru_core::DocumentId,
+        store_ws: koru_store_core::ids::WorkspaceId,
+        name: String,
+    ) {
         // No parent window — same reason as /attach and /image pickers.
         let Some(destination) = crate::dialogs::pick_save_file(
             "Save workspace file",
@@ -10397,7 +10580,6 @@ Nothing was written. The store starts on demand, so this usually means it could 
         let proxy = self.wake_proxy.clone();
         let root = self.gateway_root.clone();
         let segment = koru_workspace::fromstore::segment().to_owned();
-        let store_ws = koru_store_core::ids::WorkspaceId::from_uuid(workspace_id.as_uuid());
         let store_id = koru_store_core::ids::DocumentId::from_uuid(id.as_uuid());
         let worker_name = name.clone();
         let worker_destination = destination.clone();
@@ -10643,66 +10825,27 @@ Nothing was written. The store starts on demand, so this usually means it could 
     /// and disk write stay off the event thread; the cache keeps one bounded
     /// copy per stable file id rather than leaking a new temp file per click.
     fn open_file(&mut self, id: koru_core::DocumentId) {
-        crate::attach_debug!("shell open_file id={}", id.to_storage());
-        let Some(workspace_id) = self.runtime.workspace.current() else {
-            crate::attach_debug!("shell open_file abort: no current workspace");
-            return;
-        };
-        // Prefer a file-kind entry; fall back to any entry with this id so an
-        // attachment whose manifest row is still settling can still open.
-        let entries = self.runtime.workspace.entries();
-        let listed = entries
-            .iter()
-            .find(|entry| entry.id == id && entry.kind == koru_core::explore::KIND_FILE)
-            .or_else(|| entries.iter().find(|entry| entry.id == id));
-        let Some((name, mime)) = listed.map(|entry| (entry.title.clone(), entry.mime.clone()))
-        else {
-            crate::attach_debug!(
-                "shell open_file abort: id not in entries (n={})",
-                entries.len()
-            );
-            self.report(ErrorReport::new(
-                "File not found",
-                "It may have been removed in another window.",
-            ));
-            return;
-        };
-        crate::attach_debug!(
-            "shell open_file spawning worker name={name} workspace={}",
-            workspace_id.to_storage()
-        );
         let tx = self.import_tx.clone();
         let proxy = self.wake_proxy.clone();
         let root = self.gateway_root.clone();
         let segment = koru_workspace::fromstore::segment().to_owned();
-        let store_ws = koru_store_core::ids::WorkspaceId::from_uuid(workspace_id.as_uuid());
         let store_id = koru_store_core::ids::DocumentId::from_uuid(id.as_uuid());
-        let worker_name = name.clone();
         if let Err(error) = std::thread::Builder::new()
             .name("koru-open-file".into())
             .spawn(move || {
+                let mut name = id.to_storage();
                 let result = (|| {
+                    let (workspace, entry) =
+                        locate_workspace_file(&segment, root.as_deref(), store_id)?;
+                    name = entry.title;
                     let bytes =
-                        workspace_file_bytes(&segment, root.as_deref(), store_ws, store_id)?;
-                    crate::attach_debug!(
-                        "shell open_file worker got {} bytes for {worker_name}",
-                        bytes.len()
-                    );
-                    open_file_bytes(store_id, &worker_name, mime.as_deref(), &bytes)
+                        workspace_file_bytes(&segment, root.as_deref(), workspace, store_id)?;
+                    open_file_bytes(store_id, &name, entry.mime.as_deref(), &bytes)
                 })();
-                if let Err(ref e) = result {
-                    crate::attach_debug!("shell open_file worker failed: {e}");
-                } else {
-                    crate::attach_debug!("shell open_file worker ok for {worker_name}");
-                }
-                let _ = tx.send(ImportMessage::FileOpened {
-                    name: worker_name,
-                    result,
-                });
+                let _ = tx.send(ImportMessage::FileOpened { name, result });
                 let _ = proxy.send_event(Wake::Import);
             })
         {
-            crate::attach_debug!("shell open_file spawn failed: {error}");
             self.report(
                 ErrorReport::new("Couldn't start opening the file", "Nothing was changed.")
                     .with_details(error),
@@ -11528,6 +11671,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
     /// Clear a pending `/attach`. When `cancelled`, restore the trigger row so
     /// the literal `/attach` text is not left behind.
     fn finish_pending_attachment(&mut self, cancelled: bool) {
+        self.pending_page_attachment = None;
         let Some((window, node)) = self.pending_attachment.take() else {
             return;
         };
@@ -11769,10 +11913,21 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 if !canvas && let Some(pane) = self.panes.get_mut(&source) {
                     pane.view.create_document_failed();
                 }
-                self.report(
+                // *Nothing was changed* is only true when the store never
+                // made the document. When it did and only the open failed,
+                // the document is listed and the message has to say so.
+                let report = if e
+                    .to_string()
+                    .contains(koru_workspace::CREATED_BUT_NOT_OPENED)
+                {
+                    ErrorReport::new(
+                        "Made the document, but couldn't open it",
+                        "It is in the sidebar.",
+                    )
+                } else {
                     ErrorReport::new("Couldn't create that document", "Nothing was changed.")
-                        .with_details(e),
-                );
+                };
+                self.report(report.with_details(e));
             }
         }
     }

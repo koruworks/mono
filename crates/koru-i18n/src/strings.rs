@@ -698,6 +698,12 @@ pub enum Key {
     SettingsGlobal,
     SettingsTerminal,
     SettingsStartOnLogin,
+    /// Linux only: the switch that adds Koru's entry to the desktop's app menu.
+    SettingsShowInAppMenu,
+    SettingsShowInAppMenuHint,
+    WelcomeAppMenu,
+    AppMenuAddFailed,
+    AppMenuRemoveFailed,
     SettingsZoom,
     /// Why the rows are dimmed and refusing edits: the authority is not
     /// answering, so what is on screen is the last thing it said.
@@ -2875,6 +2881,7 @@ pub enum Key {
     TerminalRecoveredResumeHint,
     TerminalRecoverResume,
     TerminalRecoverStartNew,
+    TerminalResumeFailed,
 
     // ------------------------------------------ the document's context menu
     // The two rows a code block's menu shares with every other block. The
@@ -2946,6 +2953,31 @@ pub enum Key {
     PlaceSplitLeft,
     /// Its middle: a new tab in the current pane, no split.
     PlaceNewTab,
+
+    // --------------------------------------------- page documents (Tasks)
+    /// The empty note above a Tasks page's rows: *Write about {page}…*.
+    PagePlaceholder,
+    /// The note's region, for a screen reader.
+    PageNote,
+    /// The band's notice when the first registration failed (plan Q8).
+    PageSaveFailed,
+    /// The band's notice when an existing note would not open.
+    PageOpenFailed,
+    /// The rename prompt's title for a note.
+    PageRenameTitle,
+    /// Its field's placeholder.
+    PageRenamePlaceholder,
+    /// The deletion-conflict band's message.
+    PageDeletedElsewhere,
+    /// Its *Keep deleted* action.
+    PageKeepDeleted,
+    /// Its *Recover* action.
+    PageRecover,
+    PageShowInline,
+    PageHideInline,
+    PageAttachFile,
+    PageLinkExisting,
+    PageDetach,
     // ---- removing a Profile from this device (Profiles page notices)
     /// Done: the Profile is gone from this device, and the hosted listing is
     /// what brings it back.
@@ -2981,7 +3013,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2093] = [
+    pub const ALL: [Key; 2113] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -3517,6 +3549,11 @@ impl Key {
         Key::SettingsGlobal,
         Key::SettingsTerminal,
         Key::SettingsStartOnLogin,
+        Key::SettingsShowInAppMenu,
+        Key::SettingsShowInAppMenuHint,
+        Key::WelcomeAppMenu,
+        Key::AppMenuAddFailed,
+        Key::AppMenuRemoveFailed,
         Key::SettingsZoom,
         Key::SettingsUnavailableReadOnly,
         Key::SettingsNotSaved,
@@ -5013,6 +5050,7 @@ impl Key {
         Key::TerminalRecoveredResumeHint,
         Key::TerminalRecoverResume,
         Key::TerminalRecoverStartNew,
+        Key::TerminalResumeFailed,
         Key::MenuCopy,
         Key::MenuDelete,
         Key::MenuSaveAs,
@@ -5055,6 +5093,20 @@ impl Key {
         Key::PlaceSplitDown,
         Key::PlaceSplitLeft,
         Key::PlaceNewTab,
+        Key::PagePlaceholder,
+        Key::PageNote,
+        Key::PageSaveFailed,
+        Key::PageOpenFailed,
+        Key::PageRenameTitle,
+        Key::PageRenamePlaceholder,
+        Key::PageDeletedElsewhere,
+        Key::PageKeepDeleted,
+        Key::PageRecover,
+        Key::PageShowInline,
+        Key::PageHideInline,
+        Key::PageAttachFile,
+        Key::PageLinkExisting,
+        Key::PageDetach,
         Key::ProfilesRemovedFromDevice,
         Key::ProfilesRemoveCascadeIncomplete,
         Key::ProfilesRemoveNotPermitted,
@@ -9783,6 +9835,11 @@ pub const ROWS: &[Row] = &[
     Row { key: Key::SettingsGlobal, en: "Global", es: "General", pt_br: "Geral", de: "Allgemein", fr: "Général", ar: "عام", zh_hans: "通用", ja: "全般" },
     Row { key: Key::SettingsTerminal, en: "Terminal", es: "Terminal", pt_br: "Terminal", de: "Terminal", fr: "Terminal", ar: "الطرفية", zh_hans: "终端", ja: "ターミナル" },
     Row { key: Key::SettingsStartOnLogin, en: "Start Koru when you log in", es: "Iniciar Koru al iniciar sesión", pt_br: "Iniciar o Koru ao entrar", de: "Koru bei der Anmeldung starten", fr: "Lancer Koru à l'ouverture de session", ar: "تشغيل Koru عند تسجيل الدخول", zh_hans: "登录时启动 Koru", ja: "ログイン時に Koru を起動" },
+    Row { key: Key::SettingsShowInAppMenu, en: "Show Koru in the app menu", es: "Mostrar Koru en el menú de aplicaciones", pt_br: "Mostrar o Koru no menu de aplicativos", de: "Koru im Anwendungsmenü anzeigen", fr: "Afficher Koru dans le menu des applications", ar: "إظهار Koru في قائمة التطبيقات", zh_hans: "在应用菜单中显示 Koru", ja: "アプリメニューに Koru を表示" },
+    Row { key: Key::SettingsShowInAppMenuHint, en: "Adds Koru to your desktop's app list, with its own icon in the dock.", es: "Añade Koru a la lista de aplicaciones del escritorio, con su propio icono en el dock.", pt_br: "Adiciona o Koru à lista de aplicativos da área de trabalho, com seu próprio ícone no dock.", de: "Fügt Koru der App-Liste Ihres Desktops hinzu, mit eigenem Symbol im Dock.", fr: "Ajoute Koru à la liste des applications de votre bureau, avec sa propre icône dans le dock.", ar: "يضيف Koru إلى قائمة التطبيقات في سطح المكتب، مع أيقونته الخاصة في شريط التطبيقات.", zh_hans: "将 Koru 添加到桌面的应用列表，并在程序坞中显示其图标。", ja: "デスクトップのアプリ一覧に Koru を追加し、ドックに専用のアイコンを表示します。" },
+    Row { key: Key::WelcomeAppMenu, en: "Add Koru to your app menu", es: "Añadir Koru al menú de aplicaciones", pt_br: "Adicionar o Koru ao menu de aplicativos", de: "Koru zum Anwendungsmenü hinzufügen", fr: "Ajouter Koru au menu des applications", ar: "إضافة Koru إلى قائمة التطبيقات", zh_hans: "将 Koru 添加到应用菜单", ja: "Koru をアプリメニューに追加" },
+    Row { key: Key::AppMenuAddFailed, en: "Koru could not add itself to the app menu.", es: "No se pudo añadir Koru al menú de aplicaciones.", pt_br: "Não foi possível adicionar o Koru ao menu de aplicativos.", de: "Koru konnte nicht zum Anwendungsmenü hinzugefügt werden.", fr: "Impossible d’ajouter Koru au menu des applications.", ar: "تعذرت إضافة Koru إلى قائمة التطبيقات.", zh_hans: "无法将 Koru 添加到应用菜单。", ja: "Koru をアプリメニューに追加できませんでした。" },
+    Row { key: Key::AppMenuRemoveFailed, en: "Koru could not remove itself from the app menu.", es: "No se pudo quitar Koru del menú de aplicaciones.", pt_br: "Não foi possível remover o Koru do menu de aplicativos.", de: "Koru konnte nicht aus dem Anwendungsmenü entfernt werden.", fr: "Impossible de retirer Koru du menu des applications.", ar: "تعذرت إزالة Koru من قائمة التطبيقات.", zh_hans: "无法从应用菜单中移除 Koru。", ja: "Koru をアプリメニューから削除できませんでした。" },
     Row { key: Key::SettingsZoom, en: "Zoom", es: "Zoom", pt_br: "Zoom", de: "Zoom", fr: "Zoom", ar: "التكبير", zh_hans: "缩放", ja: "ズーム" },
     Row { key: Key::SettingsUnavailableReadOnly, en: "Settings are read-only: the Koru service is not answering. These are the last values it confirmed.", es: "Los ajustes son de solo lectura: el servicio de Koru no responde. Estos son los últimos valores confirmados.", pt_br: "As configurações estão somente para leitura: o serviço do Koru não está respondendo. Estes são os últimos valores confirmados.", de: "Einstellungen sind schreibgeschützt: Der Koru-Dienst antwortet nicht. Dies sind die zuletzt bestätigten Werte.", fr: "Les réglages sont en lecture seule : le service Koru ne répond pas. Voici les dernières valeurs confirmées.", ar: "الإعدادات للقراءة فقط: خدمة Koru لا تستجيب. هذه آخر القيم المؤكدة.", zh_hans: "设置为只读：Koru 服务未响应。以下是它最后确认的值。", ja: "設定は読み取り専用です。Koru サービスが応答していません。以下は最後に確認された値です。" },
     Row { key: Key::SettingsNotSaved, en: "That change was not saved. The setting has been put back to the stored value.", es: "Ese cambio no se guardó. El ajuste ha vuelto al valor almacenado.", pt_br: "Essa alteração não foi salva. A configuração voltou ao valor armazenado.", de: "Diese Änderung wurde nicht gespeichert. Die Einstellung steht wieder auf dem gespeicherten Wert.", fr: "Cette modification n'a pas été enregistrée. Le réglage a été rétabli à la valeur stockée.", ar: "لم يُحفَظ هذا التغيير. أُعيد الإعداد إلى القيمة المخزَّنة.", zh_hans: "该更改未保存。设置已恢复为已存储的值。", ja: "この変更は保存されませんでした。設定は保存済みの値に戻されました。" },
@@ -15736,6 +15793,7 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::TerminalRecoveredResumeHint, en: "Resume continues the most recent conversation in this folder.", es: "Reanudar continúa la conversación más reciente de esta carpeta.", pt_br: "Retomar continua a conversa mais recente nesta pasta.", de: "Fortsetzen setzt die letzte Unterhaltung in diesem Ordner fort.", fr: "Reprendre poursuit la conversation la plus récente de ce dossier.", ar: "تتابع «استئناف» أحدث محادثة في هذا المجلد.", zh_hans: "“继续”会接上此文件夹中最近的一次对话。", ja: "「再開」は、このフォルダーの直近の会話を続けます。" },
     Row { key: Key::TerminalRecoverResume, en: "Resume", es: "Reanudar", pt_br: "Retomar", de: "Fortsetzen", fr: "Reprendre", ar: "استئناف", zh_hans: "继续", ja: "再開" },
     Row { key: Key::TerminalRecoverStartNew, en: "Start new", es: "Empezar de nuevo", pt_br: "Começar novo", de: "Neu starten", fr: "Nouvelle session", ar: "بدء جديد", zh_hans: "新建会话", ja: "新しく始める" },
+    Row { key: Key::TerminalResumeFailed, en: "Session couldn't be restored, starting a new one", es: "No se pudo restaurar la sesión, iniciando una nueva", pt_br: "Não foi possível restaurar a sessão, iniciando uma nova", de: "Sitzung konnte nicht wiederhergestellt werden. Eine neue wird gestartet", fr: "La session n’a pas pu être restaurée, démarrage d’une nouvelle session", ar: "تعذّرت استعادة الجلسة، جارٍ بدء جلسة جديدة", zh_hans: "无法恢复会话，正在启动新会话", ja: "セッションを復元できませんでした。新しいセッションを開始します" },
     // ------------------------------------------ the document's context menu
     Row { key: Key::MenuCopy, en: "Copy", es: "Copiar", pt_br: "Copiar", de: "Kopieren", fr: "Copier", ar: "نسخ", zh_hans: "复制", ja: "コピー" },
     Row { key: Key::MenuDelete, en: "Delete", es: "Eliminar", pt_br: "Excluir", de: "Löschen", fr: "Supprimer", ar: "حذف", zh_hans: "删除", ja: "削除" },
@@ -16001,6 +16059,111 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
         zh_hans: "新建标签页",
         ja: "新しいタブ",
     },
+    // ----------------------------------------------- page documents (Tasks)
+    Row {
+        key: Key::PagePlaceholder,
+        en: "Write about {}…",
+        es: "Escribe sobre {}…",
+        pt_br: "Escreva sobre {}…",
+        de: "Schreibe über {}…",
+        fr: "Écrivez à propos de {}…",
+        ar: "اكتب عن {}…",
+        zh_hans: "写一写{}…",
+        ja: "{}について書く…",
+    },
+    Row {
+        key: Key::PageNote,
+        en: "Note",
+        es: "Nota",
+        pt_br: "Nota",
+        de: "Notiz",
+        fr: "Note",
+        ar: "ملاحظة",
+        zh_hans: "笔记",
+        ja: "メモ",
+    },
+    Row {
+        key: Key::PageSaveFailed,
+        en: "Couldn’t save this note",
+        es: "No se pudo guardar esta nota",
+        pt_br: "Não foi possível salvar esta nota",
+        de: "Diese Notiz konnte nicht gespeichert werden",
+        fr: "Impossible d’enregistrer cette note",
+        ar: "تعذّر حفظ هذه الملاحظة",
+        zh_hans: "无法保存此笔记",
+        ja: "このメモを保存できませんでした",
+    },
+    Row {
+        key: Key::PageOpenFailed,
+        en: "Couldn’t open this note",
+        es: "No se pudo abrir esta nota",
+        pt_br: "Não foi possível abrir esta nota",
+        de: "Diese Notiz konnte nicht geöffnet werden",
+        fr: "Impossible d’ouvrir cette note",
+        ar: "تعذّر فتح هذه الملاحظة",
+        zh_hans: "无法打开此笔记",
+        ja: "このメモを開けませんでした",
+    },
+    Row {
+        key: Key::PageRenameTitle,
+        en: "Rename note",
+        es: "Cambiar el nombre de la nota",
+        pt_br: "Renomear nota",
+        de: "Notiz umbenennen",
+        fr: "Renommer la note",
+        ar: "إعادة تسمية الملاحظة",
+        zh_hans: "重命名笔记",
+        ja: "メモの名前を変更",
+    },
+    Row {
+        key: Key::PageRenamePlaceholder,
+        en: "Name",
+        es: "Nombre",
+        pt_br: "Nome",
+        de: "Name",
+        fr: "Nom",
+        ar: "الاسم",
+        zh_hans: "名称",
+        ja: "名前",
+    },
+    Row {
+        key: Key::PageDeletedElsewhere,
+        en: "This note was deleted on another device.",
+        es: "Esta nota se eliminó en otro dispositivo.",
+        pt_br: "Esta nota foi excluída em outro dispositivo.",
+        de: "Diese Notiz wurde auf einem anderen Gerät gelöscht.",
+        fr: "Cette note a été supprimée sur un autre appareil.",
+        ar: "حُذفت هذه الملاحظة على جهاز آخر.",
+        zh_hans: "此笔记已在其他设备上删除。",
+        ja: "このメモは別のデバイスで削除されました。",
+    },
+    Row {
+        key: Key::PageKeepDeleted,
+        en: "Keep deleted",
+        es: "Mantener eliminada",
+        pt_br: "Manter excluída",
+        de: "Gelöscht lassen",
+        fr: "Garder supprimée",
+        ar: "إبقاؤها محذوفة",
+        zh_hans: "保持删除",
+        ja: "削除のままにする",
+    },
+    Row {
+        key: Key::PageRecover,
+        en: "Recover",
+        es: "Recuperar",
+        pt_br: "Recuperar",
+        de: "Wiederherstellen",
+        fr: "Récupérer",
+        ar: "استرجاع",
+        zh_hans: "恢复",
+        ja: "復元",
+    },
+    Row { key: Key::PageShowInline, en: "Inline description", es: "Descripción en línea", pt_br: "Descrição em linha", de: "Inline-Beschreibung", fr: "Description intégrée", ar: "وصف مضمّن", zh_hans: "内联描述", ja: "インライン説明" },
+    Row { key: Key::PageHideInline, en: "Hide inline description", es: "Ocultar descripción en línea", pt_br: "Ocultar descrição em linha", de: "Inline-Beschreibung ausblenden", fr: "Masquer la description intégrée", ar: "إخفاء الوصف المضمّن", zh_hans: "隐藏内联描述", ja: "インライン説明を非表示" },
+    Row { key: Key::PageAttachFile, en: "Attachment…", es: "Adjunto…", pt_br: "Anexo…", de: "Anhang…", fr: "Pièce jointe…", ar: "مرفق…", zh_hans: "附件…", ja: "添付ファイル…" },
+    Row { key: Key::PageLinkExisting, en: "Add existing document or file…", es: "Añadir documento o archivo existente…", pt_br: "Adicionar documento ou arquivo existente…", de: "Vorhandenes Dokument oder vorhandene Datei hinzufügen…", fr: "Ajouter un document ou fichier existant…", ar: "إضافة مستند أو ملف موجود…", zh_hans: "添加现有文档或文件…", ja: "既存のドキュメントやファイルを追加…" },
+    Row { key: Key::PageDetach, en: "Remove attachment", es: "Quitar adjunto", pt_br: "Remover anexo", de: "Anhang entfernen", fr: "Retirer la pièce jointe", ar: "إزالة المرفق", zh_hans: "移除附件", ja: "添付を解除" },
     Row {
         key: Key::ProfilesRemovedFromDevice,
         en: "Profile removed from this device. Its hosted recovery listing remains available after sign-in.",

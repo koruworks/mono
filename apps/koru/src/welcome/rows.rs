@@ -15,6 +15,9 @@ pub enum RowId {
     Documents,
     Files,
     Learn,
+    /// Linux only: adds Koru's entry to the desktop's app menu. Ticked by
+    /// the container once the entry is there, not by the press.
+    AppMenu,
     /// Drawn, with nothing behind it yet.
     TaskList,
     Reminder,
@@ -33,11 +36,12 @@ pub enum RowId {
 }
 
 impl RowId {
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 15] = [
         Self::FirstDocument,
         Self::Documents,
         Self::Files,
         Self::Learn,
+        Self::AppMenu,
         Self::TaskList,
         Self::Reminder,
         Self::Feedback,
@@ -57,6 +61,7 @@ impl RowId {
             Self::Documents => "documents",
             Self::Files => "files",
             Self::Learn => "learn",
+            Self::AppMenu => "app-menu",
             Self::TaskList => "task-list",
             Self::Reminder => "reminder",
             Self::Feedback => "feedback",
@@ -91,6 +96,7 @@ impl RowId {
     /// in the AI row's place.
     pub fn shown_in_product(self) -> bool {
         match self {
+            Self::AppMenu => koru_autostart::app_menu::SUPPORTED,
             Self::Reminder => koru_features::reminders(),
             Self::TerminalAgent => koru_features::agents(),
             Self::Learn | Self::TaskList | Self::Ai | Self::Phone | Self::Watch | Self::OwnApps => {
@@ -151,6 +157,7 @@ impl Section {
                 RowId::Documents,
                 RowId::Files,
                 RowId::Learn,
+                RowId::AppMenu,
                 RowId::TaskList,
                 RowId::Reminder,
                 RowId::Feedback,

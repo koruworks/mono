@@ -2938,6 +2938,16 @@ count — the same chips, the same rows. What changes is which tasks are on it,
 and that tasks with no date are perfectly normal here, so their due chip is a
 dash rather than a nudge to schedule something.
 
+**Write above the tasks.** Between the heading and the rows there is room to
+write — *Write about Bike Project…* — and anything you put there is a real
+document named after the page: it is in your library like any other, opens in
+its own tab, and is there again on every device. Nothing is made until you
+write something. The note grows as you write, up to about forty percent of
+the page, then scrolls on its own. `Esc`, or a click on a task, puts the
+keyboard back on the list. If the note could not be saved to the Koru Store
+the band says so and offers *Try again*; nothing you wrote is lost, it is
+kept on this computer until it lands.
+
 **The first row is where you add one.** Click *Add a task…*, type, and press
 `Enter` — or, with the keyboard on the list's first task, press `↑` once more
 and the caret lands in that row without you reaching for the mouse. `Esc` leaves
@@ -2980,6 +2990,17 @@ which takes it off Tasks. Filed in a list, the toast names the list and
 *View task* opens it.
 
 Press **Alt+3** to open the Tasks sidebar and focus its queues. Up/Down browse Today, Next, Upcoming, Later and Completed; Home/End reach the first or last queue. Enter or Space opens the focused queue, and Escape or Tab returns the keyboard to the page. From a Tasks page, **Ctrl+Shift+E** returns focus to the queues; press it again to close the sidebar. On a task in a document, that chord still reveals the task on its Tasks page. On Windows, assistive technology can also read and activate these five queues, including which one is selected. List creation and editing are separate controls and are not covered by this route.
+
+To link an existing document or file to a Tasks page, press **+** above the
+task list and choose **Add existing document or file…**. Search by title across
+the workspaces in your current profile; `doc:` and `file:` narrow the results.
+The link shows the item's title and opens the original. You can remove the link
+without deleting the document or file.
+
+Files attached from another workspace offer Open, Save As, and Remove attachment.
+Rename, trash, and note editing are available in the file's owning workspace.
+Files owned by the current workspace retain their full file menu. Removing an
+attachment removes only the reference from the Tasks page, leaving the file intact.
 
 Each row carries:
 
@@ -3725,7 +3746,10 @@ running. If it was stopped — a restart of the computer, a crash, or **Quit**
 from the tray — the tab is still there, in the same place and the same folder.
 A shell starts again by itself. An agent shows **Resume**, which continues its
 most recent conversation in that folder where the agent can, and **Start new**;
-nothing starts until you choose. What was on the screen is not brought back. The Koru Agent's tray menu has the same **Agents** list, so you
+nothing starts until you choose. If the resume launch fails, Koru tries a fresh
+session once in the same tab and folder and shows a toast: “Session couldn't be
+restored, starting a new one”. If that launch also fails, the error stays visible.
+What was on the screen is not brought back. The Koru Agent's tray menu has the same **Agents** list, so you
 can jump to a session from there too. The composer (for sending a message to a
 managed agent) is hidden until you need it — **Ctrl+Shift+U** shows it. A message you send to Codex while it is working is added to the turn in progress instead of being refused.
 
@@ -5975,6 +5999,24 @@ turning it on tells us what matters most to you.
 Turning it off takes effect at once and deletes anything not yet sent. Nothing
 recorded while it was off is ever sent, even after you turn it on. The choice belongs to this device: another computer of yours has
 its own switch. The phone apps send no usage data.
+
+## Koru in the app menu on Linux
+
+The Linux download is a folder with nothing to install, so Koru adds itself to
+your desktop's app list when you ask. **Add Koru to your app menu** on Welcome,
+or **Settings → System → Show Koru in the app menu**, writes one launcher entry
+for your user (in `~/.local/share/applications`), naming the `koru` you are
+running and its icon. Koru appears in the app list at once, with its own icon
+in the dock. No administrator rights are needed, and updates keep it working.
+
+If you move Koru's folder, the entry points at the new place the next time you
+start Koru from there. Turning the switch off removes the entry. The nightly
+has its own entry, *Koru Nightly*, beside the stable one.
+
+**Start Koru when you log in** works on Linux too: it adds an entry to
+`~/.config/autostart`, which GNOME, KDE and most other desktops start at
+sign-in. Koru starts in the background, without opening a window, as it does
+on Windows and macOS.
 
 ## Document history
 

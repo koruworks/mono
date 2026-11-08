@@ -889,6 +889,22 @@ pub enum ListEdit {
     /// others to be guessed at — including the unranked ones a peer made,
     /// which sort last until somebody orders them.
     Reorder(Vec<koru_core::ids::ListId>),
+    /// Show or hide a page's note inline — the page's `+` menu's *Inline
+    /// description*. On the page's record, so every device agrees.
+    NoteShown {
+        page: koru_core::ids::PageKey,
+        shown: bool,
+    },
+    /// Attach workspace files to a page as context, in the order chosen.
+    Attach {
+        page: koru_core::ids::PageKey,
+        files: Vec<koru_core::DocumentId>,
+    },
+    /// Take a file off a page. The reference goes; the file stays.
+    Detach {
+        page: koru_core::ids::PageKey,
+        file: koru_core::DocumentId,
+    },
 }
 
 /// Run one [`ListEdit`]. Answers whether the open document was written to, so
@@ -928,6 +944,18 @@ pub fn serve_list_edit(workspace: &mut koru_workspace::Workspace, edit: &ListEdi
                 workspace.touched();
             }
             cleared > 0
+        }
+        ListEdit::NoteShown { page, shown } => {
+            workspace.set_page_note_shown(*page, *shown);
+            false
+        }
+        ListEdit::Attach { page, files } => {
+            workspace.attach_files_to_page(*page, files);
+            false
+        }
+        ListEdit::Detach { page, file } => {
+            workspace.detach_file_from_page(*page, *file);
+            false
         }
     }
 }

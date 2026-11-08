@@ -2101,6 +2101,16 @@ impl View for ManagerView {
         }
     }
 
+    forward_to_the_window! {
+        fn take_wants_page_documents(&mut self) -> Vec<koru_core::ids::PageKey>;
+        fn set_page_state(&mut self, state: &koru_workspace::pages::PageState) -> bool;
+        fn take_wants_page_retry(&mut self) -> Vec<koru_core::ids::PageKey>;
+        fn take_wants_page_of(&mut self) -> Vec<koru_core::DocumentId>;
+        fn set_page_of(&mut self, document: koru_core::DocumentId, page: Option<koru_core::ids::PageKey>) -> bool;
+        fn take_wants_page_decisions(&mut self) -> Vec<(koru_core::ids::PageKey, koru_workspace::pages::PageDecision)>;
+        fn take_wants_page_attachments(&mut self) -> Vec<koru_core::ids::PageKey>;
+    }
+
     /// **Every task the Tasks page asked for, on its way to the one hand that
     /// can write it.**
     ///
