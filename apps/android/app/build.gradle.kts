@@ -95,9 +95,11 @@ val koruUpdate: Pair<String, String>? = run {
 fun koruGitBranch(): String = koruGit("rev-parse", "--abbrev-ref", "HEAD").takeIf { it != "HEAD" } ?: ""
 fun koruGitCommit(): String = koruGit("rev-parse", "--short=12", "HEAD")
 
-fun accountBuildValue(name: String): String {
+fun accountBuildValue(name: String, limit: Int = 2048): String {
     val value = providers.gradleProperty(name).orNull.orEmpty()
-    require(value.length <= 2048 && value.none { it.isISOControl() }) { "invalid account build configuration" }
+    require(value.length <= limit && value.none { it.isISOControl() }) {
+        "invalid account build configuration: $name"
+    }
     return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 }
 
@@ -137,7 +139,8 @@ android {
         // intent, document or hosted response can choose this configuration.
         buildConfigField("String", "ACCOUNT_ORIGIN", accountBuildValue("koruAccountOrigin"))
         buildConfigField("String", "ACCOUNT_ISSUER", accountBuildValue("koruAccountIssuer"))
-        buildConfigField("String", "ACCOUNT_CREDENTIAL_ROLLOUT", accountBuildValue("koruAccountCredentialRollout"))
+        // The regional policy's own ceiling is 8 KiB (RegionalCredentialPolicy::parse).
+        buildConfigField("String", "ACCOUNT_CREDENTIAL_ROLLOUT", accountBuildValue("koruAccountCredentialRollout", limit = 8192))
         buildConfigField("String", "GOOGLE_SERVER_CLIENT_ID", accountBuildValue("koruGoogleServerClientId"))
         buildConfigField("String", "ACCOUNT_CHANNEL", accountBuildValue("koruAccountChannel"))
         // A local object worker this build may send blob bytes to, beside the

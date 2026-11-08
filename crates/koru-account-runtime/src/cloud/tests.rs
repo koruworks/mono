@@ -204,6 +204,7 @@ struct World {
     log: Vec<String>,
     pages: Vec<CloudWorkspacePageV1>,
     denied: HashSet<WorkspaceId>,
+    removed_profiles: HashSet<ProfileId>,
     not_ready: HashSet<WorkspaceId>,
     descriptors: HashMap<WorkspaceId, CloudWorkspaceDescriptorV1>,
     /// The logical replica id the issuer answers with, so a test can make the
@@ -386,7 +387,11 @@ impl Host for FakeHost {
     ) -> Result<(), Failure> {
         let mut world = lock(&self.0);
         world.note(format!("profile:{}:{account}", profile.to_storage()));
-        Ok(())
+        if world.removed_profiles.contains(&profile) {
+            Err(Failure::Bootstrap)
+        } else {
+            Ok(())
+        }
     }
 
     fn ensure_workspace_presence(
@@ -880,6 +885,39 @@ fn an_originating_device_uses_its_own_manifest_identity_and_skips_the_hosted_loo
     assert_eq!(descriptor.logical_replica_id, replica(1));
     assert_eq!(descriptor.lineage_id, incarnation(1));
     assert_eq!(descriptor.membership_epoch, 5);
+}
+
+#[test]
+fn a_retained_local_manifest_cannot_admit_a_removed_profile() {
+    let world = World::shared();
+    {
+        let mut state = lock(&world);
+        state.pages = vec![page(vec![candidate(1), candidate(2)], None)];
+        state.removed_profiles.insert(profile(1));
+        for index in [1, 2] {
+            state.local.insert(
+                workspace(index),
+                LocalBootstrap {
+                    profile_id: profile(index),
+                    workspace_id: workspace(index),
+                    manifest_document_id: manifest(index),
+                },
+            );
+        }
+    }
+    let harness = Harness::start(world);
+    harness.control.update_authorization(authority("1"));
+    harness.wait_for(|world| world.opened.contains(&workspace_dataset(2, replica(2))));
+    let state = lock(&harness.world);
+    assert!(!state.opened.contains(&workspace_dataset(1, replica(1))));
+    assert!(!state.opened.contains(&profile_dataset(1)));
+    assert!(
+        state
+            .contexts
+            .iter()
+            .flat_map(|(_, _, permits)| permits)
+            .all(|permit| permit.profile_id != profile(1))
+    );
 }
 
 #[test]

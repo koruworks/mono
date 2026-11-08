@@ -580,7 +580,7 @@ pub const VARS: &[EnvVar] = &[
     // overridable at run time — see guide/contributing/FEATURE-FLAGS.md.
     switch_var(
         name::KORU_ENABLE_CLOUD_SYNC,
-        "Shows Koru Cloud: account sign-in (email, Google, Apple), the Koru Cloud page and its pointers. Off by default; a release bakes it on by setting it for koru-release, and a set value overrides the baked one at run time.",
+        "Shows Koru Cloud: account sign-in (email, Google, Apple), the Koru Cloud page and its pointers. On by default; a release bakes it off by setting it to 0 for koru-release, and a set value overrides the baked one at run time.",
         "koru.exe, koru-agent (product surfaces)",
     ),
     switch_var(

@@ -190,7 +190,16 @@ impl MainView {
         let cx = self.shell(view);
         let chrome = self.chrome_revision();
         let whole = scope == Scope::Whole || !self.bodies.borrow().holds_chrome(chrome);
+        let blockers = self.blockers();
         if !whole {
+            // A blocker removed the body and its parent from the client's
+            // tree. A later publish with unchanged chrome must keep it absent:
+            // publishing a loose body here would graft it onto no parent and
+            // panic in AccessKit. Closing the blocker changes chrome and
+            // restores the complete body through ordinary_semantics below.
+            if blockers.is_blocking() {
+                return Vec::new();
+            }
             // The chrome is exactly what the client already holds, so this
             // publish is the document's difference and nothing else. The
             // paragraphs go up as loose nodes and keep the parent the client
@@ -200,7 +209,6 @@ impl MainView {
         }
         // **The blocker first, and alone.** Same table, same order, same
         // answer the keyboard gets.
-        let blockers = self.blockers();
         let children = if blockers.is_blocking() {
             self.bodies.borrow_mut().body_withheld(&cx);
             self.blocking_semantics(&cx, blockers)

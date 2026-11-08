@@ -19,6 +19,66 @@ fn scope() -> Scope {
 }
 
 #[test]
+fn uuid_v5_documents_keep_their_identity_across_control_and_loro_metadata() {
+    let mut bytes = *id(2).as_bytes();
+    bytes[6] = 0x52;
+    let document_id = CloudId::from_bytes(bytes);
+    let document = Unit::Document {
+        workspace_id: id(1),
+        document_id,
+    };
+    let mut transfer = start(1);
+    transfer.unit = document;
+    let encoded = serde_json::to_vec(&Control::TransferStart(transfer)).unwrap();
+    assert!(
+        matches!(decode_control(&encoded).unwrap(), Control::TransferStart(value) if value.unit == document)
+    );
+    assert!(
+        matches!(scope().object_unit(document).unwrap(), crate::cloud::object::Unit::WorkspaceDocument { document_id: value } if value == document_id)
+    );
+
+    let Record::Peer(join) = metadata::join_request(scope(), document, Vec::new()).unwrap() else {
+        panic!()
+    };
+    assert!(
+        matches!(metadata::decode(scope(), join, 1).unwrap().as_slice(), [Metadata::Request(request)] if request.unit == document)
+    );
+    let Record::Peer(ack) = scope().committed_ack(document, [1; 8]).unwrap() else {
+        panic!()
+    };
+    assert!(
+        matches!(metadata::decode(scope(), ack, 1).unwrap().as_slice(), [Metadata::Ack { unit, ok: true, .. }] if *unit == document)
+    );
+
+    let wrong_scope = Unit::Document {
+        workspace_id: id(3),
+        document_id,
+    };
+    assert!(scope().object_unit(wrong_scope).is_err());
+    assert!(
+        !Unit::Document {
+            workspace_id: document_id,
+            document_id
+        }
+        .valid()
+    );
+    assert!(
+        !Unit::Identity {
+            profile_id: document_id
+        }
+        .valid()
+    );
+    bytes[8] = 0;
+    assert!(
+        !Unit::Document {
+            workspace_id: id(1),
+            document_id: CloudId::from_bytes(bytes)
+        }
+        .valid()
+    );
+}
+
+#[test]
 fn live_rooms_negotiate_on_existing_loro_joins_and_leave_in_scope() {
     for live in [false, true] {
         let Record::Peer(frame) =

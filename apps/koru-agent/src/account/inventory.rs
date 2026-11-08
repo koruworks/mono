@@ -107,12 +107,14 @@ impl LocalProfileInventory for GatewayProfileInventory {
         let client =
             koru_api_client::Client::connect_at(crate::segment(), &self.authorization_root)
                 .map_err(|_| ServiceError::retryable("enrollment_unavailable"))?;
-        let profiles = client
+        let inventory = client
             .store()
-            .profiles()
+            .profile_lifecycle_inventory()
             .map_err(|_| ServiceError::retryable("enrollment_unavailable"))?;
-        Ok(profiles.iter().any(|candidate| {
-            candidate.id == profile && candidate.account.as_deref() == Some(&binding)
+        Ok(inventory.profiles.iter().any(|candidate| {
+            candidate.profile_id == profile
+                && candidate.account_binding == binding
+                && candidate.removed_at_millis.is_none()
         }))
     }
 }

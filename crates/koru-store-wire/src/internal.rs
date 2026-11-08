@@ -463,6 +463,10 @@ pub struct CloudDocumentActivity {
 /// The coalesced per-dataset record — one pass, the newest one.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct CloudPassActivity {
+    /// Confirmed progress for the unchanged inventory, retained across rechecks.
+    /// Separate from this pass's counters; never persisted across restarts.
+    #[serde(default)]
+    pub confirmed_documents: Option<CloudDocumentProgress>,
     /// Current manifest inventory, including the Workspace manifest itself.
     /// Unknown until that manifest has been reconciled and read locally.
     #[serde(default)]
@@ -489,6 +493,15 @@ pub struct CloudPassActivity {
     pub refusal_code: Option<String>,
     #[serde(default)]
     pub refused_at: Option<i64>,
+}
+
+/// A lower bound established by observed passes over an unchanged inventory.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CloudDocumentProgress {
+    pub required: u32,
+    pub synced: u32,
+    /// A whole pass finished without changes, hints, deferrals or refusals.
+    pub complete: bool,
 }
 
 /// Which replica path supplied this document's newest local update.

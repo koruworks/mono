@@ -2297,6 +2297,48 @@ async fn run_coverage(harness: &crate::fakes::Harness) {
         .expect("coverage ran");
 }
 
+#[tokio::test]
+async fn missing_files_are_listed_before_any_download_is_requested() {
+    let harness = Harness::new();
+    let bytes = picture(75, 700);
+    let hash = hash_of(&bytes);
+    let document = harness
+        .store
+        .document(harness.workspace, &[(&hash, "image/png")]);
+    // Unmeasured is unknown, not missing.
+    assert!(
+        harness
+            .engine
+            .waiting(harness.workspace)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    run_coverage(&harness).await;
+    let calls = harness.calls.total();
+    let waiting = harness.engine.waiting(harness.workspace).await.unwrap();
+    assert_eq!(waiting.len(), 1);
+    assert_eq!(waiting[0].document, document);
+    assert_eq!(waiting[0].blobs, vec![hash]);
+    assert_eq!(
+        harness.calls.total(),
+        calls,
+        "reading details must not request a download"
+    );
+    harness
+        .plane
+        .publish(harness.workspace, &bytes, "image/png");
+    run_coverage(&harness).await;
+    assert!(
+        harness
+            .engine
+            .waiting(harness.workspace)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
 /// **Images and files counted apart, and only this document's.** Two pictures
 /// (one durable, one uploading), a PDF Cloud holds and an archive it does
 /// not — and a second document whose durable picture must not leak into the

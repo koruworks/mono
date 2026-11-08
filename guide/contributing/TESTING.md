@@ -1,5 +1,9 @@
 # Test architecture
 
+The workspace host's native-menu queue tests share `QUEUE_TEST_LOCK` across
+each ingest/drain sequence. Distinct fixture ids do not isolate the tests:
+the production drain consumes every queued id, including another test's.
+
 The schedule SSE drop regression holds its fake bridge open with a channel
 until `Drop` returns, proving cancellation does not join the bridge. It does
 not measure a 100 ms wall-clock deadline: the former fake held the cancellation

@@ -142,6 +142,25 @@ fn delegate_needs_ai_and_the_agent_views() {
 }
 
 #[test]
+fn cloud_sync_ships_by_default_and_a_runtime_override_can_hide_it() {
+    if option_env!("KORU_ENABLE_CLOUD_SYNC").is_none() {
+        assert!(Features::BAKED.cloud_sync, "Cloud sync ships when unset");
+    }
+
+    let baked = Features {
+        cloud_sync: true,
+        ..Features::ALL_OFF
+    };
+    assert!(Features::resolve(baked, |_| None).cloud_sync);
+    for off in ["", "0", "false", "no", "off"] {
+        let resolved = Features::resolve(baked, |name| {
+            (name == env::KORU_ENABLE_CLOUD_SYNC).then(|| off.to_owned())
+        });
+        assert!(!resolved.cloud_sync, "{off:?} hides Cloud sync");
+    }
+}
+
+#[test]
 fn an_unset_agents_flag_is_on_and_a_set_one_follows_the_rule() {
     assert!(switch_value_or(None, true), "unset: agents ship");
     assert!(!switch_value_or(None, false));

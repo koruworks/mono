@@ -209,7 +209,8 @@ environment. Origin and issuer must be hosted HTTPS, including explicit Gradle
 overrides. It clears any inherited API forwarding request; ADB is used only
 to install, launch and view logs. Disconnect it for
 [hosted acceptance S](../../docs/features/oauth/TESTPLAN.md#s-hosted-oauth-release-without-local-api-infrastructure-about-25-minutes).
-The APK's actual signing certificate still needs its Android OAuth registration.
+The APK's signing certificate is the one already registered for that package.
+This repository does not contain that Google registration or `assetlinks.json`.
 
 The configuration-loader regression checks use a fake runner and need no SDK or
 device: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-configured.tests.ps1`.
@@ -600,6 +601,39 @@ rerunning `run-local` restores forwarding after a device reconnect. Remote API
 origins skip forwarding. For a remote API use
 HTTPS, and keep the issuer exactly equal to the server's configured issuer.
 The Android OAuth client/package/signing setup below is still required.
+
+## Official Cloud builds
+
+Nightly Android was built with no account settings, the same choice as the old
+desktop nightly (NIGHTLY N5). The installed app then shows account sign-in as
+unavailable and does not attach Cloud sync. A Cloud build of this job now
+passes the public settings the desktop already bakes in:
+
+| Gradle property | Existing value |
+| --- | --- |
+| `koruAccountOrigin` | `KORU_PUBLIC_API_ORIGIN` |
+| `koruAccountIssuer` | `KORU_PUBLIC_API_ISSUER` |
+| `koruAccountCredentialRollout` | `KORU_PUBLIC_API_CREDENTIAL_ROLLOUT` |
+| `koruGoogleServerClientId` | `KORU_PUBLIC_API_GOOGLE_CLIENT_ID`, the public web client id `.env.example` already names. Not `KORU_GOOGLE_DOCS_CLIENT_ID`. |
+| `koruAccountChannel` | `nightly` or `stable`, the same channel segment the desktop uses |
+
+`scripts/release/android-account-config.py` checks those values and prints the
+`-P` arguments. If validation fails, the release workflow stops before Gradle
+builds the APK. CI runs `python3 scripts/release/test_android_account_config.py`
+to check the validator and the workflow's Bash failure handling. With Cloud
+off it prints nothing, so `android-check` and a
+local build without the properties stay offline. The nightly package is
+`do.koru.app.nightly`. The same job with channel `stable` uses `do.koru.app`.
+The stable tag workflow does not build Android. Signing is the existing release
+keystore; an unsigned nightly is still not published.
+
+Sign-in on that build offers Google and Apple. Email is not offered: the
+mobile host refuses that action until its journey exists. Credential rollout
+is required together with sign-in, because that is what attaches Cloud sync.
+Passing the build does not show that a device completed sign-in or sync. The
+Google Android client for the package and signing certificate, and the
+verified App Link on `www.koru.do`, stay where they already are; this change
+does not create them.
 
 ## Google account build configuration
 

@@ -3701,6 +3701,35 @@ fn a_documents_rows_slot_folds_it_and_its_plus_asks_for_a_child() {
     assert_eq!(v.row_parts(&file, r).plus.w, 0.0);
 }
 
+#[test]
+fn document_priority_sits_between_icon_and_title_and_clear_reclaims_space() {
+    let mut view = with_rows(3);
+    let (index, band) = view.row_rects(area())[0];
+    let row = view.rows[index].clone();
+    let plain = view.row_parts(&row, band);
+    view.set_document_appearance(
+        row.node,
+        DocumentAppearance {
+            color: Some("purple".into()),
+            priority: Some(koru_core::attributes::Priority::Urgent),
+        },
+    );
+    let flagged = view.row_parts(&row, band);
+    assert!(flagged.icon.x + flagged.icon.w <= flagged.priority.x);
+    assert!(flagged.priority.x + flagged.priority.w < flagged.label.x);
+    assert!(flagged.label.x + flagged.label.w <= flagged.plus.x);
+    assert_eq!(flagged.dots, plain.dots);
+    assert!(flagged.label.w < plain.label.w);
+    assert_eq!(
+        view.document_appearance(&row).unwrap().color.as_deref(),
+        Some("purple")
+    );
+    view.set_document_appearance(row.node, DocumentAppearance::default());
+    let cleared = view.row_parts(&row, band);
+    assert_eq!(cleared.priority.w, 0.0);
+    assert_eq!(cleared.label, plain.label);
+}
+
 /// **The reflow guard.** The label's width must not depend on whether the
 /// pointer is on the row, or the name shuffles sideways as you move down the
 /// list — which reads as the list twitching rather than as a button arriving.

@@ -10,6 +10,32 @@ mod commit_retry;
 mod inspection;
 mod preparation;
 
+#[test]
+fn missing_position_repair_preserves_content_and_existing_positions() {
+    let mut repo = repo();
+    let id = DocumentId::new();
+    repo.create_document(id, DocumentKind::Document, at())
+        .unwrap();
+    let version = [1, 1, 1];
+    let frontiers = [1, 1, 0];
+    assert!(
+        repo.repair_missing_position(id, &version, &frontiers)
+            .unwrap()
+    );
+    let state = repo.document(id).unwrap().unwrap();
+    assert_eq!(state.version_vector, version);
+    assert_eq!(state.frontiers, frontiers);
+    assert_eq!(state.updated_at, at());
+    assert!(repo.updates_after(id, None).unwrap().is_empty());
+    assert!(repo.checkpoints(id).unwrap().is_empty());
+    assert!(
+        !repo
+            .repair_missing_position(id, &[1, 1, 2], &frontiers)
+            .unwrap()
+    );
+    assert_eq!(repo.document(id).unwrap().unwrap().version_vector, version);
+}
+
 fn at() -> Timestamp {
     Timestamp::from_millis(1_770_000_000_000)
 }

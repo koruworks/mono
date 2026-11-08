@@ -129,9 +129,14 @@ class AccountScreenTest {
     @Test fun signedOutEntryEmitsExplicitSignInAndStillOffersOffline() {
         show(AccountScreenState(phase = AccountPhase.SignedOut, capable = true))
         text(R.string.account_google).performClick()
+        text(R.string.account_apple).performClick()
+        compose.onNodeWithText(label(R.string.account_email)).assertDoesNotExist()
         text(R.string.account_offline).performClick()
         compose.runOnIdle {
-            assertEquals(listOf(AccountIntent.SignIn to null), actions)
+            assertEquals(
+                listOf(AccountIntent.SignIn to null, AccountIntent.SignInWithApple to null),
+                actions,
+            )
             assertEquals(1, offline)
         }
     }
