@@ -1406,6 +1406,10 @@ or **+ → Koru context** to open the same document picker as `@`. The band wrap
 up to three lines and then scrolls. When you send from a workspace or mention
 another workspace's document, Koru grants the needed workspace before it sends
 the message. A refused grant leaves the draft and its attachments in place.
+Type `@` to find a document or a task by name. A selected task links to its
+place in the document; when you send it to AI, the containing document supplies
+context. The picker starts in the current workspace. Press `Ctrl+Space` while
+it is open to search your other workspaces too.
 
 On a chat with a local agent, the send button carries the agent's current
 approval mode: its color and icon identify the mode, and its chevron appears

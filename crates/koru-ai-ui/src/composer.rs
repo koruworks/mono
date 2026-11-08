@@ -1114,7 +1114,7 @@ impl ChatComposer {
                 .map(|hit| DocumentChoice {
                     target: DocumentTarget {
                         document: koru_core::DocumentId::from_uuid(hit.document.as_uuid()),
-                        node: None,
+                        node: hit.node.as_deref().and_then(NodeId::parse),
                     },
                     title: hit.title,
                     breadcrumb: hit.breadcrumb,

@@ -72,6 +72,9 @@ pub fn fragments(
 
     let root = projection.nodes.first().filter(|n| n.kind == "document");
     for (seq, node) in projection.nodes.iter().enumerate() {
+        if node.in_trash {
+            continue;
+        }
         let seq = seq as i64 + 1;
         let is_root = root.is_some_and(|r| r.id == node.id);
         // The root's own text is already carried by the listing — unless the
@@ -158,6 +161,9 @@ pub fn attr_values(
 ) -> Vec<AttrRow> {
     let mut out = Vec::new();
     for node in &projection.nodes {
+        if node.in_trash {
+            continue;
+        }
         for attr in &node.attrs {
             if attr.value.trim().is_empty() {
                 continue;

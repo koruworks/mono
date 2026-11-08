@@ -1012,7 +1012,14 @@ fn draw_entity_picker(
         let ry = rows_y + i as f32 * theme::ROW_H;
         let on = index == sel || hovered_row == Some(index);
         draw_row_bg(scene, root, px, ry, pw, on);
-        let glyph = view.engine.icon_layout(icons::DOCUMENT, 15.0);
+        let glyph = view.engine.icon_layout(
+            if hit.target.node.is_some() {
+                icons::CHECK_SQUARE
+            } else {
+                icons::DOCUMENT
+            },
+            15.0,
+        );
         draw_layout(
             scene,
             root,

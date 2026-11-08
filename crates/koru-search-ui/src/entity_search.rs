@@ -34,7 +34,7 @@ pub fn parse_kind_prefix(text: &str) -> (Vec<String>, String) {
         let original_rest = &trimmed[trimmed.len() - rest.len()..];
         return (vec!["document".into()], original_rest.trim().to_owned());
     }
-    (vec!["document".into(), "file".into()], text.to_owned())
+    (Vec::new(), text.to_owned())
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -50,6 +50,8 @@ pub struct EntityDocument {
     pub profile: ProfileId,
     pub workspace: WorkspaceId,
     pub document: DocumentId,
+    /// The selected task node, if this row is a task rather than a page.
+    pub node: Option<String>,
     pub title: String,
     pub breadcrumb: String,
     /// Manifest kind of the hit (`document` / `file`). Defaults to document
@@ -173,8 +175,8 @@ impl EntitySearch {
     /// Search live document and file titles in the selected workspaces.
     ///
     /// Kind prefixes restrict the query: `file:budget` only files, `doc:plan`
-    /// only documents. An unknown prefix is treated as plain text. A bare
-    /// query matches both kinds by name.
+    /// only those title kinds. An unknown prefix is treated as plain text.
+    /// A bare query matches document titles and task labels.
     pub fn request(&mut self, text: String, workspaces: Vec<WorkspaceId>) -> u64 {
         self.ensure_catalog();
         self.last_request = Some((text.clone(), workspaces.clone()));
@@ -189,6 +191,7 @@ impl EntitySearch {
                 text,
                 workspaces,
                 kinds,
+                entity_picker: true,
                 lifecycle: LifecycleFilter::Live,
                 page_size: 20,
                 request_seq: self.seq,
@@ -372,7 +375,7 @@ impl EntitySearch {
                 }
                 let workspace = WorkspaceId::parse(&hit.workspace)?;
                 let document = DocumentId::parse(hit.document.as_deref()?)?;
-                if !seen.insert((workspace, document)) {
+                if !seen.insert((workspace, document, hit.node.clone())) {
                     return None;
                 }
                 let kind = if hit.document_kind.is_empty() {
@@ -384,6 +387,7 @@ impl EntitySearch {
                     profile: self.catalog.owner_of(workspace)?,
                     workspace,
                     document,
+                    node: hit.node,
                     title: hit.title,
                     breadcrumb: hit.breadcrumb,
                     kind,
@@ -564,14 +568,8 @@ mod tests {
             parse_kind_prefix("DOC: Roadmap"),
             (vec!["document".into()], "Roadmap".into())
         );
-        assert_eq!(
-            parse_kind_prefix("foo:bar"),
-            (vec!["document".into(), "file".into()], "foo:bar".into())
-        );
-        assert_eq!(
-            parse_kind_prefix("plain"),
-            (vec!["document".into(), "file".into()], "plain".into())
-        );
+        assert_eq!(parse_kind_prefix("foo:bar"), (Vec::new(), "foo:bar".into()));
+        assert_eq!(parse_kind_prefix("plain"), (Vec::new(), "plain".into()));
     }
 
     fn hit(workspace: WorkspaceId, document: DocumentId) -> koru_api_client::SearchHit {
@@ -596,6 +594,82 @@ mod tests {
             observed_modified_at_ms: None,
             workspace_last_used_at_ms: None,
         }
+    }
+
+    #[test]
+    fn task_hits_keep_distinct_nodes_in_one_document() {
+        let workspace = WorkspaceId::new();
+        let document = DocumentId::new();
+        let profile = ProfileId::new();
+        let mut search = EntitySearch::new();
+        search.catalog = Catalog::for_test(
+            vec![(workspace, "Work".into(), profile)],
+            vec![(profile, "Profile".into())],
+        );
+        let mut first = hit(workspace, document);
+        first.node = Some("11111111-1111-4111-8111-111111111111".into());
+        first.title = "Ship café".into();
+        let mut second = first.clone();
+        second.node = Some("22222222-2222-4222-8222-222222222222".into());
+        second.title = "Ship a second task".into();
+        let choices = search.documents(vec![first.clone(), second.clone(), first.clone()]);
+        assert_eq!(choices.len(), 2);
+        assert_eq!(choices[0].node, first.node);
+        assert_eq!(choices[1].node, second.node);
+        assert_eq!(choices[0].title, "Ship café");
+        assert_eq!(choices[0].document, document);
+        assert_eq!(choices[0].workspace, workspace);
+    }
+
+    #[test]
+    fn removed_task_hits_are_ignored_and_stale_task_pages_cannot_replace_a_new_query() {
+        let (reader, response_tx, request_rx, _background_rx) =
+            SearchReader::test_pair_with_background();
+        let profile = ProfileId::new();
+        let workspace = WorkspaceId::new();
+        let document = DocumentId::new();
+        let mut search = EntitySearch::new();
+        search.reader = Some(reader);
+        response_tx
+            .send(SearchReadResponse {
+                seq: 0,
+                result: SearchReadResult::Catalog(Catalog::for_test(
+                    vec![(workspace, "Workspace".into(), profile)],
+                    vec![(profile, "Profile".into())],
+                )),
+            })
+            .unwrap();
+        search.pump();
+
+        let stale = search.request("old".into(), vec![workspace]);
+        request_rx.recv().unwrap();
+        let current = search.request("new".into(), vec![workspace]);
+        request_rx.recv().unwrap();
+        let mut old_task = hit(workspace, document);
+        old_task.node = Some("old-node".into());
+        response_tx
+            .send(SearchReadResponse {
+                seq: stale,
+                result: page(stale, vec![old_task]),
+            })
+            .unwrap();
+        assert!(search.poll().is_none());
+
+        let mut removed_task = hit(workspace, document);
+        removed_task.node = Some("removed-node".into());
+        removed_task.lifecycle = Lifecycle::Trashed;
+        let mut live_task = hit(workspace, document);
+        live_task.node = Some("live-node".into());
+        response_tx
+            .send(SearchReadResponse {
+                seq: current,
+                result: page(current, vec![removed_task, live_task]),
+            })
+            .unwrap();
+        let update = search.poll().unwrap();
+        assert_eq!(update.seq, current);
+        assert_eq!(update.documents.len(), 1);
+        assert_eq!(update.documents[0].node.as_deref(), Some("live-node"));
     }
 
     fn page(seq: u64, hits: Vec<koru_api_client::SearchHit>) -> SearchReadResult {

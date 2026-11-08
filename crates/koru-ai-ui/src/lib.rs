@@ -4844,10 +4844,22 @@ impl ChatSurface {
             })
             .collect();
         self.usage_report = None;
-        // A chip's caption is the document's title as it was chosen: the sent
-        // card reads it at once, before any lookup.
+        // A node link may be a task whose pill caption is its task label.
+        // The same document can appear elsewhere in this chat, so only a
+        // document-only link may seed the document title cache. Node links
+        // use the Store title lookup when no title is known yet.
+        let node_documents: HashSet<DocumentId> = koru_link::wrapped(&markdown)
+            .into_iter()
+            .filter_map(|token| match token.link {
+                koru_link::KoruLink::Document {
+                    document,
+                    node: Some(_),
+                } => Some(DocumentId::from_uuid(document)),
+                _ => None,
+            })
+            .collect();
         for (document, title) in &message.documents {
-            if !title.trim().is_empty() {
+            if !title.trim().is_empty() && !node_documents.contains(document) {
                 self.document_titles.insert(*document, title.clone());
             }
         }
@@ -10581,6 +10593,51 @@ mod tests {
             commands.recv_timeout(Duration::from_millis(50)).unwrap(),
             Command::Send(_)
         ));
+    }
+
+    #[test]
+    fn task_node_link_grants_its_containing_document_before_send() {
+        let mut surface = ChatSurface::new();
+        let (reader, commands, _updates) = Reader::test_pair();
+        let mut transcript = transcript();
+        transcript.chat.current_model.provider = AiProviderId::parse("agent-codex").unwrap();
+        let chat = transcript.chat.id;
+        let policy = transcript.tool_policy.clone();
+        let document = DocumentId::new();
+        let node = koru_core::NodeId::new();
+        surface.reader = Some(reader);
+        surface.transcript = Some(transcript);
+        surface.document_titles.insert(document, "Plan".into());
+        surface
+            .composer
+            .set_message(&format!("[[koru://doc/{document}#{node}]]"), |_| {
+                "Ship café".into()
+            });
+        assert!(surface.send_composer());
+        let Command::AddGrants(actual, _, documents, op) =
+            commands.recv_timeout(Duration::from_millis(50)).unwrap()
+        else {
+            panic!("document grant precedes task send");
+        };
+        assert_eq!(actual, chat);
+        assert_eq!(documents, vec![document]);
+        assert!(commands.try_recv().is_err());
+        surface.apply_update(Update::GrantsAdded {
+            chat,
+            op,
+            result: Ok(policy),
+        });
+        let Command::Send(request) = commands.recv_timeout(Duration::from_millis(50)).unwrap()
+        else {
+            panic!("task turn follows grant acknowledgement");
+        };
+        assert_eq!(
+            request.explicit_refs,
+            vec![ContextRef::Document {
+                document_id: document
+            }]
+        );
+        assert_eq!(surface.document_titles.get(&document).unwrap(), "Plan");
     }
 
     #[test]

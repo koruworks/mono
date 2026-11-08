@@ -5354,6 +5354,11 @@
             "nullable": true,
             "type": "string"
           },
+          "entity_picker": {
+            "default": false,
+            "description": "Restrict results to document/file titles and live task nodes for an @ picker.\nThis is a query shape over the existing projection, not a stored index.",
+            "type": "boolean"
+          },
           "excluded_workspaces": {
             "default": [],
             "items": {
@@ -12276,6 +12281,11 @@
               "$ref": "#/components/schemas/AttrFilter"
             },
             "type": "array"
+          },
+          "entity_picker": {
+            "default": false,
+            "description": "Restrict results to document/file titles and live task nodes for an @ picker.\nThis is a query shape over the existing projection, not a stored index.",
+            "type": "boolean"
           },
           "excluded_workspaces": {
             "default": [],

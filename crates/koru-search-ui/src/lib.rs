@@ -2059,6 +2059,7 @@ impl SearchSurface {
         let (text, attributes) = filters::split(&self.query.value(), &self.definitions);
         SearchQuery {
             text,
+            entity_picker: false,
             workspaces,
             excluded_workspaces,
             lifecycle: self.lifecycle,

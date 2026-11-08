@@ -59,6 +59,37 @@ fn a_chosen_document_sits_in_the_text_as_a_chip_and_leaves_as_its_link() {
 }
 
 #[test]
+fn selected_task_keeps_its_node_link_and_containing_document_context() {
+    let document = DocumentId::new();
+    let node = NodeId::new();
+    let mut composer = ChatComposer::new(None);
+    typed(&mut composer, "@ship");
+    assert!(composer.editor.set_entity_search_results(
+        vec![DocumentChoice {
+            target: DocumentTarget {
+                document: koru_core::DocumentId::from_uuid(document.as_uuid()),
+                node: Some(node)
+            },
+            title: "Ship café".into(),
+            breadcrumb: "Workspace / Plan".into(),
+            is_file: false,
+        }],
+        false
+    ));
+    assert!(press(&mut composer, NamedKey::Enter));
+    let message = composer.message();
+    assert_eq!(
+        message.markdown,
+        format!("[[koru://doc/{document}#{node}]] ")
+    );
+    assert_eq!(message.documents, vec![(document, "Ship café".into())]);
+    let mut recalled = ChatComposer::new(None);
+    recalled.set_message(&message.markdown, |_| "Ship café".into());
+    assert_eq!(recalled.message().markdown, message.markdown);
+    assert_eq!(recalled.message().documents, message.documents);
+}
+
+#[test]
 fn at_inside_a_word_does_nothing() {
     let mut composer = ChatComposer::new(None);
     typed(&mut composer, "mail@example");

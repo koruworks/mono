@@ -936,6 +936,36 @@ mod tests {
     }
 
     #[test]
+    fn task_choice_commits_the_containing_document_and_node() {
+        let document = DocumentId::new();
+        let node = NodeId::new();
+        let mut picker = EntityPicker::new(Trigger::at_start());
+        picker.set_results(
+            vec![DocumentChoice {
+                target: DocumentTarget {
+                    document,
+                    node: Some(node),
+                },
+                title: "Ship café".into(),
+                breadcrumb: "Work / Plan".into(),
+                is_file: false,
+            }],
+            false,
+        );
+        let Outcome::Commit(pill) = picker.choose(0) else {
+            panic!("task choice commits");
+        };
+        assert_eq!(
+            pill.document,
+            Some(DocumentTarget {
+                document,
+                node: Some(node)
+            })
+        );
+        assert_eq!(pill.label, "Ship café");
+    }
+
+    #[test]
     fn new_page_uses_the_typed_query_as_its_title() {
         let mut picker = EntityPicker::new(Trigger::at_start());
         picker.query = "someone".into();

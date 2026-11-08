@@ -16491,7 +16491,7 @@ impl MainView {
                 |document| koru_editor::components::entity_picker::DocumentChoice {
                     target: koru_editor::trigger::DocumentTarget {
                         document: koru_core::DocumentId::from_uuid(document.document.as_uuid()),
-                        node: None,
+                        node: document.node.as_deref().and_then(koru_core::NodeId::parse),
                     },
                     title: document.title,
                     breadcrumb: document.breadcrumb,
