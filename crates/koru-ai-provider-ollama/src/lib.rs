@@ -791,6 +791,7 @@ mod tests {
             messages: vec![AiRequestMessage {
                 role: ChatRole::User,
                 markdown: "Hello".into(),
+                attachments: Vec::new(),
             }],
             context: Vec::new(),
             tools: Vec::new(),

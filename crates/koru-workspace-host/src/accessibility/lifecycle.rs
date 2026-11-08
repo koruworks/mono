@@ -41,7 +41,6 @@ use koru_window::AccessibilityProvider as Provider;
 use super::dump::{self, Dump, Redaction};
 use super::identity::{Occurrence, ViewSlot, WindowSlot};
 use super::projection::{Projection, Scope, WindowSemantics, build};
-use super::repair::Repair;
 
 /// Where a window is in its life. The order is the invariant: a provider is
 /// installed while the window is still hidden, and nothing is answered after
@@ -82,10 +81,6 @@ pub struct Counters {
     pub dumps: u64,
     /// Node ids that collided or were published twice. Always a bug.
     pub duplicate_ids: u64,
-    /// Changes made to an update so AccessKit would accept it, instead of
-    /// panicking. Always a bug in a view, and logged with its locators; see
-    /// [`super::repair`].
-    pub repairs: u64,
     /// A published focus named a control that was not in the tree.
     pub unresolved_focus: u64,
 }
@@ -124,15 +119,7 @@ struct Landed {
     duplicate_ids: usize,
     unresolved_focus: bool,
     retired: Vec<NodeId>,
-    repairs: Vec<Repair>,
 }
-
-/// How many repairs one window writes to the log before it only counts them.
-///
-/// A view that publishes one control twice usually does it on every publish —
-/// every keystroke, in a delta — and the first few lines already name it. The
-/// rest are in [`Counters::repairs`].
-const LOGGED_REPAIRS: u64 = 16;
 
 pub struct PaneAccessibility {
     slot: WindowSlot,
@@ -428,7 +415,6 @@ impl PaneAccessibility {
                 duplicate_ids,
                 unresolved_focus,
                 retired,
-                repairs,
             } = build(semantics, &known);
             // **The one copy, and only when somebody asked for it.** The
             // adapter takes the update, so describing it afterwards means
@@ -443,7 +429,6 @@ impl PaneAccessibility {
                 duplicate_ids,
                 unresolved_focus,
                 retired,
-                repairs,
             });
             update
         });
@@ -459,7 +444,6 @@ impl PaneAccessibility {
         self.counters.duplicate_ids += landed.duplicate_ids as u64;
         self.counters.unresolved_focus += u64::from(landed.unresolved_focus);
         self.counters.nodes_published += landed.nodes as u64;
-        self.log_repairs(&landed.repairs, semantics.scope);
         if self.owes_full {
             self.counters.activations += 1;
             self.owes_full = false;
@@ -571,33 +555,6 @@ impl PaneAccessibility {
         }
         self.counters.actions_routed += resolved.len() as u64;
         resolved
-    }
-
-    /// Count what [`super::repair`] had to change, and say so in the log.
-    ///
-    /// **Not behind the debug switch**, unlike [`note`](Self::note): each of
-    /// these used to be a panic that closed the window, and the line naming the
-    /// control is the only way to find the view that published it twice. Ids,
-    /// roles and locators only, which is what a [`Repair`] carries.
-    fn log_repairs(&mut self, repairs: &[Repair], scope: Scope) {
-        for repair in repairs {
-            self.counters.repairs += 1;
-            if self.counters.repairs <= LOGGED_REPAIRS {
-                tracing::error!(
-                    target: "koru::accessibility",
-                    window = self.slot.raw(),
-                    scope = ?scope,
-                    "the accessibility tree was repaired before publishing: {repair}"
-                );
-            }
-            if self.counters.repairs == LOGGED_REPAIRS {
-                tracing::error!(
-                    target: "koru::accessibility",
-                    window = self.slot.raw(),
-                    "further accessibility repairs in this window are counted, not logged"
-                );
-            }
-        }
     }
 
     fn refuse(&mut self, count: usize, why: &'static str) {

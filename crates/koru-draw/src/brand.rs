@@ -370,6 +370,10 @@ pub fn for_profile(key: &str) -> Option<ProfileMark> {
         // QUESTIONS.md, phase D). Never Gemini's mark: a different product.
         "antigravity" => Some(ProfileMark::Glyph(crate::icons::ROBOT)),
         "muse" => Some(ProfileMark::Brand(&META)),
+        // No licensed Devin or Cognition mark exists for the tree, and
+        // Windsurf's is another product's: a neutral code glyph, distinct
+        // from Antigravity's robot so the two rows are told apart.
+        "devin" => Some(ProfileMark::Glyph(crate::icons::CODE)),
         _ => None,
     }
 }

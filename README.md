@@ -1,7 +1,7 @@
 <p align="center">
   <a href="https://koru.do"><img src="assets/logo.png" alt="Koru logo" height="80"></a>
 </p>
-<p align="center"><strong>Your private workspace for thinking, writing and AI.</strong></p>
+<p align="center"><strong>A free notes app that works with your AI subscription.</strong></p>
 <p align="center">
   <a href="https://koru.do"><img src="https://img.shields.io/badge/%E2%9C%A8-Website-0a0a0a.svg?style=flat&colorA=0a0a0a" alt="Website"></a>
   <a href="https://koru.do/#download"><img src="https://img.shields.io/badge/%E2%9C%A8-Download-0a0a0a.svg?style=flat&colorA=0a0a0a" alt="Download Koru"></a>
@@ -12,10 +12,10 @@
 </p>
 
 <p align="center">
-  <img src=".github/readme/koru-workspace.webp" alt="Koru on Windows: a travel-planning note with a photo and an itinerary, next to a Claude Code agent tab" width="100%">
+  <img src=".github/readme/koru-workspace.webp" alt="Koru on Windows: a travel-planning note with a photo and a checklist, next to the AI Chat tab" width="100%">
 </p>
 
-# Koru is a private, local-first AI workspace
+# Koru is a free notes app that works with your AI subscription
 
 Koru is an open-source, local-first workspace for thinking, writing and working
 with AI. Documents, files and terminal sessions, including your shells and AI
@@ -103,9 +103,9 @@ experimental features.
 | --- | --- |
 | **Windows** (x86-64) | Supported. Builds, runs and packages from this repository. A [stable build](https://github.com/koruworks/mono/releases/latest) and a [nightly build](https://github.com/koruworks/mono/releases/tag/nightly) are published as an installer, or a zip to run without installing; either updates itself. They are not code-signed yet, so SmartScreen asks before the first run and reminders show no notifications |
 | **macOS** (Apple silicon, macOS 12+) | Supported. A [stable build](https://github.com/koruworks/mono/releases/latest) and a [nightly build](https://github.com/koruworks/mono/releases/tag/nightly) are published as signed and notarized disk images that update themselves, and it builds and runs from source |
-| **Android** | The native app builds with Gradle and is in active development; see [Android setup and verification](apps/android/README.md) |
+| **Android** | Not released yet. The native app builds with Gradle and is in active development; see [Android setup and verification](apps/android/README.md) |
 | **iOS** | Held. The project in `apps/ios` is not released yet; the first release waits for it to be built and verified on a Mac |
-| **Linux** (x86-64) | Supported. A [stable build](https://github.com/koruworks/mono/releases/latest) and a [nightly build](https://github.com/koruworks/mono/releases/tag/nightly) are published as tarballs that update themselves. Koru runs as an X11 app (XWayland on Wayland desktops), and text may look soft at fractional scaling; voice input is not available on Linux yet |
+| **Linux** (x86-64) | Supported. A [stable build](https://github.com/koruworks/mono/releases/latest) and a [nightly build](https://github.com/koruworks/mono/releases/tag/nightly) are published as tarballs for glibc 2.35 or newer that update themselves; 0.1.4 is the first stable Linux release. Koru runs as an X11 app (XWayland on Wayland desktops), and text may look soft at fractional scaling; voice input is not available on Linux yet |
 
 ## Build and run from a fresh clone
 
@@ -228,7 +228,8 @@ koru.bat test                  REM cargo test --workspace, the whole suite
 koru.bat dist-local beta       REM an unsigned local package under dist\ (needs the voice archive)
 ```
 
-Android needs JDK 17 and Android SDK 37. The Gradle wrapper is fetched, not
+Android needs JDK 17 and Android SDK Platform 37 to compile against (the app
+targets API 36 and runs on API 29 or newer). The Gradle wrapper is fetched, not
 committed, so on a fresh clone run `scripts\setup\fetch-third-party.ps1` (or
 `bash scripts/setup/fetch-third-party.sh`) once, then `cd apps/android` and
 `./gradlew testDebugUnitTest assembleDebug`. See the
@@ -279,10 +280,10 @@ registration. A build without them turns those features off and says so.
 If Koru is useful to you, a post about it really helps a small, independent
 project get found. Follow the build on X: [@liechti_dev](https://x.com/liechti_dev).
 
-[![Share on Reddit](https://img.shields.io/badge/share%20on-reddit-FF4500?logo=reddit&logoColor=white)](https://www.reddit.com/submit?url=https%3A%2F%2Fkoru.do&title=Koru%3A%20a%20private%2C%20open-source%2C%20local-first%20AI%20workspace)
-[![Share on Hacker News](https://img.shields.io/badge/share%20on-hacker%20news-F0652F?logo=ycombinator&logoColor=white)](https://news.ycombinator.com/submitlink?u=https%3A%2F%2Fkoru.do&t=Koru%3A%20a%20private%2C%20open-source%2C%20local-first%20AI%20workspace)
-[![Share on X](https://img.shields.io/badge/share%20on-x-000000?logo=x&logoColor=white)](https://x.com/intent/post?url=https%3A%2F%2Fkoru.do&text=Koru%3A%20a%20private%2C%20open-source%2C%20local-first%20AI%20workspace&via=liechti_dev)
-[![Share on Bluesky](https://img.shields.io/badge/share%20on-bluesky-0285FF?logo=bluesky&logoColor=white)](https://bsky.app/intent/compose?text=Koru%3A%20a%20private%2C%20open-source%2C%20local-first%20AI%20workspace%20https%3A%2F%2Fkoru.do)
+[![Share on Reddit](https://img.shields.io/badge/share%20on-reddit-FF4500?logo=reddit&logoColor=white)](https://www.reddit.com/submit?url=https%3A%2F%2Fkoru.do&title=Koru%3A%20a%20free%2C%20open-source%20notes%20app%20that%20works%20with%20your%20AI%20subscription)
+[![Share on Hacker News](https://img.shields.io/badge/share%20on-hacker%20news-F0652F?logo=ycombinator&logoColor=white)](https://news.ycombinator.com/submitlink?u=https%3A%2F%2Fkoru.do&t=Koru%3A%20a%20free%2C%20open-source%20notes%20app%20that%20works%20with%20your%20AI%20subscription)
+[![Share on X](https://img.shields.io/badge/share%20on-x-000000?logo=x&logoColor=white)](https://x.com/intent/post?url=https%3A%2F%2Fkoru.do&text=Koru%3A%20a%20free%2C%20open-source%20notes%20app%20that%20works%20with%20your%20AI%20subscription&via=liechti_dev)
+[![Share on Bluesky](https://img.shields.io/badge/share%20on-bluesky-0285FF?logo=bluesky&logoColor=white)](https://bsky.app/intent/compose?text=Koru%3A%20a%20free%2C%20open-source%20notes%20app%20that%20works%20with%20your%20AI%20subscription%20https%3A%2F%2Fkoru.do)
 [![Share on LinkedIn](https://img.shields.io/badge/share%20on-linkedin-0A66C2?logo=linkedin&logoColor=white)](https://www.linkedin.com/sharing/share-offsite/?url=https%3A%2F%2Fkoru.do)
 [![Share on Facebook](https://img.shields.io/badge/share%20on-facebook-1877F2?logo=facebook&logoColor=white)](https://www.facebook.com/sharer/sharer.php?u=https%3A%2F%2Fkoru.do)
 

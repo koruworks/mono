@@ -283,10 +283,24 @@ pub fn scope(
     bounds: Rect,
     properties: impl FnOnce(&mut Record),
 ) -> Scope {
+    scope_at(name, kind, root, bounds, Location::caller(), properties)
+}
+
+/// A scope whose source is where the thing was *written*, not where it was
+/// painted: an element built in a host module and painted by the shared
+/// frame names the host's line (ELEMENTS.final §3.9, construction site).
+pub fn scope_at(
+    name: &'static str,
+    kind: &'static str,
+    root: Affine,
+    bounds: Rect,
+    site: &'static Location<'static>,
+    properties: impl FnOnce(&mut Record),
+) -> Scope {
     if !enabled() {
         return Scope(false);
     }
-    let index = append(name, kind, root, bounds, Location::caller(), properties);
+    let index = append(name, kind, root, bounds, site, properties);
     if let Some(index) = index {
         CAPTURE.with_borrow_mut(|slot| slot.as_mut().unwrap().stack.push(index));
     }
@@ -469,11 +483,21 @@ pub fn text_run(
                 .english_or_first()
                 .map(|name| name.to_string())
                 .unwrap_or_else(|| "Unknown".into());
+            // Who supplied the face: a family the person chose by name, one
+            // Koru ships, or the system filling in a glyph the stack lacked.
+            let source = if crate::installed_fonts::is_interned(&family) {
+                "installed (chosen by name)"
+            } else if crate::text::is_bundled_family(&family) {
+                "bundled with Koru"
+            } else {
+                "system fallback"
+            };
             record.property(
                 "rendered family",
                 family,
                 "actual font face; fallback included",
             );
+            record.property("font source", source, "who supplied the face");
             record.property(
                 "face attributes",
                 format!("{:?}", font.attributes()),

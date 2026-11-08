@@ -42,54 +42,6 @@ fn main() {
     .icon(2, assets.join("document.ico"))
     .versioned(version(), build_number());
     koru_winres::embed("koru", &resource);
-
-    delay_load();
-}
-
-/// System DLLs `koru.exe` imports but does not need before its first frame,
-/// loaded on the first call into them instead of before `main`.
-///
-/// **Every static import is loaded, initialised and resolved before `main`
-/// runs**, whether or not this launch ever calls it. Started and immediately
-/// asked for `--version`, this executable took 80 ms where `cmd /c exit` took
-/// 14 — a launch-time cost no in-process timer can see, because it is over
-/// before the first one starts. Several of these pull in a dozen more DLLs of
-/// their own (`wininet`, `opengl32`, `setupapi`, `uiautomationcore`).
-///
-/// **A window launch does not get faster from this yet.** With a wider set of
-/// sixteen delayed, `--version` came down to 13 ms, but a cold window launch
-/// measured the same with and without it, because GPU device creation loads
-/// most of these before the first frame anyway — the cost moves, it does not
-/// leave the critical path. This narrower set has not been timed on its own.
-/// It pays once the first frame no longer waits for the GPU.
-///
-/// Behaviour does not change: a delay-loaded DLL is loaded by the first call
-/// into it, on the thread that makes it. The cost of being wrong is only that
-/// one of these is needed early after all and is loaded then instead. What is
-/// **not** here is deliberate: `kernel32`, `user32`, `gdi32`, `ole32`,
-/// `dwmapi`, `advapi32`, `ntdll`, the `bcrypt` pair and the `api-ms-win-*`
-/// sets are either loaded by Windows for every GUI process anyway or called
-/// before the window exists. A DLL with data imports cannot be delay-loaded,
-/// and the linker says so (LNK1194) rather than building something broken.
-fn delay_load() {
-    if env::var("CARGO_CFG_TARGET_ENV").as_deref() != Ok("msvc") {
-        return;
-    }
-    const LATER: &[&str] = &[
-        "opengl32.dll",
-        "d3d11.dll",
-        "setupapi.dll",
-        "wininet.dll",
-        "winmm.dll",
-        "coremessaging.dll",
-        "ws2_32.dll",
-        "userenv.dll",
-    ];
-    for dll in LATER {
-        println!("cargo:rustc-link-arg-bins=/DELAYLOAD:{dll}");
-    }
-    // The helper that resolves a delay-loaded import on its first call.
-    println!("cargo:rustc-link-arg-bins=delayimp.lib");
 }
 
 /// The version a release stamps in, or the package's own.

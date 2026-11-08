@@ -47,6 +47,10 @@ use super::{MainView, TabView};
 /// layers a caller above has already dealt with.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub(crate) enum Layer {
+    /// The installed-font picker. Above everything: it stands over a
+    /// terminal tab or the Settings page that opened it, and owns the keys
+    /// while it is up.
+    FontPicker,
     /// The centred *Move to…* picker. Claimed by the `View::key` wrapper.
     MoveTo,
     /// The global-search overlay. Claimed by the `View::key` wrapper.
@@ -73,10 +77,23 @@ pub(crate) enum Layer {
     /// The session-recording setup modal. Same argument as `Delegate`: the
     /// caption-menu row that opens it is gone before the modal answers.
     Recording,
+    /// The place chooser an Alt+click on a reference opens. Above `Menu`:
+    /// opening it takes any menu down, so the two never stand together, and
+    /// it is the more recent of the two by construction.
+    PlaceChooser,
+    /// The `+` button's New… dialog. Beside the place chooser and above
+    /// `Menu` for the same reason: opening it takes any menu down, and
+    /// Alt on a tile closes it before the chooser opens.
+    Launcher,
     Menu,
     ReminderOverlay,
     ReminderManagement,
     ReminderCreation,
+    /// The shared media viewer a tab or the Koru AI column lifted over the
+    /// window (ADR-482). Last: it is drawn under the container's menus and
+    /// modals, which still stand above everything a tab owns, and the keys
+    /// it claims are routed to its owner by the arm that names it.
+    MediaViewer,
 }
 
 impl Layer {
@@ -87,7 +104,8 @@ impl Layer {
     /// projection publishes the standing blocker and nothing beneath it, and
     /// the test that every kind of blocker publishes the control it focuses
     /// walks *this* table rather than a second list of kinds to keep in step.
-    pub(crate) const ALL: [Self; 19] = [
+    pub(crate) const ALL: [Self; 23] = [
+        Self::FontPicker,
         Self::MoveTo,
         Self::Search,
         Self::Error,
@@ -103,16 +121,20 @@ impl Layer {
         Self::NewList,
         Self::Delegate,
         Self::Recording,
+        Self::PlaceChooser,
+        Self::Launcher,
         Self::Menu,
         Self::ReminderOverlay,
         Self::ReminderManagement,
         Self::ReminderCreation,
+        Self::MediaViewer,
     ];
 
     /// What this layer *is*, to a caller that only wants to know whether it can
     /// be typed into.
     pub(crate) fn blocker(self) -> Blockers {
         match self {
+            Self::FontPicker => Blockers::Prompt(PromptKind::FontPicker),
             Self::MoveTo => Blockers::Prompt(PromptKind::MoveTo),
             Self::Search => Blockers::Prompt(PromptKind::Search),
             Self::Error => Blockers::Modal(ModalKind::Error),
@@ -132,10 +154,13 @@ impl Layer {
             // A **modal**: the setup is a small form with its own focus ring,
             // and nothing underneath may receive keys while it stands.
             Self::Recording => Blockers::Modal(ModalKind::Recording),
+            Self::PlaceChooser => Blockers::Modal(ModalKind::PlaceChooser),
+            Self::Launcher => Blockers::Modal(ModalKind::Launcher),
             Self::Menu => Blockers::Modal(ModalKind::ContextMenu),
             Self::ReminderOverlay => Blockers::Modal(ModalKind::ReminderOverlay),
             Self::ReminderManagement => Blockers::Modal(ModalKind::ReminderManagement),
             Self::ReminderCreation => Blockers::Prompt(PromptKind::ReminderCreation),
+            Self::MediaViewer => Blockers::Modal(ModalKind::MediaViewer),
         }
     }
 }
@@ -157,6 +182,7 @@ impl MainView {
             match &self.tabs().active_tab().view {
                 TabView::Leaf(_) => "document",
                 TabView::Welcome(_) => "welcome",
+                TabView::Home(_) => "home",
                 TabView::Manage(_) => "manage",
                 TabView::Trash(_) => "trash",
                 TabView::Tasks(_) => "tasks",
@@ -181,6 +207,7 @@ impl MainView {
     /// these questions in an order of its own.
     fn layer_is_up(&self, layer: Layer) -> bool {
         match layer {
+            Layer::FontPicker => self.font_picker.is_some(),
             Layer::MoveTo => self.move_to.is_some(),
             Layer::Search => self.search.is_some(),
             Layer::Error => self.error.is_some(),
@@ -196,10 +223,13 @@ impl MainView {
             Layer::NewList => self.new_list.is_some(),
             Layer::Delegate => self.delegation_open(),
             Layer::Recording => self.recording_modal.is_some(),
+            Layer::PlaceChooser => self.place_chooser.is_some(),
+            Layer::Launcher => self.launcher.is_some(),
             Layer::Menu => self.menu.is_some(),
             Layer::ReminderOverlay => self.reminder_shell.overlay_live(),
             Layer::ReminderManagement => self.reminder_creation.is_management(),
             Layer::ReminderCreation => self.reminder_creation.is_creation(),
+            Layer::MediaViewer => self.lifted_viewer().is_some(),
         }
     }
 
@@ -209,7 +239,7 @@ impl MainView {
     /// surfaces the `View::key` wrapper claims before the container's own chain
     /// ever runs.
     pub(crate) fn blockers(&self) -> Blockers {
-        self.blockers_from(Layer::MoveTo)
+        self.blockers_from(Layer::FontPicker)
     }
 
     /// …and the same order starting at `from`, for a caller that has already
@@ -256,6 +286,7 @@ impl MainView {
             // The Tasks page's capture row is not a dictation surface this
             // release; a wrong `None` merely declines a dictation.
             TabView::Welcome(_)
+            | TabView::Home(_)
             | TabView::Manage(_)
             | TabView::Settings(_)
             | TabView::Trash(_)
@@ -295,6 +326,11 @@ pub(crate) struct LiveDictation {
     /// and addressed by index — otherwise a commit would land in whatever tab
     /// happened to be showing when the `Final` arrived.
     pub(crate) tab: usize,
+    /// **The composer of the chat tab at [`tab`](Self::tab)** (koru-ai
+    /// D103). A chat tab takes no typed character the container routes —
+    /// its surface owns its keys — so it has no [`EditableTarget`] of its
+    /// own, and the dictation is addressed here instead.
+    pub(crate) chat_tab: bool,
 }
 
 impl MainView {
@@ -317,15 +353,23 @@ impl MainView {
                 return false;
             }
             let target = self.editable_target();
-            if !Self::accepts_dictation(target) {
+            // A chat tab's composer, where nothing else takes the words.
+            let chat_tab = target == EditableTarget::None && self.chat_tab_takes_dictation();
+            if !chat_tab && !Self::accepts_dictation(target) {
                 return false;
             }
-            let opened = self.deliver_to(ws, target, self.tabs().active(), action);
+            let tab = self.tabs().active();
+            let opened = if chat_tab {
+                self.dictate_chat_tab(tab, action)
+            } else {
+                self.deliver_to(ws, target, tab, action)
+            };
             if opened {
                 self.dictation = Some(LiveDictation {
                     generation: *generation,
                     target,
-                    tab: self.tabs().active(),
+                    tab,
+                    chat_tab,
                 });
             }
             return opened;
@@ -336,9 +380,12 @@ impl MainView {
         if action.generation() != live.generation {
             return false;
         }
-        let (target, tab) = (live.target, live.tab);
+        let (target, tab, chat_tab) = (live.target, live.tab, live.chat_tab);
         if action.closes() {
             self.dictation = None;
+        }
+        if chat_tab {
+            return self.dictate_chat_tab(tab, action);
         }
         self.deliver_to(ws, target, tab, action)
     }
@@ -438,6 +485,10 @@ impl MainView {
             // Routed through the surface in `deliver_to`, because committing
             // the query has result-set side effects beyond editing the field.
             FieldId::Search => None,
+            FieldId::FontPicker => Some(ComposeInto::Input(
+                self.font_picker.as_mut()?.surface.dictation_field(),
+                &mut self.engine,
+            )),
             FieldId::MoveTo => Some(ComposeInto::Input(
                 self.move_to.as_mut()?.dictation_field(),
                 &mut self.engine,

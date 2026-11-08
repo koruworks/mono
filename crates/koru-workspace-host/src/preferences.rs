@@ -13,13 +13,12 @@
 //! the entire body, so one of them lost a value it had never touched — survey
 //! note 4, and the reason [`patch`] names only the fields that moved.
 
-use koru_draw::theme::{
-    CaretColor, CaretHeight, CaretWidth, Density, FontChoice, ThemePreference, ViewMode,
-};
+use koru_draw::theme::{CaretColor, CaretHeight, CaretWidth, Density, ThemePreference, ViewMode};
 use koru_settings::{
     CanvasBackground, CaretColorChoice, CaretHeightChoice, CaretWidthChoice, CloseBehaviorChoice,
-    DictationGesture, DictationInput, DictationLanguage, DictationTier, FontFamily, FontSetting,
-    GlobalPatch, GlobalSettings, LanguageChoice, PopoutCloseChoice, ThemeChoice, ViewModeChoice,
+    DictationGesture, DictationInput, DictationLanguage, DictationTier, Field, FontSetting,
+    GlobalPatch, GlobalSettings, LanguageChoice, PopoutCloseChoice, RgbColor, ThemeChoice,
+    ViewModeChoice,
 };
 
 use crate::settings::Settings;
@@ -36,16 +35,20 @@ mod tests;
 pub fn adopt(section: &GlobalSettings, into: &mut Settings) -> bool {
     let before = snapshot(into);
     into.theme = ThemePreference::parse(section.theme.token());
+    into.icon_pack = section
+        .icon_pack
+        .map(|pack| koru_draw::icons::IconPack::parse(pack.token()));
     into.caret_color = CaretColor::parse(section.caret_color.token());
     into.caret_width = CaretWidth::parse(section.caret_width.token());
     into.caret_height = CaretHeight::parse(section.caret_height.token());
-    into.font = font_of(section.ui_font, koru_draw::theme::default_ui_font());
-    into.body_font = font_of(section.body_font, koru_draw::theme::default_body_font());
-    into.headings_font = font_of(
-        section.headings_font,
-        koru_draw::theme::default_headings_font(),
-    );
-    into.code_font = font_of(section.code_font, koru_draw::theme::default_code_font());
+    into.font = section.ui_font.clone();
+    into.body_font = section.body_font.clone();
+    into.headings_font = section.headings_font.clone();
+    into.code_font = section.code_font.clone();
+    into.chat_font = section.chat_font.clone();
+    into.doc_text_size = section.document_text_size.chosen().map(|size| size.px());
+    into.base_color_light = section.base_color_light.map(RgbColor::rgb);
+    into.base_color_dark = section.base_color_dark.map(RgbColor::rgb);
     into.density = Density::parse(section.density.token());
     into.zoom = section.zoom.get();
     into.view_mode = view_mode_of(section.default_view_mode);
@@ -71,6 +74,15 @@ pub fn adopt(section: &GlobalSettings, into: &mut Settings) -> bool {
 /// the whole of what the per-field shape buys.
 pub fn patch(authoritative: &GlobalSettings, settings: &Settings) -> GlobalPatch {
     let mut patch = GlobalPatch::default();
+    // A choice is named when it differs from what is stored. Following the
+    // default is never sent: it is the authority's state, and no control here
+    // takes a choice back.
+    let icon_pack = settings
+        .icon_pack
+        .map(|pack| koru_settings::IconPackChoice::parse(pack.token()));
+    if icon_pack.is_some() && icon_pack != authoritative.icon_pack {
+        patch.icon_pack = icon_pack;
+    }
 
     let theme = ThemeChoice::parse(settings.theme.key());
     if theme != authoritative.theme {
@@ -88,39 +100,66 @@ pub fn patch(authoritative: &GlobalSettings, settings: &Settings) -> GlobalPatch
     if caret_height != authoritative.caret_height {
         patch.caret_height = Some(caret_height);
     }
-    for (chosen, role_default, stored, slot) in [
+    for (chosen, stored, slot) in [
+        (&settings.font, &authoritative.ui_font, &mut patch.ui_font),
         (
-            settings.font,
-            koru_draw::theme::default_ui_font(),
-            authoritative.ui_font,
-            &mut patch.ui_font,
-        ),
-        (
-            settings.body_font,
-            koru_draw::theme::default_body_font(),
-            authoritative.body_font,
+            &settings.body_font,
+            &authoritative.body_font,
             &mut patch.body_font,
         ),
         (
-            settings.headings_font,
-            koru_draw::theme::default_headings_font(),
-            authoritative.headings_font,
+            &settings.headings_font,
+            &authoritative.headings_font,
             &mut patch.headings_font,
         ),
         (
-            settings.code_font,
-            koru_draw::theme::default_code_font(),
-            authoritative.code_font,
+            &settings.code_font,
+            &authoritative.code_font,
             &mut patch.code_font,
         ),
+        // Back to following the app font is a change like any other, and
+        // is sent as `follow_default`.
+        (
+            &settings.chat_font,
+            &authoritative.chat_font,
+            &mut patch.chat_font,
+        ),
     ] {
-        // **A chosen family is written even when it equals today's default.**
-        // The pre-SP-6 writer omitted it, which made "I picked Inter" and "I
-        // never chose" the same bytes — so a later default change silently
-        // moved somebody who had deliberately chosen. Follow-the-app is the
-        // authority's state, and this window only ever reports a choice.
-        if chosen != font_of(stored, role_default) {
-            *slot = Some(FontSetting::Chosen(FontFamily::parse(chosen.key())));
+        // **The setting, compared as a setting.** Not the face it draws: a
+        // role that chose the default's family, one following the default and
+        // one set to a family missing here can all draw the same face and
+        // still save three different things. A chosen family is written even
+        // when it equals today's default — follow-the-app is a state.
+        if chosen != stored {
+            *slot = Some(chosen.clone());
+        }
+    }
+    // A chosen size is named when it differs from what is stored. Following
+    // the default is never sent: no control here takes a choice back.
+    let size = settings
+        .doc_text_size
+        .and_then(koru_settings::DocTextSize::new);
+    if size.is_some() && size != authoritative.document_text_size.chosen() {
+        patch.document_text_size = size.map(koru_settings::DocTextSizeSetting::Chosen);
+    }
+    // **Unlike the size, a base color can be taken back**: the theme's own
+    // swatch comes first in the row, so going back to the theme is a change
+    // and is sent as a clear.
+    for (chosen, stored, slot) in [
+        (
+            settings.base_color_light,
+            authoritative.base_color_light,
+            &mut patch.base_color_light,
+        ),
+        (
+            settings.base_color_dark,
+            authoritative.base_color_dark,
+            &mut patch.base_color_dark,
+        ),
+    ] {
+        let chosen = chosen.and_then(RgbColor::new);
+        if chosen != stored {
+            *slot = chosen.map_or(Field::Clear, Field::Set);
         }
     }
     let density = koru_settings::DensityChoice::parse(settings.density.key());
@@ -212,8 +251,21 @@ fn close_behavior_to(behavior: koru_window::CloseBehavior) -> CloseBehaviorChoic
 /// forgotten here would make a real change look like no change, which is a
 /// window that does not repaint until something else happens to move.
 type Preferences = (
-    (ThemePreference, CaretColor, CaretWidth, CaretHeight),
-    (FontChoice, FontChoice, FontChoice, FontChoice),
+    (
+        ThemePreference,
+        CaretColor,
+        CaretWidth,
+        CaretHeight,
+        Option<koru_draw::icons::IconPack>,
+    ),
+    (
+        FontSetting,
+        FontSetting,
+        FontSetting,
+        FontSetting,
+        FontSetting,
+        Option<u8>,
+    ),
     (Density, String, ViewMode, Option<[u8; 4]>),
     (
         bool,
@@ -228,6 +280,7 @@ type Preferences = (
         koru_voice::InputChoice,
     ),
     (bool, Option<koru_spell::SpellLang>),
+    (Option<u32>, Option<u32>),
 );
 
 fn snapshot(settings: &Settings) -> Preferences {
@@ -237,12 +290,15 @@ fn snapshot(settings: &Settings) -> Preferences {
             settings.caret_color,
             settings.caret_width,
             settings.caret_height,
+            settings.icon_pack,
         ),
         (
-            settings.font,
-            settings.body_font,
-            settings.headings_font,
-            settings.code_font,
+            settings.font.clone(),
+            settings.body_font.clone(),
+            settings.headings_font.clone(),
+            settings.code_font.clone(),
+            settings.chat_font.clone(),
+            settings.doc_text_size,
         ),
         (
             settings.density,
@@ -263,6 +319,7 @@ fn snapshot(settings: &Settings) -> Preferences {
             settings.dictation_input.clone(),
         ),
         (settings.spellcheck_enabled, settings.spellcheck_language),
+        (settings.base_color_light, settings.base_color_dark),
     )
 }
 
@@ -270,14 +327,6 @@ fn snapshot(settings: &Settings) -> Preferences {
 /// stable across a round trip through the file.
 fn zoom_token(zoom: f32) -> String {
     format!("{zoom:.2}")
-}
-
-/// The family a role resolves to. `FollowDefault` is *this build's* default,
-/// resolved now rather than frozen into a file.
-fn font_of(setting: FontSetting, role_default: FontChoice) -> FontChoice {
-    setting
-        .family()
-        .map_or(role_default, |family| FontChoice::parse(family.token()))
 }
 
 fn view_mode_of(choice: ViewModeChoice) -> ViewMode {

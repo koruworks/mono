@@ -439,6 +439,7 @@ pub fn reflow(
     viewport_h: f32,
 ) {
     let span = koru_core::timing::Span::start("reflow");
+    outline.sync_metrics();
     let mut shaped = 0usize;
     // Position first with the heights in hand, so the shape band can be found.
     // Unshaped text rows use an estimate; shaped rows their real layout.
@@ -513,7 +514,22 @@ fn position_rows(outline: &mut Body, viewport_w: f32, top_inset: f32, pills: &Pi
     }
     // Chrome above the rows — a toolbar, a breadcrumb — pushes them all down.
     let mut y = theme::MARGIN_TOP + top_inset;
+    // Room that belongs to no row (an image still loading) opens before the
+    // row it is reserved ahead of, exactly where that row's own space would
+    // have started — so a placeholder sized like its picture occupies the
+    // room the picture's row will. Sorted by row; one past the last row is
+    // the end of the body.
+    let reserved = &mut outline.reserved;
+    let mut next_band = 0;
     for (i, row) in outline.rows.iter_mut().enumerate() {
+        while let Some(band) = reserved
+            .get_mut(next_band)
+            .filter(|band| band.before_row <= i)
+        {
+            band.top = y;
+            y += band.height;
+            next_band += 1;
+        }
         let step = row.type_step();
         // A heading opens space above itself — except as the first row, where
         // there is nothing to be separated from and the gap would only push the
@@ -524,7 +540,7 @@ fn position_rows(outline: &mut Body, viewport_w: f32, top_inset: f32, pills: &Pi
         row.height = if row.kind == koru_core::node::Kind::Divider {
             // A hairline drawn centred in a single-line band: tall enough to have
             // air around the rule, short enough not to read as an empty paragraph.
-            theme::FONT_SIZE * theme::LINE_HEIGHT
+            row.metrics.line
         } else if let Some(img) = &row.image {
             image_row_height(img, viewport_w)
         } else if let Some(table) = &row.table {
@@ -580,9 +596,9 @@ fn position_rows(outline: &mut Body, viewport_w: f32, top_inset: f32, pills: &Pi
             // outside the panel: `code_panel_rect` still reaches `CODE_PAD`
             // above `y`, so the air lands between the panel and the rows.
             if row.diagram.is_some() {
-                theme::CODE_PAD + theme::DIAGRAM_AIR
+                row.metrics.code_pad + theme::DIAGRAM_AIR
             } else {
-                theme::CODE_PAD
+                row.metrics.code_pad
             }
         } else if row.image.is_some() {
             theme::IMAGE_PAD
@@ -595,8 +611,8 @@ fn position_rows(outline: &mut Body, viewport_w: f32, top_inset: f32, pills: &Pi
         // rows of the box rather than one row: its first row takes the pad
         // above and its last the pad below, once per box that starts or ends
         // there. `callout_panel_rect` keeps its own padding inside this room.
-        let gap_above = block_pad + theme::CODE_PAD * f32::from(boxes_opening[i]);
-        let gap_below = block_pad + theme::CODE_PAD * f32::from(boxes_closing[i]);
+        let gap_above = block_pad + row.metrics.code_pad * f32::from(boxes_opening[i]);
+        let gap_below = block_pad + row.metrics.code_pad * f32::from(boxes_closing[i]);
         row.y += gap_above;
         y += gap_above;
         // List styling must not change the document's vertical rhythm. A row
@@ -614,8 +630,12 @@ fn position_rows(outline: &mut Body, viewport_w: f32, top_inset: f32, pills: &Pi
         // outside its own: `y` stays the first glyph's top and every caret and
         // hit-test keeps measuring from there.
         if row.is_title {
-            y += theme::TITLE_GAP_BELOW;
+            y += row.metrics.title_gap;
         }
+    }
+    for band in &mut reserved[next_band..] {
+        band.top = y;
+        y += band.height;
     }
 }
 
@@ -951,13 +971,13 @@ pub fn diagram_control_rect(
     control: crate::diagram::Control,
 ) -> Rect {
     let side = crate::table::CONTROL_SIZE;
-    let right = layout_w - theme::MARGIN_X - theme::AFFORDANCE_W + theme::CODE_PAD_X;
+    let right = layout_w - theme::MARGIN_X - theme::AFFORDANCE_W + row.metrics.code_pad_x;
     let inset = DIAGRAM_BAR_INSET + DIAGRAM_BAR_PAD;
     let corner = right - inset - side;
     let slots = control.slots_from_corner() as f32;
     Rect::new(
         (corner - slots * (side + DIAGRAM_CONTROL_GAP)).max(row.text_x() + DIAGRAM_BAR_PAD),
-        row.y - theme::CODE_PAD + inset,
+        row.y - row.metrics.code_pad + inset,
         side,
         side,
     )
@@ -994,13 +1014,14 @@ pub fn diagram_controls_bar(row: &Paragraph, layout_w: f32) -> Rect {
 /// stop, which is what makes the padding *inner* rather than a gap somebody
 /// added to the outside.
 pub fn code_panel_rect(row: &Paragraph, layout_w: f32, oy: f32) -> Rect {
-    let left = row.text_x() - theme::CODE_PAD_X;
-    let right = layout_w - theme::MARGIN_X - theme::AFFORDANCE_W + theme::CODE_PAD_X;
+    let pad = &row.metrics;
+    let left = row.text_x() - pad.code_pad_x;
+    let right = layout_w - theme::MARGIN_X - theme::AFFORDANCE_W + pad.code_pad_x;
     Rect::new(
         left,
-        oy - theme::CODE_PAD,
+        oy - pad.code_pad,
         (right - left).max(0.0),
-        row.height + theme::CODE_PAD * 2.0,
+        row.height + pad.code_pad * 2.0,
     )
 }
 
@@ -1017,11 +1038,11 @@ pub fn callout_panel_rect(
     last_oy: f32,
     layout_w: f32,
 ) -> Rect {
-    const PAD_Y: f32 = theme::CODE_PAD - 2.0;
+    let pad_y = first.metrics.code_pad - 2.0;
     let left = first.text_x() - crate::paragraph::CALLOUT_INSET_X;
-    let right = layout_w - theme::MARGIN_X - theme::AFFORDANCE_W + theme::CODE_PAD;
-    let top = first_oy - PAD_Y;
-    let bottom = last_oy + last.height + PAD_Y;
+    let right = layout_w - theme::MARGIN_X - theme::AFFORDANCE_W + first.metrics.code_pad;
+    let top = first_oy - pad_y;
+    let bottom = last_oy + last.height + pad_y;
     Rect::new(left, top, (right - left).max(0.0), bottom - top)
 }
 
@@ -1041,7 +1062,7 @@ pub fn first_baseline(row: &Paragraph) -> f32 {
     row.layout
         .lines()
         .next()
-        .map_or(theme::FONT_SIZE, |line| line.metrics().baseline)
+        .map_or(row.metrics.glyph, |line| line.metrics().baseline)
 }
 
 /// The semantic quote rule beside `row`, in the same window-space coordinate
@@ -1099,7 +1120,7 @@ pub fn lang_chip_rect(row: &Paragraph, layout_w: f32) -> Rect {
     // layout_w - MARGIN_X/2), 4px in — the text has already reserved a gutter
     // so it never reaches here.
     // Inside the panel's own right edge, which is where the eye expects it.
-    let right = layout_w - theme::MARGIN_X - theme::AFFORDANCE_W + theme::CODE_PAD_X;
+    let right = layout_w - theme::MARGIN_X - theme::AFFORDANCE_W + row.metrics.code_pad_x;
     let x = (right - 4.0 - chip_w).max(theme::MARGIN_X);
     // `Rect::new` takes a width and a height. It was handed `x + chip_w` and
     // `y + chip_h`, which drew a chip as wide as the page — the grey band past
@@ -1275,7 +1296,7 @@ pub fn checkbox_band(row: &Paragraph, oy: f32) -> Option<Rect> {
         return None;
     }
     const PAD: f32 = 3.0;
-    let size = theme::CHECKBOX_SIZE;
+    let size = row.metrics.checkbox;
     Some(Rect::new(
         checkbox_x(row.depth) - PAD,
         center_on_first_line(row, oy, size) - PAD,
@@ -1352,10 +1373,18 @@ impl ClampEmpty for std::ops::Range<usize> {
 }
 
 pub fn content_height(outline: &Body) -> f32 {
+    // A placeholder after the last row is content too: the page must scroll
+    // to it, and the picture that replaces it will be.
     outline
         .rows
         .iter()
         .map(|r| r.y + r.height + theme::MARGIN_TOP)
+        .chain(
+            outline
+                .reserved
+                .iter()
+                .map(|band| band.top + band.height - band.trailing + theme::MARGIN_TOP),
+        )
         .fold(theme::MARGIN_TOP, f32::max)
 }
 
@@ -2523,6 +2552,34 @@ mod tests {
         o
     }
 
+    /// **Paint, hit and accessibility read one size.** At 22 px a task row's
+    /// checkbox hit area is built from the scaled checkbox, its text sits one
+    /// scaled gutter right of the column, and a code panel keeps a scaled
+    /// pad — at 14 and 16 the same arithmetic holds.
+    #[test]
+    fn a_scaled_body_lays_out_its_ramp_checkbox_and_code_padding_together() {
+        for px in [14.0f32, 16.0, 22.0] {
+            let scale = px / theme::FONT_SIZE;
+            let mut engine = TextEngine::new();
+            let mut ws = WorkspaceDoc::create(WorkspaceId::new(), "t").unwrap();
+            ws.insert(Parent::Root, Node::task("a task").unwrap())
+                .unwrap();
+            let mut o = Body::new(&ws);
+            o.text_scale = crate::body::TextScale::Fixed(scale);
+            reflow_all(&mut engine, &mut o, 900.0, 0.0);
+            let row = &o.rows[0];
+            let m = theme::DocMetrics::at(scale);
+            assert_eq!(row.metrics, m);
+            assert_eq!(row.type_step().size, px);
+            assert_eq!(row.text_x(), checkbox_x(row.depth) + m.gutter);
+            let hit = checkbox_band(row, 0.0).expect("a task has a checkbox");
+            assert!((hit.w - (m.checkbox + 6.0)).abs() < 1e-4, "{px}: {hit:?}");
+            let panel = code_panel_rect(row, 900.0, 100.0);
+            assert!((panel.y - (100.0 - m.code_pad)).abs() < 1e-4);
+            assert!((panel.x - (row.text_x() - m.code_pad_x)).abs() < 1e-4);
+        }
+    }
+
     /// The ramp has to reach parley rather than merely being pushed: a heading
     /// of the same words occupies a taller line box.
     #[test]
@@ -2910,6 +2967,75 @@ mod tests {
     // built out of.
 
     /// A body of `n` paragraphs, each carrying `line`.
+    /// **What one preview step costs on a long document** (DOCFONTSIZE
+    /// PLAN.final Phase A): a size step against a font step, on 2,000 rows,
+    /// laid out the way a window does — the shown band shaped, the rest
+    /// estimated. A size step reshapes what a font step reshapes, so the two
+    /// should cost about the same. Measured, not asserted (timing is the
+    /// machine's); run with `--ignored --nocapture` and read the numbers.
+    #[test]
+    #[ignore = "a measurement: run by hand with --ignored --nocapture"]
+    fn a_size_preview_step_costs_what_a_font_preview_step_costs() {
+        use std::time::{Duration, Instant};
+        let mut ws = WorkspaceDoc::create(WorkspaceId::new(), "t").unwrap();
+        let mut o = body_of(
+            &mut ws,
+            2_000,
+            "A paragraph of ordinary prose, long enough to wrap once or twice in the column.",
+        );
+        let mut engine = TextEngine::new();
+        reflow(&mut engine, &mut o, 900.0, 0.0, 0.0, 700.0);
+        let median = |mut samples: Vec<Duration>| {
+            samples.sort();
+            samples[samples.len() / 2]
+        };
+        let mut size = Vec::new();
+        for (i, px) in [
+            18.0f32, 20.0, 22.0, 17.0, 15.0, 14.0, 16.0, 18.0, 20.0, 22.0, 16.0,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            o.text_scale = crate::body::TextScale::Fixed(px / theme::FONT_SIZE);
+            let started = Instant::now();
+            reflow(&mut engine, &mut o, 900.0, 0.0, 0.0, 700.0);
+            if i > 0 {
+                size.push(started.elapsed());
+            }
+        }
+        o.text_scale = crate::body::TextScale::Fixed(1.0);
+        reflow(&mut engine, &mut o, 900.0, 0.0, 0.0, 700.0);
+        let was = theme::body_font();
+        let mut font = Vec::new();
+        for (i, face) in [
+            theme::FontChoice::Lora,
+            theme::FontChoice::Inter,
+            theme::FontChoice::SourceSerif4,
+            theme::FontChoice::Poppins,
+            theme::FontChoice::Inter,
+            theme::FontChoice::Lora,
+            theme::FontChoice::Nunito,
+            theme::FontChoice::Inter,
+            theme::FontChoice::Manrope,
+            theme::FontChoice::Lora,
+            theme::FontChoice::Inter,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            theme::set_body_font(face);
+            o.invalidate();
+            let started = Instant::now();
+            reflow(&mut engine, &mut o, 900.0, 0.0, 0.0, 700.0);
+            if i > 0 {
+                font.push(started.elapsed());
+            }
+        }
+        theme::set_body_font(was);
+        let (size, font) = (median(size), median(font));
+        println!("2,000 rows, one preview step (median of 10): size {size:?}, font {font:?}");
+    }
+
     fn body_of(ws: &mut WorkspaceDoc, n: usize, line: &str) -> Body {
         for _ in 0..n {
             ws.insert(Parent::Root, Node::paragraph(line).unwrap())

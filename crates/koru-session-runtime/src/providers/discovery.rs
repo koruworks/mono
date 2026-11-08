@@ -9,9 +9,11 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use koru_session_protocol::{ErrorCode, ProviderKind};
+use koru_session_protocol::{AgentModes, ErrorCode, ProviderKind, ProviderModels, VersionNeed};
 
-use super::{AgentCapabilities, ProviderDiagnostic, ProviderFailure, ProviderStage};
+use super::{
+    AgentCapabilities, ProviderDiagnostic, ProviderFailure, ProviderStage, ProviderVersion,
+};
 
 /// Production factories resolve through the same PATH/PATHEXT candidate
 /// selection as managed CreateProfile. This belongs in factory construction,
@@ -68,6 +70,20 @@ pub struct ProviderDiscovery {
     pub provider: ProviderKind,
     pub raw_available: bool,
     pub managed: ManagedAvailability,
+    /// The model list the probe's session start received, for the catalog.
+    pub models: Option<ProviderModels>,
+    /// The approval modes the same start received (koru-ai D7), for the
+    /// catalog; `None` where the agent advertised none.
+    pub modes: Option<AgentModes>,
+}
+
+/// **What a probe's session start received** for the host's catalog: its
+/// model list when the catalog comes from the probe, and the agent's
+/// approval modes whatever the catalog's source (koru-ai D7).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ProbeCapture {
+    pub models: Option<ProviderModels>,
+    pub modes: Option<AgentModes>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -79,8 +95,12 @@ pub enum ManagedAvailability {
     SignedOut {
         code: ErrorCode,
     },
+    /// Refused by the route. `found` and `needed` are the version refusal's
+    /// facts when the refusal was the version, for the window to name.
     Incompatible {
         code: ErrorCode,
+        found: Option<ProviderVersion>,
+        needed: Option<VersionNeed>,
     },
     Failed {
         code: ErrorCode,
@@ -130,8 +150,16 @@ impl ManagedAvailability {
                 Default::default(),
                 None,
             ),
-            Self::Incompatible { code } => (
-                A::Incompatible { code: code.clone() },
+            Self::Incompatible {
+                code,
+                found,
+                needed,
+            } => (
+                A::Incompatible {
+                    code: code.clone(),
+                    found: found.as_ref().map(|version| version.as_str().to_owned()),
+                    needed: needed.clone(),
+                },
                 Default::default(),
                 None,
             ),
@@ -166,6 +194,34 @@ pub trait CompatibilityProbe: Send + 'static {
     fn provider(&self) -> ProviderKind;
     fn raw_available(&self) -> bool;
     fn probe(&self, limits: ProbeLimits) -> Result<AgentCapabilities, ProviderFailure>;
+
+    /// The probe, and the model list its session start received when the
+    /// provider's catalog comes from the probe (`CatalogSource::Probe`).
+    /// Keeping it costs nothing: the start already happened.
+    fn probe_with_models(
+        &self,
+        limits: ProbeLimits,
+    ) -> Result<(AgentCapabilities, Option<ProviderModels>), ProviderFailure> {
+        self.probe(limits).map(|capabilities| (capabilities, None))
+    }
+
+    /// The probe, its model list as [`probe_with_models`](Self::probe_with_models)
+    /// keeps it, and the approval modes its start received (D7).
+    fn probe_with_capture(
+        &self,
+        limits: ProbeLimits,
+    ) -> Result<(AgentCapabilities, ProbeCapture), ProviderFailure> {
+        self.probe_with_models(limits)
+            .map(|(capabilities, models)| {
+                (
+                    capabilities,
+                    ProbeCapture {
+                        models,
+                        modes: None,
+                    },
+                )
+            })
+    }
 }
 
 /// A discovery run starts bounded provider probes on named background threads.
@@ -193,12 +249,18 @@ impl DiscoveryRun {
                 .spawn(move || {
                     let raw_available =
                         catch_unwind(AssertUnwindSafe(|| probe.raw_available())).unwrap_or(false);
-                    let managed = match catch_unwind(AssertUnwindSafe(|| probe.probe(limits))) {
-                        Ok(Ok(capabilities)) if capabilities.provider == provider => {
+                    let mut capture = ProbeCapture::default();
+                    let managed = match catch_unwind(AssertUnwindSafe(|| {
+                        probe.probe_with_capture(limits)
+                    })) {
+                        Ok(Ok((capabilities, captured))) if capabilities.provider == provider => {
+                            capture = captured;
                             ManagedAvailability::Compatible(capabilities)
                         }
                         Ok(Ok(_)) => ManagedAvailability::Incompatible {
                             code: ErrorCode::ProviderIncompatible,
+                            found: None,
+                            needed: None,
                         },
                         Ok(Err(failure)) => classify_failure(failure),
                         Err(_) => ManagedAvailability::Failed {
@@ -211,6 +273,8 @@ impl DiscoveryRun {
                         provider,
                         raw_available,
                         managed,
+                        models: capture.models,
+                        modes: capture.modes,
                     });
                 })
                 .map_err(|_| {
@@ -279,10 +343,42 @@ pub(crate) fn classify_failure(failure: ProviderFailure) -> ManagedAvailability 
         | ErrorCode::ProfileIncompatible
         | ErrorCode::ProtocolIncompatible
         | ErrorCode::CapabilityNotNegotiated => {
-            ManagedAvailability::Incompatible { code: failure.code }
+            let (found, needed) = failure
+                .version
+                .map_or((None, None), |refusal| (refusal.found, refusal.needed));
+            ManagedAvailability::Incompatible {
+                code: failure.code,
+                found,
+                needed,
+            }
         }
         _ => failed_availability(failure),
     }
+}
+
+/// **What a `--version` run printed, or the failure that it said nothing.**
+///
+/// A run that exits non-zero, or prints nothing at all, never got as far as
+/// naming a version: the agent's program does not start on this computer.
+/// Kimi's CLI under a Node.js too old for it is one — it exits 1 with a
+/// `SyntaxError` on stderr and nothing on stdout. That is `UnexpectedExit`
+/// at the version stage with `ProviderFailed`, which readiness reads as
+/// *Failed*: calling it an unsupported version sent people to update an
+/// agent whose version was never the problem. Output that is there but is
+/// not text is `Ok(None)`: the program ran and printed something no route
+/// can read, which stays the route's refusal.
+pub(crate) fn version_print(success: bool, stdout: &[u8]) -> Result<Option<&str>, ProviderFailure> {
+    let did_not_start = || {
+        ProviderFailure::new(
+            ErrorCode::ProviderFailed,
+            ProviderStage::Version,
+            ProviderDiagnostic::UnexpectedExit,
+        )
+    };
+    if !success || stdout.iter().all(u8::is_ascii_whitespace) {
+        return Err(did_not_start());
+    }
+    Ok(std::str::from_utf8(stdout).ok())
 }
 
 fn failed_availability(failure: ProviderFailure) -> ManagedAvailability {
@@ -400,6 +496,9 @@ pub fn run_probe_command(
         ));
     }
     let mut process = Command::new(&command.program);
+    // Before the probe's own environment, which may name a `PATH` of its
+    // own; this is also the `PATH` a bare program name is resolved through.
+    koru_session_profiles::with_effective_path(&mut process);
     process
         .args(&command.arguments)
         .envs(command.environment.iter().map(|(key, value)| (key, value)))
@@ -426,6 +525,7 @@ pub fn run_probe_command(
             stage: ProviderStage::Spawn,
             diagnostic,
             os_code: error.raw_os_error(),
+            version: None,
         }
     })?;
 

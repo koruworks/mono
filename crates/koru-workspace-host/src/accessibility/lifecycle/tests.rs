@@ -714,38 +714,3 @@ fn a_dump_asked_for_before_a_client_attached_waits_for_the_first_tree() {
     assert_eq!(access.counters().dumps, 1);
     assert!(!access.dump_armed());
 }
-
-/// **A control published twice is repaired and counted, not a dead window.**
-/// The provider is handed the repaired update — the one with the paragraph
-/// once — and the counter says it happened, which is what an inspector or a
-/// bug report reads.
-#[test]
-fn a_control_published_twice_is_repaired_before_the_adapter_sees_it() {
-    let recorder = Recorder::default();
-    let mut access = pane(&recorder);
-    access.revealed();
-    recorder.attach();
-    let twice = SemanticNode::new(
-        Occurrence::model(
-            window(),
-            ViewSlot::from_raw(1),
-            Uuid::from_u128(9),
-            ControlPart::ROOT,
-        ),
-        accesskit::Role::ListItem,
-    );
-    service(&mut access, vec![twice.clone(), twice]);
-
-    assert!(access.counters().repairs > 0);
-    let client = recorder.0.lock().expect("no test poisons this");
-    let update = client.published.last().expect("a tree was published");
-    let mut seen = std::collections::HashSet::new();
-    for (_, node) in &update.nodes {
-        for child in node.children() {
-            assert!(
-                seen.insert(*child),
-                "the adapter was handed child {child:?} twice"
-            );
-        }
-    }
-}

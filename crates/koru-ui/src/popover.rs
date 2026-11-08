@@ -61,7 +61,43 @@ impl PopoverShell {
     pub fn draw(&self, canvas: &mut Scene, root: Affine) {
         // This scope covers shell paint only. Content ownership is a separate
         // migration; custom shell literals do not imply anchored placement.
-        let _inspection = koru_draw::inspect::scope(
+        let _inspection = self.surface_scope(
+            root,
+            "Shell paint only; placement origin and content ownership not exposed",
+            "PopoverShell::draw",
+        );
+        self.paint(canvas, root);
+    }
+
+    /// Paint this shell, then `content` while its *Popover surface* record
+    /// is still open: everything drawn inside the panel nests under the
+    /// surface in the inspector rather than lying beside it. The host keeps
+    /// input, motion and clipping policy; nothing retains the callback.
+    #[track_caller]
+    pub fn draw_containing<R>(
+        &self,
+        canvas: &mut Scene,
+        root: Affine,
+        content: impl FnOnce(&mut Scene, Affine) -> R,
+    ) -> R {
+        let _inspection = self.surface_scope(
+            root,
+            "Shell paint and its content: what is drawn inside the panel nests under this record",
+            "PopoverShell::draw_containing",
+        );
+        self.paint(canvas, root);
+        content(canvas, root)
+    }
+
+    /// The *Popover surface* record, open until the guard drops.
+    #[track_caller]
+    fn surface_scope(
+        &self,
+        root: Affine,
+        coverage: &'static str,
+        origin: &'static str,
+    ) -> koru_draw::inspect::Scope {
+        koru_draw::inspect::scope(
             "Popover surface",
             "part",
             root,
@@ -80,14 +116,9 @@ impl PopoverShell {
                     "theme::overlay::popover().anchor_gap; anchored default, not measured spacing",
                 );
                 record.property("recipe radius", recipe.radius, "theme::overlay::popover().radius; anchored default, actual radius shown separately");
-                record.property(
-                    "coverage",
-                    "Shell paint only; placement origin and content ownership not exposed",
-                    "PopoverShell::draw",
-                );
+                record.property("coverage", coverage, origin);
             },
-        );
-        self.paint(canvas, root);
+        )
     }
 
     /// Paint this shell and its content under one shared ownership boundary.

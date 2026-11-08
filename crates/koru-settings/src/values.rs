@@ -163,6 +163,17 @@ token_enum! {
 }
 
 token_enum! {
+    /// The in-app vector artwork, persisted as `icon_pack=`.
+    IconPackChoice, default = Phosphor, fold_case = true,
+    {
+        Phosphor => "phosphor";
+        Tabler => "tabler";
+        Lucide => "lucide";
+        Remix => "remix";
+    }
+}
+
+token_enum! {
     /// `caret_color=`, and the terminal row's `cursor_color=`.
     CaretColorChoice, default = Default, fold_case = true,
     {
@@ -222,8 +233,10 @@ token_enum! {
 token_enum! {
     /// `view_mode=` — the default view mode for a newly opened document.
     ///
-    /// Unknown input becomes `Full`, matching `parse_view_mode`.
-    ViewModeChoice, default = Full, fold_case = false,
+    /// **Narrow until somebody chooses** (the user's call, 2026-10-31): a
+    /// readable column is what a new page should look like. Unknown input
+    /// becomes the default too.
+    ViewModeChoice, default = Narrow, fold_case = false,
     {
         Page => "page";
         Narrow => "narrow";
@@ -247,6 +260,22 @@ token_enum! {
         Ask => "ask";
         Background => "background";
         Quit => "quit";
+    }
+}
+
+token_enum! {
+    /// **The permission a new agent chat starts in** (Settings → Coding →
+    /// Agent providers), in `desktop-v1.json`. Each agent's own modes are
+    /// what a chat runs in; this names which of them a new chat starts from
+    /// (`koru-ai-ui`'s `approval_modes` does the mapping): *Manual* is the
+    /// agent's asking mode, *Auto* the mode that approves safe actions on its
+    /// own, *Yolo* the one that runs everything without asking. An agent that
+    /// offers no such mode starts in *Manual*.
+    AgentPermission, default = Manual, fold_case = true,
+    {
+        Manual => "manual";
+        Auto => "auto";
+        Yolo => "yolo";
     }
 }
 
@@ -390,6 +419,76 @@ impl FontFamily {
     }
 }
 
+/// The longest family name Koru stores or puts into a font stack.
+const MAX_FAMILY_NAME: usize = 64;
+
+/// Whether `name` is safe to store in the settings file and to splice into a
+/// font stack: no separator of either (`,` `;` `|` `=`), no quote, no
+/// backslash, no `@` (Windows' vertical-text aliases) and no control
+/// character, and at most 64 characters.
+///
+/// **The one rule.** The terminal's per-agent font, the app's font roles and
+/// the drawing layer's installed-family scan all ask this function; there is
+/// no second copy to drift (DOCFONTSIZE Q-H, 2026-10-30).
+pub fn is_storable_family_name(name: &str) -> bool {
+    let name = name.trim();
+    !name.is_empty()
+        && name.chars().count() <= MAX_FAMILY_NAME
+        && !name.chars().any(|c| {
+            c.is_control() || matches!(c, ',' | ';' | '|' | '=' | '"' | '\'' | '`' | '\\' | '@')
+        })
+}
+
+/// An installed font family, by the name the operating system gives it.
+///
+/// Valid by construction ([`is_storable_family_name`]), on the wire too: a
+/// name with a separator or a quote fails to deserialize rather than reaching
+/// a stack.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct FamilyName(String);
+
+impl FamilyName {
+    pub fn new(name: &str) -> Option<Self> {
+        is_storable_family_name(name).then(|| Self(name.trim().to_owned()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for FamilyName {
+    type Error = String;
+
+    fn try_from(name: String) -> Result<Self, Self::Error> {
+        Self::new(&name).ok_or_else(|| {
+            "a family name is 1 to 64 characters with no separator, quote or control character"
+                .to_owned()
+        })
+    }
+}
+
+impl From<FamilyName> for String {
+    fn from(name: FamilyName) -> Self {
+        name.0
+    }
+}
+
+impl schemars::JsonSchema for FamilyName {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        std::borrow::Cow::Borrowed("FamilyName")
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type": "string",
+            "minLength": 1,
+            "maxLength": MAX_FAMILY_NAME,
+        })
+    }
+}
+
 /// What a font role is set to.
 ///
 /// **"Follow the app default" is a state, not a value.** The alternative —
@@ -400,9 +499,7 @@ impl FontFamily {
 /// default. That last part is a deliberate change from the pre-SP-6 writer,
 /// which omitted a key whose value matched the default and so could not tell
 /// a choice from a habit either.
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
-)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FontSetting {
     /// Use whatever this build's default for the role is, now and later.
@@ -410,14 +507,132 @@ pub enum FontSetting {
     FollowDefault,
     /// Use this family, whatever the build's default becomes.
     Chosen(FontFamily),
+    /// Use this installed family, by name. On a computer without it the role
+    /// draws its default and the choice is kept for one that has it.
+    Installed(FamilyName),
 }
 
 impl FontSetting {
-    /// The family, or `None` when the role follows the app.
-    pub fn family(self) -> Option<FontFamily> {
+    /// The bundled family, or `None` when the role follows the app or names
+    /// an installed family.
+    pub fn family(&self) -> Option<FontFamily> {
+        match self {
+            Self::Chosen(family) => Some(*family),
+            Self::FollowDefault | Self::Installed(_) => None,
+        }
+    }
+
+    /// The installed family this names, if it names one.
+    pub fn installed(&self) -> Option<&FamilyName> {
+        match self {
+            Self::Installed(name) => Some(name),
+            Self::FollowDefault | Self::Chosen(_) => None,
+        }
+    }
+
+    /// Read a font role's `preferences.conf` value: `family:<name>` names an
+    /// installed family, anything else a bundled one. A name that is not
+    /// storable follows the default.
+    pub fn parse_file_value(value: &str) -> Self {
+        match value.strip_prefix("family:") {
+            Some(name) => FamilyName::new(name).map_or(Self::FollowDefault, Self::Installed),
+            None => Self::Chosen(FontFamily::parse(value)),
+        }
+    }
+
+    /// The `preferences.conf` value, or `None` while the role follows the app.
+    pub fn file_value(&self) -> Option<String> {
         match self {
             Self::FollowDefault => None,
-            Self::Chosen(family) => Some(family),
+            Self::Chosen(family) => Some(family.token().to_owned()),
+            Self::Installed(name) => Some(format!("family:{}", name.as_str())),
+        }
+    }
+}
+
+/// A document's body text size, in px: one of the sizes Settings offers.
+///
+/// **A closed set, enforced where the value is read.** `Zoom` is a range
+/// checked in the patch; this is a list, so a JSON `19` fails to deserialize
+/// rather than slipping in, and the generated schema names the same seven
+/// values the runtime accepts. The file codec stays tolerant on its own: an
+/// unknown `doc_text_size=` reads as following the default.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "u8", into = "u8")]
+pub struct DocTextSize(u8);
+
+impl DocTextSize {
+    /// Every size offered, smallest first. Above 22 is what zoom is for.
+    pub const ALL: [u8; 7] = [14, 15, 16, 17, 18, 20, 22];
+    /// The size the type ramp is drawn at, and what follows-the-default means
+    /// in this build.
+    pub const DEFAULT: Self = Self(16);
+
+    pub fn new(px: u8) -> Option<Self> {
+        Self::ALL.contains(&px).then_some(Self(px))
+    }
+
+    pub fn px(self) -> u8 {
+        self.0
+    }
+
+    /// Read a `doc_text_size=` value, or `None` for anything not offered.
+    pub fn parse(text: &str) -> Option<Self> {
+        text.trim().parse::<u8>().ok().and_then(Self::new)
+    }
+}
+
+impl TryFrom<u8> for DocTextSize {
+    type Error = String;
+
+    fn try_from(px: u8) -> Result<Self, Self::Error> {
+        Self::new(px).ok_or_else(|| format!("a document text size is one of {:?}", Self::ALL))
+    }
+}
+
+impl From<DocTextSize> for u8 {
+    fn from(size: DocTextSize) -> Self {
+        size.0
+    }
+}
+
+impl schemars::JsonSchema for DocTextSize {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        std::borrow::Cow::Borrowed("DocTextSize")
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type": "integer",
+            "enum": Self::ALL,
+        })
+    }
+}
+
+/// What the document text size is set to.
+///
+/// The same shape as [`FontSetting`], for the same reason: following the
+/// default is a state, persisted as no key, and a chosen size is always
+/// written, even when it is today's default, so a person who picked 16 keeps
+/// 16 if the default ever moves.
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum DocTextSizeSetting {
+    /// This build's default size, now and later.
+    #[default]
+    FollowDefault,
+    /// This size, whatever the build's default becomes.
+    Chosen(DocTextSize),
+}
+
+impl DocTextSizeSetting {
+    /// The chosen size, or `None` while the default applies.
+    pub fn chosen(self) -> Option<DocTextSize> {
+        match self {
+            Self::FollowDefault => None,
+            Self::Chosen(size) => Some(size),
         }
     }
 }
@@ -496,6 +711,74 @@ impl CanvasBackground {
             (Some(r), Some(g), Some(b)) => Self::Color([r, g, b]),
             _ => Self::Auto,
         }
+    }
+}
+
+/// An opaque color, persisted as `#rrggbb` in lowercase — today the window's
+/// base color for one theme.
+///
+/// **Any color, not only the swatches Settings offers.** The list is what a
+/// person can pick today; the file and the wire take every `#rrggbb`, so a
+/// free-form picker later needs no format change. Read in either case and
+/// written in lowercase. Anything that is not `#` and six hex digits is not a
+/// color: the file reads it as absent, and the wire refuses it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct RgbColor(u32);
+
+impl RgbColor {
+    /// An `0xRRGGBB` value, or `None` for one with bits above the 24.
+    pub fn new(rgb: u32) -> Option<Self> {
+        (rgb <= 0xFF_FFFF).then_some(Self(rgb))
+    }
+
+    /// The color as `0xRRGGBB`.
+    pub fn rgb(self) -> u32 {
+        self.0
+    }
+
+    /// The exact spelling written: `#rrggbb`, lowercase.
+    pub fn token(self) -> String {
+        format!("#{:06x}", self.0)
+    }
+
+    /// Read `#rrggbb`, or `None` for anything else.
+    ///
+    /// Every digit is checked as a hex digit before parsing, because
+    /// `from_str_radix` takes a leading `+` and `#+12345` is not a color.
+    pub fn parse(text: &str) -> Option<Self> {
+        let hex = text.trim().strip_prefix('#')?;
+        if hex.len() != 6 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return None;
+        }
+        u32::from_str_radix(hex, 16).ok().and_then(Self::new)
+    }
+}
+
+impl TryFrom<String> for RgbColor {
+    type Error = String;
+
+    fn try_from(text: String) -> Result<Self, Self::Error> {
+        Self::parse(&text).ok_or_else(|| "a color is written #rrggbb".to_owned())
+    }
+}
+
+impl From<RgbColor> for String {
+    fn from(color: RgbColor) -> Self {
+        color.token()
+    }
+}
+
+impl schemars::JsonSchema for RgbColor {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        std::borrow::Cow::Borrowed("RgbColor")
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type": "string",
+            "pattern": "^#[0-9A-Fa-f]{6}$",
+        })
     }
 }
 

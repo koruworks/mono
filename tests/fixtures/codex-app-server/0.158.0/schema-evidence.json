@@ -32,8 +32,10 @@
     "account/chatgptAuthTokens/refresh",
     "attestation/generate",
     "item/tool/call",
-    "item/tool/requestUserInput",
     "mcpServer/elicitation/request"
+  ],
+  "question_server_requests": [
+    "item/tool/requestUserInput"
   ],
   "additive_notifications_ignored": [
     "thread/started",
@@ -57,9 +59,13 @@
     "deprecationNotice",
     "configWarning"
   ],
+  "skill_client_methods": ["skills/list"],
+  "skill_server_notifications": ["skills/changed"],
+  "skill_input_items": ["skill"],
   "recording_provenance": {
     "schema": "Generated on Windows on 2026-09-29 with the normally installed codex-cli 0.158.0 through scripts/probe-codex-app-server.ps1 (twice, same digest); every required token present. The server-request set is the 0.156.1 set; the adapter's required notifications and model/rerouted are all present.",
     "handshake": "The opt-in no-prompt factory handshake (live_codex_no_prompt_handshake_lists_models_when_opted_in) completed initialize and model/list against the installed CLI; no thread or prompt.",
-    "jsonl": "No replay fixtures for this version. The 0.154.0 replay set is the boundary fixture; a model turn under 0.158.0 has not been recorded."
+    "jsonl": "No replay fixtures for this version. The 0.154.0 replay set is the boundary fixture; a model turn under 0.158.0 has not been recorded.",
+    "skills": "Read from the rust-v0.158.0 tag of github.com/openai/codex on 2026-11-03: codex-rs/app-server-protocol/src/protocol/common.rs lists SkillsList => \"skills/list\" (params SkillsListParams {cwds, forceReload}) and SkillsChanged => \"skills/changed\", neither behind #[experimental]; protocol/v2/turn.rs's UserInput has Skill {name, path}; protocol/v2/plugin.rs's SkillMetadata has name, description, shortDescription, interface {displayName, shortDescription, ...}, path, scope (user|repo|system|admin), enabled and pluginId. The same in all eight supported versions, so the feature has no version gate (koru-ai D121)."
   }
 }

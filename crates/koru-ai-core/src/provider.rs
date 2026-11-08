@@ -192,10 +192,26 @@ pub enum ReasoningControl {
     },
     Levels {
         values: Vec<ReasoningLevel>,
-        default: ReasoningLevel,
+        /// The level the model runs at when the chat chooses none. OpenAI,
+        /// Koru AI and Ollama always state it; a local agent that does not
+        /// leaves it `None`, and *Default* then sends nothing — the agent
+        /// decides (agent-models §6.2).
+        #[serde(default)]
+        default: Option<ReasoningLevel>,
         supports_off: bool,
     },
 }
+
+/// What an agent chat's failed turn says when the agent did not accept the
+/// chat's reasoning level (agent-models D19). A surface that knows it says
+/// the same in the person's language.
+pub const AGENT_REASONING_REJECTED: &str = "The agent did not accept that reasoning level.";
+
+/// What an agent chat's answers say when their questions can no longer be
+/// answered (koru-ai D108): a set answered by the next message that was
+/// passed over, or whose agent session ended. A surface that knows it says
+/// the same in the person's language.
+pub const AGENT_QUESTIONS_CLOSED: &str = "These questions can no longer be answered.";
 
 /// Resolves a requested reasoning choice against a model's declared control.
 pub fn validate_reasoning(
@@ -217,7 +233,7 @@ pub fn validate_reasoning(
             choice @ (ReasoningChoice::Off | ReasoningChoice::On),
         ) => Ok(Some(choice)),
         (ReasoningControl::Levels { default, .. }, ReasoningChoice::Default) => {
-            Ok(Some(ReasoningChoice::Level(*default)))
+            Ok(default.map(ReasoningChoice::Level))
         }
         (ReasoningControl::Levels { supports_off, .. }, ReasoningChoice::Off) if *supports_off => {
             Ok(Some(ReasoningChoice::Off))
@@ -362,6 +378,35 @@ mod tests {
         assert!(AiProviderId::parse("").is_err());
         assert!(AiProviderId::parse("-openai").is_err());
         assert!(AiProviderId::parse("open_ai").is_err());
+    }
+
+    /// A local agent that states no default: *Default* sends nothing, a
+    /// level it offers is that level, one it does not is refused. An older
+    /// control without the field reads as stating none.
+    #[test]
+    fn a_control_with_no_stated_default_sends_nothing_on_default() {
+        let control = ReasoningControl::Levels {
+            values: vec![ReasoningLevel::Low, ReasoningLevel::High],
+            default: None,
+            supports_off: false,
+        };
+        assert_eq!(
+            validate_reasoning(&control, ReasoningChoice::Default).unwrap(),
+            None
+        );
+        assert_eq!(
+            validate_reasoning(&control, ReasoningChoice::Level(ReasoningLevel::High)).unwrap(),
+            Some(ReasoningChoice::Level(ReasoningLevel::High))
+        );
+        assert!(validate_reasoning(&control, ReasoningChoice::Level(ReasoningLevel::Max)).is_err());
+        let read: ReasoningControl = serde_json::from_value(serde_json::json!({
+            "kind": "levels", "values": ["low"], "supports_off": false
+        }))
+        .unwrap();
+        assert!(matches!(
+            read,
+            ReasoningControl::Levels { default: None, .. }
+        ));
     }
 
     #[test]

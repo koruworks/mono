@@ -80,3 +80,139 @@ fn live_is_the_default_and_down_is_the_exception() {
     assert!(!Availability::Live.is_down());
     assert!(Availability::Down.is_down());
 }
+
+/// An agent that knows the command to run names it, in code style; one that
+/// does not keeps the sentence it always had.
+#[test]
+fn an_attention_row_names_the_agents_command_when_it_has_one() {
+    let lang = koru_i18n::Lang::En;
+    let words = |why| AgentProviderStatus::NeedsAttention(why).words(lang);
+    assert_eq!(
+        words(AgentAttention::UnsupportedVersion {
+            found: None,
+            needed: None,
+            update: Some("devin update".into()),
+            desktop_app: None,
+        }),
+        "Needs attention — This version isn't one Koru supports yet. Run `devin update` to update it."
+    );
+    // An agent whose desktop app carries its own copy says so after the
+    // command (D63).
+    assert_eq!(
+        words(AgentAttention::UnsupportedVersion {
+            found: None,
+            needed: None,
+            update: Some("devin update".into()),
+            desktop_app: Some("Devin".into()),
+        }),
+        "Needs attention — This version isn't one Koru supports yet. Run `devin update` to update it. \
+         If you use the Devin desktop app, its copy updates with the app."
+    );
+    assert_eq!(
+        words(AgentAttention::SignedOut {
+            sign_in: Some("devin auth login".into())
+        }),
+        "Needs attention — Signed out. Run `devin auth login` to sign in."
+    );
+    assert!(
+        words(AgentAttention::UnsupportedVersion {
+            found: None,
+            needed: None,
+            update: None,
+            desktop_app: None,
+        })
+        .ends_with("This version isn't one Koru supports yet.")
+    );
+    assert!(
+        words(AgentAttention::SignedOut { sign_in: None })
+            .ends_with("Signed out. Sign in from the agent's own CLI.")
+    );
+}
+
+/// **A refused version says what was found and what Koru needs**, and a
+/// `--version` that failed says the agent's program does not start here.
+#[test]
+fn a_version_row_names_what_was_found_and_what_koru_needs() {
+    let lang = koru_i18n::Lang::En;
+    let words = |why| AgentProviderStatus::NeedsAttention(why).words(lang);
+    let version = |found: Option<&str>, needed, update: Option<&str>, app: Option<&str>| {
+        words(AgentAttention::UnsupportedVersion {
+            found: found.map(Into::into),
+            needed: Some(needed),
+            update: update.map(Into::into),
+            desktop_app: app.map(Into::into),
+        })
+    };
+    assert_eq!(
+        version(
+            Some("1.18.25"),
+            NeededVersion::AtLeast("1.18.27".into()),
+            None,
+            None
+        ),
+        "Needs attention — Found 1.18.25; Koru needs 1.18.27 or newer."
+    );
+    assert_eq!(
+        version(
+            Some("3000.10.48"),
+            NeededVersion::AtLeast("3000.11.1".into()),
+            Some("devin update"),
+            Some("Devin")
+        ),
+        "Needs attention — Found 3000.10.48; Koru needs 3000.11.1 or newer. \
+         Run `devin update` to update it. If you use the Devin desktop app, its copy updates with the app."
+    );
+    assert_eq!(
+        version(None, NeededVersion::AtLeast("1.18.27".into()), None, None),
+        "Needs attention — Koru needs 1.18.27 or newer."
+    );
+    // Newer than everything reviewed: no update command, since none helps.
+    assert_eq!(
+        version(
+            Some("0.167.0"),
+            NeededVersion::CheckedUpTo("0.166.0".into()),
+            Some("codex update"),
+            None
+        ),
+        "Needs attention — Found 0.167.0; Koru has only checked up to 0.166.0 so far."
+    );
+    assert_eq!(
+        version(
+            Some("0.155.0"),
+            NeededVersion::Reviewed("0.166.0".into()),
+            None,
+            None
+        ),
+        "Needs attention — Found 0.155.0, which Koru hasn't checked; the newest it supports is 0.166.0."
+    );
+    assert_eq!(
+        version(None, NeededVersion::Reviewed("1.2.1".into()), None, None),
+        "Needs attention — The newest version Koru supports is 1.2.1."
+    );
+    assert_eq!(
+        words(AgentAttention::WontStart {
+            program: "kimi".into()
+        }),
+        "Needs attention — `kimi --version` failed, so the agent can't start on this computer. \
+         Run it in a terminal to see why."
+    );
+    assert_eq!(
+        words(AgentAttention::CheckFailed),
+        "Needs attention — Koru couldn't check it."
+    );
+    // Every language joins the sentences and fills every slot.
+    for lang in koru_i18n::Lang::ALL {
+        let said = AgentProviderStatus::NeedsAttention(AgentAttention::UnsupportedVersion {
+            found: Some("1.0.0".into()),
+            needed: Some(NeededVersion::AtLeast("2.0.0".into())),
+            update: Some("x update".into()),
+            desktop_app: Some("X".into()),
+        })
+        .words(lang);
+        assert!(
+            said.contains("1.0.0") && said.contains("2.0.0") && said.contains("x update"),
+            "{said}"
+        );
+        assert!(!said.contains("{}"), "{said}");
+    }
+}

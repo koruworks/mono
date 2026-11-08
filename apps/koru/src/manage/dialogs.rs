@@ -117,8 +117,8 @@ impl Dialog {
 }
 
 const ADD_GOOGLE_BODY: &str = "This Google Account will be able to help connect new devices to this Profile. Your Profile content stays on your devices.";
-const REMOVE_CASCADE_BODY: &str = "Koru will close this Profile's open Workspace sessions, move every Workspace to Trash, and remove the Profile from this device. Workspace content remains recoverable from Store data. The hosted Profile listing stays in your Koru account so another trusted device can offer recovery.";
-const REMOVE_EMPTY_BODY: &str = "This removes the empty Profile and its settings from this device. The hosted Profile listing stays in your Koru account, so it can appear again after sign-in and another trusted device can offer recovery.";
+const REMOVE_CASCADE_BODY: &str = "Koru will close this Profile's open Workspace sessions, move every Workspace to Trash, and remove the Profile and its AI chats from this device. For 30 days you can restore the Profile with its chats and recover its Workspaces from Trash; after that they are deleted from this device. The hosted Profile listing stays in your Koru account so another trusted device can offer recovery.";
+const REMOVE_EMPTY_BODY: &str = "This removes the Profile, its settings and its AI chats from this device. You can restore it with its chats for 30 days; after that the chats are deleted. The hosted Profile listing stays in your Koru account, so it can appear again after sign-in and another trusted device can offer recovery.";
 const OFFLINE_BODY: &str = "This removes the last sign-in method. Local content and established trusted-device sync remain. Connect a Google Account again before adding a new device.";
 const SIGN_OUT_TITLE: &str = "Sign out of Koru on this computer?";
 const SIGN_OUT_BODY: &str = "Every signed-in profile on this computer stops syncing until you sign in again. Your profiles and their workspaces stay on this computer.";

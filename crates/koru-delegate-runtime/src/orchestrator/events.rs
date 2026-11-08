@@ -448,6 +448,14 @@ impl Orchestrator {
             }
             // Mirrored by the session summary; nothing for the run.
             AgentEvent::ProviderState { .. } => {}
+            // A chat's approval mode (koru-ai D7); a delegated run sets none.
+            AgentEvent::ModeChanged { .. } => {}
+            // An agent's status line (koru-ai D69): the chat shows it; a run
+            // keeps its reply and its steps, and nothing else.
+            AgentEvent::Notice { .. } => {}
+            // An agent's questions (koru-ai D108): a run's sessions are not
+            // created to draw them, so its agent declines and none arrive.
+            AgentEvent::QuestionsRequired { .. } | AgentEvent::QuestionsResolved { .. } => {}
         }
         Ok(HandleOutcome::Continue)
     }

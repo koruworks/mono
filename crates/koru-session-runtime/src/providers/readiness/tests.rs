@@ -5,6 +5,7 @@ use crate::providers::{
     AgentCapabilities, CompatibilityProbe, DelegationFacts, ManagedProvider,
     ManagedProviderFactory, ManagedProviderRequest,
 };
+use koru_session_protocol::ProviderModels;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
@@ -268,4 +269,85 @@ fn timed_out_inner_probes_keep_their_slots_and_coalesced_retries_stay_finite() {
         ExecutableAvailability::Available { .. }
     ));
     replies[1].send(Ok(compatible())).unwrap();
+}
+
+/// A probe whose session start already received the agent's models.
+struct CapturingFactory;
+
+impl ManagedProviderFactory for CapturingFactory {
+    fn create(&self, _: ManagedProviderRequest) -> Result<ManagedProvider, ProviderFailure> {
+        unreachable!("readiness must not create a managed session")
+    }
+    fn compatibility_probe(
+        &self,
+        _: std::ffi::OsString,
+        _: PathBuf,
+    ) -> Result<Box<dyn CompatibilityProbe>, ProviderFailure> {
+        Ok(Box::new(CapturingProbe))
+    }
+    fn discover_models(
+        &self,
+        _: std::ffi::OsString,
+        _: PathBuf,
+    ) -> Result<ProviderModels, ProviderFailure> {
+        unreachable!("the probe's capture is the list; nothing is listed again")
+    }
+    fn catalog_source(&self) -> crate::providers::CatalogSource {
+        crate::providers::CatalogSource::Probe
+    }
+}
+
+struct CapturingProbe;
+
+impl CompatibilityProbe for CapturingProbe {
+    fn provider(&self) -> ProviderKind {
+        "fixture".parse().unwrap()
+    }
+    fn raw_available(&self) -> bool {
+        true
+    }
+    fn probe(&self, limits: ProbeLimits) -> Result<AgentCapabilities, ProviderFailure> {
+        self.probe_with_models(limits)
+            .map(|(capabilities, _)| capabilities)
+    }
+    fn probe_with_models(
+        &self,
+        _: ProbeLimits,
+    ) -> Result<(AgentCapabilities, Option<ProviderModels>), ProviderFailure> {
+        let model = koru_session_protocol::ProviderModel::new(
+            "opus".parse().unwrap(),
+            "fixture".parse().unwrap(),
+        );
+        Ok((compatible(), Some(vec![model].try_into().unwrap())))
+    }
+}
+
+/// The list a probe's start received reaches the catalog with the row: a
+/// request made while the probe runs waits for it, and is answered from it
+/// without a listing.
+#[test]
+fn the_probes_captured_list_reaches_the_catalog() {
+    let mut registry = ManagedProviderRegistry::default();
+    registry
+        .register(
+            koru_session_profiles::ManagedProviderRegistration {
+                kind: "fixture",
+                ..koru_session_profiles::CODEX_REGISTRATION
+            },
+            Arc::new(CapturingFactory),
+        )
+        .unwrap();
+    let registry = Arc::new(registry);
+    let catalog = ProviderCatalogCache::new(
+        registry.clone(),
+        "fixture-cwd".into(),
+        Box::new(crate::providers::MemoryCatalogStore::default()),
+        false,
+    );
+    let cache =
+        ProviderReadinessCache::with_catalog(registry, "fixture-cwd".into(), true, catalog.clone());
+    let kind: ProviderKind = "fixture".parse().unwrap();
+    cache.refresh(kind.clone()).unwrap();
+    let models = catalog.serve(&kind).unwrap();
+    assert_eq!(models.models()[0].id.as_str(), "opus");
 }

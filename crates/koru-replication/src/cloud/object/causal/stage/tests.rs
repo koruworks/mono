@@ -3,6 +3,8 @@
 use super::*;
 use crate::cloud::object::causal::tests::{cp, fixture, segment, template};
 use crate::cloud::object::tests::{bind_fixture, bytes, head, limits};
+mod creation;
+mod messages;
 
 #[test]
 fn checkpoint_from_recovered_content_preserves_exact_head_and_requires_its_coverage() {

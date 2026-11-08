@@ -36,6 +36,10 @@ fn chat(id: ChatId, offset: i64) -> Chat {
         current_model: model(),
         branched_from: None,
         agent_working_folder: None,
+        agent_mode: None,
+        agent_fast: None,
+        pinned_at: None,
+        profile_id: None,
         created_at: at(offset),
         updated_at: at(offset),
     }
@@ -56,14 +60,14 @@ fn a_chats_working_folder_is_durable_listed_and_unset_by_none() {
     );
 
     let updated = repository
-        .set_chat_working_folder(chat_id, Some("D:/work/koru"), at(10))
+        .set_chat_working_folder(chat_id, Some("D:/work/koru"))
         .unwrap()
         .unwrap();
     assert_eq!(
         updated.agent_working_folder.as_deref(),
         Some("D:/work/koru")
     );
-    assert_eq!(updated.updated_at, at(10));
+    assert_eq!(updated.updated_at, at(0), "not activity (D85)");
     let listed = repository.chats().unwrap();
     assert_eq!(
         listed[0].agent_working_folder.as_deref(),
@@ -71,16 +75,62 @@ fn a_chats_working_folder_is_durable_listed_and_unset_by_none() {
     );
 
     let cleared = repository
-        .set_chat_working_folder(chat_id, None, at(20))
+        .set_chat_working_folder(chat_id, None)
         .unwrap()
         .unwrap();
     assert!(cleared.agent_working_folder.is_none());
     assert!(
         repository
-            .set_chat_working_folder(ChatId::new(), None, at(30))
+            .set_chat_working_folder(ChatId::new(), None)
             .unwrap()
             .is_none()
     );
+}
+
+/// **A chat's approval mode** (koru-ai D7) is durable, listed, and — like
+/// a rename — leaves the chat where it is in the list.
+#[test]
+fn a_chats_agent_mode_is_durable_listed_and_leaves_its_place() {
+    let mut repository = Repository::in_memory().unwrap();
+    let chat_id = ChatId::new();
+    repository.create_chat(&chat(chat_id, 0)).unwrap();
+    assert!(
+        repository
+            .chat(chat_id)
+            .unwrap()
+            .unwrap()
+            .agent_mode
+            .is_none()
+    );
+
+    let updated = repository
+        .set_chat_agent_mode(chat_id, Some("acceptEdits"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(updated.agent_mode.as_deref(), Some("acceptEdits"));
+    assert_eq!(updated.updated_at, at(0), "the list order is untouched");
+    assert_eq!(
+        repository.chats().unwrap()[0].agent_mode.as_deref(),
+        Some("acceptEdits")
+    );
+    assert!(
+        repository
+            .set_chat_agent_mode(ChatId::new(), Some("plan"))
+            .unwrap()
+            .is_none()
+    );
+
+    // Fast mode (D11) beside it: on, then off, and listed.
+    let fast = repository
+        .set_chat_agent_fast(chat_id, Some(true))
+        .unwrap()
+        .unwrap();
+    assert_eq!(fast.agent_fast, Some(true));
+    assert_eq!(fast.agent_mode.as_deref(), Some("acceptEdits"));
+    repository
+        .set_chat_agent_fast(chat_id, Some(false))
+        .unwrap();
+    assert_eq!(repository.chats().unwrap()[0].agent_fast, Some(false));
 }
 
 #[test]
@@ -90,12 +140,9 @@ fn chat_privacy_is_durable_and_visible_in_cheap_overviews() {
     repository.create_chat(&chat(chat_id, 0)).unwrap();
     assert!(!repository.chat(chat_id).unwrap().unwrap().private);
 
-    let updated = repository
-        .set_chat_private(chat_id, true, at(10))
-        .unwrap()
-        .unwrap();
+    let updated = repository.set_chat_private(chat_id, true).unwrap().unwrap();
     assert!(updated.private);
-    assert_eq!(updated.updated_at, at(10));
+    assert_eq!(updated.updated_at, at(0), "not activity (D85)");
     assert!(repository.chat(chat_id).unwrap().unwrap().private);
 
     let overviews = repository.chat_overviews().unwrap();
@@ -167,6 +214,7 @@ fn tool_audit_keeps_only_stable_targets_and_public_failure_context() {
         agent_summary: None,
         agent_input: None,
         agent_output: None,
+        text_offset: None,
         display_target: None,
         live: None,
     };
@@ -193,6 +241,147 @@ fn tool_audit_keeps_only_stable_targets_and_public_failure_context() {
     for forbidden in ["arguments", "results", "query", "title", "path", "content"] {
         assert!(!columns.iter().any(|column| column.contains(forbidden)));
     }
+}
+
+#[test]
+fn an_agent_row_records_where_the_reply_stood_when_it_began() {
+    let mut repository = Repository::in_memory().unwrap();
+    let chat_id = ChatId::new();
+    repository.create_chat(&chat(chat_id, 0)).unwrap();
+    let pending = turn(chat_id, Uuid::new_v4(), 1);
+    repository.begin_turn(&pending).unwrap();
+    // Bytes, not characters: the surface slices its draft by the same count.
+    repository
+        .apply_event(
+            &AiEvent::TextDelta {
+                attempt_id: pending.attempt.id,
+                text: "Je vais lire é.".into(),
+                at: at(2),
+            },
+            &[],
+        )
+        .unwrap();
+    let row = |tool_name: &str| ToolActivity {
+        id: ToolInvocationId::new(),
+        attempt_id: pending.attempt.id,
+        chat_id,
+        assistant_message_id: pending.assistant_message.id,
+        tool_name: tool_name.into(),
+        read_only: false,
+        status: ToolActivityStatus::Proposed,
+        approval: ToolApproval::NotRequired,
+        proposed_at: at(3),
+        started_at: None,
+        completed_at: None,
+        result_bytes: None,
+        error_code: None,
+        target_workspace_id: None,
+        target_document_id: None,
+        error_message: None,
+        agent_label: None,
+        agent_summary: None,
+        agent_input: None,
+        agent_output: None,
+        text_offset: None,
+        display_target: None,
+        live: None,
+    };
+    let agent = row(AgentToolKind::Tool.as_token());
+    repository.create_tool_activity(&agent).unwrap();
+    let workspace = row("read_document");
+    repository.create_tool_activity(&workspace).unwrap();
+    assert_eq!(
+        repository
+            .tool_activity(agent.id)
+            .unwrap()
+            .unwrap()
+            .text_offset,
+        Some("Je vais lire é.".len() as u32)
+    );
+    // Koru's own tool rows keep no offset: their reply reads as before.
+    assert_eq!(
+        repository
+            .tool_activity(workspace.id)
+            .unwrap()
+            .unwrap()
+            .text_offset,
+        None
+    );
+}
+
+/// **A local agent's notice is kept where the reply stood** (koru-ai D69,
+/// schema 12): in byte length, in the order notices came, with its reply,
+/// and gone with its chat.
+#[test]
+fn an_agent_notice_records_where_the_reply_stood_and_goes_with_its_chat() {
+    let mut repository = Repository::in_memory().unwrap();
+    let chat_id = ChatId::new();
+    repository.create_chat(&chat(chat_id, 0)).unwrap();
+    let pending = turn(chat_id, Uuid::new_v4(), 1);
+    repository.begin_turn(&pending).unwrap();
+    let notice = |text: &str, offset: i64| koru_ai_core::AgentNotice {
+        id: koru_ai_core::AgentNoticeId::new(),
+        attempt_id: pending.attempt.id,
+        chat_id,
+        assistant_message_id: pending.assistant_message.id,
+        text: text.into(),
+        text_offset: None,
+        created_at: at(offset),
+    };
+    let first = repository
+        .create_agent_notice(&notice("Hook failed: exit 127", 2))
+        .unwrap();
+    assert_eq!(first.text_offset, Some(0), "before any reply text");
+    assert_eq!(first.assistant_message_id, pending.assistant_message.id);
+    repository
+        .apply_event(
+            &AiEvent::TextDelta {
+                attempt_id: pending.attempt.id,
+                text: "Voilà é.".into(),
+                at: at(3),
+            },
+            &[],
+        )
+        .unwrap();
+    let second = repository
+        .create_agent_notice(&notice("Second", 4))
+        .unwrap();
+    assert_eq!(second.text_offset, Some("Voilà é.".len() as u32));
+    assert_eq!(
+        repository.agent_notices(chat_id).unwrap(),
+        vec![first, second]
+    );
+    // A notice naming another chat's reply is refused, never misfiled.
+    let mut foreign = notice("x", 5);
+    foreign.chat_id = ChatId::new();
+    assert!(repository.create_agent_notice(&foreign).is_err());
+    repository.delete_chat(chat_id).unwrap();
+    assert!(repository.agent_notices(chat_id).unwrap().is_empty());
+}
+
+/// **A pin is the chat's, durable and listed** (schema 12), and like a
+/// rename it leaves the chat where it is in the list.
+#[test]
+fn a_chats_pin_is_durable_listed_and_leaves_its_place() {
+    let mut repository = Repository::in_memory().unwrap();
+    let chat_id = ChatId::new();
+    repository.create_chat(&chat(chat_id, 0)).unwrap();
+    assert_eq!(repository.chat(chat_id).unwrap().unwrap().pinned_at, None);
+    let pinned = repository
+        .set_chat_pinned(chat_id, Some(at(7)))
+        .unwrap()
+        .unwrap();
+    assert_eq!(pinned.pinned_at, Some(at(7)));
+    assert_eq!(pinned.updated_at, at(0), "the list order is untouched");
+    assert_eq!(repository.chats().unwrap()[0].pinned_at, Some(at(7)));
+    let unpinned = repository.set_chat_pinned(chat_id, None).unwrap().unwrap();
+    assert_eq!(unpinned.pinned_at, None);
+    assert!(
+        repository
+            .set_chat_pinned(ChatId::new(), Some(at(1)))
+            .unwrap()
+            .is_none()
+    );
 }
 
 fn turn(chat_id: ChatId, operation_id: Uuid, offset: i64) -> PendingTurn {
@@ -261,6 +450,7 @@ fn turn(chat_id: ChatId, operation_id: Uuid, offset: i64) -> PendingTurn {
             error_class: None,
             provider_response_id: None,
         },
+        attachment_ids: Vec::new(),
     }
 }
 
@@ -390,22 +580,17 @@ fn attempts_for_chat_returns_only_message_backed_attempts_for_that_chat() {
     );
 }
 
+/// A rename changes the title and nothing else: not the recency the Chats
+/// list is ordered by, so the chat keeps its place.
 #[test]
-fn chat_rename_updates_the_title_and_recency_atomically() {
+fn chat_rename_changes_the_title_and_keeps_the_place() {
     let (mut repository, chat_id) = repository_with_chat();
-    assert!(
-        repository
-            .rename_chat(chat_id, "Renamed chat", at(10))
-            .unwrap()
-    );
+    let before = repository.chat(chat_id).unwrap().unwrap().updated_at;
+    assert!(repository.rename_chat(chat_id, "Renamed chat").unwrap());
     let renamed = repository.chat(chat_id).unwrap().unwrap();
     assert_eq!(renamed.title, "Renamed chat");
-    assert_eq!(renamed.updated_at, at(10));
-    assert!(
-        !repository
-            .rename_chat(ChatId::new(), "Missing", at(11))
-            .unwrap()
-    );
+    assert_eq!(renamed.updated_at, before);
+    assert!(!repository.rename_chat(ChatId::new(), "Missing").unwrap());
 }
 
 #[test]
@@ -416,19 +601,114 @@ fn chat_model_update_is_durable_and_does_not_touch_the_title() {
         requested_model: "gpt-next".into(),
         default_reasoning: ReasoningChoice::Level(ReasoningLevel::High),
     };
-    assert!(
-        repository
-            .update_chat_model(chat_id, &selected, at(12))
-            .unwrap()
-    );
+    assert!(repository.update_chat_model(chat_id, &selected).unwrap());
     let updated = repository.chat(chat_id).unwrap().unwrap();
     assert_eq!(updated.title, chat(chat_id, 0).title);
     assert_eq!(updated.current_model, selected);
-    assert_eq!(updated.updated_at, at(12));
+    assert_eq!(
+        updated.updated_at,
+        chat(chat_id, 0).updated_at,
+        "not activity (D85)"
+    );
     assert!(
         !repository
-            .update_chat_model(ChatId::new(), &model(), at(13))
+            .update_chat_model(ChatId::new(), &model())
             .unwrap()
+    );
+}
+
+/// **Only messages count as activity** (koru-ai D85, the user's call
+/// 2026-11-03): changing an older chat's model, privacy, folder or tools
+/// leaves it below the newer one; a message sent in it moves it up.
+#[test]
+fn only_a_message_moves_a_chat_in_the_list() {
+    let mut repository = Repository::in_memory().unwrap();
+    let older = ChatId::new();
+    let newer = ChatId::new();
+    repository.create_chat(&chat(older, 1)).unwrap();
+    repository.create_chat(&chat(newer, 2)).unwrap();
+    let order = |repository: &Repository| {
+        repository
+            .chats()
+            .unwrap()
+            .into_iter()
+            .map(|chat| chat.id)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(order(&repository), [newer, older]);
+
+    let other = ModelSelection {
+        provider: AiProviderId::parse(AiProviderId::OPENAI).unwrap(),
+        requested_model: "gpt-other".into(),
+        default_reasoning: ReasoningChoice::Default,
+    };
+    assert!(repository.update_chat_model(older, &other).unwrap());
+    repository.set_chat_private(older, true).unwrap().unwrap();
+    repository
+        .set_chat_working_folder(older, Some("D:/work"))
+        .unwrap()
+        .unwrap();
+    repository
+        .replace_chat_tool_policy(older, ToolMode::Auto, &[], at(50))
+        .unwrap()
+        .unwrap();
+    assert_eq!(order(&repository), [newer, older], "none of it is activity");
+    assert_eq!(
+        repository.chat(older).unwrap().unwrap().updated_at,
+        at(1),
+        "its *when* has not moved"
+    );
+
+    complete_turn(&mut repository, older, 0, "Moving up", 60);
+    assert_eq!(order(&repository), [older, newer], "a message is");
+}
+
+/// **A reply that ends is activity** (koru-ai D85): the chat's place in the
+/// list moves to when its reply arrived, as it moved when the message was
+/// sent — whether the reply completed, failed or was stopped — and a late
+/// event for a reply already ended moves nothing.
+#[test]
+fn a_reply_that_ends_moves_its_chat_to_when_it_arrived() {
+    let (mut repository, chat_id) = repository_with_chat();
+    complete_turn(&mut repository, chat_id, 0, "Done", 10);
+    let chat = repository.chat(chat_id).unwrap().unwrap();
+    assert_eq!(chat.updated_at, at(12), "the completion, not the send");
+
+    let mut pending = turn(chat_id, Uuid::new_v4(), 20);
+    pending.user_message.ordinal = 2;
+    pending.assistant_message.ordinal = 3;
+    let attempt_id = pending.attempt.id;
+    repository.begin_turn(&pending).unwrap();
+    assert_eq!(
+        repository.chat(chat_id).unwrap().unwrap().updated_at,
+        at(20)
+    );
+    repository
+        .apply_event(
+            &AiEvent::Cancelled {
+                attempt_id,
+                at: at(25),
+            },
+            &[],
+        )
+        .unwrap();
+    assert_eq!(
+        repository.chat(chat_id).unwrap().unwrap().updated_at,
+        at(25)
+    );
+    repository
+        .apply_event(
+            &AiEvent::Cancelled {
+                attempt_id,
+                at: at(30),
+            },
+            &[],
+        )
+        .unwrap();
+    assert_eq!(
+        repository.chat(chat_id).unwrap().unwrap().updated_at,
+        at(25),
+        "a reply already ended moves nothing"
     );
 }
 
@@ -591,6 +871,10 @@ fn branch_retry_and_export_preserve_history_and_retry_identity() {
             through_message_id: original.assistant_message.id,
         }),
         agent_working_folder: None,
+        agent_mode: None,
+        agent_fast: None,
+        pinned_at: None,
+        profile_id: None,
         created_at: at(4),
         updated_at: at(4),
     };
@@ -606,6 +890,7 @@ fn branch_retry_and_export_preserve_history_and_retry_identity() {
             blocks: Vec::new(),
             citations: Vec::new(),
             pinned_documents: Vec::new(),
+            attachments: Vec::new(),
         })
         .unwrap();
     assert_eq!(repository.messages(branch_id).unwrap().len(), 2);
@@ -728,10 +1013,7 @@ fn context_measurements_and_provenance_commit_atomically_before_provider_work() 
             .markdown,
         "Reusable answer"
     );
-    repository
-        .set_chat_private(chat_id, true, at(6))
-        .unwrap()
-        .unwrap();
+    repository.set_chat_private(chat_id, true).unwrap().unwrap();
     assert!(
         repository
             .message_block_context(source_block)
@@ -1068,10 +1350,7 @@ fn search_returns_one_highlighted_best_block_per_finalized_response() {
             ],
         )
         .unwrap();
-    repository
-        .set_chat_private(chat_id, true, at(3))
-        .unwrap()
-        .unwrap();
+    repository.set_chat_private(chat_id, true).unwrap().unwrap();
 
     let page = repository
         .search(&AiSearchQuery {
@@ -1079,6 +1358,8 @@ fn search_returns_one_highlighted_best_block_per_finalized_response() {
             limit: 50,
             cursor: None,
             visibility: ChatAccessLens::UserSurface,
+            profile: None,
+            removed_profiles: Vec::new(),
         })
         .unwrap();
     assert_eq!(page.hits.len(), 1);
@@ -1098,6 +1379,8 @@ fn search_returns_one_highlighted_best_block_per_finalized_response() {
             limit: 50,
             cursor: None,
             visibility: ChatAccessLens::UserSurface,
+            profile: None,
+            removed_profiles: Vec::new(),
         })
         .unwrap();
     assert!(empty.hits.is_empty());
@@ -1119,17 +1402,13 @@ fn chat_tools_apply_one_privacy_lens_to_list_search_and_read() {
         repository.create_chat(&value).unwrap();
         complete_turn(&mut repository, id, 0, "sharedneedle answer", offset + 1);
     }
-    repository
-        .set_chat_private(private_id, true, at(40))
-        .unwrap();
-    repository
-        .set_chat_private(calling_id, true, at(41))
-        .unwrap();
+    repository.set_chat_private(private_id, true).unwrap();
+    repository.set_chat_private(calling_id, true).unwrap();
 
     let lens = ChatAccessLens::ToolSurface {
         calling_chat: Some(calling_id),
     };
-    let listed = list_chats(&repository, lens, ListChatsToolRequest::default()).unwrap();
+    let listed = list_chats(&repository, lens, ListChatsToolRequest::default(), &[]).unwrap();
     let listed_ids = listed
         .chats
         .iter()
@@ -1147,6 +1426,7 @@ fn chat_tools_apply_one_privacy_lens_to_list_search_and_read() {
             cursor: None,
             page_size: None,
         },
+        &[],
     )
     .unwrap();
     let searched_ids = searched
@@ -1465,6 +1745,8 @@ fn usage_reports_nullable_provider_fields_and_survives_history_until_cleared() {
                 limit: 10,
                 cursor: None,
                 visibility: ChatAccessLens::UserSurface,
+                profile: None,
+                removed_profiles: Vec::new(),
             })
             .unwrap()
             .hits
@@ -1476,4 +1758,554 @@ fn usage_reports_nullable_provider_fields_and_survives_history_until_cleared() {
     assert_eq!(cleared.attempts, 1);
     assert_eq!(cleared.feedback_events, 1);
     assert!(repository.usage(None).unwrap().groups.is_empty());
+}
+
+fn staged(chat_id: ChatId, name: &str, offset: i64) -> koru_ai_core::AttachmentRecord {
+    koru_ai_core::AttachmentRecord {
+        chat_id,
+        attachment: koru_ai_core::ChatAttachment {
+            id: koru_ai_core::ChatAttachmentId::new(),
+            message_id: None,
+            ordinal: None,
+            kind: koru_ai_core::AttachmentKind::Image,
+            source: koru_ai_core::AttachmentSource::Clipboard,
+            file_name: name.into(),
+            media_type: "image/png".into(),
+            byte_count: 1_024,
+            dimensions: Some((40, 30)),
+            origin: None,
+            created_at: at(offset),
+        },
+        has_sent_copy: false,
+        content_blake3: "a".repeat(64),
+    }
+}
+
+#[test]
+fn a_staged_attachment_is_bound_to_the_user_message_in_the_turn_transaction() {
+    let (mut repository, chat_id) = repository_with_chat();
+    let first = staged(chat_id, "first.png", 1);
+    let second = staged(chat_id, "second.png", 2);
+    let kept = staged(chat_id, "kept.png", 3);
+    for record in [&first, &second, &kept] {
+        repository.stage_attachment(record).unwrap();
+    }
+    assert_eq!(
+        repository.attachment(first.attachment.id).unwrap(),
+        Some(first.clone())
+    );
+
+    let mut pending = turn(chat_id, Uuid::new_v4(), 10);
+    // Bound in the order the send names them, not the order they were added.
+    pending.attachment_ids = vec![second.attachment.id, first.attachment.id];
+    repository.begin_turn(&pending).unwrap();
+
+    let listed = repository.attachments_for_chat(chat_id).unwrap();
+    let names: Vec<_> = listed.iter().map(|item| item.file_name.as_str()).collect();
+    assert_eq!(names, ["second.png", "first.png", "kept.png"]);
+    assert_eq!(listed[0].message_id, Some(pending.user_message.id));
+    assert_eq!(listed[0].ordinal, Some(0));
+    assert_eq!(listed[1].ordinal, Some(1));
+    assert_eq!(listed[2].message_id, None, "the one not named stays staged");
+}
+
+#[test]
+fn a_turn_naming_an_unknown_or_foreign_attachment_writes_nothing() {
+    let (mut repository, chat_id) = repository_with_chat();
+    let other_chat = ChatId::new();
+    repository.create_chat(&chat(other_chat, 0)).unwrap();
+    let foreign = staged(other_chat, "foreign.png", 1);
+    repository.stage_attachment(&foreign).unwrap();
+
+    for ids in [
+        vec![koru_ai_core::ChatAttachmentId::new()],
+        vec![foreign.attachment.id],
+    ] {
+        let mut pending = turn(chat_id, Uuid::new_v4(), 10);
+        pending.attachment_ids = ids;
+        assert!(repository.begin_turn(&pending).is_err());
+        assert!(repository.messages(chat_id).unwrap().is_empty());
+    }
+    assert_eq!(
+        repository
+            .attachment(foreign.attachment.id)
+            .unwrap()
+            .unwrap()
+            .attachment
+            .message_id,
+        None
+    );
+}
+
+#[test]
+fn only_a_staged_attachment_can_be_removed() {
+    let (mut repository, chat_id) = repository_with_chat();
+    let sent = staged(chat_id, "sent.png", 1);
+    let draft = staged(chat_id, "draft.png", 2);
+    repository.stage_attachment(&sent).unwrap();
+    repository.stage_attachment(&draft).unwrap();
+    let mut pending = turn(chat_id, Uuid::new_v4(), 10);
+    pending.attachment_ids = vec![sent.attachment.id];
+    repository.begin_turn(&pending).unwrap();
+
+    assert_eq!(
+        repository
+            .remove_staged_attachment(chat_id, sent.attachment.id)
+            .unwrap(),
+        RemovedAttachment::Sent
+    );
+    assert_eq!(
+        repository
+            .remove_staged_attachment(ChatId::new(), draft.attachment.id)
+            .unwrap(),
+        RemovedAttachment::NotFound,
+        "another chat cannot remove it"
+    );
+    assert_eq!(
+        repository
+            .remove_staged_attachment(chat_id, draft.attachment.id)
+            .unwrap(),
+        RemovedAttachment::Removed
+    );
+    assert_eq!(
+        repository
+            .remove_staged_attachment(chat_id, draft.attachment.id)
+            .unwrap(),
+        RemovedAttachment::NotFound
+    );
+}
+
+#[test]
+fn old_staged_rows_are_swept_and_the_known_folders_are_listed() {
+    let (mut repository, chat_id) = repository_with_chat();
+    let old = staged(chat_id, "old.png", 1);
+    let fresh = staged(chat_id, "fresh.png", 100);
+    let sent = staged(chat_id, "sent.png", 2);
+    for record in [&old, &fresh, &sent] {
+        repository.stage_attachment(record).unwrap();
+    }
+    let mut pending = turn(chat_id, Uuid::new_v4(), 10);
+    pending.attachment_ids = vec![sent.attachment.id];
+    repository.begin_turn(&pending).unwrap();
+
+    assert_eq!(
+        repository.remove_staged_attachments_before(at(50)).unwrap(),
+        1
+    );
+    let known = repository.attachment_dirs_known().unwrap();
+    assert!(known.chats.contains(&chat_id));
+    assert!(known.attachments.contains(&fresh.attachment.id));
+    assert!(known.attachments.contains(&sent.attachment.id));
+    assert!(!known.attachments.contains(&old.attachment.id));
+
+    // Deleting the chat takes every row with it.
+    repository.delete_chat(chat_id).unwrap();
+    assert!(
+        repository
+            .attachment_dirs_known()
+            .unwrap()
+            .attachments
+            .is_empty()
+    );
+}
+
+#[test]
+fn a_branch_carries_its_copied_attachments_under_new_ids() {
+    let (mut repository, chat_id) = repository_with_chat();
+    let sent = staged(chat_id, "sent.png", 1);
+    repository.stage_attachment(&sent).unwrap();
+    let mut pending = turn(chat_id, Uuid::new_v4(), 10);
+    pending.attachment_ids = vec![sent.attachment.id];
+    repository.begin_turn(&pending).unwrap();
+
+    let branch_id = ChatId::new();
+    let mut copied_user = pending.user_message.clone();
+    copied_user.id = MessageId::new();
+    copied_user.chat_id = branch_id;
+    copied_user.origin_message_id = Some(pending.user_message.id);
+    let mut copy = repository.attachment(sent.attachment.id).unwrap().unwrap();
+    copy.chat_id = branch_id;
+    copy.attachment.id = koru_ai_core::ChatAttachmentId::new();
+    copy.attachment.message_id = Some(copied_user.id);
+    let mut branch = chat(branch_id, 20);
+    branch.branched_from = Some(BranchOrigin {
+        chat_id,
+        through_message_id: pending.user_message.id,
+    });
+    repository
+        .create_branch(&BranchCopy {
+            chat: branch,
+            tool_policy: ChatToolPolicy {
+                chat_id: branch_id,
+                mode: ToolMode::Manual,
+                workspace_ids: Vec::new(),
+            },
+            messages: vec![copied_user.clone()],
+            blocks: Vec::new(),
+            citations: Vec::new(),
+            pinned_documents: Vec::new(),
+            attachments: vec![copy.clone()],
+        })
+        .unwrap();
+    let listed = repository.attachments_for_chat(branch_id).unwrap();
+    assert_eq!(listed, vec![copy.attachment]);
+    assert_eq!(listed[0].message_id, Some(copied_user.id));
+    // The source keeps its own row.
+    assert_eq!(repository.attachments_for_chat(chat_id).unwrap().len(), 1);
+}
+
+/// **A message steered into a running reply is recorded after it**: after
+/// every message the chat has, the pending reply included, with no schema
+/// change; recording it again answers what was recorded.
+#[test]
+fn a_steered_message_is_recorded_after_the_running_reply() {
+    let (mut repository, chat_id) = repository_with_chat();
+    let pending = turn(chat_id, Uuid::new_v4(), 10);
+    repository.begin_turn(&pending).unwrap();
+    let steered = Message {
+        id: MessageId::new(),
+        chat_id,
+        ordinal: 0,
+        role: ChatRole::User,
+        state: MessageState::Complete,
+        markdown: "Also check the tests".into(),
+        origin_message_id: None,
+        provider: None,
+        requested_model: None,
+        resolved_model: None,
+        error_class: None,
+        created_at: at(20),
+        completed_at: Some(at(20)),
+    };
+    let stored = repository.append_user_message(&steered).unwrap();
+    assert_eq!(stored.ordinal, 2, "after the pending reply's ordinal 1");
+    let messages = repository.messages(chat_id).unwrap();
+    assert_eq!(
+        messages
+            .iter()
+            .map(|message| (message.role, message.state))
+            .collect::<Vec<_>>(),
+        [
+            (ChatRole::User, MessageState::Complete),
+            (ChatRole::Assistant, MessageState::Pending),
+            (ChatRole::User, MessageState::Complete),
+        ]
+    );
+    let again = repository.append_user_message(&steered).unwrap();
+    assert_eq!(again, stored, "idempotent by id");
+    assert_eq!(repository.messages(chat_id).unwrap().len(), 3);
+    // Only the person's complete message is recorded this way.
+    let mut reply = steered.clone();
+    reply.id = MessageId::new();
+    reply.role = ChatRole::Assistant;
+    assert!(repository.append_user_message(&reply).is_err());
+}
+
+/// **Placing the chats of a schema-12 store** (AI schema 13, koru-ai D120):
+/// four chats written before profiles, read in two profiles' workspaces or
+/// in none. Each goes to the profile of the workspace it last read; a read
+/// beats a grant; with nothing at all, the first profile. Nothing is
+/// deleted, and a chat placed once is never moved.
+#[test]
+fn a_v12_stores_chats_are_placed_by_what_they_last_read() {
+    use koru_ai_core::{ChatRead, ProfileCatalog, place_chat};
+
+    const V12: koru_sqlite::Schema = koru_sqlite::Schema {
+        database: crate::DATABASE_FILE,
+        understood: 12,
+        migrations: crate::db::MIGRATIONS.split_at(12).0,
+    };
+    let mut connection = koru_sqlite::open_in_memory(&V12).unwrap();
+    let (private, work) = (ProfileId::new(), ProfileId::new());
+    let (home, office) = (WorkspaceId::new(), WorkspaceId::new());
+    let letter = DocumentId::new();
+    // A: a tool read the office after the home was granted.
+    // B: read the home's letter as context, though the office is granted.
+    // C: nothing at all.
+    // D: only granted the office.
+    let (a, b, c, d) = (ChatId::new(), ChatId::new(), ChatId::new(), ChatId::new());
+    let message = MessageId::new();
+    connection
+        .execute_batch(&format!(
+            "INSERT INTO chats (id, title, current_provider, current_model,
+                                created_at_ms, updated_at_ms)
+             VALUES ('{a}', 'A', 'mock', 'default', 1, 1),
+                    ('{b}', 'B', 'mock', 'default', 2, 2),
+                    ('{c}', 'C', 'mock', 'default', 3, 3),
+                    ('{d}', 'D', 'mock', 'default', 4, 4);
+             INSERT INTO chat_workspace_grants (chat_id, workspace_id, granted_at_ms)
+             VALUES ('{a}', '{home}', 1), ('{b}', '{office}', 9), ('{d}', '{office}', 1);
+             INSERT INTO inference_attempts (
+                id, operation_id, chat_id, surface, provider, requested_model,
+                prompt_template_version, status, queued_at_ms
+             ) VALUES ('attempt', 'op', '{a}', 'standalone', 'mock', 'default',
+                       'v1', 'pending', 1);
+             INSERT INTO tool_invocations (
+                id, attempt_id, chat_id, tool_name, read_only, status, approval,
+                proposed_at_ms, completed_at_ms, target_workspace_id
+             ) VALUES ('denied', 'attempt', '{a}', 'read_document', 1, 'failed',
+                       'not_required', 8, 9, '{home}'),
+                      ('read', 'attempt', '{a}', 'read_document', 1, 'complete',
+                       'not_required', 4, 5, '{office}');
+             INSERT INTO messages (id, chat_id, ordinal, role, state, created_at_ms)
+             VALUES ('{message}', '{b}', 0, 'user', 'complete', 6);
+             INSERT INTO message_document_refs (
+                message_id, document_id, relation, display_title, source_revision, used_at_ms
+             ) VALUES ('{message}', '{letter}', 'context', 'Letter', X'00', 7);",
+            a = a.to_storage(),
+            b = b.to_storage(),
+            c = c.to_storage(),
+            d = d.to_storage(),
+            home = home.to_storage(),
+            office = office.to_storage(),
+            letter = letter.to_storage(),
+            message = message.to_storage(),
+        ))
+        .unwrap();
+    crate::db::prepare(&mut connection).unwrap();
+    let mut repository = Repository { connection };
+
+    let evidence = repository.unplaced_chats().unwrap();
+    assert_eq!(
+        evidence.iter().map(|chat| chat.chat_id).collect::<Vec<_>>(),
+        vec![a, b, c, d],
+        "every chat, oldest first"
+    );
+    assert_eq!(
+        evidence[0].reads,
+        vec![(Timestamp::from_millis(5), ChatRead::Workspace(office))],
+        "only a completed call is a read"
+    );
+    assert_eq!(
+        evidence[1].reads,
+        vec![(Timestamp::from_millis(7), ChatRead::Document(letter))]
+    );
+    assert!(evidence[2].reads.is_empty() && evidence[2].grants.is_empty());
+
+    let catalog = ProfileCatalog {
+        profiles: vec![private, work],
+        workspace_owners: [(home, private), (office, work)].into_iter().collect(),
+    };
+    for chat in &evidence {
+        let profile = place_chat(chat, &catalog, |document| {
+            (document == letter).then_some(home)
+        })
+        .unwrap();
+        assert!(
+            repository
+                .assign_chat_profile(chat.chat_id, profile)
+                .unwrap()
+        );
+    }
+    let placed = |repository: &Repository, chat| repository.chat(chat).unwrap().unwrap().profile_id;
+    assert_eq!(placed(&repository, a), Some(work));
+    assert_eq!(placed(&repository, b), Some(private));
+    assert_eq!(placed(&repository, c), Some(private), "the first profile");
+    assert_eq!(placed(&repository, d), Some(work));
+    assert!(repository.unplaced_chats().unwrap().is_empty());
+
+    // Placed once, never moved; and every grant is still there.
+    assert!(!repository.assign_chat_profile(a, private).unwrap());
+    assert_eq!(placed(&repository, a), Some(work));
+    assert_eq!(
+        repository
+            .chat_tool_policy(b)
+            .unwrap()
+            .unwrap()
+            .workspace_ids,
+        vec![office]
+    );
+    assert_eq!(repository.chats().unwrap().len(), 4);
+}
+
+/// **A chat's profile is stored, copied by a branch, and holds the search
+/// and a chat's own tools to it** (AI schema 13). The person's search names
+/// a profile or none; a chat's tools see only their own profile's chats,
+/// whatever the chats' privacy.
+#[test]
+fn a_profile_holds_search_and_a_chats_tools_to_its_chats() {
+    let mut repository = Repository::in_memory().unwrap();
+    let (private, work) = (ProfileId::new(), ProfileId::new());
+    let (home_chat, work_chat, calling) = (ChatId::new(), ChatId::new(), ChatId::new());
+    for (id, profile, offset) in [
+        (home_chat, private, 0),
+        (work_chat, work, 10),
+        (calling, private, 20),
+    ] {
+        let mut value = chat(id, offset);
+        value.profile_id = Some(profile);
+        repository.create_chat(&value).unwrap();
+        complete_turn(&mut repository, id, 0, "profileneedle answer", offset + 1);
+    }
+    assert_eq!(
+        repository.chat(work_chat).unwrap().unwrap().profile_id,
+        Some(work)
+    );
+
+    let search = |profile| {
+        repository
+            .search(&AiSearchQuery {
+                text: "profileneedle".into(),
+                limit: 50,
+                cursor: None,
+                visibility: ChatAccessLens::UserSurface,
+                profile,
+                removed_profiles: Vec::new(),
+            })
+            .unwrap()
+            .hits
+    };
+    let everyone = search(None);
+    assert_eq!(everyone.len(), 3);
+    let work_hits = search(Some(work));
+    assert_eq!(work_hits.len(), 1);
+    assert_eq!(
+        (work_hits[0].chat_id, work_hits[0].profile_id),
+        (work_chat, Some(work))
+    );
+
+    let lens = ChatAccessLens::ToolSurface {
+        calling_chat: Some(calling),
+    };
+    let listed = list_chats(&repository, lens, ListChatsToolRequest::default(), &[])
+        .unwrap()
+        .chats
+        .into_iter()
+        .map(|chat| chat.chat_id)
+        .collect::<Vec<_>>();
+    assert_eq!(listed.len(), 2);
+    assert!(!listed.contains(&work_chat));
+    let searched = search_chats(
+        &repository,
+        lens,
+        SearchChatsToolRequest {
+            query: "profileneedle".into(),
+            cursor: None,
+            page_size: None,
+        },
+        &[],
+    )
+    .unwrap();
+    assert_eq!(searched.hits.len(), 2);
+    assert!(searched.hits.iter().all(|hit| hit.chat_id != work_chat));
+    let read = |chat_id| {
+        read_chat(
+            &repository,
+            lens,
+            ReadChatToolRequest {
+                chat_id,
+                cursor: None,
+                page_size: None,
+            },
+        )
+    };
+    assert!(read(home_chat).is_ok());
+    assert_eq!(
+        read(work_chat).unwrap_err().public_message,
+        read(ChatId::new()).unwrap_err().public_message,
+        "another profile's chat is the same as no chat"
+    );
+
+    // An outside MCP client is no chat, and is not held to a profile.
+    let outside = list_chats(
+        &repository,
+        ChatAccessLens::ToolSurface { calling_chat: None },
+        ListChatsToolRequest::default(),
+        &[],
+    )
+    .unwrap();
+    assert_eq!(outside.chats.len(), 3);
+}
+
+/// **A removed profile's chats are left out of every search and tool
+/// listing** before the page is cut, while another profile's and a chat
+/// with no profile yet are found as before.
+#[test]
+fn a_removed_profiles_chats_are_left_out_of_search_and_tool_listings() {
+    let mut repository = Repository::in_memory().unwrap();
+    let (removed, kept) = (ProfileId::new(), ProfileId::new());
+    let (gone, stays, unplaced) = (ChatId::new(), ChatId::new(), ChatId::new());
+    for (id, profile, offset) in [
+        (gone, Some(removed), 0),
+        (stays, Some(kept), 10),
+        (unplaced, None, 20),
+    ] {
+        let mut value = chat(id, offset);
+        value.profile_id = profile;
+        repository.create_chat(&value).unwrap();
+        complete_turn(&mut repository, id, 0, "hiddenneedle answer", offset + 1);
+    }
+
+    let search = |removed_profiles: Vec<ProfileId>, profile| {
+        let mut ids: Vec<ChatId> = repository
+            .search(&AiSearchQuery {
+                text: "hiddenneedle".into(),
+                limit: 50,
+                cursor: None,
+                visibility: ChatAccessLens::UserSurface,
+                profile,
+                removed_profiles,
+            })
+            .unwrap()
+            .hits
+            .into_iter()
+            .map(|hit| hit.chat_id)
+            .collect();
+        ids.sort();
+        ids
+    };
+    let sorted = |mut ids: Vec<ChatId>| {
+        ids.sort();
+        ids
+    };
+    assert_eq!(
+        search(Vec::new(), None),
+        sorted(vec![gone, stays, unplaced])
+    );
+    assert_eq!(search(vec![removed], None), sorted(vec![stays, unplaced]));
+    assert!(search(vec![removed], Some(removed)).is_empty());
+    assert_eq!(
+        search(vec![removed, ProfileId::new()], Some(kept)),
+        vec![stays]
+    );
+
+    let outside = ChatAccessLens::ToolSurface { calling_chat: None };
+    let first = list_chats(
+        &repository,
+        outside,
+        ListChatsToolRequest {
+            cursor: None,
+            page_size: Some(1),
+        },
+        &[removed],
+    )
+    .unwrap();
+    assert_eq!(first.chats.len(), 1);
+    let rest = list_chats(
+        &repository,
+        outside,
+        ListChatsToolRequest {
+            cursor: first.next_cursor,
+            page_size: Some(1),
+        },
+        &[removed],
+    )
+    .unwrap();
+    assert_eq!(rest.next_cursor, None, "two chats are left, in two pages");
+    let mut listed = vec![first.chats[0].chat_id, rest.chats[0].chat_id];
+    listed.sort();
+    assert_eq!(listed, sorted(vec![stays, unplaced]));
+    let searched = search_chats(
+        &repository,
+        outside,
+        SearchChatsToolRequest {
+            query: "hiddenneedle".into(),
+            cursor: None,
+            page_size: None,
+        },
+        &[removed],
+    )
+    .unwrap();
+    assert_eq!(searched.hits.len(), 2);
+    assert!(searched.hits.iter().all(|hit| hit.chat_id != gone));
 }

@@ -3,8 +3,8 @@
 //! Narrow adapter from the AI context port to the bounded Store worker.
 
 use koru_ai_core::{
-    AiError, AiErrorClass, DocumentContext, DocumentDestination, DocumentId, StoreContextPort,
-    StoreRevision,
+    AiError, AiErrorClass, DocumentContext, DocumentDestination, DocumentId, ProfileCatalog,
+    ProfileId, StoreContextPort, StoreRevision, WorkspaceId,
 };
 use koru_core::WorkspaceDoc;
 use koru_export::NoBlobs;
@@ -30,7 +30,13 @@ struct StoredDocument {
 }
 
 impl StoreContextPort for StoreContextAdapter {
-    fn resolve_document(&self, document: DocumentId) -> Result<DocumentContext, AiError> {
+    fn resolve_document(
+        &self,
+        document: DocumentId,
+        reader: Option<ProfileId>,
+    ) -> Result<DocumentContext, AiError> {
+        // A chat not yet placed reads nothing (AI schema 13).
+        let reader = reader.ok_or_else(document_unavailable)?;
         let stored = self
             .client
             .with_store(move |store| {
@@ -38,6 +44,16 @@ impl StoreContextPort for StoreContextAdapter {
                     .locate(document)
                     .map_err(|_| context_unavailable())?
                     .ok_or_else(document_unavailable)?;
+                // **Only the reader's profile's documents**: another
+                // profile's is the same answer as a missing one.
+                if store
+                    .workspace(workspace)
+                    .map_err(|_| context_unavailable())?
+                    .owner
+                    != reader
+                {
+                    return Err(document_unavailable());
+                }
                 let entry = store
                     .documents(workspace)
                     .map_err(|_| context_unavailable())?
@@ -153,6 +169,65 @@ impl StoreContextPort for StoreContextAdapter {
             .map_err(|_| export_unavailable())?
             .map_err(|_| export_unavailable())
     }
+
+    /// The live profiles in the Store's order — the order Koru lists them,
+    /// oldest first — and the owner of every workspace, those in the bin
+    /// too: a chat that last read a workspace since binned is still that
+    /// profile's.
+    fn profile_catalog(&self) -> Result<ProfileCatalog, AiError> {
+        self.client
+            .with_store(|store| {
+                let profiles = store.profiles()?.into_iter().map(|profile| profile.id);
+                let owners = store
+                    .workspaces_including_deleted()?
+                    .into_iter()
+                    .map(|workspace| (workspace.id, workspace.owner));
+                Ok::<_, koru_store_core::Error>(ProfileCatalog {
+                    profiles: profiles.collect(),
+                    workspace_owners: owners.collect(),
+                })
+            })
+            .map_err(|_| profiles_unavailable())?
+            .map_err(|_| profiles_unavailable())
+    }
+
+    fn document_workspace(&self, document: DocumentId) -> Result<Option<WorkspaceId>, AiError> {
+        self.client
+            .with_store(move |store| store.locate(document))
+            .map_err(|_| context_unavailable())?
+            .map_err(|_| context_unavailable())
+    }
+
+    fn retired_profiles(&self) -> Result<Vec<ProfileId>, AiError> {
+        // The window the Store's own purge keeps a deleted workspace for.
+        let before = koru_store_core::Timestamp::from_millis(
+            koru_store_core::Timestamp::now()
+                .millis()
+                .saturating_sub(koru_store_core::TRASH_RETENTION_MS),
+        );
+        self.client
+            .with_store(move |store| store.profiles_removed_before(before))
+            .map_err(|_| profiles_unavailable())?
+            .map_err(|_| profiles_unavailable())
+    }
+
+    /// The same query with no window: every row marked removed, however
+    /// lately — and however the clock has moved since.
+    fn removed_profiles(&self) -> Result<Vec<ProfileId>, AiError> {
+        let always = koru_store_core::Timestamp::from_millis(i64::MAX);
+        self.client
+            .with_store(move |store| store.profiles_removed_before(always))
+            .map_err(|_| profiles_unavailable())?
+            .map_err(|_| profiles_unavailable())
+    }
+}
+
+fn profiles_unavailable() -> AiError {
+    AiError::new(
+        AiErrorClass::Storage,
+        "Koru's profiles are temporarily unavailable.",
+        true,
+    )
 }
 
 fn export_unavailable() -> AiError {
@@ -195,11 +270,18 @@ mod tests {
         .spawn()
         .unwrap();
         let client = worker.client();
-        let document = client
+        let (profile, other, document) = client
             .with_store(|store| {
                 let at = Timestamp::from_millis(1);
                 let profile =
                     store.create_profile("Test", None, None, Locale::parse("en").unwrap(), at)?;
+                let other = store.create_profile(
+                    "Other",
+                    None,
+                    None,
+                    Locale::parse("en").unwrap(),
+                    Timestamp::from_millis(2),
+                )?;
                 let workspace = store.create_workspace(profile.id, "Workspace", at)?;
                 let (document, _) =
                     store.create_document(workspace.id, "Roadmap", "page", None, None, at)?;
@@ -218,19 +300,73 @@ mod tests {
                     UpdateOrigin::Store,
                 )?;
                 store.flush(workspace.id, document, at)?;
-                Ok::<_, koru_store_core::Error>(document)
+                Ok::<_, koru_store_core::Error>((profile.id, other.id, document))
             })
             .unwrap()
             .unwrap();
 
         let adapter = StoreContextAdapter::new(client);
-        let resolved = adapter.resolve_document(document).unwrap();
+        let resolved = adapter.resolve_document(document, Some(profile)).unwrap();
         assert_eq!(resolved.document_id, document);
         assert_eq!(resolved.display_title, "Roadmap");
         assert_eq!(resolved.markdown, "# Roadmap\n\nShip context\n");
         assert!(!resolved.source_revision.0.is_empty());
 
+        // **Another profile's chat reads nothing of it** (AI schema 13), and
+        // a chat not yet placed reads nothing at all: both are the answer a
+        // missing document gets.
+        let missing = adapter
+            .resolve_document(DocumentId::new(), Some(profile))
+            .unwrap_err();
+        for reader in [Some(other), None] {
+            let refused = adapter.resolve_document(document, reader).unwrap_err();
+            assert_eq!(refused.public_message, missing.public_message);
+            assert_eq!(refused.class, missing.class);
+        }
+        let catalog = adapter.profile_catalog().unwrap();
+        assert_eq!(catalog.profiles.len(), 2);
+        assert_eq!(catalog.first(), Some(profile), "the older one first");
+        assert_eq!(catalog.workspace_owners.len(), 1);
+        assert!(adapter.document_workspace(document).unwrap().is_some());
+
         drop(adapter);
+        assert_eq!(worker.join(), koru_store_server::WorkerExit::Clean);
+    }
+
+    /// **A profile removed a moment ago is removed, not yet retired**; a
+    /// restored one is neither, and a live one never was.
+    #[test]
+    fn removed_profiles_name_every_removal_and_retired_only_final_ones() {
+        let root = tempfile::tempdir().unwrap();
+        let worker = koru_store_server::StoreWorker::new(
+            koru_store_server::WorkerConfig::embedded(root.path().to_owned(), "internal-debug"),
+        )
+        .spawn()
+        .unwrap();
+        let client = worker.client();
+        let (kept, removed) = client
+            .with_store(|store| {
+                let locale = || Locale::parse("en").unwrap();
+                let kept = store.create_profile("Kept", None, None, locale(), Timestamp::now())?;
+                let removed =
+                    store.create_profile("Removed", None, None, locale(), Timestamp::now())?;
+                store.remove_profile_local(removed.id, Timestamp::now())?;
+                Ok::<_, koru_store_core::Error>((kept.id, removed.id))
+            })
+            .unwrap()
+            .unwrap();
+        let adapter = StoreContextAdapter::new(client.clone());
+        assert_eq!(adapter.removed_profiles().unwrap(), vec![removed]);
+        assert!(!adapter.removed_profiles().unwrap().contains(&kept));
+        assert!(adapter.retired_profiles().unwrap().is_empty());
+
+        client
+            .with_store(move |store| store.restore_profile_local(removed))
+            .unwrap()
+            .unwrap();
+        assert!(adapter.removed_profiles().unwrap().is_empty());
+        drop(adapter);
+        drop(client);
         assert_eq!(worker.join(), koru_store_server::WorkerExit::Clean);
     }
 

@@ -13,7 +13,8 @@
 //! ## Pages
 //!
 //! The sidebar lists [`PageId`]s — Appearance, Editor, Reminders, Terminal,
-//! System — with a search box that narrows them by what they hold. One page is
+//! System, and under a **Coding** heading ([`PageGroup`]) Agent providers —
+//! with a search box that narrows them by what they hold. One page is
 //! laid out at a time, so a page that is not showing has no rects and cannot be
 //! pressed. **Reminders is the host's page**: its rows belong to `apps/koru`
 //! and are drawn into the slot [`host_section_rect`](SettingsSurface::host_section_rect)
@@ -55,6 +56,7 @@
 
 use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
+use koru_draw::theme::preview::{self, Preview, PreviewSlot};
 use koru_draw::{icons, inspect, scene, theme};
 use koru_i18n::{Key, Lang};
 use koru_settings::{
@@ -79,6 +81,7 @@ pub mod links;
 mod page;
 pub mod state;
 
+mod agents;
 mod global;
 mod terminal;
 
@@ -89,8 +92,11 @@ mod tests;
 
 pub use action::{FontRole, Request};
 pub use links::SettingsLinks;
-pub use page::PageId;
-pub use state::{AiSlot, Availability, DictionaryRow, Notice, RendererRow, VoiceFacts};
+pub use page::{PageGroup, PageId};
+pub use state::{
+    AgentAttention, AgentDefaults, AgentProviderRow, AgentProviderStatus, AiSlot, Availability,
+    DictionaryRow, NeededVersion, Notice, RendererRow, VoiceFacts,
+};
 
 use action::Action;
 use page::{Block, Builder, Laid, Target, TilePreview, Widget};
@@ -114,8 +120,6 @@ const NAV_TOP: f32 = PageShell::TOP;
 /// The search box, and the air between it and the list (or chips) under it.
 const SEARCH_H: f32 = 30.0;
 const SEARCH_GAP: f32 = 14.0;
-/// The room kept at the search box's right end for the *Ctrl+,* hint.
-const SEARCH_HINT_W: f32 = 44.0;
 /// The page column's side air.
 const PAGE_MARGIN: f32 = PageShell::PAGE_MARGIN;
 /// **Below this width the nav has no column of its own**: the search box and
@@ -135,9 +139,8 @@ pub(crate) fn title_style() -> theme::TextStyle {
 
 /// **Which sections this host shows.**
 ///
-/// Koru shows every page. The two other constructors remain for the
-/// standalone Terminal and AI windows until they are removed; they are not
-/// designed for.
+/// Koru shows every page. The other constructor remains for the standalone
+/// Terminal window until it is removed; it is not designed for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Sections {
     pub global: bool,
@@ -145,6 +148,9 @@ pub struct Sections {
     pub terminal: bool,
     /// The host fills a Reminders page.
     pub reminders: bool,
+    /// The host lists the coding agents, so *Coding → Agent providers* is a
+    /// page (Koru's window only: it is the one that hides them).
+    pub agents: bool,
 }
 
 impl Sections {
@@ -155,16 +161,7 @@ impl Sections {
             ai: true,
             terminal: true,
             reminders: true,
-        }
-    }
-
-    /// Koru AI's window: what applies to the app, and its own providers.
-    pub fn koru_ai() -> Self {
-        Self {
-            global: true,
-            ai: true,
-            terminal: false,
-            reminders: false,
+            agents: true,
         }
     }
 
@@ -175,6 +172,7 @@ impl Sections {
             ai: false,
             terminal: true,
             reminders: false,
+            agents: false,
         }
     }
 
@@ -187,6 +185,7 @@ impl Sections {
                 PageId::Reminders => self.reminders,
                 PageId::Terminal => self.terminal,
                 PageId::System => self.global || self.ai,
+                PageId::AgentProviders => self.agents,
             })
             .collect()
     }
@@ -198,6 +197,66 @@ struct OpenDropdown {
     index: usize,
     menu: Menu<DropdownOption>,
     actions: Vec<Action>,
+    /// What the lit row is showing on the whole app, owned by this menu: it
+    /// ends when the menu closes, by a choice or not, and a stale menu cannot
+    /// end a newer one's (`theme::preview`).
+    preview: Option<Preview>,
+}
+
+impl OpenDropdown {
+    /// Preview the lit row, if it is a choice that previews: a font, a
+    /// document size or an icon style. A row that does not preview leaves
+    /// the last preview in place.
+    fn preview_highlight(&mut self) {
+        let Some(want) = self
+            .menu
+            .hover
+            .and_then(|i| self.actions.get(i))
+            .and_then(previewed_by)
+        else {
+            return;
+        };
+        match self.preview.as_mut() {
+            Some(preview) if preview.slot() == want.0 => preview.set(want.1),
+            _ => self.preview = Some(Preview::new(want.0, want.1)),
+        }
+    }
+}
+
+/// The slot and value a list row previews, when it previews anything.
+fn previewed_by(action: &Action) -> Option<(PreviewSlot, u16)> {
+    match action {
+        Action::Font(role, family) => Some((
+            PreviewSlot::Font(role.slot()),
+            theme::font_preview_value(*family),
+        )),
+        // *Follow app* on the chat's list shows the face it would follow.
+        Action::FontSetting(role, koru_settings::FontSetting::FollowDefault) => Some((
+            PreviewSlot::Font(role.slot()),
+            theme::font_preview_value(theme::resolve_font(
+                role.slot(),
+                &koru_settings::FontSetting::FollowDefault,
+            )),
+        )),
+        Action::DocTextSize(px) => Some((PreviewSlot::DocTextSize, u16::from(*px))),
+        Action::IconPack(choice) => Some((
+            PreviewSlot::IconPack,
+            icons::IconPack::parse(choice.token()) as u16,
+        )),
+        _ => None,
+    }
+}
+
+/// The air above a sidebar group's heading.
+const NAV_GROUP_GAP: f32 = 14.0;
+
+/// One run of the sidebar: a group's heading (none for the ungrouped pages)
+/// and the list under it, by index into the listed pages.
+struct NavRun {
+    group: Option<page::PageGroup>,
+    heading: Option<Rect>,
+    area: Rect,
+    pages: Vec<usize>,
 }
 
 /// Where the pointer is, in the surface's own vocabulary.
@@ -266,8 +325,10 @@ pub struct SettingsSurface {
     personal_words: Option<usize>,
     /// *Apply to all* was pressed while this tab was open.
     layout_applied: bool,
-    /// The System page's Advanced card is unfolded.
-    advanced_open: bool,
+    /// The host can open a sample document beside this tab, so *Document
+    /// fonts* offers the link that asks it to. Off until a host says so: a
+    /// window with nowhere to put one draws no link that would do nothing.
+    sample_document: bool,
     /// *Share anonymous usage data*, as the host last read this device's
     /// record. `None` draws no row: there is no record to show a switch for
     /// (the events worker is not there, or has not answered yet).
@@ -278,12 +339,25 @@ pub struct SettingsSurface {
 
     voice: VoiceFacts,
     renderer: RendererRow,
+    /// The coding agents on *Agent providers*, as the host last read them.
+    agent_providers: Vec<AgentProviderRow>,
+    /// Where a new chat starts, as the host last read it.
+    agent_defaults: AgentDefaults,
+    /// The host's Koru AI slot. Held but **not drawn** while the card is off
+    /// Settings; kept so the hosts that fill it need not change.
+    #[cfg_attr(not(test), allow(dead_code))]
     ai: AiSlot,
 
     availability: Availability,
     notice: Option<Notice>,
 
     laid: Laid,
+    /// The agent row the keyboard is on (*Agent providers*), by key: a press
+    /// on the row or its handle puts it there, and the move chords move it.
+    agent_focus: Option<String>,
+    /// An agent row being dragged by its handle: where it came from and
+    /// where it would land, by index into the rows.
+    agent_drag: Option<(usize, usize)>,
     /// The compact nav's chips, in viewport space, and the band they sit in.
     nav_chips: Vec<Rect>,
     nav_band_h: f32,
@@ -335,15 +409,19 @@ impl SettingsSurface {
             dictionary: None,
             personal_words: None,
             layout_applied: false,
-            advanced_open: false,
+            sample_document: false,
             telemetry: None,
             app_menu: None,
             voice: VoiceFacts::default(),
             renderer: RendererRow::none(),
+            agent_providers: Vec::new(),
+            agent_defaults: AgentDefaults::default(),
             ai: AiSlot::default(),
             availability: Availability::Live,
             notice: None,
             laid: Laid::default(),
+            agent_focus: None,
+            agent_drag: None,
             nav_chips: Vec::new(),
             nav_band_h: 0.0,
             requests: Vec::new(),
@@ -457,6 +535,40 @@ impl SettingsSurface {
 
     pub fn set_ai_slot(&mut self, slot: AiSlot) {
         self.ai = slot;
+    }
+
+    /// The coding agents *Agent providers* lists, in the host's order, each
+    /// with its status and switch. Answers whether anything moved.
+    pub fn set_agent_providers(&mut self, rows: Vec<AgentProviderRow>) -> bool {
+        let moved = self.agent_providers != rows;
+        self.agent_providers = rows;
+        moved
+    }
+
+    /// The rows as this surface holds them — the host's, with any press
+    /// already applied.
+    pub fn agent_providers(&self) -> &[AgentProviderRow] {
+        &self.agent_providers
+    }
+
+    /// Where a new chat starts, as the host's settings hold it. Answers
+    /// whether anything moved.
+    pub fn set_agent_defaults(&mut self, defaults: AgentDefaults) -> bool {
+        let moved = self.agent_defaults != defaults;
+        self.agent_defaults = defaults;
+        moved
+    }
+
+    /// The defaults as this surface holds them, with any press applied.
+    pub fn agent_defaults(&self) -> &AgentDefaults {
+        &self.agent_defaults
+    }
+
+    /// Say whether this host can open the sample document
+    /// ([`Request::OpenSampleDocument`]); only then does *Document fonts*
+    /// carry the link.
+    pub fn offer_sample_document(&mut self, offered: bool) {
+        self.sample_document = offered;
     }
 
     /// This device's telemetry answer, as the host last read it: `Some(on)`
@@ -579,6 +691,11 @@ impl SettingsSurface {
         self.open.is_some()
     }
 
+    /// Dismiss transient choices when the host loses focus or hides this page.
+    pub fn dismiss_menu(&mut self) {
+        self.open = None;
+    }
+
     /// Show `page`, from its top. Answers whether anything changed; a page this
     /// host does not have is refused.
     pub fn show_page(&mut self, page: PageId) -> bool {
@@ -589,6 +706,9 @@ impl SettingsSurface {
         self.page = page;
         self.scroll = 0.0;
         self.open = None;
+        self.agent_focus = None;
+        self.agent_drag = None;
+        self.sync_preview();
         moved
     }
 
@@ -622,6 +742,7 @@ impl SettingsSurface {
             MouseScrollDelta::PixelDelta(p) => p.y as f32,
         };
         self.open = None;
+        self.sync_preview();
         self.scroll = (self.scroll - lines).max(0.0);
     }
 
@@ -730,6 +851,42 @@ impl SettingsSurface {
         )
     }
 
+    /// **The sidebar's runs**: the ungrouped pages first, then each group's
+    /// pages under its heading, with the listed pages' indices each run
+    /// holds. One function for drawing and hit-testing, as everywhere here.
+    fn nav_runs(&self, listed: &[PageId]) -> Vec<NavRun> {
+        let nav = self.nav_rect();
+        let mut runs: Vec<NavRun> = Vec::new();
+        let mut y = nav.y;
+        for (index, page) in listed.iter().enumerate() {
+            let group = page.group();
+            let same = runs.last().is_some_and(|run| run.group == group);
+            if !same {
+                if let Some(last) = runs.last() {
+                    y = last.area.y + last.area.h;
+                }
+                let heading = group.map(|_| {
+                    if !runs.is_empty() {
+                        y += NAV_GROUP_GAP;
+                    }
+                    let at = Rect::new(nav.x, y, nav.w, Card::TITLE_H);
+                    y += Card::TITLE_H + Card::TITLE_GAP;
+                    at
+                });
+                runs.push(NavRun {
+                    group,
+                    heading,
+                    area: Rect::new(nav.x, y, nav.w, 0.0),
+                    pages: Vec::new(),
+                });
+            }
+            let run = runs.last_mut().expect("a run was just pushed");
+            run.pages.push(index);
+            run.area.h = NavList::height(run.pages.len());
+        }
+        runs
+    }
+
     /// Where the compact chips start: under the search box.
     fn chips_area(&self) -> Rect {
         let search = self.search_rect();
@@ -774,7 +931,6 @@ impl SettingsSurface {
         self.relayout_nav();
         let rect = self.column_rect();
         let Self {
-            sections,
             lang,
             engine,
             page,
@@ -794,12 +950,13 @@ impl SettingsSurface {
             dictionary,
             personal_words,
             layout_applied,
-            advanced_open,
+            sample_document,
             telemetry,
             app_menu,
             voice,
             renderer,
-            ai,
+            agent_providers,
+            agent_defaults,
             availability,
             notice,
             laid,
@@ -807,7 +964,11 @@ impl SettingsSurface {
         } = self;
         let lang = *lang;
         let mut b = Builder::new(engine, rect.x, rect.w, rect.y);
-        b.title(page.label(self.lang), page.description(self.lang));
+        b.title_with_button(
+            page.label(lang),
+            page.description(lang),
+            (*page == PageId::AgentProviders).then(|| agents::title_button(lang)),
+        );
         // The one sentence a read-only surface owes, first thing on the page.
         if availability.is_down() && *page != PageId::Reminders {
             b.note(koru_i18n::t(lang, Key::SettingsUnavailableReadOnly));
@@ -833,10 +994,9 @@ impl SettingsSurface {
             dictionary: dictionary.as_ref(),
             personal_words: *personal_words,
             layout_applied: *layout_applied,
-            advanced_open: *advanced_open,
             telemetry: *telemetry,
             app_menu: *app_menu,
-            ai: if sections.ai { ai } else { &EMPTY_AI },
+            sample_document: *sample_document,
         };
         match page {
             PageId::Appearance => global::appearance(&mut b, &rows),
@@ -846,6 +1006,9 @@ impl SettingsSurface {
             }
             PageId::Terminal => terminal::lay_out(&mut b, lang, terminal),
             PageId::System => global::system(&mut b, &rows),
+            PageId::AgentProviders => {
+                agents::lay_out(&mut b, lang, agent_providers, agent_defaults)
+            }
         }
         *laid = b.finish();
         // A relayout can drop the dropdown a list was opened from — the page
@@ -854,6 +1017,7 @@ impl SettingsSurface {
             && open.index >= self.laid.dropdowns.len()
         {
             self.open = None;
+            self.sync_preview();
         }
     }
 
@@ -876,7 +1040,10 @@ impl SettingsSurface {
                 return koru_ui::ChipNav::chip_at(&self.nav_chips, x, y).map(Pointed::Nav);
             }
             let listed = self.listed();
-            return NavList::row_at(self.nav_rect(), listed.len(), x, y).map(Pointed::Nav);
+            return self.nav_runs(&listed).iter().find_map(|run| {
+                NavList::row_at(run.area, run.pages.len(), x, y)
+                    .map(|row| Pointed::Nav(run.pages[row]))
+            });
         }
         let cy = y + self.scroll;
         self.laid
@@ -889,16 +1056,158 @@ impl SettingsSurface {
     pub fn mouse_move(&mut self, x: f32, y: f32) -> bool {
         let moved = self.pointer != (x, y);
         self.pointer = (x, y);
+        if let Some((from, to)) = self.agent_drag {
+            let over = self.drag_target(y + self.scroll).unwrap_or(to);
+            self.agent_drag = Some((from, over));
+            return moved || over != to;
+        }
         if let Some(open) = self.open.as_mut() {
             let viewport = self.viewport;
             open.menu.hover = open.menu.item_at(viewport, x, y).or(open.menu.hover);
         }
-        moved
+        self.sync_preview() || moved
+    }
+
+    /// **A font list previews the lit face on the whole app.** While a list
+    /// of fonts is open, the face its lit row names stands in for the
+    /// role's choice; when the list closes, by a choice or not, the
+    /// stand-in goes and the choice (old or new) shows. Answers whether the
+    /// app's faces changed, so the host can lay every window out again.
+    ///
+    /// The icon-style list previews here too, through the menu's own
+    /// [`IconPreview`](icons::IconPreview), which restores the saved style
+    /// when the menu goes. The host repaints for that one rather than laying
+    /// out, so it is not part of the answer.
+    fn sync_preview(&mut self) -> bool {
+        let shown = Self::previews_shown();
+        if let Some(open) = self.open.as_mut() {
+            open.preview_highlight();
+        }
+        Self::previews_shown() != shown
+    }
+
+    /// Every slot a list can preview, as it reads now.
+    fn previews_shown() -> [Option<u16>; 7] {
+        use theme::FontSlot;
+        [
+            PreviewSlot::Font(FontSlot::Ui),
+            PreviewSlot::Font(FontSlot::Body),
+            PreviewSlot::Font(FontSlot::Headings),
+            PreviewSlot::Font(FontSlot::Code),
+            PreviewSlot::Font(FontSlot::Chat),
+            PreviewSlot::DocTextSize,
+            PreviewSlot::IconPack,
+        ]
+        .map(preview::previewed)
     }
 
     pub fn mouse_up(&mut self) -> bool {
         self.search.release();
-        false
+        match self.agent_drag.take() {
+            Some((from, to)) => {
+                self.move_agent(from, to);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The draggable row a drag at content-space `y` lands on: the one under
+    /// it, the first above them all and the last below.
+    fn drag_target(&self, y: f32) -> Option<usize> {
+        let rows = &self.laid.drag_rows;
+        let first = rows.first()?;
+        if y < first.y {
+            return Some(0);
+        }
+        Some(
+            rows.iter()
+                .position(|row| y < row.y + row.h)
+                .unwrap_or(rows.len() - 1),
+        )
+    }
+
+    /// **Move agent row `from` to `to`** — by a drag or a chord — and ask the
+    /// host to store the whole order. The row keeps the keyboard.
+    fn move_agent(&mut self, from: usize, to: usize) -> bool {
+        let len = self.agent_providers.len();
+        if from == to || from >= len || to >= len || self.availability.is_down() {
+            return false;
+        }
+        let row = self.agent_providers.remove(from);
+        self.agent_focus = Some(row.key.clone());
+        self.agent_providers.insert(to, row);
+        self.requests.push(Request::SetAgentOrder(
+            self.agent_providers
+                .iter()
+                .map(|row| row.key.clone())
+                .collect(),
+        ));
+        true
+    }
+
+    /// The agent row the keyboard is on, by index.
+    fn agent_focus_index(&self) -> Option<usize> {
+        let key = self.agent_focus.as_deref()?;
+        self.agent_providers.iter().position(|row| row.key == key)
+    }
+
+    /// The agent row the keyboard is on, by key — for a host's test.
+    pub fn focused_agent(&self) -> Option<&str> {
+        self.agent_focus.as_deref()
+    }
+
+    /// **The keys an agent row with the keyboard answers** (*Agent
+    /// providers*): the editor's move chords — the same registry entries a
+    /// paragraph block moves with — move it up or down; Up and Down move the
+    /// keyboard to the next row; Escape lets it go. `None` for any other key,
+    /// or with no row focused.
+    fn agent_row_key(
+        &mut self,
+        key: &WinitKey,
+        text: Option<&str>,
+        mods: ModifiersState,
+    ) -> Option<bool> {
+        if self.page != PageId::AgentProviders {
+            return None;
+        }
+        let at = self.agent_focus_index()?;
+        let chord = |id| koru_keys::registry::get(id).chord.matches(key, text, mods);
+        if chord(koru_keys::ShortcutId::MoveRowUp) {
+            // Taken at the top too: the row is the keyboard's, and a chord
+            // that cannot move it still belongs to it.
+            if at > 0 {
+                self.move_agent(at, at - 1);
+            }
+            return Some(true);
+        }
+        if chord(koru_keys::ShortcutId::MoveRowDown) {
+            self.move_agent(at, at + 1);
+            return Some(true);
+        }
+        if !mods.is_empty() {
+            return None;
+        }
+        let step = |to: usize| self.agent_providers.get(to).map(|row| row.key.clone());
+        match key {
+            WinitKey::Named(NamedKey::ArrowUp) => {
+                if let Some(key) = at.checked_sub(1).and_then(step) {
+                    self.agent_focus = Some(key);
+                }
+                Some(true)
+            }
+            WinitKey::Named(NamedKey::ArrowDown) => {
+                if let Some(key) = step(at + 1) {
+                    self.agent_focus = Some(key);
+                }
+                Some(true)
+            }
+            WinitKey::Named(NamedKey::Escape) => {
+                self.agent_focus = None;
+                Some(true)
+            }
+            _ => None,
+        }
     }
 
     /// Put the keyboard in the search box with the query it holds selected,
@@ -909,6 +1218,7 @@ impl SettingsSurface {
     /// mouse's.
     pub fn focus_search(&mut self) {
         self.open = None;
+        self.sync_preview();
         self.search_focused = true;
         self.search.select_all(&mut self.engine);
     }
@@ -930,6 +1240,7 @@ impl SettingsSurface {
             if let Some(item) = open.menu.item_at(self.viewport, x, y) {
                 self.choose(open, item);
             }
+            self.sync_preview();
             return true;
         }
         match self.pointed(x, y) {
@@ -956,8 +1267,9 @@ impl SettingsSurface {
                 true
             }
             None => {
-                let was = self.search_focused;
+                let was = self.search_focused || self.agent_focus.is_some();
                 self.search_focused = false;
+                self.agent_focus = None;
                 was
             }
         }
@@ -967,6 +1279,14 @@ impl SettingsSurface {
         let Some(hit) = self.laid.hits.get(index) else {
             return;
         };
+        // An agent row keeps the keyboard only while it is what was pressed.
+        let row = match hit.target {
+            Target::Grip(n) | Target::Row(n) => Some(n),
+            _ => None,
+        };
+        self.agent_focus = row
+            .and_then(|n| self.agent_providers.get(n))
+            .map(|row| row.key.clone());
         match &hit.target {
             Target::Action(action) => {
                 let action = clone_action(action);
@@ -976,6 +1296,9 @@ impl SettingsSurface {
                 let dropdown = *dropdown;
                 self.open_dropdown(dropdown);
             }
+            // The handle starts a drag; the drop is the release.
+            Target::Grip(n) => self.agent_drag = Some((*n, *n)),
+            Target::Row(_) => {}
         }
     }
 
@@ -1005,6 +1328,7 @@ impl SettingsSurface {
             index,
             menu,
             actions,
+            preview: None,
         });
     }
 
@@ -1036,7 +1360,13 @@ impl SettingsSurface {
                 }
                 _ => return false,
             }
+            self.sync_preview();
             return true;
+        }
+        if !self.search_focused
+            && let Some(handled) = self.agent_row_key(key, text, mods)
+        {
+            return handled;
         }
         if self.search_focused {
             match key {
@@ -1126,6 +1456,7 @@ impl SettingsSurface {
                 self.draw_block(scene_out, content, block, hovered);
             }
             self.laid.blocks = blocks;
+            self.draw_drop_line(scene_out, content);
             scene_out.pop_layer();
         }
 
@@ -1192,16 +1523,41 @@ impl SettingsSurface {
                 None,
             );
         } else {
-            NavList::draw(
-                scene_out,
-                root,
-                &mut self.engine,
-                nav,
-                &items,
-                current,
-                hovered,
-                None,
-            );
+            for run in self.nav_runs(&listed) {
+                if let (Some(group), Some(at)) = (run.group, run.heading) {
+                    // A group's heading: a card caption's words, as Manage's
+                    // nav captions are.
+                    koru_ui::text_paragraph::draw_line(
+                        scene_out,
+                        root,
+                        &mut self.engine,
+                        group.label(self.lang),
+                        at.x + 8.0,
+                        at.y,
+                        theme::role::meta(),
+                        "theme::role::meta()",
+                        p.text_dim,
+                    );
+                }
+                let run_items: Vec<NavItem<'_>> = run
+                    .pages
+                    .iter()
+                    .map(|index| NavItem::new(listed[*index].label(self.lang)))
+                    .collect();
+                let local = |index: Option<usize>| {
+                    index.and_then(|index| run.pages.iter().position(|page| *page == index))
+                };
+                NavList::draw(
+                    scene_out,
+                    root,
+                    &mut self.engine,
+                    run.area,
+                    &run_items,
+                    local(current),
+                    local(hovered),
+                    None,
+                );
+            }
         }
         if items.is_empty() {
             koru_ui::text_paragraph::draw_line(
@@ -1221,8 +1577,9 @@ impl SettingsSurface {
     /// The search box's text area: the box, less the magnifier's slot.
     fn search_text_rect(&self) -> Rect {
         let r = self.search_rect();
-        let hint = if self.compact() { 0.0 } else { SEARCH_HINT_W };
-        Rect::new(r.x + 26.0, r.y, (r.w - 30.0 - hint).max(0.0), r.h)
+        // No chord inside the box (the review's note): the rail's Settings
+        // tooltip carries it.
+        Rect::new(r.x + 26.0, r.y, (r.w - 30.0).max(0.0), r.h)
     }
 
     fn draw_search(&mut self, scene_out: &mut Scene, root: Affine) {
@@ -1240,26 +1597,6 @@ impl SettingsSurface {
         scene::fill(scene_out, root, p.status_bg, &shape);
         if self.search_focused {
             scene::stroke(scene_out, root, p.focus_ring, theme::BORDER_W, &shape);
-        }
-        // The chord that opens Settings, inside the box's right end — where
-        // the sidebar heading used to carry it.
-        if !self.compact()
-            && let Some(chord) =
-                koru_keys::show_hint(koru_keys::ShortcutId::Settings, koru_keys::Section::Heading)
-        {
-            let style = theme::role::hint();
-            let hint = self.engine.simple_layout(&chord, style);
-            koru_ui::text_paragraph::draw_line(
-                scene_out,
-                root,
-                &mut self.engine,
-                &chord,
-                r.x + r.w - 8.0 - hint.width(),
-                r.y + (r.h - scene::first_line_height(&hint)) * 0.5,
-                style,
-                "theme::role::hint()",
-                p.placeholder,
-            );
         }
         let glass = self.engine.icon_layout(icons::SEARCH, 13.0);
         scene::draw_layout(
@@ -1303,7 +1640,22 @@ impl SettingsSurface {
                 y,
                 w,
                 title_h,
+                button,
             } => {
+                if let Some((label, rect, hit)) = button {
+                    ActionButton {
+                        label,
+                        style: koru_ui::ActionStyle::Secondary,
+                        trailing_icon: None,
+                    }
+                    .draw(
+                        scene_out,
+                        root,
+                        &mut self.engine,
+                        *rect,
+                        hovered == Some(*hit),
+                    );
+                }
                 koru_ui::text_paragraph::KoruTextParagraph::new(
                     title,
                     title_style(),
@@ -1378,38 +1730,23 @@ impl SettingsSurface {
                     &dividers,
                     alpha,
                 );
-                if card.font_preview {
-                    let samples = [
-                        koru_ui::FontSample {
-                            text: "body",
-                            stack: theme::body_stack(),
-                            weight: theme::FontWeight::Medium,
-                        },
-                        koru_ui::FontSample {
-                            text: "Heading",
-                            stack: theme::headings_font().stack(),
-                            weight: theme::FontWeight::SemiBold,
-                        },
-                        koru_ui::FontSample {
-                            text: "code",
-                            stack: theme::code_stack(),
-                            weight: theme::FontWeight::Medium,
-                        },
-                    ];
-                    koru_ui::FontPreview {
-                        lead: koru_i18n::t(self.lang, Key::SettingsPreview),
-                        samples: &samples,
-                    }
-                    .draw(
-                        scene_out,
-                        root,
-                        &mut self.engine,
-                        card.rect.x + card.rect.w,
-                        card.rect.y,
-                        alpha,
-                    );
-                }
                 for row in &card.rows {
+                    self.draw_row_drag(scene_out, root, row);
+                    if let Some(key) = &row.mark {
+                        let size = page::MARK_SIZE;
+                        let at = Rect::new(
+                            row.rect.x + CardRow::PAD_X,
+                            row.rect.y + (row.rect.h - size) * 0.5,
+                            size,
+                            size,
+                        );
+                        draw_mark(scene_out, root, &mut self.engine, at, key, alpha);
+                    }
+                    // A row of chips has no name of its own.
+                    if row.label.is_empty() {
+                        self.draw_widget(scene_out, root, &row.widget, hovered, alpha);
+                        continue;
+                    }
                     let _row = CardRow {
                         label: &row.label,
                         hint: row.hint.as_deref(),
@@ -1420,7 +1757,7 @@ impl SettingsSurface {
                         scene_out,
                         root,
                         &mut self.engine,
-                        row.rect,
+                        row.text_rect(),
                         row.text_w,
                         alpha,
                     );
@@ -1473,6 +1810,91 @@ impl SettingsSurface {
             }
             Block::Host => {}
         }
+    }
+
+    /// While an agent row is dragged: a line where it would land — the
+    /// block drag's own drop indicator, two pixels in `drop_indicator`, at
+    /// the target row's top edge moving up and its bottom edge moving down.
+    fn draw_drop_line(&self, scene_out: &mut Scene, root: Affine) {
+        let Some((from, to)) = self.agent_drag.filter(|(from, to)| from != to) else {
+            return;
+        };
+        let Some(row) = self.laid.drag_rows.get(to) else {
+            return;
+        };
+        let y = if to < from { row.y } else { row.y + row.h };
+        let _line = inspect::scope(
+            "Drop indicator",
+            "part",
+            root,
+            scene::rect(row.x, y - 1.0, row.w, 2.0),
+            |r| r.property("lands at", to, "view state"),
+        );
+        scene::fill(
+            scene_out,
+            root,
+            theme::p().drop_indicator,
+            &scene::rrect(row.x, y - 1.0, row.w, 2.0, 1.0),
+        );
+    }
+
+    /// A draggable row's move handle — the editor's six-dot grip, shown, as
+    /// a block's is, while the pointer is on the row, while the row has the
+    /// keyboard and while it is dragged — and the focus ring of the row the
+    /// keyboard is on.
+    fn draw_row_drag(&mut self, scene_out: &mut Scene, root: Affine, row: &page::RowLaid) {
+        let Some((n, grip)) = row.drag else {
+            return;
+        };
+        let pointer = (self.pointer.0, self.pointer.1 + self.scroll);
+        let on_row = row.rect.contains(pointer.0, pointer.1) && self.open.is_none();
+        let focused = self.agent_focus_index() == Some(n);
+        let dragged = self.agent_drag.is_some_and(|(from, _)| from == n);
+        if focused {
+            scene::stroke(
+                scene_out,
+                root,
+                theme::p().focus_ring,
+                theme::BORDER_W * 2.0,
+                &scene::rrect(
+                    row.rect.x + 1.0,
+                    row.rect.y + 1.0,
+                    row.rect.w - 2.0,
+                    row.rect.h - 2.0,
+                    6.0,
+                ),
+            );
+        }
+        if !(on_row || focused || dragged) || self.availability.is_down() {
+            return;
+        }
+        let name = self
+            .agent_providers
+            .get(n)
+            .map(|agent| {
+                koru_i18n::fill(
+                    koru_i18n::t(self.lang, Key::SettingsAgentMoveHandle),
+                    &[&agent.name],
+                )
+            })
+            .unwrap_or_default();
+        let _grip = inspect::scope(
+            "Grip icon",
+            "part",
+            root,
+            scene::rect(grip.x, grip.y, grip.w, grip.h),
+            |r| {
+                r.property("name", name.as_str(), "accessible name");
+                r.property("drawn", "koru_draw::scene::grip_dots", "shared painter");
+            },
+        );
+        let over_grip = pointer.0 < row.rect.x + CardRow::PAD_X && on_row;
+        let color = if over_grip || dragged {
+            theme::p().grip_active
+        } else {
+            theme::p().grip
+        };
+        scene::grip_dots(scene_out, root, grip, color);
     }
 
     fn draw_widget(
@@ -1601,6 +2023,30 @@ impl SettingsSurface {
                 self.draw_widget(scene_out, root, first, hovered, alpha);
                 self.draw_widget(scene_out, root, second, hovered, alpha);
             }
+            Widget::Chips(chips) => {
+                for laid in chips {
+                    let slot = if laid.mark.is_some() {
+                        page::CHIP_MARK_SLOT
+                    } else {
+                        0.0
+                    };
+                    let chip = koru_ui::Chip::new(&laid.label, laid.selected).leading(slot);
+                    chip.draw(
+                        scene_out,
+                        root,
+                        &mut self.engine,
+                        laid.rect,
+                        hovered == Some(laid.hit),
+                        false,
+                    );
+                    if let Some(key) = &laid.mark {
+                        let lead = chip.leading_rect(laid.rect);
+                        let size = page::CHIP_MARK_SIZE;
+                        let at = Rect::new(lead.x, lead.y + (lead.h - size) * 0.5, size, size);
+                        draw_mark(scene_out, root, &mut self.engine, at, key, alpha);
+                    }
+                }
+            }
         }
     }
 
@@ -1656,10 +2102,42 @@ impl SettingsSurface {
     }
 }
 
-static EMPTY_AI: std::sync::LazyLock<AiSlot> = std::sync::LazyLock::new(AiSlot::default);
-
 /// What a theme tile shows: a sliver of that theme's page and ink, from the
 /// real palettes rather than a drawing of them.
+/// An agent's brand mark in the square `at` — before an agent row's name, or
+/// in a *Default agent* chip: the agent's own mark where it has one, the
+/// robot otherwise — the mark the chat's rail and the terminal's Agents menu
+/// draw for the same key.
+fn draw_mark(
+    canvas: &mut Scene,
+    root: Affine,
+    engine: &mut TextEngine,
+    at: Rect,
+    key: &str,
+    alpha: f32,
+) {
+    let color = theme::p().text.multiply_alpha(alpha);
+    let size = at.w;
+    match koru_draw::brand::for_profile(key)
+        .unwrap_or(koru_draw::brand::ProfileMark::Glyph(icons::ROBOT))
+    {
+        koru_draw::brand::ProfileMark::Brand(icon) => {
+            scene::draw_brand_icon(canvas, root, at, color, icon)
+        }
+        koru_draw::brand::ProfileMark::Glyph(glyph) => {
+            let layout = engine.icon_layout(glyph, size);
+            scene::draw_layout(
+                canvas,
+                root,
+                &layout,
+                at.x + (at.w - layout.width()) * 0.5,
+                at.y + (at.h - layout.height()) * 0.5,
+                Some(color),
+            );
+        }
+    }
+}
+
 fn paint_theme_preview(canvas: &mut Scene, root: Affine, area: Rect, preview: TilePreview) {
     let sheet = |canvas: &mut Scene, rect: Rect, palette: &theme::Palette| {
         scene::fill(
@@ -1737,10 +2215,17 @@ impl SettingsSurface {
                 self.layout_applied = true;
                 self.requests.push(Request::ApplyLayoutToAllDocuments);
             }
-            Action::ShowAdvanced(open) => self.advanced_open = open,
+            Action::PreviewSampleDocument => self.requests.push(Request::OpenSampleDocument),
             Action::Density(choice) => theme::set_density(density(choice)),
+            Action::IconPack(choice) => {
+                icons::set_icon_pack(icons::IconPack::parse(choice.token()))
+            }
             Action::PinnedShowTitle(show) => self.pinned_show_title = show,
             Action::Font(role, family) => role.set(family),
+            Action::DocTextSize(px) => theme::set_doc_text_size(Some(px)),
+            Action::BaseColor(dark, rgb) => theme::set_base_color(dark, rgb),
+            Action::FontSetting(role, setting) => theme::set_font_setting(role.slot(), setting),
+            Action::MoreFonts(role) => self.requests.push(Request::MoreFonts(role)),
             Action::VoiceLanguage(language) => {
                 self.voice_language = language.clone();
                 self.requests.push(Request::SetVoiceLanguage(language));
@@ -1842,7 +2327,47 @@ impl SettingsSurface {
                     ..TerminalPatch::default()
                 })
             }
-            Action::OpenAiSetup => self.requests.push(Request::OpenAiSetup),
+            // The switch moves at once; the host stores the list and hides
+            // the agent everywhere, and hands the rows back.
+            Action::AgentEnabled(key, on) => {
+                if let Some(row) = self.agent_providers.iter_mut().find(|row| row.key == key) {
+                    row.on = on;
+                }
+                self.requests.push(Request::SetAgentEnabled { key, on });
+            }
+            Action::RestoreAgentDefaults => {
+                for row in &mut self.agent_providers {
+                    row.on = true;
+                }
+                // Both permissions on Manual, and Auto for the agent.
+                self.agent_defaults = AgentDefaults::default();
+                self.requests.push(Request::RestoreAgentDefaults);
+            }
+            Action::RefreshAgentStatus => self.requests.push(Request::RefreshAgentStatus),
+            Action::AgentGuide(url) => self.requests.push(Request::OpenAgentGuide(url)),
+            Action::InstallAgent(key) => self.requests.push(Request::InstallAgent(key)),
+            // The control moves at once; the host stores it and hands every
+            // chat surface the new default.
+            Action::AgentPermission(other, permission) => {
+                let current = if other {
+                    &mut self.agent_defaults.permission_other
+                } else {
+                    &mut self.agent_defaults.permission
+                };
+                if *current != permission {
+                    *current = permission;
+                    self.requests
+                        .push(Request::SetAgentPermission { other, permission });
+                }
+            }
+            Action::DefaultAgent(agent) => {
+                if self.agent_defaults.agent != agent {
+                    self.agent_defaults.agent = agent.clone();
+                    // The host says again whether the new choice can be had.
+                    self.agent_defaults.agent_note = None;
+                    self.requests.push(Request::SetDefaultAgent(agent));
+                }
+            }
         }
     }
 
@@ -1961,8 +2486,13 @@ fn clone_action(action: &Action) -> Action {
         Action::CanvasBackground => Action::CanvasBackground,
         Action::ApplyLayoutToAll => Action::ApplyLayoutToAll,
         Action::Density(v) => Action::Density(*v),
+        Action::IconPack(v) => Action::IconPack(*v),
         Action::PinnedShowTitle(v) => Action::PinnedShowTitle(*v),
         Action::Font(role, family) => Action::Font(*role, *family),
+        Action::DocTextSize(px) => Action::DocTextSize(*px),
+        Action::BaseColor(dark, rgb) => Action::BaseColor(*dark, *rgb),
+        Action::FontSetting(role, setting) => Action::FontSetting(*role, setting.clone()),
+        Action::MoreFonts(role) => Action::MoreFonts(*role),
         Action::VoiceLanguage(v) => Action::VoiceLanguage(v.clone()),
         Action::VoiceInput(v) => Action::VoiceInput(v.clone()),
         Action::VoiceTier(v) => Action::VoiceTier(*v),
@@ -1978,7 +2508,7 @@ fn clone_action(action: &Action) -> Action {
         Action::StartOnLogin(v) => Action::StartOnLogin(*v),
         Action::TelemetryConsent(v) => Action::TelemetryConsent(*v),
         Action::AppMenuEntry(v) => Action::AppMenuEntry(*v),
-        Action::ShowAdvanced(v) => Action::ShowAdvanced(*v),
+        Action::PreviewSampleDocument => Action::PreviewSampleDocument,
         Action::TerminalTheme(v) => Action::TerminalTheme(*v),
         Action::TerminalFont(v) => Action::TerminalFont(*v),
         Action::TerminalZoom(v) => Action::TerminalZoom(*v),
@@ -1988,7 +2518,13 @@ fn clone_action(action: &Action) -> Action {
         Action::TerminalCursorBlink(v) => Action::TerminalCursorBlink(*v),
         Action::TerminalComposerDefault(v) => Action::TerminalComposerDefault(*v),
         Action::TerminalMatchCaret(v) => Action::TerminalMatchCaret(*v),
-        Action::OpenAiSetup => Action::OpenAiSetup,
+        Action::AgentEnabled(key, on) => Action::AgentEnabled(key.clone(), *on),
+        Action::RestoreAgentDefaults => Action::RestoreAgentDefaults,
+        Action::RefreshAgentStatus => Action::RefreshAgentStatus,
+        Action::AgentGuide(url) => Action::AgentGuide(url),
+        Action::InstallAgent(key) => Action::InstallAgent(key.clone()),
+        Action::AgentPermission(other, permission) => Action::AgentPermission(*other, *permission),
+        Action::DefaultAgent(agent) => Action::DefaultAgent(agent.clone()),
     }
 }
 

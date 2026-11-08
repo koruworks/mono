@@ -164,11 +164,12 @@ fn a_sidebar_drag_reflows_the_content_once_on_release() {
     let before_view = v.focused_view_rect();
     assert_eq!(before, (before_view.w, before_view.h));
 
-    // The drag: three moves. The column *draws* at the pointer…
-    for w in [220.0, 260.0, 300.0] {
+    // The drag: three moves, all inside the clamp (the pane's 256–600 plus
+    // the rail). The column *draws* at the pointer…
+    for w in [340.0, 380.0, 420.0] {
         assert!(v.set_sidebar_width(w));
     }
-    assert_eq!(v.sidebar.full(), 300.0, "the drawn chrome follows the drag");
+    assert_eq!(v.sidebar.full(), 420.0, "the drawn chrome follows the drag");
     // …while the layout holds still: the view rect keeps its committed
     // width, and the tab is not re-laid-out per mouse-move.
     assert_eq!(
@@ -474,16 +475,23 @@ fn pressing_a_tab_in_the_title_bar_focuses_its_pane() {
 fn the_explore_column_starts_shut_and_ctrl_e_opens_it() {
     let (mut v, mut workspace) = container();
     assert_eq!(v.regions.sidebar.w, 0.0, "shut by default");
-    assert_eq!(v.content().x, 0.0);
+    assert_eq!(v.content().x, theme::EDGE_LANE_W, "the left lane's width");
 
     assert!(v.key(&mut workspace.ws, &ch("e"), Some("e"), PRIMARY_SHIFT));
     assert!(v.sidebar.is_open());
-    assert_eq!(v.regions.sidebar.w, theme::SIDEBAR_W);
-    assert_eq!(v.content().x, theme::SIDEBAR_W, "the view made room");
+    assert_eq!(v.regions.sidebar.w, theme::SIDEBAR_W + theme::RAIL_W);
+    assert_eq!(
+        v.content().x,
+        theme::SIDEBAR_W + theme::RAIL_W,
+        "the view made room"
+    );
+    assert_eq!(v.rail_area().w, theme::RAIL_W, "the rail before the pane");
+    assert_eq!(v.explore_area().x, theme::RAIL_W);
+    assert_eq!(v.explore_area().w, theme::SIDEBAR_W);
 
     assert!(v.key(&mut workspace.ws, &ch("e"), Some("e"), PRIMARY_SHIFT));
     assert!(!v.sidebar.is_open());
-    assert_eq!(v.content().x, 0.0, "and took it back");
+    assert_eq!(v.content().x, theme::EDGE_LANE_W, "and took it back");
 }
 
 /// The pane runs the full height of the window and pushes the caption — logo,
@@ -499,12 +507,16 @@ fn opening_the_pane_pushes_the_caption_and_its_toggle_right() {
     assert!(v.key(&mut workspace.ws, &ch("e"), Some("e"), PRIMARY_SHIFT));
 
     assert_eq!(v.regions.sidebar.y, 0.0, "the pane starts at the top");
-    assert_eq!(v.regions.sidebar.h, v.viewport.1, "and runs to the bottom");
-    assert_eq!(v.regions.caption.x, theme::SIDEBAR_W);
+    assert_eq!(
+        v.regions.sidebar.h,
+        v.viewport.1 - theme::EDGE_LANE_W,
+        "and runs to the foot lane"
+    );
+    assert_eq!(v.regions.caption.x, theme::SIDEBAR_W + theme::RAIL_W);
     let open_toggle = koru_shell_chrome::caption::sidebar_toggle(v.regions.caption);
     assert_eq!(
         open_toggle.x - shut_toggle.x,
-        theme::SIDEBAR_W,
+        theme::SIDEBAR_W + theme::RAIL_W,
         "the toggle moved"
     );
 }
@@ -528,18 +540,90 @@ fn the_window_buttons_stay_in_the_corner_when_the_pane_opens() {
     assert_eq!(last.rect.x + last.rect.w, v.viewport.0);
 }
 
-/// It is still the toggle after it has moved — the rect follows `caption.x`,
-/// and the hit test has to follow it too.
+/// It is still the toggle after it has moved — into the lane at the top of
+/// the open pane, where the hit test has to follow it too; and the caption's
+/// left end is bare while it is there.
 #[test]
 fn the_toggle_still_works_from_its_new_place() {
     let (mut v, mut workspace) = container();
     assert!(v.key(&mut workspace.ws, &ch("e"), Some("e"), PRIMARY_SHIFT));
     assert!(v.sidebar.is_open());
 
-    let (x, y) = koru_shell_chrome::caption::sidebar_toggle(v.regions.caption).centre();
-    assert!(x > theme::SIDEBAR_W, "it really did move: {x}");
+    // Settled rects: the pane is still sliding open, and the hit test reads
+    // the settled lane, not the drawn one.
+    let toggle = v.settled_lane_controls().toggle;
+    let (x, y) = toggle.centre();
+    assert!(
+        x < theme::SIDEBAR_W + theme::RAIL_W,
+        "it really is in the lane: {x}"
+    );
+    assert!(y < theme::CAPTION_H);
+    let chain = koru_shell_chrome::caption::leading_chain(v.regions.caption, v.leading());
+    assert_eq!(chain.toggle.w, 0.0, "and not in the caption");
     v.mouse_down(&mut workspace.ws, x, y, false);
     assert!(!v.sidebar.is_open(), "clicking it closed the pane again");
+}
+
+/// **The fold reflows once, at the toggle** (ANIMATION.md, "The pane
+/// fold"): the layout takes the final width the moment the pane is toggled
+/// and nothing re-cuts the window while it slides. The contents fade as the
+/// recipe says, the chain is drawn through the fold, and the fold's clock
+/// stops with the slide.
+#[test]
+fn the_fold_reflows_once_and_settles_with_the_slide() {
+    use std::time::Duration;
+    let (mut v, mut workspace) = container();
+    assert!(!v.sidebar.is_open());
+    assert!(v.chain_drawn(), "shut: the chain is there");
+    let before = v.relayouts;
+    assert!(v.key(&mut workspace.ws, &ch("e"), Some("e"), PRIMARY_SHIFT));
+    assert_eq!(v.relayouts, before + 1, "one reflow at the toggle");
+    assert!(v.sidebar.animating());
+    assert!(v.fold.is_some_and(|(_, opening)| opening));
+    assert!(v.chain_drawn(), "opening: the chain rides the edge");
+    assert_eq!(
+        v.fold_content_alpha(),
+        0.0,
+        "and the contents are not there yet"
+    );
+
+    // The slide, frame by frame: nothing re-cuts the window.
+    let t0 = Instant::now();
+    for ms in [20, 60, 100] {
+        v.sidebar.advance(t0 + Duration::from_millis(ms));
+        v.settle_fold();
+        assert!(v.sidebar.animating(), "{ms} ms: still sliding");
+        assert!(v.fold.is_some());
+    }
+    assert_eq!(v.relayouts, before + 1, "a frame paid a reflow mid-slide");
+
+    v.sidebar.advance(t0 + Duration::from_secs(1));
+    v.settle_fold();
+    assert!(!v.sidebar.animating());
+    assert_eq!(v.fold, None, "the fold's clock stops with the slide");
+    assert!(
+        !v.chain_drawn(),
+        "open and at rest: the lane has the controls"
+    );
+    assert_eq!(v.fold_content_alpha(), 1.0);
+}
+
+/// Under reduced motion the fold lands at once: no slide, no fade, no frame
+/// asked for — the OS said so, and the panel's other door answers it.
+#[test]
+fn reduced_motion_lands_the_fold_at_once() {
+    let (mut v, mut workspace) = container();
+    v.reduced_motion = true;
+    assert!(v.key(&mut workspace.ws, &ch("e"), Some("e"), PRIMARY_SHIFT));
+    assert!(v.sidebar.is_open());
+    assert!(!v.sidebar.animating(), "no slide");
+    assert_eq!(v.sidebar.progress(), 1.0, "and already flush");
+    assert_eq!(v.fold, None);
+    assert!(!v.chain_drawn());
+    assert_eq!(v.fold_content_alpha(), 1.0);
+    assert!(v.toggle_sidebar() == false || !v.sidebar.is_open());
+    assert_eq!(v.sidebar.progress(), 0.0);
+    assert!(!v.sidebar.animating());
 }
 
 /// ADR-26: the slide costs frames only while it is running, and stops asking
@@ -658,7 +742,7 @@ fn clicking_a_document_in_the_tree_from_welcome_opens_it_beside_welcome() {
     v.adopt(&workspace.ws);
     v.refresh_explore(&workspace.ws, true);
 
-    let area = v.regions.sidebar;
+    let area = v.explore_area();
     let (_, r) = v.explore.row_rects(area).into_iter().next().expect("a row");
     // Right of the caret column, on the label. **Not the far right** — the last
     // 20 px of every row are the `…`'s reserved lane now, and a press there
@@ -686,7 +770,7 @@ fn clicking_explore_after_opening_ai_releases_explores_latent_drag() {
     v.refresh_explore(&workspace.ws, true);
     assert!(v.ai_focused, "opening AI gives its composer focus");
 
-    let area = v.regions.sidebar;
+    let area = v.explore_area();
     let (_, row) = v.explore.row_rects(area).into_iter().next().expect("a row");
     v.mouse_down(
         &mut workspace.ws,
@@ -731,7 +815,7 @@ fn the_wheel_over_the_column_scrolls_the_tree() {
         TabView::Leaf(l) => l.view().scroll,
         _ => 0.0,
     };
-    let area = v.regions.sidebar;
+    let area = v.explore_area();
     v.mouse_move(area.centre().0, area.centre().1);
     v.scroll_by(MouseScrollDelta::LineDelta(0.0, -5.0));
     assert_eq!(doc_scroll(&v), 0.0, "the document did not move");
@@ -769,12 +853,12 @@ fn the_ai_pane_uses_the_right_slot_and_clamps_its_drag_width() {
     assert_eq!(v.content().w, full - 480.0);
     assert_eq!(
         v.ai_rect().x,
-        v.viewport.0,
-        "the pane begins just beyond the right edge"
+        v.regions.edge.x,
+        "the pane begins just beyond the right edge, where the lane is"
     );
     v.ai_panel
         .advance(Instant::now() + std::time::Duration::from_secs(1));
-    assert_eq!(v.ai_rect().x, v.viewport.0 - 480.0);
+    assert_eq!(v.ai_rect().x, v.regions.edge.x - 480.0);
     assert_eq!(v.ai_rect().w, 480.0);
 
     assert!(v.set_ai_width(2_000.0));
@@ -826,8 +910,11 @@ fn both_columns_open_together_and_the_offset_still_holds() {
     v.adopt(ws);
 
     let c = v.content();
-    assert_eq!(c.x, theme::SIDEBAR_W);
-    assert_eq!(c.w, 1200.0 - theme::SIDEBAR_W - theme::CONTEXT_W);
+    assert_eq!(c.x, theme::SIDEBAR_W + theme::RAIL_W);
+    assert_eq!(
+        c.w,
+        1200.0 - theme::SIDEBAR_W - theme::RAIL_W - theme::CONTEXT_W - theme::EDGE_LANE_W
+    );
 
     let view = v.focused_view_rect();
     let mut bare = Leaf::document(ws, doc);
@@ -847,10 +934,10 @@ fn both_columns_open_together_and_the_offset_still_holds() {
     }
 }
 
-/// Four sections are visible (Tasks joined History when its model landed,
-/// Reminders when its own did, Cloud sync when the gateway learned to remember
-/// its passes), so the column has a tab row; a press on it switches the
-/// section and must still not fall through to the document behind the column.
+/// With every flag on three sections are visible (Reminders, History and
+/// Cloud sync; Tasks is hidden for now, `koru_features::CONTEXT_TASKS_SHOWN`),
+/// so the column has a tab row; a press on it switches the section and must
+/// still not fall through to the document behind the column.
 #[test]
 fn clicking_a_section_switches_it_without_reaching_the_document() {
     use crate::panes::context::{ContextView as CV, Section};
@@ -859,35 +946,28 @@ fn clicking_a_section_switches_it_without_reaching_the_document() {
     let area = v.regions.context;
     let sections = CV::section_rects(area);
     let [
-        (tasks, tasks_rect),
         (reminders, reminders_rect),
         (history, history_rect),
         (cloud, cloud_rect),
     ] = sections.as_slice()
     else {
-        panic!("Tasks, Reminders, History and Cloud sync should share the tab row")
+        panic!("Reminders, History and Cloud sync should share the tab row, without Tasks")
     };
     assert_eq!(
-        (*tasks, *reminders, *history, *cloud),
-        (
-            Section::Tasks,
-            Section::Reminders,
-            Section::History,
-            Section::CloudSync
-        )
+        (*reminders, *history, *cloud),
+        (Section::Reminders, Section::History, Section::CloudSync)
     );
-    assert_eq!(tasks_rect.y, history_rect.y);
-    assert_eq!(tasks_rect.x + tasks_rect.w, reminders_rect.x);
+    assert_eq!(reminders_rect.y, history_rect.y);
     assert_eq!(reminders_rect.x + reminders_rect.w, history_rect.x);
     assert_eq!(history_rect.x + history_rect.w, cloud_rect.x);
     assert_eq!(v.context_view.section(), Section::History);
-    // A press on the Tasks tab switches the column and is consumed by it.
+    // A press on the Reminders tab switches the column and is consumed by it.
     let (x, y) = (
-        tasks_rect.x + tasks_rect.w / 2.0,
-        tasks_rect.y + tasks_rect.h / 2.0,
+        reminders_rect.x + reminders_rect.w / 2.0,
+        reminders_rect.y + reminders_rect.h / 2.0,
     );
     assert!(v.mouse_down(&mut workspace.ws, x, y, false));
-    assert_eq!(v.context_view.section(), Section::Tasks);
+    assert_eq!(v.context_view.section(), Section::Reminders);
     // And the document never took a caret from any of it.
     let TabView::Leaf(l) = &v.tabs().active_tab().view else {
         panic!("leaf")
@@ -914,13 +994,17 @@ fn the_context_sections_and_the_cloud_action_are_reachable_from_the_keyboard() {
     // From there it steps, and it comes back round.
     let start = v.context_view.section();
     let mut seen = vec![start];
-    for _ in 1..Section::VISIBLE.len() {
+    let visible = Section::visible();
+    for _ in 1..visible.len() {
         v.next_context_section();
         seen.push(v.context_view.section());
     }
-    for section in Section::VISIBLE {
+    for section in &visible {
         assert!(seen.contains(section), "{section:?} is unreachable");
     }
+    // And what this build hides is never stepped onto: Tasks is hidden for now
+    // (`koru_features::CONTEXT_TASKS_SHOWN`).
+    assert!(!seen.contains(&Section::Tasks), "Tasks is hidden for now");
     v.next_context_section();
     assert_eq!(v.context_view.section(), start, "the cycle closes");
 
@@ -967,7 +1051,7 @@ fn a_pointer_over_the_column_does_not_wear_the_ibeam() {
     v.mouse_move(c.x + 70.0, c.y + row_y(0));
     assert_eq!(v.cursor_icon(), CursorIcon::Text);
 
-    let area = v.regions.sidebar;
+    let area = v.explore_area();
     v.mouse_move(area.x + 8.0, area.y + 200.0);
     assert_ne!(v.cursor_icon(), CursorIcon::Text, "over the column");
     let TabView::Leaf(l) = &v.tabs().active_tab().view else {
@@ -1013,8 +1097,16 @@ fn the_content_rect_sits_below_the_caption() {
     let (v, _w) = container();
     let r: Rect = v.content();
     assert_eq!(r.y, v.regions.caption.h);
-    assert_eq!(r.x, 0.0, "both columns are collapsed for now");
-    assert_eq!(r.w, 1200.0);
+    assert_eq!(
+        r.x,
+        theme::EDGE_LANE_W,
+        "both columns are collapsed for now: the left lane is the window's"
+    );
+    assert_eq!(
+        r.w,
+        1200.0 - 2.0 * theme::EDGE_LANE_W,
+        "and so is the right"
+    );
 }
 
 // ============================================================ drag-to-move
@@ -1218,4 +1310,40 @@ fn move_nodes_can_promote_a_nested_selection_to_the_library_root() {
         workspace.ws.children(Parent::Root).unwrap(),
         vec![parent, existing, child]
     );
+}
+
+/// **The window keeps a lane at its right edge and along its foot** (the
+/// review's artboard and note), **and at its left while the pane is shut**
+/// (his note, E71): the content stops `EDGE_LANE_W` short of the window on
+/// every side it reaches, the caption does not, and the context column,
+/// when open, ends where the lanes begin. Open the pane and the left lane
+/// goes: the pane's card is the window's left.
+#[test]
+fn the_window_keeps_an_edge_lane() {
+    let (mut v, mut workspace) = on_document();
+    let edge = v.regions.edge;
+    assert_eq!(edge.w, theme::EDGE_LANE_W);
+    assert_eq!(edge.x + edge.w, v.viewport.0);
+    assert_eq!(v.content().x + v.content().w, edge.x);
+    let verge = v.regions.left_edge;
+    assert_eq!(verge, Rect::new(0.0, edge.y, theme::EDGE_LANE_W, edge.h));
+    assert_eq!(v.content().x, verge.x + verge.w, "the same air on the left");
+    assert!(v.toggle_sidebar());
+    assert_eq!(v.regions.left_edge.w, 0.0, "the pane is the window's left");
+    assert_eq!(v.content().x, v.regions.sidebar.w);
+    assert!(v.toggle_sidebar());
+    assert_eq!(v.regions.left_edge.w, theme::EDGE_LANE_W);
+    v.adopt(&mut workspace.ws);
+    let foot = v.regions.foot;
+    assert_eq!(foot.h, theme::EDGE_LANE_W);
+    assert_eq!(foot.y + foot.h, v.viewport.1);
+    assert_eq!(v.content().y + v.content().h, foot.y);
+    assert_eq!(edge.y + edge.h, foot.y);
+    assert_eq!(v.regions.caption.x + v.regions.caption.w, v.viewport.0);
+    assert!(v.toggle_context());
+    let done = Instant::now() + std::time::Duration::from_millis(theme::PANEL_SLIDE_MS as u64 * 4);
+    v.context.advance(done);
+    assert_eq!(v.regions.context.x + v.regions.context.w, v.regions.edge.x);
+    assert_eq!(v.context_rect().x + v.context_rect().w, v.regions.edge.x);
+    assert_eq!(v.context_rect().y + v.context_rect().h, v.regions.foot.y);
 }

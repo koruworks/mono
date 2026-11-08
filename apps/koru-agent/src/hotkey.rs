@@ -284,7 +284,6 @@ fn report_unavailable(waker: &Waker) {
             shortcut: None,
         });
     }
-    waker.wake(AgentEvent::AiHotkeyRegistered { available: false });
 }
 
 #[cfg(any(windows, test))]
@@ -372,7 +371,6 @@ mod windows_impl {
     pub(super) const SEARCH_ID: i32 = 0x4b53;
     pub(super) const DICTATION_ID: i32 = 0x4b44;
     pub(super) const DICTATION_ALT_ID: i32 = 0x4b45;
-    pub(super) const AI_ID: i32 = 0x4b41;
     pub(super) const RECONFIGURE_MESSAGE: u32 = WM_APP + 0x4b;
 
     /// What a candidate label registers as. Total over both action tables,
@@ -495,15 +493,12 @@ mod windows_impl {
         id: i32,
         search: Option<winit::keyboard::KeyCode>,
         dictation: Option<(i32, VirtualKey)>,
-        ai: bool,
         foreground: ForegroundPid,
     ) -> Option<AgentEvent> {
         if id == SEARCH_ID {
             search.map(|trigger| AgentEvent::Hotkey(HotkeyPress::Search { trigger }))
         } else if dictation.is_some_and(|(active, _)| id == active) {
             dictation.map(|(_, key)| AgentEvent::Hotkey(HotkeyPress::Dictation { key, foreground }))
-        } else if id == AI_ID && ai {
-            Some(AgentEvent::AiHotkey)
         } else {
             None
         }
@@ -644,13 +639,6 @@ mod windows_impl {
         if dictation.active.is_none() {
             eprintln!("koru-agent: every global Dictation shortcut is unavailable");
         }
-        // Not registered in a build that hides Koru AI (koru-features).
-        let ai = parts("Ctrl+Shift+I")
-            .filter(|_| koru_features::ai())
-            .and_then(|(chord, _)| registrar.register(AI_ID, chord).ok());
-        waker.wake(AgentEvent::AiHotkeyRegistered {
-            available: ai.is_some(),
-        });
         process_commands(&mut registrar, &mut dictation, &control, &waker);
         let mut message = MSG::default();
         while unsafe { GetMessageW(&mut message, None, 0, 0) }.as_bool() {
@@ -663,14 +651,13 @@ mod windows_impl {
                     message.wParam.0 as i32,
                     search.as_ref().map(|(_, trigger, _, _)| *trigger),
                     dictation.effective().map(|(id, _, _, key, _)| (*id, *key)),
-                    ai.is_some(),
                     foreground_pid(),
                 )
             {
                 waker.wake(event);
             }
         }
-        drop((search, dictation, ai));
+        drop((search, dictation));
     }
 }
 
@@ -734,7 +721,6 @@ mod macos_impl {
                     shortcut: None,
                 });
             }
-            waker.wake(AgentEvent::AiHotkeyRegistered { available: false });
             return;
         };
         let mut search = None;
@@ -764,16 +750,6 @@ mod macos_impl {
             action: super::Action::Dictation,
             shortcut: None,
         });
-        let ai = HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyI);
-        // **Not registered at all in a build that hides Koru AI**
-        // (koru-features): the chord stays free for whatever else on the
-        // machine wants it, and the tray says it is unavailable.
-        let ai_id = koru_features::ai()
-            .then(|| manager.register(ai).ok().map(|_| ai.id()))
-            .flatten();
-        waker.wake(AgentEvent::AiHotkeyRegistered {
-            available: ai_id.is_some(),
-        });
         global_hotkey::GlobalHotKeyEvent::set_event_handler(Some(
             move |event: global_hotkey::GlobalHotKeyEvent| {
                 if event.state != global_hotkey::HotKeyState::Pressed {
@@ -784,8 +760,6 @@ mod macos_impl {
                     waker.wake(AgentEvent::Hotkey(crate::event::HotkeyPress::Search {
                         trigger,
                     }));
-                } else if ai_id.is_some_and(|id| event.id == id) {
-                    waker.wake(AgentEvent::AiHotkey);
                 }
             },
         ));
@@ -1036,7 +1010,6 @@ mod tests {
                     bindings.effective().unwrap().0,
                     bindings.effective().unwrap().3
                 )),
-                false,
                 crate::event::ForegroundPid::Known(42),
             ),
             Some(AgentEvent::Hotkey(
@@ -1067,15 +1040,14 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn one_pump_uses_distinct_search_dictation_and_unchanged_ai_ids() {
+    fn one_pump_uses_distinct_search_and_dictation_ids() {
         let ids = [
             super::windows_impl::SEARCH_ID,
             super::windows_impl::DICTATION_ID,
-            super::windows_impl::AI_ID,
+            super::windows_impl::DICTATION_ALT_ID,
         ];
         let unique: std::collections::HashSet<_> = ids.into_iter().collect();
         assert_eq!(unique.len(), ids.len());
-        assert_eq!(super::windows_impl::AI_ID, 0x4b41);
     }
 
     #[cfg(windows)]
@@ -1110,7 +1082,6 @@ mod tests {
                 super::windows_impl::SEARCH_ID,
                 Some(search),
                 Some((super::windows_impl::DICTATION_ID, dictation)),
-                true,
                 foreground,
             ),
             Some(AgentEvent::Hotkey(HotkeyPress::Search {
@@ -1122,7 +1093,6 @@ mod tests {
                 super::windows_impl::DICTATION_ID,
                 Some(search),
                 Some((super::windows_impl::DICTATION_ID, dictation)),
-                true,
                 foreground,
             ),
             Some(AgentEvent::Hotkey(HotkeyPress::Dictation {
@@ -1130,22 +1100,11 @@ mod tests {
                 foreground: seen,
             })) if key == dictation && seen == foreground
         ));
-        assert!(matches!(
-            super::windows_impl::dispatch(
-                super::windows_impl::AI_ID,
-                Some(search),
-                Some((super::windows_impl::DICTATION_ID, dictation)),
-                true,
-                foreground,
-            ),
-            Some(AgentEvent::AiHotkey)
-        ));
         assert!(
             super::windows_impl::dispatch(
                 123,
                 Some(search),
                 Some((super::windows_impl::DICTATION_ID, dictation)),
-                true,
                 foreground,
             )
             .is_none()
@@ -1218,15 +1177,6 @@ mod tests {
                 "a headless rooted agent reports each named action absent exactly once"
             );
         }
-        assert_eq!(
-            seen.iter()
-                .filter(|event| matches!(
-                    event,
-                    AgentEvent::AiHotkeyRegistered { available: false }
-                ))
-                .count(),
-            1
-        );
     }
 
     #[test]
@@ -1256,8 +1206,8 @@ mod tests {
         );
         assert_eq!(
             seen.len(),
-            3,
-            "and it reports both named actions plus AI on the way out"
+            2,
+            "and it reports both named actions on the way out"
         );
     }
 
@@ -1266,7 +1216,7 @@ mod tests {
         let (waker, seen) = Waker::collecting();
         assert!(report_spawn(Err::<(), ()>(()), &waker).is_none());
         let seen = seen.lock().unwrap();
-        assert_eq!(seen.len(), 3);
+        assert_eq!(seen.len(), 2);
         for action in ACTIONS {
             assert!(seen.iter().any(|event| matches!(
                 event,
@@ -1276,9 +1226,5 @@ mod tests {
                 } if seen_action == action
             )));
         }
-        assert!(
-            seen.iter()
-                .any(|event| matches!(event, AgentEvent::AiHotkeyRegistered { available: false }))
-        );
     }
 }

@@ -189,6 +189,9 @@ impl Fixture {
         // The platforms Koru ships on can all show a folder; the one test
         // about a platform that cannot says so itself.
         surface.set_can_reveal(true);
+        // A build that can delegate; the one test about a build that hides
+        // Delegate says so itself.
+        surface.set_can_re_run(true);
         surface.open(run_id(), Some(workspace()));
         Self { surface, link }
     }
@@ -2459,6 +2462,22 @@ fn re_run_and_resume_never_stand_on_the_same_run() {
     running.read(running_here());
     assert!(!running.surface.has_control(t(Lang::En, Key::RunReRun)));
     assert!(!running.surface.has_control(t(Lang::En, Key::RunResume)));
+}
+
+/// **A build that hides Delegate shows the run, not a way to start another**
+/// (`koru_features::delegate`, which the host answers): no *Re-run* and no
+/// note about what it would do, while the status line itself is unchanged.
+#[test]
+fn a_build_that_hides_delegate_offers_no_re_run() {
+    let mut f = Fixture::new();
+    f.surface.set_can_re_run(false);
+    f.read(view(header(RunStatus::Completed), here(), None));
+    assert!(!f.surface.has_control(t(Lang::En, Key::RunReRun)));
+    assert!(!f.shows(t(Lang::En, Key::RunReRunNote)));
+    assert!(
+        f.shows(&words::status(Lang::En, &RunStatus::Completed)),
+        "the run's status is shown as it was"
+    );
 }
 
 /// **A run that executed somewhere else can still be asked for again.**

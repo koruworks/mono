@@ -279,6 +279,7 @@ fn profile_carrier_apply(
         principal,
         expires_at_seconds: 600,
         generation: 1,
+        claim_references: koru_replication::cloud::transfer::ClaimReferences::None,
     };
     let scope = Scope {
         principal,
@@ -477,6 +478,7 @@ fn carrier_apply(
         principal,
         expires_at_seconds: 600,
         generation: 1,
+        claim_references: koru_replication::cloud::transfer::ClaimReferences::None,
     };
     let scope = Scope {
         principal,

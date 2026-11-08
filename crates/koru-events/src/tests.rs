@@ -931,6 +931,121 @@ fn account_telemetry_has_only_reviewed_categories_and_a_bucket() {
     );
 }
 
+/// Cloud MCP's hosted rows (C18): pseudonymous instrumentation, closed tokens
+/// and buckets only, and a client's string becomes `other` before it is an
+/// attr. Each projects, and the ingest accepts it only in a batch that carries
+/// a distinct id — the connection's keyed hash.
+#[test]
+fn cloud_mcp_telemetry_is_pseudonymous_closed_and_bucketed() {
+    use crate::telemetry::{TelemetryBatch, validate_event};
+    const SENTINEL: &str = "Acquisition of Acme Corp 11111111-2222-4333-8444-555555555555";
+
+    let rows: Vec<&EventSpec> = REGISTRY
+        .iter()
+        .filter(|spec| spec.name.starts_with("mcp."))
+        .collect();
+    assert_eq!(
+        rows.iter().map(|spec| spec.name).collect::<Vec<_>>(),
+        [
+            "mcp.tool.called",
+            "mcp.replica.loaded",
+            "mcp.replica.torn_down",
+            "mcp.save.unknown"
+        ]
+    );
+    for spec in &rows {
+        assert_eq!(spec.class, EventClass::Instrumentation, "{}", spec.name);
+        assert_eq!(
+            spec.telemetry,
+            TelemetryPolicy::PseudonymousUsage,
+            "{}",
+            spec.name
+        );
+        for attr in spec.attrs {
+            assert!(
+                matches!(attr.kind, AttrKind::Token | AttrKind::Bucket),
+                "{}.{} is neither a closed token nor a bucket",
+                spec.name,
+                attr.key
+            );
+            assert!(attr.required && attr.class.exportable());
+        }
+    }
+    // The two names a client or the executor hands the host end in `other`.
+    for vocabulary in [registry::MCP_TOOL_TOKENS, registry::MCP_TOOL_CODES] {
+        assert_eq!(vocabulary.last(), Some(&"other"));
+    }
+
+    let ctx = fixed_context();
+    let batch = |identified: bool| TelemetryBatch {
+        batch_id: "00000000-0000-4000-8000-0000000000aa".into(),
+        sent_at_ms: FIXED_TIME,
+        app_version: "0.0.3".into(),
+        build_channel: "hosted".into(),
+        platform: "linux".into(),
+        consent_version: "hosted".into(),
+        anonymous_installation_id: identified.then(|| "0123456789abcdef0123456789abcdef".into()),
+        events: Vec::new(),
+    };
+    let drafts: Vec<Draft> = vec![
+        McpToolCalled::new("read_document", None, 73, 5 * 1024 + 7).into(),
+        McpToolCalled::new(SENTINEL, Some(SENTINEL), 12_000, 0).into(),
+        McpToolCalled::new("edit_document", Some("document_claimed"), 40, 0).into(),
+        McpReplicaLoaded {
+            stage: McpReplicaStage::Full,
+            duration_ms_bucket: bucket(1_800),
+            documents_bucket: bucket(37),
+        }
+        .into(),
+        McpReplicaTornDown {
+            reason: McpTeardownReason::Idle,
+            lifetime_s_bucket: bucket(1_800),
+        }
+        .into(),
+        McpSaveUnknown.into(),
+    ];
+    let mut exported = Vec::new();
+    for draft in drafts {
+        let envelope =
+            draft
+                .subject(Subject::document(SENTINEL))
+                .build(&ctx, fixed_event_id(), FIXED_TIME);
+        validate(&envelope).unwrap();
+        let event = project(&envelope, &granted()).expect("pseudonymous usage projects");
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(!json.contains("Acme") && !json.contains("5555"), "{json}");
+        assert_eq!(validate_event(&event, &batch(true)), Ok(()), "{json}");
+        assert_eq!(
+            validate_event(&event, &batch(false)),
+            Err("consent_missing"),
+            "no distinct id, no pseudonymous event"
+        );
+        exported.push(event.properties);
+    }
+    let token = |value: &str| serde_json::Value::from(value);
+    assert_eq!(exported[0]["tool"], token("read_document"));
+    assert_eq!(exported[0]["outcome"], token("ok"));
+    assert_eq!(exported[0]["code"], token("none"));
+    assert_eq!(exported[0]["duration_ms_bucket"], 50);
+    assert_eq!(exported[0]["size_kib_bucket"], 5);
+    // A client's name for a tool, or a code nobody listed, is `other`.
+    assert_eq!(exported[1]["tool"], token("other"));
+    assert_eq!(exported[1]["outcome"], token("refused"));
+    assert_eq!(exported[1]["code"], token("other"));
+    assert_eq!(exported[1]["duration_ms_bucket"], 10_000);
+    assert_eq!(exported[2]["code"], token("document_claimed"));
+    assert_eq!(exported[3]["stage"], token("full"));
+    assert_eq!(exported[3]["documents_bucket"], 25);
+    assert_eq!(exported[4]["reason"], token("idle"));
+    assert_eq!(exported[4]["lifetime_s_bucket"], 1_000);
+    assert!(exported[5].is_empty());
+    // `none` is the answer's code, never a refusal's.
+    assert_eq!(
+        McpToolCalled::new("list_tasks", Some("none"), 1, 0),
+        McpToolCalled::new("list_tasks", Some("anything"), 1, 0)
+    );
+}
+
 #[test]
 fn the_project_rows_can_name_a_shape_but_never_a_project() {
     // A project's name and folder are the two things that must never reach

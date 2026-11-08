@@ -339,10 +339,12 @@ impl ManageView {
         {
             self.page = Some(page);
             self.page_scroll = 0.0;
+            // Not `Intent::Select`: nobody chose this Profile, and the notice
+            // that explains why the page moved has to survive the move.
             if let Page::Profile(profile) = page
                 && self.c.selected() != Some(profile)
             {
-                self.c.perform(Intent::Select(profile));
+                self.c.follow_page(profile);
                 let _ = self.c.take_hints();
             }
         }
@@ -570,6 +572,13 @@ impl View for ManageView {
                 Some(entry) => self.activate(entry),
                 None => false,
             };
+        }
+        // The New profile page's X is the page's, over the form's head and
+        // outside the form: it answers before the form is asked.
+        if self.content_page_open()
+            && let Some(control @ profile_page::Control::CloseCreation) = self.page_hit(x, y)
+        {
+            return self.activate_control(control);
         }
         if self.content_page_open() {
             let (fx, fy) = self.form_point(x, y);

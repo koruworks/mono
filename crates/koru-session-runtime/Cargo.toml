@@ -24,6 +24,9 @@ serde_json.workspace = true
 # Antigravity's ACP server prints no version; its pin is the executable's
 # SHA-256, the same digest `Get-FileHash` shows a person.
 sha2.workspace = true
+# An agent's edit arrives as old and new text; the chat keeps it as a
+# unified diff, which is what `koru-history` diffs with too.
+similar.workspace = true
 tracing.workspace = true
 
 [target.'cfg(unix)'.dependencies]

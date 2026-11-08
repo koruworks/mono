@@ -69,6 +69,9 @@ const STOP_SEQUENCE: &[(&str, bool)] = &[
     (koru_update::AGENT_EXE, false),
     (koru_update::SESSION_HOST_EXE, false),
     (koru_update::SESSION_HOST_EXE, true),
+    // **The retired Koru AI window** (2026-11-03). An installation upgrading
+    // from a build that shipped it may have it open; it has a `stop` verb,
+    // and its file leaves with the rest of the installed manifest.
     (koru_update::AI_CHAT_EXE, false),
     // **After the Agent, because the Agent is what starts one.** A voice worker
     // is started on demand and restarted by nothing, so once supervision is
@@ -394,6 +397,17 @@ pub fn run(request_path: &Path, wait_pid: u32) -> Result<Outcome, String> {
         Ok(prepared) => prepared,
         Err(error) => {
             log.line(&format!("update preparation failed: {error}"));
+            // **Recorded, as a failed installation is.** Without it the
+            // restarted build found the same verified package, offered it
+            // again, and the next Restart and install failed the same way —
+            // the banner came back on every start (2026-11-05). The record
+            // holds this build back from automatic offers; Check for updates
+            // still retries it.
+            record_failure(
+                &paths,
+                request.target_build,
+                &format!("update preparation failed: {error}"),
+            );
             let _ = remove_managed_dir(&request.install_dir, &staging, ".update");
             let _ = remove_managed_dir(&request.install_dir, &backup, ".previous");
             let _ = fs::remove_file(&journal);
@@ -2367,6 +2381,36 @@ mod tests {
         files.iter().map(|file| (*file).to_string()).collect()
     }
 
+    /// **The update that drops the Koru AI window removes its executable.**
+    /// The installed list still names `koru-ai-chat.exe`, so it is in the
+    /// owned union: the swap moves it aside with the old files, and the
+    /// incoming package does not put it back.
+    #[test]
+    fn an_update_removes_the_retired_koru_ai_window() {
+        let (_dir, install, staging, backup, incoming, _) = replacement_fixture();
+        fs::write(install.join(koru_update::AI_CHAT_EXE), b"old window").unwrap();
+        let installed = ReleaseFiles {
+            files: incoming
+                .files
+                .iter()
+                .cloned()
+                .chain(std::iter::once(koru_update::AI_CHAT_EXE.to_owned()))
+                .collect(),
+            ..incoming.clone()
+        };
+        let owned = owned_files(&incoming, Some(&installed));
+        assert!(owned.contains(koru_update::AI_CHAT_EXE));
+        assert!(STOP_SEQUENCE.contains(&(koru_update::AI_CHAT_EXE, false)));
+
+        let mut log = Log(None);
+        assert!(replace_owned(&install, &staging, &backup, &incoming, &owned, &mut log).is_ok());
+        assert!(
+            !install.join(koru_update::AI_CHAT_EXE).exists(),
+            "the retired window is not left in the installation"
+        );
+        assert!(backup.join(koru_update::AI_CHAT_EXE).is_file());
+    }
+
     #[test]
     fn package_change_keeps_removed_files_in_the_owned_union() {
         let installed = ReleaseFiles {
@@ -3145,6 +3189,13 @@ mod macos {
         })();
         if let Err(error) = prepared {
             log.line(&format!("update preparation failed: {error}"));
+            // Recorded, as the Windows transaction does: otherwise the
+            // restarted build offers the same package again, in a loop.
+            record_failure(
+                &paths,
+                request.target_build,
+                &format!("update preparation failed: {error}"),
+            );
             let _ = remove_managed_dir(&container, &staging, ".update");
             let _ = remove_managed_dir(&container, &backup, ".previous");
             let _ = fs::remove_file(&journal);

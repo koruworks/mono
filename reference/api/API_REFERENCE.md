@@ -486,7 +486,13 @@ Returns: A safe provider state, available model names, and selected-model capabi
 
 List the models a local agent offers
 
-Returns: The agent's models in its own ids, each with the agent's grouping; empty when it lists none.
+Returns: The agent's models in its own ids, each with the agent's grouping; empty when it lists none. With the optional body `{ "refresh": true }` the list is rebuilt first.
+
+## POST `/v1/ai/providers/{provider}/commands`
+
+List what a local agent can be told to do by name in a folder
+
+Returns: The agent's skills for the folder — Codex's `skills/list`, enabled ones only — in a picker's order, each a name, one line and the agent's display name; empty when it offers none. The body names the folder; absent, the home folder.
 
 ## POST `/v1/ai/providers/ollama/pulls`
 
@@ -510,7 +516,7 @@ Returns: The durable chat created with the client-minted identity.
 
 List AI chats
 
-Returns: Durable chats ordered by most recent activity.
+Returns: Durable chats ordered by most recent activity: one profile's, given `profile`, else every profile's.
 
 ## GET `/v1/ai/chats/{chat}`
 
@@ -523,6 +529,12 @@ Returns: The chat, ordered messages, finalized blocks, and pinned document refer
 Rename an AI chat
 
 Returns: The durable chat with its updated title and activity timestamp.
+
+## PATCH `/v1/ai/chats/{chat}/pin`
+
+Pin or unpin an AI chat
+
+Returns: The durable chat with its pin time, or none once unpinned; its activity timestamp is unchanged.
 
 ## PATCH `/v1/ai/chats/{chat}/model`
 
@@ -541,6 +553,12 @@ Returns: The durable chat with its updated privacy flag and activity timestamp.
 Choose the folder a chat's local agent works in
 
 Returns: The durable chat with its working folder; accepted only on an agent chat with no message yet.
+
+## PATCH `/v1/ai/chats/{chat}/agent-settings`
+
+Choose the approval mode a chat's local agent runs its next message in
+
+Returns: The durable chat with its agent settings; accepted on an agent chat at any time, a running reply keeping the mode it was sent in.
 
 ## POST `/v1/ai/tools/chats/list`
 
@@ -656,6 +674,12 @@ Cancel an AI attempt
 
 Returns: The current terminal state; cancelling an already-terminal attempt is a successful no-op.
 
+## POST `/v1/ai/attempts/{attempt}/steer`
+
+Send a message into a running agent reply
+
+Returns: The person's message as recorded after the running reply, once the local agent took it. A reply that cannot take text now (ended, not an agent's, or an agent with no mid-turn input) answers 409 steer_unavailable; the client then sends the message after the reply. Repeating an operation_id is an idempotent read of the first answer.
+
 ## POST `/v1/ai/tool-calls/{tool}/approve`
 
 Approve a pending workspace-tool call
@@ -667,6 +691,30 @@ Returns: The durable content-free tool activity. Repeating the same approval is 
 Deny a pending workspace-tool call
 
 Returns: The durable denied activity. The provider receives a structured permission-denied result and may continue.
+
+## PUT `/v1/ai/chats/{chat}/attachments/{attachment}`
+
+Store a picture or file for a local agent chat's next message
+
+Returns: The stored attachment's metadata, staged until a send names it. Idempotent by id: the same content answers the same attachment, different content answers attachment_conflict.
+
+## DELETE `/v1/ai/chats/{chat}/attachments/{attachment}`
+
+Remove a staged attachment
+
+Returns: Whether a staged attachment was removed. A sent attachment stays with its message and answers attachment_sent.
+
+## GET `/v1/ai/chats/{chat}/attachments/{attachment}`
+
+Read an attachment's stored original
+
+Returns: The original bytes, with the stored media type and the file name as an attachment disposition.
+
+## GET `/v1/ai/chats/{chat}/attachments/{attachment}/thumbnail`
+
+Read a picture attachment's thumbnail
+
+Returns: A PNG at most 512 pixels on its long edge; attachment_no_preview for anything but a picture.
 
 ## GET `/v1/artifacts/families`
 

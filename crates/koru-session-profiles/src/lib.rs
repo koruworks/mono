@@ -14,12 +14,27 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr as _;
 
 mod managed;
+mod search_path;
 pub use managed::*;
+pub use search_path::{effective_path, with_effective_path};
 
 use koru_session_protocol::{
     AttachmentDeliveryPolicy, BuiltInProfileKey, ErrorCode, ExecutableAvailability, ProfileKind,
     ProviderKind, SessionProfileId, SessionProfileKey, ShellQuoting, built_in_profile,
 };
+
+/// The name Koru's MCP bridge (`koru-mcp serve --stdio`) goes by, everywhere
+/// it is registered: the bridge a chat sends its agent (`chat_bridge` in
+/// `koru-session-host`), the welcome page's `mcp add` lines (`apps/koru`
+/// `welcome::mcp`) and the default of `koru.bat mcp` / `koru.sh mcp`.
+///
+/// **One name, because agents key MCP servers by it.** Devin imports the
+/// servers a person registered for other tools (`~/.claude.json`) and a
+/// `session/new` server of the same name *replaces* the imported one; under
+/// another name both run and every Koru tool is listed twice (D55). So with
+/// the defaults a chat has one `koru`, and it is the chat's, on the chat's
+/// root.
+pub const MCP_SERVER_NAME: &str = "koru";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProfileLabel {
@@ -37,6 +52,7 @@ pub enum ProfileLabel {
     QwenCode,
     Antigravity,
     Muse,
+    Devin,
     Custom,
 }
 
@@ -59,6 +75,7 @@ impl ProfileLabel {
             Self::QwenCode => "Qwen Code",
             Self::Antigravity => "Antigravity",
             Self::Muse => "Muse",
+            Self::Devin => "Devin",
             Self::Custom => "Custom profile",
         }
     }
@@ -99,9 +116,58 @@ impl ProfileLabel {
             Self::QwenCode => Some("Qwen Code"),
             Self::Antigravity => Some("Antigravity"),
             Self::Muse => Some("Muse"),
+            Self::Devin => Some("Devin"),
             Self::PlatformShell | Self::Custom => None,
         }
     }
+
+    /// **The coding agent this label is**, by the one key every surface
+    /// shares: the built-in profile key, which is also the managed provider
+    /// kind (`agent-<key>` in a chat). `None` for a shell or a custom
+    /// profile.
+    ///
+    /// **Both Codex labels are `codex`.** The terminal's *Codex* (the plain
+    /// CLI) and *Codex (Embedded)* (the app-server a chat runs) are two ways
+    /// to run one agent, so a person turns Codex on or off once.
+    pub const fn agent_key(self) -> Option<&'static str> {
+        match self {
+            Self::Claude => Some("claude"),
+            Self::OpenCode => Some("opencode"),
+            Self::CodexEmbedded | Self::CodexCli => Some("codex"),
+            Self::Grok => Some("grok"),
+            Self::Kimi => Some("kimi"),
+            Self::Copilot => Some("copilot"),
+            Self::Gemini => Some("gemini"),
+            Self::QwenCode => Some("qwen"),
+            Self::Antigravity => Some("antigravity"),
+            Self::Muse => Some("muse"),
+            Self::Devin => Some("devin"),
+            Self::PlatformShell | Self::PowerShell | Self::Bash | Self::Custom => None,
+        }
+    }
+}
+
+/// **Whether `profile` is one of the coding agents a person sees by name**:
+/// every built-in agent profile the terminal's *Agents ›* menu lists, which is
+/// every one but *Codex (Embedded)* — the app-server route stays a chat's,
+/// and its agent is the plain *Codex* row's. The settings page that turns
+/// agents on and off lists exactly these, in this order, so the page and the
+/// menu cannot disagree about which agents there are.
+pub fn is_coding_agent(profile: &LaunchProfile) -> bool {
+    profile.kind == ProfileKind::Agent
+        && matches!(profile.id, SessionProfileKey::BuiltIn(_))
+        && profile.label != ProfileLabel::CodexEmbedded
+        && profile.label.agent_key().is_some()
+}
+
+/// The coding agents, in `built_in_profiles()` order, each with its index in
+/// that list (what a menu row and the presence probe are keyed by).
+pub fn coding_agents() -> Vec<(usize, LaunchProfile)> {
+    built_in_profiles()
+        .into_iter()
+        .enumerate()
+        .filter(|(_, profile)| is_coding_agent(profile))
+        .collect()
 }
 
 /// The display name a launch surface renders for `profile` — the single
@@ -281,6 +347,11 @@ pub fn built_in_profiles() -> Vec<LaunchProfile> {
         // Meta's Muse Code installs itself as `muse` (a `muse.cmd` launcher on
         // Windows). Raw only: its structured `muse serve` (MSP) has no adapter.
         raw_agent(built_in_profile::MUSE, ProfileLabel::Muse, "muse"),
+        // Cognition's Devin CLI installs itself as `devin`, usually off PATH:
+        // `resolve_executable` also looks where its installers put it
+        // (`known_locations`). The tab runs it raw; a chat runs `devin acp`,
+        // `DEVIN_REGISTRATION`.
+        raw_agent(built_in_profile::DEVIN, ProfileLabel::Devin, "devin"),
     ]
     .into_iter()
     .collect()
@@ -358,13 +429,142 @@ pub fn probe(profiles: Vec<LaunchProfile>) -> Vec<ProfileRow> {
 /// Resolve the same concrete executable candidate used by presence probing.
 /// The session host calls this only after selecting an authored profile; it is
 /// not root discovery and never searches for user content.
+///
+/// The effective search path first ([`effective_path`]: the inherited `PATH`,
+/// then on Windows the registry's current `Path`, which a long-lived
+/// process's copy lags behind, and on macOS and Linux the login shell's
+/// `PATH` and the agent installers' directories) — then, for the few CLIs whose
+/// installers leave them off it, the places those installers put them
+/// ([`known_locations`]), so a tab and a chat find the same program the
+/// person installed.
 pub fn resolve_executable(program: &str) -> Option<PathBuf> {
+    resolve_on_path(program).or_else(|| installed_copies(program).next())
+}
+
+/// **Every copy of `program` this machine has**, in the order
+/// [`resolve_executable`] prefers them: the `PATH` hit, then each known
+/// install location that holds the file, without repeats. The first is what
+/// `resolve_executable` returns. A managed route that admits only some
+/// releases picks among these by version (Devin's standalone CLI updates
+/// itself, while the copy inside its desktop app moves with the app); this
+/// crate never runs one to ask.
+pub fn resolve_executable_candidates(program: &str) -> Vec<PathBuf> {
+    let mut found: Vec<PathBuf> = resolve_on_path(program).into_iter().collect();
+    for candidate in installed_copies(program) {
+        if !found.contains(&candidate) {
+            found.push(candidate);
+        }
+    }
+    found
+}
+
+fn installed_copies(program: &str) -> impl Iterator<Item = PathBuf> {
+    known_locations(program, |name| std::env::var_os(name))
+        .into_iter()
+        .filter(|candidate| candidate.is_file())
+        .filter_map(|candidate| absolute(&candidate))
+}
+
+/// **Where a CLI's own installers put it when they leave it off `PATH`**, in
+/// preference order, read from the environment through `var`.
+///
+/// - **Devin**: its Windows installer (`install.ps1`) and its desktop app both
+///   install `devin.exe` under `%LOCALAPPDATA%` without touching `PATH`. The
+///   standalone CLI comes first because it updates itself; the copy bundled
+///   with the desktop app is the fallback. Elsewhere the installer's
+///   documented `~/.local/bin/devin` is the one location (its
+///   troubleshooting page).
+/// - **Claude Code**: its native installer's `~/.local/bin` (`claude.exe`
+///   under `%USERPROFILE%` on Windows), then npm's global bin, then — on
+///   Windows — WinGet's links, and elsewhere the older "local install"
+///   `~/.claude/local`. Each of these is on the `PATH` of a new console, but
+///   not on that of a process started before the install, nor on the
+///   four-directory `PATH` launchd gives a Mac app opened from Finder.
+/// - **`claude-agent-acp`**, the adapter a Claude chat runs, is an npm
+///   package, so it is looked for in npm's global bin: `%APPDATA%\npm` (its
+///   `.cmd` shim) on Windows, Homebrew's and the system's `bin` on a Mac.
+///
+/// Every other program is found on `PATH` or not at all.
+pub fn known_locations(program: &str, var: impl Fn(&str) -> Option<OsString>) -> Vec<PathBuf> {
+    let under = |root: Option<OsString>, segments: &[&[&str]]| -> Vec<PathBuf> {
+        let Some(root) = root.filter(|root| !root.is_empty()).map(PathBuf::from) else {
+            return Vec::new();
+        };
+        segments
+            .iter()
+            .map(|path| path.iter().fold(root.clone(), |path, part| path.join(part)))
+            .collect()
+    };
+    // npm's global bin when Node came from Homebrew (Apple silicon, then
+    // Intel) or from nodejs.org's installer, which both use `/usr/local`.
+    // Linux desktops keep `/usr/local/bin` on a GUI app's `PATH` already.
+    let npm_global = |program: &str| -> Vec<PathBuf> {
+        if cfg!(target_os = "macos") {
+            ["/opt/homebrew/bin", "/usr/local/bin"]
+                .into_iter()
+                .map(|bin| Path::new(bin).join(program))
+                .collect()
+        } else {
+            Vec::new()
+        }
+    };
+    match program {
+        "devin" if cfg!(windows) => under(
+            var("LOCALAPPDATA"),
+            &[
+                &["devin", "cli", "bin", "devin.exe"],
+                &["devin", "bin", "devin.exe"],
+                &[
+                    "Programs",
+                    "Devin",
+                    "resources",
+                    "app",
+                    "extensions",
+                    "windsurf",
+                    "devin",
+                    "bin",
+                    "devin.exe",
+                ],
+            ],
+        ),
+        "devin" => under(var("HOME"), &[&[".local", "bin", "devin"]]),
+        "claude" if cfg!(windows) => [
+            under(var("USERPROFILE"), &[&[".local", "bin", "claude.exe"]]),
+            under(var("APPDATA"), &[&["npm", "claude.cmd"]]),
+            under(
+                var("LOCALAPPDATA"),
+                &[&["Microsoft", "WinGet", "Links", "claude.exe"]],
+            ),
+        ]
+        .concat(),
+        "claude" => [
+            under(
+                var("HOME"),
+                &[
+                    &[".local", "bin", "claude"],
+                    &[".claude", "local", "claude"],
+                ],
+            ),
+            npm_global("claude"),
+        ]
+        .concat(),
+        "claude-agent-acp" if cfg!(windows) => {
+            under(var("APPDATA"), &[&["npm", "claude-agent-acp.cmd"]])
+        }
+        "claude-agent-acp" => npm_global("claude-agent-acp"),
+        _ => Vec::new(),
+    }
+}
+
+fn resolve_on_path(program: &str) -> Option<PathBuf> {
     let path = Path::new(program);
     if path.is_absolute() || path.components().count() > 1 {
         return path.is_file().then(|| absolute(path)).flatten();
     }
-    let path_value = std::env::var_os("PATH")?;
-    let directories = std::env::split_paths(&path_value).collect::<Vec<_>>();
+    // Not `PATH` alone: on Windows the inherited copy is stale for as long as
+    // the process lives, and a Mac app opened from Finder has launchd's four
+    // directories, so the effective search path is used (`search_path`).
+    let directories = search_path::directories();
     #[cfg(windows)]
     if program.eq_ignore_ascii_case("bash") {
         // `C:\Windows\System32\bash.exe` is the legacy WSL launcher, not a
@@ -376,15 +576,23 @@ pub fn resolve_executable(program: &str) -> Option<PathBuf> {
         }
         return None;
     }
-    for directory in directories {
-        for name in executable_candidates(program) {
-            let candidate = directory.join(name);
-            if candidate.is_file() {
-                return absolute(&candidate);
-            }
-        }
-    }
-    None
+    first_in(program, &directories, |candidate| candidate.is_file())
+        .and_then(|candidate| absolute(&candidate))
+}
+
+/// The first `directory/name` that `exists`, over `directories` in order and
+/// each directory's [`executable_candidates`]. Pure over `exists`, so the
+/// search order is tested without a file.
+fn first_in(
+    program: &str,
+    directories: &[PathBuf],
+    exists: impl Fn(&Path) -> bool,
+) -> Option<PathBuf> {
+    directories.iter().find_map(|directory| {
+        executable_candidates(program)
+            .map(|name| directory.join(name))
+            .find(|candidate| exists(candidate))
+    })
 }
 
 /// The arguments that make a raw agent continue its **most recent
@@ -404,7 +612,10 @@ pub fn resume_arguments(label: ProfileLabel) -> Option<&'static [&'static str]> 
         | ProfileLabel::Copilot
         | ProfileLabel::Kimi
         | ProfileLabel::Grok
-        | ProfileLabel::Antigravity => Some(&["--continue"]),
+        | ProfileLabel::Antigravity
+        // `devin --continue` (`-c`): "Resume the most recent session in the
+        // current directory", its command reference (3000.10.48's docs).
+        | ProfileLabel::Devin => Some(&["--continue"]),
         // Codex's continue is a subcommand, not a flag.
         ProfileLabel::CodexEmbedded | ProfileLabel::CodexCli => Some(&["resume", "--last"]),
         ProfileLabel::PlatformShell
@@ -657,11 +868,209 @@ mod tests {
         }
     }
 
+    /// **The coding agents a person turns on and off**: the *Agents ›* menu's
+    /// ten, in its order, each keyed by the managed kind a chat uses — both
+    /// Codex rows are one agent, and *Codex (Embedded)* is not listed.
+    #[test]
+    fn coding_agents_are_the_agents_menus_rows_keyed_by_kind() {
+        let agents = coding_agents();
+        let names: Vec<&str> = agents
+            .iter()
+            .map(|(_, profile)| display_name(profile, "System", "Custom"))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "Claude",
+                "OpenCode",
+                "Grok",
+                "Kimi",
+                "Codex",
+                "GitHub Copilot",
+                "Qwen Code",
+                "Antigravity",
+                "Muse",
+                "Devin"
+            ]
+        );
+        let keys: Vec<&str> = agents
+            .iter()
+            .map(|(_, profile)| profile.label.agent_key().unwrap())
+            .collect();
+        assert_eq!(
+            keys,
+            [
+                "claude",
+                "opencode",
+                "grok",
+                "kimi",
+                "codex",
+                "copilot",
+                "qwen",
+                "antigravity",
+                "muse",
+                "devin"
+            ]
+        );
+        for registration in MANAGED_PROVIDER_REGISTRATIONS {
+            assert!(
+                keys.contains(&registration.kind),
+                "every managed kind is a coding agent: {}",
+                registration.kind
+            );
+        }
+        let profiles = built_in_profiles();
+        for (index, profile) in &agents {
+            assert_eq!(&profiles[*index], profile);
+        }
+        assert_eq!(ProfileLabel::CodexEmbedded.agent_key(), Some("codex"));
+        assert_eq!(ProfileLabel::PowerShell.agent_key(), None);
+    }
+
+    /// **Devin is looked for where its installers put it**, standalone CLI
+    /// first and the desktop app's copy last, read from the environment
+    /// given — and a program with no entry gets no location off `PATH`.
+    #[test]
+    fn devin_has_known_locations_standalone_first() {
+        let var = |name: &str| match name {
+            "LOCALAPPDATA" => Some(OsString::from(if cfg!(windows) {
+                r"C:\Users\x\AppData\Local"
+            } else {
+                "/unused"
+            })),
+            "HOME" => Some(OsString::from("/home/x")),
+            _ => None,
+        };
+        let found = known_locations("devin", var);
+        if cfg!(windows) {
+            let local = PathBuf::from(r"C:\Users\x\AppData\Local");
+            assert_eq!(
+                found,
+                [
+                    local.join(r"devin\cli\bin\devin.exe"),
+                    local.join(r"devin\bin\devin.exe"),
+                    local.join(
+                        r"Programs\Devin\resources\app\extensions\windsurf\devin\bin\devin.exe"
+                    ),
+                ]
+            );
+        } else {
+            assert_eq!(found, [PathBuf::from("/home/x/.local/bin/devin")]);
+        }
+        for program in ["grok", "Devin", "devin.exe", "bash", "Claude", "claude.exe"] {
+            assert!(known_locations(program, var).is_empty(), "{program}");
+        }
+        assert!(
+            known_locations("devin", |_| None).is_empty(),
+            "no root, no guess"
+        );
+        assert!(
+            known_locations("devin", |_| Some(OsString::new())).is_empty(),
+            "an empty root is no root"
+        );
+    }
+
+    /// **Claude Code is looked for where its installers put it** — the
+    /// native installer's `~/.local/bin` first, then npm's global bin, then
+    /// WinGet's links (Windows) or the old local install (elsewhere) — and
+    /// its chat adapter, an npm package, in npm's global bin. A machine
+    /// whose Koru started before the install, or a Mac app opened from
+    /// Finder, does not have these on `PATH`.
+    #[test]
+    fn claude_and_its_adapter_are_looked_for_where_their_installers_put_them() {
+        let var = |name: &str| match name {
+            "USERPROFILE" => Some(OsString::from(r"C:\Users\x")),
+            "APPDATA" => Some(OsString::from(r"C:\Users\x\AppData\Roaming")),
+            "LOCALAPPDATA" => Some(OsString::from(r"C:\Users\x\AppData\Local")),
+            "HOME" => Some(OsString::from("/home/x")),
+            _ => None,
+        };
+        let claude = known_locations("claude", var);
+        let adapter = known_locations("claude-agent-acp", var);
+        if cfg!(windows) {
+            assert_eq!(
+                claude,
+                [
+                    PathBuf::from(r"C:\Users\x\.local\bin\claude.exe"),
+                    PathBuf::from(r"C:\Users\x\AppData\Roaming\npm\claude.cmd"),
+                    PathBuf::from(r"C:\Users\x\AppData\Local\Microsoft\WinGet\Links\claude.exe"),
+                ]
+            );
+            assert_eq!(
+                adapter,
+                [PathBuf::from(
+                    r"C:\Users\x\AppData\Roaming\npm\claude-agent-acp.cmd"
+                )]
+            );
+            assert!(known_locations("claude", |_| None).is_empty());
+            assert!(known_locations("claude-agent-acp", |_| None).is_empty());
+        } else {
+            let npm: &[&str] = if cfg!(target_os = "macos") {
+                &["/opt/homebrew/bin", "/usr/local/bin"]
+            } else {
+                &[]
+            };
+            let mut expected = vec![
+                PathBuf::from("/home/x/.local/bin/claude"),
+                PathBuf::from("/home/x/.claude/local/claude"),
+            ];
+            expected.extend(npm.iter().map(|bin| Path::new(bin).join("claude")));
+            assert_eq!(claude, expected);
+            assert_eq!(
+                adapter,
+                npm.iter()
+                    .map(|bin| Path::new(bin).join("claude-agent-acp"))
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(
+                known_locations("claude", |_| None),
+                npm.iter()
+                    .map(|bin| Path::new(bin).join("claude"))
+                    .collect::<Vec<_>>(),
+                "no home, only the fixed npm bins"
+            );
+        }
+    }
+
     #[test]
     fn custom_profiles_require_the_future_authored_catalog() {
         assert_eq!(
             resolve(&SessionProfileKey::Custom(SessionProfileId::mint())),
             Err(ErrorCode::ProfileNotFound)
+        );
+    }
+
+    /// **A program only the extra directories hold is found**, and one on
+    /// the inherited `PATH` still wins over a copy in an extra directory —
+    /// the Finder case: launchd's four directories inherited, `codex` in
+    /// `~/.local/bin`. The directories are injected and the file system is
+    /// a closure, so nothing is spawned or read.
+    #[cfg(unix)]
+    #[test]
+    fn a_program_in_an_extra_directory_is_found_after_the_inherited_path() {
+        let inherited = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+            .map(PathBuf::from)
+            .to_vec();
+        let extra = PathBuf::from("/Users/x/.local/bin");
+        let directories = search_path::merge_unix(inherited.clone(), vec![extra.clone()]);
+        let in_extra = |candidate: &Path| {
+            candidate.parent() == Some(extra.as_path())
+                && candidate.file_stem().is_some_and(|stem| stem == "codex")
+        };
+        let found = first_in("codex", &directories, in_extra).expect("found in the extra dir");
+        assert_eq!(found.parent(), Some(extra.as_path()));
+        assert_eq!(
+            first_in("codex", &inherited, in_extra),
+            None,
+            "the inherited PATH alone does not have it"
+        );
+        let everywhere =
+            |candidate: &Path| candidate.file_stem().is_some_and(|stem| stem == "codex");
+        assert_eq!(
+            first_in("codex", &directories, everywhere)
+                .and_then(|found| found.parent().map(Path::to_path_buf)),
+            Some(PathBuf::from("/usr/bin")),
+            "the inherited PATH keeps its precedence"
         );
     }
 

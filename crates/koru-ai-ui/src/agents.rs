@@ -8,8 +8,6 @@
 //! list comes from the AI service's settings; readiness comes from the same
 //! validation answer every provider gives; the words come from `koru-i18n`.
 
-use std::collections::HashMap;
-
 use koru_ai_core::{
     AGENT_DEFAULT_MODEL, AgentToolKind, AiProviderId, ToolActivity, ToolActivityStatus,
     ToolApproval,
@@ -20,12 +18,29 @@ use koru_ai_wire::{
 };
 use koru_i18n::{Key, Lang, t};
 
+/// **Where a new chat starts**, as the person set it on *Agent providers*:
+/// the agent it starts with, the permission a chat with a supported agent
+/// (one with an auto mode) starts in, and the one any other agent's starts
+/// in. The host hands it over; a new chat reads it and an existing chat
+/// never does.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AgentDefaults {
+    pub permission: crate::approval_modes::NewChatPermission,
+    pub permission_other: crate::approval_modes::NewChatPermission,
+    /// The agent a new chat starts with, by key (`claude`, `codex`, …);
+    /// `None` is *Auto*: the last agent used.
+    pub agent: Option<String>,
+}
+
 /// How ready one agent is for a chat, as the picker and the card say it.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum AgentStatus {
     Checking,
     Ready,
     NotInstalled,
+    /// The agent is installed but the program its chats run through is
+    /// not — Claude's `claude-agent-acp`. Settings names the program.
+    AdapterMissing,
     SignedOut,
     UnsupportedVersion,
     CheckFailed,
@@ -47,6 +62,7 @@ impl AgentStatus {
                 {
                     Some("agent_checking") => Self::Checking,
                     Some("agent_not_installed") => Self::NotInstalled,
+                    Some("agent_adapter_missing") => Self::AdapterMissing,
                     Some("agent_signed_out") => Self::SignedOut,
                     Some("agent_unsupported_version") => Self::UnsupportedVersion,
                     Some("agent_check_failed") => Self::CheckFailed,
@@ -62,6 +78,9 @@ impl AgentStatus {
             Self::Ready => return None,
             Self::Checking => Key::TerminalChecking,
             Self::NotInstalled => Key::TerminalNotInstalled,
+            // Settings' own headline for the same row, where the detail
+            // names the missing program; the picker has room for the word.
+            Self::AdapterMissing => Key::SettingsAgentNeedsAttention,
             Self::SignedOut => Key::TerminalManagedSignedOut,
             Self::UnsupportedVersion => Key::AiAgentUnsupportedVersion,
             Self::CheckFailed => Key::TerminalManagedCheckFailed,
@@ -75,37 +94,6 @@ impl AgentStatus {
     }
 }
 
-/// One row of the composer's picker: a model of the chat's provider, the
-/// *Local agents* heading, or an agent.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum PickerRow {
-    Model(String),
-    Header,
-    Agent(AiProviderId),
-    /// One of an agent's model groups, when it has more than one.
-    Group {
-        agent: AiProviderId,
-        group: String,
-    },
-    /// One model of an agent, by the agent's own id.
-    AgentModel {
-        agent: AiProviderId,
-        id: String,
-    },
-    /// A word under an expanded agent: listing, failed, or nothing listed.
-    Note(Key),
-}
-
-impl PickerRow {
-    pub(crate) fn selectable(&self, status: &HashMap<AiProviderId, AgentStatus>) -> bool {
-        match self {
-            Self::Model(_) | Self::Group { .. } | Self::AgentModel { .. } => true,
-            Self::Header | Self::Note(_) => false,
-            Self::Agent(id) => status.get(id).is_some_and(|status| status.selectable()),
-        }
-    }
-}
-
 /// What the picker knows about one agent's models.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum AgentModels {
@@ -114,10 +102,11 @@ pub(crate) enum AgentModels {
     Failed,
 }
 
-/// The groups an agent's models fall into, in the order first seen.
+/// The groups an agent's models fall into, in the order first seen. The
+/// agent's own `default` entry is the *Default* row, in no group.
 pub(crate) fn model_groups(models: &[AgentModelView]) -> Vec<String> {
     let mut groups: Vec<String> = Vec::new();
-    for model in models {
+    for model in listed_models(models) {
         if !groups.contains(&model.group) {
             groups.push(model.group.clone());
         }
@@ -125,29 +114,127 @@ pub(crate) fn model_groups(models: &[AgentModelView]) -> Vec<String> {
     groups
 }
 
-/// A model's name under its group: `deepseek/v4-pro` under `deepseek`
-/// reads as `v4-pro`; an id that does not start with its group reads whole.
-pub(crate) fn model_short_name(model: &AgentModelView) -> String {
+/// An agent's models other than its own `default` entry, which is drawn as
+/// the *Default* row at the top instead of a second time in the list.
+pub(crate) fn listed_models(models: &[AgentModelView]) -> impl Iterator<Item = &AgentModelView> {
+    models
+        .iter()
+        .filter(|model| model.id != AGENT_DEFAULT_MODEL)
+}
+
+/// **The listed model a chat's model id names**, and whether the id is
+/// that model's longer context (koru-ai D10): a chat on `opus[1m]` is on
+/// *Opus*, with its 1M context.
+pub(crate) fn find_listed<'a>(
+    models: &'a [AgentModelView],
+    id: &str,
+) -> Option<(&'a AgentModelView, bool)> {
+    models.iter().find_map(|model| {
+        if model.id == id {
+            Some((model, false))
+        } else if model
+            .context
+            .as_ref()
+            .is_some_and(|context| context.id == id)
+        {
+            Some((model, true))
+        } else {
+            None
+        }
+    })
+}
+
+/// A model's label: the agent's own name for it, or the id formatted.
+pub(crate) fn model_label(model: &AgentModelView) -> String {
     model
-        .id
-        .strip_prefix(&format!("{}/", model.group))
-        .unwrap_or(&model.id)
-        .to_owned()
+        .name
+        .clone()
+        .unwrap_or_else(|| fallback_label(&model.id, &model.group))
 }
 
-/// How one picker row draws.
-pub(crate) struct PickerRowView {
-    pub(crate) label: String,
-    pub(crate) level: u8,
-    pub(crate) dim: bool,
-    pub(crate) current: bool,
-    pub(crate) trailing: Trailing,
+/// A group's heading: the agent's own name for it, or the id formatted.
+pub(crate) fn group_label(models: &[AgentModelView], group: &str) -> String {
+    models
+        .iter()
+        .filter(|model| model.group == group)
+        .find_map(|model| model.group_name.clone())
+        .unwrap_or_else(|| fallback_label(group, ""))
 }
 
-pub(crate) enum Trailing {
-    None,
-    Word(String),
-    Caret { expanded: bool },
+/// The *Default* row's label: the agent's own `default` entry's name when
+/// it lists one (Claude does), otherwise Koru's word.
+pub(crate) fn default_model_label(models: &[AgentModelView], lang: Lang) -> String {
+    models
+        .iter()
+        .find(|model| model.id == AGENT_DEFAULT_MODEL)
+        .and_then(|model| model.name.clone())
+        .unwrap_or_else(|| t(lang, Key::AiModelAgentDefault).to_owned())
+}
+
+/// A model id as a person would write it, when the agent sends no name. A
+/// formatting rule rather than a table, so it never goes stale: the group
+/// prefix (or else everything up to the last `/`) goes, `-`, `_` and spaces
+/// split words, a date (`2025-01-31`) stays whole, runs of one- and
+/// two-digit numbers join with `.`, and each word that starts with a letter
+/// is capitalised. `claude-opus-4-1` reads `Claude Opus 4.1`;
+/// `o3-mini-2025-01-31` reads `O3 Mini 2025-01-31`; `deepseek/v4-pro` under
+/// `deepseek` reads `V4 Pro`.
+pub(crate) fn fallback_label(id: &str, group: &str) -> String {
+    let tail = id
+        .strip_prefix(&format!("{group}/"))
+        .filter(|_| !group.is_empty())
+        .unwrap_or_else(|| id.rsplit('/').next().unwrap_or(id));
+    let digits = |token: &str, lengths: std::ops::RangeInclusive<usize>| {
+        lengths.contains(&token.len()) && token.bytes().all(|b| b.is_ascii_digit())
+    };
+    let raw: Vec<&str> = tail
+        .split(['-', '_', ' '])
+        .filter(|token| !token.is_empty())
+        .collect();
+    // A year, a month and a day in a row are one date, not a year and a
+    // version number.
+    let mut tokens: Vec<String> = Vec::new();
+    let mut index = 0;
+    while index < raw.len() {
+        if let [year, month, day, ..] = raw[index..]
+            && digits(year, 4..=4)
+            && digits(month, 2..=2)
+            && digits(day, 2..=2)
+        {
+            tokens.push(format!("{year}-{month}-{day}"));
+            index += 3;
+        } else {
+            tokens.push(raw[index].to_owned());
+            index += 1;
+        }
+    }
+    let mut words: Vec<String> = Vec::new();
+    let mut previous_short_number = false;
+    for token in &tokens {
+        let token = token.as_str();
+        let number = digits(token, 1..=2);
+        match words.last_mut() {
+            Some(last) if number && previous_short_number => {
+                last.push('.');
+                last.push_str(token);
+            }
+            _ => {
+                let mut chars = token.chars();
+                words.push(match chars.next() {
+                    Some(first) if first.is_alphabetic() => {
+                        first.to_uppercase().chain(chars).collect()
+                    }
+                    _ => token.to_owned(),
+                });
+            }
+        }
+        previous_short_number = number;
+    }
+    if words.is_empty() {
+        id.to_owned()
+    } else {
+        words.join(" ")
+    }
 }
 
 pub(crate) fn is_agent_provider(provider: &AiProviderId) -> bool {
@@ -160,12 +247,16 @@ pub(crate) fn chat_is_empty(transcript: Option<&ChatTranscript>) -> bool {
     transcript.is_some_and(|transcript| transcript.messages.is_empty())
 }
 
-/// The chip's text for an agent chat: the agent's name, then its model
-/// when one was chosen rather than the agent's own default.
+/// The chip's text for an agent chat: the agent's name, then its model's
+/// label when one was chosen rather than the agent's own default. A model
+/// no longer listed reads as its id formatted. When the label already
+/// starts with the agent's brand (*Claude Opus 4.7* under *Claude Code*),
+/// the brand is not said twice.
 pub(crate) fn agent_chip_label(
     agents: &[AgentProviderView],
     provider: &AiProviderId,
     requested_model: &str,
+    models: &[AgentModelView],
 ) -> String {
     let name = agents
         .iter()
@@ -173,9 +264,16 @@ pub(crate) fn agent_chip_label(
         .map(|agent| agent.label.as_str())
         .unwrap_or(provider.as_str());
     if requested_model == AGENT_DEFAULT_MODEL || requested_model.is_empty() {
-        name.to_owned()
+        return name.to_owned();
+    }
+    let label = find_listed(models, requested_model)
+        .map(|(model, _)| model_label(model))
+        .unwrap_or_else(|| fallback_label(requested_model, ""));
+    let first_word = |text: &str| text.split_whitespace().next().map(str::to_lowercase);
+    if first_word(&label).is_some() && first_word(&label) == first_word(name) {
+        label
     } else {
-        format!("{name} · {requested_model}")
+        format!("{name} · {label}")
     }
 }
 
@@ -212,6 +310,7 @@ pub(crate) fn agent_row_title(activity: &ToolActivity, lang: Lang) -> String {
         AgentToolKind::Command => Key::AiAgentRanCommand,
         AgentToolKind::FileChange => Key::AiAgentChangedFile,
         AgentToolKind::Search => Key::AiAgentSearched,
+        AgentToolKind::Read => Key::AiStepReadOne,
         AgentToolKind::Approval => Key::AiAgentAskedPermission,
     };
     t(lang, key).to_owned()
@@ -258,7 +357,10 @@ pub(crate) fn agent_row_body(activity: &ToolActivity, lang: Lang, now_ms: i64) -
         (Key::AiToolInput, activity.agent_input.as_deref()),
         (Key::AiToolOutput, activity.agent_output.as_deref()),
     ] {
-        let Some(content) = content.map(str::trim).filter(|content| !content.is_empty()) else {
+        let Some(content) = content
+            .map(str::trim)
+            .filter(|content| !crate::tool_output::says_nothing(content))
+        else {
             continue;
         };
         lines.push(format!("{}:", t(lang, key)));
@@ -272,7 +374,7 @@ pub(crate) fn agent_row_body(activity: &ToolActivity, lang: Lang, now_ms: i64) -
     lines.join("\n")
 }
 
-fn agent_row_outcome(activity: &ToolActivity, lang: Lang) -> String {
+pub(crate) fn agent_row_outcome(activity: &ToolActivity, lang: Lang) -> String {
     let key = match (activity.status, activity.approval) {
         (ToolActivityStatus::ApprovalRequired, _) => Key::AiAgentOutcomeWaiting,
         (ToolActivityStatus::Running | ToolActivityStatus::Proposed, _) => {
@@ -292,6 +394,29 @@ mod tests {
     use super::*;
     use koru_ai_core::{ChatId, InferenceAttemptId, MessageId, Timestamp, ToolInvocationId};
     use koru_ai_wire::Failure;
+
+    /// An agent wears its product's mark, OpenAI wears Codex's, and Koru's
+    /// own providers — and an agent this build has no mark for — wear none,
+    /// so the caller's own glyph stands (D22).
+    #[test]
+    fn a_provider_wears_its_agents_mark_or_none() {
+        use koru_draw::brand::{self, ProfileMark};
+        assert_eq!(
+            provider_mark("agent-claude"),
+            Some(ProfileMark::Brand(&brand::CLAUDE))
+        );
+        assert_eq!(
+            provider_mark("agent-codex"),
+            Some(ProfileMark::Brand(&brand::OPENAI))
+        );
+        assert_eq!(
+            provider_mark(AiProviderId::OPENAI),
+            Some(ProfileMark::Brand(&brand::OPENAI))
+        );
+        assert_eq!(provider_mark(AiProviderId::KORU), None);
+        assert_eq!(provider_mark(AiProviderId::OLLAMA), None);
+        assert_eq!(provider_mark("agent-someday"), None);
+    }
 
     fn validation(
         status: ProviderValidationStatus,
@@ -324,6 +449,18 @@ mod tests {
             )),
             AgentStatus::SignedOut
         );
+        // A missing adapter is not a missing agent: the picker says what
+        // Settings says, and the agent still counts as installed.
+        let adapter = AgentStatus::from_validation(&validation(
+            ProviderValidationStatus::Unavailable,
+            Some("agent_adapter_missing"),
+        ));
+        assert_eq!(adapter, AgentStatus::AdapterMissing);
+        assert_ne!(
+            adapter.word(Lang::En),
+            AgentStatus::NotInstalled.word(Lang::En)
+        );
+        assert!(!adapter.selectable());
         assert_eq!(
             AgentStatus::from_validation(&validation(ProviderValidationStatus::Failed, None)),
             AgentStatus::CheckFailed
@@ -334,45 +471,129 @@ mod tests {
         }
     }
 
-    #[test]
-    fn models_group_in_first_seen_order_and_read_short_under_their_group() {
-        let models = vec![
-            AgentModelView {
-                id: "deepseek/v4-pro".into(),
-                group: "deepseek".into(),
-            },
-            AgentModelView {
-                id: "anthropic/claude".into(),
-                group: "anthropic".into(),
-            },
-            AgentModelView {
-                id: "deepseek/v4-flash".into(),
-                group: "deepseek".into(),
-            },
-        ];
-        assert_eq!(model_groups(&models), vec!["deepseek", "anthropic"]);
-        assert_eq!(model_short_name(&models[0]), "v4-pro");
-        let flat = AgentModelView {
-            id: "gpt-5.6".into(),
-            group: "openai".into(),
-        };
-        assert_eq!(model_short_name(&flat), "gpt-5.6");
+    fn model(id: &str, group: &str) -> AgentModelView {
+        AgentModelView {
+            id: id.into(),
+            group: group.into(),
+            name: None,
+            description: None,
+            group_name: None,
+            legacy: false,
+            reasoning: None,
+            context: None,
+            fast: None,
+        }
+    }
+
+    fn named(id: &str, group: &str, name: &str) -> AgentModelView {
+        AgentModelView {
+            name: Some(name.into()),
+            ..model(id, group)
+        }
     }
 
     #[test]
-    fn the_chip_names_the_agent_and_only_a_chosen_model() {
-        let agents = vec![AgentProviderView {
-            id: AiProviderId::parse("agent-opencode").unwrap(),
-            label: "OpenCode".into(),
-        }];
-        let id = AiProviderId::parse("agent-opencode").unwrap();
+    fn models_group_in_first_seen_order_and_read_by_name_or_formatted_id() {
+        let mut deepseek = named("deepseek/v4-pro", "deepseek", "DeepSeek V4 Pro");
+        deepseek.group_name = Some("DeepSeek".into());
+        let models = vec![
+            named("default", "claude", "Default (recommended)"),
+            deepseek,
+            model("anthropic/claude", "anthropic"),
+            model("deepseek/v4-flash", "deepseek"),
+        ];
         assert_eq!(
-            agent_chip_label(&agents, &id, AGENT_DEFAULT_MODEL),
+            model_groups(&models),
+            vec!["deepseek", "anthropic"],
+            "the agent's own default is the Default row, in no group"
+        );
+        assert_eq!(model_label(&models[1]), "DeepSeek V4 Pro");
+        assert_eq!(model_label(&models[3]), "V4 Flash");
+        assert_eq!(group_label(&models, "deepseek"), "DeepSeek");
+        assert_eq!(group_label(&models, "anthropic"), "Anthropic");
+        assert_eq!(
+            default_model_label(&models, Lang::En),
+            "Default (recommended)"
+        );
+        assert_eq!(default_model_label(&models[1..], Lang::En), "Default");
+        assert_eq!(
+            listed_models(&models).count(),
+            3,
+            "an agent-listed default replaces the synthetic row"
+        );
+    }
+
+    /// TECHNICAL §8's table, and the edges around it.
+    #[test]
+    fn a_model_id_is_formatted_by_rule_when_the_agent_sends_no_name() {
+        for (id, group, label) in [
+            ("claude-opus-4-1", "claude", "Claude Opus 4.1"),
+            (
+                "claude-sonnet-4-5-20250929",
+                "claude",
+                "Claude Sonnet 4.5 20250929",
+            ),
+            ("deepseek/v4-pro", "deepseek", "V4 Pro"),
+            ("gpt-5.1-codex-mini", "openai", "Gpt 5.1 Codex Mini"),
+            ("kimi-k2-0905", "kimi", "Kimi K2 0905"),
+            ("o3-mini-2025-01-31", "openai", "O3 Mini 2025-01-31"),
+            ("gpt-4o-2024-08-06-1", "openai", "Gpt 4o 2024-08-06 1"),
+            ("model-2025-1-31", "g", "Model 2025 1.31"),
+            (
+                "openrouter/deepseek/deepseek-chat",
+                "openrouter",
+                "Deepseek/deepseek Chat",
+            ),
+            ("vendor/model_name", "other", "Model Name"),
+            ("v-1-2-3", "", "V 1.2.3"),
+            ("--", "g", "--"),
+        ] {
+            assert_eq!(fallback_label(id, group), label, "{id} under {group}");
+        }
+        assert_eq!(
+            fallback_label("deepseek", ""),
+            "Deepseek",
+            "a group heading"
+        );
+    }
+
+    #[test]
+    fn the_chip_names_the_agent_and_a_chosen_models_label_once() {
+        let agents = vec![
+            AgentProviderView {
+                id: AiProviderId::parse("agent-opencode").unwrap(),
+                label: "OpenCode".into(),
+                steers: false,
+            },
+            AgentProviderView {
+                id: AiProviderId::parse("agent-claude").unwrap(),
+                label: "Claude Code".into(),
+                steers: false,
+            },
+        ];
+        let opencode = AiProviderId::parse("agent-opencode").unwrap();
+        let claude = AiProviderId::parse("agent-claude").unwrap();
+        let listed = vec![
+            named("opencode/beam-free", "opencode", "Beam Free"),
+            named("opus", "claude", "Claude Opus 4.7"),
+        ];
+        assert_eq!(
+            agent_chip_label(&agents, &opencode, AGENT_DEFAULT_MODEL, &listed),
             "OpenCode"
         );
         assert_eq!(
-            agent_chip_label(&agents, &id, "deepseek/v4-pro"),
-            "OpenCode · deepseek/v4-pro"
+            agent_chip_label(&agents, &opencode, "opencode/beam-free", &listed),
+            "OpenCode · Beam Free"
+        );
+        assert_eq!(
+            agent_chip_label(&agents, &opencode, "deepseek/v4-pro", &[]),
+            "OpenCode · V4 Pro",
+            "a model no longer listed reads as its id formatted"
+        );
+        assert_eq!(
+            agent_chip_label(&agents, &claude, "opus", &listed),
+            "Claude Opus 4.7",
+            "the brand is not said twice"
         );
     }
 
@@ -399,6 +620,7 @@ mod tests {
             agent_summary: None,
             agent_input: None,
             agent_output: None,
+            text_offset: None,
             display_target: None,
             live: None,
         }
@@ -550,6 +772,29 @@ pub(crate) fn is_agent_provider_str(provider: &str) -> bool {
     provider.starts_with("agent-")
 }
 
+/// **The mark a provider wears**, by its id: an agent's brand by its kind
+/// (`agent-claude` wears Claude's), OpenAI's for OpenAI — Codex's face, one
+/// product — and `None` for Koru's own providers and an agent this build has
+/// no mark for, where the caller keeps its own glyph.
+///
+/// The one mapping, so the model picker's rail and a chat tab (D22) cannot
+/// give one agent two faces. It is `koru_draw::brand::for_profile` over the
+/// session layer's profile key, which an agent's id carries after `agent-`.
+/// The agent key a provider id names — `agent-claude` is `claude` — the key
+/// the host's *Agent providers* setting turns agents off by.
+pub fn agent_key(provider: &AiProviderId) -> Option<&str> {
+    provider.as_str().strip_prefix("agent-")
+}
+
+pub fn provider_mark(provider: &str) -> Option<koru_draw::brand::ProfileMark> {
+    let key = match provider.strip_prefix("agent-") {
+        Some(kind) => kind,
+        None if provider == AiProviderId::OPENAI => "codex",
+        None => return None,
+    };
+    koru_draw::brand::for_profile(key)
+}
+
 /// How often a running check is asked about while it is in view.
 const AGENT_CHECK_FOLLOW_UP: std::time::Duration = std::time::Duration::from_millis(1500);
 
@@ -602,233 +847,77 @@ impl crate::ChatSurface {
         }
     }
 
-    /// The picker's rows: the chat's provider's models, and — while the chat
-    /// has no message yet — every local agent with its readiness word.
-    pub(crate) fn chat_model_rows(&self) -> Vec<PickerRow> {
-        let mut rows: Vec<PickerRow> = self
-            .chat_model_options()
-            .into_iter()
-            .map(PickerRow::Model)
-            .collect();
-        let agents = self
+    /// An agent model's levels, as its agent's listing carries them; `None`
+    /// for any other provider, and for a model listed with none.
+    pub(crate) fn agent_model_control(
+        &self,
+        model: &koru_ai_core::ModelSelection,
+    ) -> Option<&koru_ai_core::ReasoningControl> {
+        if !is_agent_provider(&model.provider) {
+            return None;
+        }
+        find_listed(
+            self.listed_agent_models(&model.provider),
+            &model.requested_model,
+        )
+        .and_then(|(listed, _)| listed.reasoning.as_ref())
+    }
+
+    /// The models listed for `agent`, empty while none are known.
+    pub(crate) fn listed_agent_models(&self, agent: &AiProviderId) -> &[AgentModelView] {
+        match self.agent_models.get(agent) {
+            Some(AgentModels::Listed(models)) => models,
+            _ => &[],
+        }
+    }
+
+    pub(crate) fn close_picker(&mut self) {
+        self.chat_model_open = false;
+        self.picker.scroll_drag = None;
+        self.picker_tooltip.clear();
+    }
+
+    /// Ask for every agent's models, so the picker opens on lists already
+    /// known (agent-models D8): when settings arrive, and each time the
+    /// picker opens. The host answers from memory.
+    pub(crate) fn prefetch_agent_models(&mut self) {
+        let agents: Vec<AiProviderId> = self
             .settings
             .as_ref()
-            .map(|settings| settings.agents.as_slice())
+            .map(|settings| {
+                settings
+                    .agents
+                    .iter()
+                    .map(|agent| agent.id.clone())
+                    .collect()
+            })
             .unwrap_or_default();
-        if !agents.is_empty() && chat_is_empty(self.transcript.as_ref()) {
-            rows.push(PickerRow::Header);
-            for agent in agents {
-                rows.push(PickerRow::Agent(agent.id.clone()));
-                if self.expanded_agent.as_ref() == Some(&agent.id) {
-                    self.push_agent_model_rows(&agent.id, &mut rows);
-                }
-            }
-        }
-        rows
-    }
-
-    fn push_agent_model_rows(&self, agent: &AiProviderId, rows: &mut Vec<PickerRow>) {
-        match self.agent_models.get(agent) {
-            None | Some(AgentModels::Loading) => {
-                rows.push(PickerRow::Note(Key::AiAgentModelsLoading))
-            }
-            Some(AgentModels::Failed) => rows.push(PickerRow::Note(Key::AiAgentModelsFailed)),
-            Some(AgentModels::Listed(models)) if models.is_empty() => {
-                rows.push(PickerRow::Note(Key::AiAgentNoModels))
-            }
-            Some(AgentModels::Listed(models)) => {
-                let groups = model_groups(models);
-                let model_row = |model: &AgentModelView| PickerRow::AgentModel {
-                    agent: agent.clone(),
-                    id: model.id.clone(),
-                };
-                if groups.len() == 1 {
-                    rows.extend(models.iter().map(model_row));
-                    return;
-                }
-                for group in groups {
-                    rows.push(PickerRow::Group {
-                        agent: agent.clone(),
-                        group: group.clone(),
-                    });
-                    if self.expanded_group.as_ref() == Some(&group) {
-                        rows.extend(
-                            models
-                                .iter()
-                                .filter(|model| model.group == group)
-                                .map(model_row),
-                        );
-                    }
-                }
-            }
+        for agent in agents {
+            self.ask_agent_models(agent);
         }
     }
 
-    pub(crate) fn picker_row_view(
-        &self,
-        row: &PickerRow,
-        agents: &[AgentProviderView],
-        current_provider: Option<&AiProviderId>,
-        current_model: &str,
-    ) -> PickerRowView {
-        let on_agent = |agent: &AiProviderId| current_provider == Some(agent);
-        match row {
-            PickerRow::Model(model) => PickerRowView {
-                label: model.clone(),
-                level: 0,
-                dim: false,
-                current: current_provider.is_some_and(|provider| !is_agent_provider(provider))
-                    && current_model == model,
-                trailing: Trailing::None,
-            },
-            PickerRow::Header => PickerRowView {
-                label: t(self.lang, Key::AiLocalAgents).to_owned(),
-                level: 0,
-                dim: true,
-                current: false,
-                trailing: Trailing::None,
-            },
-            PickerRow::Agent(agent) => {
-                let status = self
-                    .agent_status
-                    .get(agent)
-                    .copied()
-                    .unwrap_or(AgentStatus::Checking);
-                PickerRowView {
-                    label: agent_label(agents, agent),
-                    level: 0,
-                    dim: !status.selectable(),
-                    current: on_agent(agent) && current_model == AGENT_DEFAULT_MODEL,
-                    trailing: match status.word(self.lang) {
-                        Some(word) => Trailing::Word(word),
-                        None => Trailing::Caret {
-                            expanded: self.expanded_agent.as_ref() == Some(agent),
-                        },
-                    },
-                }
-            }
-            PickerRow::Group { agent, group } => PickerRowView {
-                label: group.clone(),
-                level: 1,
-                dim: false,
-                current: on_agent(agent)
-                    && current_model.starts_with(&format!("{group}/"))
-                    && self.expanded_group.as_ref() != Some(group),
-                trailing: Trailing::Caret {
-                    expanded: self.expanded_group.as_ref() == Some(group),
-                },
-            },
-            PickerRow::AgentModel { agent, id } => {
-                let single_group =
-                    self.agent_models
-                        .get(agent)
-                        .is_some_and(|models| match models {
-                            AgentModels::Listed(models) => model_groups(models).len() == 1,
-                            _ => true,
-                        });
-                let label = self
-                    .agent_models
-                    .get(agent)
-                    .and_then(|models| match models {
-                        AgentModels::Listed(models) => models.iter().find(|model| &model.id == id),
-                        _ => None,
-                    })
-                    .filter(|_| !single_group)
-                    .map(model_short_name)
-                    .unwrap_or_else(|| id.clone());
-                PickerRowView {
-                    label,
-                    level: if single_group { 1 } else { 2 },
-                    dim: false,
-                    current: on_agent(agent) && current_model == id,
-                    trailing: Trailing::None,
-                }
-            }
-            PickerRow::Note(key) => PickerRowView {
-                label: t(self.lang, *key).to_owned(),
-                level: 1,
-                dim: true,
-                current: false,
-                trailing: Trailing::None,
-            },
-        }
-    }
-
-    /// The picker row at `index`, as drawn.
-    fn chat_model_row_rect(&self, index: usize) -> Option<crate::Rect> {
-        let panel = self.chat_model_panel()?;
-        let visible = index.checked_sub(self.chat_model_offset)?;
-        Some(crate::Rect::new(
-            panel.x + 4.0,
-            panel.y + 4.0 + visible as f32 * 30.0,
-            panel.w - 8.0,
-            30.0,
-        ))
-    }
-
-    /// A click on picker row `index`. The caret end of an agent row expands
-    /// it and lists its models; anywhere else picks the agent with its own
-    /// default model.
-    pub(crate) fn click_picker_row(&mut self, index: usize, x: f32) -> bool {
-        let Some(row) = self.chat_model_rows().get(index).cloned() else {
-            return true;
-        };
-        if !row.selectable(&self.agent_status) {
-            return true;
-        }
-        match row {
-            PickerRow::Model(model) => {
-                self.close_picker();
-                self.change_chat_model(model)
-            }
-            PickerRow::Header | PickerRow::Note(_) => true,
-            PickerRow::Agent(agent) => {
-                let caret_end = self
-                    .chat_model_row_rect(index)
-                    .is_some_and(|rect| x >= rect.x + rect.w - 36.0);
-                if caret_end {
-                    self.toggle_agent_models(agent);
-                    return true;
-                }
-                self.close_picker();
-                self.choose_agent_model(agent, AGENT_DEFAULT_MODEL.to_owned())
-            }
-            PickerRow::Group { group, .. } => {
-                self.expanded_group = if self.expanded_group.as_ref() == Some(&group) {
-                    None
-                } else {
-                    Some(group)
-                };
-                true
-            }
-            PickerRow::AgentModel { agent, id } => {
-                self.close_picker();
-                self.choose_agent_model(agent, id)
-            }
-        }
-    }
-
-    fn close_picker(&mut self) {
-        self.chat_model_open = false;
-        self.chat_model_scroll_drag = None;
-    }
-
-    /// Expand or collapse an agent's row. Its models are asked for on the
-    /// first expansion, and again after a failed listing.
-    fn toggle_agent_models(&mut self, agent: AiProviderId) {
-        if self.expanded_agent.as_ref() == Some(&agent) {
-            self.expanded_agent = None;
+    /// Ask for one agent's models unless an ask is already out. A list on
+    /// screen stays while the answer is on its way; only an agent with no
+    /// list reads *Listing models…*.
+    pub(crate) fn ask_agent_models(&mut self, agent: AiProviderId) {
+        if self.agent_models_asked.contains(&agent) {
             return;
         }
-        self.expanded_agent = Some(agent.clone());
-        self.expanded_group = None;
-        if !matches!(
-            self.agent_models.get(&agent),
-            Some(AgentModels::Loading | AgentModels::Listed(_))
-        ) {
+        if !matches!(self.agent_models.get(&agent), Some(AgentModels::Listed(_))) {
             self.agent_models
                 .insert(agent.clone(), AgentModels::Loading);
-            self.send_command(crate::reader::Command::DiscoverModels(agent));
+        }
+        // Straight to the reader: a background ask is not something the
+        // person is waiting on, so it neither marks the surface busy nor
+        // clears its status line.
+        let sent = self.reader.as_ref().is_some_and(|reader| {
+            reader
+                .send(crate::reader::Command::DiscoverModels(agent.clone()))
+                .is_ok()
+        });
+        if sent {
+            self.agent_models_asked.insert(agent);
         }
     }
 
@@ -878,29 +967,57 @@ impl crate::ChatSurface {
     }
 
     /// Make a local agent the one who answers this chat, on the model
-    /// named or its own default. Only offered on a chat with no message
-    /// yet, and only for an agent that is ready.
+    /// named or its own default — or, with no chat yet, the one a new chat
+    /// is made with. Only offered on a chat with no message yet, and only
+    /// for an agent that is ready. The chat keeps its level when the new
+    /// model offers it, and is back on *Default* otherwise (D18).
+    ///
+    /// **A begun chat keeps its agent**: another of that agent's models
+    /// only, from its next message, and only where its host takes one
+    /// ([`Self::model_locked`]). While a reply runs, a note over the picker
+    /// says the model is the next message's; the reply keeps its own.
     pub(crate) fn choose_agent_model(
         &mut self,
         agent: AiProviderId,
         requested_model: String,
     ) -> bool {
-        let Some(transcript) = &self.transcript else {
-            return false;
-        };
-        if !chat_is_empty(Some(transcript)) {
+        let begun = self
+            .transcript
+            .as_ref()
+            .is_some_and(|transcript| !chat_is_empty(Some(transcript)));
+        // *Default* names no model a live session could be moved to: the
+        // agent decides it when a session starts.
+        if begun
+            && (self.model_locked()
+                || requested_model == koru_ai_core::AGENT_DEFAULT_MODEL
+                || self.transcript.as_ref().is_some_and(|transcript| {
+                    let current = &transcript.chat.current_model;
+                    current.provider != agent || current.requested_model == requested_model
+                }))
+        {
             return true;
         }
-        let model = koru_ai_core::ModelSelection {
+        let name = (begun && self.attempt.is_some())
+            .then(|| self.agent_model_name(&agent, &requested_model));
+        let mut model = koru_ai_core::ModelSelection {
             provider: agent,
             requested_model,
             default_reasoning: koru_ai_core::ReasoningChoice::Default,
         };
-        self.web_search_armed = false;
-        self.send_command(crate::reader::Command::UpdateModel(
-            transcript.chat.id,
-            koru_ai_wire::UpdateChatModelRequest { model },
-        ))
+        let current = self
+            .transcript
+            .as_ref()
+            .map(|transcript| transcript.chat.current_model.default_reasoning);
+        if let (Some(current), Some(control)) = (current, self.agent_model_control(&model))
+            && crate::effort::stops(control).contains(&current)
+        {
+            model.default_reasoning = current;
+        }
+        let chosen = self.start_chat_on(model);
+        if chosen && let Some(name) = name {
+            self.announce_model_next_message(&name);
+        }
+        chosen
     }
 
     /// Answer an agent's permission request by the choice clicked.
@@ -945,16 +1062,79 @@ impl crate::ChatSurface {
         ))
     }
 
+    /// **Turn coding agents off on this machine** (Settings → Coding → Agent
+    /// providers): the keys of the agents turned off. A hidden agent leaves
+    /// the picker's rail and the setup card; a chat already on one keeps it
+    /// and keeps working. Answers whether anything moved.
+    pub fn set_hidden_agents(&mut self, keys: impl IntoIterator<Item = String>) -> bool {
+        let keys: std::collections::HashSet<String> = keys.into_iter().collect();
+        let moved = self.hidden_agents != keys;
+        self.hidden_agents = keys;
+        moved
+    }
+
+    /// **Where a new chat starts** (Settings → Coding → Agent providers), as
+    /// the host's settings hold it. Only a new chat reads it; a chat that
+    /// exists keeps its own mode. Answers whether anything moved.
+    pub fn set_agent_defaults(&mut self, defaults: AgentDefaults) -> bool {
+        let moved = self.agent_defaults != defaults;
+        self.agent_defaults = defaults;
+        moved
+    }
+
+    /// **The agent a new chat starts with** (D40): the default agent, while
+    /// it is listed, turned on and not known to be missing from this
+    /// computer. `None` is *Auto* — the last agent used — which is also
+    /// where a default that cannot be had falls back.
+    pub(crate) fn default_agent_provider(&self) -> Option<AiProviderId> {
+        let key = self.agent_defaults.agent.as_deref()?;
+        let agent = self
+            .settings
+            .as_ref()?
+            .agents
+            .iter()
+            .find(|agent| agent_key(&agent.id) == Some(key))?;
+        let installed = self.agent_status.get(&agent.id) != Some(&AgentStatus::NotInstalled);
+        (self.agent_shown(&agent.id) && installed).then(|| agent.id.clone())
+    }
+
+    /// **The order the agents are listed in** (Settings → Coding → Agent
+    /// providers), by key: the picker's rail and the setup card follow it.
+    /// An agent it does not name follows the ones it does, in the service's
+    /// order. Answers whether anything moved.
+    pub fn set_agent_order(&mut self, keys: impl IntoIterator<Item = String>) -> bool {
+        let keys: Vec<String> = keys.into_iter().collect();
+        let moved = self.agent_order != keys;
+        self.agent_order = keys;
+        moved
+    }
+
+    /// The service's agents in the person's order.
+    pub(crate) fn ordered_agents(&self) -> Vec<&AgentProviderView> {
+        let mut agents: Vec<&AgentProviderView> = self
+            .settings
+            .as_ref()
+            .map(|settings| settings.agents.iter().collect())
+            .unwrap_or_default();
+        agents.sort_by_key(|agent| {
+            agent_key(&agent.id)
+                .and_then(|key| self.agent_order.iter().position(|known| known == key))
+                .unwrap_or(usize::MAX)
+        });
+        agents
+    }
+
+    /// Whether `agent` is offered as a choice: not turned off.
+    pub(crate) fn agent_shown(&self, agent: &AiProviderId) -> bool {
+        agent_key(agent).is_none_or(|key| !self.hidden_agents.contains(key))
+    }
+
     /// The Settings card's agent rows: one per agent, its name and its
     /// readiness word, the picked one tinted.
     pub(crate) fn agent_row_rects(&self, area: crate::Rect) -> Vec<(AiProviderId, crate::Rect)> {
-        let agents = self
-            .settings
-            .as_ref()
-            .map(|settings| settings.agents.as_slice())
-            .unwrap_or_default();
-        agents
-            .iter()
+        self.ordered_agents()
+            .into_iter()
+            .filter(|agent| self.agent_shown(&agent.id))
             .enumerate()
             .map(|(index, agent)| {
                 (
@@ -979,10 +1159,13 @@ impl crate::ChatSurface {
         if self.setup_provider != crate::SetupProvider::Agents {
             return 0.0;
         }
-        let rows = self
-            .settings
-            .as_ref()
-            .map_or(0, |settings| settings.agents.len());
+        let rows = self.settings.as_ref().map_or(0, |settings| {
+            settings
+                .agents
+                .iter()
+                .filter(|agent| self.agent_shown(&agent.id))
+                .count()
+        });
         (rows as f32 * 34.0 + 16.0 - 134.0).max(0.0)
     }
 

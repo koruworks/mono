@@ -19,8 +19,8 @@ use rmcp::{
     ServerHandler,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::{
-        Annotations, CallToolResult, ErrorData, ListResourcesResult, ReadResourceRequestParams,
-        ReadResourceResponse, ReadResourceResult, Resource, ResourceContents, Role,
+        Annotations, CallToolResult, ErrorData, ListResourceTemplatesResult, ListResourcesResult,
+        ReadResourceRequestParams, ReadResourceResponse, Resource, ResourceTemplate, Role,
         ServerCapabilities, ServerInfo,
     },
     schemars, tool, tool_handler, tool_router,
@@ -50,13 +50,28 @@ use koru_store_wire::tasks::{
 use koru_store_wire::{CaptureHistory, HistoryEntry, HistoryPage, HistoryQuery, Status};
 use koru_workspace::store::{StoreSession, Synced};
 
+mod attribution;
+mod capabilities;
 mod chat_tools;
+pub mod effects;
+pub mod hosted;
+pub use attribution::{ACTOR_V1, ActorCreate, ActorMessage, ChangeAttribution};
+pub use capabilities::{HostCapabilities, RUNG1_READ_TOOLS, RUNG1_TOOLS};
 pub use chat_tools::CHAT_TOOL_NAMES;
 use chat_tools::{ListChatsToolRequest, ReadChatToolRequest, SearchChatsToolRequest};
+use effects::{EffectKind, Ledger, Recovery};
 
+mod local_ids;
 mod published_schema;
+mod shared_surface;
+pub use shared_surface::{
+    documentation_resource_templates, documentation_resources, read_documentation_resource,
+    server_instructions,
+};
 pub mod tasks;
 mod tool_pages;
+mod toolsets;
+pub use toolsets::{Toolset, Toolsets};
 
 pub const MODEL_RESOURCE_URI: &str = "koru://docs/model";
 /// The short form: the contract's *Essentials* section on its own, what an
@@ -218,10 +233,189 @@ fn section_slugs(markdown: &str) -> Vec<String> {
         .collect()
 }
 
+/// Where one section of the contract is read as a resource:
+/// `koru://docs/model/<slug>`, the same answer as `get_documentation` with
+/// `section`.
+const MODEL_SECTION_URI_PREFIX: &str = "koru://docs/model/";
+
+/// The longest one-line summary the table of contents gives a section.
+const SUMMARY_CHARS: usize = 200;
+
+/// A text's size in tokens, roughly: English markdown runs about four bytes
+/// a token. Enough for an agent to judge what a section costs before asking.
+fn approximate_tokens(text: &str) -> usize {
+    text.len().div_ceil(4)
+}
+
+/// One `##` section as the table of contents lists it.
+struct TocEntry {
+    slug: String,
+    title: String,
+    summary: String,
+    tokens: usize,
+    /// The slugs of its `###` children, each answerable on its own.
+    subsections: Vec<String>,
+}
+
+/// The `##` sections of the contract, in order, each with the first sentence
+/// of its first paragraph as its summary.
+fn table_of_contents(markdown: &str) -> Vec<TocEntry> {
+    let mut entries: Vec<TocEntry> = Vec::new();
+    let mut in_fence = false;
+    for line in markdown.lines() {
+        match heading(line, &mut in_fence) {
+            Some((2, title)) => {
+                let slug = heading_slug(title);
+                let text = section_of(markdown, &slug).unwrap_or_default();
+                entries.push(TocEntry {
+                    summary: section_summary(&text),
+                    tokens: approximate_tokens(&text),
+                    title: title.trim().to_owned(),
+                    slug,
+                    subsections: Vec::new(),
+                });
+            }
+            Some((_, title)) => {
+                if let Some(entry) = entries.last_mut() {
+                    entry.subsections.push(heading_slug(title));
+                }
+            }
+            None => {}
+        }
+    }
+    entries
+}
+
+/// A section's one line: the first sentence of the paragraph under its
+/// heading, with the markdown that reads badly inline — bold, link targets —
+/// taken out, and cut at [`SUMMARY_CHARS`] on a word.
+fn section_summary(section: &str) -> String {
+    let paragraph: Vec<&str> = section
+        .lines()
+        .skip(1)
+        .skip_while(|line| line.trim().is_empty())
+        .take_while(|line| !line.trim().is_empty())
+        .map(str::trim)
+        .collect();
+    let joined = paragraph.join(" ");
+    let plain = strip_inline_markdown(joined.trim_start_matches("- "));
+    let sentence = first_sentence(&plain).trim_end_matches(':').trim();
+    if sentence.chars().count() <= SUMMARY_CHARS {
+        return sentence.to_owned();
+    }
+    let cut: String = sentence.chars().take(SUMMARY_CHARS).collect();
+    let cut = cut.rsplit_once(' ').map_or(cut.as_str(), |(head, _)| head);
+    format!("{}…", cut.trim_end_matches([',', ';', ':']))
+}
+
+/// `**bold**` loses its stars and `[label](target)` becomes `label`.
+fn strip_inline_markdown(text: &str) -> String {
+    let text = text.replace("**", "");
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text.as_str();
+    while let Some(open) = rest.find('[') {
+        let after = &rest[open + 1..];
+        let link = after.find("](").and_then(|close| {
+            after[close + 2..]
+                .find(')')
+                .map(|end| (close, close + 2 + end))
+        });
+        match link {
+            Some((close, end)) => {
+                out.push_str(&rest[..open]);
+                out.push_str(&after[..close]);
+                rest = &after[end + 1..];
+            }
+            None => {
+                out.push_str(&rest[..=open]);
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Up to and including the first `.`, `!` or `?` that ends a sentence:
+/// outside backticks, followed by a space or the end, and not `e.g.`/`i.e.`.
+fn first_sentence(text: &str) -> &str {
+    let mut in_code = false;
+    for (index, character) in text.char_indices() {
+        match character {
+            '`' => in_code = !in_code,
+            '.' | '!' | '?' if !in_code => {
+                let end = index + character.len_utf8();
+                let ends = text[end..].chars().next().is_none_or(char::is_whitespace);
+                let abbreviation = text[..end].ends_with("e.g.") || text[..end].ends_with("i.e.");
+                if ends && !abbreviation {
+                    return &text[..end];
+                }
+            }
+            _ => {}
+        }
+    }
+    text
+}
+
+/// What `koru://docs/model` answers with no section: every `##` section's
+/// slug, title, summary and rough size, as markdown for the text and as
+/// `sections` for a program. The whole contract is never one answer — it
+/// is past 80 KB, more than some agents can take back from one tool call.
+fn table_of_contents_answer(guide: &str) -> (String, Value) {
+    let entries = table_of_contents(guide);
+    let mut text = String::from(
+        "# Koru MCP contract: contents\n\n\
+         The contract is read one section at a time, never whole. Read `essentials` \
+         before the first mutation. Fetch any section by its slug: \
+         get_documentation({\"section\":\"<slug>\"}), or the resource \
+         koru://docs/model/<slug>. A `###` slug listed under a section answers \
+         on its own too. Sizes are approximate tokens.\n\n",
+    );
+    for entry in &entries {
+        text.push_str(&format!(
+            "- `{}` ({}, ~{} tokens): {}",
+            entry.slug, entry.title, entry.tokens, entry.summary
+        ));
+        if !entry.subsections.is_empty() {
+            let children: Vec<String> = entry
+                .subsections
+                .iter()
+                .map(|slug| format!("`{slug}`"))
+                .collect();
+            text.push_str(&format!(" Also: {}.", children.join(", ")));
+        }
+        text.push('\n');
+    }
+    let sections = entries
+        .iter()
+        .map(|entry| {
+            json!({
+                "slug": entry.slug,
+                "title": entry.title,
+                "summary": entry.summary,
+                "tokens": entry.tokens,
+                "subsections": entry.subsections,
+            })
+        })
+        .collect();
+    (text.trim_end().to_owned(), Value::Array(sections))
+}
+
 /// What `get_documentation` and `resources/read` answer: `{uri, mime_type,
-/// section?, text}`, the text being the whole contract, one section of it
-/// by slug, or the Essentials.
+/// section?, text}`, the text being the Essentials, one section of the
+/// contract by slug, or — for `koru://docs/model` with no section — its
+/// table of contents, which also carries `sections`. `koru://docs/model/<slug>`
+/// is the same as `koru://docs/model` with `section`.
 fn documentation(uri: &str, section: Option<&str>) -> Result<Value, ToolError> {
+    let (uri, section) = match uri.strip_prefix(MODEL_SECTION_URI_PREFIX) {
+        Some(slug) if section.is_some_and(|wanted| heading_slug(wanted) != heading_slug(slug)) => {
+            return Err(ToolError::invalid(format!(
+                "{uri} names a section already; send section only with koru://docs/model"
+            )));
+        }
+        Some(slug) => (MODEL_RESOURCE_URI, Some(slug)),
+        None => (uri, section),
+    };
     let guide = read_model_document()?;
     let (section, text) = match (uri, section) {
         (ESSENTIALS_RESOURCE_URI, None) => (
@@ -237,7 +431,16 @@ fn documentation(uri: &str, section: Option<&str>) -> Result<Value, ToolError> {
                 "koru://docs/essentials is one section already; section applies to koru://docs/model",
             ));
         }
-        (MODEL_RESOURCE_URI, None) => (None, guide),
+        (MODEL_RESOURCE_URI, None) => {
+            let (text, sections) = table_of_contents_answer(&guide);
+            return Ok(json!({
+                "uri": uri,
+                "mime_type": MODEL_DOCUMENT_MIME,
+                "section": null,
+                "text": text,
+                "sections": sections,
+            }));
+        }
         (MODEL_RESOURCE_URI, Some(wanted)) => {
             let slug = heading_slug(wanted);
             let text = section_of(&guide, &slug).ok_or_else(|| ToolError {
@@ -271,7 +474,7 @@ fn essentials_resource() -> Resource {
     Resource::new(ESSENTIALS_RESOURCE_URI, "koru-essentials")
         .with_title("Koru in brief: read, create and edit documents correctly")
         .with_description(
-            "The short form of the contract. Read before the first mutation; koru://docs/model has every rule.",
+            "The short form of the contract. Read before the first mutation; koru://docs/model lists every other section.",
         )
         .with_mime_type(MODEL_DOCUMENT_MIME)
         .with_annotations(
@@ -283,9 +486,9 @@ fn essentials_resource() -> Resource {
 
 fn model_resource() -> Resource {
     Resource::new(MODEL_RESOURCE_URI, "koru-model")
-        .with_title("Koru document model and editing contract")
+        .with_title("Koru document model and editing contract: contents")
         .with_description(
-            "Read before the first mutation. Defines Koru's typed tree, identities, ordering, inline objects, preconditions, history, and cross-document semantics.",
+            "The contract's table of contents: each section's slug, summary and size in tokens. Read a section as koru://docs/model/<slug>; the contract is never served whole. Covers Koru's typed tree, identities, ordering, inline objects, preconditions, history, and cross-document semantics.",
         )
         .with_mime_type(MODEL_DOCUMENT_MIME)
         .with_annotations(
@@ -295,6 +498,19 @@ fn model_resource() -> Resource {
         )
 }
 
+/// One section of the contract by slug, as `koru://docs/model` lists them.
+fn model_section_template() -> ResourceTemplate {
+    ResourceTemplate::new(
+        format!("{MODEL_SECTION_URI_PREFIX}{{section}}"),
+        "koru-model-section",
+    )
+    .with_title("One section of the Koru document model contract")
+    .with_description(
+        "One section of the contract, by the slug koru://docs/model lists, with its ### children.",
+    )
+    .with_mime_type(MODEL_DOCUMENT_MIME)
+}
+
 #[derive(Clone, Debug)]
 pub struct RequestContext {
     pub tenant: String,
@@ -302,6 +518,14 @@ pub struct RequestContext {
     pub scopes: Vec<String>,
     pub workspace_access: WorkspaceAccess,
     pub chat_tools: ChatToolAccess,
+    /// Which tools this host serves at all, checked before anything else.
+    /// Local hosts serve [`HostCapabilities::All`].
+    pub capabilities: HostCapabilities,
+    /// Who every commit this call makes is attributed to: the app connection
+    /// a hosted call came through, written as `actor/1`
+    /// (`contracts/connector-attribution-v1.md`). `None` on every local host,
+    /// whose commits carry no message.
+    pub attribution: Option<ChangeAttribution>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -350,6 +574,8 @@ impl RequestContext {
             scopes: vec!["read_documents".into(), "edit_documents".into()],
             workspace_access: WorkspaceAccess::All,
             chat_tools: ChatToolAccess::Bridge,
+            capabilities: HostCapabilities::All,
+            attribution: None,
         }
     }
 
@@ -369,7 +595,21 @@ impl RequestContext {
                 .collect(),
             workspace_access: WorkspaceAccess::selected(workspaces),
             chat_tools: ChatToolAccess::Denied,
+            capabilities: HostCapabilities::All,
+            attribution: None,
         }
+    }
+
+    /// The same context, serving only `capabilities`' tools.
+    pub fn with_capabilities(mut self, capabilities: HostCapabilities) -> Self {
+        self.capabilities = capabilities;
+        self
+    }
+
+    /// The same context, attributing every commit it makes to `attribution`.
+    pub fn with_attribution(mut self, attribution: ChangeAttribution) -> Self {
+        self.attribution = Some(attribution);
+        self
     }
 
     fn has_scope(&self, required: Scope) -> bool {
@@ -399,17 +639,33 @@ pub trait EmbeddedStore: Send + Sync {
         &self,
         request: SearchRequest,
     ) -> Result<koru_store_wire::search::SearchResponse, ToolError>;
+    /// The tasks query, answered from the host's read model by the one task
+    /// interpretation the Store has — the page `POST /v1/tasks/query` answers.
+    /// A host whose read model has not swept a workspace says so in
+    /// `updating_workspaces`, never with an empty list that reads as done.
+    fn query_tasks(&self, query: TaskQuery) -> Result<TaskQueryResponse, ToolError>;
     fn snapshot(
         &self,
         workspace: StoreWorkspaceId,
         document: StoreDocumentId,
     ) -> Result<Vec<u8>, ToolError>;
+    /// Register an empty document. `attribution`, when given, labels the
+    /// manifest commit this makes with an app connection's `actor/1` message.
+    ///
+    /// **Two effects in one call** when an extraction makes its destination:
+    /// the empty unit and its manifest entry. A port that can save one and
+    /// not the other says which with [`ToolError::with_effects`].
     fn create_document(
         &self,
         workspace: StoreWorkspaceId,
         title: String,
         kind: String,
+        attribution: Option<&str>,
     ) -> Result<StoreDocumentId, ToolError>;
+    /// The workspace manifest's document id, which names the `manifest`
+    /// effect in a mutating call's outcome. Asked only when a call has to
+    /// report one.
+    fn manifest_id(&self, workspace: StoreWorkspaceId) -> Result<StoreDocumentId, ToolError>;
     /// The one note a file carries, creating it when it has none.
     ///
     /// Idempotent, like the store operation it ports: the boolean answers
@@ -423,6 +679,10 @@ pub trait EmbeddedStore: Send + Sync {
         &self,
         request: EmbeddedSeedDocument,
     ) -> Result<EmbeddedSeededDocument, ToolError>;
+    /// Keep one update of one unit: one effect. `Ok` means it is durable; an
+    /// error means it is not, unless its code is
+    /// [`effects::SAVE_STATUS_UNKNOWN`] — submitted and never confirmed
+    /// ([`effects`]).
     fn persist_update(
         &self,
         workspace: StoreWorkspaceId,
@@ -469,6 +729,10 @@ pub trait EmbeddedStore: Send + Sync {
     fn status(&self) -> Result<Status, ToolError>;
 }
 
+/// A created document, as [`EmbeddedStore::seed_document`] is asked to keep
+/// it: its content first, then its manifest entry — **two effects in one
+/// call**, which a port that can save one and not the other reports with
+/// [`ToolError::with_effects`].
 pub struct EmbeddedSeedDocument {
     pub workspace: StoreWorkspaceId,
     pub title: String,
@@ -478,6 +742,9 @@ pub struct EmbeddedSeedDocument {
     pub idempotency_key: String,
     pub request_hash: String,
     pub initial_update: Vec<u8>,
+    /// The app connection's `actor/1` message for the manifest entry's commit;
+    /// `None` on a local host. The content's own commits already carry theirs.
+    pub attribution: Option<String>,
 }
 
 pub struct EmbeddedSeededDocument {
@@ -590,6 +857,7 @@ fn tool_policy(name: &str) -> Option<ToolPolicy> {
         },
         "create_document"
         | "edit_document"
+        | "update_task"
         | "add_image"
         | "ensure_file_note"
         | "extract_to_document"
@@ -597,6 +865,19 @@ fn tool_policy(name: &str) -> Option<ToolPolicy> {
         | "restore_document_version" => ToolPolicy {
             scope: edit,
             workspace: WorkspaceTarget::One,
+            domain: ToolDomain::Workspace,
+        },
+        // Hosted only (`hosted`): a claim changes what other agents may do,
+        // so it needs Read & edit. Taking one names its Workspace; releasing
+        // one names only its handle, which names its document server-side.
+        hosted::CLAIM_DOCUMENT => ToolPolicy {
+            scope: edit,
+            workspace: WorkspaceTarget::One,
+            domain: ToolDomain::Workspace,
+        },
+        hosted::RELEASE_DOCUMENT => ToolPolicy {
+            scope: edit,
+            workspace: WorkspaceTarget::None,
             domain: ToolDomain::Workspace,
         },
         _ => return None,
@@ -620,6 +901,11 @@ impl WorkspaceToolExecutor {
         tool: &str,
         mut arguments: Value,
     ) -> Result<Value, ToolError> {
+        // **Capabilities first**: a tool this host does not serve is refused
+        // before its scope, its workspace or the backend is consulted.
+        if let Some(refusal) = context.capabilities.refusal(tool) {
+            return Err(refusal);
+        }
         let policy = tool_policy(tool).ok_or_else(|| ToolError::invalid("unknown tool"))?;
         if policy.domain == ToolDomain::Chat && context.chat_tools == ChatToolAccess::Denied {
             return Err(ToolError::permission_denied(
@@ -705,7 +991,7 @@ impl WorkspaceToolExecutor {
 
         let result = if tool == "get_documentation" {
             let request: DocumentationRequest = from(arguments)?;
-            documentation(&request.uri, request.section.as_deref())?
+            documentation(request.uri(), request.section.as_deref())?
         } else {
             self.backend.invoke(context, tool, arguments)?
         };
@@ -961,11 +1247,106 @@ impl DocumentSession {
         }
     }
 
+    /// Record the version an embedded session's next persist exports from,
+    /// for a caller that knows it without a decoded document of the type.
+    fn record_version(&mut self, version: loro::VersionVector) {
+        if let DocumentSession::Embedded { before, .. } = self {
+            *before = Some(version);
+        }
+    }
+
     /// Leave the room. An embedded session never joined one.
     fn leave(&self) {
         if let DocumentSession::Remote(session) = self {
             session.leave();
         }
+    }
+}
+
+/// One mutating call, as every write it makes needs to know it.
+struct Call<'a> {
+    /// The operation id: minted per mutating call, written into every commit's
+    /// attribution (`op`) and every outcome envelope.
+    operation: uuid::Uuid,
+    attribution: Option<&'a ChangeAttribution>,
+    /// Whether this host is a device, which keeps the `mcp_before`/`mcp_after`
+    /// history captures and delivers the task log. A hosted replica does
+    /// neither: history is device-local, and a replica has nowhere durable to
+    /// keep a log (TECHNICAL §5.5).
+    device: bool,
+}
+
+impl<'a> Call<'a> {
+    fn new(context: &'a RequestContext) -> Self {
+        Self {
+            operation: uuid::Uuid::new_v4(),
+            attribution: context.attribution.as_ref(),
+            device: context.capabilities.is_device(),
+        }
+    }
+
+    /// The `actor/1` message for this call's commits, when it has one.
+    fn message(&self) -> Option<String> {
+        self.attribution
+            .map(|attribution| attribution.message(self.operation))
+    }
+
+    /// Label every commit `doc` makes from now on with this call's message,
+    /// while the returned subscription lives.
+    fn label(&self, doc: &loro::LoroDoc) -> Option<loro::Subscription> {
+        self.message()
+            .map(|message| attribution::attribute_commits(doc, &message))
+    }
+
+    fn ledger(&self) -> Ledger {
+        Ledger::new(self.operation)
+    }
+}
+
+/// A document joined for writing by [`LocalBackend::join_for_edit`].
+struct Editing {
+    session: DocumentSession,
+    /// The frontier the Store holds the document at, read before any id stamp
+    /// was applied in memory: where every `*_before` history capture forks.
+    stored: loro::Frontiers,
+    /// Labels each commit on the document with the call's attribution, for as
+    /// long as the edit lives.
+    _attributed: Option<loro::Subscription>,
+}
+
+/// The workspace system document, opened by [`LocalBackend::system_document`].
+struct SystemSession {
+    id: StoreDocumentId,
+    session: SessionGuard,
+    doc: SystemDoc,
+    _attributed: Option<loro::Subscription>,
+}
+
+/// Record, in memory, the workspace and the document `doc` belongs to, where
+/// it does not say. **Both ids, for one reason.** The workspace is step 0 of
+/// every task command's preflight; the document is the middle segment of
+/// every reference minted here, and this is the only side that knows it — the
+/// caller asked the store for this document *by* this id. Each stamp is
+/// idempotent, so a document already carrying both is unchanged.
+fn stamp_ids(
+    doc: &mut WorkspaceDoc,
+    workspace: StoreWorkspaceId,
+    document: StoreDocumentId,
+) -> Result<(), ToolError> {
+    if doc.id().is_none() {
+        doc.stamp_workspace_id(CoreWorkspaceId::from_uuid(workspace.as_uuid()))?;
+    }
+    doc.stamp_document_id(CoreDocumentId::from_uuid(document.as_uuid()))?;
+    Ok(())
+}
+
+/// The refusal for a Store-made commit an app connection's call would make
+/// through the desktop bridge, which cannot label it.
+fn unattributable() -> ToolError {
+    ToolError {
+        code: "attribution_unavailable".into(),
+        message: "this Store cannot attribute a connection's changes".into(),
+        details: None,
     }
 }
 
@@ -1136,20 +1517,14 @@ impl LocalBackend {
 
     /// What is outstanding, from the store's read model.
     ///
-    /// **The embedded host has no answer to this and says so.** `EmbeddedStore`
-    /// is a port over a bounded in-process Store *worker*, and the tasks query
-    /// lives beside the daemon's HTTP surface rather than in that worker — so
-    /// widening the port would mean teaching a second host to build a page it
-    /// has no statement for. It refuses in the shape `ai()` already refuses in,
-    /// because a capability a host does not have is better named than
-    /// simulated with an empty list that reads as *you have nothing to do*.
+    /// **One query, two transports.** The bridge asks the Store's HTTP route;
+    /// an embedded host asks its port, which answers from the same task port
+    /// the route reads (`koru_store_api::routes::tasks::answer`) — so Koru AI
+    /// and a hosted replica list exactly the page the desktop does, rather
+    /// than a second interpretation of a task.
     fn query_tasks(&self, query: &TaskQuery) -> Result<TaskQueryResponse, ToolError> {
-        if self.embedded.is_some() {
-            return Err(ToolError {
-                code: "tasks_unavailable".into(),
-                message: "This embedded Koru host does not provide the tasks query.".into(),
-                details: None,
-            });
+        if let Some(store) = &self.embedded {
+            return store.query_tasks(query.clone());
         }
         self.store(|client| client.store().query_tasks(query))
     }
@@ -1170,10 +1545,25 @@ impl LocalBackend {
         workspace: StoreWorkspaceId,
         title: &str,
         kind: &str,
+        attribution: Option<&str>,
     ) -> Result<StoreDocumentId, ToolError> {
+        match (&self.embedded, attribution) {
+            (Some(store), _) => {
+                store.create_document(workspace, title.to_owned(), kind.to_owned(), attribution)
+            }
+            (None, None) => self.store(|client| client.create_document(workspace, title, kind)),
+            // The desktop bridge serves one local person, whose commits carry
+            // no message; a connection's call reaching it is a host composed
+            // wrongly, and writing its manifest entry unattributed would be
+            // the one failure nobody sees.
+            (None, Some(_)) => Err(unattributable()),
+        }
+    }
+
+    fn manifest_id(&self, workspace: StoreWorkspaceId) -> Result<StoreDocumentId, ToolError> {
         match &self.embedded {
-            Some(store) => store.create_document(workspace, title.to_owned(), kind.to_owned()),
-            None => self.store(|client| client.create_document(workspace, title, kind)),
+            Some(store) => store.manifest_id(workspace),
+            None => self.store(|client| client.manifest(workspace)),
         }
     }
 
@@ -1203,6 +1593,7 @@ impl LocalBackend {
     ) -> Result<EmbeddedSeededDocument, ToolError> {
         match &self.embedded {
             Some(store) => store.seed_document(request),
+            None if request.attribution.is_some() => Err(unattributable()),
             None => self
                 .store(|client| {
                     client.seed_document(
@@ -1337,52 +1728,49 @@ impl LocalBackend {
     /// write path there is no such problem: `validate_base` asks whether the
     /// caller's base is *included*, and a stamp only ever adds.
     ///
-    /// **It is committed here rather than carried by the edit, and that is not
-    /// tidiness.** Every write path captures a `*_before` history entry, and
-    /// [`capture`](Self::capture) hands the store this document's *frontiers* to
-    /// fork at. A frontier naming an op the store has never seen is
-    /// `version_unavailable`, so an uncommitted stamp turns the first agent edit
-    /// of an unstamped document into a failure one step later than the one it
-    /// was fixing. Committing it makes it a fact about the document rather than
-    /// part of somebody's edit, which is also what it is: a refused edit still
-    /// leaves the document knowing where it lives.
+    /// **The stamps ride in the document's next real commit** (TECHNICAL §5.5,
+    /// Cloud MCP Plan 2.1). They are applied here in memory only and reach the
+    /// Store with the edit that follows — never as a write of their own — so
+    /// a call refused after this, by its base revision, a precondition or the
+    /// validation fork, leaves the document exactly as it was, stamp included.
+    /// They used to be committed here first, which made a refused edit a
+    /// write.
     ///
-    /// The commit is paid **only when the stamp happens**. A document that
-    /// already carries an id takes this route unchanged — which matters because
-    /// a `publish` with nothing local to say still exports everything since the
-    /// empty version vector and waits for the acknowledgement.
+    /// **History still works, through [`Editing::stored`].** Every write path
+    /// captures a `*_before` entry, and [`capture`](Self::capture) hands the
+    /// Store a frontier to fork at; a frontier naming the unpersisted stamp
+    /// would be `version_unavailable`. So the frontier the Store holds is read
+    /// here, *before* any stamp, and every `*_before` capture forks there: the
+    /// before-entry is the document as the Store held it, which is exactly what
+    /// it was. The `*_after` capture follows the persist, which carries the
+    /// stamps, so it names a frontier the Store has.
+    ///
+    /// **And every commit it makes is attributed** when the call is an app
+    /// connection's: [`Editing`] holds the subscription that labels each
+    /// commit on this document with the call's `actor/1` message, from the
+    /// stamps through the persist.
     ///
     /// Undo does not come into it — the bridge never calls `enable_undo`, so
     /// there is no history for the stamp to become the first step of. That is
     /// the one thing the desktop seam has to order around and this one does not.
     fn join_for_edit(
         &self,
+        call: &Call,
         workspace: StoreWorkspaceId,
         document: StoreDocumentId,
-    ) -> Result<(DocumentSession, WorkspaceDoc), ToolError> {
-        let (mut session, mut doc) = self.join(workspace, document)?;
-        // **Both ids, for one reason.** The workspace is step 0 of every task
-        // command's preflight; the document is the middle segment of every
-        // reference minted here, and this is the only side that knows it — the
-        // caller asked the store for this document *by* this id. Each stamp is
-        // idempotent, and the document one answers whether it wrote, so a
-        // document already carrying both takes the route below unchanged.
-        let owed = doc.id().is_none();
-        if owed {
-            doc.stamp_workspace_id(CoreWorkspaceId::from_uuid(workspace.as_uuid()))?;
-        }
-        let stamped_document =
-            doc.stamp_document_id(CoreDocumentId::from_uuid(document.as_uuid()))?;
-        if owed || stamped_document {
-            // After `join`'s `record_base`, deliberately: an embedded session
-            // exports what changed since the base, and a stamp inside the base
-            // is a stamp that never reaches the disk.
-            self.persist(&mut session, &mut doc)?;
-            // And the base moves past it, so the edit that follows publishes
-            // itself rather than the stamp a second time.
-            session.record_base(&doc);
-        }
-        Ok((session, doc))
+    ) -> Result<(Editing, WorkspaceDoc), ToolError> {
+        let (session, mut doc) = self.join(workspace, document)?;
+        let stored = doc.doc().oplog_frontiers();
+        let attributed = call.label(doc.doc());
+        stamp_ids(&mut doc, workspace, document)?;
+        Ok((
+            Editing {
+                session,
+                stored,
+                _attributed: attributed,
+            },
+            doc,
+        ))
     }
 
     /// Join a room and hand back its snapshot bytes undecoded.
@@ -1442,19 +1830,31 @@ impl LocalBackend {
     /// and the manifest is the app's to keep tidy; a bridge that pruned rows
     /// as a side effect of tagging a task would be doing something nobody
     /// asked it to.
+    ///
+    /// **Through the port this backend has**, embedded or remote: listing and
+    /// registering went straight to a desktop Store client, so an embedded
+    /// host — Koru AI, a hosted replica — could not tag anything.
+    ///
+    /// `message`, when the call is an app connection's, labels every commit
+    /// made on the system document from the moment it is opened — opening
+    /// folds duplicate tags, which commits — and the registration of a new
+    /// one.
     fn system_document(
         &self,
         workspace: StoreWorkspaceId,
         create: bool,
-    ) -> Result<Option<(DocumentSession, SystemDoc)>, ToolError> {
+        message: Option<&str>,
+    ) -> Result<Option<SystemSession>, ToolError> {
         let mut ids: Vec<CoreDocumentId> = self
-            .store(|client| client.documents(workspace))?
+            .documents(workspace)?
             .into_iter()
             .filter(|entry| entry.kind == koru_core::explore::KIND_SYSTEM)
             .map(|entry| koru_workspace::explore::koru_document(entry.id))
             .collect();
         ids.sort();
         ids.dedup();
+        let loro = loro::LoroDoc::new();
+        let attributed = message.map(|message| attribution::attribute_commits(&loro, message));
 
         let Some(canonical) = SystemDoc::canonical_document(&ids) else {
             if !create {
@@ -1463,30 +1863,42 @@ impl LocalBackend {
             // Registered with an empty title, the way the app registers it:
             // `explore::listed` filters the kind out of every listing, so a
             // name here would be a name nobody ever sees.
-            let id = self.store(|client| {
-                client.create_document_at(
-                    workspace,
-                    "",
-                    koru_core::explore::KIND_SYSTEM,
-                    None,
-                    None,
-                )
-            })?;
+            let id = self.create_empty_document(
+                workspace,
+                "",
+                koru_core::explore::KIND_SYSTEM,
+                message,
+            )?;
             let (mut session, snapshot) = self.join_raw(workspace, id)?;
-            let mut doc = SystemDoc::create()?;
-            // Based on the *empty* document, before the seed is absorbed, so an
-            // embedded session exports the whole of what it then writes.
-            session.record_base(&doc);
+            // Based on the *empty* version, so an embedded session exports the
+            // whole of what it then writes — the seed `create` commits
+            // included, which a base recorded after it would leave behind.
+            session.record_version(loro::VersionVector::default());
+            let mut doc = SystemDoc::create_on(loro)?;
             // The union is the seed plus whatever a racing peer already wrote.
+            // Not persisted here: the batch that needed the table writes the
+            // seed with its tags, one submission of the unit.
             doc.absorb(&snapshot)?;
-            self.persist(&mut session, &mut doc)?;
-            return Ok(Some((session, doc)));
+            return Ok(Some(SystemSession {
+                id,
+                session: SessionGuard(session),
+                doc,
+                _attributed: attributed,
+            }));
         };
 
         let canonical = koru_workspace::explore::store_document(canonical);
         let (mut session, snapshot) = self.join_raw(workspace, canonical)?;
-        let mut doc = SystemDoc::open_or_create(Some(&snapshot))?;
-        session.record_base(&doc);
+        // Based on the version the Store holds, read from the snapshot's
+        // header before opening folds anything. A base taken after the fold
+        // would leave the fold out of the update while the tags written on
+        // top of it depend on it — and a delta whose causal ancestors are
+        // missing imports `Ok` and applies nothing (STORE.md).
+        let stored = loro::LoroDoc::decode_import_blob_meta(&snapshot, false).map_err(|error| {
+            ToolError::invalid(format!("the system document did not open: {error}"))
+        })?;
+        session.record_version(stored.partial_end_vv);
+        let mut doc = SystemDoc::from_snapshot_on(loro, &snapshot)?;
         for duplicate in ids
             .into_iter()
             .map(koru_workspace::explore::store_document)
@@ -1499,7 +1911,12 @@ impl LocalBackend {
                 extra.leave();
             }
         }
-        Ok(Some((session, doc)))
+        Ok(Some(SystemSession {
+            id: canonical,
+            session: SessionGuard(session),
+            doc,
+            _attributed: attributed,
+        }))
     }
 
     fn persist<T: Synced + ?Sized>(
@@ -1593,17 +2010,20 @@ impl LocalBackend {
         }))
     }
 
+    /// Mark the document's history at `at`, a frontier the Store holds: the
+    /// [`Editing::stored`] frontier for a `*_before` entry, the persisted
+    /// document's for an `*_after` one.
     fn capture(
         &self,
         workspace: StoreWorkspaceId,
         document: StoreDocumentId,
-        doc: &WorkspaceDoc,
+        at: &loro::Frontiers,
         reason: &str,
         boundary: Option<&str>,
     ) -> Result<Value, ToolError> {
         let request = CaptureHistory {
             reason: reason.into(),
-            frontiers: Some(doc.doc().oplog_frontiers().encode()),
+            frontiers: Some(at.encode()),
             label: None,
             message: None,
             boundary: boundary.map(str::to_owned),
@@ -1619,9 +2039,9 @@ impl LocalBackend {
     /// captures or creates anything.** They used to join by id with no kind
     /// check at all, so a client could write into a run, a schedule or the
     /// system document — kinds it can neither list, search nor read here.
-    /// Asked first, a refusal leaves nothing behind:
-    /// [`join_for_edit`](Self::join_for_edit) alone would already have
-    /// persisted a stamp.
+    /// Asked first, a refusal leaves nothing behind — and it is the first of
+    /// the checks every mutation runs before its first write (TECHNICAL
+    /// §5.5).
     fn ensure_readable(
         &self,
         workspace: StoreWorkspaceId,
@@ -1684,6 +2104,7 @@ impl LocalBackend {
     /// this call.
     fn attr_context<'a>(
         &self,
+        call: &Call,
         workspace: StoreWorkspaceId,
         operations: &'a [EditOperation],
     ) -> Result<(AttrContext, PendingAttrs<'a>), ToolError> {
@@ -1695,7 +2116,8 @@ impl LocalBackend {
         // Opened read-only, even for a batch that will need a system document:
         // registering one is a manifest write, and a batch that fails
         // validation must not leave that behind either. `commit` creates it.
-        let Some((session, mut doc)) = self.system_document(workspace, false)? else {
+        let message = call.message();
+        let Some(mut system) = self.system_document(workspace, false, message.as_deref())? else {
             // No system document. Every custom key is therefore undefined and
             // every named tag names nothing — which an empty table answers
             // exactly, refusal included. This one is a throwaway, so it *is*
@@ -1709,31 +2131,43 @@ impl LocalBackend {
             };
             return Ok((context, pending));
         };
-        let session = SessionGuard(session);
         let (context, creates) = match asked.creates() {
             // A batch that only *reads* the table — a removal, a custom key —
             // cannot write, so the real document answers it and no snapshot is
             // taken. `remove_tag_by_an_unknown_name_creates_nothing` is what
             // holds that claim up.
-            false => asked.resolve(&mut doc, now)?,
-            true => asked.resolve_on_fork(&doc, now)?,
+            false => asked.resolve(&mut system.doc, now)?,
+            true => asked.resolve_on_fork(&system.doc, now)?,
         };
         if !creates {
             // Every answer came off a record that already exists, so it is the
             // real table's answer too and there is nothing left to write.
             return Ok((context, PendingAttrs::Settled));
         }
-        Ok((
-            context,
-            PendingAttrs::Held {
-                session,
-                doc,
-                asked,
-            },
-        ))
+        Ok((context, PendingAttrs::Held { system, asked }))
     }
 
-    fn edit_document(&self, a: EditDocumentRequest) -> Result<Value, ToolError> {
+    fn edit_document(&self, call: &Call, a: EditDocumentRequest) -> Result<Value, ToolError> {
+        self.edit(call, a).map(|(answer, _)| answer)
+    }
+
+    /// `edit_document`, handing back the document as the edit left it, for a
+    /// caller that answers with something read from it.
+    ///
+    /// **Every check, then every write** (TECHNICAL §5.5): readability, the
+    /// tag table on a fork, the base revision and the whole batch on a
+    /// validation fork all run before anything is written, the id stamps
+    /// included. Then two effects in order — `system`, when the batch creates
+    /// tags, and `document` — and a refusal of the second after the first
+    /// landed answers `partially_saved` rather than pretending nothing did.
+    fn edit(
+        &self,
+        call: &Call,
+        mut a: EditDocumentRequest,
+    ) -> Result<(Value, WorkspaceDoc), ToolError> {
+        // Ids left out and local names become UUIDs before anything else
+        // reads the batch, so everything below sees only UUIDs.
+        let created = local_ids::resolve_edit(&mut a.operations)?;
         let ws = workspace(&a.workspace_id)?;
         let doc_id = document(&a.document_id)?;
         self.ensure_readable(ws, doc_id, "document_id")?;
@@ -1742,28 +2176,198 @@ impl LocalBackend {
         // document: enough to validate with, and nothing written. Any
         // creation the batch implies is held in `pending`, which
         // writes nothing if this function leaves before committing it.
-        let (provisional, mut pending) = self.attr_context(ws, &a.operations)?;
+        let (provisional, mut pending) = self.attr_context(call, ws, &a.operations)?;
         inline_context.attrs = provisional;
-        let (mut session, mut doc) = self.join_for_edit(ws, doc_id)?;
+        let (mut editing, mut doc) = self.join_for_edit(call, ws, doc_id)?;
         validate_base(&doc, &a.base_revision)?;
         let mut validation = doc.fork_for_read();
         apply_ops(&mut validation, &a.operations, &inline_context)?;
+
+        let mut ledger = call.ledger();
+        if pending.writes() {
+            ledger.plan(
+                EffectKind::System,
+                pending.document().map(|id| id.to_storage()),
+            );
+        }
+        ledger.plan(EffectKind::Document, Some(doc_id.to_storage()));
+        let recovery = |_: &[effects::Effect]| {
+            Recovery::sentence(
+                "The tags were created; the edit was not saved. Retrying the edit is safe: existing tags are reused.",
+            )
+        };
         // Proved, so the tags this batch names may now exist. The real
         // pass runs on the ids that were persisted, never the fork's.
-        if let Some(attrs) = pending.commit(self)? {
-            inline_context.attrs = attrs;
+        let message = call.message();
+        match pending.commit(self, message.as_deref()) {
+            Ok((attrs, written)) => {
+                if let Some(attrs) = attrs {
+                    inline_context.attrs = attrs;
+                }
+                match written {
+                    Some(system) => {
+                        ledger.name(EffectKind::System, system.to_storage());
+                        ledger.saved(EffectKind::System);
+                    }
+                    None => ledger.drop_plan(EffectKind::System),
+                }
+            }
+            Err(error) => return Err(ledger.failed(&[EffectKind::System], error, recovery)),
         }
         let boundary = uuid::Uuid::new_v4().to_string();
-        let _ = self.capture(ws, doc_id, &doc, "mcp_before", Some(&boundary))?;
-        let tasks = apply_ops(&mut doc, &a.operations, &inline_context)?;
-        self.persist(&mut session, &mut doc)?;
-        // **After the durability wait**, best effort, one attempt. A
-        // failed append keeps the task change and is never retried and
-        // never fabricated later (SPEC §9), and the batch is the burst:
-        // one delivery per `edit_document` call.
-        tasks.deliver(&mut tasks::LogSink::default());
-        let after = self.capture(ws, doc_id, &doc, "mcp_after", Some(&boundary))?;
-        Ok(json!({"revision": revision(&doc), "history": after}))
+        if call.device {
+            self.capture(ws, doc_id, &editing.stored, "mcp_before", Some(&boundary))
+                .map_err(|error| ledger.refused(error, recovery))?;
+        }
+        let tasks = apply_ops(&mut doc, &a.operations, &inline_context)
+            .map_err(|error| ledger.refused(error, recovery))?;
+        self.persist(&mut editing.session, &mut doc)
+            .map_err(|error| ledger.failed(&[EffectKind::Document], error, recovery))?;
+        let mut answer = json!({"revision": revision(&doc)});
+        if call.device {
+            // **After the durability wait**, best effort, one attempt. A
+            // failed append keeps the task change and is never retried and
+            // never fabricated later (SPEC §9), and the batch is the burst:
+            // one delivery per `edit_document` call.
+            tasks.deliver(&mut tasks::LogSink::default());
+            let after = self.capture(
+                ws,
+                doc_id,
+                &doc.doc().oplog_frontiers(),
+                "mcp_after",
+                Some(&boundary),
+            )?;
+            answer["history"] = after;
+        }
+        if !created.is_empty() {
+            answer["created"] = Value::Object(created);
+        }
+        Ok((answer, doc))
+    }
+
+    /// Change one task by the identity `list_tasks` answers, without a
+    /// document read: so a bridge serving `tasks` alone can complete what it
+    /// lists.
+    ///
+    /// **It is `edit_document`, not a second mutation path.** The changes
+    /// become the operations an agent would have sent — `set_attribute` and
+    /// `clear_attribute` of `koru.due`, `koru.priority` and `koru.list`, then
+    /// `set_done` — and run through [`edit`](Self::edit): the same fork
+    /// validation, task commands, history markers, durability wait and
+    /// activity attempt. What this adds is the read the agent did not make —
+    /// the revision, and the node's exact text for each `expected` — and the
+    /// precondition that read is checked against: the `title` the row
+    /// reported, computed by the read model's own rule
+    /// (`koru_title::resolve_title`).
+    fn update_task(&self, call: &Call, a: UpdateTaskRequest) -> Result<Value, ToolError> {
+        let ws = workspace(&a.workspace_id)?;
+        let doc_id = document(&a.document_id)?;
+        let id = node(&a.node_id)?;
+        if a.done.is_none() && a.due.is_none() && a.priority.is_none() && a.list.is_none() {
+            return Err(ToolError::invalid(
+                "update_task needs done, due, priority or list; null clears due, priority or list",
+            ));
+        }
+        self.ensure_readable(ws, doc_id, "document_id")?;
+        let (_, doc) = self.join(ws, doc_id)?;
+        let retry = |code: &str, message: String| ToolError {
+            code: code.into(),
+            message,
+            details: Some(json!({"node_id": id.to_storage(), "retry": "list_tasks"})),
+        };
+        let current = match doc.read(id) {
+            Ok(current) => current,
+            Err(koru_core::StoreError::NoSuchNode(_)) => {
+                return Err(retry(
+                    "stale_node",
+                    format!(
+                        "node {} is not in that document; list_tasks again for the task's current ids",
+                        id.to_storage()
+                    ),
+                ));
+            }
+            Err(error) => return Err(error.into()),
+        };
+        if !koru_core::tasks::is_task(&koru_core::tasks::TaskFields::of(&current)) {
+            return Err(retry(
+                "invalid_request",
+                format!(
+                    "node {} is not a task; update_task changes what list_tasks lists",
+                    id.to_storage()
+                ),
+            ));
+        }
+        // An image or a file has no text, so there is nothing to be stale
+        // about and the node id is the target — `edit_document`'s own rule.
+        let text = current.content.as_text().unwrap_or_default().to_owned();
+        if current.content.as_text().is_some()
+            && a.expected != text
+            && a.expected != koru_title::resolve_title(&text, current.meta.name.as_deref())
+        {
+            return Err(retry(
+                "precondition_failed",
+                format!(
+                    "update_task expected does not match task {}; list_tasks again and retry with its title",
+                    id.to_storage()
+                ),
+            ));
+        }
+
+        let node_id = || a.node_id.clone();
+        let expected = || text.clone();
+        let set_or_clear = |key: &str, value: Option<AttributeValue>| match value {
+            Some(value) => EditOperation::SetAttribute {
+                node_id: node_id(),
+                expected: expected(),
+                key: key.into(),
+                value,
+            },
+            None => EditOperation::ClearAttribute {
+                node_id: node_id(),
+                expected: expected(),
+                key: key.into(),
+            },
+        };
+        let mut operations = Vec::new();
+        if let Some(due) = a.due {
+            operations.push(set_or_clear(
+                koru_core::attributes::KEY_DUE,
+                due.map(AttributeValue::from),
+            ));
+        }
+        if let Some(priority) = a.priority {
+            operations.push(set_or_clear(
+                koru_core::attributes::KEY_PRIORITY,
+                priority.map(|priority| AttributeValue::Text {
+                    value: priority.token().into(),
+                }),
+            ));
+        }
+        if let Some(list) = a.list {
+            operations.push(set_or_clear(
+                koru_core::attributes::KEY_LIST,
+                list.map(|value| AttributeValue::Text { value }),
+            ));
+        }
+        // Last: what the task carries first, then whether it is done.
+        if let Some(done) = a.done {
+            operations.push(EditOperation::SetDone {
+                node_id: node_id(),
+                expected: expected(),
+                done,
+            });
+        }
+        let (mut answer, doc) = self.edit(
+            call,
+            EditDocumentRequest {
+                workspace_id: a.workspace_id,
+                document_id: a.document_id,
+                base_revision: revision(&doc),
+                operations,
+            },
+        )?;
+        answer["task"] = task_json(&doc, ws, doc_id, id)?;
+        Ok(answer)
     }
 
     /// Keep an image's bytes and put it in a document, as one tool call. The
@@ -1772,8 +2376,9 @@ impl LocalBackend {
     /// its type and its size is inserted through the same pipeline
     /// `edit_document` uses: the base revision, the precondition and the
     /// history markers are the edit's own.
-    fn add_image(&self, a: AddImageRequest) -> Result<Value, ToolError> {
+    fn add_image(&self, call: &Call, a: AddImageRequest) -> Result<Value, ToolError> {
         use base64::Engine as _;
+        let (node_id, created) = local_ids::resolve_single(a.node_id)?;
         let ws = workspace(&a.workspace_id)?;
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(a.data_base64.trim())
@@ -1781,22 +2386,28 @@ impl LocalBackend {
         let sniffed = sniff_image(&bytes)?;
         let blob = self.put_blob(ws, bytes, sniffed.mime, a.name.as_deref())?;
         let hash = blob.hash.as_str().to_owned();
-        let mut answer = self.edit_document(EditDocumentRequest {
-            workspace_id: a.workspace_id,
-            document_id: a.document_id,
-            base_revision: a.base_revision,
-            operations: vec![EditOperation::InsertImage {
-                node_id: a.node_id.clone(),
-                parent_id: a.parent_id,
-                after_node_id: a.after_node_id,
-                hash: hash.clone(),
-                mime: sniffed.mime.to_owned(),
-                width: sniffed.width,
-                height: sniffed.height,
-            }],
-        })?;
+        let mut answer = self.edit_document(
+            call,
+            EditDocumentRequest {
+                workspace_id: a.workspace_id,
+                document_id: a.document_id,
+                base_revision: a.base_revision,
+                operations: vec![EditOperation::InsertImage {
+                    node_id: node_id.clone(),
+                    parent_id: a.parent_id,
+                    after_node_id: a.after_node_id,
+                    hash: hash.clone(),
+                    mime: sniffed.mime.to_owned(),
+                    width: sniffed.width,
+                    height: sniffed.height,
+                }],
+            },
+        )?;
         if let Some(object) = answer.as_object_mut() {
-            object.insert("node_id".into(), json!(a.node_id));
+            object.insert("node_id".into(), json!(node_id));
+            if !created.is_empty() {
+                object.insert("created".into(), Value::Object(created));
+            }
             object.insert("hash".into(), json!(hash));
             object.insert("mime".into(), json!(sniffed.mime));
             object.insert("width".into(), json!(sniffed.width));
@@ -1806,7 +2417,23 @@ impl LocalBackend {
         Ok(answer)
     }
 
-    fn extract_to_document(&self, a: ExtractToDocumentRequest) -> Result<Value, ToolError> {
+    /// Move blocks into another document, leaving a link pill behind.
+    ///
+    /// **Every check, then every write** (TECHNICAL §5.5): both ends are
+    /// readable, the base revision holds, the first block still says
+    /// `expected`, and the whole source-side replacement is proved on a fork —
+    /// all before the first write, so a refused extraction leaves no stamp,
+    /// no empty page and no history entry. Then the effects in the contract's
+    /// order: for a new destination its empty page and manifest entry, then
+    /// the destination with the moved content, then the source. The
+    /// destination is always written before the source, so a refusal in
+    /// between leaves the content in both documents rather than in neither,
+    /// and is answered `partially_saved` with the recovery fields.
+    fn extract_to_document(
+        &self,
+        call: &Call,
+        a: ExtractToDocumentRequest,
+    ) -> Result<Value, ToolError> {
         let workspace = workspace(&a.workspace_id)?;
         let source_document = document(&a.source_document_id)?;
         let context = self.inline_context(workspace)?;
@@ -1843,7 +2470,8 @@ impl LocalBackend {
         for raw in &a.extra_source_node_ids {
             source_nodes.push(node(raw)?);
         }
-        let (mut source_session, mut source) = self.join_for_edit(workspace, source_document)?;
+        let (mut source_editing, mut source) =
+            self.join_for_edit(call, workspace, source_document)?;
         validate_base(&source, &a.base_revision)?;
 
         for (i, &source_node) in source_nodes.iter().enumerate() {
@@ -1885,35 +2513,77 @@ impl LocalBackend {
             (None, None) => unreachable!("one destination was proven above"),
         };
 
-        let (target_document, created) = match existing_target {
-            Some(target) => (target, false),
-            None => (
-                self.create_empty_document(workspace, new_title.unwrap_or_default(), "page")?,
-                true,
-            ),
+        // Every check has passed; from here on, each step is an effect.
+        let mut ledger = call.ledger();
+        let created = existing_target.is_none();
+        if created {
+            ledger.plan(EffectKind::DestinationSeed, None);
+            ledger.plan(EffectKind::Manifest, None);
+        }
+        ledger.plan(
+            EffectKind::Destination,
+            existing_target.map(|target| target.to_storage()),
+        );
+        ledger.plan(EffectKind::Source, Some(source_document.to_storage()));
+        let mut target_document = existing_target;
+        let recovery = move |effects: &[effects::Effect]| {
+            extraction_recovery(effects, target_document, source_document)
         };
-        let failure_details = |source_changed: bool| {
-            json!({
-                "created_document_id": created.then(|| target_document.to_storage()),
-                "target_document_id": target_document.to_storage(),
-                "source_document_id": source_document.to_storage(),
-                "source_unchanged": !source_changed,
-                "recovery_required": true,
-            })
+        let message = call.message();
+        if created {
+            match self.create_empty_document(
+                workspace,
+                new_title.unwrap_or_default(),
+                "page",
+                message.as_deref(),
+            ) {
+                Ok(id) => {
+                    target_document = Some(id);
+                    for effect in [EffectKind::DestinationSeed, EffectKind::Destination] {
+                        ledger.name(effect, id.to_storage());
+                    }
+                    ledger.saved(EffectKind::DestinationSeed);
+                    ledger.saved(EffectKind::Manifest);
+                }
+                Err(error) => {
+                    self.name_manifest(&mut ledger, workspace);
+                    return Err(ledger.failed(
+                        &[EffectKind::DestinationSeed, EffectKind::Manifest],
+                        error,
+                        recovery,
+                    ));
+                }
+            }
+        }
+        let target_document = target_document.expect("a destination exists from here");
+        let recovery = move |effects: &[effects::Effect]| {
+            extraction_recovery(effects, Some(target_document), source_document)
+        };
+        // What stops the sequence before or at an effect, once the first one
+        // landed: the manifest's id is asked for only then.
+        let refused = |ledger: &mut Ledger, error: ToolError| {
+            self.name_manifest(ledger, workspace);
+            ledger.refused(error, recovery)
+        };
+        let failed = |ledger: &mut Ledger, effect: EffectKind, error: ToolError| {
+            self.name_manifest(ledger, workspace);
+            ledger.failed(&[effect], error, recovery)
         };
 
-        let (mut target_session, mut target) = self
-            .join_for_edit(workspace, target_document)
-            .map_err(|error| error.with_details(failure_details(false)))?;
+        let (mut target_editing, mut target) = self
+            .join_for_edit(call, workspace, target_document)
+            .map_err(|error| refused(&mut ledger, error))?;
         let target_boundary = uuid::Uuid::new_v4().to_string();
-        self.capture(
-            workspace,
-            target_document,
-            &target,
-            "mcp_before",
-            Some(&target_boundary),
-        )
-        .map_err(|error| error.with_details(failure_details(false)))?;
+        if call.device {
+            self.capture(
+                workspace,
+                target_document,
+                &target_editing.stored,
+                "mcp_before",
+                Some(&target_boundary),
+            )
+            .map_err(|error| refused(&mut ledger, error))?;
+        }
         // Where the content goes. A created document gets its root here; an
         // existing one already has one, and `under` — when it still resolves —
         // names a block to land first beneath instead of the top.
@@ -1921,7 +2591,7 @@ impl LocalBackend {
             target
                 .insert(Parent::Root, Node::document(new_title.unwrap_or_default())?)
                 .map_err(ToolError::from)
-                .map_err(|error| error.with_details(failure_details(false)))?
+                .map_err(|error| refused(&mut ledger, error))?
         } else {
             let root = target
                 .children(Parent::Root)
@@ -1930,8 +2600,10 @@ impl LocalBackend {
                 .flatten()
                 .find(|&id| target.kind_of(id) == Some(Kind::Document))
                 .ok_or_else(|| {
-                    ToolError::invalid("the destination document has no content root")
-                        .with_details(failure_details(false))
+                    refused(
+                        &mut ledger,
+                        ToolError::invalid("the destination document has no content root"),
+                    )
                 })?;
             under
                 .filter(|&node| target.read(node).is_ok())
@@ -1939,41 +2611,49 @@ impl LocalBackend {
         };
         // Planting appends; an existing destination wants the moved content
         // first, in its original order.
-        let mut index = 0usize;
-        for cutting in &cuttings {
+        for (index, cutting) in cuttings.iter().enumerate() {
             let planted = target
                 .plant(cutting, Parent::Node(anchor), "")
                 .map_err(ToolError::from)
-                .map_err(|error| error.with_details(failure_details(false)))?;
+                .map_err(|error| refused(&mut ledger, error))?;
             if !created {
                 target
                     .move_node(planted, Parent::Node(anchor), index)
                     .map_err(ToolError::from)
-                    .map_err(|error| error.with_details(failure_details(false)))?;
+                    .map_err(|error| refused(&mut ledger, error))?;
             }
-            index += 1;
         }
-        self.persist(&mut target_session, &mut target)
-            .map_err(|error| error.with_details(failure_details(false)))?;
-        let target_history = self
-            .capture(
-                workspace,
-                target_document,
-                &target,
-                "mcp_after",
-                Some(&target_boundary),
+        self.persist(&mut target_editing.session, &mut target)
+            .map_err(|error| failed(&mut ledger, EffectKind::Destination, error))?;
+        ledger.saved(EffectKind::Destination);
+        let target_history = if call.device {
+            Some(
+                self.capture(
+                    workspace,
+                    target_document,
+                    &target.doc().oplog_frontiers(),
+                    "mcp_after",
+                    Some(&target_boundary),
+                )
+                .map_err(|error| refused(&mut ledger, error))?,
             )
-            .map_err(|error| error.with_details(failure_details(false)))?;
+        } else {
+            None
+        };
 
         let source_boundary = uuid::Uuid::new_v4().to_string();
-        self.capture(
-            workspace,
-            source_document,
-            &source,
-            "mcp_before",
-            Some(&source_boundary),
-        )
-        .map_err(|error| error.with_details(failure_details(false)))?;
+        if call.device {
+            // At the frontier the Store holds the source at: its own stamp,
+            // if it owed one, is still only in memory.
+            self.capture(
+                workspace,
+                source_document,
+                &source_editing.stored,
+                "mcp_before",
+                Some(&source_boundary),
+            )
+            .map_err(|error| refused(&mut ledger, error))?;
+        }
         // Deep-link the pill to the heading the content went under, when one
         // was chosen; the anchor of a created document is its root, which the
         // document-level reference already means.
@@ -1985,30 +2665,324 @@ impl LocalBackend {
         let replacement = source
             .replace_subtrees_with_pill(&source_nodes, &attr)
             .map_err(ToolError::from)
-            .map_err(|error| error.with_details(failure_details(false)))?;
-        self.persist(&mut source_session, &mut source)
-            .map_err(|error| error.with_details(failure_details(false)))?;
-        let source_history = self
-            .capture(
-                workspace,
-                source_document,
-                &source,
-                "mcp_after",
-                Some(&source_boundary),
-            )
-            .map_err(|error| error.with_details(failure_details(true)))?;
+            .map_err(|error| refused(&mut ledger, error))?;
+        self.persist(&mut source_editing.session, &mut source)
+            .map_err(|error| failed(&mut ledger, EffectKind::Source, error))?;
 
-        Ok(json!({
+        let mut answer = json!({
             "document_id": target_document.to_storage(),
             "document_revision": revision(&target),
             "source_revision": revision(&source),
             "source_link_node_id": replacement.to_storage(),
-            "history": {
+        });
+        if let Some(target_history) = target_history {
+            // Every effect is saved. A history marker that cannot be written
+            // now is a local failure after the move, answered as it always
+            // was: with the recovery fields, the source changed.
+            let source_history = self
+                .capture(
+                    workspace,
+                    source_document,
+                    &source.doc().oplog_frontiers(),
+                    "mcp_after",
+                    Some(&source_boundary),
+                )
+                .map_err(|error| {
+                    error.with_details(extraction_details(
+                        created.then_some(target_document),
+                        Some(target_document),
+                        source_document,
+                        false,
+                    ))
+                })?;
+            answer["history"] = json!({
                 "document": target_history,
                 "source": source_history,
-            }
-        }))
+            });
+        }
+        Ok(answer)
     }
+
+    /// Fill in the manifest's id for a call that plans a `manifest` effect,
+    /// before an outcome names it. One port question, asked only on the
+    /// failure path; an answer the port cannot give leaves the id `null`.
+    fn name_manifest(&self, ledger: &mut Ledger, workspace: StoreWorkspaceId) {
+        if ledger.plans(EffectKind::Manifest)
+            && ledger.unnamed(EffectKind::Manifest)
+            && let Ok(manifest) = self.manifest_id(workspace)
+        {
+            ledger.name(EffectKind::Manifest, manifest.to_storage());
+        }
+    }
+}
+
+/// Extraction's recovery fields: where the content went, and whether the
+/// source still has it.
+fn extraction_details(
+    created: Option<StoreDocumentId>,
+    target: Option<StoreDocumentId>,
+    source: StoreDocumentId,
+    source_unchanged: bool,
+) -> Value {
+    json!({
+        "created_document_id": created.map(|id| id.to_storage()),
+        "target_document_id": target.map(|id| id.to_storage()),
+        "source_document_id": source.to_storage(),
+        "source_unchanged": source_unchanged,
+        "recovery_required": true,
+    })
+}
+
+/// What an extraction whose later effects did not land tells the assistant,
+/// by the prefix that did (`contracts/hosted-tools-v1.md` §2). The source is
+/// always the last effect, so in every partial outcome it is unchanged.
+fn extraction_recovery(
+    effects: &[effects::Effect],
+    target: Option<StoreDocumentId>,
+    source: StoreDocumentId,
+) -> Recovery {
+    let saved = |kind: EffectKind| {
+        effects
+            .iter()
+            .any(|effect| effect.effect == kind && effect.state == effects::EffectState::Saved)
+    };
+    // A destination whose own creation call ended partly saved is named by
+    // the port's report of that call, not by `target`: the call that would
+    // have handed its id back did not succeed (Cloud MCP Plan 2.3).
+    let target = target.or_else(|| {
+        effects
+            .iter()
+            .find(|effect| effect.effect == EffectKind::DestinationSeed)
+            .and_then(|effect| effect.document_id.as_deref())
+            .and_then(StoreDocumentId::parse)
+    });
+    let created = target.filter(|_| saved(EffectKind::DestinationSeed));
+    let message = if saved(EffectKind::Destination) {
+        "The content was copied into target_document_id, but the source was not changed, so it is in both documents. Retry the source replacement with edit_document, or remove the copy."
+    } else if saved(EffectKind::Manifest) {
+        "An empty page was created as target_document_id; the content was not moved and the source is unchanged. Move the content again into target_document_id, or delete the page."
+    } else {
+        "An empty page was created as target_document_id but is not listed yet; the content was not moved and the source is unchanged. Move the content again into target_document_id, or delete the page."
+    };
+    let Value::Object(details) = extraction_details(created, target, source, true) else {
+        unreachable!("the details are an object")
+    };
+    Recovery {
+        message: message.into(),
+        details,
+    }
+}
+
+impl LocalBackend {
+    /// `create_document`: the seed, then its manifest entry, in one port call.
+    ///
+    /// **Keyed, always.** A key the caller leaves out is minted here, so the
+    /// Store's idempotency receipt always has one; a hosted host also answers
+    /// it, in every answer, so a partial or unknown outcome can always be
+    /// finished by a retry (TECHNICAL §5.5). The local answer is unchanged.
+    fn create_document(&self, call: &Call, a: CreateDocumentRequest) -> Result<Value, ToolError> {
+        let ws = workspace(&a.workspace_id)?;
+        if a.kind.as_deref().is_some_and(|kind| kind != "page") {
+            return Err(ToolError::invalid(
+                "create_document supports manifest kind page only",
+            ));
+        }
+        let idempotency_key = match a.idempotency_key.as_deref() {
+            Some(key) => uuid::Uuid::parse_str(key)
+                .map_err(|_| ToolError::invalid("idempotency_key must be a UUID"))?
+                .to_string(),
+            None => uuid::Uuid::new_v4().to_string(),
+        };
+        if call.device {
+            return self.create_keyed(call, a, ws, idempotency_key);
+        }
+        // Hosted: the key in every answer, refusals included.
+        self.create_keyed(call, a, ws, idempotency_key.clone())
+            .map_err(|mut error| {
+                let mut details = match error.details.take() {
+                    Some(Value::Object(details)) => details,
+                    Some(other) => serde_json::Map::from_iter([("cause".to_owned(), other)]),
+                    None => serde_json::Map::new(),
+                };
+                details.insert("idempotency_key".into(), json!(idempotency_key));
+                error.details = Some(Value::Object(details));
+                error
+            })
+    }
+
+    fn create_keyed(
+        &self,
+        call: &Call,
+        a: CreateDocumentRequest,
+        ws: StoreWorkspaceId,
+        idempotency_key: String,
+    ) -> Result<Value, ToolError> {
+        // The retry identity is the request as sent, before any id is
+        // minted, so a replay of a request that left ids out matches.
+        let request_hash = create_request_hash(&a, ws)?;
+        let mut a = a;
+        let created =
+            local_ids::resolve_seed(&mut a.root_node_id, a.initial_operations.as_deref_mut())?;
+        let root_id = match a.root_node_id.as_deref() {
+            Some(value) => node(value)?,
+            None => NodeId::new(),
+        };
+        let inline_context = self.inline_context(ws)?;
+        // The seed's commits carry the creation's request hash in their
+        // attribution, so a retry can recognise its first attempt from
+        // Cloud's history alone (TECHNICAL §5.6): labelled from the first.
+        let loro = loro::LoroDoc::new();
+        let _attributed = call.attribution.map(|attribution| {
+            attribution::attribute_commits(
+                &loro,
+                &attribution.seed_message(call.operation, &request_hash),
+            )
+        });
+        let mut doc =
+            WorkspaceDoc::create_on(loro, CoreWorkspaceId::from_uuid(ws.as_uuid()), &a.title)?;
+        let mut root_value = Node::document(&a.title)?;
+        root_value.id = root_id;
+        let root = doc.insert(Parent::Root, root_value)?;
+        let before = doc.fork_for_read();
+        match a.initial_operations.as_deref() {
+            Some(operations) => apply_initial_ops(&mut doc, root, operations, &inline_context)?,
+            None => {
+                doc.insert(Parent::Node(root), Node::paragraph("")?)?;
+            }
+        }
+        let initial_update = doc.export_all_updates()?;
+        // Its own message rather than `document`'s: an error naming
+        // `document_id` when `parent_document_id` is what was wrong
+        // sends somebody to check the field that is fine.
+        let parent = a
+            .parent_document_id
+            .as_deref()
+            .map(|value| {
+                StoreDocumentId::parse(value)
+                    .ok_or_else(|| ToolError::invalid("parent_document_id is not a UUID"))
+            })
+            .transpose()?;
+        let kind = a.kind.as_deref().unwrap_or("page");
+
+        let mut ledger = call.ledger();
+        ledger.plan(EffectKind::Document, None);
+        ledger.plan(EffectKind::Manifest, None);
+        if !call.device {
+            ledger.always("idempotency_key", json!(idempotency_key));
+        }
+        let key = idempotency_key.clone();
+        // The one call here that is safe to repeat by construction: the
+        // idempotency key and request hash make a second attempt a
+        // replay of the first, whichever store answers it.
+        let seeded = self
+            .seed_document(EmbeddedSeedDocument {
+                workspace: ws,
+                title: a.title.clone(),
+                kind: kind.to_owned(),
+                parent,
+                index: None,
+                idempotency_key,
+                request_hash,
+                initial_update,
+                attribution: call.message(),
+            })
+            .map_err(|error| {
+                self.name_manifest(&mut ledger, ws);
+                ledger.failed(
+                    &[EffectKind::Document, EffectKind::Manifest],
+                    error,
+                    |_| {
+                        let mut recovery = Recovery::sentence(
+                            "The document was saved but is not listed yet. Retry with the same idempotency_key to finish.",
+                        );
+                        recovery
+                            .details
+                            .insert("idempotency_key".into(), json!(key));
+                        recovery
+                    },
+                )
+            })?;
+        let returned = WorkspaceDoc::from_snapshot(&seeded.initial_update)?;
+        if call.device && !seeded.replayed {
+            let boundary = uuid::Uuid::new_v4().to_string();
+            let _ = self.capture(
+                ws,
+                seeded.id,
+                &before.doc().oplog_frontiers(),
+                "mcp_before",
+                Some(&boundary),
+            )?;
+            let _ = self.capture(
+                ws,
+                seeded.id,
+                &returned.doc().oplog_frontiers(),
+                "mcp_after",
+                Some(&boundary),
+            )?;
+        }
+        let mut answer = document_json(seeded.id, &returned)?;
+        if !created.is_empty() {
+            answer["created"] = Value::Object(local_ids::as_stored(created, &doc, &returned)?);
+        }
+        if !call.device {
+            answer["idempotency_key"] = json!(key);
+        }
+        Ok(answer)
+    }
+
+    /// `restore_document_version`: the document forward to a history entry's
+    /// state, in one effect.
+    ///
+    /// **The id stamps survive** (TECHNICAL §16). Restoring is a revert, and a
+    /// before-entry taken before the stamps were persisted — every first edit
+    /// of an unstamped document now takes one — would revert them away; so they
+    /// are applied again, in memory, before the persist.
+    fn restore_document_version(&self, call: &Call, a: RestoreRequest) -> Result<Value, ToolError> {
+        let ws = workspace(&a.workspace_id)?;
+        let doc_id = document(&a.document_id)?;
+        self.ensure_readable(ws, doc_id, "document_id")?;
+        let (mut editing, mut doc) = self.join_for_edit(call, ws, doc_id)?;
+        validate_base(&doc, &a.base_revision)?;
+        let entry_id = history(&a.entry_id)?;
+        let target = self.history_snapshot(ws, entry_id)?;
+        let mut ledger = call.ledger();
+        ledger.plan(EffectKind::Document, Some(doc_id.to_storage()));
+        let recovery = |_: &[effects::Effect]| Recovery::sentence("unreachable: one effect");
+        let boundary = uuid::Uuid::new_v4().to_string();
+        let _ = self.capture(
+            ws,
+            doc_id,
+            &editing.stored,
+            "restore_before",
+            Some(&boundary),
+        )?;
+        restore_keeping_ids(&mut doc, &target, ws, doc_id)?;
+        self.persist(&mut editing.session, &mut doc)
+            .map_err(|error| ledger.failed(&[EffectKind::Document], error, recovery))?;
+        let after = self.capture(
+            ws,
+            doc_id,
+            &doc.doc().oplog_frontiers(),
+            "restore_after",
+            Some(&boundary),
+        )?;
+        Ok(json!({"revision": revision(&doc), "history": after}))
+    }
+}
+
+/// Restore `doc` forward to `snapshot`'s state and keep the ids it carries.
+///
+/// `restore_snapshot_forward` reverts the whole document, `C_META` included,
+/// so a target that predates the id stamps would remove them; they are applied
+/// again, in memory, to ride the restore's own persist.
+fn restore_keeping_ids(
+    doc: &mut WorkspaceDoc,
+    snapshot: &[u8],
+    workspace: StoreWorkspaceId,
+    document: StoreDocumentId,
+) -> Result<(), ToolError> {
+    doc.restore_snapshot_forward(snapshot)?;
+    stamp_ids(doc, workspace, document)
 }
 
 /// Whether a manifest kind is one the read tools open: a page, or the note
@@ -2026,10 +3000,11 @@ fn readable_kind(kind: &str) -> bool {
 impl Backend for LocalBackend {
     fn invoke(
         &self,
-        _context: &RequestContext,
+        context: &RequestContext,
         tool: &str,
         arguments: Value,
     ) -> Result<Value, ToolError> {
+        let call = Call::new(context);
         match tool {
             "list_chats" => {
                 let request: ListChatsToolRequest = from(arguments)?;
@@ -2208,76 +3183,7 @@ impl Backend for LocalBackend {
             }
             "create_document" => {
                 let a: CreateDocumentRequest = from(arguments)?;
-                let ws = workspace(&a.workspace_id)?;
-                if a.kind.as_deref().is_some_and(|kind| kind != "page") {
-                    return Err(ToolError::invalid(
-                        "create_document supports manifest kind page only",
-                    ));
-                }
-                let idempotency_key = match a.idempotency_key.as_deref() {
-                    Some(key) => uuid::Uuid::parse_str(key)
-                        .map_err(|_| ToolError::invalid("idempotency_key must be a UUID"))?
-                        .to_string(),
-                    None => uuid::Uuid::new_v4().to_string(),
-                };
-                let request_hash = create_request_hash(&a, ws)?;
-                if a.initial_operations.is_some() && a.root_node_id.is_none() {
-                    return Err(ToolError::invalid(
-                        "root_node_id is required when initial_operations is present",
-                    ));
-                }
-                let root_id = match a.root_node_id.as_deref() {
-                    Some(value) => node(value)?,
-                    None => NodeId::new(),
-                };
-                let inline_context = self.inline_context(ws)?;
-                let mut doc =
-                    WorkspaceDoc::create(CoreWorkspaceId::from_uuid(ws.as_uuid()), &a.title)?;
-                let mut root_value = Node::document(&a.title)?;
-                root_value.id = root_id;
-                let root = doc.insert(Parent::Root, root_value)?;
-                let before = doc.fork_for_read();
-                match a.initial_operations.as_deref() {
-                    Some(operations) => {
-                        apply_initial_ops(&mut doc, root, operations, &inline_context)?
-                    }
-                    None => {
-                        doc.insert(Parent::Node(root), Node::paragraph("")?)?;
-                    }
-                }
-                let initial_update = doc.export_all_updates()?;
-                // Its own message rather than `document`'s: an error naming
-                // `document_id` when `parent_document_id` is what was wrong
-                // sends somebody to check the field that is fine.
-                let parent = a
-                    .parent_document_id
-                    .as_deref()
-                    .map(|value| {
-                        StoreDocumentId::parse(value)
-                            .ok_or_else(|| ToolError::invalid("parent_document_id is not a UUID"))
-                    })
-                    .transpose()?;
-                let kind = a.kind.as_deref().unwrap_or("page");
-                // The one call here that is safe to repeat by construction: the
-                // idempotency key and request hash make a second attempt a
-                // replay of the first, whichever store answers it.
-                let seeded = self.seed_document(EmbeddedSeedDocument {
-                    workspace: ws,
-                    title: a.title.clone(),
-                    kind: kind.to_owned(),
-                    parent,
-                    index: None,
-                    idempotency_key,
-                    request_hash,
-                    initial_update,
-                })?;
-                let returned = WorkspaceDoc::from_snapshot(&seeded.initial_update)?;
-                if !seeded.replayed {
-                    let boundary = uuid::Uuid::new_v4().to_string();
-                    let _ = self.capture(ws, seeded.id, &before, "mcp_before", Some(&boundary))?;
-                    let _ = self.capture(ws, seeded.id, &returned, "mcp_after", Some(&boundary))?;
-                }
-                Ok(document_json(seeded.id, &returned)?)
+                self.create_document(&call, a)
             }
             "ensure_file_note" => {
                 let a: FileRequest = from(arguments)?;
@@ -2293,15 +3199,19 @@ impl Backend for LocalBackend {
             }
             "edit_document" => {
                 let a: EditDocumentRequest = from(arguments)?;
-                self.edit_document(a)
+                self.edit_document(&call, a)
+            }
+            "update_task" => {
+                let a: UpdateTaskRequest = from(arguments)?;
+                self.update_task(&call, a)
             }
             "add_image" => {
                 let a: AddImageRequest = from(arguments)?;
-                self.add_image(a)
+                self.add_image(&call, a)
             }
             "extract_to_document" => {
                 let a: ExtractToDocumentRequest = from(arguments)?;
-                self.extract_to_document(a)
+                self.extract_to_document(&call, a)
             }
             "save_document_version" => {
                 let a: SaveVersionRequest = from(arguments)?;
@@ -2353,19 +3263,7 @@ impl Backend for LocalBackend {
             }
             "restore_document_version" => {
                 let a: RestoreRequest = from(arguments)?;
-                let ws = workspace(&a.workspace_id)?;
-                let doc_id = document(&a.document_id)?;
-                self.ensure_readable(ws, doc_id, "document_id")?;
-                let (mut session, mut doc) = self.join_for_edit(ws, doc_id)?;
-                validate_base(&doc, &a.base_revision)?;
-                let entry_id = history(&a.entry_id)?;
-                let target = self.history_snapshot(ws, entry_id)?;
-                let boundary = uuid::Uuid::new_v4().to_string();
-                let _ = self.capture(ws, doc_id, &doc, "restore_before", Some(&boundary))?;
-                doc.restore_snapshot_forward(&target)?;
-                self.persist(&mut session, &mut doc)?;
-                let after = self.capture(ws, doc_id, &doc, "restore_after", Some(&boundary))?;
-                Ok(json!({"revision": revision(&doc), "history": after}))
+                self.restore_document_version(&call, a)
             }
             _ => Err(ToolError::invalid("unknown tool")),
         }
@@ -2397,12 +3295,30 @@ struct WorkspaceRequest {
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct DocumentationRequest {
-    /// `koru://docs/essentials`, the short form, or `koru://docs/model`, the
-    /// whole contract.
-    uri: String,
-    /// With `koru://docs/model`: one `##` section by its heading's slug
-    /// (`creating-a-complete-document`), with its `###` children.
+    /// `koru://docs/essentials`, the short form; `koru://docs/model`, the
+    /// contract's table of contents (never the whole contract, which is more
+    /// than some agents can take back from one call); or
+    /// `koru://docs/model/<slug>`, one section. Absent means the essentials,
+    /// or the contract when `section` is given, so the cheapest call is the
+    /// right first one.
+    #[serde(default)]
+    uri: Option<String>,
+    /// With `koru://docs/model`: one `##` section by the slug its table of
+    /// contents lists (`creating-a-complete-document`), with its `###`
+    /// children; a `###` slug answers that subsection alone.
+    #[serde(default)]
     section: Option<String>,
+}
+
+impl DocumentationRequest {
+    /// The resource this asks for once the defaults are applied.
+    fn uri(&self) -> &str {
+        match (&self.uri, &self.section) {
+            (Some(uri), _) => uri,
+            (None, Some(_)) => MODEL_RESOURCE_URI,
+            (None, None) => ESSENTIALS_RESOURCE_URI,
+        }
+    }
 }
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -2581,6 +3497,105 @@ struct ListTasksRequest {
     cursor: Option<String>,
 }
 
+/// What `update_task` accepts: a task as `list_tasks` names it, and the
+/// changes to make to it.
+///
+/// **No `base_revision`.** `list_tasks` reads the store's read model and opens
+/// no document, so it has no revision to hand back, and requiring one would
+/// send a tasks-only agent to a tool its bridge does not serve. The
+/// precondition is `expected` instead — the row's `title`, which is what makes
+/// a stale identity fail rather than complete the wrong half of a split row —
+/// and the server edits at the revision it has just read.
+///
+/// Each change is absent (leave it), `null` (clear it — `due`, `priority` and
+/// `list` only) or a value. At least one is required.
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct UpdateTaskRequest {
+    /// The row's `workspace_id`.
+    workspace_id: String,
+    /// The row's `document_id`.
+    document_id: String,
+    /// The row's `node_id`.
+    node_id: String,
+    /// The row's `title`, or the node's exact text from `read_document`.
+    /// Ignored on an image or a file, which has no text to compare.
+    expected: String,
+    /// Complete (`true`) or reopen (`false`): `set_done`'s lifecycle.
+    #[serde(default)]
+    done: Option<bool>,
+    /// The deadline, in a shape `list_tasks` reports; `null` clears it and
+    /// keeps the task.
+    #[serde(
+        default,
+        deserialize_with = "set_or_clear",
+        skip_serializing_if = "Option::is_none"
+    )]
+    due: Option<Option<TaskDue>>,
+    /// `low`, `medium`, `high` or `urgent`; `null` clears it.
+    #[serde(
+        default,
+        deserialize_with = "set_or_clear",
+        skip_serializing_if = "Option::is_none"
+    )]
+    priority: Option<Option<TaskPriority>>,
+    /// A `koru.list` id, as a row's `list` reports it; `null` takes the task
+    /// out of its list.
+    #[serde(
+        default,
+        deserialize_with = "set_or_clear",
+        skip_serializing_if = "Option::is_none"
+    )]
+    list: Option<Option<String>>,
+}
+
+/// A deadline `update_task` writes: the two of [`AttributeValue`]'s shapes
+/// `koru.due` takes. A floating wall clock is not one of them (ADR-183), so it
+/// is not offered here rather than offered and refused.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[schemars(inline)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+enum TaskDue {
+    Date { value: String },
+    DatetimeZoned { instant_ms: i64, timezone: String },
+}
+
+impl From<TaskDue> for AttributeValue {
+    fn from(due: TaskDue) -> Self {
+        match due {
+            TaskDue::Date { value } => Self::Date { value },
+            TaskDue::DatetimeZoned {
+                instant_ms,
+                timezone,
+            } => Self::DatetimeZoned {
+                instant_ms,
+                timezone,
+            },
+        }
+    }
+}
+
+/// `koru.priority`'s tokens, in their semantic order.
+#[derive(Debug, Copy, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum TaskPriority {
+    Low,
+    Medium,
+    High,
+    Urgent,
+}
+
+impl TaskPriority {
+    fn token(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::Urgent => "urgent",
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ReadFileRequest {
@@ -2608,8 +3623,10 @@ struct CreateDocumentRequest {
     /// Stable retry key. Reusing it with the same request replays the original
     /// success for seven days; reusing it with different input is an error.
     idempotency_key: Option<String>,
-    /// Fresh client-minted UUID for the document-title root. Required when
-    /// `initial_operations` is present so every parent reference is explicit.
+    /// The document-title root's id: a fresh UUID, a local name the seed's
+    /// inserts use as `parent_id`, or absent. Absent with
+    /// `initial_operations`, the title node is the local name `root`; the
+    /// server mints the UUID either way (`local_ids`).
     root_node_id: Option<String>,
     /// A non-empty atomic seed batch. When present, Koru does not add its
     /// ordinary blank paragraph.
@@ -2665,8 +3682,11 @@ struct AddImageRequest {
     document_id: String,
     /// The opaque `revision` of the latest `read_document`.
     base_revision: String,
-    /// A fresh UUID you mint; it names the new image block.
-    node_id: String,
+    /// The new image block's id: a fresh UUID, or absent for the server to
+    /// mint one, which the answer's `node_id` carries. A local name is
+    /// minted too and reported in `created`.
+    #[serde(default)]
+    node_id: Option<String>,
     /// The document-title node, or the block the image nests under.
     parent_id: String,
     /// A sibling to place it after; null means first.
@@ -2987,8 +4007,12 @@ enum EditOperation {
     },
     /// Insert one new text-shaped node as a child of an existing node.
     Insert {
-        /// Fresh client-minted UUID for the new node.
-        node_id: String,
+        /// The new node's id: a fresh UUID, a local name (any other string)
+        /// later operations in this request use for it, or absent. The
+        /// server mints the UUID for a name or an absent id (`local_ids`), so
+        /// past that point this is always one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        node_id: Option<String>,
         /// UUID of the existing parent node. This is required: the absolute
         /// CRDT root is not a document body. For body paragraphs, use the
         /// document-title node's `node_id` from `read_document`.
@@ -3098,7 +4122,9 @@ enum EditOperation {
         node_id: String,
         /// Exact current text returned by `read_document`.
         expected: String,
-        /// 1–6, or null for body text.
+        /// 1–6, or null for body text. The range is published so the schema
+        /// says it rather than `u8`'s 0–255; the server refuses outside it.
+        #[schemars(range(min = 1, max = 6))]
         heading: Option<u8>,
     },
     /// A highlight colour over a byte range of an existing node's text.
@@ -3258,9 +4284,11 @@ impl<'a> TagSpec<'a> {
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 enum InitialOperation {
     /// Insert a fresh text-shaped block. `parent_id` names the supplied
-    /// document root or a node inserted earlier in this batch.
+    /// document root or a node inserted earlier in this batch, by UUID or by
+    /// local name; `node_id` is a UUID, a local name or absent, as the edit.
     Insert {
-        node_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        node_id: Option<String>,
         parent_id: String,
         /// A sibling inserted earlier in this batch; null means first.
         after_node_id: Option<String>,
@@ -3444,10 +4472,13 @@ enum InsertKind {
     // survive a read (ADR-471). It returns when contacts are a supported
     // surface, with the pill's find-or-create semantics rather than a bare
     // insert.
-    /// A callout box: a container with no text of its own. The inserted node
-    /// is the box; a non-empty `text` becomes a first paragraph inside it,
-    /// and later inserts under it are the rest of the box's lines. It
-    /// arrives with the default icon and tint; `set_callout_look` changes them.
+    //
+    // A callout box: a container with no text of its own. The inserted node
+    // is the box; a non-empty `text` becomes a first paragraph inside it,
+    // and later inserts under it are the rest of the box's lines. It
+    // arrives with the default icon and tint; `set_callout_look` changes them.
+    // A plain comment, not `///`: schemars publishes a documented variant as
+    // a branch of its own, which split `kind` into two schemas.
     Callout,
 }
 
@@ -3554,8 +4585,7 @@ enum PendingAttrs<'a> {
     Settled,
     /// The workspace has a system document, open and untouched.
     Held {
-        session: SessionGuard,
-        doc: SystemDoc,
+        system: SystemSession,
         asked: AttrRequests<'a>,
     },
     /// The workspace has no system document and this batch needs one.
@@ -3567,38 +4597,56 @@ enum PendingAttrs<'a> {
 }
 
 impl PendingAttrs<'_> {
+    /// Whether committing this may write — the `system` effect an edit
+    /// plans before its `document` one.
+    fn writes(&self) -> bool {
+        !matches!(self, Self::Settled)
+    }
+
+    /// The system document it would write, when the workspace has one.
+    fn document(&self) -> Option<StoreDocumentId> {
+        match self {
+            Self::Held { system, .. } => Some(system.id),
+            _ => None,
+        }
+    }
+
     /// Write what the batch asked for, now that the batch has been proved.
     ///
     /// Answers the context the *real* pass must use, because the ids in it are
-    /// the ids that were persisted rather than the fork's. `None` means the
-    /// context from [`LocalBackend::attr_context`] was already final and
-    /// nothing was written here.
+    /// the ids that were persisted rather than the fork's — `None` when the
+    /// context from [`LocalBackend::attr_context`] was already final — and the
+    /// system document it wrote, `None` when it wrote nothing.
     ///
     /// It resolves rather than replaying the fork's ids deliberately:
     /// `create_tag` reuses on a fold-key match, so a tag some other peer
     /// created while this batch was being checked is *answered* here instead
     /// of duplicated.
-    fn commit(&mut self, backend: &LocalBackend) -> Result<Option<AttrContext>, ToolError> {
-        let (mut session, mut doc, asked) = match std::mem::replace(self, Self::Settled) {
-            Self::Settled => return Ok(None),
-            Self::Held {
-                session,
-                doc,
-                asked,
-            } => (session, doc, asked),
+    fn commit(
+        &mut self,
+        backend: &LocalBackend,
+        message: Option<&str>,
+    ) -> Result<(Option<AttrContext>, Option<StoreDocumentId>), ToolError> {
+        let (mut system, asked, registered) = match std::mem::replace(self, Self::Settled) {
+            Self::Settled => return Ok((None, None)),
+            Self::Held { system, asked } => (system, asked, false),
             Self::Absent { workspace, asked } => {
-                let (session, doc) =
-                    backend.system_document(workspace, true)?.ok_or_else(|| {
+                let system = backend
+                    .system_document(workspace, true, message)?
+                    .ok_or_else(|| {
                         ToolError::invalid("the workspace system document is missing")
                     })?;
-                (SessionGuard(session), doc, asked)
+                (system, asked, true)
             }
         };
-        let (context, created) = asked.resolve(&mut doc, koru_workspace::open::now_ms())?;
-        if created {
-            backend.persist(&mut session.0, &mut doc)?;
+        let (context, created) = asked.resolve(&mut system.doc, koru_workspace::open::now_ms())?;
+        // A table registered for this batch is written with what the batch
+        // added to it, in one persist.
+        let written = created || registered;
+        if written {
+            backend.persist(&mut system.session.0, &mut system.doc)?;
         }
-        Ok(Some(context))
+        Ok((Some(context), written.then_some(system.id)))
     }
 }
 
@@ -3953,7 +5001,10 @@ fn apply_ops(
                 } else {
                     (Node::new(kind, Content::text(text))?, None)
                 };
-                value.id = node(node_id)?;
+                // `local_ids` has minted an id for one left out before any
+                // operation runs, so an absent one here is a caller that
+                // skipped it, refused as no UUID.
+                value.id = node(node_id.as_deref().unwrap_or_default())?;
                 let parent = parent(parent_id)?;
                 let index = after_index(doc, parent, after_node_id.as_deref())?;
                 let id = doc.insert(parent, value)?;
@@ -4392,7 +5443,7 @@ fn apply_initial_ops(
                 kind,
                 text,
             } => {
-                let id = node(node_id)?;
+                let id = node(node_id.as_deref().unwrap_or_default())?;
                 if available.contains(&id) {
                     return Err(ToolError::invalid(
                         "initial insert node_id must be fresh within the seed batch",
@@ -4546,7 +5597,7 @@ fn apply_initial_ops(
             "an initial operation produced task activity nothing delivers",
         );
         if let InitialOperation::Insert { node_id, .. } = operation {
-            let id = node(node_id)?;
+            let id = node(node_id.as_deref().unwrap_or_default())?;
             available.insert(id);
             inserted.insert(id);
         }
@@ -4965,6 +6016,31 @@ fn task_row_json(row: &koru_store_wire::tasks::TaskRow) -> Value {
     })
 }
 
+/// The task `update_task` changed, as the edit left it, in a `list_tasks`
+/// row's names and shapes — so a bridge serving `tasks` alone sees what it
+/// did without a read it cannot make. Read from the document, not the read
+/// model, which trails the edit.
+fn task_json(
+    doc: &WorkspaceDoc,
+    workspace: StoreWorkspaceId,
+    document: StoreDocumentId,
+    id: NodeId,
+) -> Result<Value, ToolError> {
+    let node = doc.read(id)?;
+    let fields = koru_core::tasks::TaskFields::of(&node);
+    let text = node.content.as_text().unwrap_or_default();
+    Ok(json!({
+        "workspace_id": workspace.to_storage(),
+        "document_id": document.to_storage(),
+        "node_id": id.to_storage(),
+        "title": koru_title::resolve_title(text, node.meta.name.as_deref()),
+        "lifecycle": fields.lifecycle.as_str(),
+        "due": node.attr(koru_core::attributes::KEY_DUE).map(|attr| attr_json(attr)["value"].clone()),
+        "priority": node.attr(koru_core::attributes::KEY_PRIORITY).and_then(koru_core::Attr::as_text),
+        "list": node.attr(koru_core::attributes::KEY_LIST).and_then(koru_core::Attr::as_text),
+    }))
+}
+
 /// A deadline in **the same three shapes `read_document` publishes and
 /// `set_attribute` accepts** (ADR-183), rebuilt from the read model's flat
 /// `(kind, value, zone)` triple.
@@ -5155,6 +6231,9 @@ pub struct KoruMcp {
     // Whether `tools/list` answers in pages under `tool_pages::PAGE_BYTES`
     // or in one reply (ADR-433-compacttools).
     paged_tools: bool,
+    // The toolsets this bridge serves; the router has every other tool
+    // disabled, so it is neither listed nor called.
+    toolsets: Toolsets,
 }
 impl KoruMcp {
     pub fn new(backend: Arc<dyn Backend>, context: RequestContext) -> Self {
@@ -5165,6 +6244,7 @@ impl KoruMcp {
             context,
             tool_router,
             paged_tools: PAGED_TOOLS_BY_DEFAULT,
+            toolsets: Toolsets::all(),
         }
     }
 
@@ -5172,6 +6252,33 @@ impl KoruMcp {
     pub fn with_paged_tools(mut self, paged: bool) -> Self {
         self.paged_tools = paged;
         self
+    }
+
+    /// Serve only `toolsets`' tools: the others are not listed, and a call to
+    /// one is refused with the toolset that holds it.
+    pub fn with_toolsets(mut self, toolsets: Toolsets) -> Self {
+        for set in Toolset::ALL {
+            for tool in set.tools() {
+                if toolsets.contains(set) {
+                    self.tool_router.enable_route(tool);
+                } else {
+                    self.tool_router.disable_route(*tool);
+                }
+            }
+        }
+        self.toolsets = toolsets;
+        self
+    }
+
+    /// The contract's table of contents, with which toolsets are on when
+    /// some are off. Every other documentation answer is unchanged.
+    fn with_toolsets_note(&self, mut answer: Value) -> Value {
+        if let (Some(note), Some(_)) = (self.toolsets.note(), answer.get("sections"))
+            && let Some(text) = answer["text"].as_str()
+        {
+            answer["text"] = Value::String(format!("{text}\n\n{note}"));
+        }
+        answer
     }
     fn call<T: serde::Serialize>(&self, name: &str, value: T) -> CallToolResult {
         let started = Instant::now();
@@ -5242,11 +6349,14 @@ impl KoruMcp {
 impl KoruMcp {
     #[tool(
         title = "Read Koru model documentation",
-        description = "koru://docs/essentials is the short contract to read before the first mutation; koru://docs/model is the whole one, or one section by heading slug (section). For hosts that cannot read MCP resources; the markdown is the text block.",
+        description = "No arguments: koru://docs/essentials, to read before the first mutation. uri koru://docs/model lists the sections; section answers one by slug. For hosts without MCP resources.",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
     fn get_documentation(&self, Parameters(a): Parameters<DocumentationRequest>) -> CallToolResult {
         let mut result = self.call("get_documentation", a);
+        if let Some(answer) = result.structured_content.take() {
+            result.structured_content = Some(self.with_toolsets_note(answer));
+        }
         // The markdown itself is the text block, not a JSON line with the
         // markdown escaped inside it, so an agent reads it as written instead
         // of unescaping it first. The structured copy keeps the published
@@ -5290,11 +6400,24 @@ impl KoruMcp {
     }
     #[tool(
         title = "List Koru tasks",
-        description = "List tasks (nodes with the task marker or a deadline) in workspace_ids (empty: all) from the store's read model: open by default, soonest due first. A row carries its task: reference, the workspace_id, document_id and node_id to edit it by, title, breadcrumb, lifecycle, due, priority and list. due filters per temporal type: dates {after, before} for days and wall clocks, instants {after_ms, before_ms} for zoned deadlines; naming one leaves the other out. min_priority orders low < medium < high < urgent; list is a list id; limit is at most 500. Page with cursor = next_after; restarted means the cursor's row stopped matching and this is page one again; updating_workspaces may be behind. Change a task with edit_document: set_done, or set_attribute of koru.due.",
+        description = "List tasks (nodes with the task marker or a deadline) in workspace_ids (empty: all) from the store's read model: open by default, soonest due first. A row carries its task: reference, the workspace_id, document_id and node_id to edit it by, title, breadcrumb, lifecycle, due, priority and list. due filters per temporal type: dates {after, before} for days and wall clocks, instants {after_ms, before_ms} for zoned deadlines; naming one leaves the other out. min_priority orders low < medium < high < urgent; list is a list id; limit is at most 500. Page with cursor = next_after; restarted means the cursor's row stopped matching and this is page one again; updating_workspaces may be behind. Change a task with update_task.",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
     fn list_tasks(&self, Parameters(a): Parameters<ListTasksRequest>) -> CallToolResult {
         self.call("list_tasks", a)
+    }
+    #[tool(
+        title = "Update a Koru task",
+        description = "Change one task by a list_tasks row's workspace_id, document_id and node_id; expected is the row's title, or the node's exact text. done completes (true) or reopens (false), with the cascade the app applies. due is {type:date,value:YYYY-MM-DD} or {type:datetime_zoned,instant_ms,timezone:IANA}; priority low, medium, high or urgent; list a koru.list id; null clears due (the task stays), priority or list, and absent leaves it. No base_revision: on stale_node or precondition_failed, list_tasks again. Answers the edit's revision and history and the task as it now is.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    fn update_task(&self, Parameters(a): Parameters<UpdateTaskRequest>) -> CallToolResult {
+        self.call("update_task", a)
     }
     #[tool(
         title = "List Koru files",
@@ -5338,7 +6461,7 @@ impl KoruMcp {
     }
     #[tool(
         title = "Create a Koru document",
-        description = "Atomically create, and optionally seed, a complete document before it becomes visible; returns it as read_document does. parent_document_id nests it (absent: the workspace root); kind defaults to page. A UUID idempotency_key replays the same request for seven days. With initial_operations (non-empty; insert, insert_inline, set_done, set_language, set_mark, set_align and set_callout_look only) root_node_id is required, a fresh UUID for the title node; every parent is it or an earlier insert, and no blank paragraph is added. Read koru://docs/essentials before the first mutation.",
+        description = "Atomically create a document, optionally seeded, and return it as read_document does. parent_document_id nests it (absent: workspace root); kind is page or absent. A UUID idempotency_key replays the same request for seven days. initial_operations, when sent, are non-empty, target the title node or earlier inserts only, and replace the blank first paragraph. root_node_id and insert node_ids are omitted or local names (an omitted root is \"root\"); created maps each to its minted UUID. Operations follow edit_document. Read koru://docs/essentials before the first mutation; rules: get_documentation section creating-a-complete-document.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -5364,7 +6487,7 @@ impl KoruMcp {
     }
     #[tool(
         title = "Edit a Koru document",
-        description = "Atomically apply edits, in order, at base_revision from the latest read_document. Read koru://docs/essentials before the first mutation. Each op on an existing node carries expected, its exact current text; on stale_node or a mismatch, reread and retry. insert mints node_id; parent_id is required and body blocks go under the document-title node, never the absolute CRDT root. after_node_id is a sibling and null means first; numeric ordinals are unsupported. at_utf8 is a UTF-8 byte offset into expected. remove takes the node's whole subtree. set_mark turns one of bold, italic, underline, strike, code on or off over start_utf8..end_utf8 of expected (non-empty, on character boundaries). set_align sets start, center or end. insert_inline also takes {type:link,url,label?} (http, https or mailto). set_heading sets metadata.heading to 1–6, or null for body text. set_highlight sets runs[].highlight to yellow, green, blue or pink over the same byte range, or null to clear. set_attribute writes koru.due, koru.priority, koru.color or a workspace's custom key in the value shapes read_document reports: date {value: YYYY-MM-DD}, datetime_zoned {instant_ms, timezone: IANA name}, datetime_floating {wall}. add_tag and remove_tag take a tag name or a tag_id. set_callout_look takes an emoji icon and an accent color token; omit one to keep it, null restores the default. Unknown fields are errors.",
+        description = "Apply operations atomically, in order, at base_revision from the latest read_document. Read koru://docs/essentials before the first mutation. An op on an existing node sends expected, its exact current text (\"\" for an image); on stale_node or a mismatch, reread and retry. A new node_id is omitted or a local name later ops use; created maps it to the minted UUID. parent_id is the title node for body blocks, never the absolute CRDT root; after_node_id is a sibling, null for first; numeric ordinals are unsupported. *_utf8 are UTF-8 byte offsets into expected, on character boundaries. highlight: yellow, green, blue, pink, null clears. Callout icon: one emoji; color: red, orange, yellow, green, teal, blue, purple, pink, gray; null restores the default, absent keeps it. Link url: http, https or mailto. set_attribute koru.due: date {value:YYYY-MM-DD} or datetime_zoned {instant_ms, timezone:IANA}; koru.priority: text low, medium, high or urgent; other keys take the shape read_document reports. add_tag/remove_tag: tag (a name) or tag_id. Rules: get_documentation sections typed-blocks-text-and-ordering, attributes-and-tags, tasks.",
         annotations(
             read_only_hint = false,
             destructive_hint = true,
@@ -5377,7 +6500,7 @@ impl KoruMcp {
     }
     #[tool(
         title = "Add an image to a document",
-        description = "Store an image's bytes and place it as a block in one call, at base_revision from the latest read_document. data_base64 is a PNG, JPEG, GIF or WebP of at most 8 MiB; node_id is a fresh UUID you mint; parent_id is the document-title node or a block; after_node_id is a sibling, null meaning first. Answers the edit's revision and history with node_id, hash, mime, width and height. Read koru://docs/essentials before the first mutation.",
+        description = "Store an image's bytes and place it as a block in one call, at base_revision from the latest read_document. data_base64 is a PNG, JPEG, GIF or WebP of at most 8 MiB; node_id is optional; parent_id is the document-title node or a block; after_node_id is a sibling, null meaning first. Answers the edit's revision and history with node_id, hash, mime, width and height. Read koru://docs/essentials before the first mutation.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -5489,8 +6612,33 @@ impl KoruMcp {
 /// back, so paging would hide 17 of 21 tools from both (ADR-433-compacttools).
 pub const PAGED_TOOLS_BY_DEFAULT: bool = false;
 
+/// What every client is told at `initialize`. A bridge started with some
+/// toolsets off adds which are on ([`Toolsets::note`]).
+const SERVER_INSTRUCTIONS: &str = "Read koru://docs/essentials before the first mutation; koru://docs/model lists the contract's sections, each read on its own as koru://docs/model/<slug>. Both are standard MCP resources and the get_documentation compatibility tool (no arguments: the essentials; section: one section). Read and edit Koru's typed node model, never raw CRDT operations. Always read a fresh revision before mutation; use node ids and after_node_id, never numeric remote positions. On stale_node, reread the document, remap the intended block, and retry. Use insert_inline for /document references and extract_to_document for a cross-document move; never insert kind=document into a body.";
+
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for KoruMcp {
+    /// What rmcp's generated `call_tool` does, after refusing a tool whose
+    /// toolset is off by name, as an `isError` tool result: the router alone
+    /// would answer a "tool not found" protocol error, which tells an agent
+    /// nothing about the flag that would serve it.
+    async fn call_tool(
+        &self,
+        request: rmcp::model::CallToolRequestParams,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<rmcp::model::CallToolResponse, ErrorData> {
+        if let Some(refusal) = self.toolsets.refusal(&request.name) {
+            tracing::warn!(
+                tool = %request.name,
+                toolsets = %self.toolsets,
+                "tool call refused: its toolset is off"
+            );
+            return Ok(rmcp::model::CallToolResponse::Complete(refusal));
+        }
+        let call = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
+        self.tool_router.call(call).await
+    }
+
     async fn list_tools(
         &self,
         request: Option<rmcp::model::PaginatedRequestParams>,
@@ -5537,13 +6685,18 @@ impl ServerHandler for KoruMcp {
     }
 
     fn get_info(&self) -> ServerInfo {
+        let mut instructions = String::from(SERVER_INSTRUCTIONS);
+        if let Some(note) = self.toolsets.note() {
+            instructions.push(' ');
+            instructions.push_str(&note);
+        }
         ServerInfo::new(
             ServerCapabilities::builder()
                 .enable_tools()
                 .enable_resources()
                 .build(),
         )
-        .with_instructions("Read koru://docs/essentials before the first mutation; koru://docs/model is the full contract, whole or one section by heading slug. Both are standard MCP resources and the get_documentation compatibility tool. Read and edit Koru's typed node model, never raw CRDT operations. Always read a fresh revision before mutation; use node ids and after_node_id, never numeric remote positions. On stale_node, reread the document, remap the intended block, and retry. Use insert_inline for /document references and extract_to_document for a cross-document move; never insert kind=document into a body.")
+        .with_instructions(instructions)
     }
 
     fn list_resources(
@@ -5551,10 +6704,19 @@ impl ServerHandler for KoruMcp {
         _: Option<rmcp::model::PaginatedRequestParams>,
         _: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> impl Future<Output = Result<ListResourcesResult, ErrorData>> + Send + '_ {
-        std::future::ready(Ok(ListResourcesResult::with_all_items(vec![
-            essentials_resource(),
-            model_resource(),
-        ])))
+        std::future::ready(Ok(ListResourcesResult::with_all_items(
+            shared_surface::documentation_resources(),
+        )))
+    }
+
+    fn list_resource_templates(
+        &self,
+        _: Option<rmcp::model::PaginatedRequestParams>,
+        _: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> impl Future<Output = Result<ListResourceTemplatesResult, ErrorData>> + Send + '_ {
+        std::future::ready(Ok(ListResourceTemplatesResult::with_all_items(
+            shared_surface::documentation_resource_templates(),
+        )))
     }
 
     fn read_resource(
@@ -5564,26 +6726,9 @@ impl ServerHandler for KoruMcp {
     ) -> impl Future<Output = Result<ReadResourceResponse, ErrorData>> + Send + '_ {
         let started = Instant::now();
         tracing::info!(uri = %request.uri, "resource read started");
-        let result = if request.uri != MODEL_RESOURCE_URI && request.uri != ESSENTIALS_RESOURCE_URI
-        {
-            Err(ErrorData::resource_not_found(
-                "Koru documentation resource not found",
-                Some(json!({ "uri": request.uri })),
-            ))
-        } else {
-            documentation(&request.uri, None)
-                .map(|answer| {
-                    let text = answer["text"].as_str().unwrap_or_default().to_owned();
-                    ReadResourceResult::new(vec![
-                        ResourceContents::text(text, request.uri.clone())
-                            .with_mime_type(MODEL_DOCUMENT_MIME),
-                    ])
-                    .into()
-                })
-                .map_err(|error| {
-                    ErrorData::internal_error(error.message, Some(json!({ "uri": request.uri })))
-                })
-        };
+        let result =
+            shared_surface::read_with(&request.uri, |answer| self.with_toolsets_note(answer))
+                .map(Into::into);
         match &result {
             Ok(_) => tracing::info!(
                 uri = %request.uri,
@@ -5808,7 +6953,7 @@ mod tests {
     }
 
     #[test]
-    fn the_official_sdk_exposes_all_twenty_two_tools() {
+    fn the_official_sdk_exposes_all_twenty_three_tools() {
         let server = KoruMcp::new(Arc::new(Fake), RequestContext::local());
         let names: std::collections::HashSet<_> = server
             .tool_router
@@ -5822,6 +6967,7 @@ mod tests {
             "list_documents",
             "search_documents",
             "list_tasks",
+            "update_task",
             "list_files",
             "search_files",
             "get_file",
@@ -5841,7 +6987,7 @@ mod tests {
         ] {
             assert!(names.contains(expected), "missing MCP tool {expected}");
         }
-        assert_eq!(names.len(), 22);
+        assert_eq!(names.len(), 23);
     }
 
     fn an_arg(key: &str, op: &str, values: &[&str], kinds: &[&str]) -> AttrFilterArg {
@@ -6031,18 +7177,14 @@ mod tests {
         }
     }
 
-    /// The bytes the `tools/list` reply may take, newline excluded. Grok CLI
-    /// 1.0.34 can lose an 8,192-byte chunk of any longer line
-    /// (ADR-433-compacttools); 21 typed tools cannot fit under that, so this
-    /// holds what was reached and makes growth a decision rather than a drift.
-    /// Raised from 17,500 for `set_mark`'s schema in both operation unions
-    /// (ADR-471-mcpessentials, 17,973 bytes measured), to 19,100 for
-    /// `add_image`, a 22nd tool (ADR-473-addimage, 19,005 bytes measured),
-    /// and to 19,500 for `set_heading` and `set_highlight` on `edit_document`
-    /// (19,428 bytes measured), and to 20,000 for `set_align` and the link
-    /// inline (ADR-473-addimage), and to 20,500 for `set_callout_look`, one edit
-    /// operation and one seed operation (ADR-468-callout; 20,375 bytes measured).
-    const TOOLS_LIST_BUDGET: usize = 20_500;
+    /// The bytes the `tools/list` reply may take with every toolset on,
+    /// newline excluded. Grok CLI 1.0.34 can lose an 8,192-byte chunk of any
+    /// longer line (ADR-433-compacttools); 23 typed tools cannot fit under
+    /// that. Until 2026-11-02 this was one number, last raised to 20,500 for
+    /// `set_callout_look` (ADR-468-callout; 20,375 bytes measured, 20,491 at
+    /// the split). It is now the sum of each toolset's budget and the reply's
+    /// envelope (`toolsets::BUDGETS`), so growth is decided per toolset.
+    const TOOLS_LIST_BUDGET: usize = toolsets::total_budget();
 
     /// What crosses the wire is compact: no prose inside a schema except the
     /// generated union summaries, no `$ref`, `$defs`, `$schema`, `title` or
@@ -6082,10 +7224,11 @@ mod tests {
             .expect("tools/list over stdio");
         server_task.abort();
 
-        assert_eq!(listed.tools.len(), 22);
+        assert_eq!(listed.tools.len(), 23);
         assert!(listed.next_cursor.is_none(), "one page when paging is off");
         let line = serde_json::to_string(&json!({"jsonrpc": "2.0", "id": 2, "result": &listed}))
             .expect("reply JSON");
+        println!("tools/list with every toolset on: {} bytes", line.len());
         assert!(
             line.len() < TOOLS_LIST_BUDGET,
             "tools/list is {} bytes, over its {TOOLS_LIST_BUDGET}-byte budget",
@@ -6199,7 +7342,7 @@ mod tests {
             .into_iter()
             .map(|tool| tool.name.to_string())
             .collect();
-        assert_eq!(expected.len(), 22);
+        assert_eq!(expected.len(), 23);
         assert_eq!(seen, expected, "each tool once, in the router's order");
     }
 
@@ -6257,6 +7400,116 @@ mod tests {
         }
     }
 
+    /// A bridge started with `--toolsets docs` lists core's and docs' tools
+    /// only, refuses a tasks tool by its toolset and the flag that serves it,
+    /// and says which toolsets are on in its instructions and its contents —
+    /// while a bridge started without the flag says nothing new.
+    #[tokio::test]
+    async fn a_narrowed_bridge_lists_refuses_and_explains_by_toolset() {
+        use rmcp::ServiceExt;
+
+        let (server_transport, client_transport) = tokio::io::duplex(64 * 1024);
+        let server = KoruMcp::new(Arc::new(Fake), RequestContext::local())
+            .with_toolsets(Toolsets::parse("docs").expect("docs"));
+        let server_task = tokio::spawn(async move {
+            if let Ok(running) = server.serve(server_transport).await {
+                let _ = running.waiting().await;
+            }
+        });
+        let client = ().serve(client_transport).await.expect("MCP initialize handshake");
+
+        let listed: HashSet<String> = client
+            .peer()
+            .list_all_tools()
+            .await
+            .expect("tools/list")
+            .into_iter()
+            .map(|tool| tool.name.to_string())
+            .collect();
+        let expected: HashSet<String> = [Toolset::Core, Toolset::Docs]
+            .into_iter()
+            .flat_map(|set| set.tools().iter().map(|tool| tool.to_string()))
+            .collect();
+        assert_eq!(listed, expected);
+
+        // A tool result the agent reads, not a protocol error: the call
+        // succeeds at the JSON-RPC level and the result is marked an error.
+        let refused = client
+            .peer()
+            .call_tool(rmcp::model::CallToolRequestParams::new("list_tasks"))
+            .await
+            .expect("a refusal is a tool result, not a JSON-RPC error");
+        assert_eq!(refused.is_error, Some(true), "{refused:?}");
+        let error = refused.structured_content.as_ref().expect("the error");
+        assert_eq!(error["code"], "toolset_disabled");
+        let message = error["message"].as_str().unwrap_or_default();
+        assert!(message.contains("tasks toolset"), "{message}");
+        assert!(message.contains("--toolsets docs,tasks"), "{message}");
+        assert_eq!(error["details"]["toolsets_flag"], "docs,tasks");
+        // A name that is no tool at all is still the router's own answer.
+        assert!(
+            client
+                .peer()
+                .call_tool(rmcp::model::CallToolRequestParams::new("no_such_tool"))
+                .await
+                .is_err(),
+            "an unknown tool is not a toolset question"
+        );
+
+        let instructions = client
+            .peer()
+            .peer_info()
+            .and_then(|info| info.instructions.clone())
+            .unwrap_or_default();
+        assert!(
+            instructions.starts_with(SERVER_INSTRUCTIONS)
+                && instructions.contains("toolsets core, docs"),
+            "{instructions}"
+        );
+
+        let contents = client
+            .peer()
+            .call_tool(
+                rmcp::model::CallToolRequestParams::new("get_documentation").with_arguments(
+                    serde_json::from_value(json!({ "uri": MODEL_RESOURCE_URI }))
+                        .expect("arguments object"),
+                ),
+            )
+            .await
+            .expect("contents on a docs bridge");
+        let text = contents
+            .structured_content
+            .as_ref()
+            .and_then(|value| value["text"].as_str())
+            .unwrap_or_default();
+        assert!(text.contains("toolsets core, docs"), "{text}");
+        let essentials = client
+            .peer()
+            .call_tool(rmcp::model::CallToolRequestParams::new("get_documentation"))
+            .await
+            .expect("essentials on a docs bridge");
+        let text = essentials
+            .structured_content
+            .as_ref()
+            .and_then(|value| value["text"].as_str())
+            .unwrap_or_default();
+        assert!(!text.contains("This bridge serves"), "essentials unchanged");
+        client.cancel().await.expect("close MCP client");
+        server_task.abort();
+
+        let (every, every_task) = paged_client(false).await;
+        assert_eq!(
+            every
+                .peer()
+                .peer_info()
+                .and_then(|info| info.instructions.clone())
+                .as_deref(),
+            Some(SERVER_INSTRUCTIONS),
+            "no flag, no note"
+        );
+        every_task.abort();
+    }
+
     /// Koru AI reads the catalog, not `tools/list`: paging never hides a tool
     /// from it.
     #[test]
@@ -6265,7 +7518,7 @@ mod tests {
             .into_iter()
             .map(|tool| tool.name)
             .collect();
-        assert_eq!(names.len(), 22);
+        assert_eq!(names.len(), 23);
         let routed: HashSet<String> = KoruMcp::new(Arc::new(Fake), RequestContext::local())
             .tool_router
             .list_all()
@@ -6445,6 +7698,125 @@ mod tests {
     }
 
     #[test]
+    fn a_summary_is_the_first_sentence_of_the_first_paragraph_in_plain_text() {
+        let markdown = "## One\n\n**Bold** words and a [link](../x.md#y) end here. Then `a.b` more.\n\n## Two\n\n- `koru.due` is a list item, e.g. this one. Next.\n\n### Two A\n\nchild\n\n## Three\n\n`add_image` does it in one call:\n\n```\ncode\n```\n";
+        let entries = table_of_contents(markdown);
+        let summaries: Vec<&str> = entries.iter().map(|e| e.summary.as_str()).collect();
+        assert_eq!(
+            summaries,
+            [
+                "Bold words and a link end here.",
+                "`koru.due` is a list item, e.g. this one.",
+                "`add_image` does it in one call",
+            ]
+        );
+        assert_eq!(entries[1].subsections, ["two-a"]);
+        assert_eq!(entries[0].title, "One");
+
+        let long = format!("## Long\n\n{} end.\n", "word ".repeat(100));
+        let summary = &table_of_contents(&long)[0].summary;
+        assert!(summary.ends_with('…'), "{summary}");
+        assert!(summary.chars().count() <= SUMMARY_CHARS + 1, "{summary}");
+    }
+
+    /// What a Claude Code session hit on 2026-11-02: `koru://docs/model` with
+    /// no section answered the whole contract, about 84 KB and 33k tokens once
+    /// wrapped as JSON, which the agent spilled to a file it then could not
+    /// read back (its reader stops at 25k tokens). Every documentation answer
+    /// now fits in a budget well under that, and none is the whole file.
+    #[test]
+    fn the_contract_is_served_in_pieces_and_the_model_uri_answers_its_contents() {
+        /// What any one documentation answer may take, serialized: about 6k
+        /// tokens.
+        const ANSWER_BUDGET: usize = 24_000;
+        let guide = read_model_document().unwrap();
+
+        let contents = documentation(MODEL_RESOURCE_URI, None).unwrap();
+        assert_eq!(contents["section"], Value::Null);
+        let text = contents["text"].as_str().unwrap();
+        assert!(
+            text.contains("koru://docs/model/<slug>") && text.contains("\"section\""),
+            "the contents say how to fetch a section: {text}"
+        );
+        let listed: Vec<&str> = contents["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["slug"].as_str().unwrap())
+            .collect();
+        assert_eq!(listed, section_slugs(&guide), "every ## section, in order");
+        for entry in contents["sections"].as_array().unwrap() {
+            let slug = entry["slug"].as_str().unwrap();
+            assert!(text.contains(&format!("`{slug}`")), "{slug} in the text");
+            let summary = entry["summary"].as_str().unwrap();
+            assert!(
+                !summary.is_empty() && summary.chars().count() <= SUMMARY_CHARS + 1,
+                "{slug}: {summary:?}"
+            );
+            assert!(entry["tokens"].as_u64().unwrap() > 0, "{slug}");
+        }
+
+        // Every answer: the contents, the essentials, each section and each
+        // subsection it lists.
+        let mut answers = vec![
+            ("contents".to_owned(), contents.clone()),
+            (
+                "essentials".to_owned(),
+                documentation(ESSENTIALS_RESOURCE_URI, None).unwrap(),
+            ),
+        ];
+        for entry in contents["sections"].as_array().unwrap() {
+            let slugs = std::iter::once(&entry["slug"])
+                .chain(entry["subsections"].as_array().unwrap())
+                .map(|slug| slug.as_str().unwrap().to_owned());
+            for slug in slugs {
+                let answer = documentation(MODEL_RESOURCE_URI, Some(&slug)).unwrap();
+                answers.push((slug, answer));
+            }
+        }
+        for (name, answer) in &answers {
+            let bytes = serde_json::to_string(answer).unwrap().len();
+            assert!(
+                bytes < ANSWER_BUDGET,
+                "{name} is {bytes} bytes as JSON, over {ANSWER_BUDGET}"
+            );
+            let text = answer["text"].as_str().unwrap();
+            assert!(
+                text.len() * 2 < guide.len() && !text.contains("# MCP semantics"),
+                "{name} answers the whole contract"
+            );
+        }
+
+        // The resource form and the tool's defaults reach the same answers.
+        assert_eq!(
+            documentation("koru://docs/model/Diagrams", None).unwrap()["text"],
+            documentation(MODEL_RESOURCE_URI, Some("diagrams")).unwrap()["text"]
+        );
+        assert_eq!(
+            documentation("koru://docs/model/tasks", Some("searching"))
+                .unwrap_err()
+                .code,
+            "invalid_request"
+        );
+        assert_eq!(
+            documentation("koru://docs/model/no-such-thing", None)
+                .unwrap_err()
+                .code,
+            "documentation_section_not_found"
+        );
+        let request = |value: Value| from::<DocumentationRequest>(value).unwrap();
+        assert_eq!(request(json!({})).uri(), ESSENTIALS_RESOURCE_URI);
+        assert_eq!(
+            request(json!({"section": "tasks"})).uri(),
+            MODEL_RESOURCE_URI
+        );
+        assert_eq!(
+            request(json!({"uri": MODEL_RESOURCE_URI})).uri(),
+            MODEL_RESOURCE_URI
+        );
+    }
+
+    #[test]
     fn the_essentials_are_one_section_of_the_contract_and_the_tool_answers_them_as_text() {
         let essentials = documentation(ESSENTIALS_RESOURCE_URI, None).unwrap();
         let text = essentials["text"].as_str().unwrap();
@@ -6456,9 +7828,8 @@ mod tests {
             text.len()
         );
         assert_eq!(essentials["section"], Value::Null);
-
-        let whole = documentation(MODEL_RESOURCE_URI, None).unwrap();
-        assert!(whole["text"].as_str().unwrap().contains(text));
+        let guide = read_model_document().unwrap();
+        assert!(guide.contains(text), "the short form is the contract's own");
 
         let section =
             documentation(MODEL_RESOURCE_URI, Some("Creating a complete document")).unwrap();
@@ -6498,7 +7869,7 @@ mod tests {
         // written, and the structured copy keeps the published shape.
         let server = KoruMcp::new(Arc::new(Fake), RequestContext::local());
         let result = server.get_documentation(Parameters(DocumentationRequest {
-            uri: ESSENTIALS_RESOURCE_URI.into(),
+            uri: None,
             section: None,
         }));
         assert_eq!(result.is_error, Some(false));
@@ -6582,6 +7953,34 @@ mod tests {
         }
     }
 
+    /// A description that sends an agent to the contract names sections that
+    /// exist, so moving detail out of a description and into
+    /// `get_documentation` cannot leave a slug that answers nothing.
+    #[test]
+    fn every_section_a_tool_description_names_exists() {
+        let mut named = Vec::new();
+        for tool in KoruMcp::tool_router().list_all() {
+            let description = tool.description.as_deref().unwrap_or_default();
+            for (at, marker) in description.match_indices("get_documentation section") {
+                let rest = &description[at + marker.len()..];
+                let list = rest.strip_prefix('s').unwrap_or(rest);
+                let list = list.split('.').next().unwrap_or_default();
+                for slug in list.split(',').map(str::trim) {
+                    assert!(
+                        documentation(MODEL_RESOURCE_URI, Some(slug)).is_ok(),
+                        "{} names the section {slug:?}, which the contract does not have",
+                        tool.name
+                    );
+                    named.push(slug.to_owned());
+                }
+            }
+        }
+        assert!(
+            named.iter().any(|slug| slug == "attributes-and-tags"),
+            "{named:?}"
+        );
+    }
+
     #[test]
     fn edit_tool_schema_explains_parent_and_stable_sibling_ordering() {
         let server = KoruMcp::new(Arc::new(Fake), RequestContext::local());
@@ -6607,9 +8006,18 @@ mod tests {
         ] {
             assert!(description.contains(phrase), "missing {phrase:?}");
         }
+        // node_id is optional: the server mints it when it is left out
+        // (`local_ids`). The optional fields' order follows the JSON map in
+        // use, as below, so only which ones are optional is pinned.
+        let insert = encoded
+            .split("insert(")
+            .nth(1)
+            .and_then(|rest| rest.split(')').next())
+            .expect("insert's summary");
+        assert!(insert.starts_with("parent_id, kind, text, "), "{insert}");
         assert!(
-            encoded.contains("insert(node_id, parent_id, kind, text, after_node_id?)"),
-            "{encoded}"
+            insert.contains(" node_id?") && insert.contains("after_node_id?"),
+            "{insert}"
         );
         assert!(encoded.contains("insert_inline"));
         // A new operation is published with its fields, optional ones marked.
@@ -6703,7 +8111,7 @@ mod tests {
                 idempotency_key: Some(key.to_owned()),
                 root_node_id: Some(spell(root)),
                 initial_operations: Some(vec![InitialOperation::Insert {
-                    node_id: spell(paragraph),
+                    node_id: Some(spell(paragraph)),
                     parent_id: spell(root),
                     after_node_id: None,
                     kind: InsertKind::Paragraph,
@@ -6775,14 +8183,14 @@ mod tests {
             root,
             &[
                 InitialOperation::Insert {
-                    node_id: first.to_storage(),
+                    node_id: Some(first.to_storage()),
                     parent_id: root.to_storage(),
                     after_node_id: None,
                     kind: InsertKind::Paragraph,
                     text: "One".into(),
                 },
                 InitialOperation::Insert {
-                    node_id: second.to_storage(),
+                    node_id: Some(second.to_storage()),
                     parent_id: root.to_storage(),
                     after_node_id: Some(first.to_storage()),
                     kind: InsertKind::Paragraph,
@@ -6819,7 +8227,7 @@ mod tests {
             &mut doc,
             root,
             &[InitialOperation::Insert {
-                node_id: NodeId::new().to_storage(),
+                node_id: Some(NodeId::new().to_storage()),
                 parent_id: NodeId::new().to_storage(),
                 after_node_id: None,
                 kind: InsertKind::Paragraph,
@@ -6892,14 +8300,14 @@ mod tests {
             &mut doc,
             &[
                 EditOperation::Insert {
-                    node_id: box_id.to_storage(),
+                    node_id: Some(box_id.to_storage()),
                     parent_id: root.to_storage(),
                     after_node_id: None,
                     kind: InsertKind::Callout,
                     text: "Mind the gap".into(),
                 },
                 EditOperation::Insert {
-                    node_id: empty_id.to_storage(),
+                    node_id: Some(empty_id.to_storage()),
                     parent_id: root.to_storage(),
                     after_node_id: Some(box_id.to_storage()),
                     kind: InsertKind::Callout,
@@ -7095,7 +8503,7 @@ mod tests {
             &mut doc,
             &[
                 EditOperation::Insert {
-                    node_id: heading_id.to_storage(),
+                    node_id: Some(heading_id.to_storage()),
                     parent_id: root.to_storage(),
                     after_node_id: None,
                     kind: InsertKind::Paragraph,
@@ -7237,7 +8645,7 @@ mod tests {
             on: true,
         };
         let insert = |root: NodeId| InitialOperation::Insert {
-            node_id: first.to_storage(),
+            node_id: Some(first.to_storage()),
             parent_id: root.to_storage(),
             after_node_id: None,
             kind: InsertKind::Paragraph,
@@ -7843,7 +9251,7 @@ mod tests {
             root,
             &[
                 InitialOperation::Insert {
-                    node_id: block.to_storage(),
+                    node_id: Some(block.to_storage()),
                     parent_id: root.to_storage(),
                     after_node_id: None,
                     kind: InsertKind::Code,
@@ -8100,7 +9508,7 @@ mod tests {
             root,
             &[
                 InitialOperation::Insert {
-                    node_id: callout.to_storage(),
+                    node_id: Some(callout.to_storage()),
                     parent_id: root.to_storage(),
                     after_node_id: None,
                     kind: InsertKind::Callout,
@@ -8313,7 +9721,7 @@ mod tests {
             root,
             &[
                 InitialOperation::Insert {
-                    node_id: block.to_storage(),
+                    node_id: Some(block.to_storage()),
                     parent_id: root.to_storage(),
                     after_node_id: None,
                     kind: InsertKind::Code,
@@ -10340,7 +11748,7 @@ mod tests {
                 },
             },
             EditOperation::Insert {
-                node_id: id(),
+                node_id: Some(id()),
                 parent_id: id(),
                 after_node_id: None,
                 kind: InsertKind::Task,
@@ -10484,7 +11892,7 @@ mod tests {
         let first = NodeId::new().to_storage();
         let seed = vec![
             InitialOperation::Insert {
-                node_id: first.clone(),
+                node_id: Some(first.clone()),
                 parent_id: root.clone(),
                 after_node_id: None,
                 kind: InsertKind::Code,
@@ -10640,7 +12048,7 @@ mod tests {
             .await
             .expect("tools/list over stdio");
 
-        assert_eq!(tools.len(), 22);
+        assert_eq!(tools.len(), 23);
         assert!(
             tools
                 .iter()
@@ -10678,18 +12086,42 @@ mod tests {
         let resource_json = serde_json::to_value(resource.contents).expect("resource JSON");
         assert_eq!(resource_json[0]["uri"], MODEL_RESOURCE_URI);
         assert_eq!(resource_json[0]["mimeType"], MODEL_DOCUMENT_MIME);
-        assert!(
-            resource_json[0]["text"]
-                .as_str()
-                .is_some_and(|text| text.contains("# MCP semantics"))
+        // The model resource is the contents, never the whole contract.
+        let contents = resource_json[0]["text"].as_str().unwrap_or_default();
+        assert!(contents.contains("`diagrams`"), "{contents}");
+        assert!(!contents.contains("# MCP semantics"), "{contents}");
+
+        let templates = client
+            .peer()
+            .list_resource_templates(None)
+            .await
+            .expect("resources/templates/list over stdio");
+        assert_eq!(
+            templates.resource_templates[0].uri_template,
+            "koru://docs/model/{section}"
         );
         // The section an agent writing a diagram reads reaches it over the
         // wire, not only from the checked-out file.
+        let section = client
+            .peer()
+            .read_resource(ReadResourceRequestParams::new("koru://docs/model/diagrams"))
+            .await
+            .expect("one section over resources/read");
+        let section_json = serde_json::to_value(section.contents).expect("resource JSON");
+        assert_eq!(section_json[0]["uri"], "koru://docs/model/diagrams");
         assert!(
-            resource_json[0]["text"]
+            section_json[0]["text"]
                 .as_str()
-                .is_some_and(|text| text.contains("## Diagrams"))
+                .is_some_and(|text| text.starts_with("## Diagrams"))
         );
+        let unknown = client
+            .peer()
+            .read_resource(ReadResourceRequestParams::new(
+                "koru://docs/model/no-such-section",
+            ))
+            .await
+            .expect_err("an unknown section must fail");
+        assert!(unknown.to_string().contains("no section"), "{unknown}");
 
         let documentation = client
             .peer()
@@ -10738,6 +12170,11 @@ mod tests {
         search_hits: Mutex<Vec<koru_store_wire::search::SearchHit>>,
         /// Every history marker captured, with the document as it stood.
         markers: Mutex<Vec<(HistoryEntry, Vec<u8>)>>,
+        /// Each `create_document` idempotency key: the request hash, the
+        /// document it made, and that document's first update.
+        seeds: Mutex<HashMap<String, (String, StoreDocumentId, Vec<u8>)>>,
+        /// Every tasks query the port was asked.
+        task_queries: Mutex<Vec<TaskQuery>>,
     }
 
     impl MemoryStore {
@@ -10749,6 +12186,8 @@ mod tests {
                 blobs: Mutex::new(Vec::new()),
                 search_hits: Mutex::new(Vec::new()),
                 markers: Mutex::new(Vec::new()),
+                seeds: Mutex::new(HashMap::new()),
+                task_queries: Mutex::new(Vec::new()),
             })
         }
 
@@ -10914,6 +12353,25 @@ mod tests {
             })
         }
 
+        /// An empty, projected page: what a swept workspace with nothing
+        /// outstanding answers.
+        fn query_tasks(&self, query: TaskQuery) -> Result<TaskQueryResponse, ToolError> {
+            let limit = query.limit;
+            self.task_queries.lock().unwrap().push(query);
+            Ok(TaskQueryResponse {
+                rows: Vec::new(),
+                definitions: Vec::new(),
+                tags: Vec::new(),
+                groups: Vec::new(),
+                projected: true,
+                updating_workspaces: Vec::new(),
+                limit,
+                next_after: None,
+                restarted: false,
+                covered: None,
+            })
+        }
+
         fn snapshot(
             &self,
             _workspace: StoreWorkspaceId,
@@ -10932,8 +12390,13 @@ mod tests {
             _workspace: StoreWorkspaceId,
             _title: String,
             _kind: String,
+            _attribution: Option<&str>,
         ) -> Result<StoreDocumentId, ToolError> {
             unreachable!("no test here creates a bare document, and a refused extract must not")
+        }
+
+        fn manifest_id(&self, _workspace: StoreWorkspaceId) -> Result<StoreDocumentId, ToolError> {
+            unreachable!("no test here reports a manifest effect")
         }
 
         fn ensure_file_note(
@@ -10981,11 +12444,57 @@ mod tests {
             Ok((note, true))
         }
 
+        /// The store's idempotency contract, in memory: a key seen with the
+        /// same request hash replays the document it made, with a different
+        /// one it is a conflict.
         fn seed_document(
             &self,
-            _request: EmbeddedSeedDocument,
+            request: EmbeddedSeedDocument,
         ) -> Result<EmbeddedSeededDocument, ToolError> {
-            unreachable!("the note tests never seed through the store")
+            let mut seeds = self.seeds.lock().unwrap();
+            if let Some((hash, id, update)) = seeds.get(&request.idempotency_key) {
+                if *hash != request.request_hash {
+                    return Err(ToolError {
+                        code: "idempotency_conflict".into(),
+                        message: "that key made a different document".into(),
+                        details: None,
+                    });
+                }
+                return Ok(EmbeddedSeededDocument {
+                    id: *id,
+                    initial_update: update.clone(),
+                    replayed: true,
+                });
+            }
+            let id = StoreDocumentId::new();
+            let doc = loro::LoroDoc::new();
+            doc.import(&request.initial_update)
+                .map_err(|error| ToolError::invalid(error.to_string()))?;
+            self.snapshots.lock().unwrap().insert(
+                id,
+                doc.export(loro::ExportMode::Snapshot)
+                    .map_err(|error| ToolError::invalid(error.to_string()))?,
+            );
+            self.entries.lock().unwrap().push(DocumentEntry {
+                id,
+                parent: request.parent,
+                ordinal: 0,
+                title: request.title,
+                kind: koru_core::explore::KIND_DOCUMENT.into(),
+                mime: None,
+                note: None,
+                trashed_at: None,
+                trashed_by: None,
+            });
+            seeds.insert(
+                request.idempotency_key,
+                (request.request_hash, id, request.initial_update.clone()),
+            );
+            Ok(EmbeddedSeededDocument {
+                id,
+                initial_update: request.initial_update,
+                replayed: false,
+            })
         }
 
         fn persist_update(
@@ -11103,6 +12612,29 @@ mod tests {
             observed_modified_at_ms: None,
             workspace_last_used_at_ms: None,
         }
+    }
+
+    /// **An embedded host answers `list_tasks`** through its port — Koru AI
+    /// and a hosted replica used to be refused `tasks_unavailable` here — with
+    /// the executor's workspace grant written into the query, as for search.
+    #[test]
+    fn an_embedded_host_answers_list_tasks_through_its_port() {
+        let store = MemoryStore::new();
+        let executor = WorkspaceToolExecutor::new(Arc::new(store.backend()));
+        let context = RequestContext::selected(
+            "local",
+            "koru-ai",
+            [Scope::ReadDocuments],
+            [store.workspace],
+        );
+        let page = executor
+            .invoke(&context, "list_tasks", json!({}))
+            .expect("the port answers rather than refusing");
+        assert_eq!(page["tasks"], json!([]));
+        assert_eq!(page["restarted"], json!(false));
+        let asked = store.task_queries.lock().unwrap();
+        assert_eq!(asked.len(), 1);
+        assert_eq!(asked[0].workspaces, vec![store.workspace]);
     }
 
     /// `list_files`, `search_files` and `get_file` all build their answer
@@ -11350,6 +12882,119 @@ mod tests {
                 koru_core::explore::KIND_NOTE
             ]
         );
+    }
+
+    /// An agent no longer invents a UUID for each block: through the real
+    /// create and edit paths, ids left out and local names come back minted
+    /// in `created`, name the nodes the read shows, and a replayed create
+    /// answers the ids the first call stored.
+    #[test]
+    fn the_server_mints_new_node_ids_and_answers_which() {
+        let store = MemoryStore::new();
+        let backend = store.backend();
+        let context = RequestContext::local();
+        let workspace_id = store.workspace.to_storage();
+        let parent_of = |read: &Value, id: &Value| {
+            read["nodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|node| node["node_id"] == *id)
+                .unwrap_or_else(|| panic!("{id} is a node of {read}"))["parent_id"]
+                .clone()
+        };
+
+        let request = json!({
+            "workspace_id": workspace_id,
+            "title": "Jokes",
+            "idempotency_key": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+            "initial_operations": [
+                {"op": "insert", "node_id": "q", "parent_id": "root", "kind": "paragraph",
+                 "text": "Why?"},
+                {"op": "insert", "parent_id": "root", "after_node_id": "q", "kind": "paragraph",
+                 "text": "Because."},
+                {"op": "set_mark", "node_id": "q", "expected": "Why?", "start_utf8": 0,
+                 "end_utf8": 3, "mark": "bold", "on": true},
+            ],
+        });
+        let made = backend
+            .invoke(&context, "create_document", request.clone())
+            .unwrap();
+        let created = &made["created"];
+        assert_eq!(created["root"], made["root_node_id"]);
+        assert_eq!(parent_of(&made, &created["q"]), made["root_node_id"]);
+        assert_eq!(parent_of(&made, &created["1"]), made["root_node_id"]);
+        let texts: Vec<&Value> = made["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|node| &node["content"]["text"])
+            .collect();
+        assert_eq!(texts[1..], [&json!("Why?"), &json!("Because.")]);
+
+        // A retry with the same key replays the first document, and the ids
+        // it answers are the ones that document holds, not new ones.
+        let again = backend
+            .invoke(&context, "create_document", request)
+            .unwrap();
+        assert_eq!(again["document_id"], made["document_id"]);
+        assert_eq!(again["created"], made["created"]);
+
+        // An edit mixes a caller's UUID, an omitted id and local names.
+        let document_id = made["document_id"].as_str().unwrap();
+        let mine = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+        let edited = backend
+            .invoke(
+                &context,
+                "edit_document",
+                json!({
+                    "workspace_id": workspace_id,
+                    "document_id": document_id,
+                    "base_revision": made["revision"],
+                    "operations": [
+                        {"op": "insert", "node_id": "box", "parent_id": made["root_node_id"],
+                         "after_node_id": created["1"], "kind": "callout", "text": ""},
+                        {"op": "insert", "node_id": mine, "parent_id": "box",
+                         "kind": "paragraph", "text": "Mine"},
+                        {"op": "insert", "parent_id": "box", "after_node_id": mine,
+                         "kind": "paragraph", "text": "Minted"},
+                    ],
+                }),
+            )
+            .unwrap();
+        let minted = &edited["created"];
+        assert_eq!(
+            minted.as_object().unwrap().len(),
+            2,
+            "a caller's UUID is not reported: {minted}"
+        );
+        let read = backend
+            .invoke(
+                &context,
+                "read_document",
+                json!({"workspace_id": workspace_id, "document_id": document_id}),
+            )
+            .unwrap();
+        assert_eq!(parent_of(&read, &json!(mine)), minted["box"]);
+        assert_eq!(parent_of(&read, &minted["2"]), minted["box"]);
+
+        // Nothing is written when a name cannot be resolved.
+        let refused = backend
+            .invoke(
+                &context,
+                "edit_document",
+                json!({
+                    "workspace_id": workspace_id,
+                    "document_id": document_id,
+                    "base_revision": edited["revision"],
+                    "operations": [
+                        {"op": "insert", "parent_id": "nowhere", "kind": "paragraph", "text": "x"},
+                    ],
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(refused.code, "invalid_request");
+        assert!(refused.message.contains("nowhere"), "{refused}");
     }
 
     /// `edit_document` admits every kind `read_document` reads, so a note takes
@@ -11708,5 +13353,244 @@ mod tests {
         assert!(reads_back(&backend, &workspace_id, page, "Rewritten"));
         restore(page, &entry).unwrap();
         assert!(reads_back(&backend, &workspace_id, page, "Kept"));
+    }
+
+    // ------------------------------------------------- update_task, in memory
+
+    /// A page whose one line is a task due 2026-09-04, made the way an agent
+    /// makes one: a `koru.due` through `edit_document`.
+    fn a_task(store: &Arc<MemoryStore>, text: &str) -> (StoreDocumentId, NodeId) {
+        let page = store.add_document(koru_core::explore::KIND_DOCUMENT, "Plan", text);
+        let (revision, line) = store.stored(page);
+        call(
+            &store.backend(),
+            "edit_document",
+            json!({
+                "workspace_id": store.workspace.to_storage(),
+                "document_id": page.to_storage(),
+                "base_revision": revision,
+                "operations": [{
+                    "op": "set_attribute", "node_id": line.to_storage(), "expected": text,
+                    "key": "koru.due", "value": {"type": "date", "value": "2026-09-04"},
+                }],
+            }),
+        )
+        .expect("a due makes the line a task");
+        (page, line)
+    }
+
+    /// The node as the store now holds it.
+    fn stored_task(store: &MemoryStore, page: StoreDocumentId, line: NodeId) -> koru_core::Node {
+        WorkspaceDoc::from_snapshot(&store.snapshots.lock().unwrap()[&page])
+            .unwrap()
+            .read(line)
+            .unwrap()
+    }
+
+    /// What `tasks` was split out for: a bridge serving `tasks` alone lists
+    /// `update_task` beside `list_tasks`, and completes, reopens, re-dates and
+    /// re-prioritises a task with it — through the edit path, so the store
+    /// holds the lifecycle the app would have written — and answers the task
+    /// as it now is, since it cannot read the document.
+    #[tokio::test]
+    async fn a_tasks_only_bridge_completes_and_reopens_a_task() {
+        use rmcp::ServiceExt;
+
+        let store = MemoryStore::new();
+        let (page, line) = a_task(&store, "Ship the report");
+        let markers = store.markers.lock().unwrap().len();
+        let (server_transport, client_transport) = tokio::io::duplex(64 * 1024);
+        let server = KoruMcp::new(Arc::new(store.backend()), RequestContext::local())
+            .with_toolsets(Toolsets::parse("tasks").expect("tasks"));
+        let server_task = tokio::spawn(async move {
+            if let Ok(running) = server.serve(server_transport).await {
+                let _ = running.waiting().await;
+            }
+        });
+        let client = ().serve(client_transport).await.expect("MCP initialize handshake");
+
+        let listed: HashSet<String> = client
+            .peer()
+            .list_all_tools()
+            .await
+            .expect("tools/list")
+            .into_iter()
+            .map(|tool| tool.name.to_string())
+            .collect();
+        let expected: HashSet<String> = [
+            "get_documentation",
+            "list_workspaces",
+            "list_tasks",
+            "update_task",
+        ]
+        .map(String::from)
+        .into();
+        assert_eq!(listed, expected);
+
+        let update = |changes: Value| {
+            let mut arguments = json!({
+                "workspace_id": store.workspace.to_storage(),
+                "document_id": page.to_storage(),
+                "node_id": line.to_storage(),
+                "expected": "Ship the report",
+            });
+            arguments
+                .as_object_mut()
+                .unwrap()
+                .extend(changes.as_object().unwrap().clone());
+            rmcp::model::CallToolRequestParams::new("update_task")
+                .with_arguments(serde_json::from_value(arguments).expect("arguments object"))
+        };
+
+        let completed = client
+            .peer()
+            .call_tool(update(json!({"done": true})))
+            .await
+            .expect("update_task on a tasks bridge");
+        assert_ne!(completed.is_error, Some(true), "{completed:?}");
+        let task = &completed.structured_content.as_ref().expect("an answer")["task"];
+        assert_eq!(task["lifecycle"], "completed", "{task}");
+        assert_eq!(task["title"], "Ship the report");
+        assert_eq!(task["due"], json!({"type": "date", "value": "2026-09-04"}));
+        let node = stored_task(&store, page, line);
+        assert_eq!(
+            koru_core::tasks::TaskFields::of(&node).lifecycle.as_str(),
+            "completed"
+        );
+        assert!(node.meta.done, "the checkbox follows the lifecycle");
+        assert_eq!(
+            store.markers.lock().unwrap().len(),
+            markers + 2,
+            "the edit's own mcp_before and mcp_after"
+        );
+
+        let reopened = client
+            .peer()
+            .call_tool(update(
+                json!({"done": false, "priority": "high", "due": null}),
+            ))
+            .await
+            .expect("a second update");
+        assert_ne!(reopened.is_error, Some(true), "{reopened:?}");
+        let task = &reopened.structured_content.as_ref().expect("an answer")["task"];
+        assert_eq!(task["lifecycle"], "open", "{task}");
+        assert_eq!(task["priority"], "high");
+        assert_eq!(task["due"], Value::Null);
+        let node = stored_task(&store, page, line);
+        assert!(
+            koru_core::tasks::is_task(&koru_core::tasks::TaskFields::of(&node)),
+            "clearing the due keeps the task"
+        );
+
+        client.cancel().await.expect("close MCP client");
+        server_task.abort();
+    }
+
+    /// A task whose text moved since it was listed, or that was removed, is
+    /// refused with `list_tasks` as the retry and nothing written. The title
+    /// the read model reports — trimmed — still matches the text it came from.
+    #[test]
+    fn update_task_refuses_a_stale_task_and_writes_nothing() {
+        let store = MemoryStore::new();
+        let backend = store.backend();
+        let (page, line) = a_task(&store, "Ship the report");
+        let update = |expected: &str| {
+            call(
+                &backend,
+                "update_task",
+                json!({
+                    "workspace_id": store.workspace.to_storage(),
+                    "document_id": page.to_storage(),
+                    "node_id": line.to_storage(),
+                    "expected": expected,
+                    "done": true,
+                }),
+            )
+        };
+        let edit = |operation: Value| {
+            let (revision, _) = store.stored(page);
+            call(
+                &backend,
+                "edit_document",
+                json!({
+                    "workspace_id": store.workspace.to_storage(),
+                    "document_id": page.to_storage(),
+                    "base_revision": revision,
+                    "operations": [operation],
+                }),
+            )
+            .unwrap();
+        };
+
+        // Renamed by somebody else after the agent listed it.
+        edit(json!({"op": "replace_text", "node_id": line.to_storage(),
+                    "expected": "Ship the report", "text": "Ship the final report "}));
+        let before = store.state();
+        let stale = update("Ship the report").expect_err("the listed title is stale");
+        assert_eq!(stale.code, "precondition_failed", "{stale}");
+        assert_eq!(stale.details.as_ref().unwrap()["retry"], "list_tasks");
+        assert!(store.state() == before, "a refused update wrote");
+
+        // The title list_tasks reports now is the trimmed text, and matches.
+        let done = update("Ship the final report").expect("the current title");
+        assert_eq!(done["task"]["lifecycle"], "completed");
+
+        // Removed after it was listed.
+        edit(json!({"op": "remove", "node_id": line.to_storage(),
+                    "expected": "Ship the final report "}));
+        let before = store.state();
+        let gone = update("Ship the final report").expect_err("the task is gone");
+        assert_eq!(gone.code, "stale_node", "{gone}");
+        assert_eq!(gone.details.as_ref().unwrap()["retry"], "list_tasks");
+        assert!(store.state() == before, "a refused update wrote");
+    }
+
+    /// A node id that names nothing, and a node that is not a task, are
+    /// refused rather than made into one; so is a call that asks for no
+    /// change, and an unknown field.
+    #[test]
+    fn update_task_refuses_an_unknown_task() {
+        let store = MemoryStore::new();
+        let backend = store.backend();
+        let page = store.add_document(koru_core::explore::KIND_DOCUMENT, "Plan", "Just a note");
+        let (_, line) = store.stored(page);
+        let update = |node: NodeId, changes: Value| {
+            let mut arguments = json!({
+                "workspace_id": store.workspace.to_storage(),
+                "document_id": page.to_storage(),
+                "node_id": node.to_storage(),
+                "expected": "Just a note",
+            });
+            arguments
+                .as_object_mut()
+                .unwrap()
+                .extend(changes.as_object().unwrap().clone());
+            call(&backend, "update_task", arguments)
+        };
+        let before = store.state();
+
+        let nowhere = update(NodeId::new(), json!({"done": true})).unwrap_err();
+        assert_eq!(nowhere.code, "stale_node", "{nowhere}");
+        assert_eq!(nowhere.details.as_ref().unwrap()["retry"], "list_tasks");
+
+        let plain = update(
+            line,
+            json!({"due": {"type": "date", "value": "2026-09-04"}}),
+        )
+        .expect_err("a plain line is not a task");
+        assert_eq!(plain.code, "invalid_request", "{plain}");
+        assert!(plain.message.contains("not a task"), "{plain}");
+        assert!(
+            !koru_core::tasks::is_task(&koru_core::tasks::TaskFields::of(&stored_task(
+                &store, page, line
+            ))),
+            "and it did not become one"
+        );
+
+        let idle = update(line, json!({})).unwrap_err();
+        assert_eq!(idle.code, "invalid_request", "{idle}");
+        let unknown = update(line, json!({"done": true, "title": "Renamed"})).unwrap_err();
+        assert!(unknown.message.contains("unknown field"), "{unknown}");
+        assert!(store.state() == before, "a refused update wrote");
     }
 }

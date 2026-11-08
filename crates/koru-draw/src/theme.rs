@@ -10,7 +10,8 @@
 //! Switching mode has to invalidate every task layout, because
 //! `layout::build_task` bakes brushes into the parley layout.
 
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU16, AtomicU32, Ordering};
 
 use parley::BoundingBox;
 use peniko::Color;
@@ -143,12 +144,34 @@ pub struct Palette {
 
     /// Status bar band along the bottom edge.
     pub status_bg: Color,
+    /// The side panes' own fill: the explore column and the context pane.
+    /// White in the light theme, a sheet on the lighter `ground`, so what is
+    /// chosen or hovered in it is a grey of its own ink (`row_chosen`,
+    /// `hover_tint`) rather than a card.
+    pub pane_bg: Color,
     /// Backing for the level-name chip on a group row.
     pub chip_bg: Color,
+    /// The window's ground — the title bar, the lane, the rail and the
+    /// edge lanes the cards sit on (E57). The default base colour: a user's
+    /// chosen one replaces it (`base_fill`), and every hover and active grey
+    /// on it is a translucent ink, so they follow either. Barely off white,
+    /// so the white panes and pages lift off it on their hairlines alone.
+    pub ground: Color,
     /// The tint behind a code block and an inline-code span — one colour so the
     /// two read as the same feature. Chrome only; not a name a document stores.
     pub code_bg: Color,
     pub hover_tint: Color,
+    /// The fill a **chosen** sidebar row wears: the open document, a picked
+    /// row, the Tasks rail's queue. The text colour at a low alpha, like
+    /// `hover_tint` but about half again as strong, so the chosen row stays a
+    /// step darker than the one under the pointer on any rail colour.
+    pub row_chosen: Color,
+    /// The fill the **active tab** wears: the strip's own colour, darkened
+    /// by a twentieth in the light themes (black at 5% multiplies whatever is
+    /// under it by 0.95), so the tab is a shade of the strip rather than a grey
+    /// of its own. Lighter than `hover_tint` on the strip, so a hovered tab
+    /// reads darker than the active one.
+    pub tab_chosen: Color,
     /// The selection bubble's surface, and the two colours that go on it.
     ///
     /// **The one inverted surface in the app**, and the reason it needed
@@ -268,7 +291,7 @@ pub struct TerminalPalette {
     pub ansi: [Color; 16],
 }
 
-const LIGHT_TERMINAL: TerminalPalette = TerminalPalette {
+static LIGHT_TERMINAL: TerminalPalette = TerminalPalette {
     background: rgb(0xFF, 0xFF, 0xFF),
     foreground: rgb(0x19, 0x19, 0x19),
     cursor: rgb(0x19, 0x19, 0x19),
@@ -293,7 +316,7 @@ const LIGHT_TERMINAL: TerminalPalette = TerminalPalette {
     ],
 };
 
-const DARK_TERMINAL: TerminalPalette = TerminalPalette {
+static DARK_TERMINAL: TerminalPalette = TerminalPalette {
     background: rgb(0x0C, 0x0C, 0x0C),
     foreground: rgb(0xF5, 0xF5, 0xF5),
     cursor: rgb(0xF5, 0xF5, 0xF5),
@@ -323,11 +346,16 @@ const DARK_TERMINAL: TerminalPalette = TerminalPalette {
 /// They were warm once, tuned against a cream `bg`. With the page white and the
 /// text a neutral near-black, a warm grey beside it reads as a yellow cast
 /// rather than as warmth, so the whole set moved together.
-pub static LIGHT: Palette = Palette {
+/// The light table as a constant, so the fixture theme can be derived from
+/// it at compile time; [`LIGHT`] is the one the program reads.
+const LIGHT_TABLE: Palette = Palette {
     bg: rgb(0xFF, 0xFF, 0xFF),
     canvas: rgb(0xED, 0xEE, 0xF0),
     text: rgb(0x19, 0x19, 0x19),
-    text_dim: rgb(0x8A, 0x8A, 0x8A),
+    // 4.9:1 on a #F6F6F6 pane, past WCAG AA's 4.5:1 for 13 px text. The
+    // #8A8A8A it replaces was 3.2:1, and vello's greyscale coverage (no gamma,
+    // no contrast boost, stems at fractional x) made that pale grey read as blur.
+    text_dim: rgb(0x6B, 0x6B, 0x6B),
     placeholder: rgb(0xAB, 0xAB, 0xAB),
     selection: rgb(0xCF, 0xDD, 0xEE),
     // A separate field that happens to match `text`. It will not follow it —
@@ -349,7 +377,9 @@ pub static LIGHT: Palette = Palette {
     focus_ring: rgb(0xC7, 0xC7, 0xC7),
 
     status_bg: rgb(0xF6, 0xF6, 0xF6),
+    pane_bg: rgb(0xFF, 0xFF, 0xFF),
     chip_bg: rgb(0xEA, 0xEA, 0xEA),
+    ground: rgb(0xF7, 0xF7, 0xF7),
     code_bg: rgb(0xF1, 0xF1, 0xF3),
     highlights: [
         ("yellow", Color::from_rgba8(0xFF, 0xE0, 0x66, 0x8C)),
@@ -372,6 +402,10 @@ pub static LIGHT: Palette = Palette {
         ("stone", rgb(0x6E, 0x66, 0x60)),
     ],
     hover_tint: Color::from_rgba8(0x19, 0x19, 0x19, 0x14),
+    // #D9D9D9 on a #F6F6F6 column, where hover is #E5E5E5.
+    row_chosen: Color::from_rgba8(0x19, 0x19, 0x19, 0x21),
+    // #E2E2E2 on the #EEEEEE strip, where a hovered tab is about #DDDDDD.
+    tab_chosen: Color::from_rgba8(0x00, 0x00, 0x00, 0x0D),
     bubble_bg: rgb(0x23, 0x23, 0x23),
     bubble_fg: rgb(0xF5, 0xF5, 0xF5),
     bubble_dim: rgb(0xA3, 0xA3, 0xA3),
@@ -487,6 +521,8 @@ pub static LIGHT: Palette = Palette {
 /// of collapsing into greys, and the highlight swatches are tuned separately
 /// because a highlight has to sit behind pale text without drowning it. A
 /// mechanical inversion would lose both.
+pub static LIGHT: Palette = LIGHT_TABLE;
+
 pub static DARK: Palette = Palette {
     // The light theme's text, inverted into a page.
     bg: rgb(0x19, 0x19, 0x19),
@@ -509,7 +545,9 @@ pub static DARK: Palette = Palette {
     focus_ring: rgb(0x55, 0x55, 0x55),
 
     status_bg: rgb(0x1A, 0x1A, 0x1A),
+    pane_bg: rgb(0x1A, 0x1A, 0x1A),
     chip_bg: rgb(0x33, 0x33, 0x33),
+    ground: rgb(0x2E, 0x2E, 0x2E),
     code_bg: rgb(0x23, 0x23, 0x23),
     // Dimmer and more transparent than the light set: a highlight has to sit
     // behind pale text without drowning it.
@@ -535,6 +573,9 @@ pub static DARK: Palette = Palette {
         ("stone", rgb(0x9E, 0x94, 0x8C)),
     ],
     hover_tint: Color::from_rgba8(0xF5, 0xF5, 0xF5, 0x16),
+    row_chosen: Color::from_rgba8(0xF5, 0xF5, 0xF5, 0x24),
+    // Lightened, not darkened: there is little below a dark strip to use.
+    tab_chosen: Color::from_rgba8(0xF5, 0xF5, 0xF5, 0x1F),
     // Lighter than the dark `bg` (#191919), not darker: the bubble has to lift
     // off the page in this theme, and there is nothing below #191919 to use.
     bubble_bg: rgb(0x33, 0x33, 0x33),
@@ -652,19 +693,14 @@ pub static DARK: Palette = Palette {
     ],
 };
 
-static DARK_MODE: AtomicBool = AtomicBool::new(false);
-
-/// The active palette.
+/// The active palette: the host's root theme at its root contrast. An
+/// element reads its frame context instead (`el::FrameCx`).
 pub fn p() -> &'static Palette {
-    if DARK_MODE.load(Ordering::Relaxed) {
-        &DARK
-    } else {
-        &LIGHT
-    }
+    themes::active().palette(themes::contrast())
 }
 
 pub fn terminal_palette() -> &'static TerminalPalette {
-    terminal_palette_for(is_dark())
+    themes::active().terminal
 }
 
 /// Resolve a terminal's own theme without mutating the application's palette.
@@ -715,8 +751,57 @@ pub fn terminal_dim(foreground: Color, background: Color) -> Color {
     ])
 }
 
+// ------------------------------------------------------- the base color
+//
+// One color per theme, never derived from the other: a tint that sits well
+// on light is wrong on dark. Chosen from a list in Settings for now, and
+// saved: `base_color_light=` / `base_color_dark=` in `preferences.conf`, as
+// `#rrggbb`. The host applies both at startup and whenever the authority
+// answers, and saves a swatch click like any other appearance choice. The
+// file takes any `#rrggbb`, so a free-form picker needs no format change.
+
+/// `0` follows the theme; otherwise `0xFF00_0000 | rgb`. Light, then dark.
+static BASE_COLOR: [AtomicU32; 2] = [AtomicU32::new(0), AtomicU32::new(0)];
+
+/// The tints Settings offers for the base, per theme: soft ones on light,
+/// deep ones on dark, so the rail's icons stay readable on every one.
+pub const BASE_TINTS_LIGHT: [u32; 6] = [0xE4E9F0, 0xDDE7F6, 0xDCEFE4, 0xF2E9DA, 0xEAE2F4, 0xF6E0E3];
+pub const BASE_TINTS_DARK: [u32; 6] = [0x232832, 0x293750, 0x294435, 0x3F2F50, 0x444444, 0x493235];
+
+/// Set the base colour for the light or the dark theme, or `None` for the
+/// theme's own.
+pub fn set_base_color(dark: bool, rgb: Option<u32>) {
+    BASE_COLOR[usize::from(dark)].store(
+        rgb.map_or(0, |rgb| 0xFF00_0000 | (rgb & 0xFF_FFFF)),
+        Ordering::Relaxed,
+    );
+}
+
+/// The base colour chosen for the light or the dark theme, if any.
+pub fn base_color(dark: bool) -> Option<u32> {
+    match BASE_COLOR[usize::from(dark)].load(Ordering::Relaxed) {
+        0 => None,
+        value => Some(value & 0xFF_FFFF),
+    }
+}
+
+/// An `0xRRGGBB` value as a colour.
+pub fn rgb_hex(value: u32) -> Color {
+    Color::from_rgb8((value >> 16) as u8, (value >> 8) as u8, value as u8)
+}
+
+/// The window's ground now — the rail, the header, the side lanes, the foot
+/// and the masks behind the cards' corners, one tint: the colour chosen for
+/// the theme on screen, or the theme's own ground.
+pub fn base_fill() -> Color {
+    base_color(is_dark()).map_or(p().ground, rgb_hex)
+}
+
+/// Whether the host's root theme is a dark one: derived from the theme's
+/// appearance, never its identity (D3). Migrated code reads its frame
+/// context and never branches on this.
 pub fn is_dark() -> bool {
-    DARK_MODE.load(Ordering::Relaxed)
+    themes::active().is_dark()
 }
 
 // The host updates this from its existing OS appearance observation. Terminal
@@ -732,8 +817,15 @@ pub fn set_system_dark(dark: bool) -> bool {
     SYSTEM_DARK.swap(dark, Ordering::Relaxed) != dark
 }
 
+/// Make the built-in light or dark theme the root one: what the preference
+/// and the OS signal resolve to. Ignored while the fixture preview has pinned
+/// a theme.
 pub fn set_dark(on: bool) {
-    DARK_MODE.store(on, Ordering::Relaxed);
+    themes::set_active(if on {
+        &themes::DARK_THEME
+    } else {
+        &themes::LIGHT_THEME
+    });
 }
 
 // --------------------------------------------------------------- theme preference
@@ -811,26 +903,30 @@ impl CaretColor {
         }
     }
 
+    /// Where this colour sits in a [`themes::CaretSet`].
+    fn index(self) -> usize {
+        match self {
+            Self::Default => 0,
+            Self::Blue => 1,
+            Self::Amber => 2,
+            Self::Violet => 3,
+        }
+    }
+
     /// Concrete paint for the current theme.
     pub fn color(self) -> Color {
-        self.color_for(is_dark())
+        themes::active().carets.colors[self.index()]
     }
 
     /// A surface with its own palette must not borrow the app's dark/light
     /// choice when resolving the same semantic caret color.
     pub fn color_for(self, dark: bool) -> Color {
-        match (self, dark) {
-            (Self::Default, false) => rgb(0x19, 0x19, 0x19),
-            (Self::Default, true) => rgb(0xF4, 0xF4, 0xF5),
-            (Self::Blue, false) => rgb(0x25, 0x63, 0xEB),
-            (Self::Blue, true) => rgb(0x60, 0xA5, 0xFA),
-            (Self::Amber, false) => rgb(0xD9, 0x77, 0x06),
-            (Self::Amber, true) => rgb(0xFB, 0xBF, 0x24),
-            // Light matches the product violet; dark is a mid violet that still
-            // reads on #18181B without blowing out selection contrast.
-            (Self::Violet, false) => rgb(0x7C, 0x3A, 0xED),
-            (Self::Violet, true) => rgb(0x8B, 0x5C, 0xF6),
-        }
+        let set = if dark {
+            &themes::DARK_CARETS
+        } else {
+            &themes::LIGHT_CARETS
+        };
+        set.colors[self.index()]
     }
 
     /// Text selection fill for the current theme — same hue as [`Self::color`],
@@ -840,18 +936,7 @@ impl CaretColor {
     /// **Dark:** solid tint at ~30–40% accent strength (stronger than light so
     /// the highlight still reads on a dark ground while text stays #F4F4F5).
     pub fn selection(self) -> Color {
-        match (self, is_dark()) {
-            // Neutral caret → neutral wash (not a leftover blue).
-            (Self::Default, false) => Color::from_rgba8(0x19, 0x19, 0x19, 0x40),
-            (Self::Default, true) => rgb(0x3F, 0x3F, 0x46),
-            (Self::Blue, false) => Color::from_rgba8(0x25, 0x63, 0xEB, 0x40),
-            (Self::Blue, true) => rgb(0x1E, 0x3A, 0x5F),
-            (Self::Amber, false) => Color::from_rgba8(0xD9, 0x77, 0x06, 0x40),
-            (Self::Amber, true) => rgb(0x5C, 0x3D, 0x12),
-            (Self::Violet, false) => Color::from_rgba8(0x7C, 0x3A, 0xED, 0x40),
-            // Hand-tuned ~35% accent of #8B5CF6 on dark chrome.
-            (Self::Violet, true) => rgb(0x4C, 0x32, 0x78),
-        }
+        themes::active().carets.selections[self.index()]
     }
 }
 
@@ -1088,24 +1173,219 @@ pub fn set_theme_preference(pref: ThemePreference) {
 /// Stored as the variant's index into [`FontChoice::ALL`]. The initial value
 /// is [`default_ui_font`] spelled as an index — `System` (SF Pro) on macOS,
 /// `Inter` elsewhere — because a static cannot call `position()`.
-static UI_FONT: AtomicU8 = AtomicU8::new(if cfg!(target_os = "macos") {
+static UI_FONT: AtomicU16 = AtomicU16::new(if cfg!(target_os = "macos") {
     SYSTEM
 } else {
     INTER
 });
 
 /// The typeface the **chrome** is set in. Not what a document row is set in —
-/// that is `Paragraph::font`.
+/// that is `Paragraph::font`. A [preview](set_font_preview) stands in for the
+/// choice while it lasts.
 pub fn ui_font() -> FontChoice {
-    let i = UI_FONT.load(Ordering::Relaxed) as usize;
-    FontChoice::ALL.get(i).copied().unwrap_or_default()
+    previewed(FontSlot::Ui).unwrap_or_else(|| chosen_font(FontSlot::Ui))
+}
+
+// ------------------------------------------------------------- font previews
+//
+// Settings' font lists show each face on the whole app while the pointer or
+// the keyboard rests on it. A preview is not a choice: layout reads it, and
+// what is saved does not ([`chosen_font`]), so a preview that is never chosen
+// leaves nothing behind, even if the app closes mid-preview.
+
+/// The five font globals, as a preview names one.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum FontSlot {
+    Ui,
+    Body,
+    Headings,
+    Code,
+    /// The AI chat's messages and composer ([`chat_font`]). Its default is
+    /// the app font, followed live rather than copied.
+    Chat,
+}
+
+/// The value a font preview, or a role global, carries for `font`: a bundled
+/// face is its index in [`FontChoice::ALL`]; an installed family is past
+/// them, by its interned id. A [`preview::Preview`] of
+/// `PreviewSlot::Font(slot)` owns a preview; callers must invalidate laid-out
+/// text afterwards, as for a choice.
+pub fn font_preview_value(font: FontChoice) -> u16 {
+    match font {
+        FontChoice::Installed(id) => FontChoice::ALL.len() as u16 + id.index(),
+        bundled => FontChoice::ALL
+            .iter()
+            .position(|c| *c == bundled)
+            .unwrap_or(0) as u16,
+    }
+}
+
+/// The face a value from [`font_preview_value`] stands for.
+fn font_of_value(value: u16) -> Option<FontChoice> {
+    let bundled = FontChoice::ALL.len() as u16;
+    if value < bundled {
+        FontChoice::ALL.get(usize::from(value)).copied()
+    } else {
+        crate::installed_fonts::InstalledId::from_index(value - bundled).map(FontChoice::Installed)
+    }
+}
+
+fn previewed(slot: FontSlot) -> Option<FontChoice> {
+    preview::previewed(preview::PreviewSlot::Font(slot)).and_then(font_of_value)
+}
+
+/// What `slot` is set to, without any preview: what Settings saves and
+/// what its lists tick.
+pub fn chosen_font(slot: FontSlot) -> FontChoice {
+    let (global, fallback) = match slot {
+        FontSlot::Ui => (&UI_FONT, FontChoice::default()),
+        FontSlot::Body => (&BODY_FONT, FontChoice::default()),
+        FontSlot::Headings => (&HEADINGS_FONT, FontChoice::default()),
+        FontSlot::Code => (&CODE_FONT, FontChoice::JetBrainsMono),
+        FontSlot::Chat => (&CHAT_FONT, FontChoice::default()),
+    };
+    match global.load(Ordering::Relaxed) {
+        FOLLOWS_APP => chosen_font(FontSlot::Ui),
+        value => font_of_value(value).unwrap_or(fallback),
+    }
 }
 
 /// Callers must invalidate laid-out text afterwards — the font, like the
 /// brushes, is baked into every parley layout.
 pub fn set_ui_font(font: FontChoice) {
-    let i = FontChoice::ALL.iter().position(|c| *c == font).unwrap_or(0);
-    UI_FONT.store(i as u8, Ordering::Relaxed);
+    set_font_setting(FontSlot::Ui, setting_of(font));
+}
+
+// ------------------------------------------- what each role is set to
+//
+// **The selection is kept apart from the face.** A role set to an installed
+// family that is missing on this computer draws its default face and keeps
+// the family's name, so the choice survives to a computer that has it; and a
+// role following the default draws the same face as one that chose it, yet
+// saves differently. So the setting is held here beside the face it resolves
+// to, and what Settings saves and ticks is the setting, never read back from
+// the face (DOCFONTSIZE D12, D14).
+
+static FONT_SETTINGS: Mutex<[koru_settings::FontSetting; 5]> = Mutex::new([
+    koru_settings::FontSetting::FollowDefault,
+    koru_settings::FontSetting::FollowDefault,
+    koru_settings::FontSetting::FollowDefault,
+    koru_settings::FontSetting::FollowDefault,
+    koru_settings::FontSetting::FollowDefault,
+]);
+
+/// The face a role draws when its setting does not name one here. The
+/// chat's is **the app font's choice**, not a face of its own.
+fn role_default(slot: FontSlot) -> FontChoice {
+    match slot {
+        FontSlot::Ui => default_ui_font(),
+        FontSlot::Body => default_body_font(),
+        FontSlot::Headings => default_headings_font(),
+        FontSlot::Code => default_code_font(),
+        FontSlot::Chat => chosen_font(FontSlot::Ui),
+    }
+}
+
+fn role_global(slot: FontSlot) -> &'static AtomicU16 {
+    match slot {
+        FontSlot::Ui => &UI_FONT,
+        FontSlot::Body => &BODY_FONT,
+        FontSlot::Headings => &HEADINGS_FONT,
+        FontSlot::Code => &CODE_FONT,
+        FontSlot::Chat => &CHAT_FONT,
+    }
+}
+
+/// The setting a face chosen from a list stands for.
+fn setting_of(font: FontChoice) -> koru_settings::FontSetting {
+    match font {
+        FontChoice::Installed(id) => {
+            koru_settings::FamilyName::new(crate::installed_fonts::interned(id).name)
+                .map_or(koru_settings::FontSetting::FollowDefault, |name| {
+                    koru_settings::FontSetting::Installed(name)
+                })
+        }
+        bundled => {
+            koru_settings::FontSetting::Chosen(koru_settings::FontFamily::parse(bundled.key()))
+        }
+    }
+}
+
+/// The face `setting` draws `slot` in on this computer: an installed family
+/// if it is installed here, otherwise the role's default.
+pub fn resolve_font(slot: FontSlot, setting: &koru_settings::FontSetting) -> FontChoice {
+    use koru_settings::FontSetting;
+    match setting {
+        FontSetting::FollowDefault => role_default(slot),
+        FontSetting::Chosen(family) => FontChoice::parse(family.token()),
+        FontSetting::Installed(name) => match crate::installed_fonts::resolve(name.as_str()) {
+            Some(id) => FontChoice::Installed(id),
+            None => {
+                note_missing(slot, name.as_str());
+                role_default(slot)
+            }
+        },
+    }
+}
+
+/// Say once per process that a chosen family is not installed here: the one
+/// fact a person comparing two computers needs, and never again per frame.
+fn note_missing(slot: FontSlot, name: &str) {
+    static NOTED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    let mut noted = NOTED.lock().unwrap_or_else(|held| held.into_inner());
+    if noted.iter().any(|seen| seen == name) {
+        return;
+    }
+    noted.push(name.to_owned());
+    tracing::info!(
+        target: "koru::fonts",
+        family = name,
+        role = ?slot,
+        default = role_default(slot).label(),
+        "a chosen font is not installed here; drawing the role's default"
+    );
+}
+
+/// Set what `slot` is set to, and draw it in the face that resolves to.
+/// Callers must invalidate laid-out text afterwards.
+pub fn set_font_setting(slot: FontSlot, setting: koru_settings::FontSetting) {
+    let face = resolve_font(slot, &setting);
+    // A chat that draws its default draws the app font as it is *now*, so
+    // it holds the mark rather than a copy that the next App font change
+    // would leave behind.
+    let follows_app = slot == FontSlot::Chat
+        && match &setting {
+            koru_settings::FontSetting::FollowDefault => true,
+            koru_settings::FontSetting::Installed(_) => !matches!(face, FontChoice::Installed(_)),
+            koru_settings::FontSetting::Chosen(_) => false,
+        };
+    let value = if follows_app {
+        FOLLOWS_APP
+    } else {
+        font_preview_value(face)
+    };
+    role_global(slot).store(value, Ordering::Relaxed);
+    FONT_SETTINGS
+        .lock()
+        .unwrap_or_else(|held| held.into_inner())[slot as usize] = setting;
+}
+
+/// What `slot` is set to: what Settings saves and ticks.
+pub fn font_setting(slot: FontSlot) -> koru_settings::FontSetting {
+    FONT_SETTINGS
+        .lock()
+        .unwrap_or_else(|held| held.into_inner())[slot as usize]
+        .clone()
+}
+
+/// The installed family `slot` is set to when it is not installed here: the
+/// list shows it as *Name (not installed)* while the default face draws.
+pub fn missing_font(slot: FontSlot) -> Option<String> {
+    let setting = font_setting(slot);
+    let name = setting.installed()?;
+    crate::installed_fonts::resolve(name.as_str())
+        .is_none()
+        .then(|| name.as_str().to_owned())
 }
 
 // ----------------------------------------------- the document font roles
@@ -1117,17 +1397,17 @@ pub fn set_ui_font(font: FontChoice) {
 // shell from `Settings` on save; loaded here at startup.
 
 /// Index of `Inter` in `FontChoice::ALL`.
-const INTER: u8 = 0;
+const INTER: u16 = 0;
 /// Index of `Manrope` in `FontChoice::ALL` — the headings role's default.
-const MANROPE: u8 = 5;
+const MANROPE: u16 = 5;
 /// Index of `JetBrainsMono` in `FontChoice::ALL` — the code role's default.
-const JETBRAINS_MONO: u8 = 9;
+const JETBRAINS_MONO: u16 = 9;
 /// Index of `System` in `FontChoice::ALL` — the app role's default on macOS.
-const SYSTEM: u8 = 12;
+const SYSTEM: u16 = 12;
 
-static BODY_FONT: AtomicU8 = AtomicU8::new(INTER);
-static HEADINGS_FONT: AtomicU8 = AtomicU8::new(MANROPE);
-static CODE_FONT: AtomicU8 = AtomicU8::new(JETBRAINS_MONO);
+static BODY_FONT: AtomicU16 = AtomicU16::new(INTER);
+static HEADINGS_FONT: AtomicU16 = AtomicU16::new(MANROPE);
+static CODE_FONT: AtomicU16 = AtomicU16::new(JETBRAINS_MONO);
 
 /// The shipped default per role, as a value — what the index consts above
 /// spell for the atomics. `Settings::default` reads these so the two homes of
@@ -1153,36 +1433,61 @@ pub fn default_code_font() -> FontChoice {
 }
 
 pub fn body_font() -> FontChoice {
-    let i = BODY_FONT.load(Ordering::Relaxed) as usize;
-    FontChoice::ALL.get(i).copied().unwrap_or_default()
+    previewed(FontSlot::Body).unwrap_or_else(|| chosen_font(FontSlot::Body))
 }
 pub fn headings_font() -> FontChoice {
-    let i = HEADINGS_FONT.load(Ordering::Relaxed) as usize;
-    FontChoice::ALL.get(i).copied().unwrap_or_default()
+    previewed(FontSlot::Headings).unwrap_or_else(|| chosen_font(FontSlot::Headings))
 }
 pub fn code_font() -> FontChoice {
-    let i = CODE_FONT.load(Ordering::Relaxed) as usize;
-    FontChoice::ALL
-        .get(i)
-        .copied()
-        .unwrap_or(FontChoice::JetBrainsMono)
+    previewed(FontSlot::Code).unwrap_or_else(|| chosen_font(FontSlot::Code))
 }
 
 /// Callers must invalidate laid-out text afterwards.
 pub fn set_body_font(font: FontChoice) {
-    let i = FontChoice::ALL.iter().position(|c| *c == font).unwrap_or(0);
-    BODY_FONT.store(i as u8, Ordering::Relaxed);
+    set_font_setting(FontSlot::Body, setting_of(font));
 }
 pub fn set_headings_font(font: FontChoice) {
-    let i = FontChoice::ALL.iter().position(|c| *c == font).unwrap_or(0);
-    HEADINGS_FONT.store(i as u8, Ordering::Relaxed);
+    set_font_setting(FontSlot::Headings, setting_of(font));
 }
 pub fn set_code_font(font: FontChoice) {
-    let i = FontChoice::ALL
-        .iter()
-        .position(|c| *c == font)
-        .unwrap_or(JETBRAINS_MONO as usize);
-    CODE_FONT.store(i as u8, Ordering::Relaxed);
+    set_font_setting(FontSlot::Code, setting_of(font));
+}
+
+// ------------------------------------------------------------ the chat font
+//
+// The AI chat's messages and composer (koru-ai D79). Not a document role and
+// not the chrome: a person may want to read answers in a serif and keep the
+// menus in a sans. **Until chosen it is the app font, followed rather than
+// copied** — so a person who never touches it sees no change, and an App
+// font change, or a preview of one, carries the chat with it.
+
+/// The chat's role global while it follows the app font: a mark past every
+/// face [`font_preview_value`] can produce, not a face of its own.
+const FOLLOWS_APP: u16 = u16::MAX;
+
+static CHAT_FONT: AtomicU16 = AtomicU16::new(FOLLOWS_APP);
+
+/// The typeface the AI chat's messages and composer are set in: a preview
+/// of it, the person's choice, or — while it follows — [`ui_font`], preview
+/// included. A code block or inline code keeps the code font.
+pub fn chat_font() -> FontChoice {
+    previewed(FontSlot::Chat).unwrap_or_else(|| {
+        if CHAT_FONT.load(Ordering::Relaxed) == FOLLOWS_APP {
+            ui_font()
+        } else {
+            chosen_font(FontSlot::Chat)
+        }
+    })
+}
+
+/// The stack the AI chat's text is set in now.
+pub fn chat_stack() -> &'static str {
+    chat_font().stack()
+}
+
+/// Callers must invalidate laid-out text afterwards.
+pub fn set_chat_font(font: FontChoice) {
+    set_font_setting(FontSlot::Chat, setting_of(font));
 }
 
 pub fn body_stack() -> &'static str {
@@ -1346,7 +1651,9 @@ pub fn set_density(d: Density) {
 // layout row sets them live. Persisted by the shell from `Settings` on the
 // click that chose them; loaded here at startup.
 
-static DEFAULT_VIEW_MODE: AtomicU8 = AtomicU8::new(0); // 0=Full, 1=Page, 2=Narrow
+// Narrow until the settings say otherwise, matching `ViewModeChoice`'s
+// default, so a document opened before they load is not set wide.
+static DEFAULT_VIEW_MODE: AtomicU8 = AtomicU8::new(2); // 0=Full, 1=Page, 2=Narrow
 /// Packed RGBA, or `0` for "Auto" (follow the theme canvas). Real colours are
 /// opaque, so the low byte is `0xFF` and `0` is unambiguous.
 static DEFAULT_CANVAS_BG: AtomicU32 = AtomicU32::new(0);
@@ -1562,7 +1869,7 @@ pub const ICON_SIZE: f32 = 17.0;
 
 /// A typeface the user can pick.
 ///
-/// **Four independent things choose from this list**, and they are deliberately
+/// **Five independent things choose from this list**, and they are deliberately
 /// not the same setting:
 ///
 /// - the **app font** — the chrome, via [`ui_font`] / [`set_ui_font`], persisted
@@ -1570,6 +1877,9 @@ pub const ICON_SIZE: f32 = 17.0;
 /// - the **body** font of a document — `theme::body_font()`;
 /// - the **headings** font of a document — `theme::headings_font()`;
 /// - the **code** font (code blocks and inline code) — `theme::code_font()`.
+///
+/// - the **chat** font — the AI chat's messages and composer, via
+///   [`chat_font`], which follows the app font until chosen.
 ///
 /// Sharing the list is the point: whatever role a face can fill, any role can.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
@@ -1597,6 +1907,10 @@ pub enum FontChoice {
     // an *index* into [`Self::ALL`], so a mid-list insertion silently reseats
     // every persisted choice.
     System,
+    /// A family installed on this computer, picked by name. Not in
+    /// [`Self::ALL`]: its name, stack and class are the interner's
+    /// ([`installed_fonts::resolve`](crate::installed_fonts::resolve)).
+    Installed(crate::installed_fonts::InstalledId),
 }
 
 /// The class a family belongs to, so a picker can group families and a role can
@@ -1640,6 +1954,14 @@ impl FontChoice {
             Self::SourceSerif4 | Self::Lora => FontClass::Serif,
             Self::Nunito => FontClass::Rounded,
             Self::JetBrainsMono | Self::SourceCodePro | Self::Mono => FontClass::Mono,
+            // A serif face is not detected; it only affects grouping.
+            Self::Installed(id) => {
+                if crate::installed_fonts::interned(id).monospace {
+                    FontClass::Mono
+                } else {
+                    FontClass::Sans
+                }
+            }
         }
     }
 
@@ -1697,6 +2019,7 @@ impl FontChoice {
             // macOS and "Segoe UI" on Windows, so the arm needs no platform
             // names of its own.
             Self::System => with_scripts!("system-ui, sans-serif"),
+            Self::Installed(id) => crate::installed_fonts::interned(id).role_stack,
         }
     }
 
@@ -1719,7 +2042,9 @@ impl FontChoice {
         // family, so 500 would set `embolden` and stroke a faux-bold second
         // pass — and 400 is what both platforms set their own chrome in, which
         // is the whole point of choosing the system face.
-        if self == Self::System {
+        // An installed family is the same case: most are static, and 500 on
+        // a static face is faux bold.
+        if matches!(self, Self::System | Self::Installed(_)) {
             return 400.0;
         }
         match self.class() {
@@ -1743,6 +2068,7 @@ impl FontChoice {
             Self::SourceCodePro => "Source Code",
             Self::Mono => "System Mono",
             Self::System => "System",
+            Self::Installed(id) => crate::installed_fonts::interned(id).name,
         }
     }
 
@@ -1763,6 +2089,9 @@ impl FontChoice {
             Self::SourceCodePro => "sourcecodepro",
             Self::Mono => "mono",
             Self::System => "system",
+            // Not a bundled key: an installed family is saved by its name,
+            // through the role's `FontSetting`, never through this.
+            Self::Installed(_) => "installed",
         }
     }
 
@@ -1933,6 +2262,140 @@ pub fn type_step(heading: Option<u8>) -> TypeStep {
     }
 }
 
+/// [`type_step`] at a document's text scale: the body size over
+/// [`FONT_SIZE`].
+///
+/// **One factor for the whole ramp.** Size and the space above scale; leading
+/// is a ratio and does not, so H1 stays 1.875 × the body at every size and the
+/// rhythm between blocks holds. Not rounded: parley sets fractional sizes, and
+/// rounding would bend the ramp at the odd sizes.
+pub fn type_step_at(heading: Option<u8>, scale: f32) -> TypeStep {
+    let step = type_step(heading);
+    TypeStep {
+        size: step.size * scale,
+        line_height: step.line_height,
+        space_above: step.space_above * scale,
+    }
+}
+
+// --------------------------------------------------- the document text size
+//
+// The person's body size for documents, a process global for the same reason
+// the font roles are: layout reads it in leaf calls that have no settings to
+// be handed. A document's `Body` decides whether to follow it — the chat
+// composer is an editor too, and is pinned at the base size.
+
+/// The size the person chose, in px; `0` while it follows the default.
+static DOC_TEXT_SIZE: AtomicU8 = AtomicU8::new(0);
+
+/// Set the chosen size, or `None` to follow the default. Clears any preview.
+pub fn set_doc_text_size(px: Option<u8>) {
+    DOC_TEXT_SIZE.store(px.unwrap_or(0), Ordering::Relaxed);
+    preview::clear(preview::PreviewSlot::DocTextSize);
+}
+
+/// The person's choice, or `None` while the default applies. What Settings
+/// saves and ticks; never the preview.
+pub fn chosen_doc_text_size() -> Option<u8> {
+    match DOC_TEXT_SIZE.load(Ordering::Relaxed) {
+        0 => None,
+        px => Some(px),
+    }
+}
+
+/// The body size documents are laid out at now: a preview, the choice, or
+/// the default.
+pub fn doc_text_size() -> f32 {
+    preview::previewed(preview::PreviewSlot::DocTextSize)
+        .and_then(|px| u8::try_from(px).ok())
+        .or_else(chosen_doc_text_size)
+        .map_or(FONT_SIZE, f32::from)
+}
+
+/// [`doc_text_size`] as a factor of the base ramp.
+pub fn doc_scale() -> f32 {
+    doc_text_size() / FONT_SIZE
+}
+
+/// The document measurements that grow with its text.
+///
+/// Whose font an editor's text is set in.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
+pub enum TextFace {
+    /// The document font roles: body, headings, code.
+    #[default]
+    Document,
+    /// The chat font ([`chat_font`]), which is the app font until chosen; a
+    /// code block keeps the code font.
+    Chat,
+}
+
+/// The checkbox and its column, a bullet, the gap after a list marker, a code
+/// block's padding, the `+` affordance's glyph and a body line: what the eye
+/// reads as part of the text. The page's own geometry — the margins, the
+/// indent per level, the page width, the affordance lane — stays put, so a
+/// larger size gets fewer words per line, as a larger font does anywhere.
+///
+/// Paint, hit-testing and accessibility bounds all read one of these, so a
+/// checkbox cannot be drawn at one size and answer clicks at another.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct DocMetrics {
+    /// The body size over [`FONT_SIZE`].
+    pub scale: f32,
+    /// Whose font the text is set in: the document's, or the app's.
+    pub face: TextFace,
+    pub checkbox: f32,
+    /// Checkbox column to text column, [`GUTTER`] at the base size.
+    pub gutter: f32,
+    pub bullet_r: f32,
+    pub marker_gap: f32,
+    pub code_pad: f32,
+    pub code_pad_x: f32,
+    /// The `+` affordance's glyph size.
+    pub glyph: f32,
+    /// One line of body text.
+    pub line: f32,
+    pub title_gap: f32,
+}
+
+impl DocMetrics {
+    /// The measurements at the base size — every document before this
+    /// setting existed, and the chat composer always.
+    pub const BASE: Self = Self::at(1.0);
+
+    pub const fn at(scale: f32) -> Self {
+        Self {
+            scale,
+            face: TextFace::Document,
+            checkbox: CHECKBOX_SIZE * scale,
+            gutter: GUTTER * scale,
+            bullet_r: BULLET_R * scale,
+            marker_gap: MARKER_GAP * scale,
+            code_pad: CODE_PAD * scale,
+            code_pad_x: CODE_PAD_X * scale,
+            glyph: FONT_SIZE * scale,
+            line: FONT_SIZE * LINE_HEIGHT * scale,
+            title_gap: TITLE_GAP_BELOW * scale,
+        }
+    }
+
+    /// **The chat's own text**, for an editor that is part of the app rather
+    /// than a document — the chat composer: the chat font, at the size the
+    /// app's text is set at for the current density ([`role::ui`]), so what
+    /// is typed reads like the messages above it.
+    pub fn chat() -> Self {
+        Self {
+            face: TextFace::Chat,
+            ..Self::at(role::ui().metrics.size / FONT_SIZE)
+        }
+    }
+
+    /// The step a block is set at, at these metrics' scale.
+    pub fn step(&self, heading: Option<u8>) -> TypeStep {
+        type_step_at(heading, self.scale)
+    }
+}
+
 // ------------------------------------------------------------- the type system
 //
 // A two-layer system, the way Tailwind pairs a size scale with semantic names.
@@ -2019,6 +2482,12 @@ pub mod text_metrics {
     pub const XS: TextMetrics = TextMetrics::new(12.0, 16.0);
     pub const SM: TextMetrics = TextMetrics::new(13.0, 18.0);
     pub const UI_BODY: TextMetrics = TextMetrics::new(14.0, 20.0);
+    /// A chrome heading — a popover page's *WORKSPACES · n*. Chrome leading,
+    /// tighter than the document's at the same size (E74).
+    pub const UI_HEADING: TextMetrics = TextMetrics::new(16.0, 22.0);
+    /// A chrome title — the explore pane's app name, level with the rail's
+    /// Home square (E74; 18 after 22 read too large on screen, E77).
+    pub const UI_TITLE: TextMetrics = TextMetrics::new(18.0, 24.0);
     pub const DOC_BODY: TextMetrics = TextMetrics::new(16.0, 24.0);
     pub const DOC_BODY_COMPACT: TextMetrics = TextMetrics::new(14.0, 21.0);
     pub const DOC_BODY_COMFORTABLE: TextMetrics = TextMetrics::new(18.0, 27.0);
@@ -2066,6 +2535,19 @@ pub mod role {
     /// migration.
     pub const fn section_heading() -> TextStyle {
         TextStyle::new(text_metrics::UI_BODY, FontWeight::SemiBold)
+    }
+    /// The explore pane's title — the app's name over its nav, level with
+    /// the rail's Home square: `UI_TITLE` 18/24, Medium (the review's notes,
+    /// E72, E74 and E77, after ChatGPT's sidebar title). Drawn in the rows'
+    /// ink, `text_dim`, so the name and its rows read as one column.
+    pub const fn pane_title() -> TextStyle {
+        TextStyle::new(text_metrics::UI_TITLE, MEDIUM)
+    }
+    /// A popover page's heading — *WORKSPACES · n*, *SWITCH TO · n*:
+    /// `UI_HEADING` 16/22, Medium (the review's notes, E73 and E74; it was
+    /// `hint`, 11 px).
+    pub const fn popover_heading() -> TextStyle {
+        TextStyle::new(text_metrics::UI_HEADING, MEDIUM)
     }
     /// The default application UI — dialogs, settings, prominent controls.
     /// Compact steps it down to `SM` (13/18); Normal and Comfortable keep
@@ -2147,11 +2629,7 @@ pub const CANVAS_PRESETS_DARK: [[u8; 4]; 3] = [
 
 /// The canvas-colour presets for the active theme.
 pub fn canvas_presets() -> &'static [[u8; 4]; 3] {
-    if is_dark() {
-        &CANVAS_PRESETS_DARK
-    } else {
-        &CANVAS_PRESETS_LIGHT
-    }
+    themes::active().canvas_presets
 }
 
 impl ViewMode {
@@ -2449,7 +2927,13 @@ pub const SCROLLBAR_MIN_THUMB: f32 = 28.0;
 /// Hover raises opacity and darkens RGB so the change reads as "active" without
 /// a grab cursor or a wider bar.
 pub fn scrollbar_thumb_color(active: bool) -> Color {
-    let c = p().scrollbar_thumb;
+    scrollbar_thumb_color_in(p(), active)
+}
+
+/// [`scrollbar_thumb_color`] from `palette`: an element's own theme rather
+/// than the root's.
+pub fn scrollbar_thumb_color_in(palette: &Palette, active: bool) -> Color {
+    let c = palette.scrollbar_thumb;
     if !active {
         return c;
     }
@@ -2491,15 +2975,36 @@ pub const CAPTION_BTN: f32 = 44.0;
 /// is a zero-width rect rather than an absent one, so every caller does the same
 /// arithmetic either way.
 ///
-/// **240 so the explore heading holds seven mode icons and its search button.**
-/// Seven icons at a 26 px pitch end at 188 px; the `…` and the search icon need
-/// 24 px each beyond that, so 232 — the width before Canvases became the seventh
-/// mode — dropped the search button at the default width.
-pub const SIDEBAR_W: f32 = 240.0;
+/// **256 is the sidebar's resting width on the workspace-foundation canvas**
+/// (`docs/features/workspace-foundation/TECHNICAL.final.md` §5.11), and also
+/// its floor: the apps row wraps rather than clips below it, so a narrower
+/// column would only be a narrower nav. It was 240 while the explore heading
+/// held seven mode icons and a search button in one 24 px band.
+pub const SIDEBAR_W: f32 = 256.0;
+/// How far the sidebar may be dragged, both ends. **One owner.** These were
+/// written twice — once in `koru-app-shell`'s panel and once in the
+/// workspace window's layout, both 190/500 — and a clamp applied in two
+/// places is two clamps. The canvas's range is 256–600: past 600 the pane
+/// competes with the document rather than serving it, and `regions::solve`
+/// would start eating into `CONTENT_MIN_W` on an ordinary laptop screen.
+pub const SIDEBAR_MIN_W: f32 = 256.0;
+pub const SIDEBAR_MAX_W: f32 = 600.0;
+/// The rail at the sidebar's left edge — the apps, and at its foot Settings,
+/// Help and the profile (the review's artboard 11). The pane and its widths
+/// above are what sits after it; the sidebar as a whole is the two together.
+/// 48, not 56: four pixels off each side (the review's note); a 36 px square
+/// keeps six pixels of air either side.
+pub const RAIL_W: f32 = 48.0;
 pub const CONTEXT_W: f32 = 268.0;
 /// The narrowest the active view may become before a side column is dropped.
 /// Content is what the window is for; the panels give way first.
 pub const CONTENT_MIN_W: f32 = 320.0;
+/// The ground's lanes at the window's right edge and along its foot, in the
+/// rail's colour, that the cards stop short of (the review's artboard: the
+/// explore pane and the document are cards on the window's ground, and a
+/// card needs ground around it). The main window's `Regions::with_ground`
+/// carves them.
+pub const EDGE_LANE_W: f32 = 8.0;
 /// How long a side column takes to slide in or out.
 pub const PANEL_SLIDE_MS: f32 = 140.0;
 
@@ -2591,11 +3096,24 @@ pub const AUTO_SCROLL_MAX_SPEED: f32 = 600.0;
 /// from the other end.
 pub const POPOVER_FADE_MS: f32 = 90.0;
 
+#[cfg(test)]
+mod doc_size_tests;
 pub mod motion;
 pub mod overlay;
+pub mod preview;
+pub mod themes;
+pub mod tokens;
+
+pub use themes::{Appearance, Contrast, Theme};
+pub use tokens::{
+    Accent, IconSize, Ink, Line, Metric, Profile, Radius, Space, Surface, Tagged, TextRole, alias,
+    metrics, roles,
+};
 
 #[cfg(test)]
 mod token_guards;
+#[cfg(test)]
+mod ui_scan;
 
 pub const POPOVER_RISE: f32 = 5.0;
 
@@ -2711,19 +3229,29 @@ mod tests {
     }
 
     /// The size scale is monotonic: each tier's size and line height step up.
-    /// `DOC_BODY_COMPACT` and `DOC_BODY_COMFORTABLE` are density variants of
-    /// the document body, checked separately rather than as rungs on the ladder.
+    /// Two ladders, because the chrome and the document tiers are named by
+    /// domain and keep their own leading — `UI_HEADING` is 16/22 beside
+    /// `DOC_BODY`'s 16/24 (E74). `DOC_BODY_COMPACT` and
+    /// `DOC_BODY_COMFORTABLE` are density variants of the document body,
+    /// checked separately rather than as rungs on the ladder.
     #[test]
     fn text_metrics_form_a_monotonic_scale() {
         use text_metrics::*;
-        let ladder = [MICRO, XS, SM, UI_BODY, DOC_BODY, LG, XL, _2XL, _3XL];
-        for w in ladder.windows(2) {
-            assert!(w[0].size < w[1].size, "size must increase across the scale");
-            assert!(
-                w[0].line_height < w[1].line_height,
-                "line height must increase across the scale"
-            );
+        let document = [MICRO, XS, SM, UI_BODY, DOC_BODY, LG, XL, _2XL, _3XL];
+        let chrome = [MICRO, XS, SM, UI_BODY, UI_HEADING, UI_TITLE, _2XL];
+        for ladder in [&document[..], &chrome[..]] {
+            for w in ladder.windows(2) {
+                assert!(w[0].size < w[1].size, "size must increase across the scale");
+                assert!(
+                    w[0].line_height < w[1].line_height,
+                    "line height must increase across the scale"
+                );
+            }
         }
+        assert!(
+            UI_HEADING.line_height < DOC_BODY.line_height,
+            "chrome leading is tighter than the document's at the same size"
+        );
         // Document-body density variants: compact is smaller than normal,
         // comfortable is larger.
         assert!(DOC_BODY_COMPACT.size < DOC_BODY.size);

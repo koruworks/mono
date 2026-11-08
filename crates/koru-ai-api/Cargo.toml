@@ -8,5 +8,6 @@ publish = false
 description = "Typed internal Koru AI server boundary."
 
 [dependencies]
+bytes.workspace = true
 koru-ai-core = { path = "../koru-ai-core" }
 koru-ai-wire = { path = "../koru-ai-wire" }

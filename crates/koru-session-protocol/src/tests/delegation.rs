@@ -9,7 +9,13 @@ use super::state::sample_summary;
 /// pins the two together so a host gate cannot drift from the changelog.
 #[test]
 fn the_delegation_family_rides_protocol_fourteen_and_its_own_capability() {
-    assert_eq!(MAX_PROTOCOL_VERSION, 17);
+    assert_eq!(MAX_PROTOCOL_VERSION, 22);
+    assert_eq!(TURN_MODEL_PROTOCOL_VERSION, 22);
+    assert_eq!(QUESTIONS_PROTOCOL_VERSION, 21);
+    assert_eq!(AGENT_NOTICES_PROTOCOL_VERSION, 20);
+    assert_eq!(TURN_REASONING_PROTOCOL_VERSION, 20);
+    assert_eq!(AGENT_MODES_PROTOCOL_VERSION, 19);
+    assert_eq!(PROVIDER_MODEL_FACTS_PROTOCOL_VERSION, 18);
     assert_eq!(TOOL_DETAIL_PROTOCOL_VERSION, 17);
     assert_eq!(SESSION_ORIGIN_PROTOCOL_VERSION, 16);
     assert_eq!(PROVIDER_MODELS_PROTOCOL_VERSION, 15);
@@ -18,8 +24,11 @@ fn the_delegation_family_rides_protocol_fourteen_and_its_own_capability() {
     // The pinned count: a capability is append-only and a new one is a
     // decision, so this line is what makes adding the next one deliberate.
     // The thirty-first, `launch-resume`, rides no version: it gates a defaulted
-    // `resume` flag on a creation (ADR-474).
-    assert_eq!(capability::ALL.len(), 31);
+    // `resume` flag on a creation (ADR-474). The thirty-second,
+    // `managed-questions`, rides v21: the creating peer draws an agent's
+    // questions (koru-ai D108). The thirty-third, `agent-commands`, rides
+    // v21 too: an agent's skills listed and named with an input (D121).
+    assert_eq!(capability::ALL.len(), 33);
     assert_eq!(
         capability::DELEGATION
             .parse::<CapabilityName>()

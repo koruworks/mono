@@ -10,8 +10,16 @@
 //! polling cancellation and pending approval answers between them, and
 //! translates each into the chat's own event. The stream ends at the turn's
 //! terminal event and gives the lease back.
+//!
+//! **Attachments** (chat-attachments D3, D4; ADR-480). The message's pictures
+//! are ingested into the session with the turn's lease and go natively when
+//! the session takes them; every attachment, picture or file, is also named
+//! by path in a block after the person's words, so an agent that cannot see
+//! pictures — or a file it should read — still has them. The session's copies
+//! are removed when the turn ends, which frees the host's slots.
 
 use std::collections::{HashMap, VecDeque};
+use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, sync_channel};
@@ -19,28 +27,32 @@ use std::time::{Duration, Instant};
 
 use koru_ai_core::{
     AgentActivityEvent, AgentToolFailure, AgentToolKind, AiError, AiErrorClass, AiEvent, AiRequest,
-    AiUsage, AttemptNotice, Cancellation, ChatRole, ChoiceIntent, ContextItem, InferenceAttemptId,
-    OfferedChoice, ProviderStream, Timestamp, ToolInvocationId, UsageSource, bound_agent_content,
-    bound_live_text,
+    AiUsage, AttachmentInput, AttachmentKind, AttemptNotice, Cancellation, ChatRole, ChoiceIntent,
+    ContextItem, InferenceAttemptId, OfferedChoice, ProviderStream, ReasoningChoice,
+    ReasoningLevel, Timestamp, ToolInvocationId, UsageSource, bound_agent_content, bound_live_text,
 };
 use koru_session_client::{ClientError, SessionClient, Subscription};
 use koru_session_protocol::{
-    AgentEvent, AgentTurnId, AgentUsage, ApprovalDecision, ApprovalId, ApprovalIntent,
-    CancelReason, ControllerLeaseToken, IdempotencyKey, LaunchReasoning, LaunchSelection,
-    ModelName, PendingInput, SessionId, ToolCallId, ToolFailure, ToolKind, ViewportGeneration,
+    AgentEvent, AgentModeId, AgentTurnId, AgentUsage, ApprovalDecision, ApprovalId, ApprovalIntent,
+    Attachment, AttachmentId, AttachmentSource, CancelReason, ControllerLeaseToken, DeliveryMode,
+    ErrorCode, IdempotencyKey, LaunchReasoning, LaunchSelection, ModelIdentity, ModelName,
+    PendingInput, SessionId, ToolCallId, ToolFailure, ToolKind, ViewportGeneration,
 };
 use koru_session_wire::SubscriptionUpdate;
 
 use crate::control::{offer, session_error};
 use crate::{
-    AGENT_DEFAULT_MODEL, AgentProvider, ApprovalAnswer, CANCEL_DEADLINE, COLUMNS, LiveTurns,
-    PREFIX_BYTES, PRODUCT, PendingApproval, READ_INTERVAL, chat_origin,
+    AGENT_DEFAULT_MODEL, AgentProvider, CANCEL_DEADLINE, COLUMNS, LiveTurns, PREFIX_BYTES, PRODUCT,
+    PendingApproval, READ_INTERVAL, SteerError, SteerInput, chat_origin,
 };
 
 /// How long the turn waits for a turn it found already running to end
 /// after cancelling it, before submitting its own.
 const RECONCILE_DEADLINE: Duration = Duration::from_secs(10);
 const ANSWER_CAPACITY: usize = 8;
+/// Steers waiting for the turn's thread at once; a person steers one
+/// message at a time, so a few is plenty.
+const STEER_CAPACITY: usize = 4;
 
 pub(crate) fn start(
     provider: &AgentProvider,
@@ -56,9 +68,58 @@ pub(crate) fn start(
         )
     })?;
     let origin = chat_origin(chat)?;
-    // Effort for an agent lands with the effort chip (phase B); until then the
-    // chat sends none and the agent runs at its own default.
-    let selection = selection_for(&request.model, None)?;
+    // The chat's level rides the session's start with its model, and the
+    // host checks the agent applied it (agent-models D18). *Default* sends
+    // none: the agent decides.
+    let reasoning = launch_reasoning(request.reasoning);
+    // The chat's approval mode (koru-ai D7): the session starts in it, and
+    // every message carries it, so a mode chosen after the start reaches
+    // the agent with the next message.
+    let mode = agent_mode(request.options.agent_mode.as_deref())?;
+    // Fast mode (D11) rides the same way: the start, and every message.
+    let fast = request.options.agent_fast;
+    let selection = selection_for(&request.model, reasoning, mode.clone())?
+        .map(|selection| LaunchSelection { fast, ..selection });
+    let selection = match (selection, fast) {
+        (None, Some(fast)) => Some(LaunchSelection {
+            fast: Some(fast),
+            ..LaunchSelection::default()
+        }),
+        (selection, _) => selection,
+    };
+    // The chat's model, as the session would be started on it: kept for a
+    // session that is already live on another (below).
+    let chat_model = selection
+        .as_ref()
+        .and_then(|selection| selection.model.clone());
+    // A set's answers sent as the next message (D108): the set must still be
+    // answerable, and the answers fit it, before a session is touched.
+    let answering = match &request.options.agent_answers {
+        Some(next) => {
+            let set = provider
+                .live
+                .next_message_set(next.invocation)
+                .filter(|set| set.chat == chat)
+                .ok_or_else(questions_closed)?;
+            let answers = koru_session_protocol::validate_answers(
+                &set.questions,
+                next.answers
+                    .iter()
+                    .cloned()
+                    .map(crate::protocol_answer)
+                    .collect(),
+            )
+            .map_err(|_| {
+                AiError::new(
+                    AiErrorClass::Configuration,
+                    "Those answers do not fit the questions.",
+                    false,
+                )
+            })?;
+            Some((next.invocation, set, answers))
+        }
+        None => None,
+    };
     let ensured = provider.sessions.ensure(
         origin,
         &provider.kind,
@@ -84,6 +145,16 @@ pub(crate) fn start(
     drop(render);
     let lease = lease.token;
 
+    // Only the session that asked can take the answers: a chat whose agent
+    // started again has nobody waiting for them (D108).
+    if let Some((invocation, set, _)) = &answering
+        && set.session != ensured.session
+    {
+        provider.live.forget_next_message(*invocation);
+        let _ = client.detach(ensured.session, lease);
+        return Err(questions_closed());
+    }
+
     let observation = client
         .observe_agent_events(ensured.session)
         .map_err(|error| session_error("observe", error))?;
@@ -98,22 +169,137 @@ pub(crate) fn start(
         reconcile(&client, ensured.session, lease, stale, &events)?;
     }
 
-    let had_history = request.messages.len() > 1;
-    let text = compose_prompt(&request, ensured.fresh);
-    let sent = client
-        .send_pending_input(
-            ensured.session,
-            lease,
-            PendingInput {
-                idempotency_key: IdempotencyKey::mint(),
-                text,
-                attachment_ids: Vec::new(),
-            },
-        )
-        .map_err(|error| session_error("send", error))?;
+    let had_history = request.messages.len() > 1 && answering.is_none();
+    // Answers are the whole message: the adapter writes them in the agent's
+    // own form, and nothing of the chat's goes with them.
+    let text = if answering.is_some() {
+        String::new()
+    } else {
+        compose_prompt(&request, ensured.fresh)
+    };
+    let pictures = match answering {
+        Some(_) => &[][..],
+        None => request
+            .messages
+            .last()
+            .map(|message| message.attachments.as_slice())
+            .unwrap_or_default(),
+    };
+    let mut delivered = deliver_pictures(
+        pictures,
+        |native| {
+            let bytes = std::fs::read(native).map_err(|_| None)?;
+            client
+                .ingest_attachment(
+                    ensured.session,
+                    lease,
+                    AttachmentId::mint(),
+                    AttachmentSource::PublicUpload,
+                    &bytes,
+                )
+                .map_err(Some)
+        },
+        |id| remove_session_copy(&client, ensured.session, lease, id),
+    );
+    // The message's level (D70), to a host that takes one per message: a
+    // level chosen after the chat began reaches the agent with it. A v19
+    // host would ignore it, so it is never sent one.
+    let turn_reasoning = request
+        .options
+        .agent_turn_reasoning
+        .and_then(launch_reasoning)
+        .filter(|_| client.supports_turn_reasoning());
+    // **A model chosen after the chat began**: the session is live on
+    // another, so the message moves it there, to a host that takes a model
+    // per message (protocol v22). A session started for this message is on
+    // it already. An older host would run the message on the session's
+    // model, so it is never sent one; the picker offers the switch only
+    // where the listing says the host takes it.
+    let turn_model = turn_model(
+        chat_model,
+        ensured.fresh,
+        ensured.model.as_ref(),
+        client.supports_turn_model(),
+    );
+    let reply = answering
+        .as_ref()
+        .map(|(_, set, answers)| koru_session_protocol::QuestionsReply {
+            request_id: set.request,
+            answers: answers.clone(),
+        });
+    // The skills the person picked (koru-ai D121), by name, to a host that
+    // takes them; the text says `$name` for each either way, so against an
+    // older host the message goes as typed.
+    let skills = if answering.is_some() || request.options.agent_skills.is_empty() {
+        Vec::new()
+    } else if client.supports_agent_commands() {
+        request.options.agent_skills.clone()
+    } else {
+        tracing::info!(
+            target: "koru_ai::agent",
+            skills = request.options.agent_skills.len(),
+            "the session host takes no skills; the message goes as typed"
+        );
+        Vec::new()
+    };
+    let send = |attachment_ids: Vec<AttachmentId>| {
+        let input = PendingInput {
+            model: turn_model.clone(),
+            idempotency_key: IdempotencyKey::mint(),
+            text: text.clone(),
+            attachment_ids,
+            mode: mode.clone(),
+            fast,
+            reasoning: turn_reasoning,
+            skills: skills.clone(),
+        };
+        match &reply {
+            Some(reply) => {
+                client.send_pending_answers(ensured.session, lease, input, reply.clone())
+            }
+            None => client.send_pending_input(ensured.session, lease, input),
+        }
+    };
+    let sent = match send(delivered.native.clone()) {
+        Ok(sent) => sent,
+        // The pictures did not fit the prompt frame after all: they go as
+        // paths, with the notice, rather than failing every retry the same
+        // way (D4, D6).
+        Err(ClientError::Session(failure))
+            if failure.code == ErrorCode::InputTooLarge && !delivered.native.is_empty() =>
+        {
+            for id in std::mem::take(&mut delivered.native) {
+                remove_session_copy(&client, ensured.session, lease, id);
+            }
+            delivered.as_files = true;
+            send(Vec::new()).map_err(|error| session_error("send", error))?
+        }
+        Err(error) => {
+            for id in &delivered.native {
+                remove_session_copy(&client, ensured.session, lease, *id);
+            }
+            // A message that keeps the session's model and is refused one is
+            // refused its level (D70), said as D19 says it. One that moves
+            // the session to another model is refused that model — the
+            // adapters set the model before the level — and says so.
+            if turn_reasoning.is_some()
+                && turn_model.is_none()
+                && matches!(&error, ClientError::Session(failure)
+                    if failure.code == ErrorCode::ProviderModelUnavailable)
+            {
+                return Err(AiError::new(
+                    AiErrorClass::ModelUnavailable,
+                    koru_ai_core::AGENT_REASONING_REJECTED,
+                    false,
+                ));
+            }
+            return Err(session_error("send", error));
+        }
+    };
 
     let (answers_tx, answers) = sync_channel(ANSWER_CAPACITY);
-    provider.live.register(attempt, chat, answers_tx);
+    let (steers_tx, steers) = sync_channel(STEER_CAPACITY);
+    provider.live.register(attempt, chat, answers_tx, steers_tx);
     let mut queued = VecDeque::new();
     if ensured.fresh && had_history {
         queued.push_back(AiEvent::Notice {
@@ -122,42 +308,228 @@ pub(crate) fn start(
             at: Timestamp::now(),
         });
     }
+    if delivered.as_files {
+        tracing::info!(
+            target: "koru_ai::agent",
+            pictures = pictures
+                .iter()
+                .filter(|attachment| attachment.kind == AttachmentKind::Image)
+                .count(),
+            "an agent takes no pictures here; they went as file paths"
+        );
+        queued.push_back(AiEvent::Notice {
+            attempt_id: attempt,
+            notice: AttemptNotice::ImagesAsFiles,
+            at: Timestamp::now(),
+        });
+    }
     queued.push_back(AiEvent::Started {
         attempt_id: attempt,
         provider_response_id: Some(sent.turn_id.to_string()),
         request_payload_bytes: None,
-        resolved_model: ensured
-            .model
+        // The model the message moved the session to, else the session's.
+        resolved_model: turn_model
             .as_ref()
-            .and_then(|model| model.reported.as_ref().or(model.requested.as_ref()))
+            .or_else(|| {
+                ensured
+                    .model
+                    .as_ref()
+                    .and_then(|model| model.reported.as_ref().or(model.requested.as_ref()))
+            })
             .map(|model| model.as_str().to_owned()),
-        effective_reasoning: None,
+        // The level the session started at: the host refuses a start whose
+        // level the agent did not report applied, so the chat's is the one.
+        effective_reasoning: reasoning.and_then(applied_choice),
         at: Timestamp::now(),
     });
+    // The answers' set closes in this reply: its resolution is followed here
+    // though another turn asked it.
+    let question_rows = answering
+        .map(|(invocation, set, _)| (set.request, invocation))
+        .into_iter()
+        .collect();
     Ok(Box::new(TurnStream {
         attempt,
+        chat,
         session: ensured.session,
         lease,
         turn: sent.turn_id,
         client: Arc::new(client),
         events,
         answers,
+        steers,
         live: Arc::clone(&provider.live),
         cancellation,
         cancelling: None,
         queued,
         tools: HashMap::new(),
         approvals: HashMap::new(),
+        question_rows,
         usage: None,
+        ingested: delivered.native,
+        started_in: request.options.agent_mode.clone(),
         done: false,
     }))
 }
 
+/// A set answered by the next message that can no longer be answered: it
+/// was answered or passed over, or the agent's session that asked it ended.
+fn questions_closed() -> AiError {
+    AiError::new(
+        AiErrorClass::Configuration,
+        koru_ai_core::AGENT_QUESTIONS_CLOSED,
+        false,
+    )
+}
+
+/// The chat's mode as the session protocol spells it. A token that is not a
+/// mode id never reaches the agent.
+fn agent_mode(mode: Option<&str>) -> Result<Option<AgentModeId>, AiError> {
+    mode.map(AgentModeId::from_str).transpose().map_err(|_| {
+        AiError::new(
+            AiErrorClass::Configuration,
+            "That approval mode is not one the agent offers.",
+            false,
+        )
+    })
+}
+
+/// What became of a message's pictures: the session copies that go
+/// natively, and whether any picture fell back to its path.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Delivered {
+    native: Vec<AttachmentId>,
+    as_files: bool,
+}
+
+/// Hand each picture's native copy to the session. One the session takes
+/// natively goes in the input; one it does not, or one it refuses (a
+/// picture it cannot read, its slots full, a file gone from disk), falls
+/// back to its path, which the prompt's block names anyway (D4). `ingest`
+/// answers `Err(None)` when the file could not be read.
+fn deliver_pictures(
+    attachments: &[AttachmentInput],
+    mut ingest: impl FnMut(&Path) -> Result<Attachment, Option<ClientError>>,
+    mut remove: impl FnMut(AttachmentId),
+) -> Delivered {
+    let mut delivered = Delivered::default();
+    for attachment in attachments {
+        if attachment.kind != AttachmentKind::Image {
+            continue;
+        }
+        let Some(native) = attachment.native.as_deref() else {
+            delivered.as_files = true;
+            continue;
+        };
+        match ingest(native) {
+            Ok(ingested) if ingested.delivery_mode == DeliveryMode::NativeStructured => {
+                tracing::debug!(
+                    target: "koru_ai::agent",
+                    attachment_id = %ingested.id,
+                    "picture ingested for native delivery"
+                );
+                delivered.native.push(ingested.id);
+            }
+            Ok(ingested) => {
+                tracing::debug!(
+                    target: "koru_ai::agent",
+                    delivery_mode = ?ingested.delivery_mode,
+                    "the session delivers no pictures natively"
+                );
+                remove(ingested.id);
+                delivered.as_files = true;
+            }
+            Err(Some(ClientError::Session(failure)))
+                if failure.code == ErrorCode::UnsupportedMedia =>
+            {
+                delivered.as_files = true;
+            }
+            Err(error) => {
+                tracing::warn!(
+                    target: "koru_ai::agent",
+                    error = %error.map_or_else(|| "unreadable".to_owned(), |error| error.to_string()),
+                    "a picture could not be handed to the session; it goes as a path"
+                );
+                delivered.as_files = true;
+            }
+        }
+    }
+    delivered
+}
+
+fn remove_session_copy(
+    client: &SessionClient,
+    session: SessionId,
+    lease: ControllerLeaseToken,
+    id: AttachmentId,
+) {
+    if let Err(error) = client.remove_attachment(session, lease, id) {
+        tracing::debug!(target: "koru_ai::agent", error = %error, "a session's picture copy was not removed");
+    }
+}
+
 /// The explicit selection a chat's model column asks for: none for the
 /// agent's own default, otherwise the agent's model id as it spelled it.
+/// A chat's reasoning choice as the session's launch spells it; *Default*
+/// is none, which leaves the agent at its own default.
+fn launch_reasoning(choice: ReasoningChoice) -> Option<LaunchReasoning> {
+    Some(match choice {
+        ReasoningChoice::Default => return None,
+        ReasoningChoice::Off => LaunchReasoning::Off,
+        ReasoningChoice::On => LaunchReasoning::On,
+        ReasoningChoice::Level(level) => match level {
+            ReasoningLevel::Minimal => LaunchReasoning::Minimal,
+            ReasoningLevel::Low => LaunchReasoning::Low,
+            ReasoningLevel::Medium => LaunchReasoning::Medium,
+            ReasoningLevel::High => LaunchReasoning::High,
+            ReasoningLevel::XHigh => LaunchReasoning::XHigh,
+            ReasoningLevel::Max => LaunchReasoning::Max,
+        },
+    })
+}
+
+/// The level a session started at, as the attempt records it.
+fn applied_choice(level: LaunchReasoning) -> Option<ReasoningChoice> {
+    Some(match level {
+        LaunchReasoning::Off => ReasoningChoice::Off,
+        LaunchReasoning::On => ReasoningChoice::On,
+        LaunchReasoning::Minimal => ReasoningChoice::Level(ReasoningLevel::Minimal),
+        LaunchReasoning::Low => ReasoningChoice::Level(ReasoningLevel::Low),
+        LaunchReasoning::Medium => ReasoningChoice::Level(ReasoningLevel::Medium),
+        LaunchReasoning::High => ReasoningChoice::Level(ReasoningLevel::High),
+        LaunchReasoning::XHigh => ReasoningChoice::Level(ReasoningLevel::XHigh),
+        LaunchReasoning::Max => ReasoningChoice::Level(ReasoningLevel::Max),
+    })
+}
+
+/// **The model a message moves its session to**: the chat's, when the
+/// session was live before the message and asks for another — `None` when
+/// the chat is on its agent's *Default*, which names no model, or the
+/// session was started for this message on the chat's model. Only to a host
+/// that takes a model per message (protocol v22): an older one runs the
+/// message on the session's model, as before.
+fn turn_model(
+    chat: Option<ModelName>,
+    fresh: bool,
+    session: Option<&ModelIdentity>,
+    host_takes_one: bool,
+) -> Option<ModelName> {
+    let moved =
+        chat.filter(|model| !fresh && session.and_then(|s| s.requested.as_ref()) != Some(model))?;
+    if !host_takes_one {
+        tracing::info!(
+            target: "koru_ai::agent",
+            "the session host takes no model per message; the message runs on the session's"
+        );
+        return None;
+    }
+    Some(moved)
+}
+
 fn selection_for(
     model: &str,
     reasoning: Option<LaunchReasoning>,
+    mode: Option<AgentModeId>,
 ) -> Result<Option<LaunchSelection>, AiError> {
     let model = (model != AGENT_DEFAULT_MODEL && !model.trim().is_empty())
         .then(|| ModelName::from_str(model))
@@ -169,10 +541,15 @@ fn selection_for(
                 false,
             )
         })?;
-    if model.is_none() && reasoning.is_none() {
+    if model.is_none() && reasoning.is_none() && mode.is_none() {
         return Ok(None);
     }
-    Ok(Some(LaunchSelection { model, reasoning }))
+    Ok(Some(LaunchSelection {
+        model,
+        reasoning,
+        mode,
+        fast: None,
+    }))
 }
 
 fn reconcile(
@@ -258,8 +635,16 @@ pub(crate) fn compose_prompt(request: &AiRequest, fresh: bool) -> String {
         let mut parts = Vec::new();
         let mut used = 0usize;
         for message in prior.iter().rev() {
+            let attached = if message.attachments.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "\n{}",
+                    attachment_block("Attached to that message:", &message.attachments)
+                )
+            };
             let part = format!(
-                "{}\n{}\n\n",
+                "{}\n{}{attached}\n\n",
                 match message.role {
                     ChatRole::User => "**Person:**",
                     ChatRole::Assistant => "**Assistant:**",
@@ -283,25 +668,73 @@ pub(crate) fn compose_prompt(request: &AiRequest, fresh: bool) -> String {
     }
     if let Some(last) = last {
         text.push_str(&last.markdown);
+        if !last.attachments.is_empty() {
+            if !last.markdown.trim().is_empty() {
+                text.push_str("\n\n");
+            }
+            text.push_str(&attachment_block(
+                "Attached to this message (stored on this computer; read a file from disk if you need it):",
+                &last.attachments,
+            ));
+        }
     }
     text
 }
 
+/// The Koru-authored list of a message's attachments: name, media type,
+/// size and the absolute path of the stored original. English, like the
+/// rest of what the agent reads from Koru.
+pub(crate) fn attachment_block(heading: &str, attachments: &[AttachmentInput]) -> String {
+    let mut block = String::from(heading);
+    for attachment in attachments {
+        block.push_str(&format!(
+            "\n- {} — {}, {} — {}",
+            attachment.file_name,
+            attachment.media_type,
+            human_size(attachment.byte_count),
+            attachment.path.display()
+        ));
+    }
+    block
+}
+
+fn human_size(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = 1024 * 1024;
+    if bytes >= MB {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{} KB", bytes.div_ceil(KB))
+    } else {
+        format!("{bytes} B")
+    }
+}
+
 struct TurnStream {
     attempt: InferenceAttemptId,
+    chat: koru_ai_core::ChatId,
     session: SessionId,
     lease: ControllerLeaseToken,
     turn: AgentTurnId,
     client: Arc<SessionClient>,
     events: Subscription,
-    answers: Receiver<ApprovalAnswer>,
+    answers: Receiver<crate::TurnAnswer>,
+    /// Text the person sends into this turn (a steer), sent on its lease.
+    steers: Receiver<SteerInput>,
     live: Arc<LiveTurns>,
     cancellation: Cancellation,
     cancelling: Option<Instant>,
     queued: VecDeque<AiEvent>,
     tools: HashMap<ToolCallId, ToolInvocationId>,
     approvals: HashMap<ApprovalId, ToolInvocationId>,
+    /// Each question set this turn asked, by the row it is (D108).
+    question_rows: HashMap<koru_session_protocol::QuestionRequestId, ToolInvocationId>,
     usage: Option<AiUsage>,
+    /// The session's copies of this turn's pictures, removed when it ends.
+    ingested: Vec<AttachmentId>,
+    /// The chat's mode the message was sent in, for a move the agent makes
+    /// during it (D7).
+    started_in: Option<String>,
     done: bool,
 }
 
@@ -320,6 +753,7 @@ impl Iterator for TurnStream {
                 return None;
             }
             self.drain_answers();
+            self.drain_steers();
             if self.cancellation.is_cancelled() && self.cancelling.is_none() {
                 self.cancelling = Some(Instant::now());
                 if let Err(error) = self.client.cancel_turn_for(
@@ -390,16 +824,97 @@ impl Iterator for TurnStream {
 impl TurnStream {
     fn drain_answers(&mut self) {
         while let Ok(answer) = self.answers.try_recv() {
-            if let Err(error) = self.client.answer_approval(
+            match answer {
+                crate::TurnAnswer::Approval(answer) => {
+                    if let Err(error) = self.client.answer_approval(
+                        self.session,
+                        self.lease,
+                        IdempotencyKey::mint(),
+                        answer.approval,
+                        answer.decision,
+                        answer.choice,
+                    ) {
+                        tracing::debug!(target: "koru_ai::agent", error = %error, "agent approval answer failed");
+                    }
+                }
+                crate::TurnAnswer::Questions { request, answers } => {
+                    if let Err(error) = self.client.answer_questions(
+                        self.session,
+                        self.lease,
+                        IdempotencyKey::mint(),
+                        request,
+                        answers,
+                    ) {
+                        tracing::debug!(target: "koru_ai::agent", error = %error, "agent questions answer failed");
+                    }
+                }
+            }
+        }
+    }
+
+    /// **Send each waiting steer into the running turn**, on this turn's
+    /// lease. While a turn runs, the session runtime hands the input to the
+    /// agent's `AgentControl::steer` and answers with the running turn's id.
+    /// An agent with no mid-turn input refuses it, and the person's message
+    /// is sent after the reply instead. A turn the host had already ended
+    /// would take the input as a new turn this stream does not follow: that
+    /// turn is cancelled at once and the steer is refused, so nothing runs
+    /// unrecorded.
+    fn drain_steers(&mut self) {
+        while let Ok(steer) = self.steers.try_recv() {
+            if self.cancelling.is_some() || self.done {
+                steer.reply.send(Err(SteerError::Closed));
+                continue;
+            }
+            let sent = self.client.send_pending_input(
                 self.session,
                 self.lease,
-                IdempotencyKey::mint(),
-                answer.approval,
-                answer.decision,
-                answer.choice,
-            ) {
-                tracing::debug!(target: "koru_ai::agent", error = %error, "agent approval answer failed");
-            }
+                PendingInput {
+                    model: None,
+                    idempotency_key: steer.key,
+                    text: steer.text,
+                    attachment_ids: Vec::new(),
+                    mode: None,
+                    fast: None,
+                    reasoning: None,
+                    skills: Vec::new(),
+                },
+            );
+            let outcome = match sent {
+                Ok(sent) if sent.turn_id == self.turn => {
+                    tracing::info!(target: "koru_ai::agent", "agent turn steered");
+                    Ok(())
+                }
+                Ok(sent) => {
+                    tracing::info!(
+                        target: "koru_ai::agent",
+                        "a steer reached an agent between turns; its turn is cancelled"
+                    );
+                    if let Err(error) = self.client.cancel_turn_for(
+                        self.session,
+                        self.lease,
+                        IdempotencyKey::mint(),
+                        sent.turn_id,
+                        CancelReason::Run,
+                    ) {
+                        tracing::debug!(target: "koru_ai::agent", error = %error, "stray steer turn cancel failed");
+                    }
+                    Err(SteerError::Refused)
+                }
+                Err(ClientError::Session(failure))
+                    if matches!(
+                        failure.code,
+                        ErrorCode::InvalidTransition | ErrorCode::DeliveryUnsupported
+                    ) =>
+                {
+                    Err(SteerError::Refused)
+                }
+                Err(error) => {
+                    tracing::debug!(target: "koru_ai::agent", error = %error, "agent steer failed");
+                    Err(SteerError::Failed)
+                }
+            };
+            steer.reply.send(outcome);
         }
     }
 
@@ -592,6 +1107,100 @@ impl TurnStream {
                 };
                 self.queue_terminal(terminal);
             }
+            AgentEvent::ModeChanged { turn_id, mode } if turn_id == self.turn => {
+                self.queued.push_back(AiEvent::AgentActivity {
+                    attempt_id,
+                    activity: AgentActivityEvent::ModeChanged {
+                        started_in: self.started_in.clone(),
+                        mode: mode.as_str().to_owned(),
+                    },
+                    at,
+                });
+            }
+            // A status line, not the reply (D69): kept beside it.
+            AgentEvent::Notice { turn_id, text } if turn_id == self.turn => {
+                self.queued.push_back(AiEvent::AgentActivity {
+                    attempt_id,
+                    activity: AgentActivityEvent::Notice { text },
+                    at,
+                });
+            }
+            // The agent stopped to ask (D108): a row of its own, filed as a
+            // permission request, whose questions are live until answered.
+            AgentEvent::QuestionsRequired {
+                turn_id,
+                request_id,
+                questions,
+                blocking,
+                delivery,
+            } if turn_id == self.turn => {
+                let invocation = ToolInvocationId::new();
+                let next_message =
+                    delivery == koru_session_protocol::QuestionsDelivery::NextMessage;
+                self.question_rows.insert(request_id, invocation);
+                self.live.offer_questions(
+                    attempt_id,
+                    invocation,
+                    crate::PendingQuestions {
+                        request: request_id,
+                        questions: questions.clone(),
+                    },
+                );
+                // A set answered by the next message outlives this turn.
+                if next_message {
+                    self.live.keep_next_message(
+                        invocation,
+                        crate::NextMessageSet {
+                            chat: self.chat,
+                            session: self.session,
+                            request: request_id,
+                            questions: questions.clone(),
+                        },
+                    );
+                }
+                self.queued.push_back(AiEvent::AgentActivity {
+                    attempt_id,
+                    activity: AgentActivityEvent::QuestionsAsked {
+                        invocation,
+                        questions: questions.into_iter().map(chat_question).collect(),
+                        blocking,
+                        next_message,
+                    },
+                    at,
+                });
+            }
+            // A set this turn asked, or one whose answers this turn carries.
+            AgentEvent::QuestionsResolved {
+                turn_id,
+                request_id,
+                outcome,
+            } if turn_id == self.turn || self.question_rows.contains_key(&request_id) => {
+                self.live.settle_questions(attempt_id, request_id);
+                if let Some(invocation) = self.question_rows.remove(&request_id) {
+                    self.live.forget_next_message(invocation);
+                    use koru_session_protocol::QuestionsOutcome;
+                    let activity = match outcome {
+                        QuestionsOutcome::Answered { answers } => {
+                            AgentActivityEvent::QuestionsAnswered {
+                                invocation,
+                                answers: Some(answers.into_iter().map(chat_answer).collect()),
+                            }
+                        }
+                        QuestionsOutcome::Skipped => AgentActivityEvent::QuestionsAnswered {
+                            invocation,
+                            answers: None,
+                        },
+                        QuestionsOutcome::Expired => {
+                            AgentActivityEvent::ApprovalExpired { invocation }
+                        }
+                    };
+                    self.queued.push_back(AiEvent::AgentActivity {
+                        attempt_id,
+                        activity,
+                        at,
+                    });
+                }
+            }
             // Another turn's events, provider state, attachments, children:
             // counted, never surfaced.
             _ => {}
@@ -604,6 +1213,13 @@ impl TurnStream {
         }
         self.done = true;
         self.live.unregister(self.attempt);
+        // A steer still waiting is answered now, not when the stream drops.
+        while let Ok(steer) = self.steers.try_recv() {
+            steer.reply.send(Err(SteerError::Closed));
+        }
+        for id in std::mem::take(&mut self.ingested) {
+            remove_session_copy(&self.client, self.session, self.lease, id);
+        }
         let _ = self.client.detach(self.session, self.lease);
     }
 }
@@ -611,6 +1227,40 @@ impl TurnStream {
 impl Drop for TurnStream {
     fn drop(&mut self) {
         self.finish();
+    }
+}
+
+/// A question as the chat keeps it: the agent's words, its options in its
+/// order (D108).
+fn chat_question(question: koru_session_protocol::AgentQuestion) -> koru_ai_core::AgentQuestion {
+    koru_ai_core::AgentQuestion {
+        id: question.id,
+        header: question.header,
+        question: question.question,
+        options: question
+            .options
+            .into_iter()
+            .map(|option| koru_ai_core::AgentQuestionOption {
+                label: option.label,
+                description: option.description,
+            })
+            .collect(),
+        allow_other: question.allow_other,
+        secret: question.secret,
+    }
+}
+
+/// An answer as the chat keeps it; a secret's arrives withheld.
+fn chat_answer(answer: koru_session_protocol::QuestionAnswer) -> koru_ai_core::AgentAnswer {
+    use koru_ai_core::AgentAnswerValue;
+    use koru_session_protocol::QuestionAnswerValue;
+    koru_ai_core::AgentAnswer {
+        question_id: answer.question_id,
+        value: match answer.value {
+            QuestionAnswerValue::Option { label } => AgentAnswerValue::Option { label },
+            QuestionAnswerValue::Text { text } => AgentAnswerValue::Text { text },
+            QuestionAnswerValue::Withheld => AgentAnswerValue::Withheld,
+        },
     }
 }
 
@@ -671,6 +1321,7 @@ mod tests {
                 .map(|(role, markdown)| AiRequestMessage {
                     role: *role,
                     markdown: (*markdown).to_owned(),
+                    attachments: Vec::new(),
                 })
                 .collect(),
             context: Vec::new(),
@@ -678,6 +1329,46 @@ mod tests {
             tool_history: Vec::new(),
             options: AiRequestOptions::default(),
         }
+    }
+
+    /// **A message carries the chat's model only where the session is live
+    /// on another** and its host takes one: never for a session started for
+    /// it, a chat on *Default*, or the model the session already asks for.
+    #[test]
+    fn a_message_moves_a_live_session_only_to_another_model() {
+        let name = |model: &str| ModelName::from_str(model).unwrap();
+        let on = |model: Option<&str>| ModelIdentity {
+            requested: model.map(name),
+            reported: None,
+        };
+        let opus = on(Some("opus"));
+        assert_eq!(
+            turn_model(Some(name("sonnet")), false, Some(&opus), true),
+            Some(name("sonnet"))
+        );
+        // A session that started on the agent's default asks for none.
+        assert_eq!(
+            turn_model(Some(name("sonnet")), false, Some(&on(None)), true),
+            Some(name("sonnet"))
+        );
+        assert_eq!(
+            turn_model(Some(name("sonnet")), false, None, true),
+            Some(name("sonnet"))
+        );
+        assert_eq!(
+            turn_model(Some(name("opus")), false, Some(&opus), true),
+            None
+        );
+        assert_eq!(
+            turn_model(Some(name("sonnet")), true, Some(&opus), true),
+            None
+        );
+        assert_eq!(turn_model(None, false, Some(&opus), true), None);
+        assert_eq!(
+            turn_model(Some(name("sonnet")), false, Some(&opus), false),
+            None,
+            "an older host is never sent one"
+        );
     }
 
     #[test]
@@ -722,10 +1413,53 @@ mod tests {
 
     #[test]
     fn the_default_model_is_no_selection_and_a_model_is_the_agents_own_id() {
-        assert_eq!(selection_for(AGENT_DEFAULT_MODEL, None).unwrap(), None);
-        let selection = selection_for("deepseek/v4-pro", None).unwrap().unwrap();
+        assert_eq!(
+            selection_for(AGENT_DEFAULT_MODEL, None, None).unwrap(),
+            None
+        );
+        let selection = selection_for("deepseek/v4-pro", None, None)
+            .unwrap()
+            .unwrap();
         assert_eq!(selection.model.unwrap().as_str(), "deepseek/v4-pro");
         assert!(selection.reasoning.is_none());
+    }
+
+    /// **A chat's mode starts the session** (koru-ai D7), even on the
+    /// agent's default model and level; a token that is no mode id is
+    /// refused before anything reaches the agent.
+    #[test]
+    fn a_chosen_mode_alone_is_a_selection() {
+        let mode = agent_mode(Some("acceptEdits")).unwrap();
+        let selection = selection_for(AGENT_DEFAULT_MODEL, None, mode)
+            .unwrap()
+            .unwrap();
+        assert_eq!(selection.mode.unwrap().as_str(), "acceptEdits");
+        assert!(selection.model.is_none() && selection.reasoning.is_none());
+        assert_eq!(agent_mode(None).unwrap(), None);
+        assert!(agent_mode(Some("two words")).is_err());
+    }
+
+    /// **A chat's level rides the launch** (D18): *Default* is none, so the
+    /// agent decides; a level alone, on the agent's own default model, is
+    /// still a selection; and the attempt records the level it started at.
+    #[test]
+    fn a_chats_level_rides_the_launch_and_default_sends_none() {
+        assert_eq!(launch_reasoning(ReasoningChoice::Default), None);
+        let high = launch_reasoning(ReasoningChoice::Level(ReasoningLevel::High));
+        assert_eq!(high, Some(LaunchReasoning::High));
+        assert_eq!(
+            launch_reasoning(ReasoningChoice::Level(ReasoningLevel::XHigh)),
+            Some(LaunchReasoning::XHigh)
+        );
+        let selection = selection_for(AGENT_DEFAULT_MODEL, high, None)
+            .unwrap()
+            .unwrap();
+        assert!(selection.model.is_none());
+        assert_eq!(selection.reasoning, Some(LaunchReasoning::High));
+        assert_eq!(
+            high.and_then(applied_choice),
+            Some(ReasoningChoice::Level(ReasoningLevel::High))
+        );
     }
 
     #[test]
@@ -760,5 +1494,144 @@ mod tests {
             choice_intent(ApprovalIntent::AllowRemembered),
             ChoiceIntent::AllowAlways
         );
+    }
+
+    fn attachment(name: &str, kind: AttachmentKind) -> AttachmentInput {
+        let path = std::env::temp_dir()
+            .join("attachments")
+            .join("chat")
+            .join("id")
+            .join("file")
+            .join(name);
+        AttachmentInput {
+            id: koru_ai_core::ChatAttachmentId::new(),
+            kind,
+            file_name: name.into(),
+            media_type: if kind == AttachmentKind::Image {
+                "image/png".into()
+            } else {
+                "application/pdf".into()
+            },
+            byte_count: 2_516_582,
+            native: (kind == AttachmentKind::Image).then(|| path.clone()),
+            path,
+        }
+    }
+
+    fn session_copy(mode: DeliveryMode) -> Attachment {
+        Attachment {
+            id: AttachmentId::mint(),
+            session_id: SessionId::mint(),
+            kind: koru_session_protocol::AttachmentKind::Image,
+            source: AttachmentSource::PublicUpload,
+            media_type: "image/png".into(),
+            byte_count: 10,
+            dimensions: None,
+            status: koru_session_protocol::AttachmentStatus::Pending,
+            delivery_mode: mode,
+            delivery: koru_session_protocol::DeliveryState::Pending,
+            turn_id: None,
+            preview_available: false,
+            created_at_ms: 0,
+        }
+    }
+
+    #[test]
+    fn every_attachment_is_named_by_path_after_the_persons_words() {
+        let mut request = request(&[(ChatRole::User, "What is in these?")]);
+        let picture = attachment("shot.png", AttachmentKind::Image);
+        let report = attachment("report.pdf", AttachmentKind::File);
+        request.messages[0].attachments = vec![picture.clone(), report.clone()];
+        let text = compose_prompt(&request, true);
+        assert!(text.starts_with("What is in these?\n\nAttached to this message"));
+        assert!(text.contains(&format!(
+            "- shot.png — image/png, 2.4 MB — {}",
+            picture.path.display()
+        )));
+        assert!(text.contains(&format!(
+            "- report.pdf — application/pdf, 2.4 MB — {}",
+            report.path.display()
+        )));
+
+        // A message of attachments only is the block alone.
+        request.messages[0].markdown = String::new();
+        assert!(compose_prompt(&request, false).starts_with("Attached to this message"));
+    }
+
+    #[test]
+    fn a_fresh_session_hears_of_earlier_attachments_by_path() {
+        let mut request = request(&[
+            (ChatRole::User, "Look"),
+            (ChatRole::Assistant, "A cat."),
+            (ChatRole::User, "And now?"),
+        ]);
+        let earlier = attachment("cat.png", AttachmentKind::Image);
+        request.messages[0].attachments = vec![earlier.clone()];
+        let fresh = compose_prompt(&request, true);
+        assert!(fresh.contains("**Person:**\nLook\nAttached to that message:"));
+        assert!(fresh.contains(&earlier.path.display().to_string()));
+        assert!(fresh.ends_with("And now?"));
+        // A session that saw it already is not told again.
+        assert_eq!(compose_prompt(&request, false), "And now?");
+    }
+
+    #[test]
+    fn a_picture_goes_natively_only_when_the_session_takes_it() {
+        let pictures = [
+            attachment("a.png", AttachmentKind::Image),
+            attachment("report.pdf", AttachmentKind::File),
+        ];
+        let native = session_copy(DeliveryMode::NativeStructured);
+        let delivered = deliver_pictures(
+            &pictures,
+            |_| Ok(native.clone()),
+            |_| panic!("a native copy is kept"),
+        );
+        assert_eq!(
+            delivered,
+            Delivered {
+                native: vec![native.id],
+                as_files: false
+            }
+        );
+
+        // A session that delivers no pictures: its copy is removed, the
+        // picture goes as a path and the notice is owed.
+        let quoted = session_copy(DeliveryMode::QuotedPath);
+        let mut removed = Vec::new();
+        let delivered = deliver_pictures(&pictures, |_| Ok(quoted.clone()), |id| removed.push(id));
+        assert_eq!(removed, vec![quoted.id]);
+        assert!(delivered.native.is_empty() && delivered.as_files);
+
+        // Refused (unsupported, or the slots full) or unreadable: a path.
+        for code in [ErrorCode::UnsupportedMedia, ErrorCode::AttachmentLimit] {
+            let delivered = deliver_pictures(
+                &pictures,
+                |_| {
+                    Err(Some(ClientError::Session(
+                        koru_session_protocol::SessionFailure {
+                            code: code.clone(),
+                            message: String::new(),
+                        },
+                    )))
+                },
+                |_| {},
+            );
+            assert!(delivered.native.is_empty() && delivered.as_files);
+        }
+        let unreadable = deliver_pictures(&pictures, |_| Err(None), |_| {});
+        assert!(unreadable.native.is_empty() && unreadable.as_files);
+
+        // Files are never ingested; with no picture there is no notice.
+        let delivered =
+            deliver_pictures(&pictures[1..], |_| panic!("a file is not ingested"), |_| {});
+        assert_eq!(delivered, Delivered::default());
+    }
+
+    #[test]
+    fn sizes_read_as_a_person_reads_them() {
+        assert_eq!(human_size(900), "900 B");
+        assert_eq!(human_size(412 * 1024), "412 KB");
+        assert_eq!(human_size(2_516_582), "2.4 MB");
     }
 }

@@ -52,8 +52,7 @@ koru-search-ui = { path = "../../crates/koru-search-ui" }
 # node and no workspace document, hosted here as a mode of the explore
 # column (ADR-352).
 koru-artifacts-ui = { path = "../../crates/koru-artifacts-ui" }
-# The Chats view (AGENTUX I5): every AI chat, newest first. The same surface
-# the standalone chat window hosts as its floating pane.
+# The Chats view (AGENTUX I5): every AI chat, newest first.
 koru-chats-ui = { path = "../../crates/koru-chats-ui" }
 # Talking to the Koru Agent: the endpoint and the framing (`koru-ipc`), and
 # every message that travels over it (`koru-agent-wire`). **Not `koru-agent`
@@ -134,6 +133,10 @@ koru-ai-ui = { path = "../../crates/koru-ai-ui" }
 koru-socials-ui = { path = "../../crates/koru-socials-ui" }
 koru-session-profiles = { path = "../../crates/koru-session-profiles" }
 koru-session-protocol = { path = "../../crates/koru-session-protocol" }
+# The coding-agent CLIs' npm packages, read by *Agent providers*' *Install*
+# so the package it installs is the one the update check reads. Its weight —
+# reqwest, semver, serde — is already linked here.
+koru-cli-updates = { path = "../../crates/koru-cli-updates" }
 # A session as an ordinary Koru tab (TERMINATAB W4): the extracted session
 # surface, the backend command thread it is driven by, the view vocabulary the
 # adapter translates into, and the stats handle the surface is built over.
@@ -166,6 +169,9 @@ parley.workspace = true
 chrono.workspace = true
 qrcode.workspace = true
 reqwest.workspace = true
+# An AI chat tab's title is capped at twenty graphemes (D22): a flag or a
+# family emoji is one character to the reader, and never cut in half.
+unicode-segmentation.workspace = true
 zip.workspace = true
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 
@@ -198,7 +204,17 @@ windows = { version = "0.62.2", features = [
 [build-dependencies]
 koru-winres = { path = "../../crates/koru-winres" }
 
+[features]
+# The element layer's fixture theme in the running app, for the preview
+# ELEMENTS-PLAN P1 describes: `KORU_FIXTURE_THEME=1` applies it at startup in
+# place of the preference, `KORU_FIXTURE_CONTRAST=1` its high-contrast table.
+# Never in `koru.bat run` or a release.
+fixture-theme = ["koru-draw/fixture-theme"]
+
 [dev-dependencies]
+# **The fixture theme in this crate's tests**, which a `cfg(test)` item in
+# `koru-draw` cannot reach: a dependency is never compiled with it.
+koru-draw = { path = "../../crates/koru-draw", features = ["fixture-theme"] }
 # Every surface on by default in tests; `koru_features::testing::with` opts
 # one test into the simplified product.
 koru-features = { path = "../../crates/koru-features", features = ["testing"] }
@@ -207,7 +223,7 @@ tempfile.workspace = true
 koru-diagram = { path = "../../crates/koru-diagram" }
 koru-workspace-host = { path = "../../crates/koru-workspace-host", features = ["no-model-reader"] }
 koru-ai-core = { path = "../../crates/koru-ai-core" }
-koru-ai-ui = { path = "../../crates/koru-ai-ui", features = ["no-client"] }
+koru-ai-ui = { path = "../../crates/koru-ai-ui", features = ["no-client", "test-support"] }
 koru-socials-ui = { path = "../../crates/koru-socials-ui", features = ["no-reader"] }
 # **The same crate, with `no-reader` on.** A `SearchSurface` built in a test must
 # not dial the store a developer has running, and `cfg(test)` inside

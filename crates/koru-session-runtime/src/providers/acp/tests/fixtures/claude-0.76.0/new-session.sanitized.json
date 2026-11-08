@@ -1,0 +1,75 @@
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "result": {
+    "sessionId": "<private-session>",
+    "modes": {
+      "currentModeId": "default",
+      "availableModes": [
+        {"id": "default", "name": "Manual", "description": "Always ask before making changes", "_meta": {"kind": "standard"}},
+        {"id": "acceptEdits", "name": "Accept edits", "description": "Automatically accept all file edits", "_meta": {"kind": "standard"}},
+        {"id": "plan", "name": "Plan", "description": "Create a plan before making changes", "_meta": {"kind": "plan"}},
+        {"id": "auto", "name": "Auto", "description": "Claude handles permission decisions", "_meta": {"kind": "auto_review"}},
+        {"id": "bypassPermissions", "name": "Bypass permissions", "description": "Accepts all permissions", "_meta": {"kind": "full_access"}}
+      ]
+    },
+    "configOptions": [
+      {
+        "id": "mode",
+        "name": "Mode",
+        "description": "Session permission mode",
+        "category": "mode",
+        "type": "select",
+        "currentValue": "default",
+        "options": [
+          {"value": "default", "name": "Manual", "description": "Always ask before making changes", "_meta": {"kind": "standard"}},
+          {"value": "acceptEdits", "name": "Accept edits", "description": "Automatically accept all file edits", "_meta": {"kind": "standard"}},
+          {"value": "plan", "name": "Plan", "description": "Create a plan before making changes", "_meta": {"kind": "plan"}},
+          {"value": "auto", "name": "Auto", "description": "Claude handles permission decisions", "_meta": {"kind": "auto_review"}},
+          {"value": "bypassPermissions", "name": "Bypass permissions", "description": "Accepts all permissions", "_meta": {"kind": "full_access"}}
+        ]
+      },
+      {
+        "id": "model",
+        "name": "Model",
+        "description": "AI model to use",
+        "category": "model",
+        "type": "select",
+        "currentValue": "default",
+        "options": [
+          {"value": "default", "name": "<label>"},
+          {"value": "opus[1m]", "name": "<label>"},
+          {"value": "sonnet", "name": "<label>"},
+          {"value": "haiku", "name": "<label>"}
+        ]
+      },
+      {
+        "id": "effort",
+        "name": "<label>",
+        "category": "thought_level",
+        "type": "select",
+        "currentValue": "default",
+        "options": [
+          {"value": "default", "name": "<label>"},
+          {"value": "low", "name": "<label>"},
+          {"value": "medium", "name": "<label>"},
+          {"value": "high", "name": "<label>"},
+          {"value": "xhigh", "name": "<label>"},
+          {"value": "max", "name": "<label>"}
+        ]
+      },
+      {
+        "id": "fast",
+        "name": "Fast mode",
+        "description": "Faster responses on supported models",
+        "category": "model_config",
+        "type": "select",
+        "currentValue": "off",
+        "options": [
+          {"value": "on", "name": "On"},
+          {"value": "off", "name": "Off"}
+        ]
+      }
+    ]
+  }
+}

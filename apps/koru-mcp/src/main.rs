@@ -9,7 +9,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use koru_mcp_server::{
     Backend, KoruMcp, LocalBackend, MODEL_RESOURCE_URI, PAGED_TOOLS_BY_DEFAULT, RequestContext,
-    verify_model_documentation,
+    Toolsets, verify_model_documentation,
 };
 use rmcp::ServiceExt;
 
@@ -79,12 +79,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             // a server's argv and not every one passes its env on.
             let paged_tools = options.tool_pages.unwrap_or(PAGED_TOOLS_BY_DEFAULT);
             tracing::info!(paged_tools, "tools/list paging");
+            // `--toolsets docs,tasks` serves only those groups and `core`;
+            // absent, every toolset. An argument for the same reason.
+            let toolsets = options.toolsets.unwrap_or_default();
+            tracing::info!(toolsets = %toolsets, "toolsets");
             let runtime = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .build()?;
             let served: Result<(), String> = runtime.block_on(async move {
                 let service = KoruMcp::new(service_backend, RequestContext::local())
                     .with_paged_tools(paged_tools)
+                    .with_toolsets(toolsets)
                     .serve(rmcp::transport::stdio())
                     .await
                     .map_err(|error| error.to_string())?;
@@ -108,7 +113,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         "help" | "--help" | "-h" => {
             println!(
-                "koru-mcp serve --stdio [--root PATH|--root=PATH] [--tool-pages on|off]\nkoru-mcp doctor [--root PATH|--root=PATH]"
+                "koru-mcp serve --stdio [--root PATH|--root=PATH] [--tool-pages on|off] [--toolsets NAME,...]\nkoru-mcp doctor [--root PATH|--root=PATH]\n\n--toolsets serves only the named toolsets ({}); core is always on. Absent: every toolset.",
+                koru_mcp_server::Toolset::ALL
+                    .map(koru_mcp_server::Toolset::name)
+                    .join(", ")
             );
             Ok(())
         }
@@ -127,6 +135,9 @@ struct Options {
     /// `--tool-pages on|off`: serve `tools/list` in pages under 7 KB, or in
     /// one reply. Absent means the build's default.
     tool_pages: Option<bool>,
+    /// `--toolsets docs,tasks`: serve only those toolsets and `core`.
+    /// Absent means every toolset.
+    toolsets: Option<Toolsets>,
 }
 
 fn tool_pages(value: Option<&str>) -> Result<bool, String> {
@@ -142,13 +153,19 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Options, String>
     let mut root = None;
     let mut stdio = false;
     let mut pages = None;
+    let mut toolsets = None;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--root" => root = Some(PathBuf::from(args.next().ok_or("--root needs a path")?)),
             "--stdio" => stdio = true,
             "--tool-pages" => pages = Some(tool_pages(args.next().as_deref())?),
+            "--toolsets" => {
+                toolsets = Some(Toolsets::parse(&args.next().unwrap_or_default())?);
+            }
             _ => {
-                if let Some(value) = arg.strip_prefix("--tool-pages=") {
+                if let Some(value) = arg.strip_prefix("--toolsets=") {
+                    toolsets = Some(Toolsets::parse(value)?);
+                } else if let Some(value) = arg.strip_prefix("--tool-pages=") {
                     pages = Some(tool_pages(Some(value))?);
                 } else if let Some(value) = arg.strip_prefix("--root=") {
                     if value.is_empty() {
@@ -166,6 +183,7 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Options, String>
         root,
         stdio,
         tool_pages: pages,
+        toolsets,
     })
 }
 
@@ -236,6 +254,42 @@ mod tests {
             &["serve", "--tool-pages"][..],
             &["serve", "--tool-pages", "yes"],
             &["serve", "--tool-pages="],
+        ] {
+            assert!(parse(bad).is_err(), "{bad:?} was accepted");
+        }
+    }
+
+    /// `--toolsets` only narrows: absent is every toolset, and a name the
+    /// bridge does not know stops it rather than starting it without tools.
+    #[test]
+    fn toolsets_narrow_by_name_and_refuse_what_they_do_not_know() {
+        use koru_mcp_server::{Toolset, Toolsets};
+        let parse = |args: &[&str]| super::parse_args(args.iter().map(|arg| arg.to_string()));
+        assert_eq!(parse(&["serve", "--stdio"]).unwrap().toolsets, None);
+        assert_eq!(
+            Toolsets::default(),
+            Toolsets::all(),
+            "absent is every toolset"
+        );
+        let spaced = parse(&["serve", "--stdio", "--toolsets", "docs,tasks"])
+            .unwrap()
+            .toolsets
+            .expect("narrowed");
+        assert_eq!(
+            spaced.enabled().collect::<Vec<_>>(),
+            [Toolset::Core, Toolset::Docs, Toolset::Tasks]
+        );
+        assert_eq!(
+            parse(&["serve", "--toolsets=docs,tasks", "--stdio"])
+                .unwrap()
+                .toolsets,
+            Some(spaced)
+        );
+        for bad in [
+            &["serve", "--toolsets"][..],
+            &["serve", "--toolsets="],
+            &["serve", "--toolsets", "docs,nope"],
+            &["serve", "--toolsets", "--stdio"],
         ] {
             assert!(parse(bad).is_err(), "{bad:?} was accepted");
         }

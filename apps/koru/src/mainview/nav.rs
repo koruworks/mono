@@ -62,6 +62,18 @@ pub(super) struct Spot {
     /// Tasks stop, so `history.last() == Some(&spot)` still tells two run
     /// tabs apart.
     pub run: Option<koru_delegate_core::RunId>,
+    /// **The chat this stop was on**, or `None` for anything else (koru-ai
+    /// D102).
+    ///
+    /// The run's shape, for the run's reason: a chat tab is a place — you got
+    /// to it from the Chats list, with `Ctrl+Shift+↑`/`↓`, or by leaving it
+    /// for a document a reply linked — but it holds no document and no row.
+    /// Without this a chat stopped existing as far as Back and Forward were
+    /// concerned: leaving one recorded nothing, so Back from the document a
+    /// reply opened skipped past the chat, and Forward could never return to
+    /// one. `doc` and `row` carry the tab's own id, as on a run stop, and
+    /// `scroll` is the conversation's.
+    pub chat: Option<koru_ai_ui::ChatId>,
     /// The document's root — which document this is.
     pub doc: NodeId,
     /// The row inside it the caret was on.
@@ -119,6 +131,7 @@ impl MainView {
                 tab: tab.id,
                 tasks: Some(page.target()),
                 run: None,
+                chat: None,
                 doc: stand_in,
                 row: stand_in,
                 caret: 0,
@@ -141,6 +154,7 @@ impl MainView {
                 tab: tab.id,
                 tasks: None,
                 run: Some(run),
+                chat: None,
                 doc: stand_in,
                 row: stand_in,
                 caret: 0,
@@ -159,11 +173,33 @@ impl MainView {
                 tab: tab.id,
                 tasks: Some(crate::panes::explore::rail::RailTarget::Reminders),
                 run: None,
+                chat: None,
                 doc: stand_in,
                 row: stand_in,
                 caret: 0,
                 selection: None,
                 scroll: tab.view.scroll(),
+            });
+        }
+        // **A chat tab is a place** (D102), on the run arm's terms: its
+        // identity is its chat. A new chat not sent yet names none and is not
+        // somewhere to be sent back to — a draft's rule.
+        if let TabView::AiChat(view) = &tab.view {
+            let chat = view.chat_id()?;
+            let stand_in = NodeId::from_uuid(uuid::Uuid::from_u64_pair(0, tab.id));
+            return Some(Spot {
+                profile: route.map(|route| route.0),
+                workspace: route.map(|route| route.1),
+                document: None,
+                tab: tab.id,
+                tasks: None,
+                run: None,
+                chat: Some(chat),
+                doc: stand_in,
+                row: stand_in,
+                caret: 0,
+                selection: None,
+                scroll: view.conversation_scroll(),
             });
         }
         let doc = tab.view.root()?;
@@ -183,6 +219,7 @@ impl MainView {
             tab: tab.id,
             tasks: None,
             run: None,
+            chat: None,
             doc,
             row: leaf.body().focused_id().unwrap_or(doc),
             caret,
@@ -272,6 +309,19 @@ impl MainView {
             if opened {
                 self.tabs_mut().active_view().set_scroll(spot.scroll);
             }
+            self.restoring = false;
+            return opened;
+        }
+        // **A chat stop is answered here too** (D102): no document, no row.
+        if let Some(chat) = spot.chat {
+            // **Only this profile's chats** (AI schema 13): a stop made
+            // before the window switched profile names a chat of another,
+            // which never opens here — Back and Forward step over it.
+            if spot.profile.is_some() && spot.profile != self.current_profile_id() {
+                return false;
+            }
+            self.restoring = true;
+            let opened = self.restore_chat_spot(chat, spot.tab, spot.scroll);
             self.restoring = false;
             return opened;
         }
@@ -391,6 +441,49 @@ impl MainView {
         ok
     }
 
+    /// Back on a chat: the tab the stop was made in while it still shows
+    /// the chat, else any tab on it, else a tab opened on it again — the
+    /// forgiveness every other arm shows a closed tab.
+    ///
+    /// **A tab still open is only brought forward.** Its surface kept its own
+    /// scroll, and whether it was following a reply as it streamed; putting
+    /// back the scroll recorded on the way out would pin a reader the reply
+    /// had since carried on below. Only a chat opened again is given the
+    /// recorded scroll, applied when its read lands. Nothing here stops or
+    /// touches a running reply: the tab is selected, never reseated.
+    fn restore_chat_spot(&mut self, chat: koru_ai_ui::ChatId, tab: u64, scroll: f32) -> bool {
+        let on_chat = |candidate: &super::tab::Tab| matches!(&candidate.view, TabView::AiChat(view) if view.chat_id() == Some(chat));
+        let find = |want: &dyn Fn(&super::tab::Tab) -> bool| {
+            self.panes.iter_groups().find_map(|(path, group)| {
+                group
+                    .tabs()
+                    .iter()
+                    .position(|candidate| want(candidate))
+                    .map(|index| (path, index))
+            })
+        };
+        let found =
+            find(&|candidate| candidate.id == tab && on_chat(candidate)).or_else(|| find(&on_chat));
+        if let Some((path, index)) = found {
+            self.panes.set_focus(path);
+            let selected = self.select(index);
+            self.ensure_tab_visible(index);
+            return selected;
+        }
+        // Deleted since: skipped, as a deleted document is.
+        let listed = self.explore.chats_mut().chats();
+        if !listed.is_empty() && !listed.iter().any(|listed| listed.id == chat) {
+            return false;
+        }
+        if !self.open_ai_chat_tab_for(chat) {
+            return false;
+        }
+        if let TabView::AiChat(view) = self.tabs_mut().active_view() {
+            view.restore_conversation_scroll(scroll);
+        }
+        true
+    }
+
     pub(super) fn apply_spot_view(&mut self, spot: Spot) {
         nav_debug!(
             "[koru:nav] apply-spot tab={} doc={} row={} caret={} scroll={}",
@@ -497,6 +590,9 @@ impl MainView {
         }
     }
 }
+
+#[cfg(test)]
+mod chat_tests;
 
 #[cfg(test)]
 mod tests {

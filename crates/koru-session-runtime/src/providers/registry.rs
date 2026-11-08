@@ -83,6 +83,46 @@ impl ManagedProviderRegistry {
             .compatibility_probe(entry.registration.executable.into(), working_directory)
     }
 
+    /// Where the model catalog gets `kind`'s list; `None` for a kind that
+    /// is not registered.
+    pub fn catalog_source(&self, kind: &ProviderKind) -> Option<super::CatalogSource> {
+        self.entries
+            .get(kind)
+            .map(|entry| entry.factory.catalog_source())
+    }
+
+    /// The modes Koru gives `kind` when the agent advertises none (D7).
+    pub fn fixed_modes(&self, kind: &ProviderKind) -> Option<koru_session_protocol::AgentModes> {
+        self.entries
+            .get(kind)
+            .and_then(|entry| entry.factory.fixed_modes())
+    }
+
+    /// Whether `kind`'s levels are read by the catalog's walk (D16).
+    pub fn walks_model_levels(&self, kind: &ProviderKind) -> bool {
+        self.entries
+            .get(kind)
+            .is_some_and(|entry| entry.factory.walks_model_levels())
+    }
+
+    /// Walk `kind`'s models for their levels (D16).
+    pub fn walk_model_levels(
+        &self,
+        kind: &ProviderKind,
+        working_directory: std::path::PathBuf,
+    ) -> Result<koru_session_protocol::ProviderModels, ProviderFailure> {
+        let entry = self.entries.get(kind).ok_or_else(|| {
+            ProviderFailure::new(
+                ErrorCode::CapabilityNotNegotiated,
+                ProviderStage::Discovery,
+                ProviderDiagnostic::HandshakeRejected,
+            )
+        })?;
+        entry
+            .factory
+            .walk_model_levels(entry.registration.executable.into(), working_directory)
+    }
+
     pub fn discover_models(
         &self,
         kind: &ProviderKind,
@@ -98,6 +138,25 @@ impl ManagedProviderRegistry {
         entry
             .factory
             .discover_models(entry.registration.executable.into(), working_directory)
+    }
+
+    /// What `kind` can be told to do by name in `working_directory`
+    /// (koru-ai D121); empty for an agent with nothing to offer.
+    pub fn discover_commands(
+        &self,
+        kind: &ProviderKind,
+        working_directory: std::path::PathBuf,
+    ) -> Result<Vec<koru_session_protocol::AgentCommand>, ProviderFailure> {
+        let entry = self.entries.get(kind).ok_or_else(|| {
+            ProviderFailure::new(
+                ErrorCode::CapabilityNotNegotiated,
+                ProviderStage::Discovery,
+                ProviderDiagnostic::HandshakeRejected,
+            )
+        })?;
+        entry
+            .factory
+            .discover_commands(entry.registration.executable.into(), working_directory)
     }
 
     pub fn create(

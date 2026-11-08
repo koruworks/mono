@@ -22,6 +22,7 @@ async fn local_commit_reconciles_again_on_the_same_stream_then_fence_stops_it() 
             generation: 1,
             expires_at_seconds: 600,
         },
+        claim_references: koru_replication::cloud::transfer::ClaimReferences::None,
     };
     let server = Stream::new(
         &accepted,

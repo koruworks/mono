@@ -86,6 +86,11 @@ impl RunView {
         // here rather than guessed there, and *Open location* is simply
         // absent where pressing it would fail.
         surface.set_can_reveal(koru_workspace_host::reveal::is_supported());
+        // **Whether *Re-run* is offered**: it starts a delegation, which this
+        // build may hide (koru-features) while still showing the run.
+        // `begin_delegation` would refuse it anyway; asked here so the
+        // control is absent rather than inert.
+        surface.set_can_re_run(koru_features::delegate());
         Self {
             surface,
             presentation_zone: None,

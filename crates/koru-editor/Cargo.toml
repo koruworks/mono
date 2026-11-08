@@ -22,6 +22,10 @@ koru-env = { path = "../koru-env" }
 koru-core = { path = "../koru-core" }
 uuid.workspace = true
 tracing = { workspace = true }
+# **The `koru://` grammar, read once.** A link pill whose URL is a Koru link
+# opens inside the window rather than going to the OS's handler for the
+# scheme; deciding which it is is this crate's one parser, not a second copy.
+koru-link = { path = "../koru-link" }
 # Chords, the primary modifier, and how a shortcut is written. Shared so
 # `koru-workspace-host` and `koru-editor` agree without depending on each other.
 # **The words a person reads.** One row of the slash menu is localized —

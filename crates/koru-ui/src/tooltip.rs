@@ -6,9 +6,30 @@ use std::time::{Duration, Instant};
 
 use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
+use koru_draw::theme::Brush;
 use koru_draw::{anim::ease_out_cubic, scene, theme};
+use parley::Layout;
 use vello::Scene;
 use vello::kurbo::Affine;
+
+/// The widest a [wrapped](TooltipContent::wrapped) tooltip grows: about
+/// fifty characters of the hint role, a comfortable measure for a sentence
+/// or two. A one-line tooltip is bounded by the surface it floats over
+/// instead, and elides into it.
+pub const MAX_W: f32 = 320.0;
+
+/// Where a tooltip stands against its anchor.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Placement {
+    /// Centred under the anchor: every control's tooltip.
+    #[default]
+    Below,
+    /// Beside the anchor, its top level with the anchor's: to the right
+    /// where it fits, else to the left. For a row of a list, which a tooltip
+    /// under it would cover the next rows of — the anchor is then the row's
+    /// height across the whole list, so the tooltip clears the list.
+    Beside,
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TooltipContent {
@@ -16,6 +37,11 @@ pub struct TooltipContent {
     pub anchor: Rect,
     pub label: String,
     pub shortcut: Option<String>,
+    /// A label too long for one line wraps onto more, at most [`MAX_W`]
+    /// wide, instead of eliding: for a tooltip whose whole job is to show
+    /// words the anchor cut short.
+    pub wrap: bool,
+    pub placement: Placement,
 }
 
 impl TooltipContent {
@@ -25,7 +51,21 @@ impl TooltipContent {
             anchor,
             label: label.into(),
             shortcut: None,
+            wrap: false,
+            placement: Placement::Below,
         }
+    }
+
+    /// Wrap a long label at [`MAX_W`] rather than eliding it.
+    pub fn wrapped(mut self) -> Self {
+        self.wrap = true;
+        self
+    }
+
+    /// Stand beside the anchor rather than under it ([`Placement::Beside`]).
+    pub fn beside(mut self) -> Self {
+        self.placement = Placement::Beside;
+        self
     }
 
     pub fn with_shortcut(mut self, shortcut: impl Into<String>) -> Self {
@@ -297,15 +337,7 @@ impl Tooltip {
             return None;
         }
         Some(draw_tooltip(
-            canvas,
-            root,
-            engine,
-            content.anchor,
-            viewport,
-            &content.label,
-            content.shortcut.as_deref(),
-            alpha,
-            offset,
+            canvas, root, engine, content, viewport, alpha, offset,
         ))
     }
 
@@ -427,30 +459,97 @@ fn fitted(
     (text, width)
 }
 
-#[allow(clippy::too_many_arguments)]
+/// The panel's pad above and below its text: a one-line panel is this, a
+/// hint line, and this — 26.
+const PAD_Y: f32 = 6.0;
+/// Between the anchor and the panel.
+const GAP: f32 = 6.0;
+/// The least room beside an anchor worth standing in; with less on both
+/// sides a [`Placement::Beside`] tooltip takes the surface's width instead,
+/// clamped into it like any other.
+const BESIDE_MIN_W: f32 = MAX_W * 0.5;
+
+/// **A wrapped label laid out, and how wide the panel then is**: broken at
+/// `widest` less the pads and the shortcut, and the panel as wide as its
+/// longest line — a short label is one line at its own width.
+fn wrapped_fit(
+    engine: &mut TextEngine,
+    label: &str,
+    shortcut_width: f32,
+    widest: f32,
+) -> (Layout<Brush>, f32) {
+    let room = (widest - PAD * 2.0 - shortcut_width).max(1.0);
+    let layout = engine.simple_layout_wrapped(label, theme::role::hint(), room);
+    let width = (layout.width() + shortcut_width + PAD * 2.0).min(widest);
+    (layout, width)
+}
+
+/// **Where the panel stands and what it draws**, split from the drawing so
+/// the placement can be asserted without a scene: its rect before the rise,
+/// the label's layout (one line, or wrapped), and the shortcut's.
+fn arrange(
+    engine: &mut TextEngine,
+    content: &TooltipContent,
+    viewport: Rect,
+) -> (Rect, Layout<Brush>, Option<Layout<Brush>>) {
+    let role = theme::role::hint();
+    let anchor = content.anchor;
+    let shortcut_layout = content
+        .shortcut
+        .as_deref()
+        .map(|value| engine.simple_layout(value, role));
+    let shortcut_width = shortcut_layout
+        .as_ref()
+        .map_or(0.0, |layout| layout.width() + 12.0);
+    // The room either side of the anchor, inside the surface's inset.
+    let right_room = viewport.x + viewport.w - PAD - (anchor.x + anchor.w + GAP);
+    let left_room = anchor.x - GAP - (viewport.x + PAD);
+    let surface = viewport.w - PAD * 2.0;
+    let (label_layout, width) = if content.wrap {
+        let mut widest = MAX_W.min(surface);
+        if content.placement == Placement::Beside && right_room.max(left_room) >= BESIDE_MIN_W {
+            widest = widest.min(right_room.max(left_room));
+        }
+        wrapped_fit(engine, &content.label, shortcut_width, widest)
+    } else {
+        let (label, width) = fitted(engine, &content.label, shortcut_width, viewport.w);
+        (engine.simple_layout(&label, role), width)
+    };
+    let height = label_layout.height().max(role.metrics.line_height) + PAD_Y * 2.0;
+    let left_edge = viewport.x + PAD;
+    let right_edge = (viewport.x + viewport.w - width - PAD).max(left_edge);
+    let bottom_edge = (viewport.y + viewport.h - height - PAD).max(viewport.y + PAD);
+    let (x, y) = match content.placement {
+        Placement::Below => (
+            anchor.x + anchor.w * 0.5 - width * 0.5,
+            (anchor.y + anchor.h + GAP).min(bottom_edge),
+        ),
+        Placement::Beside => {
+            let right = anchor.x + anchor.w + GAP;
+            let left = anchor.x - GAP - width;
+            let x = if width <= right_room || (width > left_room && right_room >= left_room) {
+                right
+            } else {
+                left
+            };
+            (x, anchor.y.clamp(viewport.y + PAD, bottom_edge))
+        }
+    };
+    let rect = Rect::new(x.clamp(left_edge, right_edge), y, width, height);
+    (rect, label_layout, shortcut_layout)
+}
+
 fn draw_tooltip(
     canvas: &mut Scene,
     root: Affine,
     engine: &mut TextEngine,
-    anchor: Rect,
+    content: &TooltipContent,
     viewport: Rect,
-    label: &str,
-    shortcut: Option<&str>,
     alpha: f32,
     offset: f32,
 ) -> Rect {
-    let role = theme::role::hint();
-    let shortcut_layout = shortcut.map(|value| engine.simple_layout(value, role));
-    let shortcut_width = shortcut_layout
-        .as_ref()
-        .map_or(0.0, |layout| layout.width() + 12.0);
-    let (label, width) = fitted(engine, label, shortcut_width, viewport.w);
-    let label_layout = engine.simple_layout(&label, role);
-    let height = 26.0;
-    let x = (anchor.x + anchor.w * 0.5 - width * 0.5)
-        .clamp(viewport.x + 8.0, viewport.x + viewport.w - width - 8.0);
-    let y = (anchor.y + anchor.h + 6.0).min(viewport.y + viewport.h - height - 8.0) + offset;
-    let rect = Rect::new(x, y, width, height);
+    let (rect, label_layout, shortcut_layout) = arrange(engine, content, viewport);
+    let rect = Rect::new(rect.x, rect.y + offset, rect.w, rect.h);
     scene::floating_panel(
         canvas,
         root,
@@ -460,14 +559,26 @@ fn draw_tooltip(
         rect.h,
         &scene::Panel::tooltip(6.0).faded(alpha),
     );
-    scene::draw_layout_first_line(
-        canvas,
-        root,
-        &label_layout,
-        rect.x + 8.0,
-        rect.y + 6.0,
-        Some(theme::p().bubble_fg.multiply_alpha(alpha)),
-    );
+    let ink = Some(theme::p().bubble_fg.multiply_alpha(alpha));
+    if content.wrap {
+        scene::draw_layout(
+            canvas,
+            root,
+            &label_layout,
+            rect.x + PAD,
+            rect.y + PAD_Y,
+            ink,
+        );
+    } else {
+        scene::draw_layout_first_line(
+            canvas,
+            root,
+            &label_layout,
+            rect.x + PAD,
+            rect.y + PAD_Y,
+            ink,
+        );
+    }
     if let Some(layout) = shortcut_layout {
         scene::draw_layout_first_line(
             canvas,
@@ -630,6 +741,82 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A sentence long enough to need several lines at [`MAX_W`].
+    const LONG: &str = "Review the open pull request against the repository's \
+        contribution rules, then write up every finding with the file and \
+        line it is about, and what to change.";
+
+    /// **A wrapped label breaks onto lines no wider than [`MAX_W`]**, and
+    /// the panel grows down to hold them all — a hint line and the pads a
+    /// line, as a one-line panel is.
+    #[test]
+    fn a_wrapped_label_breaks_at_the_maximum_and_the_panel_holds_every_line() {
+        let mut engine = TextEngine::new();
+        let viewport = Rect::new(0.0, 0.0, 1200.0, 800.0);
+        let anchor = Rect::new(100.0, 300.0, 200.0, 40.0);
+        let content = TooltipContent::new(1, anchor, LONG).wrapped();
+        let (rect, label, _) = arrange(&mut engine, &content, viewport);
+        let lines = label.lines().count();
+        assert!(lines > 1, "a long label wraps: {lines} line(s)");
+        assert!(rect.w <= MAX_W + 0.5, "capped at MAX_W: {}", rect.w);
+        assert!(
+            label.width() + PAD * 2.0 <= rect.w + 0.5,
+            "the text is inside"
+        );
+        assert!((rect.h - (label.height() + PAD_Y * 2.0)).abs() < 0.5);
+
+        // A short one is one line, at its own width.
+        let short = TooltipContent::new(1, anchor, "Search").wrapped();
+        let (rect, label, _) = arrange(&mut engine, &short, viewport);
+        assert_eq!(label.lines().count(), 1);
+        assert!(rect.w < MAX_W * 0.5);
+        assert!((rect.h - 26.0).abs() < 0.5, "a one-line panel: {}", rect.h);
+    }
+
+    /// **Beside its anchor**: to the right where it fits, its top level with
+    /// the anchor's; to the left where the right has no room; never over
+    /// the anchor.
+    #[test]
+    fn beside_stands_right_where_it_fits_and_left_where_it_does_not() {
+        let mut engine = TextEngine::new();
+        let viewport = Rect::new(0.0, 0.0, 1200.0, 800.0);
+
+        let anchor = Rect::new(100.0, 300.0, 400.0, 40.0);
+        let content = TooltipContent::new(1, anchor, LONG).wrapped().beside();
+        let (rect, _, _) = arrange(&mut engine, &content, viewport);
+        assert_eq!(rect.x, anchor.x + anchor.w + GAP, "to the right");
+        assert_eq!(rect.y, anchor.y, "level with the anchor");
+
+        let anchor = Rect::new(700.0, 300.0, 420.0, 40.0);
+        let content = TooltipContent::new(1, anchor, LONG).wrapped().beside();
+        let (rect, _, _) = arrange(&mut engine, &content, viewport);
+        assert!(
+            (rect.x + rect.w - (anchor.x - GAP)).abs() < 0.5,
+            "to the left, ending a gap short of the anchor: {rect:?}"
+        );
+        assert!(rect.w <= MAX_W + 0.5);
+
+        // Near the floor it rises to stay on the surface.
+        let anchor = Rect::new(100.0, 780.0, 400.0, 40.0);
+        let content = TooltipContent::new(1, anchor, LONG).wrapped().beside();
+        let (rect, _, _) = arrange(&mut engine, &content, viewport);
+        assert!(rect.y + rect.h <= viewport.h - PAD + 0.5);
+    }
+
+    /// The default is unchanged: one line, centred under the anchor.
+    #[test]
+    fn the_default_stays_one_line_under_the_anchor() {
+        let mut engine = TextEngine::new();
+        let viewport = Rect::new(0.0, 0.0, 1200.0, 800.0);
+        let anchor = Rect::new(500.0, 300.0, 40.0, 40.0);
+        let (rect, label, _) =
+            arrange(&mut engine, &TooltipContent::new(1, anchor, LONG), viewport);
+        assert_eq!(label.lines().count(), 1);
+        assert_eq!(rect.h, 26.0);
+        assert_eq!(rect.y, anchor.y + anchor.h + GAP);
+        assert!((rect.x + rect.w * 0.5 - (anchor.x + anchor.w * 0.5)).abs() < 0.5);
     }
 
     /// ...and a label that fits is left alone — no ellipsis on *Search*.

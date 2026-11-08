@@ -6,18 +6,18 @@
 //! [`ChatsSurface::row_parts`] — the functions the hit test uses — and the
 //! draw is clipped to the same band, so a row cannot be drawn anywhere other
 //! than where it is pressable. A title that will not fit is **elided, not
-//! wrapped**: a row is two lines tall and stays two lines tall.
+//! wrapped**: a row is one line tall and stays one line tall.
 //!
-//! **The library's treatments, one column over**: the open chat wears the
-//! card, the pointer's row the hover tint, the keyboard's row the ring — and a
-//! title is dim at rest and full-strength on the card, so the list does not
-//! tell the same story in two greys.
+//! **The library's treatments, one column over**: the open chat and the
+//! picked ones wear the card, the pointer's row the hover tint, the
+//! keyboard's row the ring — and a title is dim at rest and full-strength on
+//! the card, so the list does not tell the same story in two greys.
 
 use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
 use koru_draw::{icons, scene, theme};
 use koru_i18n::strings::{Key, t};
-use koru_shell_chrome::tabs::draw_icon;
+use koru_shell_chrome::tabs::{draw_icon, draw_icon_filled};
 use vello::Scene;
 use vello::kurbo::Affine;
 use vello::peniko::Color;
@@ -27,8 +27,9 @@ use crate::{ChatsSurface, Deleting};
 
 /// The icon the navigator's mode row draws for this view. The same mark the
 /// `+` menu's *Chats* row and an AI chat tab wear, so the three places a
-/// chat is reached from agree about what one looks like.
-pub const MODE_ICON: char = icons::SPARKLE;
+/// chat is reached from agree about what one looks like — two bubbles (the
+/// review's pick: `chats-circle`).
+pub const MODE_ICON: char = icons::CHATS_CIRCLE;
 
 impl ChatsSurface {
     /// The whole list below its host's heading, from `top` down to the
@@ -96,8 +97,10 @@ impl ChatsSurface {
             scene::fill(scene, root, p.hover_tint, &chip(rect, area));
         }
         // The ring says *here, not yet chosen*; a ring on a card would read
-        // as two things open, so the card wins.
-        if treatment != "Card" && row.pressable() && self.focus_row() == Some(row) {
+        // as two things open, so the card wins. A row being renamed wears
+        // none of the three: the field's box is the only one on it (D89).
+        if matches!(treatment, "Hover" | "Idle") && row.pressable() && self.focus_row() == Some(row)
+        {
             scene::stroke(
                 scene,
                 root,
@@ -107,18 +110,21 @@ impl ChatsSurface {
             );
         }
         match row {
-            Row::New => {
-                draw_icon(scene, root, engine, icons::PLUS, parts.lead, p.accent);
-                self.line(
+            // *Pinned*, in the dim small label the navigator's other
+            // section headings wear (Home's *Recent*, Agents' *Projects*).
+            Row::PinnedHeading => {
+                let layout = engine.simple_layout(t(lang, Key::ChatsPinned), theme::role::hint());
+                self.work.layouts += 1;
+                scene::draw_layout_first_line(
                     scene,
                     root,
-                    engine,
-                    parts.title,
-                    t(lang, Key::ChatsNew),
-                    theme::role::row(),
-                    p.accent,
+                    &layout,
+                    parts.title.x,
+                    rect.y + (rect.h - scene::first_line_height(&layout)) * 0.5,
+                    Some(p.row_hint),
                 );
             }
+            Row::GroupGap => {}
             Row::Notice(notice) => {
                 let key = match notice {
                     Notice::Loading => Key::ChatsLoading,
@@ -145,41 +151,86 @@ impl ChatsSurface {
                     return;
                 };
                 let private = chat.private;
+                let chat_pinned = chat.pinned_at.is_some();
                 let title = crate::text::title(lang, chat).to_owned();
-                let meta = crate::text::meta_line(lang, chat, &self.agents, self.now_ms);
-                if private {
-                    draw_icon(
-                        scene,
-                        root,
-                        engine,
-                        icons::DETECTIVE,
-                        parts.lead,
-                        p.text_dim,
-                    );
-                }
+                let status = self.status(chat.id);
+                // An unread chat's title is semibold until it is opened
+                // (D83), in the ink its treatment gives every title.
+                let style = if status == crate::ChatStatus::Unread {
+                    theme::role::row().with_weight(theme::FontWeight::SemiBold)
+                } else {
+                    theme::role::row()
+                };
                 let ink = if treatment == "Card" {
                     p.text
                 } else {
                     p.text_dim
                 };
-                self.line(
-                    scene,
-                    root,
-                    engine,
-                    parts.title,
-                    &title,
-                    theme::role::row(),
-                    ink,
-                );
-                self.line(
-                    scene,
-                    root,
-                    engine,
-                    parts.meta,
-                    &meta,
-                    theme::role::meta(),
-                    p.text_dim,
-                );
+                // The private mark left of the title, in a page icon's slot
+                // (the review's note). Who answered and when is the accessible
+                // name's, not the row's.
+                if private && parts.lead.w > 0.0 {
+                    draw_icon(scene, root, engine, icons::DETECTIVE, parts.lead, ink);
+                }
+                // Renamed in place (D89): the host's field stands where the
+                // title, the mark and the buttons were, and nothing of the
+                // row is drawn under or beside it.
+                if treatment == "Renaming" {
+                    return;
+                }
+                self.line(scene, root, engine, parts.title, &title, style, ink);
+                // The mark at the row's end: the ring while it works, the
+                // amber question mark while it waits on the person, the
+                // accent dot while something is unseen. One clock turns
+                // every ring.
+                let now = (!self.reduced_motion).then(std::time::Instant::now);
+                if parts.end.w > 0.0
+                    && let Some(mark) = status.mark(now)
+                {
+                    koru_shell_chrome::status_mark::draw(scene, root, engine, parts.end, mark);
+                }
+                // The pin (filled, in the accent, on a pinned chat) and ⋯
+                // (D86), on the row under the pointer only (D91); a plate
+                // under the one the pointer is on.
+                let hovered = self
+                    .hover_button
+                    .filter(|_| self.hover == Some(row))
+                    .map(|button| match button {
+                        crate::RowButton::Pin => parts.pin,
+                        crate::RowButton::More => parts.more,
+                    });
+                if let Some(plate) = hovered.filter(|plate| plate.w > 0.0) {
+                    let side = plate.w.min(plate.h) - 2.0;
+                    scene::fill(
+                        scene,
+                        root,
+                        p.hover_tint,
+                        &scene::rrect(
+                            plate.x + (plate.w - side) * 0.5,
+                            plate.y + (plate.h - side) * 0.5,
+                            side,
+                            side,
+                            5.0,
+                        ),
+                    );
+                }
+                if parts.pin.w > 0.0 {
+                    if chat_pinned {
+                        draw_icon_filled(scene, root, engine, icons::PUSH_PIN, parts.pin, p.accent);
+                    } else {
+                        draw_icon(scene, root, engine, icons::PUSH_PIN, parts.pin, p.text_dim);
+                    }
+                }
+                if parts.more.w > 0.0 {
+                    draw_icon(
+                        scene,
+                        root,
+                        engine,
+                        icons::DOTS_THREE,
+                        parts.more,
+                        p.text_dim,
+                    );
+                }
             }
             Row::Note(index) => {
                 let Some(state) = self
@@ -206,13 +257,20 @@ impl ChatsSurface {
         }
     }
 
-    /// What a row is wearing, in the library's vocabulary.
-    fn row_treatment(&self, row: Row) -> &'static str {
+    /// What a row is wearing, in the library's vocabulary. Open **or**
+    /// picked wear the card — one treatment, as the library's rows: a
+    /// multi-selection and the chat you have open are the same claim. A row
+    /// being renamed is *Renaming* whatever else it is (D89): it wears
+    /// nothing, so the field over it is the one box there.
+    pub(crate) fn row_treatment(&self, row: Row) -> &'static str {
+        if self.is_renaming(row) {
+            return "Renaming";
+        }
         let open = match row {
             Row::Chat(index) => self
                 .chats
                 .get(index)
-                .is_some_and(|chat| self.current == Some(chat.id)),
+                .is_some_and(|chat| self.current == Some(chat.id) || self.is_selected(chat.id)),
             _ => false,
         };
         if open {

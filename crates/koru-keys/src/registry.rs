@@ -60,6 +60,9 @@ pub enum Layer {
     View = 3,
     /// `koru-editor`'s `input::keymap` — text, marks, structure.
     Editor = 4,
+    /// The AI chat's composer (`koru-ai-ui`), asked **after** its editor:
+    /// a key the editor declines falls through to the chat.
+    Chat = 5,
 }
 
 impl Layer {
@@ -70,6 +73,7 @@ impl Layer {
             Self::Container => "Tabs and columns",
             Self::View => "Document",
             Self::Editor => "Editing",
+            Self::Chat => "AI chat",
         }
     }
 }
@@ -81,7 +85,6 @@ impl Layer {
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum ShortcutId {
     // ------------------------------------------------------------- the shell
-    NewWindow,
     PinWindow,
     ToggleUiInspector,
     ToggleInspectorSpacingRays,
@@ -134,33 +137,39 @@ pub enum ShortcutId {
     TerminalToggleExplore,
     // ---------------------------------------------------------- the container
     NewTab,
-    AddContent,
+    /// The New… launcher: a document, a task, an agent or a shell, each
+    /// chosen by its letter. The `+` button's chord.
+    New,
     CloseTab,
     CloseAllTabs,
     /// Global search in this window.
     Search,
     ToggleExplore,
-    /// The explore column's views, `Alt+1` to `Alt+8` — the order the
-    /// icons at its head sit in. Plain Alt, not the primary modifier:
+    /// Home, by its letter, `Alt+H` (the review's note, E69) — the one view
+    /// with a chord of its own. Hidden for now (`koru_features::HOME_SHOWN`),
+    /// so it resolves to nothing and is taught nowhere.
+    ShowHome,
+    /// **The rail's slots, not its views** (the user, 2026-11-03: "the Alt+X
+    /// shortcuts are per slot, not per app"). `Alt+1` shows whatever view
+    /// sits first down the rail, `Alt+2` the second, through `Alt+8`; drag
+    /// Chats to the top and it is `Alt+1`. A view the build hides takes no
+    /// slot, so the digits count only what is drawn. [`RAIL_SLOTS`] is the
+    /// list and [`rail_slot`] the lookup every surface teaching a view's
+    /// chord goes through.
+    ///
+    /// Plain Alt (⌃⌘ on a Mac, [`crate::VIEW`]), not the primary modifier:
     /// `Ctrl+Alt+digit` is a heading and `Ctrl+digit` a tab, and the digits
-    /// are free under Alt alone on every layer.
-    ShowDocuments,
-    ShowFiles,
-    ShowTasks,
-    /// The Chats view: every chat newest first, with who answered it
-    /// (AGENTUX I5). Right of Tasks, so `Alt+4`; Agents and Artifacts moved
-    /// up one digit to make room (decision R3).
-    ShowChats,
-    ShowAgents,
-    /// The Artifacts column: what the delegated runs of this workspace
-    /// produced, and what they left that is not a result yet (P1.13).
-    ShowArtifacts,
-    /// The Canvases section: every canvas in this workspace, one flat list.
-    /// The seventh icon, so `Alt+7` (CANVAS P1.3).
-    ShowCanvases,
-    /// The Socials navigator: drafts, channel queues and the publishing
-    /// schedule. The eighth icon, so `Alt+8` (after Canvases took `Alt+7`).
-    ShowSocials,
+    /// are free under Alt alone on every layer. `Alt+0` and `Alt+9` stay
+    /// free: eight is every view this build can show with Home hidden, and a
+    /// view past the eighth slot has no digit.
+    ShowRailView1,
+    ShowRailView2,
+    ShowRailView3,
+    ShowRailView4,
+    ShowRailView5,
+    ShowRailView6,
+    ShowRailView7,
+    ShowRailView8,
     ToggleContext,
     ToggleAiPane,
     /// Bring back the tab that was closed last, as a browser does.
@@ -342,6 +351,50 @@ pub enum ShortcutId {
     Outdent,
     MoveRowUp,
     MoveRowDown,
+    // ----------------------------------------------------------- the AI chat
+    /// **The next approval mode** of a local agent's chat (koru-ai D7):
+    /// Shift+Tab in the composer steps the chat to the agent's next mode and
+    /// says which. It skips *Full access*, which only a press chooses.
+    ///
+    /// The same chord as the editor's [`Outdent`](Self::Outdent), and said
+    /// so: the chat asks its composer first, so an outdent wins wherever
+    /// there is something to outdent. The composer's policy refuses lists
+    /// and tables, so in a message there never is, and the key falls
+    /// through to the chat.
+    CycleAgentMode,
+    /// **Jump to the newest message** (koru-ai D77): the transcript scrolled
+    /// to its end, following a streaming reply from there, as the ↓ above
+    /// the composer does. In the composer `Ctrl+End` is the editor's *caret
+    /// to the end of the text*, and it stays that wherever there is text:
+    /// the chat takes the key only while the message is empty or the
+    /// keyboard is not in the composer. The editor's caret keys are not
+    /// rows of this table, so no row is shared.
+    JumpToLatest,
+    /// **The chat above in the Chats list** (koru-ai D87), as shown — the
+    /// Pinned group first, then by activity — the same as choosing its row.
+    ///
+    /// The same chord as the editor's [`MoveRowUp`](Self::MoveRowUp), and
+    /// said so: the composer is an editor, and in a message with lines in
+    /// it the chord stays *move this line up*. The chat takes it only while
+    /// the message is empty or the keyboard is not in the composer — the
+    /// rule `Ctrl+End` keeps (D77). The Agent providers list's row moves
+    /// (D41) and the document's block moves are other surfaces.
+    PreviousChat,
+    /// **The chat below in the Chats list** (D87); the same chord as the
+    /// editor's [`MoveRowDown`](Self::MoveRowDown), on the same terms.
+    NextChat,
+    /// **Add the text selected in a reply to the message** (koru-ai D88): a
+    /// quote chip at the composer's caret, the caret on a new line under it
+    /// for the comment, and the keyboard in the composer. The *Add to chat*
+    /// pill over the selection and the reply's right-click menu do the same.
+    ///
+    /// The same chord as the editor's [`AlignLeft`](Self::AlignLeft), and
+    /// said so: the chat takes it **while *Add to chat* is offered** — a
+    /// reply has a selection and the pill is up — wherever the keyboard is
+    /// in the chat, the composer included, whose policy refuses alignment
+    /// in a message anyway (the user's call, 2026-11-03). A document beside
+    /// the chat keeps it whenever the keyboard is there.
+    AddSelectionToChat,
 }
 
 /// One row of the table.
@@ -468,12 +521,6 @@ pub const REGISTRY: &[Shortcut] = &[
     ),
     // ------------------------------------------------------------- the shell
     s(
-        ShortcutId::NewWindow,
-        Layer::Shell,
-        "New window",
-        Chord::new(On::Letter('n'), PRIMARY),
-    ),
-    s(
         ShortcutId::PinWindow,
         Layer::Shell,
         "Keep window on top",
@@ -572,10 +619,10 @@ pub const REGISTRY: &[Shortcut] = &[
         Chord::new(On::Letter('t'), PRIMARY),
     ),
     s(
-        ShortcutId::AddContent,
+        ShortcutId::New,
         Layer::Container,
-        "Add…",
-        Chord::new(On::Letter('a'), PRIMARY_SHIFT),
+        "New…",
+        Chord::new(On::Letter('n'), PRIMARY),
     ),
     Shortcut {
         shares_chord_with: Some(ShortcutId::CloseDocumentWindow),
@@ -605,51 +652,57 @@ pub const REGISTRY: &[Shortcut] = &[
         Chord::new(On::Letter('e'), PRIMARY_SHIFT),
     ),
     s(
-        ShortcutId::ShowDocuments,
+        ShortcutId::ShowHome,
         Layer::Container,
-        "Documents",
+        "Home",
+        Chord::new(On::Letter('h'), crate::VIEW),
+    ),
+    s(
+        ShortcutId::ShowRailView1,
+        Layer::Container,
+        "Rail view 1",
         Chord::new(On::Letter('1'), crate::VIEW),
     ),
     s(
-        ShortcutId::ShowFiles,
+        ShortcutId::ShowRailView2,
         Layer::Container,
-        "Files",
+        "Rail view 2",
         Chord::new(On::Letter('2'), crate::VIEW),
     ),
     s(
-        ShortcutId::ShowTasks,
+        ShortcutId::ShowRailView3,
         Layer::Container,
-        "Tasks",
+        "Rail view 3",
         Chord::new(On::Letter('3'), crate::VIEW),
     ),
     s(
-        ShortcutId::ShowChats,
+        ShortcutId::ShowRailView4,
         Layer::Container,
-        "Chats",
+        "Rail view 4",
         Chord::new(On::Letter('4'), crate::VIEW),
     ),
     s(
-        ShortcutId::ShowAgents,
+        ShortcutId::ShowRailView5,
         Layer::Container,
-        "Agents",
+        "Rail view 5",
         Chord::new(On::Letter('5'), crate::VIEW),
     ),
     s(
-        ShortcutId::ShowArtifacts,
+        ShortcutId::ShowRailView6,
         Layer::Container,
-        "Artifacts",
+        "Rail view 6",
         Chord::new(On::Letter('6'), crate::VIEW),
     ),
     s(
-        ShortcutId::ShowCanvases,
+        ShortcutId::ShowRailView7,
         Layer::Container,
-        "Canvases",
+        "Rail view 7",
         Chord::new(On::Letter('7'), crate::VIEW),
     ),
     s(
-        ShortcutId::ShowSocials,
+        ShortcutId::ShowRailView8,
         Layer::Container,
-        "Socials",
+        "Rail view 8",
         Chord::new(On::Letter('8'), crate::VIEW),
     ),
     s(
@@ -1027,6 +1080,48 @@ pub const REGISTRY: &[Shortcut] = &[
         "Move line down",
         Chord::new(named(NamedKey::ArrowDown), PRIMARY_SHIFT),
     ),
+    Shortcut {
+        shares_chord_with: Some(ShortcutId::Outdent),
+        ..s(
+            ShortcutId::CycleAgentMode,
+            Layer::Chat,
+            "Next approval mode",
+            Chord::new(named(NamedKey::Tab), SHIFT),
+        )
+    },
+    s(
+        ShortcutId::JumpToLatest,
+        Layer::Chat,
+        "Jump to latest",
+        Chord::new(named(NamedKey::End), PRIMARY),
+    ),
+    Shortcut {
+        shares_chord_with: Some(ShortcutId::MoveRowUp),
+        ..s(
+            ShortcutId::PreviousChat,
+            Layer::Chat,
+            "Previous chat",
+            Chord::new(named(NamedKey::ArrowUp), PRIMARY_SHIFT),
+        )
+    },
+    Shortcut {
+        shares_chord_with: Some(ShortcutId::MoveRowDown),
+        ..s(
+            ShortcutId::NextChat,
+            Layer::Chat,
+            "Next chat",
+            Chord::new(named(NamedKey::ArrowDown), PRIMARY_SHIFT),
+        )
+    },
+    Shortcut {
+        shares_chord_with: Some(ShortcutId::AlignLeft),
+        ..s(
+            ShortcutId::AddSelectionToChat,
+            Layer::Chat,
+            "Add to chat",
+            Chord::new(On::Letter('l'), PRIMARY),
+        )
+    },
 ];
 
 impl ShortcutId {
@@ -1041,16 +1136,45 @@ impl ShortcutId {
     /// container's `mainview::keys::resolve`).
     pub fn shown_in_product(self) -> bool {
         match self {
-            Self::ShowTasks => koru_features::tasks(),
-            Self::ShowChats | Self::ToggleAiPane | Self::Delegate => koru_features::ai(),
-            Self::ShowAgents | Self::ShowArtifacts => koru_features::agent_views(),
+            // Home is hidden for now, by a constant (`koru_features::HOME_SHOWN`).
+            Self::ShowHome => koru_features::home(),
+            // The delegation modal's chord: starting Delegate follows the
+            // agent views as well as Koru AI.
+            Self::Delegate => koru_features::delegate(),
+            Self::ToggleAiPane
+            | Self::CycleAgentMode
+            | Self::JumpToLatest
+            | Self::PreviousChat
+            | Self::NextChat
+            | Self::AddSelectionToChat => koru_features::ai(),
             Self::CopyCloudDetails => koru_features::cloud_sync(),
             Self::Reminders => koru_features::reminders(),
-            Self::ShowCanvases => koru_features::canvas(),
-            Self::ShowSocials => koru_features::socials(),
+            // The rail's slots (`ShowRailView1`…) are never hidden by a
+            // switch: a slot's chord is taught by whichever view sits in it,
+            // and a slot with no view in it is never asked (`rail_slot`).
             _ => true,
         }
     }
+}
+
+/// The rail's slots, top to bottom: `Alt+1` … `Alt+8` (⌃⌘ on a Mac). The
+/// chord belongs to the slot, never to the view in it — see
+/// [`ShortcutId::ShowRailView1`].
+pub const RAIL_SLOTS: [ShortcutId; 8] = [
+    ShortcutId::ShowRailView1,
+    ShortcutId::ShowRailView2,
+    ShortcutId::ShowRailView3,
+    ShortcutId::ShowRailView4,
+    ShortcutId::ShowRailView5,
+    ShortcutId::ShowRailView6,
+    ShortcutId::ShowRailView7,
+    ShortcutId::ShowRailView8,
+];
+
+/// The chord of the view in rail slot `index`, counted from zero down the
+/// views the rail draws. `None` past the eighth: that view has no digit.
+pub fn rail_slot(index: usize) -> Option<ShortcutId> {
+    RAIL_SLOTS.get(index).copied()
 }
 
 /// The entry for `id`. Panics if the table has no such row, which can only be a
@@ -1090,6 +1214,7 @@ pub fn markdown() -> String {
         Layer::Container,
         Layer::View,
         Layer::Editor,
+        Layer::Chat,
     ] {
         out.push_str(&format!("\n## {}\n\n| | |\n| --- | --- |\n", layer.name()));
         for entry in of_layer(layer) {

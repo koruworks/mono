@@ -7,6 +7,7 @@
 
 use std::path::PathBuf;
 
+mod attachments;
 mod chat_tools;
 mod store_context;
 mod store_tools;

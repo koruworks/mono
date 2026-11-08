@@ -86,9 +86,14 @@ fn logs_capture_lifecycle_counts_without_provider_content_and_coalesce_streams()
         let turn = AgentTurnId::mint();
         h.control
             .submit(AgentInput {
+                model: None,
                 turn_id: turn,
                 text: "private-prompt-sentinel".into(),
                 attachments: vec![],
+                mode: None,
+                fast: None,
+                reasoning: None,
+                skills: Vec::new(),
             })
             .unwrap();
         h.control

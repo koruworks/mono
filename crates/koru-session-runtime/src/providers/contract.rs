@@ -110,6 +110,10 @@ pub struct ManagedProviderRequest {
     /// each into its own configuration form privately, as it does the
     /// delegated endpoint.
     pub mcp_servers: Vec<McpServerLaunch>,
+    /// The session's creator draws an agent's questions (protocol v21,
+    /// koru-ai D108). Off, the adapter declines an agent's question as it
+    /// always has, and offers it no way to ask.
+    pub questions: bool,
 }
 
 /// One stdio MCP server the agent starts as its own child: the program,
@@ -180,6 +184,18 @@ pub trait ManagedProviderFactory: Send + Sync + 'static {
         ))
     }
 
+    /// **What the agent can be told to do by name in a folder** (koru-ai
+    /// D121): Codex's skills, in a picker's order. Off the answering
+    /// threads, like the models. An agent with nothing to offer answers an
+    /// empty list, which is every agent but Codex today.
+    fn discover_commands(
+        &self,
+        _executable: OsString,
+        _working_directory: PathBuf,
+    ) -> Result<Vec<koru_session_protocol::AgentCommand>, ProviderFailure> {
+        Ok(Vec::new())
+    }
+
     /// Construct a fresh probe. The host calls this off its answering threads.
     fn compatibility_probe(
         &self,
@@ -192,6 +208,52 @@ pub trait ManagedProviderFactory: Send + Sync + 'static {
             ProviderDiagnostic::HandshakeRejected,
         ))
     }
+
+    /// Where the host's model catalog gets this provider's list.
+    fn catalog_source(&self) -> CatalogSource {
+        CatalogSource::OnDemand
+    }
+
+    /// **The approval modes Koru gives an agent that advertises none**
+    /// (koru-ai D7): Codex's, which its adapter maps onto the app-server's
+    /// own approval and sandbox settings. An agent that advertises its own
+    /// has them read from its session start instead, and answers `None`.
+    fn fixed_modes(&self) -> Option<koru_session_protocol::AgentModes> {
+        None
+    }
+
+    /// Whether this provider's levels are read by walking its models once
+    /// per version (agent-models D16), because its session offers levels for
+    /// the model it is on and no other.
+    fn walks_model_levels(&self) -> bool {
+        false
+    }
+
+    /// The walk itself: every listed model, each with the levels it offers.
+    /// Runs on the catalog's worker, holding a model slot.
+    fn walk_model_levels(
+        &self,
+        _executable: OsString,
+        _working_directory: PathBuf,
+    ) -> Result<koru_session_protocol::ProviderModels, ProviderFailure> {
+        Err(ProviderFailure::new(
+            ErrorCode::CapabilityNotNegotiated,
+            ProviderStage::Discovery,
+            ProviderDiagnostic::HandshakeRejected,
+        ))
+    }
+}
+
+/// Where the host's model catalog gets a provider's list.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CatalogSource {
+    /// The readiness probe's own session start receives it, so keeping it
+    /// costs no process (`CompatibilityProbe::probe_with_models`).
+    Probe,
+    /// A listing of its own, run in the background once per agent version.
+    Listing,
+    /// A listing run only when somebody asks.
+    OnDemand,
 }
 
 /// Provider-neutral attachment metadata. The adapter resolves an id through
@@ -219,12 +281,39 @@ pub struct AgentInput {
     pub turn_id: AgentTurnId,
     pub text: String,
     pub attachments: Vec<AgentAttachment>,
+    /// The approval mode the turn runs in (koru-ai D7): an adapter moves
+    /// the session to it before the prompt and refuses the turn when it
+    /// cannot. `None` leaves the session's mode as it is — except Codex's,
+    /// whose turns always carry Koru's default, *Ask for approval*.
+    pub mode: Option<koru_session_protocol::AgentModeId>,
+    /// The model's Fast mode for this turn (koru-ai D11): set before the
+    /// prompt when the model offers it, ignored when it does not. `None`
+    /// leaves it as it is.
+    pub fast: Option<bool>,
+    /// The reasoning level this turn runs at (koru-ai D70): set before the
+    /// prompt when it differs from the session's, and a turn the agent
+    /// cannot take it for is refused, never run at another level. `None`
+    /// leaves the level as it is.
+    pub reasoning: Option<koru_session_protocol::LaunchReasoning>,
+    /// The model this turn runs on, chosen after the start: an adapter
+    /// moves the session to it before the prompt when it is on another, and
+    /// a turn the agent cannot take it for is refused, never run on a model
+    /// nobody chose. `None` leaves the model as it is. The level and Fast
+    /// mode the turn carries are then the new model's. It is the pending
+    /// input's `model` (protocol v22); a steer never carries one.
+    pub model: Option<koru_session_protocol::ModelName>,
+    /// The skills the person picked, by name (koru-ai D121); the text says
+    /// `$name` where each was. An adapter names each to its agent beside
+    /// the text, resolving where it lives from the agent's own listing; one
+    /// that has no skills ignores them, and the text goes as typed.
+    pub skills: Vec<String>,
 }
 
 impl AgentInput {
     pub fn validate(&self, maximum_text_bytes: usize) -> Result<(), ProviderFailure> {
         if (self.text.is_empty() && self.attachments.is_empty())
             || self.text.len() > maximum_text_bytes
+            || !koru_session_protocol::valid_input_skills(&self.skills)
         {
             return Err(ProviderFailure::new(
                 ErrorCode::InvalidRequest,
@@ -251,6 +340,11 @@ impl fmt::Debug for AgentInput {
             .field("turn_id", &self.turn_id)
             .field("text_bytes", &self.text.len())
             .field("attachment_count", &self.attachments.len())
+            .field("mode", &self.mode)
+            .field("fast", &self.fast)
+            .field("reasoning", &self.reasoning)
+            .field("model", &self.model)
+            .field("skill_count", &self.skills.len())
             .finish()
     }
 }
@@ -264,6 +358,21 @@ pub struct ProviderFailure {
     pub stage: ProviderStage,
     pub diagnostic: ProviderDiagnostic,
     pub os_code: Option<i32>,
+    /// What a version gate refused, set only by one; readiness carries it to
+    /// the window so the refusal can name both versions. A field rather than
+    /// a diagnostic of its own because the diagnostic is a closed, `Copy`
+    /// wire value, and every `failure(...)` helper and caller keeps working.
+    pub version: Option<VersionRefusal>,
+}
+
+/// **A refused version**: the one the agent printed, when one could be read,
+/// and what the route accepts. `found` stays a [`ProviderVersion`], whose
+/// `Debug` shows only its length, so a failure logged with `{:?}` stays as
+/// content-free as before.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VersionRefusal {
+    pub found: Option<ProviderVersion>,
+    pub needed: Option<koru_session_protocol::VersionNeed>,
 }
 
 impl ProviderFailure {
@@ -273,6 +382,7 @@ impl ProviderFailure {
             stage,
             diagnostic,
             os_code: None,
+            version: None,
         }
     }
 
@@ -282,7 +392,19 @@ impl ProviderFailure {
             stage,
             diagnostic: ProviderDiagnostic::Io,
             os_code: error.raw_os_error(),
+            version: None,
         }
+    }
+
+    /// The same failure, saying which version was refused and what the
+    /// route accepts.
+    pub(crate) fn refusing(
+        mut self,
+        found: Option<ProviderVersion>,
+        needed: Option<koru_session_protocol::VersionNeed>,
+    ) -> Self {
+        self.version = Some(VersionRefusal { found, needed });
+        self
     }
 }
 
@@ -337,12 +459,64 @@ pub trait AgentControl: Send {
         ))
     }
 
+    /// **Start a turn whose input is a set's answers** (protocol v21,
+    /// koru-ai D108): the set is one the agent asked in its reply and moved
+    /// on from (`delivery: next_message`), and the adapter writes the
+    /// answers as the person's next message in the agent's own form.
+    /// `input` carries the turn's id and settings and no text of its own.
+    /// The answers are checked against the set; a set that is not pending
+    /// is `ApprovalStale`. An adapter that never asks so has none.
+    fn submit_answers(
+        &mut self,
+        input: AgentInput,
+        answers: koru_session_protocol::QuestionsReply,
+    ) -> Result<(), ProviderFailure> {
+        let _ = (input, answers);
+        Err(ProviderFailure::new(
+            ErrorCode::ApprovalStale,
+            ProviderStage::Submit,
+            ProviderDiagnostic::InvalidState,
+        ))
+    }
+
+    /// The same answers steered into the turn that is running.
+    fn steer_answers(
+        &mut self,
+        input: AgentInput,
+        answers: koru_session_protocol::QuestionsReply,
+    ) -> Result<(), ProviderFailure> {
+        let _ = (input, answers);
+        Err(ProviderFailure::new(
+            ErrorCode::ApprovalStale,
+            ProviderStage::Submit,
+            ProviderDiagnostic::InvalidState,
+        ))
+    }
+
     fn answer_approval(
         &mut self,
         approval_id: ApprovalId,
         decision: ApprovalDecision,
         choice: Option<koru_session_protocol::ApprovalChoiceId>,
     ) -> Result<(), ProviderFailure>;
+
+    /// **Answer a set of questions the agent asked** (protocol v21, koru-ai
+    /// D108), or skip it with `None`. The answers are checked against the
+    /// set ([`koru_session_protocol::validate_answers`]); a set that is not
+    /// pending is `ApprovalStale`, like an approval. An adapter that never
+    /// asks has nothing pending.
+    fn answer_questions(
+        &mut self,
+        request_id: koru_session_protocol::QuestionRequestId,
+        answers: Option<Vec<koru_session_protocol::QuestionAnswer>>,
+    ) -> Result<(), ProviderFailure> {
+        let _ = (request_id, answers);
+        Err(ProviderFailure::new(
+            ErrorCode::ApprovalStale,
+            ProviderStage::Approval,
+            ProviderDiagnostic::InvalidState,
+        ))
+    }
 
     /// Returns normalized events only. Unknown provider events increment the
     /// diagnostic counter and are not surfaced as invented Koru semantics.

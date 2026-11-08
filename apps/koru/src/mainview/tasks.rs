@@ -50,6 +50,15 @@ pub(super) struct PendingTaskEdit {
     pub title: String,
 }
 
+/// The queue a Tasks or Reminders tab is showing; `None` for any other tab.
+fn tasks_target_of(tab: &Tab) -> Option<RailTarget> {
+    match &tab.view {
+        TabView::Tasks(t) => Some(t.target()),
+        TabView::Reminders(_) => Some(RailTarget::Reminders),
+        _ => None,
+    }
+}
+
 impl MainView {
     /// Open the Tasks tab on `target`, or point the existing one at it.
     ///
@@ -82,17 +91,22 @@ impl MainView {
         if !rail_target_shown(target) {
             return false;
         }
+        // **A pinned Tasks tab is kept on its queue**: it is a page somebody
+        // parked at the left of the strip, so a press re-points an unpinned
+        // Tasks tab (or opens one) and never moves the pin. A press for the
+        // queue a pin already shows selects that pin instead of opening a
+        // second page on it.
+        let repointable =
+            |t: &Tab| !t.is_pinned() && matches!(t.view, TabView::Tasks(_) | TabView::Reminders(_));
         let existing = (!new_tab).then(|| {
-            matches!(
-                self.tabs().active_tab().view,
-                TabView::Tasks(_) | TabView::Reminders(_)
-            )
-            .then(|| self.tabs().active())
-            .or_else(|| {
-                self.tabs()
-                    .iter()
-                    .position(|t| matches!(t.view, TabView::Tasks(_) | TabView::Reminders(_)))
-            })
+            self.tabs()
+                .iter()
+                .position(|t| t.is_pinned() && tasks_target_of(t) == Some(target))
+                .or_else(|| {
+                    repointable(self.tabs().active_tab())
+                        .then(|| self.tabs().active())
+                        .or_else(|| self.tabs().iter().position(repointable))
+                })
         });
         match existing.flatten() {
             Some(i) => {
@@ -146,6 +160,11 @@ impl MainView {
                 self.relayout();
             }
         }
+        self.tasks_page_in_front(target)
+    }
+
+    /// The page on `target` is the active tab now: name it and card the rail.
+    fn tasks_page_in_front(&mut self, target: RailTarget) -> bool {
         // **The strip names the page**, so it moves when the page does. This is
         // the pressed half; a list renamed underneath the tab is caught by
         // MainView::refresh_labels, which runs on the tick nobody pressed.
@@ -160,11 +179,123 @@ impl MainView {
         true
     }
 
+    /// **A Tasks rail row's page, where the place chooser said** — Alt+click
+    /// on a queue, a list or the Reminders row (ADR-58). An arm puts a page of
+    /// its own in a new pane split off the focused one; the middle opens one
+    /// in a new tab, in front. Neither re-points the tab already on a page: a
+    /// page you asked to put somewhere is a page you parked, the reason
+    /// Ctrl+click opens a second one. The rail cards it, because it is the tab
+    /// in front.
+    ///
+    /// The other dispositions are the rail's own gestures, so they go through
+    /// [`open_tasks_tab`](Self::open_tasks_tab); a page has no window of its
+    /// own to open in.
+    pub(super) fn open_tasks_page_where(
+        &mut self,
+        target: RailTarget,
+        where_: koru_editor::OpenWhere,
+    ) -> bool {
+        use koru_editor::OpenWhere;
+        match where_ {
+            OpenWhere::Reuse | OpenWhere::SameTab => return self.open_tasks_tab(target, false),
+            OpenWhere::BackgroundTab => return self.open_tasks_tab(target, true),
+            OpenWhere::NewWindow => return false,
+            OpenWhere::NewTab | OpenWhere::Split(_) => {}
+        }
+        // The product flags, answered at this door as `open_tasks_tab`
+        // answers them at its own.
+        if !rail_target_shown(target) {
+            return false;
+        }
+        match where_ {
+            OpenWhere::Split(side) => self.split_with(Tab::tasks(target), side),
+            _ => {
+                self.tabs_mut().push(Tab::tasks(target));
+                self.slides_mut().clear();
+                self.relayout();
+            }
+        }
+        self.tasks_page_in_front(target)
+    }
+
+    /// **A task's node, where the place chooser said** — Alt+click on a task
+    /// row (ADR-58). The latch [`open_task_node`](Self::open_task_node) sets,
+    /// so a row whose task has gone is refused at the landing; then the door
+    /// every reference goes through, with the node, so the landing flashes
+    /// the row it arrives on as the row's own open does.
+    pub(super) fn open_task_where(
+        &mut self,
+        ws: &koru_core::schema::WorkspaceDoc,
+        document: DocumentId,
+        node: NodeId,
+        where_: koru_editor::OpenWhere,
+    ) -> bool {
+        self.pending_task_open = Some((document, node, Self::gesture_deadline()));
+        self.open_reference(
+            ws,
+            koru_editor::Reference::Document(koru_editor::trigger::DocumentTarget {
+                document,
+                node: Some(node),
+            }),
+            where_,
+        )
+    }
+
     /// What the Tasks tab asked for.
     ///
     /// **One path per verb**, so ticking from the row control and *Complete*
     /// from the menu are the same call — and so the confirm on *Remove from
     /// Tasks* cannot be skipped by coming in the other way.
+    /// **Tasks carried over the sidebar**: while rows dragged off the Tasks
+    /// page in front are past the threshold, the list row under the pointer
+    /// is where they would land — lit in the rail, and the page offers no
+    /// gap of its own meanwhile. Answers whether anything changed.
+    pub(super) fn track_task_drop(&mut self, x: f32, y: f32) -> bool {
+        let carrying = matches!(
+            &self.tabs().active_tab().view,
+            TabView::Tasks(t) if t.carrying_rows()
+        );
+        let target = if carrying
+            && self.sidebar.is_open()
+            && self.explore.navigator_mode() == crate::panes::explore::NavigatorMode::Tasks
+        {
+            let area = self.explore_area();
+            let top = self.explore.rail_top(area);
+            match area
+                .contains(x, y)
+                .then(|| self.explore.rail().target_at(area, top, x, y))
+                .flatten()
+            {
+                Some(RailTarget::List(id)) => Some(id),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        let mut changed = self.explore.rail_mut().set_drop_target(target);
+        if let TabView::Tasks(t) = &mut self.tabs_mut().active_mut().view {
+            changed |= t.set_rows_outside(target.is_some());
+        }
+        changed
+    }
+
+    /// The release of carried tasks over a list in the sidebar: they join
+    /// it. `false` — and nothing done — when no list was lit.
+    pub(super) fn drop_tasks_on_list(&mut self) -> bool {
+        let Some(list) = self.explore.rail().drop_target() else {
+            return false;
+        };
+        self.explore.rail_mut().set_drop_target(None);
+        let dropped = match &mut self.tabs_mut().active_mut().view {
+            TabView::Tasks(t) => t.drop_rows_into_list(list),
+            _ => false,
+        };
+        if dropped {
+            self.drain_tasks_request();
+        }
+        dropped
+    }
+
     pub(super) fn drain_tasks_request(&mut self) -> bool {
         let request = match &mut self.tabs_mut().active_mut().view {
             TabView::Tasks(t) => t.take_request(),
@@ -173,6 +304,12 @@ impl MainView {
         let Some(request) = request else {
             return false;
         };
+        self.handle_tasks_request(request);
+        true
+    }
+
+    /// One request from the Tasks tab, through the door its verb has.
+    fn handle_tasks_request(&mut self, request: crate::tasks_view::Request) {
         // **A tab reports in its own coordinates.** The container passes the
         // content rect's size as the viewport and subtracts its origin from
         // every pointer coordinate before delegating, so anything a view hands
@@ -187,6 +324,15 @@ impl MainView {
                 new_tab,
             } => {
                 self.open_task_node(document, node, new_tab);
+            }
+            // Alt+click on a row: the place chooser at the press, over the
+            // pane the page is in, whose answer opens the task (ADR-58).
+            crate::tasks_view::Request::ChoosePlace { document, node, at } => {
+                let page = self.focused_view_rect();
+                self.open_place_chooser(
+                    super::place_chooser::PlaceTarget::Task { document, node },
+                    (at.0 + page.x, at.1 + page.y),
+                );
             }
             crate::tasks_view::Request::RowMenu {
                 document,
@@ -227,12 +373,14 @@ impl MainView {
                 due,
                 list,
                 priority,
+                rank,
             } => self.queue_task_command(
                 TaskCommand::Create {
                     title,
                     due,
                     list,
                     priority,
+                    rank,
                 },
                 false,
             ),
@@ -280,8 +428,65 @@ impl MainView {
                 },
                 false,
             ),
+            // **A batch is a run of ordinary edits**, each through its own
+            // door, so the rail's numbers and the page's echoes see every
+            // one of them exactly as they see one.
+            crate::tasks_view::Request::SetColor {
+                document,
+                node,
+                color,
+            } => self.queue_task_command(
+                TaskCommand::SetColor {
+                    document,
+                    node,
+                    color,
+                },
+                false,
+            ),
+            // **A drag's ranks leave by the same door**, one per moved row.
+            crate::tasks_view::Request::SetRank {
+                document,
+                node,
+                rank,
+            } => self.queue_task_command(
+                TaskCommand::SetRank {
+                    document,
+                    node,
+                    rank,
+                },
+                false,
+            ),
+            // **A rename leaves by the same door** as every other edit.
+            crate::tasks_view::Request::Retitle {
+                document,
+                node,
+                title,
+            } => self.queue_task_command(
+                TaskCommand::Retitle {
+                    document,
+                    node,
+                    title,
+                },
+                false,
+            ),
+            crate::tasks_view::Request::Many(requests) => {
+                for request in requests {
+                    self.handle_tasks_request(request);
+                }
+            }
+            crate::tasks_view::Request::RowsMenu {
+                tasks,
+                native,
+                completed,
+                at,
+            } => {
+                let (subject, items) = crate::tasks_view::rows_menu(tasks, native, completed);
+                self.open_subject_menu(subject, items, to_window(at));
+            }
+            crate::tasks_view::Request::RemoveTasks { tasks } => {
+                self.ask_remove_tasks(tasks);
+            }
         }
-        true
     }
 
     /// What the Reminders page asked for.
@@ -310,6 +515,19 @@ impl MainView {
     /// menu row's *Complete*, a confirmed *Remove*); a command the page asked
     /// for has already echoed itself on the way out.
     pub(super) fn queue_task_command(&mut self, command: TaskCommand, echo: bool) {
+        self.queue_task_command_landing(command, echo, None);
+    }
+
+    /// [`queue_task_command`](Self::queue_task_command), with what its
+    /// receipt is owed said by the caller rather than read off the command —
+    /// *Add document* for several tasks gives each a home and opens none,
+    /// where one task's opens its new page.
+    pub(super) fn queue_task_command_landing(
+        &mut self,
+        command: TaskCommand,
+        echo: bool,
+        landing: Option<super::Landing>,
+    ) {
         crate::tasks::debug_line(format_args!(
             "command queued: {} (echoed by the container: {echo})",
             command.token()
@@ -319,6 +537,9 @@ impl MainView {
             | TaskCommand::Remove { document, node }
             | TaskCommand::SetDue { document, node, .. }
             | TaskCommand::SetPriority { document, node, .. }
+            | TaskCommand::SetColor { document, node, .. }
+            | TaskCommand::SetRank { document, node, .. }
+            | TaskCommand::Retitle { document, node, .. }
             | TaskCommand::SetList { document, node, .. }
             | TaskCommand::PinToday { document, node, .. }
             | TaskCommand::CreateHome { document, node } => self.task_row(*document, *node),
@@ -333,6 +554,7 @@ impl MainView {
         .unwrap_or_default();
         self.pending_count_deltas.push(delta);
         let landing = match &command {
+            _ if landing.is_some() => landing.unwrap_or(super::Landing::Plain),
             TaskCommand::CreateHome { .. } => super::Landing::OpenHome,
             TaskCommand::Create {
                 due,
@@ -920,10 +1142,42 @@ impl MainView {
                 ),
                 "Remove",
             ),
-            super::trash::ConfirmSubject::RemoveFromTasks(PendingTaskEdit {
+            super::trash::ConfirmSubject::RemoveFromTasks(vec![PendingTaskEdit {
                 command: TaskCommand::Remove { document, node },
                 title,
-            }),
+            }]),
+        ));
+        true
+    }
+
+    /// *Remove from Tasks* — or Delete — for a selection: **one question for
+    /// the set**, and every task is removed on the one yes. A set of one asks
+    /// the single question, which names the task and its date.
+    pub(super) fn ask_remove_tasks(&mut self, tasks: Vec<(DocumentId, NodeId)>) -> bool {
+        match tasks.as_slice() {
+            [] => return false,
+            &[(document, node)] => return self.ask_remove_from_tasks(document, node),
+            _ => {}
+        }
+        let n = tasks.len();
+        let pending: Vec<PendingTaskEdit> = tasks
+            .into_iter()
+            .map(|(document, node)| PendingTaskEdit {
+                command: TaskCommand::Remove { document, node },
+                title: self
+                    .task_row(document, node)
+                    .map(|row| row.title)
+                    .unwrap_or_default(),
+            })
+            .collect();
+        self.confirm = Some((
+            koru_ui::Confirm::new(
+                format!("Remove {n} tasks?"),
+                "Removing them clears their due dates. Lines in documents stay where they are."
+                    .to_owned(),
+                "Remove",
+            ),
+            super::trash::ConfirmSubject::RemoveFromTasks(pending),
         ));
         true
     }

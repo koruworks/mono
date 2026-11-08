@@ -823,6 +823,55 @@ fn ready_agents_come_from_the_modals_snapshot_and_the_default_follows_the_modal(
     assert_eq!(fresh.default_agent(), None);
 }
 
+/// **An agent turned off on Agent providers is not offered on a canvas**
+/// (D42): it leaves the agent menu and is never a new node's default, even
+/// as the one the modal last used; the rest follow the order set there.
+/// Turned back on, it is offered again.
+#[test]
+fn canvas_runs_hide_agents_turned_off_and_follow_the_order() {
+    let (mut runs, _fake) = ready_runs();
+    let every = agents();
+    let Some(first) = every.first().cloned() else {
+        return;
+    };
+    // An agent's key is its managed provider kind.
+    let kind = |runs: &CanvasRuns, key: &SessionProfileKey| {
+        runs.agents
+            .iter()
+            .find(|row| row.key == *key)
+            .map(|row| row.provider.as_str().to_owned())
+            .expect("a row")
+    };
+    let first_kind = kind(&runs, &first);
+    runs.remember_modal_agent(first.clone());
+    assert!(runs.set_agent_settings(vec![first_kind.clone()], Vec::new()));
+    assert!(
+        !runs.set_agent_settings(vec![first_kind.clone()], Vec::new()),
+        "no change"
+    );
+    let ready: Vec<_> = runs
+        .ready_agents()
+        .into_iter()
+        .map(|(key, _)| key)
+        .collect();
+    assert!(!ready.contains(&first), "turned off, so not offered");
+    assert_eq!(ready.len(), every.len() - 1);
+    assert_ne!(runs.default_agent(), Some(first.clone()), "nor the default");
+
+    // The order: the last agent listed first.
+    if let Some(last) = every.last().cloned().filter(|last| *last != first) {
+        let last_kind = kind(&runs, &last);
+        runs.set_agent_settings(Vec::new(), vec![last_kind]);
+        assert_eq!(
+            runs.ready_agents().first().map(|(key, _)| key.clone()),
+            Some(last)
+        );
+    }
+    runs.set_agent_settings(Vec::new(), Vec::new());
+    assert_eq!(runs.ready_agents().len(), every.len(), "back on");
+    assert_eq!(runs.default_agent(), Some(first));
+}
+
 // ------------------------------------------------------------ the event bus
 
 /// **A `delegate.*` event about a canvas run reads it early**; one about

@@ -695,6 +695,9 @@ pub enum TaskCommand {
         list: Option<koru_core::ids::ListId>,
         /// The level the row was captured with — `/priority` on the input.
         priority: Option<Priority>,
+        /// Its place in a list page's dragged order (`koru.rank`): the top, for
+        /// a task typed into a list ordered by hand. `None` everywhere else.
+        rank: Option<i64>,
     },
     /// Put a task in a list, or — with `None` — take it out of whatever list it
     /// is in.
@@ -747,6 +750,34 @@ pub enum TaskCommand {
         node: koru_core::NodeId,
         priority: Option<Priority>,
     },
+    /// The task line's colour (`koru.color`) from the page — a chip pressed
+    /// on its row. `None` clears it. The routed write, bracketed and guarded
+    /// exactly as [`SetPriority`](Self::SetPriority) is: a colour is a value
+    /// on the line, as a priority is.
+    SetColor {
+        document: koru_core::DocumentId,
+        node: koru_core::NodeId,
+        /// An accent token (`koru_core::attributes::AccentColor`).
+        color: Option<String>,
+    },
+    /// **Where the task sits in its list** (`koru.rank`), from a drag on a
+    /// list page. `None` clears it. The colour's road: guarded, routed, one
+    /// undo step per task; a drag of several is a run of these.
+    SetRank {
+        document: koru_core::DocumentId,
+        node: koru_core::NodeId,
+        rank: Option<i64>,
+    },
+    /// **The task's words, renamed on its row** — a double click on the
+    /// Tasks page. The line's text is set by a minimal diff (`set_text`), so
+    /// marks on the words that did not change stay, and a peer editing the
+    /// same line elsewhere keeps what it typed. Guarded and routed like the
+    /// colour: one undo step, refused for a line that stopped being a task.
+    Retitle {
+        document: koru_core::DocumentId,
+        node: koru_core::NodeId,
+        title: String,
+    },
     /// **Give a page-made task a document of its own** — *Create document* on
     /// its row. The workspace makes a page named
     /// [`home_title`](koru_workspace::tasks::home_title) at its root with the
@@ -794,6 +825,11 @@ impl TaskCommand {
                 priority: Some(_), ..
             } => "set_priority",
             Self::SetPriority { priority: None, .. } => "clear_priority",
+            Self::SetColor { color: Some(_), .. } => "set_color",
+            Self::SetColor { color: None, .. } => "clear_color",
+            Self::SetRank { rank: Some(_), .. } => "set_rank",
+            Self::SetRank { rank: None, .. } => "clear_rank",
+            Self::Retitle { .. } => "retitle",
         }
     }
 }
@@ -1002,9 +1038,10 @@ pub fn serve_with(
             due,
             list,
             priority,
+            rank,
         } => {
             let created = workspace
-                .create_native_task(title, due.clone(), *list, *priority)
+                .create_native_task_ranked(title, due.clone(), *list, *priority, *rank)
                 .map_err(|e| e.to_string())?;
             owed(&created.created);
             if let Some(dated) = &created.dated {
@@ -1091,6 +1128,105 @@ pub fn serve_with(
                             doc,
                             &[node],
                             koru_core::attributes::KEY_PRIORITY,
+                            &mut sink,
+                        ),
+                    })?;
+                    Ok(Some(sink))
+                })
+                .map_err(|e| e.to_string())?;
+            let Some(sink) = sink else {
+                return Err(TASK_GONE.to_owned());
+            };
+            for activity in sink {
+                host.attempt(activity.causation, &activity.intents);
+            }
+            landed
+        }
+        // The rank, by the colour's road.
+        TaskCommand::SetRank {
+            document,
+            node,
+            rank,
+        } => {
+            let (document, node, rank) = (*document, *node, *rank);
+            let (sink, landed) = workspace
+                .run_task_command(document, |doc| {
+                    if !still_a_task(doc, node) {
+                        return Ok(None);
+                    }
+                    let mut sink = koru_core::tasks::routed::ActivitySink::new();
+                    koru_core::tasks::compose(doc, |doc| match rank {
+                        Some(rank) => koru_core::tasks::routed::set_attribute(
+                            doc,
+                            &[node],
+                            koru_core::attributes::KEY_RANK,
+                            koru_core::node::AttrValue::Number(rank as f64),
+                            &mut sink,
+                        ),
+                        None => koru_core::tasks::routed::clear_attribute(
+                            doc,
+                            &[node],
+                            koru_core::attributes::KEY_RANK,
+                            &mut sink,
+                        ),
+                    })?;
+                    Ok(Some(sink))
+                })
+                .map_err(|e| e.to_string())?;
+            let Some(sink) = sink else {
+                return Err(TASK_GONE.to_owned());
+            };
+            for activity in sink {
+                host.attempt(activity.causation, &activity.intents);
+            }
+            landed
+        }
+        // The words, by the colour's road: guarded, one undo step.
+        TaskCommand::Retitle {
+            document,
+            node,
+            title,
+        } => {
+            let (document, node, title) = (*document, *node, title.clone());
+            let (renamed, landed) = workspace
+                .run_task_command(document, |doc| {
+                    if !still_a_task(doc, node) {
+                        return Ok(false);
+                    }
+                    koru_core::tasks::compose(doc, |doc| doc.set_text(node, &title))?;
+                    Ok(true)
+                })
+                .map_err(|e| e.to_string())?;
+            if !renamed {
+                return Err(TASK_GONE.to_owned());
+            }
+            landed
+        }
+        // The colour, by the priority's road: guarded, routed, one undo step.
+        TaskCommand::SetColor {
+            document,
+            node,
+            color,
+        } => {
+            let (document, node, color) = (*document, *node, color.clone());
+            let (sink, landed) = workspace
+                .run_task_command(document, |doc| {
+                    if !still_a_task(doc, node) {
+                        return Ok(None);
+                    }
+                    let mut sink = koru_core::tasks::routed::ActivitySink::new();
+                    koru_core::tasks::compose(doc, |doc| match &color {
+                        Some(token) => koru_core::tasks::routed::set_attribute(
+                            doc,
+                            &[node],
+                            koru_core::attributes::KEY_COLOR,
+                            koru_core::node::AttrValue::Text(token.clone()),
+                            &mut sink,
+                        ),
+                        None => koru_core::tasks::routed::clear_attribute(
+                            doc,
+                            &[node],
+                            koru_core::attributes::KEY_COLOR,
                             &mut sink,
                         ),
                     })?;

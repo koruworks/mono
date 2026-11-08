@@ -265,19 +265,283 @@
               "$ref": "#/components/schemas/OfferedChoice"
             },
             "type": "array"
+          },
+          "questions": {
+            "description": "The questions a waiting question set asks (koru-ai D108), in the\nagent's order with each one's options in its order; empty once\nanswered, skipped or expired, and on every other row.",
+            "items": {
+              "$ref": "#/components/schemas/AgentQuestion"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "AgentAnswer": {
+        "description": "One question's answer, by the question's id.",
+        "properties": {
+          "question_id": {
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/components/schemas/AgentAnswerValue"
+          }
+        },
+        "required": [
+          "question_id",
+          "value"
+        ],
+        "type": "object"
+      },
+      "AgentAnswerValue": {
+        "description": "What one question was answered with.",
+        "oneOf": [
+          {
+            "description": "One of its options, by label.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "option"
+                ],
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "label"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The person's own words.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "text"
+                ],
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "text"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A secret was given; it is not repeated.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "withheld"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "AgentCommandKindView": {
+        "description": "Where an entry comes from, in the order a picker lists them.",
+        "oneOf": [
+          {
+            "description": "A skill of the folder the agent works in.",
+            "enum": [
+              "repo_skill"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "A skill of the person's own.",
+            "enum": [
+              "user_skill"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "A skill the agent ships with.",
+            "enum": [
+              "system_skill"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "A skill an administrator installed.",
+            "enum": [
+              "admin_skill"
+            ],
+            "type": "string"
+          }
+        ]
+      },
+      "AgentCommandView": {
+        "description": "One entry an agent offers: the name its message says (`$name`), one\nline about it, and the agent's own name to show when it gives one.",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "display_name": {
+            "nullable": true,
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/AgentCommandKindView"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "kind"
+        ],
+        "type": "object"
+      },
+      "AgentCommandsResponse": {
+        "description": "**What a local agent can be told to do by name** (koru-ai D121): Codex's\nskills for the chat's folder, in a picker's order — the folder's, the\nperson's, the agent's own, an administrator's, then by name — enabled\nones only, each name once. Empty for an agent with none: a client then\noffers nothing under `$`. Where each lives stays with the agent.",
+        "properties": {
+          "commands": {
+            "items": {
+              "$ref": "#/components/schemas/AgentCommandView"
+            },
+            "type": "array"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/AiProviderId"
+          }
+        },
+        "required": [
+          "provider",
+          "commands"
+        ],
+        "type": "object"
+      },
+      "AgentModeView": {
+        "description": "One approval mode an agent offers: its own id, and what it says of it.\nA client words the ids it knows and shows these for the rest.",
+        "properties": {
+          "description": {
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "AgentModelContext": {
+        "description": "A model's longer context window: the id that runs the model with it,\nand its size in tokens.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "tokens": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "tokens"
+        ],
+        "type": "object"
+      },
+      "AgentModelFast": {
+        "description": "A model's Fast mode: whether the agent runs the model in it when a chat\nhas not chosen.",
+        "properties": {
+          "on_by_default": {
+            "type": "boolean"
           }
         },
         "type": "object"
       },
       "AgentModelView": {
         "properties": {
+          "context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentModelContext"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "A longer context window the model runs with under an id of its own\n(koru-ai D10). A chat chooses it by taking that id as its model.\nAbsent for a model with no such choice."
+          },
+          "description": {
+            "description": "The agent's own description of the model.",
+            "nullable": true,
+            "type": "string"
+          },
+          "fast": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentModelFast"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "The model offers the agent's Fast mode (koru-ai D11), and whether it\nruns in it by default. Absent for a model without one: a client\nshows no Fast control."
+          },
           "group": {
             "description": "The agent's grouping of it — OpenCode's provider, Codex's one group.",
+            "type": "string"
+          },
+          "group_name": {
+            "description": "The agent's own name for the group, e.g. `DeepSeek`.",
+            "nullable": true,
             "type": "string"
           },
           "id": {
             "description": "The id the agent itself takes, e.g. `deepseek/v4-pro`.",
             "type": "string"
+          },
+          "legacy": {
+            "description": "The agent marks the model as older. Koru never infers it.",
+            "type": "boolean"
+          },
+          "name": {
+            "description": "The agent's own name for the model, e.g. `Claude Opus 4.7`. Absent\nwhen the agent sends none; a client then formats the id.",
+            "nullable": true,
+            "type": "string"
+          },
+          "reasoning": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReasoningControl"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "The reasoning levels the model offers, in Koru's words, and the\nagent's stated default when it states one. Absent for a model with\nnone: a client shows it no level control."
           }
         },
         "required": [
@@ -289,9 +553,29 @@
       "AgentModelsResponse": {
         "description": "The models one local agent lists, in the agent's own ids. Empty when the\nagent lists none: the picker then shows no model level under it.",
         "properties": {
+          "default_mode": {
+            "description": "The mode the agent reports it starts in — the one a chat that chose\nnone runs in. Absent when the agent does not say.",
+            "nullable": true,
+            "type": "string"
+          },
+          "levels_per_turn": {
+            "description": "A begun chat's level can change, applied from its next message\n(koru-ai D70): the agent's session host takes a level with each\nmessage. `false` — the level stays the one the chat started at —\nagainst an older host, and from an older service.",
+            "type": "boolean"
+          },
           "models": {
             "items": {
               "$ref": "#/components/schemas/AgentModelView"
+            },
+            "type": "array"
+          },
+          "models_per_turn": {
+            "description": "A begun chat's model can move to another of the agent's models,\napplied from its next message: the agent's session host takes a\nmodel with each message (session protocol v22). `false` — the model\nstays the one the chat started on — against an older host, and from\nan older service.",
+            "type": "boolean"
+          },
+          "modes": {
+            "description": "The agent's approval modes (koru-ai D7), in its order, with its own\nids. Empty when it offers none: a client then shows no mode control.",
+            "items": {
+              "$ref": "#/components/schemas/AgentModeView"
             },
             "type": "array"
           },
@@ -305,6 +589,60 @@
         ],
         "type": "object"
       },
+      "AgentNotice": {
+        "description": "**A short status line a local agent said during a reply that is not\npart of the reply** (koru-ai D69, AI schema 12): Devin's *Hook failed:\n…* about a hook on the person's machine. Kept with the reply it came\nwith, in the order it came, and where in the reply it came.",
+        "properties": {
+          "assistant_message_id": {
+            "$ref": "#/components/schemas/MessageId"
+          },
+          "attempt_id": {
+            "$ref": "#/components/schemas/InferenceAttemptId"
+          },
+          "chat_id": {
+            "$ref": "#/components/schemas/ChatId"
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "id": {
+            "$ref": "#/components/schemas/AgentNoticeId"
+          },
+          "text": {
+            "description": "The agent's words, bounded to 500 characters by the session host\nbefore they reach the chat.",
+            "type": "string"
+          },
+          "text_offset": {
+            "description": "How much of the reply's Markdown, in bytes, had arrived when the\nnotice came; `None` until the store has written it.",
+            "format": "uint32",
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "attempt_id",
+          "chat_id",
+          "assistant_message_id",
+          "text",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "AgentNoticeId": {
+        "description": "AgentNoticeId — a client-minted UUID v4, never derived from content or location.",
+        "format": "uuid",
+        "type": "string"
+      },
+      "AgentPermission": {
+        "description": "**The permission a new agent chat starts in** (Settings → Coding →\nAgent providers), in `desktop-v1.json`. Each agent's own modes are\nwhat a chat runs in; this names which of them a new chat starts from\n(`koru-ai-ui`'s `approval_modes` does the mapping): *Manual* is the\nagent's asking mode, *Auto* the mode that approves safe actions on its\nown, *Yolo* the one that runs everything without asking. An agent that\noffers no such mode starts in *Manual*.",
+        "enum": [
+          "manual",
+          "auto",
+          "yolo"
+        ],
+        "type": "string"
+      },
       "AgentProviderView": {
         "properties": {
           "id": {
@@ -312,10 +650,63 @@
           },
           "label": {
             "type": "string"
+          },
+          "steers": {
+            "description": "The agent takes text into a running turn, so a client offers a native\n*Steer* (`POST /v1/ai/attempts/{attempt}/steer`); without it a client\nsteers by stopping the reply and sending. A fixed fact of the agent's\nkind; the agent itself still decides at the moment, and a steer it\ncannot take is answered `steer_unavailable`.",
+            "type": "boolean"
           }
         },
         "required": [
           "id",
+          "label"
+        ],
+        "type": "object"
+      },
+      "AgentQuestion": {
+        "description": "One question an agent asked. `id` is the agent's own key for it.",
+        "properties": {
+          "allow_other": {
+            "default": false,
+            "type": "boolean"
+          },
+          "header": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "options": {
+            "description": "In the agent's order: the first is the one it recommends.",
+            "items": {
+              "$ref": "#/components/schemas/AgentQuestionOption"
+            },
+            "type": "array"
+          },
+          "question": {
+            "type": "string"
+          },
+          "secret": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "question"
+        ],
+        "type": "object"
+      },
+      "AgentQuestionOption": {
+        "description": "One option a question offers: its label, sent back when chosen, and the\nline under it.",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
           "label"
         ],
         "type": "object"
@@ -462,6 +853,20 @@
           "message_id": {
             "$ref": "#/components/schemas/MessageId"
           },
+          "profile_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProfileId"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "The profile the hit's chat belongs to (AI schema 13), so a surface\nthat lists every profile's hits opens one in its own profile's\nwindow. `None` from an older server, or for a chat not yet placed."
+          },
           "score": {
             "format": "float",
             "type": "number"
@@ -519,6 +924,20 @@
             "minimum": 0,
             "type": "integer"
           },
+          "profile": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProfileId"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "Only this profile's chats (AI schema 13). Absent searches every\nprofile's; each hit names its own."
+          },
           "request_seq": {
             "default": 0,
             "format": "uint64",
@@ -571,8 +990,7 @@
         "type": "object"
       },
       "AiSettings": {
-        "additionalProperties": false,
-        "description": "The AI section — **a facade, not a store.**\n\nThe values live in `ai.db` behind the AI worker, and the secrets live in\nthe OS vault behind `koru-ai-provider`. Both authorities are unchanged.\nThis type is the shape the facade presents; the mapping onto the worker is\nthe Gateway's, because the worker handle is the Gateway's.\n\n**A secret never appears here, in either direction.** The only thing said\nabout the OpenAI key is whether one is configured.",
+        "description": "The AI section — **a facade, not a store.**\n\nThe values live in `ai.db` behind the AI worker, and the secrets live in\nthe OS vault behind `koru-ai-provider`. Both authorities are unchanged.\nThis type is the shape the facade presents; the mapping onto the worker is\nthe Gateway's, because the worker handle is the Gateway's.\n\n**A secret never appears here, in either direction.** The only thing said\nabout the OpenAI key is whether one is configured.\n\nRead tolerantly, as [`GlobalSettings`] is — and so are its two provider\nparts: an unknown field is ignored on the read; the [`AiPatch`] that\nwrites it refuses one.",
         "properties": {
           "ollama": {
             "$ref": "#/components/schemas/OllamaSection"
@@ -1146,11 +1564,23 @@
         "type": "integer"
       },
       "AttemptNotice": {
-        "description": "A fact about the attempt the surface shows as one line and nothing\nstores: the agent could not be reattached and a replacement was started\nwith the conversation so far.",
-        "enum": [
-          "fresh_start"
-        ],
-        "type": "string"
+        "description": "A fact about the attempt the surface shows as one line and nothing\nstores.",
+        "oneOf": [
+          {
+            "description": "The agent could not be reattached and a replacement was started with\nthe conversation so far.",
+            "enum": [
+              "fresh_start"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "The agent takes no pictures: it was told where the files are instead\n(chat-attachments D4).",
+            "enum": [
+              "images_as_files"
+            ],
+            "type": "string"
+          }
+        ]
       },
       "AttemptResponse": {
         "properties": {
@@ -2396,6 +2826,16 @@
       },
       "Chat": {
         "properties": {
+          "agent_fast": {
+            "description": "Whether a local agent runs this chat's next message in its model's\nFast mode (koru-ai D11); `None` is the model's own default. Like the\nmode, chosen at any time and applied from the next message.",
+            "nullable": true,
+            "type": "boolean"
+          },
+          "agent_mode": {
+            "description": "The approval mode a local agent runs this chat's next message in\n(koru-ai D7): the agent's own id, `None` for the agent's default.\nChosen at any time; a choice made during a reply applies to the next\nmessage. A branch starts with none.",
+            "nullable": true,
+            "type": "string"
+          },
           "agent_working_folder": {
             "description": "The folder a local agent works in for this chat, absolute; `None` is\nthe person's home folder. Only an `agent-*` chat sets it, before its\nfirst message, and a branch copies it.",
             "nullable": true,
@@ -2423,9 +2863,37 @@
           "id": {
             "$ref": "#/components/schemas/ChatId"
           },
+          "pinned_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "When the person pinned this chat (AI schema 12); `None` when it is\nnot pinned. The pinned chats are listed oldest pin first. Pinning is\nnot activity: the chat keeps its place among the others."
+          },
           "private": {
             "default": false,
             "type": "boolean"
+          },
+          "profile_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProfileId"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "**The profile the chat belongs to** (AI schema 13, koru-ai D120): the\nprofile of the window it was started in, its source's for a branch.\nIts list, its search hits and the workspaces it may read are that\nprofile's. `None` only for a chat written before schema 13 that the\nservice has not yet placed (it places each one as soon as the Store\nanswers: [`crate::place_chat`]), and on an older server's answer."
           },
           "title": {
             "type": "string"
@@ -2442,6 +2910,150 @@
           "updated_at"
         ],
         "type": "object"
+      },
+      "ChatAttachment": {
+        "description": "The public metadata of one stored attachment. Never a path.",
+        "properties": {
+          "byte_count": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "dimensions": {
+            "description": "Width and height, for a picture.",
+            "items": [
+              {
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              }
+            ],
+            "maxItems": 2,
+            "minItems": 2,
+            "nullable": true,
+            "type": "array"
+          },
+          "file_name": {
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/ChatAttachmentId"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ChatAttachmentKind"
+          },
+          "media_type": {
+            "type": "string"
+          },
+          "message_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MessageId"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "The user message it was sent with; `None` while it is staged."
+          },
+          "ordinal": {
+            "format": "uint32",
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
+          "origin": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkspaceFileOrigin"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/ChatAttachmentSource"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "source",
+          "file_name",
+          "media_type",
+          "byte_count",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "ChatAttachmentId": {
+        "description": "ChatAttachmentId — a client-minted UUID v4, never derived from content or location.",
+        "format": "uuid",
+        "type": "string"
+      },
+      "ChatAttachmentKind": {
+        "oneOf": [
+          {
+            "description": "A picture with a thumbnail and known dimensions.",
+            "enum": [
+              "image"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "Anything else, including a picture too large to preview.",
+            "enum": [
+              "file"
+            ],
+            "type": "string"
+          }
+        ]
+      },
+      "ChatAttachmentResponse": {
+        "description": "One attachment stored, or found already stored under the same id with\nthe same content.",
+        "properties": {
+          "attachment": {
+            "$ref": "#/components/schemas/ChatAttachment"
+          }
+        },
+        "required": [
+          "attachment"
+        ],
+        "type": "object"
+      },
+      "ChatAttachmentSource": {
+        "oneOf": [
+          {
+            "enum": [
+              "clipboard",
+              "drop",
+              "file_picker"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "Linked with `@` from a workspace the chat may use, and copied.",
+            "enum": [
+              "workspace"
+            ],
+            "type": "string"
+          }
+        ]
       },
       "ChatId": {
         "description": "ChatId — a client-minted UUID v4, never derived from content or location.",
@@ -2589,6 +3201,14 @@
       },
       "ChatTranscript": {
         "properties": {
+          "attachments": {
+            "default": [],
+            "description": "Every attachment of the chat: those sent with a message, in message\nand ordinal order, then the staged ones not yet sent.",
+            "items": {
+              "$ref": "#/components/schemas/ChatAttachment"
+            },
+            "type": "array"
+          },
           "blocks": {
             "items": {
               "$ref": "#/components/schemas/MessageBlock"
@@ -2608,6 +3228,13 @@
           "messages": {
             "items": {
               "$ref": "#/components/schemas/Message"
+            },
+            "type": "array"
+          },
+          "notices": {
+            "description": "A local agent's status lines beside its replies, in the order they\ncame (koru-ai D69).",
+            "items": {
+              "$ref": "#/components/schemas/AgentNotice"
             },
             "type": "array"
           },
@@ -2964,6 +3591,20 @@
           },
           "model": {
             "$ref": "#/components/schemas/ModelSelection"
+          },
+          "profile_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProfileId"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "**The profile the chat belongs to** (AI schema 13): the profile of\nthe window it is started in. An older client sends none, and the\nservice places the chat as it places one written before profiles —\nwith nothing read yet, in the first profile."
           },
           "title": {
             "type": "string"
@@ -3506,6 +4147,65 @@
           "high_accuracy"
         ],
         "type": "string"
+      },
+      "DiscoverAgentCommandsRequest": {
+        "additionalProperties": false,
+        "description": "The commands route's body: the folder the chat's agent works in, the\nperson's home folder when absent — where an agent works until a folder\nis chosen.",
+        "properties": {
+          "folder": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "DiscoverAgentModelsRequest": {
+        "additionalProperties": false,
+        "description": "The models route's optional body. With `refresh`, the agent's list is\nrebuilt before it is answered: the session host re-probes the agent and\nlists it again, as it does after a CLI update. A request already\nrebuilding the same agent's list is joined, not repeated. With no body,\nthe list already known is answered.",
+        "properties": {
+          "refresh": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "DocTextSize": {
+        "enum": [
+          14,
+          15,
+          16,
+          17,
+          18,
+          20,
+          22
+        ],
+        "type": "integer"
+      },
+      "DocTextSizeSetting": {
+        "description": "What the document text size is set to.\n\nThe same shape as [`FontSetting`], for the same reason: following the\ndefault is a state, persisted as no key, and a chosen size is always\nwritten, even when it is today's default, so a person who picked 16 keeps\n16 if the default ever moves.",
+        "oneOf": [
+          {
+            "description": "This build's default size, now and later.",
+            "enum": [
+              "follow_default"
+            ],
+            "type": "string"
+          },
+          {
+            "additionalProperties": false,
+            "description": "This size, whatever the build's default becomes.",
+            "properties": {
+              "chosen": {
+                "$ref": "#/components/schemas/DocTextSize"
+              }
+            },
+            "required": [
+              "chosen"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "DocumentDestination": {
         "properties": {
@@ -4400,6 +5100,11 @@
           }
         ]
       },
+      "FamilyName": {
+        "maxLength": 64,
+        "minLength": 1,
+        "type": "string"
+      },
       "FamilyResponse": {
         "description": "`GET /v1/artifacts/families/{family}`: the family and its versions by\nordinal.",
         "properties": {
@@ -4416,6 +5121,24 @@
         "required": [
           "family",
           "versions"
+        ],
+        "type": "object"
+      },
+      "FavoriteModel": {
+        "description": "**One favorite model** in the chat's model picker: an agent, by its key\n(`claude`, `codex`, …), and the model id that agent takes.\n\nKeyed by the agent rather than by a provider id so that a favorite follows\nthe person to a machine where the same agent is installed under the same\nkey, which is what *roaming* is for.",
+        "properties": {
+          "agent": {
+            "description": "The agent's key: lowercase ASCII letters, digits and `-`.",
+            "type": "string"
+          },
+          "model": {
+            "description": "The model id the agent takes, as its model list names it.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "agent",
+          "model"
         ],
         "type": "object"
       },
@@ -4554,6 +5277,20 @@
             "format": "uint",
             "minimum": 0,
             "type": "integer"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProfileId"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "**Only this profile's chats** among the AI results (AI schema 13):\na window searches its own profile's. Absent searches every\nprofile's, each hit naming its own. The Store results are scoped by\n`workspaces`, as before."
           },
           "recent_queries": {
             "default": null,
@@ -4820,6 +5557,19 @@
               "chosen"
             ],
             "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Use this installed family, by name. On a computer without it the role\ndraws its default and the choice is kept for one that has it.",
+            "properties": {
+              "installed": {
+                "$ref": "#/components/schemas/FamilyName"
+              }
+            },
+            "required": [
+              "installed"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -4885,9 +5635,33 @@
         "additionalProperties": false,
         "description": "One patch of [`GlobalSettings`]. Absent fields are left alone.",
         "properties": {
+          "agent_order": {
+            "description": "The whole order, written whole on every move: an empty list is the\nbuilt-in order. Absent leaves the stored order alone.",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
+          },
           "automatic_update_checks": {
             "nullable": true,
             "type": "boolean"
+          },
+          "base_color_dark": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Nullable_RgbColor"
+              }
+            ],
+            "description": "The same for the dark theme."
+          },
+          "base_color_light": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Nullable_RgbColor"
+              }
+            ],
+            "description": "`#rrggbb` sets the light theme's base color; `null` puts the theme's\nown back. Settings offers that as its first swatch, so unlike the text\nsize this choice can be taken back — which is why this is a [`Field`]\nand not an `Option`."
           },
           "body_font": {
             "anyOf": [
@@ -4941,6 +5715,20 @@
               }
             ]
           },
+          "chat_font": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FontSetting"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "`follow_default` puts the chat back on the app font."
+          },
           "close_behavior": {
             "anyOf": [
               {
@@ -4967,6 +5755,14 @@
               }
             ]
           },
+          "default_agent": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Nullable_string"
+              }
+            ],
+            "description": "The agent a new chat starts with; `null` is *Auto*."
+          },
           "default_canvas_background": {
             "anyOf": [
               {
@@ -4979,6 +5775,34 @@
                 "nullable": true
               }
             ]
+          },
+          "default_permission": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentPermission"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "The permission a new chat with a supported agent starts in."
+          },
+          "default_permission_other": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentPermission"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "The permission a new chat with any other agent starts in: *Manual*\nor *Yolo* — an agent with no auto mode has no *Auto* to start in."
           },
           "default_view_mode": {
             "anyOf": [
@@ -5066,9 +5890,38 @@
               }
             ]
           },
+          "disabled_agents": {
+            "description": "The whole off list, written whole on every switch: an empty list is\n*Restore defaults*. Absent leaves the stored list alone.",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "document_text_size": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DocTextSizeSetting"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
           "emoji_skin_tone": {
             "nullable": true,
             "type": "string"
+          },
+          "favorite_models": {
+            "description": "The whole favorites list, written whole on every star: an empty list\nclears them. Absent leaves the stored list alone.",
+            "items": {
+              "$ref": "#/components/schemas/FavoriteModel"
+            },
+            "nullable": true,
+            "type": "array"
           },
           "global_dictation_enabled": {
             "nullable": true,
@@ -5104,6 +5957,19 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/FontSetting"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "icon_pack": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IconPackChoice"
               },
               {
                 "enum": [
@@ -5204,11 +6070,48 @@
         "type": "object"
       },
       "GlobalSettings": {
-        "additionalProperties": false,
-        "description": "Everything that applies to Koru as a whole, whoever is consuming it.",
+        "description": "Everything that applies to Koru as a whole, whoever is consuming it.\n\n**Read tolerantly; written strictly.** A section is what the settings\nauthority *answers* — a client reads it — so it ignores a field it does\nnot know: an older Koru reading the section from a newer service keeps\nevery value it understands instead of failing the whole read and falling\nback to defaults. Nothing ever writes a section: a write is a\n[`GlobalPatch`], which still refuses an unknown field, so the service\nanswers a typo with a 400 rather than storing nothing. A field added\nhere is also `#[serde(default)]`, so a newer client reads an older\nservice. (The user's call, 2026-11-03: this reader shipped before any new\nGlobal field did. koru-ai D79's `chat_font` was the first to wait, and\nlanded once the user ruled, 2026-11-04, that an older Koru may ignore it.)",
         "properties": {
+          "agent_order": {
+            "default": [],
+            "description": "**The order the coding agents are listed in**, by agent key, as the\nperson dragged them on *Agent providers*: the chat's agent rail, the\nterminal's *Agents ›* menu, the *Default agent* chips and the\ndelegate dialog all follow it. Empty is the built-in order (Claude\nfirst); an agent it does not name — one a later Koru adds — follows\nthe named ones in the built-in order. Each key once.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "automatic_update_checks": {
             "type": "boolean"
+          },
+          "base_color_dark": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RgbColor"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "default": null,
+            "description": "The same for the dark theme. Each theme keeps its own; neither is\nderived from the other."
+          },
+          "base_color_light": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RgbColor"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "default": null,
+            "description": "The window's base color — the frame around the panes — for the light\ntheme, as `#rrggbb`. `null` follows the theme, now and later, and is\npersisted as no key, like a font role that follows the app."
           },
           "body_font": {
             "$ref": "#/components/schemas/FontSetting"
@@ -5222,14 +6125,47 @@
           "caret_width": {
             "$ref": "#/components/schemas/CaretWidthChoice"
           },
+          "chat_font": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/FontSetting"
+              }
+            ],
+            "default": "follow_default",
+            "description": "**The typeface the AI chat is set in** — its messages and the box a\nperson types in. `follow_default` follows the **app font** (`ui_font`),\nnow and later, rather than a build default of its own: a person who\nnever chooses sees the chat exactly as before, and a later change to\nthe app font carries the chat with it. Persisted as no key while it\nfollows, like every font role. `#[serde(default)]` so a section from a\nbuild without it reads as following the app font."
+          },
           "close_behavior": {
             "$ref": "#/components/schemas/CloseBehaviorChoice"
           },
           "code_font": {
             "$ref": "#/components/schemas/FontSetting"
           },
+          "default_agent": {
+            "default": null,
+            "description": "**The agent a new chat starts with**, by agent key, or `None` for\n*Auto* — the last agent used, which is what a chat did before this\nexisted. An agent that is turned off or not installed falls back to\n*Auto* where a chat is made; the key is kept, so turning it back on\nbrings the choice back.",
+            "nullable": true,
+            "type": "string"
+          },
           "default_canvas_background": {
             "$ref": "#/components/schemas/CanvasBackground"
+          },
+          "default_permission": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AgentPermission"
+              }
+            ],
+            "default": "manual",
+            "description": "**The permission a new chat with a supported agent starts in** — an\nagent that has an auto mode (Claude, Codex). *Manual* by default.\nThe chat's own mode is still the chat's: a change inside a chat\napplies to that chat only, and this names only where the next new\nchat starts. Device-local, beside `disabled_agents`."
+          },
+          "default_permission_other": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AgentPermission"
+              }
+            ],
+            "default": "manual",
+            "description": "The same for every other agent — one with no auto mode (OpenCode):\n*Manual* or *Yolo*, never *Auto*. *Manual* by default."
           },
           "default_view_mode": {
             "$ref": "#/components/schemas/ViewModeChoice"
@@ -5254,8 +6190,33 @@
           "dictation_tier": {
             "$ref": "#/components/schemas/DictationTier"
           },
+          "disabled_agents": {
+            "default": [],
+            "description": "**The coding agents turned off on this machine**, by agent key\n(`koru_session_profiles::ProfileLabel::agent_key`: `claude`, `codex`,\n…), sorted and without repeats. An agent named here is hidden from\nthe chat's agent picker, the terminal's *Agents ›* menu and every new\nsession choice; its chats and sessions are kept and keep working.\n\n**The off list, not the on list**, so empty is the default — every\nagent on — and an agent a later Koru adds is on until someone turns it\noff. Device-local because the agents installed differ per machine.\n`#[serde(default)]` so a section from a build without it still reads.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "document_text_size": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DocTextSizeSetting"
+              }
+            ],
+            "default": "follow_default",
+            "description": "The document body size. Follows the build's default until chosen."
+          },
           "emoji_skin_tone": {
             "type": "string"
+          },
+          "favorite_models": {
+            "default": [],
+            "description": "**The models starred in the chat's model picker**, by agent key and\nmodel id, in the order they were starred; each pair once. Roaming,\nlike the rest of how Koru looks to this person: a favorite made on\none computer is a favorite on the next. An agent turned off on a\nmachine keeps its favorites; the picker hides them there.\n`#[serde(default)]` so a section from a build without it still reads.",
+            "items": {
+              "$ref": "#/components/schemas/FavoriteModel"
+            },
+            "type": "array"
           },
           "global_dictation_enabled": {
             "description": "Whether Agent may open a global microphone session and insert into an\nexternal application. Off until the person accepts the Voice notice.\n`None` means the first-use notice has never been accepted; `Some`\nremembers onboarding independently of the current enabled value.",
@@ -5275,6 +6236,21 @@
           },
           "headings_font": {
             "$ref": "#/components/schemas/FontSetting"
+          },
+          "icon_pack": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IconPackChoice"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "default": null,
+            "description": "`None` follows the build's default artwork, now and later; it is\npersisted as no key, like a font role that follows the app."
           },
           "pinned_show_title": {
             "type": "boolean"
@@ -5504,6 +6480,16 @@
           "entries"
         ],
         "type": "object"
+      },
+      "IconPackChoice": {
+        "description": "The in-app vector artwork, persisted as `icon_pack=`.",
+        "enum": [
+          "phosphor",
+          "tabler",
+          "lucide",
+          "remix"
+        ],
+        "type": "string"
       },
       "IdempotencyKey": {
         "format": "uuid",
@@ -6795,10 +7781,47 @@
         ],
         "type": "object"
       },
+      "NextMessageAnswers": {
+        "description": "**A set's answers sent as the person's next message**: the set's row\nand an answer per question. It is a message of its own — it starts the\nagent's next reply — and the person's words are read on the set's card,\nnever as a message.",
+        "properties": {
+          "answers": {
+            "items": {
+              "$ref": "#/components/schemas/AgentAnswer"
+            },
+            "type": "array"
+          },
+          "invocation": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ToolInvocationId"
+              }
+            ],
+            "description": "The set's row."
+          }
+        },
+        "required": [
+          "invocation",
+          "answers"
+        ],
+        "type": "object"
+      },
       "Nullable_AiProvider": {
         "anyOf": [
           {
             "$ref": "#/components/schemas/AiProvider"
+          },
+          {
+            "enum": [
+              null
+            ],
+            "nullable": true
+          }
+        ]
+      },
+      "Nullable_RgbColor": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/RgbColor"
           },
           {
             "enum": [
@@ -6960,7 +7983,6 @@
         "type": "object"
       },
       "OllamaSection": {
-        "additionalProperties": false,
         "properties": {
           "endpoint": {
             "type": "string"
@@ -7073,7 +8095,6 @@
         ]
       },
       "OpenAiSection": {
-        "additionalProperties": false,
         "properties": {
           "credential_configured": {
             "description": "Whether a key is in the vault. **Read-only, and never a value.**",
@@ -7392,6 +8413,30 @@
         },
         "required": [
           "words"
+        ],
+        "type": "object"
+      },
+      "PinChatRequest": {
+        "additionalProperties": false,
+        "description": "Pin a chat, or unpin it (AI schema 12). Pinning a chat already pinned\nkeeps its pin time; like a rename it is not activity, so the chat keeps\nits place among the others.",
+        "properties": {
+          "pinned": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "pinned"
+        ],
+        "type": "object"
+      },
+      "PinChatResponse": {
+        "properties": {
+          "chat": {
+            "$ref": "#/components/schemas/Chat"
+          }
+        },
+        "required": [
+          "chat"
         ],
         "type": "object"
       },
@@ -7942,6 +8987,29 @@
             "type": "object"
           },
           {
+            "description": "A local agent's status line beside its reply, as the chat keeps it\n(koru-ai D69): not part of the reply's text.",
+            "properties": {
+              "attempt_id": {
+                "$ref": "#/components/schemas/InferenceAttemptId"
+              },
+              "notice": {
+                "$ref": "#/components/schemas/AgentNotice"
+              },
+              "type": {
+                "enum": [
+                  "agent_notice"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "attempt_id",
+              "notice"
+            ],
+            "type": "object"
+          },
+          {
             "description": "A one-line fact about the attempt the surface shows and nothing\nstores: a local agent could not be reattached and a replacement was\nstarted with the conversation so far.",
             "properties": {
               "at": {
@@ -8337,7 +9405,19 @@
           {
             "properties": {
               "default": {
-                "$ref": "#/components/schemas/ReasoningLevel"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ReasoningLevel"
+                  },
+                  {
+                    "enum": [
+                      null
+                    ],
+                    "nullable": true
+                  }
+                ],
+                "default": null,
+                "description": "The level the model runs at when the chat chooses none. OpenAI,\nKoru AI and Ollama always state it; a local agent that does not\nleaves it `None`, and *Default* then sends nothing — the agent\ndecides (agent-models §6.2)."
               },
               "kind": {
                 "enum": [
@@ -8358,7 +9438,6 @@
             "required": [
               "kind",
               "values",
-              "default",
               "supports_off"
             ],
             "type": "object"
@@ -8936,6 +10015,18 @@
         ],
         "type": "object"
       },
+      "RemoveAttachmentResponse": {
+        "properties": {
+          "removed": {
+            "description": "Whether a staged attachment existed and was removed.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "removed"
+        ],
+        "type": "object"
+      },
       "RenameChatRequest": {
         "additionalProperties": false,
         "properties": {
@@ -9321,6 +10412,10 @@
           "counter"
         ],
         "type": "object"
+      },
+      "RgbColor": {
+        "pattern": "^#[0-9A-Fa-f]{6}$",
+        "type": "string"
       },
       "RowRange": {
         "properties": {
@@ -11307,6 +12402,27 @@
       "SendTurnRequest": {
         "additionalProperties": false,
         "properties": {
+          "answers": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NextMessageAnswers"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "**A local agent's questions answered by this message** (koru-ai\nD108): a set the agent asked in its reply and moved on from, whose\nanswers go to it as the person's next message. The message is the\nanswers alone — `markdown`, `explicit_refs` and `attachment_ids`\nempty — and is recorded as no message of the person's: the answers\nare read on the set's card, and the agent's reply follows the one\nthat asked. `user_message_id` in the answer is the message the\nasking reply answered. A set that can no longer be answered is\nrefused (`questions_closed`)."
+          },
+          "attachment_ids": {
+            "description": "Attachments already stored for this chat and not yet sent, in the\norder they go with the message. Only an agent chat takes any.",
+            "items": {
+              "$ref": "#/components/schemas/ChatAttachmentId"
+            },
+            "type": "array"
+          },
           "chat_id": {
             "$ref": "#/components/schemas/ChatId"
           },
@@ -11339,6 +12455,13 @@
           "replace_pinned_documents": {
             "description": "When true, existing pinned documents are ignored and only the explicit\nrefs are used as context for this turn. Used by the contextual AI pane,\nwhere the current document should replace prior context.",
             "type": "boolean"
+          },
+          "skills": {
+            "description": "**The skills the person picked** (koru-ai D121), by the name a\nlocal agent lists each under (`POST /v1/ai/providers/{provider}/\ncommands`), in the order they appear; `markdown` says `$name` where\neach was. The agent is told each by name beside the text; one it no\nlonger lists is left out, and the text goes as typed. Only an agent\nchat takes any. Not stored: the message keeps its `$name` text.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "surface": {
             "$ref": "#/components/schemas/AiSurface"
@@ -12222,6 +13345,45 @@
           "capabilities",
           "channel",
           "started_at"
+        ],
+        "type": "object"
+      },
+      "SteerAttemptRequest": {
+        "additionalProperties": false,
+        "description": "**Steer a running agent reply**: text the person sends into the turn\nthat is running, instead of waiting for it to end. Only a local agent\nthat takes text mid-turn accepts it (`AgentProviderView::steers`); the\nmessage is recorded as the person's, after the running reply.\n`operation_id` makes a retry an idempotent read of the first answer.",
+        "properties": {
+          "markdown": {
+            "type": "string"
+          },
+          "operation_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_id",
+          "markdown"
+        ],
+        "type": "object"
+      },
+      "SteerAttemptResponse": {
+        "description": "The steer reached the running turn: the person's message as recorded.",
+        "properties": {
+          "attempt_id": {
+            "$ref": "#/components/schemas/InferenceAttemptId"
+          },
+          "replayed": {
+            "description": "The same `operation_id` was answered before; nothing was sent again.",
+            "type": "boolean"
+          },
+          "user_message_id": {
+            "$ref": "#/components/schemas/MessageId"
+          }
+        },
+        "required": [
+          "attempt_id",
+          "user_message_id",
+          "replayed"
         ],
         "type": "object"
       },
@@ -13229,11 +14391,12 @@
         "type": "object"
       },
       "TaskSort": {
-        "description": "What orders the page.\n\n`Due` is the default because a task list is asked *what should I do next*.\n`Due` and `Priority` sort set values first and unset last; `Modified` is the\nsource document's stamp.",
+        "description": "What orders the page.\n\n`Due` is the default because a task list is asked *what should I do next*.\n`Due` and `Priority` sort set values first and unset last; `Modified` is the\nsource document's stamp. `Manual` is the order somebody dragged the tasks\ninto (`koru.rank`, smaller first); a task never ranked follows the ranked\nones by its due, and an undated one of those comes last.",
         "enum": [
           "due",
           "priority",
-          "modified"
+          "modified",
+          "manual"
         ],
         "type": "string"
       },
@@ -13864,8 +15027,7 @@
         "type": "string"
       },
       "TerminalSettings": {
-        "additionalProperties": false,
-        "description": "Koru Terminal's appearance.\n\n**Roaming**, which is a change: these lived in this machine's `windows.conf`\nrow, beside the geometry, purely because the terminal had one file. How a\nterminal looks is a preference about the person, not about the monitor it\nhappened to be opened on.",
+        "description": "Koru Terminal's appearance.\n\n**Roaming**, which is a change: these lived in this machine's `windows.conf`\nrow, beside the geometry, purely because the terminal had one file. How a\nterminal looks is a preference about the person, not about the monitor it\nhappened to be opened on.\n\nRead tolerantly, as [`GlobalSettings`] is: an unknown field is ignored on\nthe read; the [`TerminalPatch`] that writes it refuses one.",
         "properties": {
           "composer_default": {
             "description": "Whether a *new* window opens with its composer showing.\n\nThe default only. Whether the composer is open in a window that already\nexists is furniture, and stays that window's `input_area` row.",
@@ -14474,6 +15636,13 @@
               }
             ]
           },
+          "text_offset": {
+            "description": "How much of the reply's Markdown, in bytes, had arrived when the\ncall began: the text before it was said before it, the text after\nit after. Kept since schema 10 on a local agent's rows, so a reopened\nreply can still tell the agent's running commentary from its final\nanswer. `None` on earlier rows and on Koru's own tool rows.",
+            "format": "uint32",
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
           "tool_name": {
             "type": "string"
           }
@@ -14514,8 +15683,15 @@
       },
       "ToolDecisionRequest": {
         "additionalProperties": false,
-        "description": "The optional body of an approve or deny. A local agent offers its own\nchoices for a permission request; the chosen one's id comes back here.\nA workspace tool offers none and takes no body. An agent's row with no\nchoice is refused, so two same-intent choices can never collapse.",
+        "description": "The optional body of an approve or deny. A local agent offers its own\nchoices for a permission request; the chosen one's id comes back here.\nA workspace tool offers none and takes no body. An agent's row with no\nchoice is refused, so two same-intent choices can never collapse.\n\n**An agent's questions are answered by approving their row with\n`answers`** (koru-ai D108), one per question by its id: an offered\noption by label, or the person's own words where the question takes\nthem. Denying the row skips the set. A question row approved without\nanswers is refused.",
         "properties": {
+          "answers": {
+            "items": {
+              "$ref": "#/components/schemas/AgentAnswer"
+            },
+            "nullable": true,
+            "type": "array"
+          },
           "choice": {
             "nullable": true,
             "type": "string"
@@ -14838,6 +16014,34 @@
         },
         "required": [
           "runs"
+        ],
+        "type": "object"
+      },
+      "UpdateChatAgentSettingsRequest": {
+        "additionalProperties": false,
+        "description": "A local agent chat's settings for its next message (koru-ai D7). A field\nleft out keeps what the chat has. Accepted on an `agent-*` chat at any\ntime: a reply already running keeps the mode it was sent in.",
+        "properties": {
+          "fast": {
+            "description": "Fast mode on or off for the chat's model (koru-ai D11), where the\nmodel offers it ([`AgentModelView::fast`]). Applied from the next\nmessage, like the mode.",
+            "nullable": true,
+            "type": "boolean"
+          },
+          "mode": {
+            "description": "The approval mode, the agent's own id: one it lists in\n[`AgentModelsResponse::modes`]. An agent refuses one it does not\noffer when the message is sent.",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "UpdateChatAgentSettingsResponse": {
+        "properties": {
+          "chat": {
+            "$ref": "#/components/schemas/Chat"
+          }
+        },
+        "required": [
+          "chat"
         ],
         "type": "object"
       },
@@ -15285,7 +16489,7 @@
         "type": "object"
       },
       "ViewModeChoice": {
-        "description": "`view_mode=` — the default view mode for a newly opened document.\n\nUnknown input becomes `Full`, matching `parse_view_mode`.",
+        "description": "`view_mode=` — the default view mode for a newly opened document.\n\n**Narrow until somebody chooses** (the user's call, 2026-10-31): a\nreadable column is what a new page should look like. Unknown input\nbecomes the default too.",
         "enum": [
           "page",
           "narrow",
@@ -15456,6 +16660,22 @@
         },
         "required": [
           "action"
+        ],
+        "type": "object"
+      },
+      "WorkspaceFileOrigin": {
+        "description": "Where an `@`-linked file was copied from. Provenance, not a live link:\nthe workspace file may since have moved, changed or gone.",
+        "properties": {
+          "document_id": {
+            "$ref": "#/components/schemas/DocumentId"
+          },
+          "workspace_id": {
+            "$ref": "#/components/schemas/WorkspaceId"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "document_id"
         ],
         "type": "object"
       },
@@ -16082,6 +17302,103 @@
         "summary": "Cancel an AI attempt"
       }
     },
+    "/v1/ai/attempts/{attempt}/steer": {
+      "post": {
+        "description": "The person's message as recorded after the running reply, once the local agent took it. A reply that cannot take text now (ended, not an agent's, or an agent with no mid-turn input) answers 409 steer_unavailable; the client then sends the message after the reply. Repeating an operation_id is an idempotent read of the first answer.",
+        "operationId": "ai_steer_attempt",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "attempt",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SteerAttemptRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SteerAttemptResponse"
+                }
+              }
+            },
+            "description": "The person's message as recorded after the running reply, once the local agent took it. A reply that cannot take text now (ended, not an agent's, or an agent with no mid-turn input) answers 409 steer_unavailable; the client then sends the message after the reply. Repeating an operation_id is an idempotent read of the first answer."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The request body or path identity is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The gateway bearer is absent or invalid"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The bearer lacks the operation's declared AI scope"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The operation conflicts with durable chat state"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The AI worker is unavailable or saturated"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "ai.chat"
+            ]
+          }
+        ],
+        "summary": "Send a message into a running agent reply"
+      }
+    },
     "/v1/ai/chats": {
       "delete": {
         "description": "The number of chats deleted. Anonymous text-free usage and feedback aggregates remain until cleared separately.",
@@ -16158,8 +17475,20 @@
         "summary": "Clear all AI chat history"
       },
       "get": {
-        "description": "Durable chats ordered by most recent activity.",
+        "description": "Durable chats ordered by most recent activity: one profile's, given `profile`, else every profile's.",
         "operationId": "ai_list_chats",
+        "parameters": [
+          {
+            "description": "Only this profile's chats (AI schema 13). Absent lists every profile's.",
+            "in": "query",
+            "name": "profile",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -16169,7 +17498,7 @@
                 }
               }
             },
-            "description": "Durable chats ordered by most recent activity."
+            "description": "Durable chats ordered by most recent activity: one profile's, given `profile`, else every profile's."
           },
           "400": {
             "content": {
@@ -16583,6 +17912,679 @@
         "summary": "Rename an AI chat"
       }
     },
+    "/v1/ai/chats/{chat}/agent-settings": {
+      "patch": {
+        "description": "The durable chat with its agent settings; accepted on an agent chat at any time, a running reply keeping the mode it was sent in.",
+        "operationId": "ai_update_chat_agent_settings",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "chat",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateChatAgentSettingsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateChatAgentSettingsResponse"
+                }
+              }
+            },
+            "description": "The durable chat with its agent settings; accepted on an agent chat at any time, a running reply keeping the mode it was sent in."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The request body or path identity is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The gateway bearer is absent or invalid"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The bearer lacks the operation's declared AI scope"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The operation conflicts with durable chat state"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The AI worker is unavailable or saturated"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "ai.chat"
+            ]
+          }
+        ],
+        "summary": "Choose the approval mode a chat's local agent runs its next message in"
+      }
+    },
+    "/v1/ai/chats/{chat}/attachments/{attachment}": {
+      "delete": {
+        "description": "Whether a staged attachment was removed. A sent attachment stays with its message and answers attachment_sent.",
+        "operationId": "ai_remove_attachment",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "chat",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "attachment",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemoveAttachmentResponse"
+                }
+              }
+            },
+            "description": "Whether a staged attachment was removed. A sent attachment stays with its message and answers attachment_sent."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The request body or path identity is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The gateway bearer is absent or invalid"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The bearer lacks the operation's declared AI scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment, or the stored file, is not there"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The operation conflicts with durable chat state"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment is larger than the limit"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment's type is not allowed, or its content is not what its name says"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The AI worker is unavailable or saturated"
+          },
+          "507": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment could not be stored on this computer"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "ai.chat"
+            ]
+          }
+        ],
+        "summary": "Remove a staged attachment"
+      },
+      "get": {
+        "description": "The original bytes, with the stored media type and the file name as an attachment disposition.",
+        "operationId": "ai_read_attachment",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "chat",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "attachment",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The original bytes, with the stored media type and the file name as an attachment disposition."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The request body or path identity is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The gateway bearer is absent or invalid"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The bearer lacks the operation's declared AI scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment, or the stored file, is not there"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The operation conflicts with durable chat state"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment is larger than the limit"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment's type is not allowed, or its content is not what its name says"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The AI worker is unavailable or saturated"
+          },
+          "507": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment could not be stored on this computer"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "ai.chat"
+            ]
+          }
+        ],
+        "summary": "Read an attachment's stored original"
+      },
+      "put": {
+        "description": "The stored attachment's metadata, staged until a send names it. Idempotent by id: the same content answers the same attachment, different content answers attachment_conflict.",
+        "operationId": "ai_put_attachment",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "chat",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "attachment",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The file's name, percent-encoded. Checked against the content.",
+            "in": "query",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "source",
+            "required": true,
+            "schema": {
+              "enum": [
+                "clipboard",
+                "drop",
+                "file_picker"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "format": "binary",
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatAttachmentResponse"
+                }
+              }
+            },
+            "description": "The stored attachment's metadata, staged until a send names it. Idempotent by id: the same content answers the same attachment, different content answers attachment_conflict."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The request body or path identity is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The gateway bearer is absent or invalid"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The bearer lacks the operation's declared AI scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment, or the stored file, is not there"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The operation conflicts with durable chat state"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment is larger than the limit"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment's type is not allowed, or its content is not what its name says"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The AI worker is unavailable or saturated"
+          },
+          "507": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment could not be stored on this computer"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "ai.chat"
+            ]
+          }
+        ],
+        "summary": "Store a picture or file for a local agent chat's next message"
+      }
+    },
+    "/v1/ai/chats/{chat}/attachments/{attachment}/thumbnail": {
+      "get": {
+        "description": "A PNG at most 512 pixels on its long edge; attachment_no_preview for anything but a picture.",
+        "operationId": "ai_read_attachment_thumbnail",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "chat",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "attachment",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "image/png": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "A PNG at most 512 pixels on its long edge; attachment_no_preview for anything but a picture."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The request body or path identity is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The gateway bearer is absent or invalid"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The bearer lacks the operation's declared AI scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment, or the stored file, is not there"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The operation conflicts with durable chat state"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment is larger than the limit"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment's type is not allowed, or its content is not what its name says"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The AI worker is unavailable or saturated"
+          },
+          "507": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment could not be stored on this computer"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "ai.chat"
+            ]
+          }
+        ],
+        "summary": "Read a picture attachment's thumbnail"
+      }
+    },
     "/v1/ai/chats/{chat}/branches": {
       "post": {
         "description": "A durable chat containing newly identified copies through the chosen response.",
@@ -16969,6 +18971,103 @@
           }
         ],
         "summary": "Change the model used by an AI chat"
+      }
+    },
+    "/v1/ai/chats/{chat}/pin": {
+      "patch": {
+        "description": "The durable chat with its pin time, or none once unpinned; its activity timestamp is unchanged.",
+        "operationId": "ai_pin_chat",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "chat",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PinChatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PinChatResponse"
+                }
+              }
+            },
+            "description": "The durable chat with its pin time, or none once unpinned; its activity timestamp is unchanged."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The request body or path identity is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The gateway bearer is absent or invalid"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The bearer lacks the operation's declared AI scope"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The operation conflicts with durable chat state"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The AI worker is unavailable or saturated"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "ai.chat"
+            ]
+          }
+        ],
+        "summary": "Pin or unpin an AI chat"
       }
     },
     "/v1/ai/chats/{chat}/privacy": {
@@ -18232,9 +20331,106 @@
         "summary": "Read non-secret AI provider settings"
       }
     },
+    "/v1/ai/providers/{provider}/commands": {
+      "post": {
+        "description": "The agent's skills for the folder — Codex's `skills/list`, enabled ones only — in a picker's order, each a name, one line and the agent's display name; empty when it offers none. The body names the folder; absent, the home folder.",
+        "operationId": "ai_discover_agent_commands",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "provider",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiscoverAgentCommandsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentCommandsResponse"
+                }
+              }
+            },
+            "description": "The agent's skills for the folder — Codex's `skills/list`, enabled ones only — in a picker's order, each a name, one line and the agent's display name; empty when it offers none. The body names the folder; absent, the home folder."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The request body or path identity is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The gateway bearer is absent or invalid"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The bearer lacks the operation's declared AI scope"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The operation conflicts with durable chat state"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The AI worker is unavailable or saturated"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "ai.chat"
+            ]
+          }
+        ],
+        "summary": "List what a local agent can be told to do by name in a folder"
+      }
+    },
     "/v1/ai/providers/{provider}/models": {
       "post": {
-        "description": "The agent's models in its own ids, each with the agent's grouping; empty when it lists none.",
+        "description": "The agent's models in its own ids, each with the agent's grouping; empty when it lists none. With the optional body `{ \"refresh\": true }` the list is rebuilt first.",
         "operationId": "ai_discover_agent_models",
         "parameters": [
           {
@@ -18247,6 +20443,16 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiscoverAgentModelsRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "content": {
@@ -18256,7 +20462,7 @@
                 }
               }
             },
-            "description": "The agent's models in its own ids, each with the agent's grouping; empty when it lists none."
+            "description": "The agent's models in its own ids, each with the agent's grouping; empty when it lists none. With the optional body `{ \"refresh\": true }` the list is rebuilt first."
           },
           "400": {
             "content": {

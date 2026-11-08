@@ -13,7 +13,7 @@ use koru_session_protocol::{
     AttachmentId, ControllerLeaseToken, ControllerState, ErrorCode, SessionFailure, SessionId,
 };
 use koru_session_runtime::providers::{
-    AcpFactory, AcpRoute, CodexFactory, ManagedProviderRegistry,
+    AcpFactory, AcpRoute, CodexFactory, ManagedProviderRegistry, ProviderCatalogCache,
 };
 use koru_session_runtime::{
     AgentEventUpdate, AttachmentPathResolver, EnvironmentPolicy, RawOutputUpdate, SessionCreate,
@@ -85,8 +85,8 @@ impl std::error::Error for HostError {}
 
 struct HostState {
     registry: SessionRegistry,
-    model_providers: Arc<ManagedProviderRegistry>,
-    model_slots: Semaphore,
+    /// Each agent's model list, answered from memory (agent-models D2).
+    catalog: Arc<ProviderCatalogCache>,
     providers: Arc<koru_session_runtime::providers::ProviderReadinessCache>,
     projects: ProjectRegistry,
     attachments: Arc<koru_session_attachments::AttachmentStore>,
@@ -95,6 +95,11 @@ struct HostState {
     started: Instant,
     next_subscription: AtomicU64,
     control_slots: Arc<Semaphore>,
+    /// `DiscoverProviderModels` may wait on a probe or a listing for most of
+    /// its budget, so it has permits of its own: a burst of model asks — six
+    /// agents for every open chat surface — never holds attaching a terminal
+    /// or sending a turn behind it.
+    model_asks: Arc<Semaphore>,
     create_replays: Mutex<VecDeque<CreateReplay>>,
     stop: Notify,
     /// The desktop MCP bridge a chat's agent starts beside itself, when the
@@ -106,6 +111,9 @@ struct HostState {
 }
 
 const CREATE_REPLAY_CAPACITY: usize = 1_024;
+/// Model asks answered at once; more wait for one to finish. Each is cheap
+/// while it waits — a condition variable, not a process.
+const MODEL_ASKS: usize = 8;
 
 #[derive(Clone)]
 struct CreateReplay {
@@ -145,6 +153,33 @@ impl ConnectionProtocol {
             && self
                 .capabilities
                 .supports(koru_session_protocol::capability::DYNAMIC_APPROVALS)
+    }
+
+    /// **This peer draws an agent's questions** (protocol v21, koru-ai
+    /// D108): it negotiated the version and `managed-questions`. A managed
+    /// session it creates may ask; any other is told to decline.
+    fn questions(&self) -> bool {
+        self.version >= koru_session_protocol::QUESTIONS_PROTOCOL_VERSION
+            && self.managed_approval
+            && self
+                .capabilities
+                .supports(koru_session_protocol::capability::MANAGED_QUESTIONS)
+    }
+
+    /// **This peer lists what an agent can be told to do and names skills
+    /// with its input** (protocol v21, koru-ai D121): it negotiated the
+    /// version and `agent-commands`.
+    fn agent_commands(&self) -> bool {
+        self.version >= koru_session_protocol::AGENT_COMMANDS_PROTOCOL_VERSION
+            && self
+                .capabilities
+                .supports(koru_session_protocol::capability::AGENT_COMMANDS)
+    }
+
+    /// **This peer may name a turn's model with its input** (protocol v22):
+    /// the number alone, as a turn's level is v20's.
+    fn turn_model(&self) -> bool {
+        self.version >= koru_session_protocol::TURN_MODEL_PROTOCOL_VERSION
     }
 }
 
@@ -286,6 +321,7 @@ pub async fn serve(
             koru_session_profiles::ANTIGRAVITY_REGISTRATION,
             AcpRoute::antigravity(),
         ),
+        (koru_session_profiles::DEVIN_REGISTRATION, AcpRoute::devin()),
     ] {
         managed_providers
             .register(
@@ -295,15 +331,25 @@ pub async fn serve(
             .expect("built-in provider registrations are valid and unique");
     }
     let managed_providers = Arc::new(managed_providers);
-    let providers = koru_session_runtime::providers::ProviderReadinessCache::with_probe_policy(
+    // The catalog loads its file before the first probe, so a persisted
+    // list is there to show while every agent still reads *Checking*.
+    let catalog = ProviderCatalogCache::new(
+        Arc::clone(&managed_providers),
+        bootstrap.sessions_directory.clone(),
+        Box::new(crate::catalog_store::FileCatalogStore::new(
+            paths.provider_models_atomic_path(),
+        )),
+        !cfg!(feature = "no-provider-probes"),
+    );
+    let providers = koru_session_runtime::providers::ProviderReadinessCache::with_catalog(
         Arc::clone(&managed_providers),
         bootstrap.sessions_directory.clone(),
         !cfg!(feature = "no-provider-probes"),
+        Arc::clone(&catalog),
     );
     providers.refresh_all();
     let state = Arc::new(HostState {
-        model_providers: Arc::clone(&managed_providers),
-        model_slots: Semaphore::new(2),
+        catalog,
         providers,
         registry: SessionRegistry::new(
             SessionRuntimeConfig::from_env(Arc::clone(&lifecycle))
@@ -318,6 +364,7 @@ pub async fn serve(
         started: Instant::now(),
         next_subscription: AtomicU64::new(1),
         control_slots: Arc::new(Semaphore::new(16)),
+        model_asks: Arc::new(Semaphore::new(MODEL_ASKS)),
         create_replays: Mutex::new(VecDeque::with_capacity(CREATE_REPLAY_CAPACITY)),
         stop: Notify::new(),
         bridge,
@@ -571,6 +618,7 @@ async fn serve_connection(
         control_receive,
         subscription_receive,
         protocol.dynamic_approvals(),
+        protocol.version,
     ));
     let resources = Arc::new(Mutex::new(ConnectionResources::default()));
 
@@ -582,7 +630,15 @@ async fn serve_connection(
         if version != FRAME_VERSION || frame.id == 0 {
             break;
         }
-        let permit = Arc::clone(&state.control_slots)
+        let pool = if matches!(
+            frame.request,
+            Request::DiscoverProviderModels { .. } | Request::DiscoverProviderCommands { .. }
+        ) {
+            &state.model_asks
+        } else {
+            &state.control_slots
+        };
+        let permit = Arc::clone(pool)
             .acquire_owned()
             .await
             .map_err(|error| HostError::Runtime(error.to_string()))?;
@@ -894,17 +950,33 @@ fn handle_request(
             session_id,
             controller_lease,
             input,
+            answers,
         } => {
             if protocol.version < 5 {
                 Err(failure(ErrorCode::ProtocolIncompatible))
             } else if let Err(error) = require_attachments(protocol.version, protocol.attachments) {
                 Err(error)
+            } else if answers.is_some() && !protocol.questions() {
+                // Answers as the next message are v21 and `managed-questions`
+                // (koru-ai D108): only a peer that draws questions has any.
+                Err(failure(ErrorCode::CapabilityNotNegotiated))
+            } else if input.needs_agent_commands() && !protocol.agent_commands() {
+                // Skills named with the input are v21 and `agent-commands`
+                // (koru-ai D121).
+                Err(failure(ErrorCode::CapabilityNotNegotiated))
+            } else if input.needs_turn_model() && !protocol.turn_model() {
+                // A turn's model is v22.
+                Err(failure(ErrorCode::CapabilityNotNegotiated))
             } else {
                 with_session(state, session_id, |session| {
-                    session
-                        .send_pending_input(controller_lease, input)
-                        .map(|result| Response::PendingInputSent { result })
-                        .map_err(failure)
+                    match answers {
+                        Some(answers) => {
+                            session.send_pending_answers(controller_lease, input, answers)
+                        }
+                        None => session.send_pending_input(controller_lease, input),
+                    }
+                    .map(|result| Response::PendingInputSent { result })
+                    .map_err(failure)
                 })
             }
         }
@@ -916,14 +988,39 @@ fn handle_request(
                 Err(failure(ErrorCode::CapabilityNotNegotiated))
             } else if !working_directory.is_absolute() {
                 Err(failure(ErrorCode::InvalidRequest))
-            } else if let Ok(_slot) = state.model_slots.try_acquire() {
-                state
-                    .model_providers
-                    .discover_models(&provider, working_directory)
-                    .map(|models| Response::ProviderModels { models })
-                    .map_err(|error| failure(error.code))
             } else {
-                Err(failure(ErrorCode::Backpressure))
+                // From the catalog's memory; a listing it has to run holds
+                // one of its two slots, or is refused with `Backpressure`.
+                // The list is the agent's user-level one whatever folder
+                // the request names (agent-models §11).
+                // The agent's approval modes ride beside its models (D7),
+                // from the same memory.
+                state
+                    .catalog
+                    .serve(&provider)
+                    .map(|models| Response::ProviderModels {
+                        models,
+                        modes: state.catalog.modes(&provider),
+                    })
+                    .map_err(failure)
+            }
+        }
+        Request::DiscoverProviderCommands {
+            provider,
+            working_directory,
+        } => {
+            if !protocol.agent_commands() {
+                Err(failure(ErrorCode::CapabilityNotNegotiated))
+            } else if !working_directory.is_absolute() {
+                Err(failure(ErrorCode::InvalidRequest))
+            } else {
+                // Asked of the agent for the folder, never cached (koru-ai
+                // D121): Codex's own `skills/list` from a process of its own.
+                state
+                    .catalog
+                    .discover_commands(&provider, working_directory)
+                    .map(|commands| Response::ProviderCommands { commands })
+                    .map_err(failure)
             }
         }
         Request::SubscribeProviders => {
@@ -976,9 +1073,13 @@ fn handle_request(
             {
                 Err(failure(ErrorCode::CapabilityNotNegotiated))
             } else {
+                // A re-probe is asked for because something about the agent
+                // changed — its CLI was updated, a model was refused, a
+                // person pressed refresh — so its model list goes with it,
+                // and the probe and listing that follow rebuild it.
                 state
                     .providers
-                    .refresh(kind)
+                    .refresh_and_rebuild_models(kind)
                     .map(|()| Response::Ok)
                     .map_err(failure)
             }
@@ -1006,6 +1107,24 @@ fn handle_request(
                             decision,
                             choice,
                         )
+                        .map_err(failure)?;
+                    Ok(Response::Ok)
+                })
+            }
+        }
+        Request::AnswerQuestions {
+            session_id,
+            controller_lease,
+            idempotency_key,
+            request_id,
+            answers,
+        } => {
+            if !protocol.questions() {
+                Err(failure(ErrorCode::CapabilityNotNegotiated))
+            } else {
+                with_session(state, session_id, |session| {
+                    session
+                        .answer_questions(controller_lease, idempotency_key, request_id, answers)
                         .map_err(failure)?;
                     Ok(Response::Ok)
                 })
@@ -1788,6 +1907,10 @@ fn create_profile_session(
                     executable: executable.into_os_string(),
                     delegation: request.delegation.clone(),
                     selection: request.selection.clone(),
+                    // Only a peer that draws an agent's questions gets an
+                    // agent that asks them (koru-ai D108); every other
+                    // session's agent declines, as before v21.
+                    questions: protocol.questions(),
                     // A chat's agent gets Koru's own tools through the
                     // desktop bridge; a terminal's or a run's does not.
                     mcp_servers: match request.origin {
@@ -2012,6 +2135,7 @@ async fn writer_loop(
     mut control: mpsc::Receiver<FromHost>,
     mut subscriptions: mpsc::Receiver<FromHost>,
     dynamic_approvals: bool,
+    version: u32,
 ) {
     loop {
         let next = tokio::select! {
@@ -2025,6 +2149,7 @@ async fn writer_loop(
         if !dynamic_approvals {
             strip_dynamic_approvals(&mut frame);
         }
+        strip_newer_agent_events(&mut frame, version);
         if write_frame(&mut writer, &frame).await.is_err() {
             break;
         }
@@ -2089,23 +2214,39 @@ fn chat_bridge(
         );
         return None;
     }
+    Some(bridge_launch(command, explicit_root))
+}
+
+/// `koru-mcp serve --stdio [--root <root>]` at `command`, under Koru's server
+/// name.
+fn bridge_launch(
+    command: PathBuf,
+    explicit_root: Option<&Path>,
+) -> koru_session_runtime::providers::McpServerLaunch {
     let mut args: Vec<std::ffi::OsString> = vec!["serve".into(), "--stdio".into()];
     if let Some(root) = explicit_root {
         args.push("--root".into());
         args.push(root.as_os_str().to_owned());
     }
-    Some(koru_session_runtime::providers::McpServerLaunch {
-        name: "koru".into(),
+    koru_session_runtime::providers::McpServerLaunch {
+        // `koru`, the name the welcome page and `koru.bat mcp` / `koru.sh mcp`
+        // register the bridge under, and the key Devin (and any agent that
+        // imports other tools' MCP configuration) dedupes on: a session's
+        // server replaces an imported one of the same name, so a chat gets
+        // one `koru` on its own root rather than two copies of every tool
+        // (D55). Change it only together with those registrations.
+        name: koru_session_profiles::MCP_SERVER_NAME.into(),
         command: command.into_os_string(),
         args,
         env: Vec::new(),
-    })
+    }
 }
 
 /// The agents measured to follow `tools/list`'s `nextCursor` through the
 /// bridge (ADR-433, amended 2026-09-26). Kimi 2.0.0 and Codex 0.156.1 read
-/// page one only and Antigravity is unmeasured, so they get the whole list
-/// in one reply. Paging is what makes Grok 1.0.34 read the list reliably.
+/// page one only and Antigravity and Devin are unmeasured, so they get the
+/// whole list in one reply. Paging is what makes Grok 1.0.34 read the list
+/// reliably.
 const PAGED_BRIDGE_PROVIDERS: &[&str] = &["claude", "grok", "opencode"];
 
 /// The bridge as `program`'s session starts it — a chat's provider kind or a
@@ -2219,6 +2360,7 @@ mod resume_tests {
             ProfileLabel::Grok,
             ProfileLabel::Kimi,
             ProfileLabel::Antigravity,
+            ProfileLabel::Devin,
         ] {
             assert!(resume_arguments(label).is_some(), "{label:?}");
         }
@@ -2253,7 +2395,7 @@ mod bridge_pages_tests {
             let args = bridge_for(&bridge, provider).args;
             assert_eq!(&args[2..], &["--tool-pages", "on"], "{provider}");
         }
-        for provider in ["kimi", "codex", "antigravity"] {
+        for provider in ["kimi", "codex", "antigravity", "devin"] {
             let args = bridge_for(&bridge, provider).args;
             assert_eq!(
                 args.len(),
@@ -2261,6 +2403,66 @@ mod bridge_pages_tests {
                 "{provider} reads page one only or is unmeasured"
             );
         }
+    }
+
+    /// The chat's bridge goes by the name every registration of `koru-mcp`
+    /// uses, so an agent that imports the person's own `koru` replaces it
+    /// with the chat's instead of listing Koru's tools twice (D55).
+    #[test]
+    fn the_chat_bridge_goes_by_the_registered_name() {
+        let bridge = bridge_launch(PathBuf::from("koru-mcp"), Some(Path::new("/data")));
+        assert_eq!(bridge.name, koru_session_profiles::MCP_SERVER_NAME);
+        assert_eq!(bridge.name, "koru");
+        assert_eq!(
+            bridge.args,
+            ["serve", "--stdio", "--root", "/data"].map(std::ffi::OsString::from)
+        );
+    }
+}
+
+/// **An older peer is never sent an agent event it cannot read** —
+/// `mode_changed` (protocol v19), `notice` (v20), `questions_required` and
+/// `questions_resolved` (v21). It gets an empty message
+/// delta of the same turn in its place, which reads as nothing and keeps
+/// every sequence number where it was: a notice is dropped for it, never
+/// turned into reply text. Filtered here, like the approvals below, never
+/// in the history.
+fn strip_newer_agent_events(frame: &mut FromHost, version: u32) {
+    let strip = |event: &mut koru_session_protocol::AgentEvent| {
+        if event.minimum_protocol_version() > version {
+            let turn_id = match event {
+                koru_session_protocol::AgentEvent::ModeChanged { turn_id, .. }
+                | koru_session_protocol::AgentEvent::Notice { turn_id, .. }
+                | koru_session_protocol::AgentEvent::QuestionsRequired { turn_id, .. }
+                | koru_session_protocol::AgentEvent::QuestionsResolved { turn_id, .. } => *turn_id,
+                _ => return,
+            };
+            *event = koru_session_protocol::AgentEvent::MessageDelta {
+                turn_id,
+                text: String::new(),
+            };
+        }
+    };
+    match frame {
+        FromHost::Subscription {
+            frame:
+                SubscriptionFrame {
+                    update: SubscriptionUpdate::AgentEvent { event },
+                    ..
+                },
+        } => strip(&mut event.event),
+        FromHost::Response {
+            frame:
+                koru_session_wire::ResponseFrame {
+                    result: Ok(Response::AgentEventsObserved { observation }),
+                    ..
+                },
+        } => {
+            for event in &mut observation.events {
+                strip(&mut event.event);
+            }
+        }
+        _ => {}
     }
 }
 

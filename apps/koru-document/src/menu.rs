@@ -65,6 +65,16 @@ pub use koru_keys::Hinted as Chord;
 pub enum Row {
     /// A small caps heading. Not selectable, and the keyboard steps over it.
     Heading(&'static str),
+    /// A heading with a settings icon at its right end — the sliders beside
+    /// *PAGE SETTINGS*, which open the global settings. Unlike a plain
+    /// heading it can be chosen: the arrow keys stop on it and Enter follows
+    /// the link, and a click anywhere on the heading's band does too, because
+    /// the band is the row's hit area like every other row's. `link` is the
+    /// icon's name in words, *Global settings*, for whoever cannot see it.
+    HeadingLink {
+        heading: &'static str,
+        link: &'static str,
+    },
     /// A hairline between groups. Not selectable.
     Divider,
     Item {
@@ -249,7 +259,10 @@ impl Row {
     /// are furniture: the keyboard steps straight over them, which is what
     /// `explore.rs`'s popover does for the same reason.
     pub fn selectable(&self) -> bool {
-        matches!(self, Self::Item { enabled: true, .. })
+        matches!(
+            self,
+            Self::Item { enabled: true, .. } | Self::HeadingLink { .. }
+        )
     }
 
     /// This row's own height. Not every row is `ROW_H`: a heading is a label
@@ -257,7 +270,7 @@ impl Row {
     /// groups read as further apart than they are.
     fn height(&self) -> f32 {
         match self {
-            Self::Heading(_) => HEADING_H,
+            Self::Heading(_) | Self::HeadingLink { .. } => HEADING_H,
             Self::Divider => DIVIDER_H,
             Self::Item { .. } => ITEM_H,
         }
@@ -502,6 +515,45 @@ impl Menu {
                         r.x + PAD + 4.0,
                         r.y + (r.h - line_h) * 0.5,
                         Some(pal.text_dim),
+                    );
+                }
+                Row::HeadingLink { heading, link: _ } => {
+                    let laid = engine.simple_layout(
+                        heading,
+                        theme::role::hint().with_weight(theme::FontWeight::SemiBold),
+                    );
+                    let line_h = scene::first_line_height(&laid);
+                    scene::draw_layout_first_line(
+                        scene,
+                        root,
+                        &laid,
+                        r.x + PAD + 4.0,
+                        r.y + (r.h - line_h) * 0.5,
+                        Some(pal.text_dim),
+                    );
+                    // The settings sliders, quiet like the heading, on an icon
+                    // button's tint and in the text color while the row is
+                    // under the pointer or the keyboard.
+                    let icon = engine.icon_layout(koru_draw::icons::FADERS, theme::CAPTION_ICON);
+                    let side = r.h.min(theme::CAPTION_ICON + 8.0);
+                    let x = r.x + r.w - PAD - side;
+                    let y = r.y + (r.h - side) * 0.5;
+                    let on = self.hover == Some(i);
+                    if on {
+                        scene::fill(
+                            scene,
+                            root,
+                            pal.hover_tint,
+                            &scene::rrect(x, y, side, side, 5.0),
+                        );
+                    }
+                    scene::draw_layout(
+                        scene,
+                        root,
+                        &icon,
+                        x + (side - icon.width()) * 0.5,
+                        y + (side - icon.height()) * 0.5,
+                        Some(if on { pal.text } else { pal.text_dim }),
                     );
                 }
                 Row::Divider => {

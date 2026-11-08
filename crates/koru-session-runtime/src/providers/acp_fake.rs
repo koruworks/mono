@@ -28,6 +28,18 @@ pub(super) struct FakeAcpConfig {
     pub flood_after_cancel: bool,
     pub exit_after_prompt: bool,
     pub stop_reason: Option<acp::StopReason>,
+    /// The session's `configOptions`, answered by `session/new` and kept:
+    /// `session/set_config_option` sets an option's `currentValue` and
+    /// answers with them all.
+    pub config_options: Vec<Value>,
+    /// A model's own `thought_level` option, put in place when the model is
+    /// set; a model not named here has none.
+    pub thought_by_model: Vec<(String, Value)>,
+    /// The level is taken but not applied: `currentValue` stays as it was.
+    pub ignore_level: bool,
+    /// The steering extension (Claude's wrapper): advertised at initialize,
+    /// and `_session/steering` answered with this outcome.
+    pub steering: Option<&'static str>,
 }
 
 #[derive(Default)]
@@ -39,6 +51,7 @@ pub(super) struct FakeAcpState {
     pub receives: usize,
     pub prompts: usize,
     pub cancels: usize,
+    pub steers: usize,
     pub permission_pending: bool,
 }
 
@@ -58,6 +71,7 @@ impl fmt::Debug for FakeAcpState {
             .field("receives", &self.receives)
             .field("prompts", &self.prompts)
             .field("cancels", &self.cancels)
+            .field("steers", &self.steers)
             .field("permission_pending", &self.permission_pending)
             .finish()
     }
@@ -144,10 +158,13 @@ impl JsonRpcTransport for FakeAcpPeer {
             Some("initialize") => {
                 self.check_stage(ProviderStage::Initialize)?;
                 decode::<acp::InitializeRequest>(params)?;
-                let result = json!({"protocolVersion":1,"agentCapabilities":{
+                let mut result = json!({"protocolVersion":1,"agentCapabilities":{
                     "mcpCapabilities":{"http":true,"sse":false},
                     "promptCapabilities":{"image":true}
                 },"authMethods":[]});
+                if self.config.steering.is_some() {
+                    result["_meta"] = json!({"steering":{"supported":true}});
+                }
                 decode::<acp::InitializeResponse>(&result)?;
                 self.reply(id, result)?;
             }
@@ -158,10 +175,42 @@ impl JsonRpcTransport for FakeAcpPeer {
                 decode::<acp::AuthenticateResponse>(&result)?;
                 self.reply(id, result)?;
             }
+            Some("session/set_config_option") => {
+                let config = params["configId"].as_str().unwrap_or_default().to_owned();
+                let value = params["value"].clone();
+                let options = &mut self.config.config_options;
+                let Some(option) = options.iter_mut().find(|option| option["id"] == config) else {
+                    return Err(failure(
+                        ProviderStage::Write,
+                        ProviderDiagnostic::InvalidInput,
+                    ));
+                };
+                let thought = option["category"] == "thought_level";
+                if !(thought && self.config.ignore_level) {
+                    option["currentValue"] = value.clone();
+                }
+                if config == "model" {
+                    options.retain(|option| option["category"] != "thought_level");
+                    if let Some((_, level)) = self
+                        .config
+                        .thought_by_model
+                        .iter()
+                        .find(|(model, _)| value.as_str() == Some(model.as_str()))
+                    {
+                        options.push(level.clone());
+                    }
+                }
+                let result = json!({"configOptions": options.clone()});
+                self.reply(id, result)?;
+            }
             Some("session/new") => {
                 self.check_stage(ProviderStage::Initialize)?;
                 decode::<acp::NewSessionRequest>(params)?;
-                let result = json!({"sessionId":SESSION});
+                let result = if self.config.config_options.is_empty() {
+                    json!({"sessionId":SESSION})
+                } else {
+                    json!({"sessionId":SESSION, "configOptions": self.config.config_options.clone()})
+                };
                 decode::<acp::NewSessionResponse>(&result)?;
                 self.reply(id, result)?;
             }
@@ -182,6 +231,16 @@ impl JsonRpcTransport for FakeAcpPeer {
                 } else if let Some(stop) = self.config.stop_reason {
                     self.finish(stop)?;
                 }
+            }
+            Some("_session/steering") => {
+                let Some(outcome) = self.config.steering else {
+                    return Err(failure(
+                        ProviderStage::Write,
+                        ProviderDiagnostic::InvalidInput,
+                    ));
+                };
+                self.state.lock().unwrap().steers += 1;
+                self.reply(id, json!({"outcome": outcome}))?;
             }
             Some("session/cancel") => {
                 self.check_stage(ProviderStage::Cancel)?;
@@ -275,10 +334,16 @@ pub(super) fn late_update() -> Value {
 /// Exercise exactly the production JSONL framing without a socket or disk.
 fn roundtrip(value: &Value) -> Result<Value, ProviderFailure> {
     let mut bytes = Vec::new();
-    write_json_line(&mut bytes, value, super::DEFAULT_PROVIDER_FRAME_BYTES)?;
+    // Koru's prompt frames are bounded by the outbound limit; the fake is
+    // the agent reading them, so it reads at that bound too.
+    write_json_line(
+        &mut bytes,
+        value,
+        super::DEFAULT_PROVIDER_PROMPT_FRAME_BYTES,
+    )?;
     JsonLineReader::new(
         std::io::Cursor::new(bytes),
-        super::DEFAULT_PROVIDER_FRAME_BYTES,
+        super::DEFAULT_PROVIDER_PROMPT_FRAME_BYTES,
     )?
     .next_frame()?
     .map(|frame| frame.into_value())

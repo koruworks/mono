@@ -30,11 +30,11 @@ use std::path::Path;
 use crate::paths::staging_path;
 use crate::sections::{GlobalSettings, TerminalSettings};
 use crate::values::{
-    CanvasBackground, CaretColorChoice, CaretHeightChoice, CaretWidthChoice, CloseBehaviorChoice,
-    DensityChoice, DictationGesture, DictationInput, DictationLanguage, DictationShortcut,
-    DictationTier, FontFamily, FontSetting, GlobalShortcut, LanguageChoice, PopoutCloseChoice,
-    TerminalCursorBlink, TerminalCursorHeight, TerminalCursorWidth, ThemeChoice, ViewModeChoice,
-    Zoom,
+    AgentPermission, CanvasBackground, CaretColorChoice, CaretHeightChoice, CaretWidthChoice,
+    CloseBehaviorChoice, DensityChoice, DictationGesture, DictationInput, DictationLanguage,
+    DictationShortcut, DictationTier, FontFamily, FontSetting, GlobalShortcut, LanguageChoice,
+    PopoutCloseChoice, RgbColor, TerminalCursorBlink, TerminalCursorHeight, TerminalCursorWidth,
+    ThemeChoice, ViewModeChoice, Zoom,
 };
 
 #[cfg(test)]
@@ -77,6 +77,7 @@ const PREFERENCES_VERSION: &str = "2";
 #[cfg(test)]
 pub(crate) const OWNED_PREFERENCE_KEYS: &[&str] = &[
     "theme",
+    "icon_pack",
     "caret_color",
     "caret_width",
     "caret_height",
@@ -84,6 +85,10 @@ pub(crate) const OWNED_PREFERENCE_KEYS: &[&str] = &[
     "body_font",
     "headings_font",
     "code_font",
+    "chat_font",
+    "doc_text_size",
+    "base_color_light",
+    "base_color_dark",
     "density",
     "dictation_toggle",
     "dictation_language",
@@ -97,6 +102,7 @@ pub(crate) const OWNED_PREFERENCE_KEYS: &[&str] = &[
     "view_mode",
     "canvas_bg",
     "emoji_skin_tone",
+    "favorite_models",
 ];
 
 /// What a read of `preferences.conf` recovered, plus what it must carry back.
@@ -139,13 +145,35 @@ pub fn apply_preferences(text: &str, into: &mut GlobalSettings) -> PreferencesFi
             // choice — especially `dark=0`. Ignored on read, dropped on write.
             "dark" => {}
             "theme" => into.theme = ThemeChoice::parse(value),
+            // A size this build does not offer follows the default; the file is
+            // left as it is until the next save.
+            "doc_text_size" => {
+                into.document_text_size = crate::DocTextSize::parse(value)
+                    .map_or(crate::DocTextSizeSetting::FollowDefault, |size| {
+                        crate::DocTextSizeSetting::Chosen(size)
+                    });
+            }
+            // Any `#rrggbb` is a choice, not only a swatch offered today.
+            // Anything else follows the theme, like a size not offered.
+            "base_color_light" => into.base_color_light = RgbColor::parse(value),
+            "base_color_dark" => into.base_color_dark = RgbColor::parse(value),
+            // Only a pack this build knows is a choice; anything else follows
+            // the default rather than snapping to whichever pack parses first.
+            "icon_pack" => {
+                into.icon_pack = crate::IconPackChoice::ALL
+                    .iter()
+                    .copied()
+                    .find(|pack| pack.token().eq_ignore_ascii_case(value.trim()));
+            }
             "caret_color" => into.caret_color = CaretColorChoice::parse(value),
             "caret_width" => into.caret_width = CaretWidthChoice::parse(value),
             "caret_height" => into.caret_height = CaretHeightChoice::parse(value),
-            "font" => into.ui_font = FontSetting::Chosen(FontFamily::parse(value)),
-            "body_font" => into.body_font = FontSetting::Chosen(FontFamily::parse(value)),
-            "headings_font" => into.headings_font = FontSetting::Chosen(FontFamily::parse(value)),
-            "code_font" => into.code_font = FontSetting::Chosen(FontFamily::parse(value)),
+            "font" => into.ui_font = FontSetting::parse_file_value(value),
+            "body_font" => into.body_font = FontSetting::parse_file_value(value),
+            "headings_font" => into.headings_font = FontSetting::parse_file_value(value),
+            "code_font" => into.code_font = FontSetting::parse_file_value(value),
+            // No v1 build wrote it, so no auto-written value to discount.
+            "chat_font" => into.chat_font = FontSetting::parse_file_value(value),
             "density" => into.density = DensityChoice::parse(value),
             "dictation_toggle" => into.dictation_gesture = DictationGesture::parse(value),
             "dictation_language" => into.dictation_language = DictationLanguage::parse(value),
@@ -159,6 +187,7 @@ pub fn apply_preferences(text: &str, into: &mut GlobalSettings) -> PreferencesFi
             "view_mode" => into.default_view_mode = ViewModeChoice::parse(value),
             "canvas_bg" => into.default_canvas_background = CanvasBackground::parse(value),
             "emoji_skin_tone" => into.emoji_skin_tone = value.to_owned(),
+            "favorite_models" => into.favorite_models = parse_favorites(value),
             // Somebody else's. `emoji_recents`, `last_export_dir`, `opened.*`,
             // `docpref.*`, `hide_completed`, `show_archived` all land here and
             // survive every write this crate makes.
@@ -191,17 +220,34 @@ pub fn render_preferences(settings: &GlobalSettings, file: &PreferencesFile) -> 
     };
 
     line("theme", settings.theme.token());
+    if let Some(pack) = settings.icon_pack {
+        line("icon_pack", pack.token());
+    }
     line("caret_color", settings.caret_color.token());
     line("caret_width", settings.caret_width.token());
     line("caret_height", settings.caret_height.token());
     for (key, setting) in [
-        ("font", settings.ui_font),
-        ("body_font", settings.body_font),
-        ("headings_font", settings.headings_font),
-        ("code_font", settings.code_font),
+        ("font", &settings.ui_font),
+        ("body_font", &settings.body_font),
+        ("headings_font", &settings.headings_font),
+        ("code_font", &settings.code_font),
+        ("chat_font", &settings.chat_font),
     ] {
-        if let Some(family) = setting.family() {
-            line(key, family.token());
+        if let Some(value) = setting.file_value() {
+            line(key, &value);
+        }
+    }
+    if let Some(size) = settings.document_text_size.chosen() {
+        line("doc_text_size", &size.px().to_string());
+    }
+    // A base color is written only once chosen: following the theme is no
+    // key, so a file that never chose one is byte-identical to before.
+    for (key, color) in [
+        ("base_color_light", settings.base_color_light),
+        ("base_color_dark", settings.base_color_dark),
+    ] {
+        if let Some(color) = color {
+            line(key, &color.token());
         }
     }
     line("density", settings.density.token());
@@ -227,11 +273,49 @@ pub fn render_preferences(settings: &GlobalSettings, file: &PreferencesFile) -> 
     line("view_mode", settings.default_view_mode.token());
     line("canvas_bg", &settings.default_canvas_background.token());
     line("emoji_skin_tone", &settings.emoji_skin_tone);
+    // Written only while there is a favorite: absent is none, which is also
+    // what a build without this key reads — and carries through its writes.
+    if !settings.favorite_models.is_empty() {
+        line(
+            "favorite_models",
+            &render_favorites(&settings.favorite_models),
+        );
+    }
 
     for (key, value) in &file.carried {
         line(key, value);
     }
     out
+}
+
+/// **`favorite_models=`** is a JSON list of `agent:model` strings on one
+/// line: `["claude:opus","opencode:anthropic/claude-sonnet-4"]`. JSON because
+/// a model id is the agent's to spell — it may hold `/`, `:` or `,` — and
+/// JSON quotes whatever it holds; the first `:` splits it, because an agent
+/// key never holds one.
+fn render_favorites(favorites: &[crate::FavoriteModel]) -> String {
+    let pairs: Vec<String> = favorites
+        .iter()
+        .map(|favorite| format!("{}:{}", favorite.agent, favorite.model))
+        .collect();
+    serde_json::to_string(&pairs).expect("a list of strings serializes")
+}
+
+/// Read `favorite_models=` tolerantly: a value that is not a JSON list of
+/// strings is no favorites, and an entry that is not `agent:model` in the
+/// shapes a patch takes is skipped rather than failing the rest.
+fn parse_favorites(value: &str) -> Vec<crate::FavoriteModel> {
+    let Ok(pairs) = serde_json::from_str::<Vec<String>>(value) else {
+        return Vec::new();
+    };
+    crate::sections::ordered_favorites(
+        pairs
+            .iter()
+            .filter_map(|pair| pair.split_once(':'))
+            .map(|(agent, model)| crate::FavoriteModel::new(agent, model))
+            .filter(crate::sections::is_valid_favorite)
+            .collect(),
+    )
 }
 
 // -------------------------------------------------------- desktop-v1.json
@@ -249,6 +333,11 @@ pub(crate) const OWNED_DESKTOP_KEYS: &[&str] = &[
     "automatic_checks",
     "delegate_temporary_root",
     "recording",
+    "disabled_agents",
+    "default_permission",
+    "default_permission_other",
+    "default_agent",
+    "agent_order",
 ];
 
 /// What a read of `desktop-v1.json` recovered, plus what it must carry back.
@@ -336,6 +425,47 @@ pub fn apply_desktop(bytes: &[u8], into: &mut GlobalSettings) -> DesktopFile {
                     into.recording = prefs;
                 }
             }
+            // Read tolerantly, like `recording`: a value that is not a list
+            // of keys reads as every agent on rather than failing the load.
+            "disabled_agents" => {
+                if let Ok(agents) = serde_json::from_value::<Vec<String>>(value) {
+                    into.disabled_agents = crate::sections::normalized_agents(agents);
+                }
+            }
+            // A token this build does not know reads as *Manual*, the
+            // token parser's default: never a mode nobody chose.
+            "default_permission" => {
+                if let Some(text) = value.as_str() {
+                    into.default_permission = AgentPermission::parse(text);
+                }
+            }
+            // An agent with no auto mode has no *Auto*: a hand-edited one
+            // reads as *Manual* rather than as something it cannot be.
+            "default_permission_other" => {
+                if let Some(text) = value.as_str() {
+                    into.default_permission_other = match AgentPermission::parse(text) {
+                        AgentPermission::Auto => AgentPermission::Manual,
+                        permission => permission,
+                    };
+                }
+            }
+            // Read tolerantly: anything but a list of agent keys is the
+            // built-in order, and a key twice keeps its first place.
+            "agent_order" => {
+                if let Ok(order) = serde_json::from_value::<Vec<String>>(value)
+                    && order.iter().all(|key| crate::sections::is_agent_key(key))
+                {
+                    into.agent_order = crate::sections::ordered_agents(order);
+                }
+            }
+            // A key that is not an agent key's shape reads as *Auto*.
+            "default_agent" => {
+                if let Some(key) = value.as_str()
+                    && crate::sections::is_agent_key(key)
+                {
+                    into.default_agent = Some(key.to_owned());
+                }
+            }
             _ => {
                 file.carried.insert(key, value);
             }
@@ -391,6 +521,40 @@ pub fn render_desktop(settings: &GlobalSettings, file: &DesktopFile) -> Vec<u8> 
             "recording".into(),
             serde_json::to_value(&settings.recording).expect("recording prefs always serialize"),
         );
+    }
+    // Written only while an agent is off: absent is what "every agent on" is
+    // spelled as, which is also what a build without this key reads.
+    if !settings.disabled_agents.is_empty() {
+        object.insert(
+            "disabled_agents".into(),
+            serde_json::to_value(&settings.disabled_agents).expect("a list of keys serializes"),
+        );
+    }
+    // Written only once chosen: absent is *Manual*, which is also what a
+    // build without these keys starts every chat in.
+    if settings.default_permission != AgentPermission::Manual {
+        object.insert(
+            "default_permission".into(),
+            settings.default_permission.token().into(),
+        );
+    }
+    if settings.default_permission_other != AgentPermission::Manual {
+        object.insert(
+            "default_permission_other".into(),
+            settings.default_permission_other.token().into(),
+        );
+    }
+    // Written only once moved: absent is the built-in order, which is also
+    // what a build without this key lists.
+    if !settings.agent_order.is_empty() {
+        object.insert(
+            "agent_order".into(),
+            serde_json::to_value(&settings.agent_order).expect("a list of keys serializes"),
+        );
+    }
+    // Written only once an agent is chosen: absent is *Auto*.
+    if let Some(agent) = &settings.default_agent {
+        object.insert("default_agent".into(), agent.as_str().into());
     }
     serde_json::to_vec_pretty(&serde_json::Value::Object(object))
         .expect("a settings object always serializes")

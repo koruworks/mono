@@ -1,0 +1,11 @@
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "error": {
+    "code": -32000,
+    "message": "<authentication-required>",
+    "data": {
+      "message": "<private-auth-detail>"
+    }
+  }
+}

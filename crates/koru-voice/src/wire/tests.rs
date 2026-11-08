@@ -80,6 +80,21 @@ fn the_wire_vectors_are_current() {
                 generation: 4,
             },
         ),
+        (
+            "request.meter",
+            Request::Meter {
+                session,
+                generation: 6,
+                input: InputChoice::named("Yeti Nano"),
+            },
+        ),
+        (
+            "request.meter_stop",
+            Request::MeterStop {
+                session,
+                generation: 6,
+            },
+        ),
     ];
     let events: Vec<(&str, Event)> = vec![
         (
@@ -185,7 +200,7 @@ fn the_wire_vectors_are_current() {
     // than derived: a new variant with no vector fails here.
     assert_eq!(
         requests.len(),
-        5,
+        7,
         "add a vector for the new Request variant"
     );
     assert_eq!(events.len(), 9, "add a vector for the new Event variant");
@@ -243,10 +258,11 @@ where
 /// a well-meaning cleanup cannot collapse them into one constant.
 #[test]
 fn the_protocol_and_frame_versions_are_two_numbers() {
-    // 2: the microphone picker's `Devices` pair and `Begin.input`. The
+    // 2: the microphone picker's `Devices` pair and `Begin.input`; 3: the
+    // tier on `Begin`; 4: the level meter's `Meter` / `MeterStop`. The
     // literal is here rather than derived so that bumping one number cannot
     // silently move the other.
-    assert_eq!(PROTOCOL_VERSION, 3);
+    assert_eq!(PROTOCOL_VERSION, 4);
     assert_eq!(FRAME_VERSION, 1);
     // `FRAME_VERSION` is a byte because that is what `koru_ipc::frame` stamps;
     // `PROTOCOL_VERSION` is a u32 because a semantic version is bumped often.
@@ -408,4 +424,48 @@ fn a_device_list_carries_the_names_a_picker_draws() {
     .unwrap();
     assert_eq!(json["devices"][0]["name"], "Yeti Nano");
     assert_eq!(json["devices"][0]["default"], true);
+}
+
+// ------------------------------------------------------------ the level meter
+
+/// **A meter written without a device still reads**, and meters the host's
+/// own microphone: `input` defaults as `Begin`'s does.
+#[test]
+fn a_meter_without_an_input_meters_the_system_default() {
+    let json = serde_json::json!({
+        "kind": "meter",
+        "session": fixed_session(),
+        "generation": 4,
+    });
+    let request: Request = serde_json::from_value(json).expect("a bare meter");
+    match request {
+        Request::Meter { input, .. } => assert_eq!(input, InputChoice::SystemDefault),
+        other => panic!("{other:?}"),
+    }
+}
+
+/// **A meter carries a device name and nothing that sounds.** The level comes
+/// back as the dictation's own `Level` event — a bucket, never a buffer — and
+/// neither request has a field a sample could travel in.
+#[test]
+fn a_meter_carries_no_audio_either_way() {
+    let session = fixed_session();
+    let messages = [
+        serde_json::to_value(Request::Meter {
+            session,
+            generation: 1,
+            input: InputChoice::named("Yeti Nano"),
+        })
+        .unwrap(),
+        serde_json::to_value(Request::MeterStop {
+            session,
+            generation: 1,
+        })
+        .unwrap(),
+    ];
+    for message in messages {
+        for (key, value) in message.as_object().expect("an object") {
+            assert!(!value.is_array(), "`{key}` is an array");
+        }
+    }
 }

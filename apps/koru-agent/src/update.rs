@@ -196,8 +196,6 @@ pub enum Handoff {
     },
     /// UI clients are gone; session trees are terminating gracefully.
     StoppingSessions,
-    /// The windows are gone; the standalone chat is being asked to close.
-    StoppingChat,
     /// Every windowed process and terminal session is gone; stop the store.
     StoppingStore,
     /// Everything is down and the updater may be spawned.
@@ -213,7 +211,7 @@ impl Handoff {
     /// the ordinary path for an agent sitting alone in the notification area.
     pub fn begin(remaining: usize, now: Instant) -> Self {
         if remaining == 0 {
-            Self::StoppingChat
+            Self::StoppingSessions
         } else {
             Self::AskingShells {
                 deadline: now + WAIT_FOR_SHELLS,
@@ -231,7 +229,7 @@ impl Handoff {
     pub fn shell_gone(&mut self, remaining: usize, now: Instant) {
         if let Self::AskingShells { .. } = self {
             if remaining == 0 {
-                *self = Self::StoppingChat;
+                *self = Self::StoppingSessions;
             } else if let Self::AskingShells {
                 remaining: left,
                 deadline,
@@ -272,7 +270,6 @@ impl Handoff {
             Self::Idle => "idle",
             Self::AskingShells { .. } => "asking-shells",
             Self::StoppingSessions => "stopping-sessions",
-            Self::StoppingChat => "stopping-chat",
             Self::StoppingStore => "stopping-store",
             Self::Ready => "ready",
             Self::Aborted(_) => "aborted",
@@ -312,9 +309,8 @@ pub struct Reopen {
     /// claim endpoint for its whole lifetime; at most one replay can continue.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     claims: Vec<ReopenClaim>,
-    /// The standalone AI host was live when quiescence began.
-    #[serde(default)]
-    pub ai_chat: bool,
+    // An older build also wrote `ai_chat`, whether the retired Koru AI
+    // window was open. It is read past, not reopened: the window is gone.
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -338,7 +334,6 @@ impl Reopen {
         Self {
             windows,
             claims: Vec::new(),
-            ai_chat: false,
         }
     }
 
@@ -355,7 +350,7 @@ impl Reopen {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.windows.is_empty() && !self.ai_chat
+        self.windows.is_empty()
     }
 
     /// Return the stable claim for one pending window, minting a v4 UUID when
@@ -526,13 +521,12 @@ impl Reopen {
             reopen.retain_live_claims();
             return reopen;
         }
-        // Before AI chat joined the lifecycle this file was the bare window
-        // vector. Accept it across the first update that changes the shape.
+        // An older build wrote the bare window vector. Accept it across the
+        // first update that changes the shape.
         match serde_json::from_slice(&bytes) {
             Ok(windows) => Self {
                 windows,
                 claims: Vec::new(),
-                ai_chat: false,
             },
             Err(error) => {
                 koru_ipc::ipc_debug!("update: the recorded reopen state was unreadable: {error}");

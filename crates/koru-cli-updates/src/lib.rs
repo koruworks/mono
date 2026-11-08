@@ -27,6 +27,14 @@
 //! - **A newer CLI is not a CLI Koru's managed routes accept.** Those routes
 //!   pin exact versions, and a version past the pin runs raw. The update card
 //!   says what the channel offers; the readiness rows say what Koru admits.
+//! - **A changed CLI is a trigger, not a key.** When a report shows a row
+//!   whose stage became *Updated*, or whose installed version moved, the Agent
+//!   (`apps/koru-agent/src/cli_updates.rs::refresh_targets`) asks the session
+//!   host to re-probe the managed agent that runs that program — today
+//!   `opencode`, `kimi`, `grok` and `codex` — which refreshes its readiness
+//!   row and rebuilds its model list. Nothing here knows about either; the
+//!   host keys its model catalog on the version its own probe reads
+//!   (agent-models D5, D6).
 //!
 //! ## Shape
 //!

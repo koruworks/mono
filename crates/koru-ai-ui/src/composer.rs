@@ -10,9 +10,8 @@
 //! `[[koru://doc/<id>]]` the conversation draws as a titled link
 //! ([`crate::doc_links`]).
 //!
-//! One module below both chat hosts — the embedded pane and tab in
-//! `apps/koru`, and the standalone `koru-ai-chat` window — so neither host
-//! repeats what `MainView` does for a document leaf: the private workspace,
+//! One module below the chat hosts — the embedded pane and tab in
+//! `apps/koru` — so no host repeats what `MainView` does for a document leaf: the private workspace,
 //! the [`Editor`], the entity search behind `@`, and the loop that drains the
 //! picker's requests and delivers its answers.
 //!
@@ -24,6 +23,26 @@
 //! paragraph (a paragraph may not hold `\n`), and [`ChatComposer::message`]
 //! joins the paragraphs with one newline, so what is sent reads exactly as the
 //! one-block field this replaced sent it.
+//!
+//! ## Quotes
+//!
+//! A passage of a reply added to the message (koru-ai D88) is a **quote
+//! chip** on a line of its own — the editor's pill under
+//! [`koru_core::attributes::ROLE_QUOTE`], holding the passage whole — with
+//! the person's comment on the lines under it. Several interleave with their
+//! comments in the order they were added. At send each is a Markdown
+//! blockquote before the text that follows it
+//! (`koru_export_markdown::message_text`); a recalled or queued message
+//! brings its quotes back as chips.
+//!
+//! ## Skills
+//!
+//! A skill of the chat's agent picked under `$` (koru-ai D121, [`crate::skills`])
+//! is a **skill chip** where the `$` was typed — the editor's pill under
+//! [`koru_core::attributes::ROLE_SKILL`], holding the skill's name. At send
+//! it is `$name` in the text and its name in [`ComposedMessage::skills`]. A
+//! recalled message brings `$name` back as text, not as a chip: nothing
+//! stores which words were chips.
 //!
 //! ## Where it is drawn
 //!
@@ -38,7 +57,7 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use koru_core::node::{AttrValue, Node};
+use koru_core::node::{Attr, AttrValue, Node};
 use koru_core::schema::{Parent, WorkspaceDoc};
 use koru_core::{NodeId, WorkspaceId};
 use koru_draw::ImageCache;
@@ -56,10 +75,14 @@ use vello::kurbo::Affine;
 use winit::event::MouseScrollDelta;
 use winit::keyboard::{Key, ModifiersState};
 
-/// How far inside its box the composer's text sits — the field padding every
-/// chrome text box uses, so the composer's first line lands where the old
-/// field's did.
-const PAD: f32 = koru_ui::text_field::PAD;
+/// How far inside its box the composer's text sits: the chat's own padding
+/// ([`crate::COMPOSER_PAD_X`], [`crate::COMPOSER_PAD_TOP`]) and, below the
+/// last line, the gap to the toolbar row ([`crate::COMPOSER_TEXT_GAP`]).
+/// **Named here, defined there**, so the box the chat measures and the inset
+/// the editor is placed at cannot disagree.
+const PAD_X: f32 = crate::COMPOSER_PAD_X;
+const PAD_TOP: f32 = crate::COMPOSER_PAD_TOP;
+const PAD_BOTTOM: f32 = crate::COMPOSER_TEXT_GAP;
 
 /// How often an open picker waiting on the store is polled.
 const POLL: Duration = Duration::from_millis(16);
@@ -71,8 +94,11 @@ fn side() -> f32 {
 }
 
 /// One line of body text, the unit the composer grows by.
+///
+/// The composer's body is set in the app's face ([`fresh`]), so its box and
+/// its text are measured from the same number whatever the document size is.
 fn line_height() -> f32 {
-    theme::FONT_SIZE * theme::LINE_HEIGHT
+    crate::chat_line_height()
 }
 
 /// What a composed message is at send.
@@ -85,6 +111,65 @@ pub struct ComposedMessage {
     /// was chosen under. A heading chip names its whole document here: until
     /// UC15 a turn sends the whole document.
     pub documents: Vec<(koru_ai_core::DocumentId, String)>,
+    /// Every skill chip's name (koru-ai D121), in reading order, each once;
+    /// the text says `$name` where each is.
+    pub skills: Vec<String>,
+}
+
+/// **A `$` being typed** (koru-ai D121): where it is, and what follows it up
+/// to the caret — the query the skill list is filtered by.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DollarToken {
+    pub(crate) row: NodeId,
+    /// The `$`'s byte offset in the row's text.
+    pub(crate) start: usize,
+    /// The caret's: where the token ends.
+    pub(crate) end: usize,
+    /// What follows the `$`.
+    pub(crate) query: String,
+}
+
+/// Whether `character` can be part of a skill's name typed after `$`.
+fn name_char(character: char) -> bool {
+    character.is_alphanumeric() || matches!(character, '-' | '_' | ':' | '.')
+}
+
+/// **The `$` token that ends at `caret` in `text`**: a `$` at the start of
+/// the line or after a space, then name characters up to the caret. Its
+/// byte offset and what follows it; `None` when the caret is not in one —
+/// `a$b`, `$$`, or a price like `5$` is not a token.
+pub(crate) fn dollar_before(text: &str, caret: usize) -> Option<(usize, &str)> {
+    let head = text.get(..caret)?;
+    let start = head.rfind(|character: char| !name_char(character))?;
+    if !head[start..].starts_with('$') {
+        return None;
+    }
+    if head[..start]
+        .chars()
+        .next_back()
+        .is_some_and(|before| !before.is_whitespace())
+    {
+        return None;
+    }
+    Some((start, &head[start + 1..]))
+}
+
+/// A skill chip's record: the skill's name, under the skill role, labelled
+/// with what the chip shows.
+fn skill_attr(name: &str, label: &str) -> Attr {
+    Attr::labelled(
+        koru_core::attributes::ROLE_SKILL,
+        AttrValue::Text(name.to_owned()),
+        label.to_owned(),
+    )
+}
+
+/// A message set aside by [`ChatComposer::stash`]: its private document and
+/// the editor over it, so it comes back exactly as it was left.
+pub(crate) struct Draft {
+    ws: WorkspaceDoc,
+    root: NodeId,
+    editor: Editor,
 }
 
 /// The composer: a private one-document workspace and the editor over it.
@@ -144,6 +229,7 @@ impl ChatComposer {
     pub(crate) fn message(&self) -> ComposedMessage {
         let markdown = koru_export_markdown::message_text(&self.ws, self.root).unwrap_or_default();
         let mut documents: Vec<(koru_ai_core::DocumentId, String)> = Vec::new();
+        let mut skills: Vec<String> = Vec::new();
         for id in self
             .ws
             .children(Parent::Node(self.root))
@@ -167,12 +253,98 @@ impl ChatComposer {
                         documents.push((document, attr.label.clone().unwrap_or_default()));
                     }
                 }
+                if attr.role == koru_core::attributes::ROLE_SKILL
+                    && let AttrValue::Text(name) = &attr.value
+                    && !name.is_empty()
+                    && !skills.contains(name)
+                {
+                    skills.push(name.clone());
+                }
             }
         }
         ComposedMessage {
             markdown,
             documents,
+            skills,
         }
+    }
+
+    /// **The `$` the caret is in, if any** (koru-ai D121): not while a
+    /// dictation is provisional, and not across a selection.
+    pub(crate) fn dollar_token(&self) -> Option<DollarToken> {
+        if self.composing() {
+            return None;
+        }
+        let paragraph = self.editor.body.focused()?;
+        if !paragraph.selection.is_collapsed() {
+            return None;
+        }
+        let caret = paragraph.caret();
+        let (start, query) = dollar_before(&paragraph.text, caret)?;
+        Some(DollarToken {
+            row: paragraph.id,
+            start,
+            end: caret,
+            query: query.to_owned(),
+        })
+    }
+
+    /// **Put a picked skill where its `$` was typed** (koru-ai D121): the
+    /// `$` and what followed it become the skill's chip, labelled `label`,
+    /// with a space after it, and the caret after that. One undo step;
+    /// Backspace takes the chip back whole. `false` when the token is no
+    /// longer there.
+    pub(crate) fn insert_skill(&mut self, token: &DollarToken, name: &str, label: &str) -> bool {
+        let current = self
+            .ws
+            .read(token.row)
+            .ok()
+            .and_then(|node| node.content.as_text().map(str::to_owned));
+        if current
+            .as_deref()
+            .and_then(|text| dollar_before(text, token.end))
+            .is_none_or(|(start, _)| start != token.start)
+        {
+            return false;
+        }
+        self.ws.checkpoint();
+        self.ws.begin_group();
+        if self
+            .ws
+            .delete_text(token.row, token.start..token.end)
+            .is_err()
+            || self
+                .ws
+                .insert_pill(token.row, token.start, &skill_attr(name, label))
+                .is_err()
+        {
+            self.ws.checkpoint();
+            return false;
+        }
+        let mut caret = token.start + koru_core::ANCHOR.len_utf8();
+        let spaced = self
+            .ws
+            .read(token.row)
+            .ok()
+            .and_then(|node| {
+                node.content
+                    .as_text()
+                    .and_then(|text| text.get(caret..))
+                    .map(|rest| rest.starts_with(char::is_whitespace))
+            })
+            .unwrap_or(false);
+        if spaced || self.ws.insert_text(token.row, caret, " ").is_ok() {
+            caret += 1;
+        }
+        self.ws.checkpoint();
+        self.editor.view.active = true;
+        self.editor.body.rebuild(&self.ws);
+        self.editor.body.focus_on(token.row);
+        self.editor.place_caret(caret);
+        self.editor.view.desired_x = None;
+        self.editor.settle();
+        self.editor.scroll_to_caret();
+        true
     }
 
     /// The message's text as it would be sent now — chips in their
@@ -200,13 +372,208 @@ impl ChatComposer {
         self.editor = editor;
     }
 
-    /// Replace the message with `text`, line breaks becoming paragraphs.
+    /// Replace the message with `text` as plain text, line breaks becoming
+    /// paragraphs, the caret after the last character. For tests; a recalled
+    /// message is [`set_message`](Self::set_message), which keeps its chips.
     #[cfg(test)]
     pub(crate) fn set_text(&mut self, text: &str) {
         self.clear();
         if !text.is_empty() {
             koru_editor::clipboard::insert_lines(&mut self.editor, &mut self.ws, text);
         }
+    }
+
+    /// Replace the message with one already sent, **chips and all** — what a
+    /// recalled message is. `markdown` is the message as it went out, chips
+    /// in their `[[koru://doc/…]]` spelling; each comes back as the chip it
+    /// was, captioned by `title`, a blockquote comes back as the quote chip
+    /// it was sent from (D88), and every other token stays text. One undo
+    /// step, the caret after the last character.
+    pub(crate) fn set_message(
+        &mut self,
+        markdown: &str,
+        title: impl Fn(koru_ai_core::DocumentId) -> String,
+    ) {
+        self.clear();
+        let normalized = markdown.replace("\r\n", "\n").replace('\r', "\n");
+        let Some(mut row) = self
+            .ws
+            .children(Parent::Node(self.root))
+            .ok()
+            .and_then(|rows| rows.first().copied())
+        else {
+            return;
+        };
+        self.ws.checkpoint();
+        self.ws.begin_group();
+        let mut at = 0;
+        for (i, recalled) in recalled_rows(&normalized).into_iter().enumerate() {
+            if i > 0 {
+                match self.ws.split(row, at) {
+                    Ok(tail) => {
+                        row = tail;
+                        at = 0;
+                    }
+                    Err(_) => break,
+                }
+            }
+            let line = match recalled {
+                Recalled::Line(line) => line,
+                Recalled::Quote(passage) => {
+                    if self.ws.insert_pill(row, at, &quote_attr(&passage)).is_ok() {
+                        at += koru_core::ANCHOR.len_utf8();
+                    }
+                    continue;
+                }
+            };
+            let mut from = 0;
+            for found in koru_link::wrapped(line) {
+                let koru_link::KoruLink::Document { document, node } = found.link else {
+                    continue;
+                };
+                at += insert_text(&mut self.ws, row, at, &line[from..found.range.start]);
+                let reference = koru_core::DocumentReference {
+                    document: koru_core::DocumentId::from_uuid(document),
+                    node: node.map(NodeId::from_uuid),
+                };
+                let attr = Attr::labelled(
+                    "document",
+                    AttrValue::Document(reference),
+                    title(koru_ai_core::DocumentId::from_uuid(document)),
+                );
+                if self.ws.insert_pill(row, at, &attr).is_ok() {
+                    at += koru_core::ANCHOR.len_utf8();
+                }
+                from = found.range.end;
+            }
+            at += insert_text(&mut self.ws, row, at, &line[from..]);
+        }
+        self.ws.checkpoint();
+        self.editor.body.rebuild(&self.ws);
+        self.editor.body.focus_on(row);
+        self.editor.place_caret(at);
+        self.editor.view.desired_x = None;
+        self.editor.settle();
+    }
+
+    /// Put the caret before the message's first character: where a message
+    /// recalled by Up leaves it, on the first line, so the next Up walks on
+    /// instead of climbing through the lines of a long one.
+    pub(crate) fn caret_to_start(&mut self) {
+        let Some(first) = self
+            .ws
+            .children(Parent::Node(self.root))
+            .ok()
+            .and_then(|rows| rows.first().copied())
+        else {
+            return;
+        };
+        self.editor.body.focus_on(first);
+        self.editor.place_caret(0);
+        self.editor.view.desired_x = None;
+        self.editor.settle();
+    }
+
+    /// Set the message being typed aside whole — its chips, its undo — and
+    /// start an empty one: what walking back through earlier messages does,
+    /// so walking forward past the newest can give it back untouched.
+    pub(crate) fn stash(&mut self) -> Draft {
+        let active = self.editor.view.active;
+        let viewport = self.editor.view.viewport;
+        let (ws, root, mut editor) = fresh();
+        editor.view.active = active;
+        editor.set_viewport(viewport.0, viewport.1);
+        Draft {
+            ws: std::mem::replace(&mut self.ws, ws),
+            root: std::mem::replace(&mut self.root, root),
+            editor: std::mem::replace(&mut self.editor, editor),
+        }
+    }
+
+    /// Put a stashed message back, caret where it was left.
+    pub(crate) fn unstash(&mut self, draft: Draft) {
+        let active = self.editor.view.active;
+        let viewport = self.editor.view.viewport;
+        self.ws = draft.ws;
+        self.root = draft.root;
+        self.editor = draft.editor;
+        self.editor.view.active = active;
+        self.editor.set_viewport(viewport.0, viewport.1);
+    }
+
+    /// **Quote a passage into the message** (koru-ai D88): a quote chip at
+    /// the caret, on a line of its own, and the caret on a new line under it
+    /// for the comment. Text before the caret stays above the chip; text after
+    /// it moves under, the caret at its start. One undo step. `false` for a
+    /// passage with nothing in it.
+    pub(crate) fn insert_quote(&mut self, passage: &str) -> bool {
+        let passage = passage.replace("\r\n", "\n").replace('\r', "\n");
+        let passage = passage.trim_matches('\n');
+        if passage.trim().is_empty() {
+            return false;
+        }
+        let first = self
+            .ws
+            .children(Parent::Node(self.root))
+            .ok()
+            .and_then(|rows| rows.first().copied());
+        let Some((mut row, mut at)) = self
+            .editor
+            .body
+            .focused()
+            .map(|paragraph| (paragraph.id, paragraph.caret()))
+            .or(first.map(|row| (row, 0)))
+        else {
+            return false;
+        };
+        self.ws.checkpoint();
+        self.ws.begin_group();
+        if at > 0
+            && let Ok(tail) = self.ws.split(row, at)
+        {
+            row = tail;
+            at = 0;
+        }
+        if self.ws.insert_pill(row, at, &quote_attr(passage)).is_err() {
+            self.ws.checkpoint();
+            return false;
+        }
+        let after = at + koru_core::ANCHOR.len_utf8();
+        let (caret_row, caret) = match self.ws.split(row, after) {
+            Ok(tail) => (tail, 0),
+            Err(_) => (row, after),
+        };
+        self.ws.checkpoint();
+        self.editor.view.active = true;
+        self.editor.body.rebuild(&self.ws);
+        self.editor.body.focus_on(caret_row);
+        self.editor.place_caret(caret);
+        self.editor.view.desired_x = None;
+        self.editor.settle();
+        self.editor.scroll_to_caret();
+        true
+    }
+
+    /// Whether the caret is on the message's first visual line — where Up
+    /// leaves the text instead of moving inside it.
+    pub(crate) fn caret_on_first_line(&self) -> bool {
+        let body = &self.editor.body;
+        body.focus <= body.first_body_row()
+            && body
+                .rows
+                .get(body.focus)
+                .is_none_or(|row| row.line_index() == 0)
+    }
+
+    /// Whether the caret is on the message's last visual line — where Down
+    /// leaves the text instead of moving inside it.
+    pub(crate) fn caret_on_last_line(&self) -> bool {
+        let body = &self.editor.body;
+        body.focus + 1 >= body.rows.len()
+            && body
+                .rows
+                .get(body.focus)
+                .is_none_or(|row| row.line_index() + 1 >= row.line_count())
     }
 
     /// Shift+Enter and Ctrl+J: a line break, which is a new plain paragraph.
@@ -263,6 +630,19 @@ impl ChatComposer {
 
     /// A chip was clicked, in the composer or in a sent message: the document
     /// the host should open.
+    /// A paste found no text: the surface reads the clipboard's picture or
+    /// files as attachments, off the window thread (chat-attachments D9).
+    pub(crate) fn take_wants_paste_attachment(&mut self) -> bool {
+        std::mem::take(&mut self.editor.view.wants_paste_attachment)
+    }
+
+    /// Arm the paste flag as a paste with no text would, for a test that
+    /// must not touch the desktop clipboard.
+    #[cfg(test)]
+    pub(crate) fn arm_paste_attachment(&mut self) {
+        self.editor.view.wants_paste_attachment = true;
+    }
+
     pub(crate) fn take_open_request(&mut self) -> Option<koru_link::KoruLink> {
         self.open_request.take()
     }
@@ -301,10 +681,10 @@ impl ChatComposer {
     /// `panels` the room its picker may float in.
     pub(crate) fn place(&mut self, text: Rect, panels: Rect) {
         let inner = Rect::new(
-            text.x + PAD,
-            text.y + PAD,
-            (text.w - 2.0 * PAD).max(1.0),
-            (text.h - 2.0 * PAD).max(1.0),
+            text.x + PAD_X,
+            text.y + PAD_TOP,
+            (text.w - 2.0 * PAD_X).max(1.0),
+            (text.h - PAD_TOP - PAD_BOTTOM).max(1.0),
         );
         let origin = (inner.x - side(), inner.y - theme::MARGIN_TOP);
         let viewport = (inner.w + 2.0 * side(), inner.h + 2.0 * theme::MARGIN_TOP);
@@ -450,7 +830,7 @@ impl ChatComposer {
     }
 
     /// The `@` picker, drawn **after** everything else the chat draws: it
-    /// floats over the conversation, the quote pills and the toolbar.
+    /// floats over the conversation, the document pill and the toolbar.
     pub(crate) fn draw_panels(&mut self, canvas: &mut Scene, root: Affine) {
         let at = root * Affine::translate((self.origin.0 as f64, self.origin.1 as f64));
         koru_editor::draw::floating_panels(canvas, at, &mut self.editor);
@@ -489,9 +869,9 @@ impl ChatComposer {
         }
         let scope = match self.current_workspace {
             Some(current) => Some((current, self.workspaces.clone())),
-            // No workspace on screen — the standalone window. Every live
-            // workspace in the catalog is the scope, the first one standing in
-            // for "current", which only seeds the picker's bootstrap.
+            // No workspace on screen. Every live workspace in the catalog is
+            // the scope, the first one standing in for "current", which only
+            // seeds the picker's bootstrap.
             None => self
                 .search
                 .as_mut()
@@ -624,6 +1004,10 @@ fn fresh() -> (WorkspaceDoc, NodeId, Editor) {
     .expect("a paragraph in a fresh document");
     ws.enable_undo();
     let mut editor = Editor::rooted_at(&ws, root, true);
+    // A chat message is not a document: it is set in the chat font — the
+    // app font until chosen — at the app's size, like the messages above
+    // it, and no document font, size or preview of one reaches it.
+    editor.body.text_scale = koru_editor::TextScale::Chat;
     editor.body.title_row = false;
     editor.body.rebuild(&ws);
     editor.view.apply_policy(Policy::Composer);
@@ -633,6 +1017,66 @@ fn fresh() -> (WorkspaceDoc, NodeId, Editor) {
     editor.body.focus = editor.body.first_body_row();
     editor.place_caret(0);
     (ws, root, editor)
+}
+
+/// A quote chip's record: the passage whole, as text, under the quote role.
+fn quote_attr(passage: &str) -> Attr {
+    Attr::new(
+        koru_core::attributes::ROLE_QUOTE,
+        AttrValue::Text(passage.to_owned()),
+    )
+}
+
+/// One row of a recalled message: a line of text, or a quoted passage.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Recalled<'a> {
+    Line(&'a str),
+    Quote(String),
+}
+
+/// A sent message read back into rows, **the inverse of what the composer
+/// sends**: a run of `>` lines is one quoted passage, and the blank line
+/// either side of it is the separator `message_text` wrote, not a line the
+/// person typed. A message that ends on a quote gets an empty line under it
+/// for the caret.
+pub(crate) fn recalled_rows(markdown: &str) -> Vec<Recalled<'_>> {
+    let lines: Vec<&str> = markdown.split('\n').collect();
+    let mut rows = Vec::with_capacity(lines.len());
+    let mut i = 0;
+    while i < lines.len() {
+        if !lines[i].starts_with('>') {
+            rows.push(Recalled::Line(lines[i]));
+            i += 1;
+            continue;
+        }
+        let mut passage = Vec::new();
+        while i < lines.len() && lines[i].starts_with('>') {
+            let line = &lines[i][1..];
+            passage.push(line.strip_prefix(' ').unwrap_or(line));
+            i += 1;
+        }
+        if rows.last() == Some(&Recalled::Line("")) {
+            rows.pop();
+        }
+        rows.push(Recalled::Quote(passage.join("\n")));
+        if lines.get(i) == Some(&"") {
+            i += 1;
+        }
+    }
+    if matches!(rows.last(), Some(Recalled::Quote(_))) {
+        rows.push(Recalled::Line(""));
+    }
+    rows
+}
+
+/// Insert `text` into `row` at `at`: the bytes it added, none for an empty
+/// piece or a refusal.
+fn insert_text(ws: &mut WorkspaceDoc, row: NodeId, at: usize, text: &str) -> usize {
+    if !text.is_empty() && ws.insert_text(row, at, text).is_ok() {
+        text.len()
+    } else {
+        0
+    }
 }
 
 fn choices(workspaces: Vec<EntityWorkspace>) -> Vec<WorkspaceChoice> {

@@ -514,7 +514,7 @@ fn offer() -> koru_workspace_host::voice_install::VoiceOffer {
     }
 }
 
-/// **The consent step names the download size and the licence**, which is the
+/// **The consent step names each download's size and licence**, which is the
 /// whole of what the plan asks it to say. Both come off the *signed*
 /// descriptor, so the sentence and the record cannot disagree.
 #[test]
@@ -524,7 +524,20 @@ fn the_consent_step_names_the_size_and_the_licence() {
     assert!(View::show_voice_consent(&mut v, offer()));
 
     let (dialog, _) = v.confirm.as_ref().expect("the consent step is open");
-    assert!(dialog.body().contains("357"), "{}", dialog.body());
+    // One line per model, each with its own size, rather than one total in a
+    // sentence.
+    assert!(dialog.body().contains("300 MB"), "{}", dialog.body());
+    assert!(dialog.body().contains("57 MB"), "{}", dialog.body());
+    assert!(
+        dialog
+            .body()
+            .lines()
+            .filter(|l| l.starts_with('\u{2022}'))
+            .count()
+            == 2,
+        "{}",
+        dialog.body()
+    );
     assert!(dialog.body().contains("Apache-2.0"), "{}", dialog.body());
     assert!(dialog.body().contains("MIT"), "{}", dialog.body());
     assert!(dialog.body().contains("k2-fsa"), "{}", dialog.body());

@@ -11,13 +11,17 @@ use koru_ai_wire::AgentProviderView;
 use koru_draw::geometry::Rect;
 use uuid::Uuid;
 
-use crate::{ChatsSurface, Listing, Row};
+use crate::{ChatsSurface, Listing, Press, Row};
 
+mod buttons;
 mod dependency;
 mod freshness;
 mod keys;
 mod locales;
+mod order;
+mod profiles;
 mod rows;
+mod status;
 
 /// The list as the navigator hands it over: 260 wide, rows starting a little
 /// under the mode row.
@@ -61,6 +65,10 @@ pub(crate) fn chat(n: u32, title: &str, ago_ms: i64) -> Chat {
         current_model: model("openai", "gpt-6-astra"),
         branched_from: None,
         agent_working_folder: None,
+        agent_mode: None,
+        agent_fast: None,
+        pinned_at: None,
+        profile_id: None,
         created_at: Timestamp::from_millis(NOW - ago_ms - 1_000),
         updated_at: Timestamp::from_millis(NOW - ago_ms),
     }
@@ -70,6 +78,7 @@ pub(crate) fn opencode() -> AgentProviderView {
     AgentProviderView {
         id: AiProviderId::parse("agent-opencode").unwrap(),
         label: "OpenCode".into(),
+        steers: false,
     }
 }
 

@@ -25,6 +25,11 @@ Arguments: serve --stdio --root C:\absolute\path\to\repo\.dev-data\history-smoke
 
 Restart ChatGPT after saving. The desktop host owns the bridge process.
 
+These commands serve every Koru tool. To serve fewer, append
+`--toolsets docs,tasks` (any of `docs`, `files`, `versions`, `tasks`, `chat`)
+to the arguments; see
+[Serve fewer tools](CLAUDE_MCP.md#serve-fewer-tools).
+
 The equivalent shared Codex configuration in `~/.codex/config.toml` is:
 
 ```toml

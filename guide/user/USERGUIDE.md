@@ -143,7 +143,9 @@ connection progress for these Profiles. “Syncing via Koru Cloud” describes t
 path, not confirmation that every document is up to date. Turning Cloud sync off
 returns the Profile to its existing device-to-device connection behavior.
 
-**The Koru Cloud page.** In the **Manage** tab, **Koru Cloud** under *This
+**The Koru Cloud page.** Click the cloud status at the bottom of the Profile
+popover to open **Manage › Koru Cloud** directly, including when Cloud is not
+set up yet. In the **Manage** tab, **Koru Cloud** under *This
 computer* in the nav (its *On* / *Off* says whether you subscribe) shows the
 subscription for your signed-in Koru account, from top to bottom:
 
@@ -308,7 +310,9 @@ F12 resumes paused picking, or closes the inspector when picking is active.
 The inspector's X always closes it and leaves the app open. The inspector
 has a header ruler toggle (F11) for spacing rays. Hierarchy is the left tab;
 double-click a node to open its Details on the right and bring the inspected
-app window forward if it is in the background. The first version
+app window forward if it is in the background. The mouse's Back and Forward
+buttons, or Alt+Left and Alt+Right, step between the two tabs as in a browser.
+The first version
 covers shared buttons, icon buttons and selected drawing/layout seams, with
 incomplete coverage clearly reported.
 
@@ -690,7 +694,10 @@ the one place Koru's Ctrl does not become Cmd. The global shortcut opens a dedic
 search window. Drag the small rail above the query to reposition it; Koru
 remembers that location on this computer. Drag its top or bottom edge to
 increase its height; Koru remembers that height too. The in-app entries remain a fixed
-620-by-400 modal over your current window. Clicking outside either search closes
+640-by-400 modal over your current window, shrinking to fit smaller windows.
+The modal lists matching results without New task or New document actions.
+Each result's selection box includes its title, location and matching excerpt.
+Clicking outside either search closes
 it. If Koru is waiting in the notification area, the shortcut opens only search;
 workspace windows stay hidden until you choose a result. On Windows, a left
 click on the tray icon brings back the workspace window you used last, and
@@ -871,7 +878,7 @@ of the document viewport so their surrounding context remains visible. The
 matched authored text flashes briefly and the caret lands immediately before
 it, ready to type at the match. The flash is a local navigation cue only: it
 clears on interaction and is never saved or shared with collaborators. Search
-icons use Koru's shared Phosphor icon set; keyboard names in the footer are text,
+icons follow the app's **Icon style**; keyboard names in the footer are text,
 so they remain readable with every UI font.
 
 The header controls are ordered **Filter**, **Sort**, and **More**. The profile
@@ -893,12 +900,9 @@ observed different searchable content, not an authored or shared modification
 date — and it is what puts a relative age (`2h ago`) beside each result.
 “Last used workspace” is based on machine-local navigation. The selected
 sort remains active when search is closed and reopened during the current Koru
-session. The More menu
-can show keyboard hints and opens clearly labelled, read-only **Help preview**
-and **Feedback preview** screens. More remains available from either preview so
-the user can move between them without first returning to results. Feedback is
-not sent, stored, or measured in
-this phase. Search uses Koru's current theme, font roles, and global density;
+session. The search header contains the query, filter control and sort control;
+there is no More menu or Help/Feedback preview. Search uses Koru's current theme,
+font roles, and global density;
 there is no separate search appearance preference.
 Rest an intentional hover on an icon-only control for 400 ms to see its tooltip.
 It fades and settles toward the control over 100 ms; moving away fades it over
@@ -949,12 +953,31 @@ leaves you on a fresh welcome tab rather than going away. Closing the tab you
 are looking at takes you **back to the tab you were in before it** — the trail
 of what you actually visited — not to whichever tab happens to sit beside it.
 
-Down the left is the **pane** — `Ctrl+Shift+E`, or the sidebar button in the
-top-left corner, which draws solid while the pane is open and says *Show
-Sidebar* / *Hide Sidebar* when you point at it. It runs the
-full height of the window and pushes everything else to the right. At its head
-are your avatar and the workspace you are in; below them, the documents, people
-and pictures in that workspace.
+Down the left is the **sidebar** — `Ctrl+Shift+E`, or the sidebar button
+that says *Hide sidebar* / *Show sidebar* when you point at it. It runs the
+full height of the window and pushes everything else to the right. At its
+top is a lane with the Koru mark, **Search** and the sidebar button; under
+it a row of **apps** — Documents, Files, Tasks and the rest the build shows
+— with the one you are in wearing its name (`Alt+1`…`Alt+8` switch them by
+place: `Alt+1` is the top view, `Alt+2` the next;
+drag an icon up or down to put it where you want it, or with the rail
+focused by F6 press `Ctrl+Shift+↑`/`↓`, and Esc while dragging puts it back;
+the shortcuts go with the place, so moving Chats to the top makes it `Alt+1`;
+the order is remembered on this computer);
+then that app's own navigation; and on the floor one chip that says which
+workspace you are in and who you are, with a **?** beside it. The chip opens
+the workspace and account switcher; the **?** opens help: what is new in
+this build, the full changelog, **Send feedback**, **Star us on GitHub**
+(Koru's repository, in your browser), and Koru's website and socials.
+Hide the sidebar and the lane's buttons fold into the title bar's left end; the chip goes with the pane, and
+`Ctrl+Alt+W` / `Ctrl+Alt+P` still open the switcher. `F6` walks the
+keyboard over the lane, the apps row and the floor; the arrows move within
+each, Enter presses, Escape returns to the page.
+
+In the desktop **Documents** list, a document's chosen color tints its outline
+icon. A priority flag (Urgent, High, Medium or Low) appears after the icon and
+before the title, using the same color as the priority picker. Custom emoji
+icons keep their original colors. Clearing priority removes the flag.
 
 ### With a screen reader
 
@@ -1023,10 +1046,7 @@ wrong.
 
 **In Explore:** a single click opens a document in the current tab. Ctrl+click (or Shift+click) builds a multi-selection; right-click then offers **Open in new tab** (one tab each) and **Open in new window** (the whole set in one window).
 
-**Right-click a document tab to pin it.** Pinned tabs sit on the left, show the page icon (and the title if you ask), and stay at the front of the strip. **A pinned tab keeps that document** — clicking another page in the pane, or a link on the pin, never replaces it. Unpin from the tab menu or *Remove from this list* on the Jump List. If pins are open, Welcome is not auto-opened. **+ → Welcome** selects the Welcome tab, or brings it back when it is closed. Your recent documents are under **+ → Documents**, with **Clear recents** at the bottom of the list. Settings controls whether new pins show a title; each pin can override that. Opening a page from search prefers a window that already has that tab.
-
-On Windows, the taskbar Jump List includes **AI Chat (Ctrl+Shift+I)**. It opens
-the standalone Koru AI chat, or brings the existing chat window forward.
+**Right-click any tab to pin it** — a document, a task list, the Trash, a terminal, Settings. Pinned tabs sit on the left, show the page icon (and the title if you ask), and stay at the front of the strip. **A pinned tab keeps what it shows** — clicking another page in the pane, or a link on the pin, never replaces it, and a pinned task list stays on its list: choosing another list in the Tasks column opens it beside the pin. Pins come back after a restart, except Settings, Feedback, a version comparison, Socials and a run's pages, which stay pinned until you quit. Unpin from the tab menu or *Remove from this list* on the Jump List. If pins are open, Welcome is not auto-opened. **+ → Welcome** selects the Welcome tab, or brings it back when it is closed. Your recent documents are under **+ → Documents**, with **Clear recents** at the bottom of the list. Settings controls whether new pins show a title; each pin can override that. Opening a page from search prefers a window that already has that tab.
 
 **`+` and `Ctrl+Shift+A` open Add…**. Documents offers **New** (`Ctrl+T`) and
 your ten most recent pages. Agents and Shell each offer **Active** when a
@@ -1113,11 +1133,9 @@ The side panes stay hidden until you ask:
 | | |
 | --- | --- |
 | `Ctrl+Shift+E` | **Explore** — focus the tree on this tab's document (may switch workspace). Click the arrow beside something to expand it |
-| `Ctrl+Shift+J` or the title-block sparkle | **Koru AI pane** — opens the shared chat from the right, replacing Context when it is open, with the current document shown as a removable pill above the composer |
+| `Ctrl+Shift+J` | **Koru AI pane** — opens the shared chat from the right, replacing Context when it is open, with the current document shown as a removable pill above the composer |
 | `Ctrl+J` | **Context** — comments, assets, tasks and threads for whatever the current tab is showing, on the right. The icon at the right of the document title does the same |
-| `Alt+1` / `Alt+2` / `Alt+3` | **Documents**, **Files**, **Tasks** — the three views at the head of the Explore column, in the order their icons sit; opens the column if it is closed. Hover an icon for its name and chord. **On a Mac these are `⌃⌘1` / `⌃⌘2` / `⌃⌘3`**, because Option with a digit types a character there (`¡`, `™`, `£` on a US keyboard) |
-| `Alt+7` (`⌃⌘7` on a Mac) | **Canvases** — the seventh icon: every canvas in this workspace, as one list. See [Canvases](#canvases) |
-| `Alt+8` (`⌃⌘8` on a Mac) | **Socials** — the eighth icon, the megaphone: scheduled posts, drafts and channels. See [Socials](#socials-experimental-desktop-mvp) |
+| `Alt+1` … `Alt+8` | the view in that place down the Explore column's rail, top first — Documents, Files, Tasks… in the default order, whatever order you drag them into; opens the column if it is closed. Hover an icon for its name and shortcut. **On a Mac `⌃⌘1` … `⌃⌘8`**, because Option with a digit types a character there (`¡`, `™`, `£` on a US keyboard) |
 
 **Drag a list to move it.** The Lists section on the tasks rail reorders the
 way the document tree does: press a row, move it, and the rows under it slide
@@ -1220,30 +1238,116 @@ The content settles when you let go rather than following the drag. That is
 deliberate: relaying a long document costs real time, and doing it for every
 pixel of a drag would make the whole window stutter.
 
-**Ask Koru AI from its own pane.** Press `Ctrl+Shift+J` or the sparkle immediately
-left of the Context control on a document's title block. The title controls stay
-anchored to row 0 rather than floating beside later paragraphs. The pane opens
+**Ask Koru AI from its own pane.** Press `Ctrl+Shift+J`. The pane opens
 from the right, replaces Context when it is open, carries a left-side divider,
 and can be dragged from 400 to 900 logical pixels wide.
-Its open state and chosen width survive restart. First use shows three cards:
-**Koru AI**, OpenAI, and **On this device — Ollama**. Click a card to select it.
-**Koru AI** needs no key: **Save & start chat** (or **Save & check** from
-Settings) validates the hosted model. For OpenAI, paste a project API key and
-choose **Save & check**. Koru saves it in the OS credential vault and immediately asks
-OpenAI for every model available to that project; the model field opens the
-scrollable returned list with GPT models first. A saved key has explicit
-**Replace** and **Clear** actions; its value is never read back into the field.
-Ollama lists locally installed models in the same field. Typing an uninstalled
-name exposes an inline **Pull** action (or press `Enter`), and an empty local
-catalog links to Ollama's model browser. Pull changes to **Cancel** immediately,
-before Ollama has emitted its first progress update; a stopped or failed pull
-can be retried. Failed reachability and an empty catalog offer **Retry**, so a
-daemon or model installed while Settings is open can be discovered without
-restarting Koru. If a previously ready daemon or selected model disappears,
-the next check revokes readiness until validation succeeds again.
-After validation, Settings offers only the
-reasoning choices that the selected model reports; models without a reasoning
-control show none. On a Koru AI chat, a lightbulb next to the composer turns
+Its open state and chosen width survive restart.
+
+**Open a document in a chat.** The `…` at the right end of a document's title
+row (where a sparkle used to be) opens a small menu; **Open in chat** opens a
+new chat in a split beside the document, with the document already a chip in
+the composer, as typing `@` and picking it would. Type your question and send:
+the chip gives the chat the document. The title controls stay anchored to row 0
+rather than floating beside later paragraphs.
+
+**Choose the model in the chat.** **New chat**, and every other way a chat
+opens, goes straight to the chat: the greeting, and the composer with its
+chips, workspace access, approval mode, the model chip and send. Until a
+model has been chosen the model chip reads **Choose a model**, the send button
+is off, and `Enter` opens the model picker instead of sending; what you typed
+waits in the composer. The model picker shows your local agents down its
+left side, one icon each — Claude, OpenCode, Kimi, Grok, Codex,
+Antigravity and Devin, in the order set on Agent providers and less any you have
+turned off — on the same colour as the window's own left rail, and a **+** at
+the foot of that
+column, which opens **Settings → Coding → Agent providers**; the selected
+agent's models sit beside them under
+their own names, one line each, and a **Search models…** box above the
+list. Typing searches the models of every agent in the left column, not only
+the selected one: what it finds is listed under each agent's icon and name, in
+the column's order, and an agent with nothing found is left out. Every word
+must match a model's name, its id, its group, its description or its agent's
+name, so adding an agent's name keeps the search to that agent. Clearing the box, or clicking an
+agent's icon, shows that agent's list again. A model found under another agent
+is chosen as from that agent's own list, so it switches the chat's agent only
+while the chat has no message yet. The pointer is the usual arrow everywhere in the
+picker except the search box. The list keeps the picker's size and scrolls
+when there is more than fits. The ↻ at the end of the search box asks the agent
+for its list again — after you connect a new provider in OpenCode, say. Once a
+chat has its first message it stays with its agent, so the picker drops the
+row of agents (and ☆ and +) and lists only that agent's models; the search
+looks only there too. **You can switch to another of that agent's models**:
+pick it, and it applies from your next message — a reply that is still
+running keeps its model — and a line in the chat, *Switched to <model>*,
+marks where it changed. The effort levels and Fast follow the new model. The
+agent's **Default** row can't be picked once the chat has begun; to go back to
+the agent's default, or to use a different agent, start a new chat. If your
+Koru agent service is older, the model stays the one the chat started with. An agent that marks some of its
+models as older ends its list with **Legacy models**, and how many there
+are: click it, or press Enter on it, to show them in the list under it, and
+again to hide them (Right and Left do the same from the keyboard); a search
+finds them too, marked *Legacy*. At the foot of the picker you choose how
+hard the model thinks: a strip shows each effort level the model offers,
+with the current one raised; pick the level the readout marks as the
+model's default to go back to it. You can change the level at any time; the
+new level applies from your next message, and if a reply is running Koru
+says so and that reply keeps its level. (With an older Koru agent service the
+level stays the one the chat started with.) Under the strip, **⚡ Fast** (Claude Code's on the
+models that support it, Codex's *Fast* service tier) and **1M context**
+appear when the model offers them, and the line at the end says the effort
+in use, for example *Effort: High (default)*. Fast can change at any time
+and applies from your next message; **1M context** is chosen before the
+first message. Choosing a model leaves the picker open —
+the ✓ moves to it and the effort strip and toggles become that model's —
+so you can set them right after; a click outside the picker, or Esc, closes
+it. The picker works from the keyboard
+too: type to search, Up and Down to pick, Enter to choose, Tab to move between
+the search box, the agents, the list, the effort strip and the toggles,
+Left and Right to move the level on the strip, Space or Enter to flip a
+toggle, Esc to clear the search or close.
+
+When you scroll up in a chat, a round ↓ button appears above the message
+box; click it, or press `Ctrl+End`, to jump to the newest message and keep
+following a reply as it arrives. If you have typed something, `Ctrl+End`
+moves to the end of your text instead. After you store a reply as a Koru
+document, click **Open** at the end of the confirmation to open the new
+document in a tab.
+
+Some agents send short status messages that are not part of their answer —
+Devin, for example, reports a hook on your computer that failed. These show
+as a small grey line above that answer and stay with the chat. A reply that
+shows a picture from a file on your computer — a `file:///…` link or a full
+path to a PNG, JPEG, GIF, WebP or BMP file — shows the picture itself; if the
+file isn't there, you see its description instead.
+
+**Favorite models.** Hover a model and a ☆ appears at the end of its row;
+click it to make the model a favorite (★, shown whether or not you hover),
+and click again to take it away. With at least one favorite, a **★
+Favorites** entry heads the picker's left column: it lists your favorites
+from every agent, each beside its agent's icon, and choosing one switches the
+chat to that agent and model. With favorites, the picker opens on this
+list; with none, it opens on your chat's agent. Favorites follow you to your other computers,
+like your theme. An agent you turn off on Agent providers keeps its
+favorites, hidden until you turn it back on.
+
+Picking a model only sets it: the chip
+names it, and you can still choose the working folder or change your mind.
+The chat is made when you send its first message, which then goes into it —
+so a new chat you leave without writing anything never appears in **Chats**.
+Pasting a picture also makes the chat, because the picture is stored with it.
+If the chat cannot be made, your message comes back to the composer and the
+line above it says why. Whatever you pick is remembered: the next new chat
+opens on it, as it did before. Until a chat has a message, it can still
+change agent.
+
+The provider setup page — the **Koru AI**, OpenAI and **On this device —
+Ollama** cards with **Save & start chat** — is not shown for now: no menu,
+button or setting opens it, and **Open Koru AI setup…** opens a new chat
+instead. While it is hidden, an OpenAI key cannot be entered or replaced from
+Koru, and an Ollama model cannot be pulled from Koru; a key saved earlier keeps
+working, and models installed with Ollama itself are listed.
+
+On a Koru AI chat, a lightbulb next to the composer turns
 thinking on or off for the next send. While the model is thinking, a
 **Thinking…** drawer can be expanded; after the answer it collapses to
 **Reasoning**. Reloading the chat keeps the answer and drops the thoughts.
@@ -1256,6 +1360,36 @@ usage. While a search is active and no answer text has arrived, the response
 says **Searching the web…**. Cited pages appear afterward in a wrapped
 **Sources:** row; click a source title to open its HTTPS page. Sources are saved
 with the response and return when the chat is reopened.
+
+**Send a picture to a local agent.** In a chat with a local agent (Claude,
+OpenCode, Codex and the others), paste a screenshot with `Ctrl+V`: it appears as
+a thumbnail above the text, dimmed while Koru stores it, with a × to take it
+out. Send, and the agent gets it — as a picture when it can see pictures,
+otherwise told where the file is, with one line under the turn saying so. A
+message may be the picture alone; one message carries up to 10 attachments and
+50 MB in all, each at most 20 MB. The picture stays on its message after a
+reload or a restart: it is kept with the chat on this computer, never in Koru
+Cloud, and deleting the chat deletes it. An OpenAI, Ollama or Koru AI chat says
+that pictures go to local agents only.
+
+**Send a file.** Copy files in Explorer or Finder and paste them into the
+chat: a PDF, a Word, Excel or PowerPoint file, an OpenDocument or EPUB, RTF,
+an MP4 or MOV, text, Markdown, CSV, JSON and the like, or source code. Each
+shows as a chip with its icon, name and size, and the agent is told where it
+is. Click a chip to open the file in the app your system uses for it; text and
+source code always open in your text editor, so a script never runs from the
+chat. Any other type — an `.exe`, a `.zip` — is refused, with one line naming
+it, and a file that only claims an allowed type is refused when Koru stores
+it. Pasting files is not available on Linux yet.
+
+**Look at a picture closely.** Click a picture on a message, or in the strip
+above the text, and it opens over the whole window — at its own size when it
+fits, fitted when it does not — in the same view a diagram opens in: zoom with
+`−` and `+`, `Ctrl`+wheel or `Ctrl+=`/`Ctrl+-`, `0` for its own size, drag or
+wheel to move around, double-click to switch between its own size and fitted.
+*Open in external app* on its toolbar opens it in Photos or whatever your system
+uses for pictures. `Esc`, the `×`, or a click on the dimmed window closes it.
+A screen reader hears the picture's name and size, the zoom, and the buttons.
 
 Long conversations use the same thin overlay scrollbar as documents: its
 wider invisible gutter pages when clicked, the thumb drags without jumping,
@@ -1286,20 +1420,74 @@ again.
 The approval control is independent and sits immediately left of the model
 control. **Manual approval** lets reads proceed but pauses every proposed
 change for an explicit decision. **Automatic** allows both reads and changes
-within the selected workspaces. **Auto-approve this session** temporarily
-approves changes for the current chat until this app session ends without
-changing the durable Manual/Automatic policy. The composer footer keeps the
-globe and workspace controls against its left edge and approval plus model
-controls against its right edge. The send action is an arrow inside the
+within the selected workspaces. A chat with a local agent has the agent's own
+**approval modes** there instead: the chip shows the current mode's icon and
+name, and opens a list upward of every mode the agent offers, each with a line
+saying what it does and a check on the current one. Claude Code offers **Ask
+first** (its default: it asks before every change), **Accept edits** (it edits
+files without asking, and still asks before commands), **Plan** (it reads and
+plans, and changes nothing until you approve the plan), **Auto** (Claude
+decides which actions need you) and **Full access** (it runs everything without
+asking). Codex offers **Ask for approval** (the default), **Approve for me**
+(Codex edits in the chat's folder and its reviewer decides anything that needs
+more) and **Full access** (no sandbox at all); OpenCode offers **Build** and
+**Plan**. Full access is shown in the warning color. `Shift+Tab` in the
+composer steps to the next mode, which the chip then names; it never steps
+to Full access, which you choose only from the list. The mode is the chat's: a
+change inside a chat applies to that chat only, and a new chat starts from the
+**default permission** you set on **Settings → Coding → Agent providers** —
+Manual (the agent's asking mode) until you choose otherwise. A mode chosen while a reply is running
+applies to your next message, and the note beside the chip says so. When the
+agent leaves a mode by itself — Claude after you approve its plan — the chip
+follows. Whatever the mode, the agent asks for permission with its own choices,
+on a card in the reply. A proposed change waits on a card with **Approve** and
+**Deny**. In the agent's work above a reply, a change to a file shows the
+file's path over its added and removed lines; the path is a link. Clicking it
+opens the file in its usual editor when it is text or source — Markdown,
+plain text, JSON, TOML, YAML, Rust, TypeScript and the like — and otherwise
+shows it selected in Explorer or Finder, so a script or a program is never
+started by a click; a file that is gone since shows the nearest folder that is
+still there. A path the agent gave relative to its folder is found in the
+chat's working folder. When an agent opens a
+picture — a PNG, JPEG, GIF, WebP or BMP file — open that step to see the
+picture itself under the file's name; Koru shows it straight from the file,
+so if the file has since been moved or deleted the step shows just its name. The
+composer footer keeps the
+globe and workspace controls against its left edge and approval plus
+model controls against its right edge. The send action is an arrow inside the
 composer; it is disabled while the composer is empty and becomes a stop control
-during an active response.
+during an active response. Pressing `Esc` twice does the same as the stop
+control: the first press shows *Press Esc again to stop* above the composer,
+and a second press within about a second and a half stops the response,
+whatever the composer holds.
 
-The incognito button immediately to the right of the chat title controls
-**Private chat**. Turn it on to keep agents and connected assistants from
-listing, searching, or reading that conversation.
+**Write the next message while a reply is still running.** Press `Enter` (or
+the send button, which reads **Queue** while a reply runs and you have typed
+something, and **Stop** when the composer is empty) and the message is queued:
+the composer clears for the next one, and the message waits in a **pending**
+list above the composer, one line each, with everything it carries — document
+chips, quotes and attachments. When the reply finishes, the first queued
+message is sent, then the next after its reply, and so on. If you stop a reply,
+or it fails, the queue pauses and says *Queue paused · Send next*: **Send next**
+sends the first one, and so does sending a message yourself. A queued message
+the chat would not take goes back to the front of the queue rather than into
+the composer. Each queued message has three buttons: **Edit** puts it back in
+the composer (anything you were typing takes its place in the queue),
+**Remove ×** drops it, and **Steer** sends it into the running reply right now.
+With Codex and Claude, Steer hands your text to the agent mid-reply and the
+reply carries on with it; your message moves up under your question, above the
+reply's work and answer, and stays there when you reopen the chat. With every other agent — and for a message with attachments or
+document chips, which a reply cannot take mid-way — Steer *stops the reply,
+then sends* the message, without pausing the rest of the queue. The queue
+belongs to its chat, so another chat shows its own, and it lives only in this
+window: closing or reloading the window empties it.
+
+**Private chat** keeps agents and connected assistants from listing,
+searching, or reading a conversation. For now a new private chat cannot be
+started from the composer; a chat that is already private stays private.
 You still see it everywhere in Koru, including ordinary search, and the chat's
 own agent can still read the conversation it is answering. An incognito marker
-in the history row and the active title button show that the chat is private.
+in the history row shows that the chat is private.
 New chats are public to tools until you turn this setting on; a branch starts
 with its source chat's current setting and can then be changed independently.
 A pending change offers the same session-only action beside **Approve** and
@@ -1335,52 +1523,102 @@ terminal. Those records include authored chat/document content and provider
 output, but never the provider credential; leave
 the switch off outside a trusted development session.
 
-The composer stays at the bottom. `Enter` sends and `Ctrl+Shift+Enter` (or
-`Cmd+Shift+Enter` on macOS) inserts a newline. It grows to eight lines and then
-scrolls inside itself, independently of the conversation. Embedded questions
-include the active document by stable identity only after Koru has received a
-durable Store acknowledgement, so the answer sees the saved revision rather
+A new chat opens on a short greeting with the composer in the middle; once the
+first message is sent the composer moves to the bottom and stays there. In the
+composer, `Up` on its first line brings back the messages you sent in this chat,
+newest first; keep pressing `Up` to go further back. Each comes back with the
+caret at its start and with its document chips and quotes. `Down` on its last
+line walks forward again, back to whatever you were typing, and `Esc` takes you
+straight back to it. A message you steered into a reply is in the list; one
+still waiting in the queue is not.
+
+**Use a Codex skill.** In a chat with Codex, type `$` to list the skills Codex
+has for this workspace — yours, the project's and its own — and keep typing to
+narrow the list. `Enter` or `Tab` picks one and it becomes a chip in your
+message; `Esc` closes the list and leaves the `$` as text, and `Backspace`
+removes a chip whole. Send as usual: Codex is told exactly which skill you
+meant. A message with a skill is not slipped into a reply that is still being
+written; it waits and goes when the reply ends. With other agents `$` is just a
+character.
+
+**Dictate a message.** Click the microphone beside the send button, or press
+`Ctrl+Shift+D` (hold it, or press once if you set dictation to toggle). The
+bottom of the message box shows a moving level, a timer, ✕ and ■. Your words
+appear where the cursor is, in a lighter colour while Koru is still
+recognising them. Press ■, Esc, Enter or `Ctrl+Shift+D` to stop: the last
+words are finished and stay in the box, and you send as usual. Press ✕ to
+throw away what you just dictated; anything you typed before stays. Typing a
+key, or clicking in the message box, also stops the recording; that key or
+click is not typed. Dictation runs on your device; the first time, Koru asks
+you to set up voice input and download the model.
+
+To change the microphone, rest the pointer on the microphone button and click
+the small arrow that appears beside it. Pick a device from the list —
+**Default** follows your system's choice — or turn **Hold to record** on or
+off. The bar at the top of the list moves with what the microphone hears, so
+you can check you picked the right one; the microphone is only open while the
+list is. These are the same settings as in Settings → Voice. If the microphone
+you chose is unplugged, Koru uses the default until it is back.
+
+The **1 space** chip under the message box shows how many of this
+profile's workspaces the chat may read; click it to choose them. The list
+shows only the workspaces of the profile you are in. With more than five, type in **Filter
+workspaces** to narrow the list; drag the bar at the list's edge, or scroll,
+to see the rest.
+
+**When an agent asks you questions.** A local agent (Codex, Claude Code) can
+stop and ask you something. Its questions appear as a card in its reply, and
+the chat shows the amber *needs you* dot until you answer. Each question lists
+the agent's options — its recommended one first. Pick one, or type your own
+answer under *Other…*; anything secret is typed into a box that hides it.
+Press **Submit** once every question has an answer, or **Skip** to tell the
+agent you'd rather not say. Tab moves through the card and Enter chooses. A
+message you send meanwhile waits in the queue until the reply ends.
+Afterwards the card shows what you answered (secrets as *(hidden)*), and it
+still does when you reopen the chat.
+
+Codex sometimes asks and finishes its reply straight away. Its card stays open
+after the reply ends: when you press **Submit**, your answers go to Codex as
+your next message and it carries on in a new reply (which counts like any
+message you send). **Skip** sends nothing. If you type a different message
+instead, the card reads *Passed over* and can no longer be answered. `Enter` sends
+and `Ctrl+Shift+Enter` (or `Cmd+Shift+Enter` on macOS) inserts a newline. It
+grows to eight lines and then scrolls inside itself, independently of the
+conversation. Embedded questions include the active document by stable
+identity only after Koru has received a durable Store acknowledgement, so the
+answer sees the saved revision rather
 than an older snapshot. **Chats** shows the left column's Chats view with this
 chat selected (see *Finding a chat again*) and **New chat** starts another
 thread. Closing the pane stops its background
-polling. The same durable chats open in the standalone `koru-ai-chat`
-application. Double-click the title at the top of either surface to rename the
-chat in place; the new title is saved with the conversation.
+polling. The same durable chats open in chat tabs too. Neither shows the
+chat's title above the conversation —
+its tab and the Chats list name it. To rename a chat, rename it in the Chats
+list (see *Finding a chat again*).
 
-To collect questions about an answer, select response text, right-click, and
-choose **Add comment**. Type an optional comment and press Enter; a quote pill
-appears above the composer. Click a pill to revise its comment, or its close
-target to remove it. You can stage several while continuing to read. Sending
-turns the pills into visible Markdown blockquotes and comments above your typed
-question, then clears the strip. The pills stay only in this chat surface until
-send: switching chats or closing the surface discards them.
+To ask about part of an answer, select it — drag across it, double-click a
+word, or hold `Shift` with the arrow keys. An **Add to chat** button appears
+just above the selection; click it, or press `Ctrl+L` (`⌘L` on a Mac). The
+passage goes into your message as a quote, the start of it shown in quotation
+marks, and the cursor moves to a new line under it so you can write what you
+want to ask. Add as many quotes as you like, each followed by its own comment;
+they are sent in that order, each quote as a Markdown blockquote right before
+what you wrote about it. Remove a quote with Backspace, like a document chip.
+A message you queue while a reply is running keeps its quotes, and your sent
+message shows them with a bar beside the quoted lines.
 
-**Open Koru AI in its own window** from **Koru AI Chat** at the top of Koru
-Agent's right-click menu, **AI Chat** in Koru's `+` menu, or the global
-`Ctrl+Shift+I` shortcut. The menu row carries the sparkle icon and the same
-shortcut hint. Agent
-starts the sibling chat application when none exists and otherwise brings its
-active window forward. It uses the same gateway, provider settings, and durable
-conversations as the in-app pane. Its Koru-drawn caption
-supports drag, double-click maximize/restore, the shared window menu, minimize,
-maximize, and close. From that focused standalone chat, `Ctrl+Shift+I` returns
-to the most recently active Koru workspace (or opens Koru when no workspace is
-running), making the chord a toggle between the two surfaces.
+**A chat opens in a tab.** A row of the Chats view, a chat result in search
+and a chat link inside a document all open the chat as a tab, or bring forward
+the tab already showing it. A `koru://chat/…` link opened from another app,
+and a chat result in Koru Agent's search overlay, do the same in the Koru
+window you used last, scrolled to the linked passage; when no Koru window is
+open, Koru opens one first. Koru AI used to have a window of its own,
+`koru-ai-chat`, with the `Ctrl+Shift+I` shortcut, a row in Koru Agent's menu
+and an *AI Chat* task in the taskbar; that window was retired on 2026-11-03,
+and every chat it showed is in Koru.
 
-If the standalone application is missing or cannot start, a request made from
-a Koru workspace opens an in-window error that says the chat window was not
-opened and leaves the workspace and conversations unchanged. A request owned
-by Koru Agent — its menu, shortcut, or a chat result in Search — reopens
-Search with an installation warning. Reinstall or restore the standalone
-application for that Koru build, then try the action again.
-
-Type `/usage` by itself to show private local measurements without contacting
-the selected provider. The current chat appears first, followed by retained
-usage grouped by day, surface, provider, model, reasoning effort, outcome, and
-prompt version. A provider field it did not report says **unavailable**, not
-zero; the report also counts web-search calls, but Koru does not estimate
-monetary cost. Each history row can delete that
-chat, while Settings can clear all history or clear usage data. Deleting chat
+Typing `/usage` sends it to the agent like any other message, and whatever it
+answers appears in the reply. Settings can clear all chat history or clear
+usage data. Deleting chat
 history removes its content and AI-search results but keeps anonymous,
 text-free usage and feedback totals. Clearing usage removes those totals and
 feedback without deleting conversations. All three destructive actions ask
@@ -1388,24 +1626,30 @@ for confirmation, with Cancel selected initially.
 
 Assistant response text selects like ordinary text across wrapped lines and
 Markdown blocks. Hold `Shift` with any arrow key to extend that selection;
-right-click inside it for **Copy** with its `Ctrl+C` hint or **Add comment** to
-stage the selected passage above the composer.
+right-click inside it for **Copy** with its `Ctrl+C` hint or **Add to chat**
+with its `Ctrl+L` hint. `Ctrl+L` adds the selection whenever the **Add to
+chat** button is showing, even while you are typing in the message box.
+Click any link in an answer, including one inside a table, to open it: a web
+page opens in your browser, a Koru document opens as a tab. A web address the
+answer writes out in full is a link too. Rest the pointer on a link and a
+card shows where it goes — a long address shortened in the middle — with
+**Copy** to put the whole address on the clipboard
+and **Open** to open it; press Escape or move away to close it.
 Completed responses also offer icon actions for **Copy** (the exact Markdown),
 toggleable **Good** and **Bad**, **Branch**, **Store**, and **Link**. Branch opens a new durable chat
 containing the conversation through that response. Store asks for a
 profile/workspace and creates a complete Koru document with a backlink to the
 source response. A failed or interrupted response stays in the thread with a
 safe explanation and **Retry**; retry adds a new response below it. **Link**
-copies a durable link to the response block. Opening one starts Koru AI if
-needed, scrolls to the block, and briefly highlights it.
+copies a durable link to the response block. Opening one opens the chat as a
+tab, scrolls to the block, and briefly highlights it.
 
 **Right-click Koru in the taskbar for your recent documents.** The last ten you
 opened are listed under *Recent*, above *New document*; choosing one brings the
 running Koru forward with that document open, or starts it there if it was not
 running. An entry for a document you have since deleted does nothing.
 
-Above *Search* is *Koru AI Chat*: it opens or focuses the standalone chat and
-shows `Ctrl+Shift+I` when Agent owns that global shortcut. *Search* opens the same global search overlay the
+*Search* opens the same global search overlay the
 shortcut does, and its title names the shortcut this agent actually holds — for
 example *Search (Ctrl+Shift+K)*, or *Search (Ctrl+Alt+Space)* if the first choice
 was already taken. It reads the agent's answer rather than assuming, so it can
@@ -1602,29 +1846,33 @@ After the first Profile and Workspace are durable, Koru selects the Welcome tab
 even when creation began in the Manage tab. It offers:
 
 - **Customize…** — opens Settings: theme, fonts, caret color, page width.
-- **Your first five minutes** — *Make your first document* (or **set up your
+- **Your first five minutes** — *Make your first document* opens a new tab
+  with a page to type on straight away, as Ctrl+T does (or **set up your
   mic**, which opens Settings at Voice input); *Bring your documents in*, one
   button per import format; *Bring your files in* with **Choose files…**;
-  *Learn your way around*, which opens the handful of shortcuts right there;
   *Set up a reminder*, which opens All Reminders; and *Let us know how it
   went* — **feedback form** opens the Feedback tab and **email** writes to
   `support@koru.do`.
 - **Connect your devices** — *Another computer* opens **Link another device**,
-  and so does the square beside it; the real pairing code is in that window.
-- **When you're ready to go further** — *Set up your AI* opens Providers and
-  models. *Manage documents over MCP* shows the command an MCP client runs to
-  reach this installation — the `koru-mcp` program beside Koru, with
-  `serve --stdio` — and **Copy** (or clicking the command) puts the whole
-  command on the clipboard, ready to paste into the client's settings — for a
-  client outside Koru, or for Grok, Kimi and Antigravity; an agent tab Koru
-  opens for Claude Code, Codex, Copilot, Qwen Code or OpenCode is given the
-  server already. *Run an agent in a terminal* opens the list of agents from
-  the **+** menu; choosing one starts it in a new tab.
+  and so does the small QR square at the row's right; the real pairing code is
+  in that window.
+- **When you're ready to go further** — *Run an agent in a terminal* opens the
+  list of agents from the **+** menu; choosing one starts it in a new tab.
+  *Manage documents over MCP* asks which agent you use — one chip each,
+  Claude Code to Antigravity, and *Other* — on one line that scrolls sideways
+  when it is wider than the page (the mouse wheel over it, or Tab to a chip).
+  Under it is the command that registers this installation with that agent —
+  the `koru-mcp` program beside Koru, with `serve --stdio` — and **Copy** at
+  its right (or clicking the command) puts the whole command on the
+  clipboard, ready to run in a terminal or paste into the client's settings —
+  for a client outside Koru, or for Grok, Kimi and Antigravity; an agent tab
+  Koru opens for Claude Code, Codex, Copilot, Qwen Code or OpenCode is given
+  the server already.
 
 Each row you complete gets a check, and the checks are kept **for this
 computer**: every Profile on it sees the same ones. *n of m done* counts the
-checklist; when everything is done the list folds to one line, and **Show**
-opens it again. Tab and Shift+Tab move through the page, Enter presses.
+checklist, and a card stays open when everything in it is done. Tab and
+Shift+Tab move through the page, Enter presses.
 Reopening Welcome focuses the same tab.
 **How often Koru looks for an update depends on your channel**, because that is
 what a channel is: nightly checks hourly, beta every six hours, stable once a
@@ -1927,10 +2175,10 @@ written while you are still speaking, so **one dictation is one undo step**:
 `Ctrl+Z` takes the whole sentence back, along with whatever was selected before
 you started.
 
-The dedicated global-search window (`Ctrl+Shift+K`) and the separate
-`koru-ai-chat` application host the same push-to-talk session themselves. They
-read the same consent and microphone/language/quality preferences as Koru and
-ask Agent for the same root-qualified voice worker. A future Koru Terminal host
+The dedicated global-search window (`Ctrl+Shift+K`) hosts the same
+push-to-talk session itself. It reads the same consent and
+microphone/language/quality preferences as Koru and asks Agent for the same
+root-qualified voice worker. A future Koru Terminal host
 has the same rule: speech may insert text, but must never submit or execute it.
 
 Dictation replaces a selection, exactly as typing does.
@@ -2128,12 +2376,29 @@ changed until you pick something.
 new tab in the background (or reuses a tab already on that document, without
 switching to it). `Shift+click` opens it in a new window.
 
+**Links to Koru content open inside Koru.** A link to a Koru document or a
+Koru chat (`koru://chat/…`) is followed like a document pill: click opens it
+in this tab, `Ctrl+click` (⌘+click on a Mac) in a new tab in the background,
+and `Shift+click` opens a document in a new window (a chat opens in a tab in
+this window). A chat opens as a chat tab of the profile you are in; a chat
+that belongs to another profile opens in a window of that profile.
+
+**Alt+click a reference to choose where it opens** (Option+click on a Mac) —
+an `@` mention, a document pill or a Koru link. A small cross appears where you
+clicked: an arrow opens it in a new pane above, to the right, below or to the
+left of the current one, and the middle opens it in a new tab without
+splitting. Hovering an arrow shows where the new pane will go. With the
+keyboard, the arrow keys move and `Enter` opens; `Esc` or a click elsewhere
+closes it without opening anything. The same cross appears when you Alt+click
+a document or chat in the Explore column, a queue or list on the tasks rail,
+or a task on the Tasks tab; there an arrow splits the pane you are working in.
+
 **Click a link pill to open it in your browser.** `Ctrl+click` opens the URL
 without leaving Koru. Hovering a link shows where it goes, with copy and edit
 buttons on the chip — copy puts the URL on the clipboard, edit reopens the
-picker that made it. The pointer turns into a hand over the pill; over the
-lines themselves it is an I-beam, so what you are about to click is never a
-guess.
+picker that made it. The pill itself shows it can be pressed — it lights
+up under the pointer — while over the lines themselves the pointer is an
+I-beam, so what you are about to click is never a guess.
 
 **Click a date pill to change it** — the only way one is made now, since
 `/date` is gone.
@@ -2219,8 +2484,8 @@ appears on a block that has none set.
 
 **A chip is the control for its attribute.** Click one and the picker for that
 attribute opens, over that block — the same panel the command below opens,
-already showing what the block carries. The pointer tells you: over a chip it
-becomes a hand. Clicking a chip does not move your caret or start a selection
+already showing what the block carries. The chip lights up under the pointer
+to tell you. Clicking a chip does not move your caret or start a selection
 in the line underneath, so you can change a due date without losing your place.
 Chips on a document's **name** are clickable in exactly the same way.
 
@@ -2627,6 +2892,10 @@ Choosing a queue or a list opens **one Tasks tab** on it, and marks it in the
 column. Choosing another queue points that same tab at it rather than opening a
 second — the column has one selection, and two tabs would be two answers to the
 same question. The tab survives a restart, on the queue you left it on.
+**Alt+click a queue or list** to choose where instead: an arrow opens it in a
+second Tasks tab in a split beside the one you are in, the middle in a new tab,
+and your first Tasks tab stays where it was. **Alt+click a task row** to open
+the task's own page the same way, in a split or a new tab, scrolled to the task.
 
 The heading names the queue, with today's date beside it in **Today** and the
 number of open tasks after that.
@@ -3068,7 +3337,8 @@ Nothing is lost by closing a window: your work is written continuously, and the
 window comes back with its tabs.
 
 **The Settings tab** (`Ctrl+,`) is a list of pages down its left —
-**Appearance**, **Editor**, **Reminders**, **Terminal** and **System**, the
+**Appearance**, **Editor**, **Reminders**, **Terminal** and **System**, then
+**Agent providers** under a **Coding** heading, the
 current one marked by an accent rule — with a search box above them that
 narrows the list by what a page holds (type *microphone* and only Editor is
 left; Enter opens it). In a narrow window or split pane the list becomes a row
@@ -3078,18 +3348,78 @@ among a few short words is a segmented control; a longer list — fonts,
 languages, microphones, tones, the renderer — is a dropdown showing the value
 in force, opened with a click or Enter and stepped with the arrow keys.
 
+**Icon style** is under **Settings → Appearance → Interface**. Choose
+**Phosphor**, **Tabler**, **Lucide**, or **Remix** to change the app's icons immediately.
+Hover a menu item or highlight it with the arrow keys to preview its icons.
+Click or press Enter to keep it; dismiss the menu to restore your saved style.
+Your choice is remembered when you reopen Koru. Until you choose one, Koru
+uses its default style, Tabler, and follows it if a later version changes it.
+Emoji, provider logos, and packaged Windows file/taskbar artwork keep their
+own artwork.
+
 **Fonts and density** are on the **Appearance** page: a density control
-(Compact / Normal / Comfortable) and four font dropdowns — the **app** font
-(tabs, sidebar, pills, panels), and three document roles, **body**,
-**headings** and **code**. Each dropdown lists every family set in that
-family's own face, so you see what you are choosing. The theme is chosen from
+(Compact / Normal) and five font dropdowns — the **app** font
+(tabs, sidebar, pills, panels), the **chat** font, and three document roles,
+**body**, **headings** and **code**. Each dropdown lists every family set in that
+family's own face, so you see what you are choosing. While a font list is
+open, the family under the pointer, or reached with the arrow keys, is shown
+across the whole app at once: point down the list to compare. Only a click
+or Enter keeps it; Escape, a click elsewhere or scrolling away puts your
+chosen font back. **Preview in sample document**, at the right of the
+*Document fonts* title, opens a short read-only sample page — headings, a
+paragraph with bold, italic, code and a link, three kinds of list, a quote
+and a code block — beside Settings, so you choose fonts on the left and see
+them on the right as you go; the sample also follows the size and the theme.
+It is not saved anywhere and is not in your library, and pressing the link
+again brings the open sample forward. The theme is chosen from
 three preview tiles at the top of the same page. A document's page menu
 also has a **Typography** group whose Body / Headings / Code rows cycle a
-role's family for a quick in-document switch. Twelve families span sans, serif,
+role's family for a quick in-document switch, and its *Page settings*
+heading carries a **Global settings** link that opens this tab on its
+**Editor** page, where the defaults for new documents live. Twelve families span sans, serif,
 rounded and mono; code defaults to JetBrains Mono.
 
-The four roles are separate on purpose. Setting the app font to a monospace
-makes every *pill* monospaced and leaves the sentence around it alone. All four
+**Base color** is two rows of swatches on the same **Appearance** page, one
+for the light theme and one for the dark. It tints the window's frame — the
+title bar, the rails and the margins around your pages. The first swatch is
+the theme's own color; the others are a few tints chosen for that theme. Each
+theme keeps its own choice, so switching between light and dark shows the
+color you picked for each. The choice is saved with your other appearance
+settings and follows you to your other computers.
+
+**The chat font** is the row under the app font. It sets the face of the
+messages in a chat — yours, the agent's answers, its notes between tools, a
+reply as it streams — and of the box you type in; code inside a message keeps
+the code font, and the chat's headers, buttons and notices stay in the app
+font. Until you choose one it is **Follow app**: the chat uses whatever the
+app font is, and changes with it. Pick *Follow app* again to go back. It has
+no size of its own; the chat follows the app's text size.
+
+**Any font installed on your computer** can be chosen for the app, chat, body,
+headings or code: every font list ends with **More fonts…**, which opens a
+searchable list of your installed fonts, each name shown in its own face.
+Type to filter; the arrow keys preview the lit font across the app, and
+Enter or a click keeps it. For **code** the list starts with monospaced
+fonts — press Tab, or tick *Show all fonts*, to see every font. The first
+row, *Default (…)*, goes back to Koru's default for that role. A font you
+picked this way is listed, ticked, after the built-in ones. If your settings
+reach a computer that does not have that font, Koru draws its default there
+and the list shows *Name (not installed)*; your choice is kept for the
+computers that have it. The terminal's own **More fonts…**, on a terminal
+tab's font menu, uses the same list.
+
+**Document text size** is the **Size** row at the end of *Document fonts*:
+14 to 22 px, 16 by default. Every document follows it — headings, code
+blocks, checkboxes and the space between blocks grow with the text, so a
+page reads the same at any size — while the app's own text, the chat box and
+the terminal keep theirs. Point down the list to preview a size in this
+workspace's open documents; a click or Enter keeps it, and other workspaces
+follow. Larger still is what zoom is for. Koru opens at your size, fonts and
+theme from its first frame when its settings answer within moments of
+starting; if they are slower it opens with the defaults and settles.
+
+The five roles are separate on purpose. Setting the app font to a monospace
+makes every *pill* monospaced and leaves the sentence around it alone. All five
 are remembered and come back when you reopen the app.
 
 **Zoom** (`Ctrl+=`, `Ctrl+-`, `Ctrl+0`, or `Ctrl` + scroll) scales the whole
@@ -3124,7 +3454,9 @@ another machine, because neither would be true there.
 
 **Renderer** picks the graphics backend Koru draws with — **Auto**,
 **DirectX 12**, **Vulkan** or **OpenGL** — and applies the next time Koru
-starts, which the row says. Auto is right for almost everyone; the others are
+starts, which the row says. The row shows what is recorded for that next
+start: if the choice could not be saved, it stays on the old one rather
+than pretending. Auto is right for almost everyone; the others are
 for a machine whose driver misbehaves. Nothing can be broken by choosing wrong:
 a backend that will not start is reported and Koru falls back to the one that
 works.
@@ -3136,6 +3468,120 @@ instant instead of a fresh start. **Ask** puts the question each time, and
 **Quit** closes Koru outright. If the Koru Agent is not running there is no way
 to bring Koru back, so ✕ closes it whatever this says; and a window closing for
 an update always closes properly.
+
+**Choose which coding agents Koru shows** on **Settings → Coding → Agent
+providers**. Under **Enabled agents** is one row per agent Koru supports —
+Claude, OpenCode, Grok, Kimi, Codex, GitHub Copilot, Qwen Code, Antigravity,
+Muse and Devin — each with its mark, its name, a switch, a **Setup guide ↗** link to
+the agent's own install page, and its status in plain words: **Ready**;
+**Not installed**, naming the program that is not on your `PATH` (*`grok`
+isn't on PATH.*); or **Needs attention**, with the reason Koru already knows —
+a version Koru does not support yet, signed out, the program a chat runs the
+agent through missing (Claude's `claude-agent-acp`, say), the agent's program
+not starting, or a check that failed. A version row names the version found
+and the one Koru needs: *Found 1.18.25; Koru needs 1.18.27 or newer.* Every
+agent is accepted from a checked release onwards, so a newer release of the
+agent works without waiting for a Koru update; only a release older than the
+one Koru names is refused, and updating the agent fixes it. When the agent's `--version` fails or prints nothing,
+the row says so instead — *`kimi --version` failed, so the agent can't start
+on this computer. Run it in a terminal to see why.* — because the version was
+never the problem (Kimi's CLI under a Node.js too old for it is one way to
+get there). Where Koru knows the command that fixes it, the row names it — Devin's
+reads *Run `devin update` to update it.* for a version Koru does not support
+yet, adding that the copy inside the Devin desktop app updates with the app,
+and *Run `devin auth login` to sign in.* when it is signed out. The status reads what Koru's own checks found; **Refresh status** runs
+them again, and the rows update when the answers arrive. The card's first line
+counts them (*9 of 9 enabled*).
+
+**Install an agent from its row.** When an agent is **Not installed** — or,
+for Claude, when only `claude-agent-acp`, the program its chats run through,
+is missing — and Koru knows the vendor's own install command, the row has an
+**Install** button before its switch. Pressing it opens a terminal tab named
+*Install Claude* (or the agent's name) that runs the command, so you see its
+output and can answer anything it asks:
+
+- **Claude**: Anthropic's installer — `curl -fsSL https://claude.ai/install.sh | bash`
+  on a Mac or Linux, `irm https://claude.ai/install.ps1 | iex` in PowerShell on
+  Windows — and then `npm install -g @agentclientprotocol/claude-agent-acp@0.76.0`,
+  the chat program at the version Koru's Claude chats accept. When Claude
+  itself is already installed, only the second command runs.
+- **Codex, GitHub Copilot, Kimi, OpenCode and Qwen Code**: `npm install -g`
+  with the agent's npm package (`@openai/codex`, `@github/copilot`,
+  `@moonshot-ai/kimi-code`, `opencode-ai`, `@qwen-code/qwen-code`).
+- **Grok, Antigravity, Muse and Devin** have no **Install**; their **Setup
+  guide ↗** says how.
+
+An npm command needs Node.js: where `npm` is not found, the tab says so and
+points to nodejs.org instead of failing. When the commands finish, the tab
+asks you to press Enter; it closes, and Koru checks the agents again, so the
+row reads **Ready** without restarting Koru. Closing the tab early leaves the
+installer running, and Koru checks again when it ends. Pressing **Install**
+again while its tab is open brings that tab forward.
+
+Koru looks for an agent's program on the `PATH` a new terminal would have,
+even when Koru itself was started from Finder, the Dock or a login item, which
+on a Mac get only `/usr/bin:/bin:/usr/sbin:/sbin`. On a Mac or Linux that is
+Koru's own `PATH`, then the `PATH` your login shell sets up (`$SHELL -l`,
+asked once when Koru starts looking), then the folders the agents' installers
+use — `~/.local/bin` (Claude Code, Codex, Muse, Devin), `~/.opencode/bin`,
+`~/.grok/bin`, and on a Mac Homebrew's `/opt/homebrew/bin` and
+`/usr/local/bin`, where npm puts `node` and the npm-installed agents. On
+Windows it is Koru's `PATH` and the `PATH` as Windows holds it now, so a
+program installed while Koru is running is found without restarting Koru.
+Claude Code is also looked for in `~/.claude/local`, npm's global folder
+(`%APPDATA%\npm` on Windows) and WinGet's links. Everything Koru starts — an
+agent's chat, its version check, a terminal tab, an **Install** tab — runs
+with that same `PATH`, so a program that needs `node` finds it. A folder only
+your interactive shell adds (`~/.zshrc`, `~/.bashrc`) beyond those is not
+seen; put it in your login profile (`~/.zprofile`, `~/.profile`) instead. The
+chat model picker uses the same words: an agent whose chat program is missing
+reads **Needs attention** there too, not **Not installed**, and the picker
+checks a missing agent again when you next open it.
+
+**The order of the rows is the order agents are listed in everywhere** — the
+chat model picker's agent column, the terminal's **Agents ›** menu, the
+Default agent chips and the delegate dialog. It starts with Claude, then
+the order above. To change it, drag a row by its handle — the same six dots
+a paragraph has in a document, shown when you point at the row — and a line
+shows where it will land; or click a row and press `Ctrl+Shift+↑` or
+`Ctrl+Shift+↓` (`⌘⇧↑`/`⌘⇧↓` on a Mac), the keys that move a paragraph. `↑` and
+`↓` move to the row above or below, and `Esc` lets go.
+Turning an agent **off** hides it from the chat's model picker, from the
+terminal's **Agents ›** menu, from the delegate dialog's agents and from a
+canvas agent node's menu of agents. Nothing is
+uninstalled or signed out, and a chat or a terminal session already on that
+agent stays and keeps working — its own picker still shows it. Turning one
+**on** does not install or sign in its CLI; **Install** and the setup guide
+are for that.
+Two other doors lead to this page: the **+** at the foot of the chat model
+picker's agent column, and **Manage…**, the last row of the terminal's
+**Agents ›** menu, under a rule.
+**Default agent**, the first card on the page, chooses the agent a new chat
+starts with: a row of chips, **Auto** first, then one per agent that is on,
+each with its mark. **Auto** — the default — starts a new chat with the last
+agent you used, as Koru always has. If the agent you chose is turned off or
+not installed, new chats start as Auto would, and a line under the chips
+says so (*Codex is turned off, so new chats start with the last agent you
+used.*); turning it back on brings your choice back.
+**Default permission for new chats**, a card on the same page, chooses the
+mode a new agent chat starts in. **Supported agents** — the ones that can
+approve safe actions on their own, Claude and Codex — offer **Manual** (the
+agent asks before it acts: Claude's Ask first, Codex's Ask for approval),
+**Auto** (Claude's Auto, Codex's Approve for me) and **Yolo**. **Other
+agents**, which have no auto mode, offer **Manual** (OpenCode's Build, or the
+agent's own default) and **Yolo**. **Yolo means the agent runs everything
+without asking**: Claude's Full access where it offers it, Codex's Full access;
+an agent that offers no full-access mode starts in Manual instead. Both are
+Manual until you change them. A new chat starts from this setting rather than
+from the mode you last used; changing the mode inside a chat changes that chat
+only, `Shift+Tab` still never steps to Full access, and a branch of a chat
+starts with no mode of its own.
+**Restore defaults**, at the top of the page, turns every agent back on, puts
+them back in the built-in order, sets the default agent back to Auto and puts
+both permissions back on Manual, which
+is how a new install starts. The choice belongs to **this computer**, because
+the agents installed differ from one machine to the next, so it does not follow
+you to another; a Koru older than this one ignores it.
 
 **Voice input** is the last card on the **Editor** page, marked *Transcribed
 on this device* — the point of the whole feature: voice is transcribed on this
@@ -3183,8 +3629,9 @@ down.
 
 **Model** says whether both speech models are on this computer, and how big they
 are together. If either is missing, **Install…** offers the remaining bundle —
-about 532 MB for a first setup — and names the combined size, both licences and
-both attributions before downloading. Progress identifies model 1 of 2 and
+about 532 MB for a first setup — and lists both models before downloading,
+one line each with its size, publisher and licence, and any further credits
+under it. Progress identifies model 1 of 2 and
 model 2 of 2 and can be stopped; a model that already completed is retained, so
 retrying resumes with only the missing tier. If the download
 cannot be offered at all, the message says which of the reasons it was:
@@ -3224,8 +3671,11 @@ documents. Press **+** at the end of the tab strip (or **Ctrl+Shift+A**) and
 pick **Shell** or **Agents**. **Active** lists running sessions of that kind
 you can switch to; below it are the same new-profile rows as before
 (System, PowerShell, Bash; Claude, OpenCode, Codex, Grok, Kimi). The session
-opens as its own tab and starts running; an agent you have not installed is
-shown greyed out with *Not installed*.
+opens as its own tab and starts running. **Agents** lists only the agents
+that are turned on and installed on this computer, then **Manage…**, which
+opens **Settings → Coding → Agent providers** to turn the others on or
+install them; with none installed it is **Manage…** alone. A shell that is
+not installed is shown greyed out with *Not installed*.
 
 The left navigator's fourth mode — the robot icon, beside Documents, Files
 and Tasks — is **Agents**: every running session, grouped by project. Click one to open or
@@ -3268,6 +3718,9 @@ unchanged; for Kimi, *Manage documents over MCP* on the Welcome page shows the
 command to add by hand.
 
 ### Handing a piece of work over
+
+*Delegating is switched off in this build for now; it returns with the Agents
+views. Runs you have already delegated still show as described below.*
 
 Delegating is asking an agent to go and do something while you get on with
 something else. There are five ways to start one, and all five open the same
@@ -3828,7 +4281,9 @@ for you.
 - **A chain of agents.** Add a start node, one or more agent nodes and an
   output node, and connect them in that order. An agent node asks for its
   instruction when you add it, and starts with the agent you last delegated
-  to; its header opens a menu of the agents ready on this computer. An output
+  to; its header opens a menu of the agents ready on this computer, in the
+  order set on **Settings → Coding → Agent providers** and without any you
+  have turned off there (a node already set to one still runs it). An output
   node asks for the title of the page it will write. Press **Run** on the start
   node to run the chain; each node shows where it is, and **Stop** stops it.
   When the page is written, its title appears on the output node — click it to
@@ -4121,7 +4576,8 @@ dragged, and never hides under the toolbar. The view takes the whole
 window, sidebar and all, so a large drawing is seen as large as the window
 allows. The view's copy control puts a picture on the
 clipboard and its save control saves one; `Esc`, the `×`, or a click
-anywhere on the dimmed window closes it.
+anywhere on the dimmed window closes it. A screen reader hears the
+drawing's title (or *Diagram*), the zoom, and each control's name.
 
 **Copying and saving.** Copy on a selected drawing copies the whole block;
 it arrives as a diagram wherever it is pasted in Koru, and as a fenced
@@ -4925,9 +5381,8 @@ extract it wherever you like — a folder in your documents, a second drive, a
 memory stick — and run **`koru.bat`**, or `koru.exe` directly. No installer, no
 administrator, no registry.
 
-Inside the zip are seven programs and everything they need: `koru.exe`, which is
-the workspace window; `koru-ai-chat.exe`, the standalone profile-free AI Chat;
-`koru-agent.exe`, which owns the notification-area icon, global shortcuts,
+Inside the zip are six programs and everything they need: `koru.exe`, which is
+the workspace window; `koru-agent.exe`, which owns the notification-area icon, global shortcuts,
 networking, and updating — and also the public API and the Store worker that
 writes your content, which it runs as workers of itself;
 `koru-com-notification.exe`, the one-shot helper that catches a button press on
@@ -4943,17 +5398,17 @@ public API and its Store worker from further copies of itself, and it looks for
 its neighbours **in its own folder** rather than anywhere else on your machine —
 so a nightly copy can never end up running a stable one's service chain. If you
 open Task Manager you will therefore see several `koru-agent.exe`: that is one
-agent and its workers, not several agents. The seven go together: they are
+agent and its workers, not several agents. The six go together: they are
 built, signed and released as one thing.
 
 **Your content is not in that folder.** It lives under
 `%LOCALAPPDATA%\Koru\<channel>\`, with `store\` (your workspaces, documents and
 images) and `agent\` beside it. So the extracted folder can be moved, replaced
 or deleted without touching a word you have written — which is also why an
-update can replace all seven programs and leave your work where it is. If the
-standalone Koru AI Chat is open, the update closes it normally and reopens it
-afterward; its secure credential and independent window geometry remain in
-their ordinary stores rather than in the installation folder.
+update can replace all six programs and leave your work where it is. An
+update from a build that still had the standalone Koru AI window
+(`koru-ai-chat.exe`, retired on 2026-11-03) closes that window if it is open
+and removes the program; your chats are not touched.
 
 ## Updates
 
@@ -5158,10 +5613,23 @@ workspaces, which opens that workspace in this window. Pressing the other half
 of the header slides to the other page; pressing the half whose page is showing,
 `Esc`, or a click anywhere else closes it. `→` or `Enter` on a profile goes in.
 
+On the **Workspaces** page, pointing at a workspace shows its **Manage**
+control at the row's end; it opens the **Manage** tab on that workspace. From
+the keyboard, `↓` and `↑` move between workspaces, `→` moves onto the lit
+workspace's Manage control and `←` back to the workspace, and `Enter` opens
+what is lit: the workspace, or Manage on it. A screen reader announces the
+control as *Manage workspace*.
+
 Click the **avatar** — or press **`Ctrl+Alt+P`** — to open the Profiles page.
 It is the same profile choice global search shows at its bottom left. The
 shortcut opens whichever profile control is in front of you and leaves Explore
 open or closed as you set it.
+
+Each profile's **Manage** control works as a workspace's does: point at the
+row to show it, or press `→` on the lit profile to move onto it and `←` to
+come back; `Enter` on it opens the **Manage** tab on that profile. A screen
+reader announces it as *Manage profile*. The page's foot is one keyboard
+stop: `Enter` there makes a new profile.
 
 Under the profiles sit **New profile**, then **Manage profiles…** and **Link a
 device…**. *New profile* opens the **Manage** tab on its create form, and *Manage
@@ -5218,6 +5686,14 @@ changing Workspace Trash; **Remove from this device** moves its active
 Workspaces to Trash; and **Continue offline** retains the local Profile and
 content but detaches it from the Koru identity so it cannot sync. Add it again
 reactivates only this device. Other devices rejoin through normal enrollment.
+
+**A removed Profile's AI chats go with it.** From the moment it is removed
+they are hidden everywhere — chat lists, search across Profiles, and outside
+apps connected through Koru's MCP server, which are told the chat does not
+exist. For 30 days — the same time its Workspaces stay in Trash — they are
+kept, and restoring the Profile brings its chats back at once. After that Koru
+deletes every chat of that Profile from this device, with its attachments, the
+next time it starts. Chats are never synced, so each device clears its own.
 
 After Google sign-in, onboarding lists every Profile authorized for that Koru
 identity and requires an explicit row selection even when there is only one.
@@ -5331,9 +5807,13 @@ profile you did not start it from. Nothing else changes: the workspace keeps
 its id, its documents and its history, and its projects follow it in Koru
 Terminal. Moving it back is the same action with the other profile chosen.
 
-If a row says *this window was not started by Koru*, the window was launched
-outside the app — a `cargo run`, or a build Koru did not start — and it holds no
-permission to archive, delete or move workspaces. If it says its terminal
+Every Koru window on this computer can archive, delete and move workspaces,
+however you opened it. If a row says *Koru could not confirm that this window
+is part of this Koru installation*, the window is a Koru from a different
+installation than the one running in the background — a second copy of the app,
+or a build from another folder — or your system would not say which program the
+window is; it holds no permission to archive, delete or move workspaces. Open
+Koru from the installation you use and try again there. If it says its terminal
 projects have not caught up, the workspace moved but Koru Terminal was not
 answering at the time; choosing the same profile again repairs them.
 
@@ -5455,23 +5935,6 @@ has its own entry, *Koru Nightly*, beside the stable one.
 `~/.config/autostart`, which GNOME, KDE and most other desktops start at
 sign-in. Koru starts in the background, without opening a window, as it does
 on Windows and macOS.
-
-## The tasks in this document
-
-Open the context column with `Ctrl+J` and choose the checklist icon. It lists the
-tasks of **the document you are reading** — every row that carries a task marker
-or a due date, in the order they appear on the page, with the due date at the
-right and completed ones dimmed and struck through. A late one is warm, the same
-colour the sidebar and the Tasks tab use.
-
-Clicking a row takes you to it in the document. Nothing here changes a task: the
-ways to do that are the row itself under your caret, and the Tasks tab.
-
-It says **No tasks in this document.** when there are none, and it costs nothing
-while the column is closed or on another section.
-
-The Tasks **tab** is the other question — every task in the workspace, wherever
-it lives — and it is the sidebar's rail that opens it.
 
 ## Document history
 
@@ -5686,6 +6149,8 @@ paragraph ready for typing. The title remains unchanged.
 | `Ctrl+click` a document pill | open in a background tab (reuse if already open) |
 | `Shift+click` a document pill | open in a new window |
 | right-click a document pill | Open / Open in new tab / Open in new window |
+| `Alt+click` a document pill, `@` mention or Koru link | choose where: a split up, right, down or left, or a new tab |
+| click a `koru://` link | follow it inside Koru, like a document pill |
 | click a link pill | open it in the browser |
 | `Ctrl+click` a link | open the URL without leaving Koru |
 | hover a link | URL chip with copy and edit |
@@ -5734,6 +6199,7 @@ paragraph ready for typing. The title remains unchanged.
 | click a document pill | follow it in this tab |
 | `Ctrl+click` a document pill | open in a background tab |
 | `Shift+click` a document pill | open in a new window |
+| `Alt+click` a document pill, `@` mention or Koru link | choose where: a split up, right, down or left, or a new tab |
 | right-click a document pill | Open / Open in new tab / Open in new window |
 | `→` onto a document pill, then `Enter` | open it — `Ctrl+Enter` in a background tab, `Shift+Enter` in a new window |
 | drag a tab up / down | pop it out into its own window |
@@ -5759,6 +6225,8 @@ restart.
 | `F2` | rename the row you are pointing at, or the document showing |
 | `Ctrl+click` a sidebar row | toggle one document in the selection |
 | `Shift+click` a sidebar row | select the full range, including child rows |
+| `Alt+click` a document or chat row | choose where it opens: a split up, right, down or left, or a new tab |
+| `Alt+click` a tasks queue, list or task | the same: a split up, right, down or left, or a new tab |
 | row `…` / right-click | **Open in new tab**, **Open in new window**, **Export → Markdown** or **TextBundle**, or move the selection to Trash |
 | `↑` `↓` `←` `→` | walk the explore tree, once it has the keyboard |
 | `Enter` | open the row the keyboard is on |
@@ -5774,15 +6242,14 @@ restart.
 | `Ctrl+J` | show / hide the Context column |
 | `Ctrl+Alt+J` | step the Context column to its next section (opens it first) |
 | `Ctrl+Alt+K` | copy the Cloud sync section's facts to the clipboard |
-| `Alt+1` / `Alt+2` / `Alt+3` | the Explore column's Documents, Files, Tasks |
-| `Ctrl+Shift+J`, title-block sparkle, or **+ → AI Chat** | show / hide Koru AI in the right-hand pane slot (it replaces Context) |
-| `Ctrl+Shift+I` | open or foreground the standalone Koru AI chat |
+| `Alt+1` … `Alt+8` | the views down the Explore column's rail, by place (top is `Alt+1`) |
+| `Ctrl+Shift+J` or **+ → AI Chat** | show / hide Koru AI in the right-hand pane slot (it replaces Context) |
 
 ## Chatting with a local agent
 
 Press **New chat** and open the model chip. Under **Local agents** are the
 coding agents installed on this computer — Codex, OpenCode, Claude, Kimi,
-Grok, Antigravity — each with a word when it is not ready (*Not installed*,
+Grok, Antigravity, Devin — each with a word when it is not ready (*Not installed*,
 *Signed out*, *Needs a supported version*). Pick one and the chip reads its
 name. Codex, OpenCode and Antigravity can also list their models: the small
 arrow at the end of the row expands them (OpenCode groups them by provider),
@@ -5796,6 +6263,16 @@ download from the `agy` command (Windows only). Run
 account in the browser, and restart Koru. Its first message takes about
 twenty seconds to start. The **+** menu's Antigravity tab still opens `agy`
 itself.
+
+**Devin** is Cognition's Devin CLI, the same `devin` command in a tab and in
+a chat. Its installers leave it off your `PATH`, so Koru also looks where
+they put it: the standalone CLI first, then the copy inside the Devin desktop
+app. A chat needs Devin 3000.11.1 or newer and uses the first copy that is;
+if none is, Devin reads *Needs a supported version* — run `devin update` (or,
+for the desktop app's copy, update the app) and restart Koru. Sign in with `devin auth login` (Koru never asks for or reads
+your Devin credentials); until you do, Devin reads *Signed out*. A Devin chat starts in Devin's own *Code* mode, which makes
+file edits in the folder without asking and still asks before running a
+command.
 
 The agent answers in the chat, as Markdown. While it works, each tool it uses
 is a row inside the turn with the agent's own words — *Working — Read
@@ -5812,17 +6289,17 @@ stopped, the chat stays and says so, and you can delete it again. If the agent
 had gone by the time you write again, Koru starts it fresh, hands it the
 conversation so far, and tells you.
 
-Before your first message, a folder button on the composer's toolbar (it
-reads *Home folder* until you choose) opens a picker for the folder the
-agent works in; the chosen folder is named in the header next to the title,
-and a chat branched from this one keeps it. Once the first message is sent
-the folder is fixed — start a new chat to work somewhere else.
+Before your first message, the folder under the composer, at its left edge
+(it reads *Home folder* until you choose), opens a picker for the folder the
+agent works in; the chosen folder stays named there, and a chat branched from
+this one keeps it. Once the first message is sent the folder is fixed — start
+a new chat to work somewhere else.
 
 **Effort.** For a model that offers levels — OpenAI's, the Koru model's
 thinking, an Ollama model — the chip reads the model and its effort
-(*gpt-5.6 · Medium*). Open the chip and drag or click the slider at the top
-to a different level; the chat keeps that level and the next message uses
-it. A local agent runs at its own effort and shows no slider.
+(*gpt-5.6 · Medium*). Open the chip and pick a level on the effort strip; the chat keeps that level and the next message uses
+it. A coding agent's level is set the same way, on the strip at the foot
+of its model picker.
 
 In Settings, the **Local agents** card lists the same agents; saving one makes
 it the default for new chats.
@@ -5830,25 +6307,57 @@ it the default for new chats.
 ## Finding a chat again
 
 Every chat is kept, and **Chats** in the left column (`Alt+4`, the sparkle
-icon right of Tasks) lists them all, newest first. Each row says the chat's
+icon right of Tasks) lists them all: chats you pinned first, under **Pinned**,
+then the rest by their latest message, so a chat moves up when you send in it
+and again when its reply arrives; changing a chat's model, privacy, folder or
+tools doesn't move it. Each row says the chat's
 title, who answered it — an agent by its name, and the model under it when you
 picked one; the model for OpenAI and Ollama; *Qwen3 8B* for Koru — and how long
 ago it last moved. A private chat wears the detective mark.
 
+A chat's tab and its row show what the chat is doing: a turning ring while it
+works, an amber dot when it is waiting for your answer, and a blue dot when a
+reply arrived that you haven't seen; unread chats have bold titles until you
+open them. Opening a chat with something new takes you to the first message
+you haven't read, under a **NEW** line. Which chats you have seen is
+remembered on this device only. Point at a row to show **⋯** (Rename…, Pin,
+Delete) and the pin; click the pin to pin or
+unpin the chat at once. In a chat, `Ctrl+Shift+↑` and `Ctrl+Shift+↓` (`⌘` on
+macOS) move to the chat above or below in the list, as long as your message
+box is empty.
+
+In a chat, as in a document, `Alt+←` / `Alt+→` (`⌘[` / `⌘]` on a Mac) or
+your mouse's Back and Forward buttons return to what you were looking at: the
+chat you were in before, or the page you opened from a link in a reply. It
+works while you're typing a message, and your message stays where you left
+it; going back never stops a reply that is still being written.
+
+**Chats belong to a profile.** A chat stays in the profile it was started in,
+and the Chats list, Pinned, Recent chats and chat search show only the chats
+of the profile you are in; switching profile switches the list. A chat reads
+only that profile's workspaces, even if it was once given one from another
+profile. A link to another profile's chat opens it in a window of that
+profile. Chats from before profiles were kept apart were placed in the
+profile of the workspace they last read, or in your first profile.
+
 Click a row to open the chat as a tab; if a tab already shows it, that tab
 comes forward. **New chat** at the top starts one. The list works from the
 keyboard too: Up and Down move, Home and End jump to either end, Enter opens,
-**Delete asks** before deleting, and Escape hands the keyboard back. Right-click
-a row for **Delete chat**. If the chat's agent could not be stopped, the chat
-stays and says so — delete it again.
+**Delete asks** before deleting, the Menu key or `Shift+F10` opens the row's
+menu, and Escape hands the keyboard back. Right-click
+a row, or click its **⋯**, for **Rename…**, **Pin** and **Delete chat**. If the chat's agent could not be
+stopped, the chat stays and says so — delete it again.
+
+**Rename a chat in its row**: choose **Rename…**, or press **F2** with the
+pointer over the row (or the keyboard on it). A box replaces the title with
+the title selected; type the new one and press Enter, or press Escape to keep
+the old one. Clicking elsewhere keeps what you typed. An empty title is
+refused and the box stays open. A tab showing the chat takes the new name
+too, and the name never reaches the model.
 
 In a chat tab, **Ctrl+Shift+E** (or the chat's own **Chats** button) opens the
 list with that chat selected. A chat you start in a tab or in the Koru AI pane
 appears in the list straight away.
-
-In the standalone Koru AI window, **Chats** — or Ctrl+Shift+E — opens the same
-list as a small floating pane. Choosing a row reads that chat in the window;
-Escape or a click outside closes the pane.
 
 ### Mentioning a document with @
 

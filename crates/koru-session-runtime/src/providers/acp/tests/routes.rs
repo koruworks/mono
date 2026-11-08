@@ -13,11 +13,13 @@ fn routes() -> Vec<(AcpRoute, &'static str)> {
             AcpRoute::antigravity(),
             "04fd51b5c6dfb6d11e649c2cfc61a64ca31d9a4a58a9a3e5c93db934cd7a9695",
         ),
+        // The floor's print is not recorded yet; the commit is a stand-in.
+        (AcpRoute::devin(), "devin 3000.11.1 (0123abcd)"),
     ]
 }
 
 #[test]
-fn exact_version_carriers_accept_pinned_output_and_refuse_adornments_or_new_release() {
+fn version_carriers_accept_pinned_output_and_refuse_adornments() {
     for (route, output) in routes() {
         let version = route.parse_version(&format!("{output}\r\n")).unwrap();
         assert_eq!(
@@ -36,8 +38,7 @@ fn exact_version_carriers_accept_pinned_output_and_refuse_adornments_or_new_rele
         }
     }
     // The versions admitted on the maintainers' instruction after their no-prompt
-    // handshake passed (AGENTUX, 2026-09-25) parse to themselves; a release
-    // nobody admitted is still refused, adorned or not.
+    // handshake passed (AGENTUX, 2026-09-25) parse to themselves.
     assert_eq!(
         AcpRoute::kimi().parse_version("2.0.0\n").unwrap().as_str(),
         "2.0.0"
@@ -74,17 +75,100 @@ fn exact_version_carriers_accept_pinned_output_and_refuse_adornments_or_new_rele
             .as_str(),
         "1.0.70"
     );
-    assert!(AcpRoute::kimi().parse_version("2.0.1").is_err());
-    assert!(
-        AcpRoute::grok()
-            .parse_version("grok 1.0.26 (f7e67d6988e2) [stable]")
-            .is_err()
+}
+
+/// **A release at or above the qualified pin is admitted** (the review's note,
+/// 2026-10-26): the installed CLIs had moved past the pins. The pin stays
+/// the floor, an adorned print is still refused, and Antigravity — known by
+/// its digest, not a number — admits nothing it was not pinned to.
+#[test]
+fn a_release_above_the_pin_is_admitted_and_one_below_it_is_not() {
+    assert_eq!(
+        AcpRoute::kimi().parse_version("2.0.1").unwrap().as_str(),
+        "2.0.1"
+    );
+    assert_eq!(
+        AcpRoute::kimi().parse_version("v2.3.0\n").unwrap().as_str(),
+        "2.3.0"
     );
     assert!(
+        AcpRoute::kimi().parse_version("0.41.9").is_err(),
+        "below the pin"
+    );
+    assert_eq!(
+        AcpRoute::claude_code()
+            .parse_version("0.77.2")
+            .unwrap()
+            .as_str(),
+        "0.77.2"
+    );
+    assert!(AcpRoute::claude_code().parse_version("0.75.9").is_err());
+    assert_eq!(
+        AcpRoute::opencode()
+            .parse_version("1.19.0")
+            .unwrap()
+            .as_str(),
+        "1.19.0"
+    );
+    assert_eq!(
+        AcpRoute::grok()
+            .parse_version("grok 1.0.40 (0123456789ab) [stable]")
+            .unwrap()
+            .as_str(),
+        "1.0.40"
+    );
+    assert_eq!(
         AcpRoute::grok()
             .parse_version("grok 1.0.25 (other) [stable]")
+            .unwrap()
+            .as_str(),
+        "1.0.25",
+        "the hash is not the version"
+    );
+    assert!(
+        AcpRoute::grok()
+            .parse_version("grok 1.0.24 (x) [stable]")
             .is_err()
     );
+    assert!(
+        AcpRoute::grok().parse_version("1.0.40").is_err(),
+        "not grok's print"
+    );
+    assert!(AcpRoute::antigravity().parse_version("1.2.2").is_err());
+    // Devin's own print, `devin <version> (<commit>)`, floor 3000.11.1.
+    // Both copies the acceptance machine had are below it: the standalone
+    // CLI, 3000.10.21, and the desktop app's, 3000.10.48.
+    for (print, version) in [
+        ("devin 3000.11.1 (other)", "3000.11.1"),
+        ("devin 3000.11.234 (0123abcd)\r\n", "3000.11.234"),
+        ("devin 3000.12.0 (0123abcd)", "3000.12.0"),
+        ("devin 3001.0.0 (0123abcd)", "3001.0.0"),
+    ] {
+        assert_eq!(
+            AcpRoute::devin().parse_version(print).unwrap().as_str(),
+            version,
+            "the commit is not the version"
+        );
+    }
+    for refused in [
+        "devin 3000.10.21 (611c1cba)",
+        "devin 3000.10.48 (fcf7ba39)",
+        "devin 3000.11.0 (0123abcd)",
+        "3000.11.234",
+        "devin 3000.11.234",
+        "grok 3000.11.234 (0123abcd)",
+        "devin 3000.11.234 (0123abcd) [stable]",
+    ] {
+        assert!(
+            AcpRoute::devin().parse_version(refused).is_err(),
+            "{refused}"
+        );
+    }
+    let route = AcpRoute::kimi();
+    assert!(route.supports(&ProviderVersion::from_str("2.0.0").unwrap()));
+    assert!(route.supports(&ProviderVersion::from_str("3.0").unwrap()));
+    assert!(!route.supports(&ProviderVersion::from_str("0.1.0").unwrap()));
+    assert!(!route.supports(&ProviderVersion::from_str("beta").unwrap()));
 }
 
 #[test]
@@ -169,7 +253,7 @@ fn experimental_routes_accept_delegation_without_claiming_native_child_control()
 }
 
 #[test]
-fn experimental_routes_still_require_http_protocol_and_exact_version() {
+fn experimental_routes_still_require_http_protocol_and_a_version_at_the_pin() {
     for route in [AcpRoute::opencode(), AcpRoute::kimi()] {
         for (http, protocol) in [(false, 1), (true, 2)] {
             let mut h = harness(
@@ -194,7 +278,9 @@ fn experimental_routes_still_require_http_protocol_and_exact_version() {
                     .any(|frame| frame["method"] == "session/new")
             );
         }
+        // A release below the pin: refused before anything is sent.
         let mut h = harness(FakeAcpConfig::default(), None, None);
+        h.control.config.executable_version = ProviderVersion::from_str("0.0.1").unwrap();
         h.control.config.route = route;
         h.control.config.delegation = Some(delegation());
         let error = h
@@ -264,6 +350,15 @@ fn recorded_routes() -> Vec<(
             include_str!("fixtures/antigravity-1.2.1/initialize.json"),
             include_str!("fixtures/antigravity-1.2.1/new-session.json"),
             include_str!("fixtures/antigravity-1.2.1/auth-required.json"),
+        ),
+        // 3000.10.48's frames, run under the floor's version: the recorded
+        // print is below the floor now, and 3000.11.x's are not captured.
+        (
+            AcpRoute::devin(),
+            "devin 3000.11.1 (0123abcd)",
+            include_str!("fixtures/devin-3000.10.48/initialize.json"),
+            include_str!("fixtures/devin-3000.10.48/new-session.json"),
+            include_str!("fixtures/devin-3000.10.48/auth-required.json"),
         ),
     ]
 }
@@ -433,5 +528,62 @@ fn grok_wrong_startup_session_and_wrong_metadata_carrier_cannot_satisfy_guard() 
         h.control
             .start(AgentStart::fresh(SessionId::mint(), None))
             .is_err()
+    );
+}
+
+/// **A refused print names the version found and the floor** — OpenCode
+/// 1.18.25 under the 1.18.27 pin — while a crashed `--version` (Kimi under
+/// a too-old Node.js) is the program not starting, which readiness reads
+/// as *Failed* and never as an unsupported version.
+#[test]
+fn a_refused_print_names_both_versions_and_a_crash_did_not_start() {
+    use crate::providers::ManagedAvailability;
+    use crate::providers::discovery::classify_failure;
+    use koru_session_protocol::VersionNeed;
+    let opencode = AcpRoute::opencode();
+    assert_eq!(
+        opencode.need(),
+        Some(VersionNeed::AtLeast("1.18.27".into()))
+    );
+    assert_eq!(
+        classify_failure(opencode.read_print(true, b"1.18.25\n").unwrap_err()),
+        ManagedAvailability::Incompatible {
+            code: ErrorCode::ProviderIncompatible,
+            found: Some(ProviderVersion::from_str("1.18.25").unwrap()),
+            needed: Some(VersionNeed::AtLeast("1.18.27".into())),
+        }
+    );
+    assert_eq!(
+        opencode.read_print(true, b"1.18.30\n").unwrap().as_str(),
+        "1.18.30"
+    );
+    // A print with no number to read: refused, with nothing found.
+    assert_eq!(
+        classify_failure(
+            opencode
+                .read_print(true, b"opencode, a build\n")
+                .unwrap_err()
+        ),
+        ManagedAvailability::Incompatible {
+            code: ErrorCode::ProviderIncompatible,
+            found: None,
+            needed: Some(VersionNeed::AtLeast("1.18.27".into())),
+        }
+    );
+    let kimi = AcpRoute::kimi();
+    for (success, stdout) in [(false, &b""[..]), (true, b"")] {
+        assert!(matches!(
+            classify_failure(kimi.read_print(success, stdout).unwrap_err()),
+            ManagedAvailability::Failed {
+                stage: ProviderStage::Version,
+                diagnostic: ProviderDiagnostic::UnexpectedExit,
+                ..
+            }
+        ));
+    }
+    // A digest-identified route has a reviewed list, not a floor.
+    assert_eq!(
+        AcpRoute::antigravity().need(),
+        Some(VersionNeed::Reviewed("1.2.1".into()))
     );
 }

@@ -28,6 +28,28 @@ fn client_pair_with_policy(
     automatic_limit: usize,
     permission: impl FnMut(&transfer::Start) -> transfer::Decision + Send + 'static,
 ) -> (IoClient, DuplexStream, Stream, MemoryBudget) {
+    use koru_replication::cloud::transfer::ClaimReferences;
+    client_pair_with_claims(
+        f,
+        worker,
+        automatic_limit,
+        permission,
+        (ClaimReferences::None, ClaimReferences::None),
+    )
+}
+
+/// [`client_pair_with_policy`] whose client and worker ends were admitted
+/// with `claims`: which way a claim reference may cross each.
+fn client_pair_with_claims(
+    f: &Fixture,
+    worker: StoreWorkerClient,
+    automatic_limit: usize,
+    permission: impl FnMut(&transfer::Start) -> transfer::Decision + Send + 'static,
+    claims: (
+        koru_replication::cloud::transfer::ClaimReferences,
+        koru_replication::cloud::transfer::ClaimReferences,
+    ),
+) -> (IoClient, DuplexStream, Stream, MemoryBudget) {
     let budget = MemoryBudget::new(128 * 1024 * 1024);
     let accepted = PreparedSession {
         principal: f.scope.principal,
@@ -39,9 +61,14 @@ fn client_pair_with_policy(
             generation: 1,
             expires_at_seconds: 600,
         },
+        claim_references: claims.0,
     };
     let server = Stream::new(
-        &accepted,
+        &PreparedSession {
+            accepted: accepted.accepted.clone(),
+            claim_references: claims.1,
+            ..accepted
+        },
         f.scope,
         0,
         0,

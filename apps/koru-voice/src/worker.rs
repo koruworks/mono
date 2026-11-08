@@ -34,6 +34,18 @@
 //! every few minutes, which is the difference between a background process a
 //! person can leave running and one they learn to kill.
 //!
+//! ## A level meter, beside the session rather than in it
+//!
+//! `Request::Meter` opens a microphone so a picker can show that it hears
+//! something. It is answered here, because the device belongs to this
+//! thread, but it never reaches [`Session`]: no model is resolved, nothing is
+//! leased, and the samples are reduced to the dictation's own
+//! [`LevelBucket`] and dropped. While it runs this thread wakes once per
+//! [`LEVEL_INTERVAL`] and sends a bucket only when it moved. One meter at a
+//! time, the newest replacing the last; a meter is refused while a dictation
+//! runs, and a dictation that begins closes the meter before it opens the
+//! device.
+//!
 //! ## The one place this bends the contract, and why
 //!
 //! `koru_voice::HostReply` has three failure variants — a model load, a capture
@@ -53,8 +65,8 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, SyncSender};
 use std::time::{Duration, Instant};
 
 use koru_voice::{
-    Effect, EngineEvent, ErrorCode, Event, HostReply, ModelId, Request, SAMPLE_RATE, Session,
-    SessionId, SessionRequest, SpeechEngine, State, VoiceError,
+    Effect, EngineEvent, ErrorCode, Event, HostReply, InputChoice, LevelBucket, ModelId, Request,
+    SAMPLE_RATE, Session, SessionId, SessionRequest, SpeechEngine, State, VoiceError,
 };
 use koru_voice_models::{InstalledModel, LoadedModel, ModelError, ModelErrorCode, ModelStore};
 
@@ -202,6 +214,8 @@ impl std::fmt::Debug for Command {
                     Request::Finish { .. } => "finish",
                     Request::Cancel { .. } => "cancel",
                     Request::Devices { .. } => "devices",
+                    Request::Meter { .. } => "meter",
+                    Request::MeterStop { .. } => "meter_stop",
                 };
                 write!(f, "Request({verb} from {client})")
             }
@@ -292,6 +306,32 @@ pub fn spawn(config: WorkerConfig, shutdown: Shutdown) -> WorkerHandle {
     WorkerHandle { commands: tx }
 }
 
+/// **A level meter that recognises nothing** (`Request::Meter`).
+///
+/// The microphone open, its samples reduced to the dictation's own
+/// [`LevelBucket`] by [`crate::capture::level_of`] and dropped. No model, no
+/// engine and no session: it lives beside the session machine rather than in
+/// it, because nothing about it is a dictation, and it runs only while that
+/// machine is idle — a dictation that begins stops it first.
+struct Meter {
+    client: ClientId,
+    sink: EventSink,
+    /// The request's correlation pair, stamped on every level it sends.
+    session: SessionId,
+    generation: u64,
+    /// The open device. `None` for a recorded source, whose samples went into
+    /// the ring when the meter began.
+    capture: Option<Capture>,
+    /// The loudest bucket drained since the last one was weighed.
+    peak: LevelBucket,
+    /// The bucket last sent. **A meter speaks only when it moves**, so a
+    /// silent room wakes nobody ten times a second.
+    sent: LevelBucket,
+    /// When the last bucket was weighed: one per [`LEVEL_INTERVAL`], the
+    /// dictation's own pace.
+    weighed: Option<Instant>,
+}
+
 /// Everything the inference thread owns.
 ///
 /// Constructed on that thread and never moved off it: `capture` holds a
@@ -325,6 +365,9 @@ struct Worker {
     /// machine has no opinion about hardware -- it emits `StartCapture` and
     /// the host performs it, which is ADR-249's whole division.
     requested_input: koru_voice::InputChoice,
+    /// The level meter, while one runs. Never at the same time as a
+    /// dictation: both read [`Worker::ring`].
+    meter: Option<Meter>,
     ring: Arc<Ring>,
     /// The client whose dictation this is, and where its events go.
     owner: Option<(ClientId, EventSink)>,
@@ -362,6 +405,7 @@ impl Worker {
             engine_generation: None,
             capture: None,
             requested_input: koru_voice::InputChoice::SystemDefault,
+            meter: None,
             ring,
             owner: None,
             scratch: Vec::new(),
@@ -455,6 +499,12 @@ impl Worker {
         if self.session.state() != State::Idle {
             return Some(POLL_INTERVAL);
         }
+        // **A running meter is somebody looking at it**, so the worker is not
+        // idle: it wakes once a level interval to weigh what arrived, and the
+        // idle clock starts again when the meter stops.
+        if self.meter.is_some() {
+            return Some(LEVEL_INTERVAL);
+        }
         // Bound before the match: `decide` borrows `self.config.idle`, and a
         // match scrutinee's temporaries live to the end of the match — so an
         // arm that unloads (which is `&mut self`) would not compile.
@@ -498,6 +548,7 @@ impl Worker {
 
     /// One turn: audio into the engine, decisions out of it.
     fn pump(&mut self) {
+        self.pump_meter();
         self.pump_audio();
         if let Some(generation) = self.engine_generation {
             let mut polled = Vec::new();
@@ -559,6 +610,124 @@ impl Worker {
             }
         }
         self.scratch = samples;
+    }
+
+    // ------------------------------------------------------- the level meter
+
+    /// **Weigh what the meter's microphone heard**, and send the bucket when
+    /// a level interval has passed and it moved.
+    ///
+    /// The samples are drained and dropped: the loudest of them, as the
+    /// dictation's own [`crate::capture::level_of`] buckets it, is all that is
+    /// kept, and only until it is sent. Nothing here reaches a model.
+    fn pump_meter(&mut self) {
+        // A dictation owns the ring. The meter has been stopped by then
+        // anyway; this keeps the two from ever draining it at once.
+        if self.session.state() != State::Idle {
+            return;
+        }
+        let Some(meter) = self.meter.as_mut() else {
+            return;
+        };
+        let mut samples = std::mem::take(&mut self.scratch);
+        samples.clear();
+        self.ring.drain(&mut samples);
+        if !samples.is_empty() {
+            meter.peak = meter.peak.max(crate::capture::level_of(&samples));
+        }
+        self.scratch = samples;
+        if meter
+            .weighed
+            .is_some_and(|at| at.elapsed() < LEVEL_INTERVAL)
+        {
+            return;
+        }
+        meter.weighed = Some(Instant::now());
+        let bucket = std::mem::replace(&mut meter.peak, LevelBucket::SILENT);
+        if bucket == meter.sent {
+            return;
+        }
+        meter.sent = bucket;
+        let level = Event::Level {
+            session: meter.session,
+            generation: meter.generation,
+            bucket,
+        };
+        if meter.sink.send(Outgoing::Event(level)).is_err() {
+            self.stop_meter("the meter's client went away");
+        }
+    }
+
+    /// **Open a microphone for a level meter**, replacing any meter already
+    /// running: one microphone, and the newest question wins, which is how a
+    /// picker switches devices.
+    ///
+    /// Refused while a dictation runs — it has the microphone, and the meter
+    /// is the one that yields. No model is resolved or leased here, so a
+    /// meter works on an installation with nothing downloaded.
+    fn start_meter(
+        &mut self,
+        client: ClientId,
+        sink: EventSink,
+        session: SessionId,
+        generation: u64,
+        input: InputChoice,
+    ) {
+        if self.session.state() != State::Idle {
+            return self.refuse(
+                &sink,
+                session,
+                generation,
+                ErrorCode::Busy.with("a dictation is running and has the microphone"),
+            );
+        }
+        self.stop_meter("a meter was replaced");
+        self.ring.clear();
+        let recorded = match &self.config.capture {
+            CaptureSource::Device => None,
+            CaptureSource::Recorded(samples) => Some(samples.clone()),
+        };
+        let capture = match recorded {
+            Some(samples) => {
+                for sample in samples.iter() {
+                    self.ring.push(*sample);
+                }
+                None
+            }
+            None => match crate::capture::open(&input, self.ring.clone()) {
+                Ok(capture) => Some(capture),
+                Err(error) => {
+                    tracing::warn!(
+                        code = %error.code,
+                        "the microphone would not open for a level meter"
+                    );
+                    return self.refuse(&sink, session, generation, error);
+                }
+            },
+        };
+        tracing::debug!(client, %session, generation, "a level meter began");
+        self.meter = Some(Meter {
+            client,
+            sink,
+            session,
+            generation,
+            capture,
+            peak: LevelBucket::SILENT,
+            sent: LevelBucket::SILENT,
+            weighed: None,
+        });
+    }
+
+    /// **Close the meter's microphone**, if one is open. The device first and
+    /// the ring after, so the callback cannot refill what was just emptied.
+    fn stop_meter(&mut self, why: &'static str) {
+        let Some(meter) = self.meter.take() else {
+            return;
+        };
+        drop(meter);
+        self.ring.clear();
+        self.idle_since = Instant::now();
+        tracing::debug!(why, "a level meter ended");
     }
 
     // ------------------------------------------------------------- effects
@@ -817,6 +986,23 @@ impl Worker {
             Request::Devices { .. } => {
                 tracing::debug!(client, "a device query reached the inference thread");
             }
+            // **A meter is answered here, not on the IPC thread**, because it
+            // opens a device and the device belongs to this thread. It still
+            // arms no session and takes no generation.
+            Request::Meter {
+                session,
+                generation,
+                input,
+            } => self.start_meter(client, sink, session, generation, input),
+            Request::MeterStop { session, .. } => {
+                if self
+                    .meter
+                    .as_ref()
+                    .is_some_and(|meter| meter.session == session)
+                {
+                    self.stop_meter("the meter was stopped on request");
+                }
+            }
             Request::Begin {
                 session,
                 generation,
@@ -861,6 +1047,10 @@ impl Worker {
                         self.requested_input = input;
                         self.pending = Some(resolved);
                         self.owner = Some((client, sink));
+                        // **A dictation wins the microphone.** The meter is
+                        // closed before the effects run, because they open
+                        // the device for the dictation in this same call.
+                        self.stop_meter("a dictation began");
                         tracing::debug!(%session, generation, "a dictation began");
                         self.perform(effects);
                     }
@@ -901,6 +1091,13 @@ impl Worker {
     }
 
     fn handle_disconnect(&mut self, client: ClientId) {
+        if self
+            .meter
+            .as_ref()
+            .is_some_and(|meter| meter.client == client)
+        {
+            self.stop_meter("the meter's client went away");
+        }
         if self.owner.as_ref().is_some_and(|(id, _)| *id == client) {
             self.owner = None;
             self.discard_live_session("the client went away");
@@ -1013,7 +1210,12 @@ impl Worker {
             model_loaded: self.engine.is_some() && self.loaded.is_some(),
             model: self.last_model.clone(),
             device: self.device,
-            capture: self.capture.as_ref().map(Capture::info),
+            // The dictation's device, or else the meter's: what is open.
+            capture: self
+                .capture
+                .as_ref()
+                .or(self.meter.as_ref().and_then(|meter| meter.capture.as_ref()))
+                .map(Capture::info),
             sample_rate: SAMPLE_RATE,
             ring_overruns: self.ring.dropped(),
             ring_capacity: self.ring.capacity(),

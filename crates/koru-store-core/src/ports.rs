@@ -169,6 +169,13 @@ pub trait Catalog {
     -> Result<LocalProfileRemoval>;
     /// Atomically clear the explicit local-removal marker.
     fn restore_profile_local(&mut self, id: ProfileId) -> Result<LocalProfileRestoration>;
+    /// Every retained row whose local-removal marker is at or before
+    /// `before`, oldest removal first. A Profile this catalog holds no row
+    /// for is never named. Defaults to none, which is correct for any
+    /// backend that does not implement local removal at all.
+    fn profiles_removed_before(&self, _before: Timestamp) -> Result<Vec<ProfileId>> {
+        Ok(Vec::new())
+    }
     fn profile_crdt(&self, _id: ProfileId) -> Result<Option<ProfileCrdtState>> {
         Ok(None)
     }
@@ -636,6 +643,17 @@ pub struct SeededDocument {
 pub trait WorkspaceRepo {
     fn documents(&self) -> Result<Vec<DocumentState>>;
     fn document(&self, id: DocumentId) -> Result<Option<DocumentState>>;
+    /// Repair an absent position index from a successful full durable replay.
+    /// Never replace a populated position or change content/timestamps. The
+    /// caller must not supply a recovered or uncommitted in-memory position.
+    fn repair_missing_position(
+        &mut self,
+        _id: DocumentId,
+        _version: &[u8],
+        _frontiers: &[u8],
+    ) -> Result<bool> {
+        Ok(false)
+    }
     fn create_document(&mut self, id: DocumentId, kind: DocumentKind, at: Timestamp) -> Result<()>;
     /// **One transaction:** plant the opaque initial document and its
     /// idempotency record, or replay the original bytes for the same request.

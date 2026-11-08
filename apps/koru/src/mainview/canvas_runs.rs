@@ -239,6 +239,12 @@ pub(crate) struct CanvasRuns {
     wants_readiness: bool,
     /// The agent the delegation modal last started a run with.
     modal_agent: Option<SessionProfileKey>,
+    /// The coding agents turned off on this machine (Agent providers), by
+    /// agent key — which is also each row's managed provider kind. Left out
+    /// of the agents a canvas offers; a node already set to one still runs.
+    hidden_agents: Vec<String>,
+    /// The order the agents are listed in (Agent providers), by agent key.
+    agent_order: Vec<String>,
     touched: Touched,
     watch: Option<(uuid::Uuid, Option<Watch>)>,
     early: bool,
@@ -269,6 +275,8 @@ impl CanvasRuns {
             readiness: None,
             wants_readiness: false,
             modal_agent: None,
+            hidden_agents: Vec::new(),
+            agent_order: Vec::new(),
             touched: Arc::default(),
             watch: None,
             early: false,
@@ -395,14 +403,38 @@ impl CanvasRuns {
     }
 
     /// The agents that can run delegated work on this machine now, with the
-    /// names the modal shows — for a canvas's agent menu. Empty until the
+    /// names the modal shows — for a canvas's agent menu — less any turned
+    /// off on *Agent providers*, in the order set there. Empty until the
     /// host has answered; [`Self::want_agents`] asks it.
     pub(crate) fn ready_agents(&self) -> Vec<(SessionProfileKey, String)> {
-        self.agents
+        let mut rows: Vec<&AgentRow> = self
+            .agents
             .iter()
             .filter(|row| row.choosable())
+            .filter(|row| {
+                !self
+                    .hidden_agents
+                    .iter()
+                    .any(|off| off == row.provider.as_str())
+            })
+            .collect();
+        rows.sort_by_key(|row| {
+            super::agent_providers::order_rank(&self.agent_order, Some(row.provider.as_str()))
+        });
+        rows.into_iter()
             .map(|row| (row.key.clone(), row.name.clone()))
             .collect()
+    }
+
+    /// **The agents turned off, and their order** (Settings → Coding →
+    /// Agent providers): a canvas's agent menu and a new node's default
+    /// leave the first out and follow the second. Answers whether anything
+    /// moved.
+    pub(crate) fn set_agent_settings(&mut self, hidden: Vec<String>, order: Vec<String>) -> bool {
+        let moved = self.hidden_agents != hidden || self.agent_order != order;
+        self.hidden_agents = hidden;
+        self.agent_order = order;
+        moved
     }
 
     /// The agent a new node should start with: the one the delegation modal

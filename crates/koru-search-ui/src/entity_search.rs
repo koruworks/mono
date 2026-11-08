@@ -219,9 +219,9 @@ impl EntitySearch {
     /// The live workspaces a picker may search, once a complete catalog has
     /// landed; `None` until then (and asks for it again, throttled).
     ///
-    /// For a host that knows no *current* workspace — the standalone AI chat
-    /// window — and so cannot seed a picker's scope the way a document tab
-    /// does. Answered from the catalog already read on the worker thread; this
+    /// For a host that knows no *current* workspace — a chat composer with
+    /// no workspace on screen — and so cannot seed a picker's scope the way a
+    /// document tab does. Answered from the catalog already read on the worker thread; this
     /// never dials anything itself.
     pub fn catalog_workspaces(&mut self) -> Option<Vec<EntityWorkspace>> {
         self.pump();

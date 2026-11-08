@@ -218,3 +218,147 @@ fn a_schedule_rename_cannot_submit_twice_while_sending() {
         Outcome::Keep
     ));
 }
+
+/// A chat's title is trimmed when it is sent, so spaces alone are refused in
+/// place, in the person's language — and Escape still leaves.
+#[test]
+fn a_chat_title_of_spaces_is_refused_and_escape_cancels() {
+    let mut e = engine();
+    let chat = koru_ai_ui::ChatId::from_uuid(uuid::Uuid::from_u128(0xc4a7));
+    let mut field = WorkspaceRename::for_chat(&mut e, chat, "Planning");
+    typed(&mut field, &mut e, "   ");
+    assert!(matches!(
+        press(&mut field, &mut e, &ENTER, &[]),
+        Outcome::Keep
+    ));
+    assert_eq!(
+        field.hint(),
+        Some(koru_i18n::t(
+            crate::format::lang(),
+            koru_i18n::Key::ChatsNameNeeded
+        ))
+    );
+    assert!(matches!(
+        press(&mut field, &mut e, &ESC, &[]),
+        Outcome::Cancel
+    ));
+}
+
+/// **Rename is on a chat's row in the Chats view** — the row menu's
+/// *Rename…* for one chat and `F2` over the row — and it is the inline
+/// field the navigator renames every other row in, over the chat's title:
+/// Escape leaves the name as it was, Enter commits.
+#[test]
+fn a_chat_is_renamed_in_its_chats_row() {
+    use koru_workspace_host::View;
+
+    use crate::mainview::context_menu::{self, MenuAction, MenuSubject};
+    use crate::panes::explore::NavigatorMode;
+
+    let (mut v, mut w) = crate::mainview::harness::on_document();
+    let chat = koru_ai_ui::ChatId::from_uuid(uuid::Uuid::from_u128(0xc4a7));
+    let now = koru_ai_core::Timestamp::from_millis(1);
+    v.show_navigator(NavigatorMode::Chats);
+    assert!(v.sidebar.is_open());
+    v.explore
+        .chats_mut()
+        .take_listing(Ok(koru_chats_ui::Listing {
+            chats: vec![koru_ai_core::Chat {
+                id: chat,
+                title: "Planning".into(),
+                private: false,
+                current_model: koru_ai_core::ModelSelection {
+                    provider: koru_ai_core::AiProviderId::parse("openai").unwrap(),
+                    requested_model: "gpt-test".into(),
+                    default_reasoning: koru_ai_core::ReasoningChoice::Default,
+                },
+                branched_from: None,
+                agent_working_folder: None,
+                agent_mode: None,
+                agent_fast: None,
+                pinned_at: None,
+                profile_id: None,
+                created_at: now,
+                updated_at: now,
+            }],
+            agents: Vec::new(),
+        }));
+
+    // Offered for one chat; one field cannot name a pick of several.
+    assert_eq!(
+        context_menu::ai_chat_items(1, false),
+        [
+            MenuAction::RenameAiChat,
+            MenuAction::PinAiChat,
+            MenuAction::Divider,
+            MenuAction::DeleteAiChat
+        ]
+    );
+    assert_eq!(
+        context_menu::ai_chat_items(3, false),
+        [MenuAction::DeleteAiChat]
+    );
+
+    assert!(v.run_menu_action_for_test(
+        MenuSubject::AiChat { chats: vec![chat] },
+        MenuAction::RenameAiChat
+    ));
+    assert!(matches!(
+        v.workspace_rename.as_ref().map(|rename| rename.target),
+        Some(Target::Chat(id)) if id == chat
+    ));
+    let title = v
+        .explore
+        .chat_label_rect(v.explore_area(), chat)
+        .expect("the chat's row is showing");
+    assert_eq!(
+        v.workspace_rename_row(),
+        Some(title),
+        "over the chat's title"
+    );
+    // The field is the only box on the row (koru-ai D89): a frame tells the
+    // list which row is renamed, so it drops its plate, mark, pin and ⋯.
+    let draw = |v: &mut crate::mainview::MainView, ws: &koru_workspace::Workspace| {
+        v.draw_frame(
+            &mut vello::Scene::new(),
+            ws,
+            &koru_draw::ImageCache::new(),
+            vello::kurbo::Affine::IDENTITY,
+            false,
+            (-1.0, -1.0),
+        );
+    };
+    draw(&mut v, &w);
+    assert_eq!(v.explore.chats().renaming(), Some(chat));
+    let none = ModifiersState::empty();
+    assert!(View::key(&mut v, &mut w.ws, &ESC, None, none));
+    assert!(
+        v.workspace_rename.is_none(),
+        "Escape leaves the name as it was"
+    );
+    draw(&mut v, &w);
+    assert_eq!(v.explore.chats().renaming(), None, "the row is back");
+
+    // F2 over the row opens the same field.
+    v.pointer = (title.x + 4.0, title.y + title.h * 0.5);
+    assert!(v.rename_here(&mut w.ws));
+    assert!(matches!(
+        v.workspace_rename.as_ref().map(|rename| rename.target),
+        Some(Target::Chat(id)) if id == chat
+    ));
+    for ch in "Roadmap".chars() {
+        let text = ch.to_string();
+        View::key(
+            &mut v,
+            &mut w.ws,
+            &Key::Character(text.as_str().into()),
+            Some(&text),
+            none,
+        );
+    }
+    assert!(View::key(&mut v, &mut w.ws, &ENTER, None, none));
+    assert!(
+        v.workspace_rename.is_none(),
+        "Enter committed the new title"
+    );
+}

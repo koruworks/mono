@@ -24,7 +24,7 @@ use koru_ui::DropdownOption;
 
 use crate::action::{Action, FontRole};
 use crate::page::{Anchor, Builder, TilePreview};
-use crate::state::{AiSlot, DictionaryRow, RendererRow, VoiceFacts};
+use crate::state::{DictionaryRow, RendererRow, VoiceFacts};
 
 #[cfg(test)]
 mod tests;
@@ -51,13 +51,12 @@ pub(crate) struct Rows<'a> {
     pub(crate) personal_words: Option<usize>,
     /// *Apply to all* was pressed this session; the link says so.
     pub(crate) layout_applied: bool,
-    /// The Advanced card is unfolded.
-    pub(crate) advanced_open: bool,
     /// This device's telemetry answer; `None` draws no Privacy card.
     pub(crate) telemetry: Option<bool>,
     /// Whether Koru's app-menu entry is there; `None` draws no row.
     pub(crate) app_menu: Option<bool>,
-    pub(crate) ai: &'a AiSlot,
+    /// The host can open the sample document, so *Document fonts* links to it.
+    pub(crate) sample_document: bool,
 }
 
 // ------------------------------------------------------------- Appearance
@@ -86,25 +85,36 @@ pub(crate) fn appearance(b: &mut Builder<'_>, rows: &Rows<'_>) {
     );
 
     b.card(Some(koru_i18n::t(lang, Key::SettingsInterface)));
+    b.row_dropdown(
+        koru_i18n::t(lang, Key::SettingsIconStyle),
+        None,
+        koru_draw::icons::IconPack::ALL
+            .into_iter()
+            .map(|pack| {
+                (
+                    Action::IconPack(koru_settings::IconPackChoice::parse(pack.token())),
+                    DropdownOption::new(pack.label(), pack == koru_draw::icons::active_pack()),
+                )
+            })
+            .collect(),
+    );
     let density_now = theme::density();
-    // Tightest to loosest, not the registry's order.
+    // Tightest to loosest, not the registry's order. *Comfortable* is not
+    // offered: it did not hold up. A stored Comfortable still parses and still
+    // draws; the row simply ticks neither until somebody picks one.
     b.row_choice(
         koru_i18n::t(lang, Key::SettingsDensity),
         Some(koru_i18n::t(lang, Key::SettingsSpacingOfTextAndControls)),
-        [
-            DensityChoice::Compact,
-            DensityChoice::Normal,
-            DensityChoice::Comfortable,
-        ]
-        .into_iter()
-        .map(|choice| {
-            (
-                Action::Density(choice),
-                density_label(lang, choice).to_owned(),
-                crate::density(choice) == density_now,
-            )
-        })
-        .collect(),
+        [DensityChoice::Compact, DensityChoice::Normal]
+            .into_iter()
+            .map(|choice| {
+                (
+                    Action::Density(choice),
+                    density_label(lang, choice).to_owned(),
+                    crate::density(choice) == density_now,
+                )
+            })
+            .collect(),
     );
     b.row_choice(
         koru_i18n::t(lang, Key::SettingsPinnedTabs),
@@ -128,11 +138,34 @@ pub(crate) fn appearance(b: &mut Builder<'_>, rows: &Rows<'_>) {
         FontRole::App,
         Some(koru_i18n::t(lang, Key::SettingsMenusSidebarAndControls)),
     );
+    // Beside the app font, whose size it shares: the chat has no size of
+    // its own, as the app font has none.
+    font_row(
+        b,
+        lang,
+        FontRole::Chat,
+        Some(koru_i18n::t(lang, Key::SettingsChatFontHint)),
+    );
+    base_row(b, lang, false);
+    base_row(b, lang, true);
 
-    b.card_with_font_preview(koru_i18n::t(lang, Key::SettingsDocumentFonts));
+    // The document fonts are seen on a page rather than named: the link opens
+    // a short sample document beside this tab, and it follows every choice
+    // made here. A host that cannot open one gets the plain title.
+    if rows.sample_document {
+        b.caption_with_link(
+            koru_i18n::t(lang, Key::SettingsDocumentFonts),
+            koru_i18n::t(lang, Key::SettingsPreviewInSampleDocument),
+            Action::PreviewSampleDocument,
+        );
+        b.card(None);
+    } else {
+        b.card(Some(koru_i18n::t(lang, Key::SettingsDocumentFonts)));
+    }
     font_row(b, lang, FontRole::Body, None);
     font_row(b, lang, FontRole::Headings, None);
     font_row(b, lang, FontRole::Code, None);
+    doc_size_row(b, lang);
 
     b.card(Some(koru_i18n::t(lang, Key::SettingsCaret)));
     let color_now = crate::caret_color_choice(theme::caret_color());
@@ -186,22 +219,119 @@ pub(crate) fn appearance(b: &mut Builder<'_>, rows: &Rows<'_>) {
     );
 }
 
-/// One font role: a dropdown of every family, each set in its own face.
-fn font_row(b: &mut Builder<'_>, lang: Lang, role: FontRole, hint: Option<&str>) {
-    let current = role.current();
+/// The base colour for one theme: the theme's own first, then the tints
+/// offered for that theme. Each theme keeps its own; neither is derived from
+/// the other.
+fn base_row(b: &mut Builder<'_>, lang: Lang, dark: bool) {
+    let (label, own, tints) = if dark {
+        (
+            Key::SettingsBaseColorDark,
+            theme::DARK.ground,
+            theme::BASE_TINTS_DARK,
+        )
+    } else {
+        (
+            Key::SettingsBaseColorLight,
+            theme::LIGHT.ground,
+            theme::BASE_TINTS_LIGHT,
+        )
+    };
+    let now = theme::base_color(dark);
+    let mut swatches = vec![(Action::BaseColor(dark, None), Some(own), now.is_none())];
+    swatches.extend(tints.iter().map(|&rgb| {
+        (
+            Action::BaseColor(dark, Some(rgb)),
+            Some(theme::rgb_hex(rgb)),
+            now == Some(rgb),
+        )
+    }));
+    b.row_swatches(koru_i18n::t(lang, label), None, swatches);
+}
+
+/// The document body size: last in *Document fonts*, labelled in px.
+///
+/// Ticks the size in force — the choice, or the default while there is none —
+/// never the one being previewed.
+fn doc_size_row(b: &mut Builder<'_>, lang: Lang) {
+    let default = koru_settings::DocTextSize::DEFAULT.px();
+    let current = theme::chosen_doc_text_size().unwrap_or(default);
     b.row_dropdown(
-        role.row_label(lang),
-        hint,
-        theme::FontChoice::ALL
+        koru_i18n::t(lang, Key::SettingsDocumentTextSize),
+        None,
+        koru_settings::DocTextSize::ALL
             .iter()
-            .map(|family| {
+            .map(|&px| {
+                let size = koru_i18n::t(lang, Key::SettingsSizePx).replace("{}", &px.to_string());
+                let label = if px == default {
+                    koru_i18n::t(lang, Key::SettingsSizeDefault).replace("{}", &size)
+                } else {
+                    size
+                };
                 (
-                    Action::Font(role, *family),
-                    DropdownOption::new(family.label(), *family == current).in_face(family.stack()),
+                    Action::DocTextSize(px),
+                    DropdownOption::new(label, px == current),
                 )
             })
             .collect(),
     );
+}
+
+/// One font role: a dropdown of every family, each set in its own face.
+///
+/// The chat's list starts with *Follow app*: its default is the app font,
+/// followed rather than copied, so following is a choice of its own — ticked
+/// instead of the face it happens to draw, and the way back once a family
+/// was chosen.
+fn font_row(b: &mut Builder<'_>, lang: Lang, role: FontRole, hint: Option<&str>) {
+    use koru_settings::FontSetting;
+    let current = role.current();
+    let follows =
+        role == FontRole::Chat && theme::font_setting(role.slot()) == FontSetting::FollowDefault;
+    // An installed family set for this role but not installed here: the
+    // default draws, and the row says why rather than ticking the default.
+    let missing = theme::missing_font(role.slot());
+    let mut options: Vec<(Action, DropdownOption)> = Vec::new();
+    if role == FontRole::Chat {
+        options.push((
+            Action::FontSetting(role, FontSetting::FollowDefault),
+            DropdownOption::new(koru_i18n::t(lang, Key::SettingsFollowApp), follows)
+                .in_face(theme::chosen_font(theme::FontSlot::Ui).stack()),
+        ));
+    }
+    options.extend(theme::FontChoice::ALL.iter().map(|family| {
+        (
+            Action::Font(role, *family),
+            DropdownOption::new(
+                family.label(),
+                !follows && missing.is_none() && *family == current,
+            )
+            .in_face(family.stack()),
+        )
+    }));
+    if let Some(name) = missing {
+        options.push((
+            Action::FontSetting(role, theme::font_setting(role.slot())),
+            DropdownOption::new(
+                koru_i18n::t(lang, Key::SettingsFontNotInstalled).replace("{}", &name),
+                true,
+            ),
+        ));
+    } else if let theme::FontChoice::Installed(_) = current
+        && !follows
+    {
+        // The installed family in force, listed after the bundled ones, ticked
+        // and drawn in its own face. Not while the chat follows the app font,
+        // which is what *Follow app* already ticks.
+        options.push((
+            Action::Font(role, current),
+            DropdownOption::new(current.label(), true).in_face(current.stack()),
+        ));
+    }
+    options.push((
+        Action::MoreFonts(role),
+        DropdownOption::new(koru_i18n::t(lang, Key::SettingsMoreFonts), false),
+    ));
+    b.row_dropdown(role.row_label(lang), hint, options);
 }
 
 // ----------------------------------------------------------------- Editor
@@ -492,52 +622,15 @@ pub(crate) fn system(b: &mut Builder<'_>, rows: &Rows<'_>) {
         );
     }
 
-    if !rows.ai.is_empty() {
-        b.card(Some(koru_i18n::t(rows.lang, Key::SettingsKoruAi)));
-        let note = (!rows.ai.note.is_empty()).then_some(rows.ai.note.as_str());
-        match rows.ai.action.as_deref() {
-            Some(action) => b.row_button(
-                koru_i18n::t(lang, Key::SettingsProvidersAndModels),
-                note,
-                Action::OpenAiSetup,
-                action,
-            ),
-            None => b.row_text(koru_i18n::t(lang, Key::SettingsProvidersAndModels), note),
-        }
-    }
+    // No Koru AI card for now: its providers are set up in Koru AI itself.
+    // The host's slot (`set_ai_slot`) is still taken, and simply not drawn.
 
     // The renderer passthrough: the one control here that does not take
-    // effect as you press it, and the row says so.
+    // effect as you press it, and the row says so. Always shown — a fold
+    // with a summary line was one more thing to read to reach one row.
     if rows.renderer.is_offered() {
-        // Folded by default: nothing in it needs attention unless something
-        // looks wrong, and the folded line says what is in it and its value.
-        b.caption_with_link(
-            koru_i18n::t(lang, Key::SettingsAdvanced),
-            koru_i18n::t(
-                lang,
-                if rows.advanced_open {
-                    Key::SettingsHide
-                } else {
-                    Key::SettingsShow
-                },
-            ),
-            Action::ShowAdvanced(!rows.advanced_open),
-        );
+        b.card(Some(koru_i18n::t(lang, Key::SettingsAdvanced)));
         let current = rows.renderer.current.as_str();
-        if !rows.advanced_open {
-            let value = rows
-                .renderer
-                .options
-                .iter()
-                .find(|(token, _)| token == current)
-                .map_or(current, |(_, label)| label.as_str());
-            b.note(&koru_i18n::fill(
-                koru_i18n::t(lang, Key::SettingsAdvancedSummary),
-                &[value],
-            ));
-            return;
-        }
-        b.card(None);
         b.row_dropdown(
             &rows.renderer.label,
             Some(&rows.renderer.note),

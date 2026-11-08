@@ -328,11 +328,26 @@ pub enum Request {
         session_id: SessionId,
         controller_lease: ControllerLeaseToken,
         input: PendingInput,
+        /// Protocol v21 (koru-ai D108): this input is the answers to a set
+        /// the agent asked in its reply and moved on from
+        /// (`delivery: next_message`); the adapter writes them as the
+        /// person's next message in the agent's own form. The input carries
+        /// no text or attachments of its own. Requires `managed-questions`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        answers: Option<koru_session_protocol::QuestionsReply>,
     },
     /// Protocol v8 provider-neutral approval response.
     /// Requires negotiated provider-readiness; an old host cannot decode it.
     SubscribeProviders,
     DiscoverProviderModels {
+        provider: koru_session_protocol::ProviderKind,
+        working_directory: PathBuf,
+    },
+    /// Protocol v21 (koru-ai D121): what the agent can be told to do by
+    /// name in `working_directory` — Codex's skills for the folder, from
+    /// its own `skills/list` — in a picker's order. An agent with none
+    /// answers an empty list. Requires `agent-commands`.
+    DiscoverProviderCommands {
         provider: koru_session_protocol::ProviderKind,
         working_directory: PathBuf,
     },
@@ -348,6 +363,17 @@ pub enum Request {
         decision: ApprovalDecision,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         choice: Option<koru_session_protocol::ApprovalChoiceId>,
+    },
+    /// Protocol v21 (koru-ai D108): answer the set of questions an agent
+    /// asked, or skip it. `answers: None` skips the whole set; the agent is
+    /// told the person declined. Requires `managed-questions`.
+    AnswerQuestions {
+        session_id: SessionId,
+        controller_lease: ControllerLeaseToken,
+        idempotency_key: IdempotencyKey,
+        request_id: koru_session_protocol::QuestionRequestId,
+        #[serde(default)]
+        answers: Option<Vec<koru_session_protocol::QuestionAnswer>>,
     },
     /// Protocol v9 turn-specific managed cancellation. A delayed request can
     /// never cancel a later active turn.
@@ -676,6 +702,15 @@ pub struct SessionCatalog {
 pub enum Response {
     ProviderModels {
         models: koru_session_protocol::ProviderModels,
+        /// The agent's approval modes (koru-ai D7), beside its models so a
+        /// picker fills before a session exists. Defaulted: an older host
+        /// sends none and an older client leaves them unread.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        modes: Option<koru_session_protocol::AgentModes>,
+    },
+    /// The answer to `DiscoverProviderCommands` (protocol v21).
+    ProviderCommands {
+        commands: Vec<koru_session_protocol::AgentCommand>,
     },
     Health {
         health: HostHealth,

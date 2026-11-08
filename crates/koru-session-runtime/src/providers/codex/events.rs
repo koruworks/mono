@@ -26,7 +26,7 @@ impl CodexControl {
         Ok(())
     }
 
-    fn mark_unknown(&mut self) {
+    pub(super) fn mark_unknown(&mut self) {
         self.diagnostics.unknown_events = self.diagnostics.unknown_events.saturating_add(1);
     }
 
@@ -55,6 +55,9 @@ impl CodexControl {
             ));
         };
         let params = frame.get("params").unwrap_or(&Value::Null);
+        if method == super::questions::METHOD {
+            return self.handle_questions(request_id, params);
+        }
         let kind = match method {
             "item/commandExecution/requestApproval" => ApprovalKind::Command,
             "item/fileChange/requestApproval" => ApprovalKind::FileChange,
@@ -96,7 +99,7 @@ impl CodexControl {
         })
     }
 
-    fn reply_error(
+    pub(super) fn reply_error(
         &mut self,
         request_id: RpcId,
         code: i32,
@@ -126,6 +129,12 @@ impl CodexControl {
             | "hook/completed"
             | "account/rateLimits/updated"
             | "remoteControl/status/changed" => Ok(()),
+            // The listing the session's skills were resolved from is out of
+            // date (koru-ai D121): the next turn that names one lists again.
+            super::skills::CHANGED_NOTIFICATION => {
+                self.forget_skills();
+                Ok(())
+            }
             "model/rerouted" => self.handle_rerouted(params),
             "item/agentMessage/delta" => {
                 let Some(turn_id) = self.koru_turn(params.get("turnId")) else {
@@ -136,6 +145,13 @@ impl CodexControl {
                     .get("delta")
                     .and_then(Value::as_str)
                     .ok_or_else(malformed_read)?;
+                // This message's words stream: its completion is not said
+                // again.
+                let item_id = params
+                    .get("itemId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                self.streamed_messages.insert((turn_id, item_id.to_owned()));
                 self.queue(AgentEvent::MessageDelta {
                     turn_id,
                     text: text.to_owned(),
@@ -164,17 +180,25 @@ impl CodexControl {
             .and_then(Value::as_str)
             .ok_or_else(malformed_read)?;
         if kind == "imageView" {
-            if completed
-                && let Some(path) = item.get("path").and_then(Value::as_str)
-                && let Some(attachment_id) =
-                    self.attachment_paths.remove(&(turn_id, path.to_owned()))
-            {
-                self.queue(AgentEvent::AttachmentAccepted {
-                    turn_id,
-                    attachment_id,
-                })?;
+            let attached = item
+                .get("path")
+                .and_then(Value::as_str)
+                .map(|path| (turn_id, path.to_owned()))
+                .filter(|key| self.attachment_paths.contains_key(key));
+            // A picture the person attached, which the agent has now seen.
+            if let Some(key) = attached {
+                if completed && let Some(attachment_id) = self.attachment_paths.remove(&key) {
+                    self.queue(AgentEvent::AttachmentAccepted {
+                        turn_id,
+                        attachment_id,
+                    })?;
+                }
+                return Ok(());
             }
-            return Ok(());
+            return self.handle_image_view(turn_id, item, completed);
+        }
+        if kind == "agentMessage" && completed {
+            return self.handle_agent_message(turn_id, item);
         }
         let Some(tool) = normalize::tool_kind(kind) else {
             if !matches!(kind, "agentMessage" | "userMessage" | "reasoning" | "plan") {
@@ -217,6 +241,87 @@ impl CodexControl {
                 input: normalize::item_input(item),
             })
         }
+    }
+
+    /// **A completed message** (koru-ai D108). Its words reach the chat as
+    /// `item/agentMessage/delta`s; this is where a message that sent none
+    /// is caught. An async question set — Codex's `request_user_input_async`
+    /// — becomes a set answered by the next message, and its plain `text`,
+    /// which says the same, is not also the reply. Any other message that
+    /// streamed nothing has its `text` said whole, so nothing Codex said
+    /// vanishes; one that streamed is not said twice.
+    fn handle_agent_message(
+        &mut self,
+        turn_id: AgentTurnId,
+        item: &Value,
+    ) -> Result<(), ProviderFailure> {
+        let item_id = item.get("id").and_then(Value::as_str).unwrap_or_default();
+        let streamed = self
+            .streamed_messages
+            .remove(&(turn_id, item_id.to_owned()))
+            || self.streamed_messages.contains(&(turn_id, String::new()));
+        if self.handle_async_questions(turn_id, item)? || streamed {
+            return Ok(());
+        }
+        match item.get("text").and_then(Value::as_str) {
+            Some(text) if !text.is_empty() => self.queue(AgentEvent::MessageDelta {
+                turn_id,
+                text: text.to_owned(),
+            }),
+            _ => Ok(()),
+        }
+    }
+
+    /// **A picture the agent chose to look at** (koru-ai D38): a step,
+    /// labelled with the tool's own name and with the file as its input, so
+    /// the chat files it as a read and can draw the picture from the disk.
+    /// The item carries no status — it is the record of a view that
+    /// happened — so it completes as succeeded. A completion whose start
+    /// was never seen still gets its step.
+    fn handle_image_view(
+        &mut self,
+        turn_id: AgentTurnId,
+        item: &Value,
+        completed: bool,
+    ) -> Result<(), ProviderFailure> {
+        const LABEL: &str = "view_image";
+        let native_id = item
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|value| valid_native_id(value))
+            .ok_or_else(malformed_read)?;
+        let key = (turn_id, native_id.to_owned());
+        let started = if completed {
+            self.tools.remove(&key)
+        } else {
+            None
+        };
+        let tool_call_id = match started {
+            Some(tool_call_id) => tool_call_id,
+            None => {
+                let tool_call_id = ToolCallId::mint();
+                self.queue(AgentEvent::ToolStarted {
+                    turn_id,
+                    tool_call_id,
+                    label: LABEL.to_owned(),
+                    input: normalize::item_input(item),
+                })?;
+                if !completed {
+                    self.tools.insert(key, tool_call_id);
+                    return Ok(());
+                }
+                tool_call_id
+            }
+        };
+        self.queue(AgentEvent::ToolCompleted {
+            turn_id,
+            tool_call_id,
+            succeeded: true,
+            tool: Some(koru_session_protocol::ToolKind::Other),
+            detail: None,
+            failure: None,
+            output: None,
+        })
     }
 
     /// `thread/tokenUsage/updated` carries the thread's cumulative total.
@@ -283,6 +388,9 @@ impl CodexControl {
         let Some(approval_id) = self.approvals.iter().find_map(|(approval_id, pending)| {
             (pending.request_id == request_id).then_some(*approval_id)
         }) else {
+            // A question set Codex took back itself — a set it did not
+            // wait on, closed when it moved on — expires.
+            self.expire_resolved_questions(&request_id)?;
             return Ok(());
         };
         let pending = self
@@ -329,10 +437,13 @@ impl CodexControl {
                 approval_id,
             })?;
         }
+        self.expire_turn_questions(turn_id)?;
         self.tools
             .retain(|(tool_turn_id, _), _| *tool_turn_id != turn_id);
         self.attachment_paths
             .retain(|(attachment_turn_id, _), _| *attachment_turn_id != turn_id);
+        self.streamed_messages
+            .retain(|(message_turn_id, _)| *message_turn_id != turn_id);
         let status = turn
             .get("status")
             .and_then(Value::as_str)
@@ -369,7 +480,7 @@ impl CodexControl {
         })
     }
 
-    fn koru_turn(&self, native: Option<&Value>) -> Option<AgentTurnId> {
+    pub(super) fn koru_turn(&self, native: Option<&Value>) -> Option<AgentTurnId> {
         native
             .and_then(Value::as_str)
             .and_then(|value| self.native_turns.get(value))

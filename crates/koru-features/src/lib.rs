@@ -2,17 +2,17 @@
 
 //! **Which product surfaces this build shows.**
 //!
-//! Koru's next release shows documents, files, terminal/shell sessions and
-//! agent sessions; seven larger surfaces are built, tested and *hidden* until
-//! they are switched on, and agents can be switched off:
+//! Koru shows documents, files and terminal/shell sessions. Cloud sync, agent
+//! sessions, Tasks and Koru AI are on by default; agent views, reminders,
+//! canvases and Socials are hidden until switched on. Each flag can be overridden:
 //!
 //! | Flag | Env var | Hides |
 //! | --- | --- | --- |
 //! | [`ENABLE_CLOUD_SYNC`] | `KORU_ENABLE_CLOUD_SYNC` | Koru Cloud: sign-in, OAuth, the Cloud page, subscribe pointers |
 //! | [`ENABLE_AGENTS`] | `KORU_ENABLE_AGENTS` | agent sessions as tabs (shell sessions stay); **on unless set off** |
-//! | [`ENABLE_AGENT_VIEWS`] | `KORU_ENABLE_AGENT_VIEWS` | Explore's Agents and Artifacts views (need agents on as well) |
+//! | [`ENABLE_AGENT_VIEWS`] | `KORU_ENABLE_AGENT_VIEWS` | Explore's Agents and Artifacts views (need agents on as well), and every way to start Delegate ([`delegate`]) |
 //! | [`ENABLE_TASKS`] | `KORU_ENABLE_TASKS` | the Tasks view and its entry points (`/due` stays) |
-//! | [`ENABLE_AI`] | `KORU_ENABLE_AI` | Koru AI chat and Delegate (runs and results) |
+//! | [`ENABLE_AI`] | `KORU_ENABLE_AI` | Koru AI chat and Delegate (runs, results, and starting one with agent views on) |
 //! | [`ENABLE_REMINDERS`] | `KORU_ENABLE_REMINDERS` | the reminders UI (the worker still runs) |
 //! | [`ENABLE_CANVAS`] | `KORU_ENABLE_CANVAS` | canvases: the Canvases view and canvas tabs |
 //! | [`ENABLE_SOCIALS`] | `KORU_ENABLE_SOCIALS` | Socials, and the Agent's Socials publisher |
@@ -22,12 +22,11 @@
 //! ## Baked in, with an environment override
 //!
 //! A flag's default is decided when *this crate* is compiled, from
-//! `option_env!` on each `KORU_ENABLE_*` name: unset is **off** — except
-//! agents, which are **on** when unset (maintainers, 2026-10-15) — so a release
-//! built with nothing set ships documents, files, shells and agents. The release
+//! `option_env!` on each `KORU_ENABLE_*` name: Cloud sync, agents, Tasks and
+//! Koru AI are **on** when unset; the other four flags are **off**. The release
 //! tool forwards each of the eight that is set, as `1` or `0`, to
 //! `cargo build` (`koru-release::package::run_cargo`), so a release bakes a
-//! surface on, or agents off, by setting it in its environment or in
+//! surface on or off by setting it in its environment or in
 //! `.env.production`.
 //!
 //! At run time a variable that is **set** wins over the baked default in both
@@ -70,14 +69,16 @@ pub struct Features {
     /// their restore, the tray's Agents submenu. Shell sessions are not an
     /// agent.
     pub agents: bool,
-    /// Explore's Agents and Artifacts views (`Alt+5`, `Alt+6`), and every
+    /// Explore's Agents and Artifacts views (their rail slots), and every
     /// way into them: revealing a run or a schedule, opening a result from
     /// the Artifacts column. Shown only with [`Self::agents`] on as well —
-    /// see [`agent_views`].
+    /// see [`agent_views`]. With [`Self::ai`] on too, every way to *start*
+    /// Delegate — see [`delegate`].
     pub agent_views: bool,
     /// The Tasks view and every way into it.
     pub tasks: bool,
-    /// Koru AI chat and Delegate.
+    /// Koru AI chat, and the runs and schedules Delegate has made. Starting
+    /// Delegate needs [`Self::agent_views`] as well — see [`delegate`].
     pub ai: bool,
     /// The reminders UI.
     pub reminders: bool,
@@ -187,20 +188,25 @@ pub mod env {
     ];
 }
 
-/// Koru Cloud / OAuth sign-in, as baked into this build.
-pub const ENABLE_CLOUD_SYNC: bool = switch_value(option_env!("KORU_ENABLE_CLOUD_SYNC"));
+/// Koru Cloud / OAuth sign-in, as baked into this build. **On when unset**;
+/// `KORU_ENABLE_CLOUD_SYNC=0` bakes it off.
+pub const ENABLE_CLOUD_SYNC: bool = switch_value_or(option_env!("KORU_ENABLE_CLOUD_SYNC"), true);
 /// Agent sessions and artifacts, as baked into this build. **On when unset**
-/// — the one flag whose surface ships by default (ADR-450's 2026-10-15
-/// amendment); `KORU_ENABLE_AGENTS=0` bakes it off.
+/// (ADR-450's 2026-10-15 amendment); `KORU_ENABLE_AGENTS=0` bakes it off.
 pub const ENABLE_AGENTS: bool = switch_value_or(option_env!("KORU_ENABLE_AGENTS"), true);
 /// Explore's Agents and Artifacts views, as baked into this build. Off when
 /// unset: agent *tabs* ship, the views over their runs and results do not
-/// (maintainers, 2026-10-16).
+/// (maintainers, 2026-10-16). Starting Delegate follows it too ([`delegate`]).
 pub const ENABLE_AGENT_VIEWS: bool = switch_value(option_env!("KORU_ENABLE_AGENT_VIEWS"));
-/// The Tasks view and its entry points, as baked into this build.
-pub const ENABLE_TASKS: bool = switch_value(option_env!("KORU_ENABLE_TASKS"));
-/// Koru AI chat and Delegate, as baked into this build.
-pub const ENABLE_AI: bool = switch_value(option_env!("KORU_ENABLE_AI"));
+/// The Tasks view and its entry points, as baked into this build. **On when
+/// unset** (the review's note, 2026-10-26, QUESTIONS.md E52): the view ships;
+/// `KORU_ENABLE_TASKS=0` bakes it off.
+pub const ENABLE_TASKS: bool = switch_value_or(option_env!("KORU_ENABLE_TASKS"), true);
+/// Koru AI chat and Delegate, as baked into this build. **On when unset**
+/// (the review's note, 2026-10-26, QUESTIONS.md E54: enable Chats): the Chats
+/// view, the chat tab and Delegate's runs ship; `KORU_ENABLE_AI=0` bakes them
+/// off. Starting Delegate also needs [`ENABLE_AGENT_VIEWS`] ([`delegate`]).
+pub const ENABLE_AI: bool = switch_value_or(option_env!("KORU_ENABLE_AI"), true);
 /// The reminders UI, as baked into this build.
 pub const ENABLE_REMINDERS: bool = switch_value(option_env!("KORU_ENABLE_REMINDERS"));
 /// Canvases, as baked into this build.
@@ -248,9 +254,21 @@ pub fn agent_views() -> bool {
 pub fn tasks() -> bool {
     features().tasks
 }
-/// Koru AI chat and Delegate are shown.
+/// Koru AI chat is shown, and so are the runs and schedules Delegate has
+/// made — their pills, Run tabs and menus. Whether a *new* delegation can be
+/// started is [`delegate`].
 pub fn ai() -> bool {
     features().ai
+}
+/// **Delegate can be started**: `/delegate`, the `+` menu's *Delegate*, a
+/// task's and a document selection's *Delegate…*, a finished run's *Re-run*,
+/// and the modal they all open (`begin_delegation`, its one door). Hidden
+/// with the agent views (the user, 2026-11-03), so it follows
+/// `KORU_ENABLE_AGENT_VIEWS` — off by default — and needs Koru AI and agents
+/// on as well. Runs that already exist keep showing as [`ai`] says; only the
+/// ways to start one go.
+pub fn delegate() -> bool {
+    ai() && agent_views()
 }
 /// The reminders UI is shown.
 pub fn reminders() -> bool {
@@ -263,6 +281,58 @@ pub fn canvas() -> bool {
 /// Socials authoring is shown.
 pub fn socials() -> bool {
     features().socials
+}
+
+// ------------------------------------------------------- hidden for now
+//
+// **Not flags: switches in the source.** A flag above is a surface a release
+// may bake on and a person may turn on with a variable. What follows is a
+// part of a shown surface that is hidden *for now* — nothing about it is
+// configurable, it is one constant to flip back, and it is here, beside the
+// flags, so "what does this build hide" has one place to look. The code
+// behind each stays built and tested where it can be; turning the constant
+// to `true` puts every way into it back.
+
+/// **Home** — the house at the top of the left rail, its page (Inbox, Today,
+/// Upcoming, Recent) and its `Alt+H`. Hidden (the user, 2026-11-03): "we
+/// don't have anything functional for now". With it off the rail starts at
+/// Documents, `Alt+H` does nothing and is taught nowhere, a window that last
+/// showed Home reopens on Documents, and nothing opens the Home tab. Home
+/// takes no rail slot, so `Alt+1` is the first view drawn.
+pub const HOME_SHOWN: bool = false;
+
+/// **The composer's private-chat button** — the detective mask at the left
+/// of the Koru AI composer's footer, which makes the chat being written
+/// private, or public again. Hidden (the user, 2026-11-03): no chat is made
+/// private from the composer. It has no shortcut. A chat that is already
+/// private stays private, works as before and still wears its mark in the
+/// Chats list; the footer's other controls start where the mask did.
+pub const PRIVATE_CHAT_BUTTON_SHOWN: bool = false;
+
+/// **The context column's Tasks section** — the checklist tab at the top of
+/// the column beside a document, which lists the tasks in that document.
+/// Hidden (the user, 2026-11-03): "Remove tasks from the page context." The
+/// Tasks *view* is untouched — its rail square, its page and its chord stay,
+/// under the `tasks` flag. With this off the column opens on History, draws no
+/// tab strip while History is its only section, and `Ctrl+Alt+J` steps past
+/// Tasks; nothing has a shortcut of its own to open it.
+pub const CONTEXT_TASKS_SHOWN: bool = false;
+
+/// Whether Home is shown ([`HOME_SHOWN`]).
+pub fn home() -> bool {
+    HOME_SHOWN
+}
+
+/// Whether the composer offers its private-chat button
+/// ([`PRIVATE_CHAT_BUTTON_SHOWN`]).
+pub fn private_chat_button() -> bool {
+    PRIVATE_CHAT_BUTTON_SHOWN
+}
+
+/// Whether the context column offers its Tasks section
+/// ([`CONTEXT_TASKS_SHOWN`]). Asked beside [`tasks`]: the section needs both.
+pub fn context_tasks() -> bool {
+    CONTEXT_TASKS_SHOWN
 }
 
 /// `koru_env::switch_value`, as a `const fn` so a baked value is a constant:

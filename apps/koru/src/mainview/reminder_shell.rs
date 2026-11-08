@@ -799,12 +799,8 @@ impl Shell {
         true
     }
 
-    /// Whether the bell has the keyboard, which is what its ring is drawn from.
-    ///
-    /// Only a test asks: `focus_chrome`'s rotation is decided by where the
-    /// keyboard is *not* — it takes the pill unless the pill already has it —
-    /// so production never needs to read this back.
-    #[cfg(test)]
+    /// Whether the bell has the keyboard, which is what its ring is drawn from
+    /// — and where `F6`'s rotation reads which stop it is leaving.
     pub(super) fn bell_is_focused(&self) -> bool {
         self.bell_focused
     }

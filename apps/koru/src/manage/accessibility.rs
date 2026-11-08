@@ -131,6 +131,7 @@ fn control_part(control: Control) -> ControlPart {
         Control::NoticeRetry => "notice-retry",
         Control::NoticeDismiss => "notice-dismiss",
         Control::LinkDevice => "link-device",
+        Control::CloseCreation => "close-creation",
         Control::ThisDevice => "this-computer",
         Control::Relay => "relay",
         Control::DeviceRow(_) => "manage-device",
@@ -467,6 +468,17 @@ impl ManageView {
                 .map_or_else(
                     || placed.label.clone(),
                     |row| format!("{}, this computer, {}", row.full_name, row.sub_text),
+                ),
+            // The button reads *Unlink…*; its name says which device, since a
+            // reader may reach it without the row.
+            Control::UnlinkDevice(index) => self
+                .laid
+                .devices
+                .as_ref()
+                .and_then(|laid| laid.rows.iter().find(|row| row.index == Some(index)))
+                .map_or_else(
+                    || placed.label.clone(),
+                    |row| format!("Unlink {}\u{2026}", row.full_name),
                 ),
             _ => placed.label.clone(),
         }

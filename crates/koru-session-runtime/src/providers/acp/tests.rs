@@ -5,7 +5,7 @@ use crate::NoopAttachmentPathResolver;
 use crate::providers::acp_fake::{
     FakeAcpConfig, FakeAcpPeer, FakeAcpState, PERMISSION_ID, SESSION, late_update,
 };
-use koru_session_protocol::ProviderKind;
+use koru_session_protocol::{LaunchSelection, ProviderKind};
 use std::sync::{Arc, Mutex};
 
 struct Script {
@@ -107,9 +107,14 @@ fn start(control: &mut AcpControl) -> AgentCapabilities {
 }
 fn input(turn_id: AgentTurnId) -> AgentInput {
     AgentInput {
+        model: None,
         turn_id,
         text: "<prompt>".into(),
         attachments: Vec::new(),
+        mode: None,
+        fast: None,
+        reasoning: None,
+        skills: Vec::new(),
     }
 }
 fn drain(control: &mut AcpControl) -> Vec<AgentEvent> {
@@ -766,7 +771,56 @@ fn native_images_use_base64_not_path_and_combined_frame_is_bounded() {
     );
     assert!(!prompt.to_string().contains("never-read.png"));
     drop(state);
-    h.control.config.maximum_frame_bytes = 10;
+    h.control.config.maximum_prompt_frame_bytes = 10;
+    assert_eq!(
+        h.control.prompt(&input).unwrap_err().code,
+        ErrorCode::InputTooLarge
+    );
+}
+
+struct MebibyteImages;
+impl input::ImageReader for MebibyteImages {
+    fn read(&self, _path: &std::path::Path, maximum: usize) -> Result<Vec<u8>, ProviderFailure> {
+        let bytes = vec![7; 1024 * 1024];
+        assert!(bytes.len() <= maximum);
+        Ok(bytes)
+    }
+}
+
+#[test]
+fn ten_one_mebibyte_pictures_fit_the_prompt_frame_while_reads_stay_bounded() {
+    let mut h = harness(FakeAcpConfig::default(), None, None);
+    h.control.config.attachment_paths = Arc::new(ImagePath);
+    h.control.image_reader = Box::new(MebibyteImages);
+    // What the agent sends Koru keeps its small bound; only Koru's own
+    // prompt frame grew (chat-attachments D6).
+    assert_eq!(
+        h.control.config.maximum_inbound_frame_bytes,
+        crate::providers::DEFAULT_PROVIDER_FRAME_BYTES
+    );
+    assert_eq!(
+        h.control.config.maximum_prompt_frame_bytes,
+        16 * 1024 * 1024
+    );
+    start(&mut h.control);
+    let mut input = input(AgentTurnId::mint());
+    for _ in 0..10 {
+        input.attachments.push(AgentAttachment {
+            id: koru_session_protocol::AttachmentId::mint(),
+            kind: koru_session_protocol::AttachmentKind::Image,
+            media_type: "image/png".into(),
+        });
+    }
+    let prompt = h.control.prompt(&input).unwrap();
+    assert_eq!(prompt.len(), 11, "the text and ten pictures");
+    // Thirteen are past the frame and refused before anything is sent.
+    for _ in 0..3 {
+        input.attachments.push(AgentAttachment {
+            id: koru_session_protocol::AttachmentId::mint(),
+            kind: koru_session_protocol::AttachmentKind::Image,
+            media_type: "image/png".into(),
+        });
+    }
     assert_eq!(
         h.control.prompt(&input).unwrap_err().code,
         ErrorCode::InputTooLarge
@@ -1038,11 +1092,15 @@ mod approvals;
 
 mod claude;
 
+mod devin;
+
 mod routes;
 
 mod routes_live;
 
 mod diagnostics;
+
+mod steering;
 
 /// Protocol v17: a failed call's own message crosses, bounded — the first
 /// text block of the update, else the raw output's `message` — and a
@@ -1095,7 +1153,7 @@ fn a_failed_tool_carries_its_own_message_bounded() {
     assert_eq!(details[2], (true, None, Some("a result".into())));
 }
 
-/// UC17: a diff block crosses as its path over its new text, an update's
+/// UC17: a diff block crosses as a unified diff (D17), an update's
 /// content accumulates until the completion, and everything is bounded.
 #[test]
 fn a_tools_output_is_its_text_or_its_diff_and_is_bounded() {
@@ -1135,9 +1193,303 @@ fn a_tools_output_is_its_text_or_its_diff_and_is_bounded() {
             _ => None,
         })
         .collect();
-    assert_eq!(outputs[0].as_deref(), Some("README.md\nnew words"));
+    assert_eq!(
+        outputs[0].as_deref(),
+        Some("--- README.md\n+++ README.md\n@@\n-old\n+new words")
+    );
     assert_eq!(
         outputs[1].as_deref().map(str::len),
         Some(koru_session_protocol::TOOL_CONTENT_CHARS)
     );
 }
+
+fn inject_updates(h: &mut Harness, updates: impl IntoIterator<Item = Value>) {
+    for update in updates {
+        h.injected.lock().unwrap().push_back(json!({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":SESSION,"update":update}}));
+    }
+}
+
+fn starts(events: &[AgentEvent]) -> Vec<(String, Option<String>)> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            AgentEvent::ToolStarted { label, input, .. } => Some((label.clone(), input.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+fn outputs(events: &[AgentEvent]) -> Vec<Option<String>> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            AgentEvent::ToolCompleted { output, .. } => Some(output.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// D17: Claude (claude-agent-acp 0.76.0, `toolCallNotification`) announces
+/// a call as *Terminal* with `rawInput: {}` while the model is still writing
+/// it, then refines it in an update with the command, its real title and
+/// the command's description as text. The row starts once, with the
+/// command; the description is not the output; the result is.
+#[test]
+fn a_call_announced_before_its_input_starts_with_what_it_does() {
+    let mut h = harness(FakeAcpConfig::default(), None, None);
+    start(&mut h.control);
+    let id = AgentTurnId::mint();
+    h.control.submit(input(id)).unwrap();
+    inject_updates(
+        &mut h,
+        [
+            json!({"sessionUpdate":"tool_call","toolCallId":"bash-1","title":"Terminal","kind":"execute","status":"pending","rawInput":{},"content":[]}),
+            json!({"sessionUpdate":"tool_call_update","toolCallId":"bash-1","title":"git status","kind":"execute",
+                "rawInput":{"command":"git status","description":"Show the tree's status"},
+                "content":[{"type":"content","content":{"type":"text","text":"Show the tree's status"}}]}),
+            json!({"sessionUpdate":"tool_call_update","toolCallId":"bash-1","status":"completed",
+                "content":[{"type":"content","content":{"type":"text","text":"```console\nOn branch main\n```"}}],
+                "rawOutput":"On branch main"}),
+        ],
+    );
+    let events = drain(&mut h.control);
+    assert_eq!(
+        starts(&events),
+        vec![(
+            "git status".to_owned(),
+            Some(r#"{"command":"git status","description":"Show the tree's status"}"#.into())
+        )]
+    );
+    assert_eq!(
+        outputs(&events),
+        vec![Some("```console\nOn branch main\n```".into())]
+    );
+}
+
+/// Calls announced together start in the order they were announced, each
+/// once it says what it does; text that follows a held call releases it
+/// first, so the call keeps its place in the reply.
+#[test]
+fn held_calls_start_in_order_and_before_what_follows_them() {
+    let mut h = harness(FakeAcpConfig::default(), None, None);
+    start(&mut h.control);
+    let id = AgentTurnId::mint();
+    h.control.submit(input(id)).unwrap();
+    inject_updates(
+        &mut h,
+        [
+            json!({"sessionUpdate":"tool_call","toolCallId":"a","title":"Read File","kind":"read","status":"pending","rawInput":{}}),
+            json!({"sessionUpdate":"tool_call","toolCallId":"b","title":"Read File","kind":"read","status":"pending","rawInput":{}}),
+            json!({"sessionUpdate":"tool_call_update","toolCallId":"b","title":"Read b.rs","rawInput":{"file_path":"b.rs"}}),
+            json!({"sessionUpdate":"tool_call_update","toolCallId":"a","title":"Read a.rs","rawInput":{"file_path":"a.rs"}}),
+            json!({"sessionUpdate":"tool_call","toolCallId":"c","title":"Terminal","kind":"execute","status":"pending","rawInput":{}}),
+            json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"and then"}}),
+        ],
+    );
+    let events = drain(&mut h.control);
+    let labels = starts(&events)
+        .into_iter()
+        .map(|(label, _)| label)
+        .collect::<Vec<_>>();
+    assert_eq!(labels, ["Read a.rs", "Read b.rs", "Terminal"]);
+    let held = events
+        .iter()
+        .position(|e| matches!(e, AgentEvent::ToolStarted { label, .. } if label == "Terminal"))
+        .unwrap();
+    let said = events
+        .iter()
+        .position(|e| matches!(e, AgentEvent::MessageDelta { .. }))
+        .unwrap();
+    assert!(held < said, "a held call starts before the text after it");
+}
+
+/// An edit's diff is its output even when the completion's `rawOutput`
+/// says only that the file was updated.
+#[test]
+fn an_edits_diff_outlives_the_completions_raw_output() {
+    let mut h = harness(FakeAcpConfig::default(), None, None);
+    start(&mut h.control);
+    let id = AgentTurnId::mint();
+    h.control.submit(input(id)).unwrap();
+    inject_updates(
+        &mut h,
+        [
+            json!({"sessionUpdate":"tool_call","toolCallId":"e","title":"Edit","kind":"edit","status":"pending","rawInput":{}}),
+            json!({"sessionUpdate":"tool_call_update","toolCallId":"e","title":"Edit a.txt",
+                "rawInput":{"file_path":"a.txt","old_string":"old","new_string":"new"},
+                "content":[{"type":"diff","path":"a.txt","oldText":"old","newText":"new"}]}),
+            json!({"sessionUpdate":"tool_call_update","toolCallId":"e","status":"completed",
+                "rawOutput":"The file a.txt has been updated."}),
+        ],
+    );
+    let events = drain(&mut h.control);
+    assert_eq!(starts(&events)[0].0, "Edit a.txt");
+    let output = outputs(&events).remove(0).unwrap();
+    assert!(output.contains("a.txt"), "{output}");
+    assert!(!output.contains("has been updated"), "{output}");
+}
+
+/// D17: the hook's report of an edit (claude-agent-acp's
+/// `toolUpdateFromDiffToolResponse`) is one diff block per hunk, with the
+/// hunk's first line in `locations`: the row keeps it as a unified diff
+/// numbered where the hunk is in the file. A new file is all additions.
+#[test]
+fn an_acp_diff_becomes_a_numbered_unified_diff() {
+    let mut h = harness(FakeAcpConfig::default(), None, None);
+    start(&mut h.control);
+    let id = AgentTurnId::mint();
+    h.control.submit(input(id)).unwrap();
+    inject_updates(
+        &mut h,
+        [
+            json!({"sessionUpdate":"tool_call","toolCallId":"e","title":"Edit src/a.rs","kind":"edit","status":"in_progress","rawInput":{"file_path":"src/a.rs"}}),
+            json!({"sessionUpdate":"tool_call_update","toolCallId":"e",
+                "content":[{"type":"diff","path":"src/a.rs","oldText":"fn a() {\n    old();\n}","newText":"fn a() {\n    new();\n}"}],
+                "locations":[{"path":"src/a.rs","line":40}]}),
+            json!({"sessionUpdate":"tool_call_update","toolCallId":"e","status":"completed"}),
+            json!({"sessionUpdate":"tool_call","toolCallId":"w","title":"Write b.txt","kind":"edit","status":"in_progress","rawInput":{"file_path":"b.txt"},
+                "content":[{"type":"diff","path":"b.txt","oldText":null,"newText":"one\ntwo"}]}),
+            json!({"sessionUpdate":"tool_call_update","toolCallId":"w","status":"completed"}),
+        ],
+    );
+    let events = drain(&mut h.control);
+    assert_eq!(
+        outputs(&events),
+        vec![
+            Some(
+                "--- src/a.rs\n+++ src/a.rs\n@@ -40,3 +40,3 @@\n fn a() {\n-    old();\n+    new();\n }"
+                    .into()
+            ),
+            Some("--- /dev/null\n+++ b.txt\n@@\n+one\n+two".into()),
+        ]
+    );
+}
+
+/// A session that offers models and, on the one it starts on, levels.
+fn leveled_peer() -> FakeAcpConfig {
+    let effort = |current: &str, values: &[&str]| {
+        json!({"id":"effort","type":"select","category":"thought_level","currentValue":current,
+            "options":values.iter().map(|value| json!({"value":value,"name":value})).collect::<Vec<_>>()})
+    };
+    FakeAcpConfig {
+        config_options: vec![
+            json!({"id":"model","type":"select","category":"model","currentValue":"default",
+                "options":[{"value":"default","name":"Default"},{"value":"opus","name":"Opus"},
+                           {"value":"haiku","name":"Haiku"}]}),
+            effort("default", &["default", "low", "high"]),
+        ],
+        thought_by_model: vec![
+            (
+                "default".into(),
+                effort("default", &["default", "low", "high"]),
+            ),
+            (
+                "opus".into(),
+                effort("default", &["default", "low", "high", "max"]),
+            ),
+        ],
+        ..FakeAcpConfig::default()
+    }
+}
+
+fn select(
+    model: Option<&str>,
+    reasoning: Option<koru_session_protocol::LaunchReasoning>,
+) -> Option<LaunchSelection> {
+    Some(LaunchSelection {
+        model: model.map(|model| model.parse().unwrap()),
+        reasoning,
+        mode: None,
+        fast: None,
+    })
+}
+
+/// **D18: the level is set after the model, from the model's own answer,
+/// and checked applied.**
+#[test]
+fn a_chosen_level_is_set_after_the_model_and_checked() {
+    let mut h = harness(leveled_peer(), None, None);
+    h.control.config.selection = select(
+        Some("opus"),
+        Some(koru_session_protocol::LaunchReasoning::Max),
+    );
+    start(&mut h.control);
+    let state = h.state.lock().unwrap();
+    let sets: Vec<(String, String)> = state
+        .sent()
+        .iter()
+        .filter(|message| message["method"] == "session/set_config_option")
+        .map(|message| {
+            (
+                message["params"]["configId"].as_str().unwrap().to_owned(),
+                message["params"]["value"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        sets,
+        [
+            ("model".into(), "opus".into()),
+            ("effort".into(), "max".into())
+        ],
+        "max is opus's, offered only once opus is set"
+    );
+}
+
+/// **D19: a level the session does not offer, or does not report applied,
+/// fails the start as a refused level** — never a run at another level.
+#[test]
+fn a_level_not_offered_or_not_applied_is_refused() {
+    let mut h = harness(leveled_peer(), None, None);
+    h.control.config.selection = select(None, Some(koru_session_protocol::LaunchReasoning::Max));
+    let refused = h
+        .control
+        .start(AgentStart::fresh(SessionId::mint(), None))
+        .unwrap_err();
+    assert_eq!(refused.code, ErrorCode::ProviderModelUnavailable);
+    assert_eq!(refused.diagnostic, ProviderDiagnostic::ReasoningRejected);
+
+    let mut ignoring = leveled_peer();
+    ignoring.ignore_level = true;
+    let mut h = harness(ignoring, None, None);
+    h.control.config.selection = select(None, Some(koru_session_protocol::LaunchReasoning::High));
+    let refused = h
+        .control
+        .start(AgentStart::fresh(SessionId::mint(), None))
+        .unwrap_err();
+    assert_eq!(refused.diagnostic, ProviderDiagnostic::ReasoningRejected);
+
+    // A session with no level option at all refuses any level.
+    let mut h = harness(FakeAcpConfig::default(), None, None);
+    h.control.config.selection = select(None, Some(koru_session_protocol::LaunchReasoning::Low));
+    assert_eq!(
+        h.control
+            .start(AgentStart::fresh(SessionId::mint(), None))
+            .unwrap_err()
+            .diagnostic,
+        ProviderDiagnostic::ReasoningRejected
+    );
+}
+
+/// **D16: the walk reads each model's own levels** by setting the session's
+/// model to it; a model with none reads none.
+#[test]
+fn the_walk_reads_each_models_levels() {
+    let mut h = harness(leveled_peer(), None, None);
+    start(&mut h.control);
+    let walked = h.control.walk_levels();
+    let levels = |id: &str| {
+        walked
+            .iter()
+            .find(|model| model.id.as_str() == id)
+            .unwrap()
+            .reasoning
+            .as_ref()
+            .map(|reasoning| reasoning.levels.len())
+    };
+    assert_eq!(levels("default"), Some(2));
+    assert_eq!(levels("opus"), Some(3));
+    assert_eq!(levels("haiku"), None);
+}
+
+mod questions;

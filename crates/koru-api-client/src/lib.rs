@@ -73,7 +73,8 @@ pub use catalog::{
 /// The scope that gates archive, soft-delete and restore.
 ///
 /// **In neither the default nor the allowed set.** Naming it is not enough; a
-/// caller must also be vouched for by the Agent that launched it — see
+/// caller must also be vouched for by the Agent, which vouches only for the
+/// Koru app of its own installation — see
 /// [`Client::connect_first_party`]. Spelled again in `koru-api-gateway-core`,
 /// which this crate deliberately does not link;
 /// `the_destructive_scope_literals_agree` pins the two copies together.
@@ -197,8 +198,14 @@ fn http_client() -> reqwest::blocking::Client {
 }
 
 fn stream_http_client() -> reqwest::blocking::Client {
+    // **An explicit read limit.** A blocking client left unset reads with a
+    // 30 s default, and an agent can be silent longer than that while it
+    // thinks or waits on a permission: the stream was cut and the window said
+    // *Connection interrupted*. The gateway now sends a keep-alive comment
+    // every 15 s, so 60 s of nothing at all means the connection is gone.
     reqwest::blocking::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(5))
+        .timeout(std::time::Duration::from_secs(60))
         .build()
         .expect("build the bounded gateway stream client")
 }
@@ -308,7 +315,7 @@ impl Client {
         )
     }
 
-    /// **Connect as a window the Agent launched, carrying a grant.**
+    /// **Connect as a Koru window the Agent vouches for, carrying a grant.**
     ///
     /// The one constructor that can come back holding
     /// [`WORKSPACE_DESTROY_SCOPE`]. Three things happen in order, and the order
@@ -316,8 +323,9 @@ impl Client {
     ///
     /// 1. this process asks the Agent to vouch for it ([`grants::request`]).
     ///    The Agent answers only for a connection whose **transport-read** pid
-    ///    is one it launched, so a caller cannot ask on somebody else's behalf
-    ///    and this call has to be made from the process that wants the scope;
+    ///    is running the `koru` beside it, so a caller cannot ask on somebody
+    ///    else's behalf and this call has to be made from the process that
+    ///    wants the scope;
     /// 2. the grant travels in this session's hello and is spent by being
     ///    validated, so a token that leaks afterwards is worthless;
     /// 3. the gateway asks the Agent about it only because the hello also names
@@ -325,9 +333,10 @@ impl Client {
     ///    as it was.
     ///
     /// **No Agent is an answer, not a failure.** A grant is meaningful only
-    /// from a running supervisor that launched this process, so when there is
-    /// none — a standalone run, a rooted rehearsal, a developer's `cargo run` —
-    /// this connects without one and comes back holding the ordinary scopes.
+    /// from a running Agent of this installation, so when there is none, or it
+    /// refuses — a standalone run, a `koru` from another installation than the
+    /// Agent's — this connects without one and comes back holding the ordinary
+    /// scopes.
     /// The caller finds out by asking what it got: the surface renders its
     /// destructive rows disabled with a reason rather than pretending they will
     /// work. Failing the whole connection would mean a window that cannot be
@@ -343,7 +352,7 @@ impl Client {
 
     /// [`Self::connect_first_party`] against a rooted installation.
     ///
-    /// A rooted product must reach the rooted Agent that launched it, or a
+    /// A rooted product must reach its own rooted Agent, or a
     /// rehearsal would be asking somebody's real installation to vouch for it.
     pub fn connect_at_first_party(
         segment: &str,
@@ -714,6 +723,38 @@ impl AiClient<'_> {
         )
     }
 
+    /// **What a local agent can be told to do by name in `folder`** (koru-ai
+    /// D121) — Codex's skills, for the composer's `$`. `None` is the home
+    /// folder a chat's agent starts in.
+    pub fn discover_agent_commands(
+        &self,
+        provider: &AiProviderId,
+        folder: Option<&str>,
+    ) -> AiResult<koru_ai_wire::AgentCommandsResponse> {
+        self.json(
+            reqwest::Method::POST,
+            format!("/v1/ai/providers/{provider}/commands"),
+            Some(json_body(&koru_ai_wire::DiscoverAgentCommandsRequest {
+                folder: folder.map(str::to_owned),
+            })?),
+        )
+    }
+
+    /// The agent's list rebuilt first — the manual refresh: the host
+    /// re-probes the agent and lists it again before answering.
+    pub fn refresh_agent_models(
+        &self,
+        provider: &AiProviderId,
+    ) -> AiResult<koru_ai_wire::AgentModelsResponse> {
+        self.json(
+            reqwest::Method::POST,
+            format!("/v1/ai/providers/{provider}/models"),
+            Some(json_body(&koru_ai_wire::DiscoverAgentModelsRequest {
+                refresh: true,
+            })?),
+        )
+    }
+
     pub fn pull_ollama_model(
         &self,
         request: &PullOllamaModelRequest,
@@ -759,8 +800,18 @@ impl AiClient<'_> {
         )
     }
 
-    pub fn list_chats(&self) -> AiResult<koru_ai_wire::ListChatsResponse> {
-        self.json(reqwest::Method::GET, "/v1/ai/chats".into(), None)
+    /// **One profile's chats** (AI schema 13): what a window of that
+    /// profile lists. `None` is every profile's, for a surface that belongs
+    /// to none.
+    pub fn list_chats(
+        &self,
+        profile: Option<koru_ai_core::ProfileId>,
+    ) -> AiResult<koru_ai_wire::ListChatsResponse> {
+        let path = match profile {
+            Some(profile) => format!("/v1/ai/chats?profile={}", profile.to_storage()),
+            None => "/v1/ai/chats".into(),
+        };
+        self.json(reqwest::Method::GET, path, None)
     }
 
     pub fn read_chat(&self, chat: ChatId) -> AiResult<ChatTranscript> {
@@ -775,6 +826,18 @@ impl AiClient<'_> {
         self.json(
             reqwest::Method::PATCH,
             format!("/v1/ai/chats/{chat}"),
+            Some(json_body(request)?),
+        )
+    }
+
+    pub fn pin_chat(
+        &self,
+        chat: ChatId,
+        request: &koru_ai_wire::PinChatRequest,
+    ) -> AiResult<koru_ai_wire::PinChatResponse> {
+        self.json(
+            reqwest::Method::PATCH,
+            format!("/v1/ai/chats/{chat}/pin"),
             Some(json_body(request)?),
         )
     }
@@ -799,6 +862,18 @@ impl AiClient<'_> {
         self.json(
             reqwest::Method::PATCH,
             format!("/v1/ai/chats/{chat}/privacy"),
+            Some(json_body(request)?),
+        )
+    }
+
+    pub fn update_chat_agent_settings(
+        &self,
+        chat: ChatId,
+        request: &koru_ai_wire::UpdateChatAgentSettingsRequest,
+    ) -> AiResult<koru_ai_wire::UpdateChatAgentSettingsResponse> {
+        self.json(
+            reqwest::Method::PATCH,
+            format!("/v1/ai/chats/{chat}/agent-settings"),
             Some(json_body(request)?),
         )
     }
@@ -999,6 +1074,21 @@ impl AiClient<'_> {
         )
     }
 
+    /// Send text into a running local agent reply (a steer). Answered once
+    /// the agent took it; `steer_unavailable` when the reply cannot take
+    /// text now, and the caller sends the message after the reply instead.
+    pub fn steer_attempt(
+        &self,
+        attempt: InferenceAttemptId,
+        request: &koru_ai_wire::SteerAttemptRequest,
+    ) -> AiResult<koru_ai_wire::SteerAttemptResponse> {
+        self.json(
+            reqwest::Method::POST,
+            format!("/v1/ai/attempts/{attempt}/steer"),
+            Some(json_body(request)?),
+        )
+    }
+
     /// Approve a pending tool call. `choice` is the id of the option a local
     /// agent offered for its permission request; a workspace tool takes none.
     pub fn approve_tool_call(
@@ -1013,6 +1103,24 @@ impl AiClient<'_> {
         )
     }
 
+    /// **Answer a local agent's questions** (koru-ai D108): their row is
+    /// approved with an answer per question. A skip is
+    /// [`Self::deny_tool_call`] with no choice.
+    pub fn answer_tool_questions(
+        &self,
+        tool: ToolInvocationId,
+        answers: Vec<koru_ai_core::AgentAnswer>,
+    ) -> AiResult<ToolDecisionResponse> {
+        self.json(
+            reqwest::Method::POST,
+            format!("/v1/ai/tool-calls/{tool}/approve"),
+            Some(json_body(&koru_ai_wire::ToolDecisionRequest {
+                choice: None,
+                answers: Some(answers),
+            })?),
+        )
+    }
+
     pub fn deny_tool_call(
         &self,
         tool: ToolInvocationId,
@@ -1023,6 +1131,85 @@ impl AiClient<'_> {
             format!("/v1/ai/tool-calls/{tool}/deny"),
             tool_decision_body(choice)?,
         )
+    }
+
+    /// Store one picture or file for a local agent chat's next message
+    /// (chat-attachments). The name and size are checked here first, as the
+    /// service will check them again with the content; the bytes are the
+    /// body, so no path crosses. Blocking: call it off the UI thread.
+    pub fn put_attachment(
+        &self,
+        chat: ChatId,
+        attachment: koru_ai_core::ChatAttachmentId,
+        file_name: &str,
+        source: koru_ai_core::AttachmentSource,
+        bytes: Bytes,
+    ) -> AiResult<koru_ai_wire::ChatAttachmentResponse> {
+        if bytes.len() as u64 > koru_ai_core::attachments::MAX_ATTACHMENT_BYTES {
+            return Err(local_attachment_failure(
+                koru_ai_wire::attachment_codes::TOO_LARGE,
+                "The attachment is larger than the limit.",
+            ));
+        }
+        if koru_ai_core::attachments::allowed_type(file_name).is_none() {
+            return Err(local_attachment_failure(
+                koru_ai_wire::attachment_codes::TYPE_NOT_ALLOWED,
+                "This type of file can't be attached.",
+            ));
+        }
+        let path = format!(
+            "/v1/ai/chats/{chat}/attachments/{attachment}?name={}&source={}",
+            percent_encode_query(file_name),
+            source.as_token()
+        );
+        checked(self.execute_with(
+            reqwest::Method::PUT,
+            path,
+            Some((bytes, "application/octet-stream")),
+            false,
+        )?)?
+        .json()
+        .map_err(|_| protocol_failure("The AI response body was invalid."))
+    }
+
+    /// Remove a staged attachment. A sent one answers `attachment_sent`.
+    pub fn remove_attachment(
+        &self,
+        chat: ChatId,
+        attachment: koru_ai_core::ChatAttachmentId,
+    ) -> AiResult<koru_ai_wire::RemoveAttachmentResponse> {
+        self.json(
+            reqwest::Method::DELETE,
+            format!("/v1/ai/chats/{chat}/attachments/{attachment}"),
+            None,
+        )
+    }
+
+    /// An attachment's stored original.
+    pub fn attachment_bytes(
+        &self,
+        chat: ChatId,
+        attachment: koru_ai_core::ChatAttachmentId,
+    ) -> AiResult<Vec<u8>> {
+        self.bytes(format!("/v1/ai/chats/{chat}/attachments/{attachment}"))
+    }
+
+    /// A picture attachment's PNG thumbnail, at most 512 px on its long edge.
+    pub fn attachment_thumbnail(
+        &self,
+        chat: ChatId,
+        attachment: koru_ai_core::ChatAttachmentId,
+    ) -> AiResult<Vec<u8>> {
+        self.bytes(format!(
+            "/v1/ai/chats/{chat}/attachments/{attachment}/thumbnail"
+        ))
+    }
+
+    fn bytes(&self, path: String) -> AiResult<Vec<u8>> {
+        checked(self.execute(reqwest::Method::GET, path, None, false)?)?
+            .bytes()
+            .map(|bytes| bytes.to_vec())
+            .map_err(|_| transport_failure_message())
     }
 
     fn json<T: serde::de::DeserializeOwned>(
@@ -1043,6 +1230,21 @@ impl AiClient<'_> {
         body: Option<Bytes>,
         streaming: bool,
     ) -> AiResult<reqwest::blocking::Response> {
+        self.execute_with(
+            method,
+            path,
+            body.map(|body| (body, "application/json")),
+            streaming,
+        )
+    }
+
+    fn execute_with(
+        &self,
+        method: reqwest::Method,
+        path: String,
+        body: Option<(Bytes, &'static str)>,
+        streaming: bool,
+    ) -> AiResult<reqwest::blocking::Response> {
         let session = self.client.gateway.as_ref().ok_or_else(|| AiFailure {
             code: "ai_unavailable".into(),
             message: "This client was not created from a Koru API gateway session.".into(),
@@ -1060,9 +1262,9 @@ impl AiClient<'_> {
             let mut request = http
                 .request(method.clone(), format!("{}{}", current.api_endpoint, path))
                 .bearer_auth(current.session.expose());
-            if let Some(body) = &body {
+            if let Some((body, content_type)) = &body {
                 request = request
-                    .header(reqwest::header::CONTENT_TYPE, "application/json")
+                    .header(reqwest::header::CONTENT_TYPE, *content_type)
                     .body(body.clone());
             }
             request.send()
@@ -1133,6 +1335,7 @@ fn decode_ai_event(data: &str) -> AiResult<Option<StreamEvent>> {
             | "text_delta"
             | "usage"
             | "tool_activity"
+            | "notice"
             | "web_search"
             | "citation"
             | "completed"
@@ -1185,9 +1388,10 @@ impl ModelPullEventStream {
     }
 }
 
-fn read_sse_frame(
-    reader: &mut BufReader<reqwest::blocking::Response>,
-) -> AiResult<Option<(String, String)>> {
+/// One `event:`/`data:` frame. Comment lines (`: keep-alive`, which the
+/// gateway sends while an agent is quiet) and the blank lines after them are
+/// skipped, so they never reach a caller as a frame.
+fn read_sse_frame(reader: &mut impl BufRead) -> AiResult<Option<(String, String)>> {
     let mut name = String::new();
     let mut data = Vec::new();
     loop {
@@ -1224,9 +1428,35 @@ fn tool_decision_body(choice: Option<String>) -> AiResult<Option<Bytes>> {
         .map(|choice| {
             json_body(&koru_ai_wire::ToolDecisionRequest {
                 choice: Some(choice),
+                answers: None,
             })
         })
         .transpose()
+}
+
+/// A refusal the client makes before anything is sent, with the code the
+/// service would answer.
+fn local_attachment_failure(code: &str, message: &str) -> AiFailure {
+    AiFailure {
+        code: code.into(),
+        message: message.into(),
+        retryable: false,
+        details: Default::default(),
+    }
+}
+
+/// Percent-encode a query value: unreserved characters stay, every other
+/// byte of its UTF-8 is `%XX`.
+fn percent_encode_query(value: &str) -> String {
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            encoded.push(byte as char);
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
 }
 
 fn json_body<T: serde::Serialize>(value: &T) -> AiResult<Bytes> {
@@ -1486,6 +1716,24 @@ fn boundary_error(message: impl Into<String>) -> Error {
 mod tests {
     use super::*;
 
+    /// **A quiet agent is not a dropped stream.** The gateway's keep-alive
+    /// comments between two events are skipped: the reader sees the two
+    /// events and then the end, nothing in between.
+    #[test]
+    fn keep_alive_comments_between_events_are_skipped() {
+        let wire = b"event: event\ndata: {\"a\":1}\n\n: keep-alive\n\n: keep-alive\n\nevent: event\ndata: {\"b\":2}\n\n";
+        let mut reader = std::io::Cursor::new(&wire[..]);
+        assert_eq!(
+            read_sse_frame(&mut reader).unwrap(),
+            Some(("event".into(), r#"{"a":1}"#.into()))
+        );
+        assert_eq!(
+            read_sse_frame(&mut reader).unwrap(),
+            Some(("event".into(), r#"{"b":2}"#.into()))
+        );
+        assert_eq!(read_sse_frame(&mut reader).unwrap(), None);
+    }
+
     #[test]
     fn ai_namespace_stays_disabled_without_the_capability() {
         let client = Client::from_gateway(koru_api_discovery::GatewayHello {
@@ -1532,5 +1780,21 @@ mod tests {
             decode_ai_event(malformed).unwrap_err().code,
             "invalid_response"
         );
+    }
+
+    #[test]
+    fn a_notice_reaches_the_chat() {
+        let attempt = InferenceAttemptId::new();
+        let notice = format!(
+            r#"{{"version":1,"sequence":2,"event":{{"type":"notice","attempt_id":"{attempt}","notice":"images_as_files","at":1}}}}"#
+        );
+        let event = decode_ai_event(&notice).unwrap().unwrap();
+        assert!(matches!(
+            event.event,
+            koru_ai_wire::PublicAiEvent::Notice {
+                notice: koru_ai_core::AttemptNotice::ImagesAsFiles,
+                ..
+            }
+        ));
     }
 }

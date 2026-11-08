@@ -58,6 +58,20 @@ pub(crate) use koru_ui::menu::EDGE_MARGIN;
 pub enum MenuSubject {
     /// The caption `+` button: create or import rather than acting on a tab.
     NewTab,
+    /// **Several task rows** selected on the Tasks page — Ctrl/Shift+click —
+    /// and the menu over all of them. `native` are the ones typed into the
+    /// page, which *Add document* gives a home to. Ids, never row
+    /// indices: the page is a cache of the store's answer. Never fewer than
+    /// two; one task is [`Task`](Self::Task).
+    Tasks {
+        tasks: Vec<(koru_core::DocumentId, NodeId)>,
+        native: Vec<(koru_core::DocumentId, NodeId)>,
+    },
+    /// The floor's `?`: the help popover. **Not [`Window`](Self::Window)**,
+    /// whose menu the caption's ⋯ tracker shuts the moment the pointer
+    /// leaves its button — which took the help popover down on the first
+    /// move.
+    Help,
     Tab(usize),
     Workspace(WorkspaceId),
     /// A right-click in the Agents navigator: a project row's menu, or —
@@ -87,12 +101,14 @@ pub enum MenuSubject {
     AgentRuns {
         runs: Vec<koru_delegate_core::RunId>,
     },
-    /// A right-click on a chat row in the **Chats** navigator. One row, and
-    /// it deletes the chat — through the confirmation, like the Delete key.
+    /// A right-click on a chat row in the **Chats** navigator. *Rename…*
+    /// renames one chat in its row, like `F2`; the delete row deletes the
+    /// pick — through the confirmation, like the Delete key.
     /// The chat's id, never a row index: the list is a cache of an answer
     /// the AI service rewrites whenever a chat changes.
     AiChat {
-        chat: koru_ai_ui::ChatId,
+        /// The picked chats, in list order.
+        chats: Vec<koru_ai_ui::ChatId>,
     },
     /// A schedule row or one of its metadata rows, captured by stable id.
     AgentSchedules {
@@ -140,11 +156,79 @@ pub enum MenuSubject {
     List(ListId),
     /// The Trash tab's own `…`. One row, and it empties the bin.
     Trash,
+    /// The floor's `…` (E60): New workspace, Import… and its formats, Invite
+    /// people, Trash.
+    Floor,
     /// The window itself — what the caption's overflow button opens. Window
     /// destinations live here; minimize, maximize and close remain direct
     /// caption controls.
     Window,
+    /// **A document's `…`, in its title row** — where Koru AI's ✦ stood.
+    /// The document and its title are taken when the menu opens, so a row
+    /// acts on the page it was opened over, not whatever tab is active by
+    /// the time it is chosen.
+    Document {
+        document: koru_core::DocumentId,
+        title: String,
+    },
 }
+
+/// Koru's accounts, in the strip's order after the website's globe. Brand
+/// names, so no row of the catalog: a name a translator must not touch.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Social {
+    X,
+    Reddit,
+    Instagram,
+    TikTok,
+    YouTube,
+}
+
+impl Social {
+    pub const ALL: [Social; 5] = [
+        Social::X,
+        Social::Reddit,
+        Social::Instagram,
+        Social::TikTok,
+        Social::YouTube,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Social::X => "X",
+            Social::Reddit => "Reddit",
+            Social::Instagram => "Instagram",
+            Social::TikTok => "TikTok",
+            Social::YouTube => "YouTube",
+        }
+    }
+
+    pub fn url(self) -> &'static str {
+        match self {
+            Social::X => "https://x.com/korudotdo",
+            Social::Reddit => "https://www.reddit.com/r/korudo/",
+            Social::Instagram => "https://www.instagram.com/korudotdo/",
+            Social::TikTok => "https://www.tiktok.com/@korudotdo",
+            Social::YouTube => "https://www.youtube.com/@korudotdo",
+        }
+    }
+
+    pub fn glyph(self) -> char {
+        match self {
+            Social::X => koru_draw::icons::X_LOGO,
+            Social::Reddit => koru_draw::icons::REDDIT_LOGO,
+            Social::Instagram => koru_draw::icons::INSTAGRAM_LOGO,
+            Social::TikTok => koru_draw::icons::TIKTOK_LOGO,
+            Social::YouTube => koru_draw::icons::YOUTUBE_LOGO,
+        }
+    }
+}
+
+/// Where the strip's globe goes.
+pub const WEBSITE_URL: &str = "https://www.koru.do";
+
+/// Where the help popover's *Star us on GitHub* goes: Koru's repository.
+pub const GITHUB_URL: &str = "https://github.com/koruworks/mono";
 
 /// What a menu item does. Resolved by the container, not here.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -174,14 +258,19 @@ pub enum MenuAction {
     /// The last row of the Documents flyout when it lists recents: forget
     /// them. It moved here from the Welcome page, which no longer lists them.
     ClearRecents,
-    /// Select the one Welcome tab, or open it. *Get started* used to be a
-    /// second row for the checklist; every Welcome is the checklist now.
-    OpenWelcome,
     ImportAs,
     /// One registered import format's row, carrying the format's stable id.
     /// The label comes from the format's descriptor — the registry decides
     /// what can be imported, this menu only displays it.
     ImportFormat(&'static str),
+    /// The floor menu's rows (the review's artboard, E60): a workspace's own
+    /// verbs, where the popover's WORKSPACES heading used to carry a `+`
+    /// and an import button.
+    NewWorkspace,
+    /// Dimmed until there is an invite flow to open.
+    InvitePeople,
+    /// The Trash tab, with the count of what is in it at the row's end.
+    OpenTrash,
 
     // ------------------------------------------------------------------ tabs
     /// Pop the tab out into its own window.
@@ -220,21 +309,28 @@ pub enum MenuAction {
     /// A running shell or agent session listed under *Active*. Choosing it
     /// focuses the tab already showing it, or attaches a new one.
     OpenRunningSession(SessionId),
+    /// *Manage…*, at the foot of the *Agents* flyout: Settings on Coding →
+    /// Agent providers, where agents are turned on and off.
+    ManageAgents,
     /// Parent of the Chats flyout on the `+` menu.
     Chats,
     /// Open a new Koru AI chat as a main tab.
     NewAiChat,
-    Socials,
+    /// **Open in chat**, on a document's `…`: a new Koru AI chat in a split
+    /// beside the document, the document already a chip in its composer.
+    OpenInChat,
     NewSocialPost,
-    /// **Hand work to an agent** (ROADMAP D7). One row in the `+` menu and
-    /// one in a task's menu, both reaching `MainView::begin_delegation` — the
-    /// same single path the editor's `/delegate` and a document selection's
-    /// row reach. Two variants rather than one because the two menus start
-    /// the modal from different places, and a subject-less action in a
-    /// subject-ful menu is how a row ends up acting on the wrong thing.
-    Delegate,
-    /// *Delegate…* on a task: its title becomes the objective's first line.
+    /// *Delegate…* on a task (ROADMAP D7): its title becomes the objective's
+    /// first line. It reaches `MainView::begin_delegation`, the same single
+    /// path the editor's `/delegate` and a document selection's row reach.
     TaskDelegate,
+    /// **A Tasks page to write a new task on** — the New… launcher's
+    /// Shift+T list: the queues, then the person's lists. Choosing one opens
+    /// the page with the caret in its *Add a task* row.
+    NewTaskIn(crate::panes::explore::rail::RailTarget),
+    /// *Import files…* — the file picker, files kept as files. The first
+    /// row of the New… launcher's Import list, above the content formats.
+    ImportFiles,
     /// **One of a run's results**, by its position in the snapshot the menu
     /// opened with. Picking it opens that version as a tab — the same
     /// primitive the run's own Result view and the Artifacts column reach.
@@ -258,6 +354,14 @@ pub enum MenuAction {
     /// stays with a sentence under it when its agent could not be stopped
     /// (UC13).
     DeleteAiChat,
+    /// *Rename…* on a chat row's menu (koru-ai D86): the field `F2` opens,
+    /// over the row. Its own row rather than [`Rename`](Self::Rename)
+    /// because this menu shows no chords for now.
+    RenameAiChat,
+    /// *Pin* / *Unpin* on a chat row's menu (D86): into or out of the
+    /// Chats list's Pinned group.
+    PinAiChat,
+    UnpinAiChat,
     /// Rename a recurring schedule in its navigator row.
     ScheduleRename,
     /// Edit the complete future definition of a recurring schedule.
@@ -510,6 +614,33 @@ pub enum MenuAction {
     HeaderFeedback,
     HeaderShortcuts,
     HeaderMobile,
+    // ------------------------------------------------------------ help
+    /// The *WHAT'S NEW* heading over the release card. It wears a dot while
+    /// a build is on offer.
+    HelpWhatsNewHeading,
+    /// The release card (the review's artboard): the build on offer when the
+    /// Agent has one, else the build that is running — badge, date, title,
+    /// a line under it, and the Download button at its foot, which is
+    /// [`HelpDownload`](Self::HelpDownload). Chosen as a whole (its `›`), it
+    /// opens the What's new tab.
+    HelpRelease,
+    /// The card's button. **Not a row**: reached only through the card's
+    /// control, like the zoom stepper's three, so nothing lists it.
+    HelpDownload,
+    /// The releases page on koru.do, in the browser.
+    HelpFullChangelog,
+    /// The Feedback tab. **The only feedback row** (the review's note): *Report
+    /// a problem* was a second door to the same tab and went.
+    HelpSendFeedback,
+    /// Koru's repository on GitHub, in the browser, to star it.
+    HelpStarOnGitHub,
+    /// The strip at the popover's foot: the website and the socials, each a
+    /// control of this one row. **Not a row that is chosen**: its controls
+    /// are, and what each does is [`HelpWebsite`](Self::HelpWebsite) or a
+    /// [`HelpSocial`](Self::HelpSocial), which nothing lists either.
+    HelpSocials,
+    HelpWebsite,
+    HelpSocial(Social),
     /// The internal session recorder: opens the setup modal
     /// (the internal session-recorder design). Only ever *built* behind the
     /// internal-and-Windows gate in [`window_items`]; a public build matches
@@ -552,6 +683,7 @@ thread_local! {
     /// menu, the same way `label` already reaches the global `format::lang()`.
     /// Only the UI thread ever touches it, and only one such menu is open at a
     /// time.
+    static TASK_LIST_NAMES: RefCell<Vec<(ListId, String)>> = const { RefCell::new(Vec::new()) };
     static SESSION_PROJECT_NAMES: RefCell<Vec<(ProjectId, String)>> =
         const { RefCell::new(Vec::new()) };
     /// Why *Terminate* is refused for the session the open menu is about, or
@@ -573,6 +705,10 @@ thread_local! {
     /// than one counts them, so the menu says what it will do before it is
     /// pressed rather than in the dialog afterwards.
     static RUN_DELETE_COUNT: RefCell<usize> = const { RefCell::new(1) };
+    /// The same for *Delete chat*: how many chats the menu is about.
+    static CHAT_DELETE_COUNT: RefCell<usize> = const { RefCell::new(1) };
+    /// What the floor menu's *Trash* row counts.
+    static TRASH_COUNT: RefCell<usize> = const { RefCell::new(0) };
     /// What the run whose pill was right-clicked has produced — one title per
     /// row, snapshotted when the menu opens for `SESSION_PROJECT_NAMES`'
     /// reason and one more: a run that is still working registers results
@@ -649,6 +785,69 @@ pub fn set_plus_canvases(canvases: Vec<(koru_core::DocumentId, String)>) {
 }
 
 thread_local! {
+    /// The coding agents turned off on this machine (Settings → Coding →
+    /// Agent providers), by agent key. Their rows leave the *Agents* flyout
+    /// wherever it opens; a session already running keeps its *Active* row.
+    static HIDDEN_AGENTS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Record the agents turned off, for the next agent menu to leave out.
+pub fn set_hidden_agents(keys: Vec<String>) {
+    HIDDEN_AGENTS.with(|cell| *cell.borrow_mut() = keys);
+}
+
+thread_local! {
+    /// The order the coding agents are listed in (Agent providers), every
+    /// agent named; the *Agents* flyout lists its rows in it.
+    static AGENT_ORDER: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Record the agents' order, for the next agent menu to follow.
+pub fn set_agent_order(keys: Vec<String>) {
+    AGENT_ORDER.with(|cell| *cell.borrow_mut() = keys);
+}
+
+thread_local! {
+    /// The presence probe's latest answer, by `built_in_profiles()` index —
+    /// `None` until the first probe has answered. The window hands it over
+    /// when an agent menu opens and again whenever a fresh answer lands, so a
+    /// flyout opened a moment after its parent already reads the new answer.
+    static PROFILE_PRESENCE: RefCell<Option<Vec<bool>>> = const { RefCell::new(None) };
+}
+
+/// Record the presence probe's answer, for the next agent menu to leave out
+/// the agents this machine does not have.
+pub fn set_profile_presence(presence: Option<Vec<bool>>) {
+    PROFILE_PRESENCE.with(|cell| *cell.borrow_mut() = presence);
+}
+
+/// **Whether the probe has said this agent's program is not here.** An
+/// *Agents* flyout lists only what it can launch (product decision,
+/// 2026-11-05): a row that can only say *Not installed* is clutter there,
+/// and installing is *Manage…*'s job (Settings → Agent providers).
+///
+/// `false` before any answer, so the menu a person opens at launch is the
+/// full list rather than empty; the probe is a `PATH` walk that lands within
+/// milliseconds, and the window rebuilds an open flyout when it does
+/// (`MainView::refresh_open_agent_flyout`). A shell is never left out — a
+/// missing one still dims with its note, which is Koru Terminal's rule.
+fn agent_missing(index: usize) -> bool {
+    PROFILE_PRESENCE.with(|cell| {
+        cell.borrow()
+            .as_ref()
+            .is_some_and(|rows| !rows.get(index).copied().unwrap_or(false))
+    })
+}
+
+/// Whether a built-in profile is an agent turned off on this machine.
+fn agent_hidden(profile: &koru_session_profiles::LaunchProfile) -> bool {
+    profile
+        .label
+        .agent_key()
+        .is_some_and(|key| HIDDEN_AGENTS.with(|cell| cell.borrow().iter().any(|off| off == key)))
+}
+
+thread_local! {
     /// The Profiles the open workspace menu's *Move to Profile ▸* flyout
     /// offers, and the reason each of its dimmed rows gives — snapshotted as
     /// the menu opens, for `SESSION_PROJECT_NAMES`' reason: a row's label and
@@ -710,6 +909,50 @@ fn workspace_menu_refusal(action: MenuAction) -> Option<String> {
 /// Snapshot the projects the *Move to project ▸* flyout offers. Called by the
 /// container as it opens a session's menu; the flyout's rows and their labels
 /// read it.
+/// Snapshot the person's task lists, by id, for the New… launcher's
+/// Shift+T list — `SESSION_PROJECT_NAMES`' reason: a row's label is read
+/// while the menu draws, long after the table it came from may have moved.
+pub fn set_task_list_names(names: Vec<(ListId, String)>) {
+    TASK_LIST_NAMES.with(|cell| *cell.borrow_mut() = names);
+}
+
+/// The Shift+T list: the four queues, then a rule and each snapshotted
+/// list, in the rail's order.
+pub fn task_destination_items() -> Vec<MenuAction> {
+    use crate::panes::explore::rail::{QUEUES, RailTarget};
+    let mut items: Vec<MenuAction> = QUEUES
+        .into_iter()
+        .map(|bucket| MenuAction::NewTaskIn(RailTarget::Bucket(bucket)))
+        .collect();
+    TASK_LIST_NAMES.with(|cell| {
+        let lists = cell.borrow();
+        if !lists.is_empty() {
+            items.push(MenuAction::Divider);
+        }
+        items.extend(
+            lists
+                .iter()
+                .map(|(id, _)| MenuAction::NewTaskIn(RailTarget::List(*id))),
+        );
+    });
+    items
+}
+
+fn task_destination_label(target: crate::panes::explore::rail::RailTarget) -> String {
+    use crate::panes::explore::rail::{RailTarget, bucket_label, reminders_label};
+    match target {
+        RailTarget::Bucket(bucket) => bucket_label(bucket).to_owned(),
+        RailTarget::List(id) => TASK_LIST_NAMES.with(|cell| {
+            cell.borrow()
+                .iter()
+                .find(|(list, _)| *list == id)
+                .map(|(_, name)| name.clone())
+                .unwrap_or_else(|| "List".to_owned())
+        }),
+        RailTarget::Reminders => reminders_label(crate::format::lang()).to_owned(),
+    }
+}
+
 pub fn set_session_project_names(names: Vec<(ProjectId, String)>) {
     SESSION_PROJECT_NAMES.with(|cell| *cell.borrow_mut() = names);
 }
@@ -717,6 +960,27 @@ pub fn set_session_project_names(names: Vec<(ProjectId, String)>) {
 /// Snapshot why *Delete run* is refused for the runs the menu is about.
 pub fn set_run_delete_refusal(reason: Option<&'static str>) {
     RUN_DELETE_REFUSAL.with(|cell| *cell.borrow_mut() = reason);
+}
+
+/// Snapshot what is in the Trash, so the floor menu's row can count it.
+pub fn set_trash_count(count: usize) {
+    TRASH_COUNT.with(|cell| *cell.borrow_mut() = count);
+}
+
+/// The floor's `…` menu (the review's artboard, E60).
+pub fn floor_items() -> Vec<MenuAction> {
+    vec![
+        MenuAction::NewWorkspace,
+        MenuAction::ImportAs,
+        MenuAction::Divider,
+        MenuAction::InvitePeople,
+        MenuAction::OpenTrash,
+    ]
+}
+
+/// Snapshot how many chats *Delete chat* is about, so the row can count them.
+pub fn set_chat_delete_count(count: usize) {
+    CHAT_DELETE_COUNT.with(|cell| *cell.borrow_mut() = count.max(1));
 }
 
 /// Snapshot how many runs *Delete run* is about, so the row can count them.
@@ -773,7 +1037,7 @@ impl MenuAction {
         use koru_features as f;
         match self {
             // Agents (shell sessions stay).
-            Self::NewAgent | Self::ActiveAgents => f::agents(),
+            Self::NewAgent | Self::ActiveAgents | Self::ManageAgents => f::agents(),
             // A project is a row of the Agents view's tree.
             Self::DeleteProject => f::agent_views(),
             Self::TerminalProfile(index) => {
@@ -783,14 +1047,18 @@ impl MenuAction {
                         .nth(index)
                         .is_none_or(|profile| profile.kind != ProfileKind::Agent)
             }
-            // Koru AI chat and Delegate, with the runs and schedules Delegate
-            // makes.
+            // Starting Delegate: with Koru AI *and* the agent views.
+            Self::TaskDelegate => f::delegate(),
+            // Koru AI chat, with the runs and schedules Delegate has made —
+            // those keep their menus whether or not a new one can be started.
             Self::NewAiChat
+            | Self::OpenInChat
             | Self::Chats
             | Self::OpenRecentChat(_)
             | Self::DeleteAiChat
-            | Self::Delegate
-            | Self::TaskDelegate
+            | Self::RenameAiChat
+            | Self::PinAiChat
+            | Self::UnpinAiChat
             | Self::OpenRunResult(_)
             | Self::RunHasNoResults
             | Self::DeleteRun
@@ -823,7 +1091,8 @@ impl MenuAction {
             // `OpenRecentDocument`, listed only inside this flyout.
             Self::Canvases | Self::NewCanvas => f::canvas(),
             // Socials authoring (the Agent's publisher runs regardless).
-            Self::Socials | Self::NewSocialPost => f::socials(),
+            Self::NewSocialPost => f::socials(),
+            Self::NewTaskIn(_) => f::tasks(),
             _ => true,
         }
     }
@@ -844,7 +1113,12 @@ impl MenuAction {
             MenuAction::ListSwatch(token) => return Cow::Owned(color_label(token)),
             MenuAction::TerminalTheme => return Cow::Borrowed("Terminal theme"),
             MenuAction::TerminalFont => return Cow::Borrowed("Terminal font"),
-            MenuAction::TerminalFontMore => return Cow::Borrowed("More fonts\u{2026}"),
+            MenuAction::TerminalFontMore => {
+                return Cow::Borrowed(koru_i18n::t(
+                    crate::format::lang(),
+                    koru_i18n::Key::SettingsMoreFonts,
+                ));
+            }
             MenuAction::TerminalThemeIs(token) => {
                 let name = match token {
                     None => "Default (Settings)",
@@ -890,11 +1164,14 @@ impl MenuAction {
             }
             MenuAction::NewShell => "Shell",
             MenuAction::NewAgent => "Agents",
+            MenuAction::ManageAgents => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::MenuManageAgents)
+            }
             MenuAction::ActiveShells | MenuAction::ActiveAgents => "Active",
             MenuAction::TerminalProfile(index) => {
                 return Cow::Owned(terminal_profile_label(index));
             }
-            MenuAction::Delegate | MenuAction::TaskDelegate => {
+            MenuAction::TaskDelegate => {
                 return Cow::Borrowed(koru_i18n::t(
                     crate::format::lang(),
                     koru_i18n::Key::DelegateMenuRow,
@@ -905,8 +1182,8 @@ impl MenuAction {
             }
             MenuAction::Chats => "Chats",
             MenuAction::NewAiChat => "New",
-            MenuAction::Socials => {
-                koru_i18n::socials::t(crate::format::lang(), koru_i18n::socials::Key::Title)
+            MenuAction::OpenInChat => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::DocumentOpenInChat)
             }
             MenuAction::NewSocialPost => {
                 koru_i18n::socials::t(crate::format::lang(), koru_i18n::socials::Key::NewPost)
@@ -922,10 +1199,35 @@ impl MenuAction {
                     koru_i18n::Key::TerminalDeleteProject,
                 ));
             }
-            MenuAction::DeleteAiChat => {
+            MenuAction::RenameAiChat => {
                 return Cow::Borrowed(koru_i18n::t(
                     crate::format::lang(),
-                    koru_i18n::Key::ChatsDelete,
+                    koru_i18n::Key::ScheduleRename,
+                ));
+            }
+            MenuAction::PinAiChat => {
+                return Cow::Borrowed(koru_i18n::t(
+                    crate::format::lang(),
+                    koru_i18n::Key::ChatsPin,
+                ));
+            }
+            MenuAction::UnpinAiChat => {
+                return Cow::Borrowed(koru_i18n::t(
+                    crate::format::lang(),
+                    koru_i18n::Key::ChatsUnpin,
+                ));
+            }
+            MenuAction::DeleteAiChat => {
+                let lang = crate::format::lang();
+                let count = CHAT_DELETE_COUNT.with(|cell| *cell.borrow());
+                if count <= 1 {
+                    return Cow::Borrowed(koru_i18n::t(lang, koru_i18n::Key::ChatsDelete));
+                }
+                // The row says how many, the way *Delete run* does (the
+                // review's note: delete several chats as several documents).
+                return Cow::Owned(koru_i18n::fill(
+                    koru_i18n::t(lang, koru_i18n::Key::ChatsDeleteMany),
+                    &[&koru_i18n::number::decimal(lang, count as u64)],
                 ));
             }
             MenuAction::DeleteRun => {
@@ -980,9 +1282,27 @@ impl MenuAction {
                     koru_i18n::Key::TerminalTerminate,
                 ));
             }
-            MenuAction::OpenWelcome => "Welcome",
+            MenuAction::NewWorkspace => {
+                return Cow::Borrowed(koru_i18n::t(
+                    crate::format::lang(),
+                    koru_i18n::Key::TerminalNewWorkspace,
+                ));
+            }
+            MenuAction::InvitePeople => {
+                return Cow::Borrowed(koru_i18n::t(
+                    crate::format::lang(),
+                    koru_i18n::Key::InvitePeople,
+                ));
+            }
+            MenuAction::OpenTrash => {
+                return Cow::Borrowed(koru_i18n::t(
+                    crate::format::lang(),
+                    koru_i18n::Key::WorkspacesTrash,
+                ));
+            }
             MenuAction::ClearRecents => "Clear recents",
             MenuAction::ImportAs => "Import\u{2026}",
+            MenuAction::ImportFiles => "Import files\u{2026}",
             MenuAction::ImportFormat(id) => {
                 koru_workspace_host::formats::import_menu_name(id, crate::format::lang())
                     .unwrap_or(id)
@@ -1006,8 +1326,9 @@ impl MenuAction {
             // short. "Tabs" is honest for one or many — each open is its own tab.
             MenuAction::OpenInNewTab => "Open in new tabs",
             MenuAction::OpenDocumentInNewWindow => "Open in a new window",
-            MenuAction::Rename => "Rename…",
-            MenuAction::ScheduleRename => {
+            // One word for every row that renames — a file, a workspace, a
+            // chat, a schedule — so it is one key in every language.
+            MenuAction::Rename | MenuAction::ScheduleRename | MenuAction::ListRename => {
                 return Cow::Borrowed(koru_i18n::t(
                     crate::format::lang(),
                     koru_i18n::Key::ScheduleRename,
@@ -1069,17 +1390,19 @@ impl MenuAction {
             MenuAction::DeletePermanently => "Delete permanently",
             MenuAction::EmptyTrash => "Empty Trash",
             MenuAction::RailOpenInNewTab => "Open in new tab",
-            MenuAction::TaskGoToOrigin => "View in origin",
+            MenuAction::NewTaskIn(target) => {
+                return Cow::Owned(task_destination_label(target));
+            }
+            MenuAction::TaskGoToOrigin => "Open document",
             MenuAction::TaskGoToList => "Go to list",
-            MenuAction::TaskCreateDocument => "Create document",
+            MenuAction::TaskCreateDocument => "Add document",
             MenuAction::TaskComplete => "Complete",
             MenuAction::TaskPinToday => "Add to Today",
             MenuAction::TaskUnpinToday => "Remove from Today",
             MenuAction::TaskReopen => "Reopen",
-            MenuAction::TaskDue => "Due\u{2026}",
-            MenuAction::TaskPriority => "Priority\u{2026}",
-            MenuAction::TaskList => "List\u{2026}",
-            MenuAction::ListRename => "Rename\u{2026}",
+            MenuAction::TaskDue => "Due",
+            MenuAction::TaskPriority => "Priority",
+            MenuAction::TaskList => "List",
             MenuAction::ListColor => "Color",
             MenuAction::ListDelete => "Delete list\u{2026}",
             MenuAction::TaskRemove => "Remove from Tasks",
@@ -1106,6 +1429,28 @@ impl MenuAction {
             MenuAction::HeaderFeedback => "Feedback",
             MenuAction::HeaderShortcuts => "Keyboard shortcuts",
             MenuAction::HeaderMobile => "Get the mobile app",
+            // A heading, so in caps — the pane's *WORKSPACES · n* rule.
+            MenuAction::HelpWhatsNewHeading => {
+                return Cow::Owned(
+                    koru_i18n::t(crate::format::lang(), koru_i18n::Key::WhatsNew).to_uppercase(),
+                );
+            }
+            MenuAction::HelpRelease => return Cow::Owned(help_card().title),
+            MenuAction::HelpDownload => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::Download)
+            }
+            MenuAction::HelpFullChangelog => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::FullChangelog)
+            }
+            MenuAction::HelpSendFeedback => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::SendFeedback)
+            }
+            MenuAction::HelpStarOnGitHub => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::StarOnGitHub)
+            }
+            MenuAction::HelpSocials => "",
+            MenuAction::HelpWebsite => "koru.do",
+            MenuAction::HelpSocial(social) => social.name(),
             MenuAction::HeaderStartRecording => {
                 koru_i18n::t(crate::format::lang(), koru_i18n::Key::RecordingMenuStart)
             }
@@ -1155,6 +1500,12 @@ impl MenuAction {
             // **Windows' own window-management chords**, which exist only there:
             // the rows carrying them are `#[cfg(windows)]` for the same reason
             // (`snap::place` is a no-op elsewhere).
+            // Not a chord: the count of what is in the Trash, at the row's
+            // end where a chord would sit (the review's artboard).
+            MenuAction::OpenTrash => {
+                let count = TRASH_COUNT.with(|cell| *cell.borrow());
+                (count > 0).then(|| koru_i18n::number::decimal(crate::format::lang(), count as u64))
+            }
             MenuAction::WindowSnapLeft => cfg!(windows).then(|| "Win+Left".to_string()),
             MenuAction::WindowSnapRight => cfg!(windows).then(|| "Win+Right".to_string()),
             _ => self.shortcut_id().map(koru_keys::label_of),
@@ -1208,6 +1559,7 @@ impl MenuAction {
             MenuAction::Canvases | MenuAction::NewCanvas => Some(koru_draw::icons::CANVAS),
             MenuAction::NewShell => Some(koru_draw::icons::TERMINAL),
             MenuAction::NewAgent => Some(koru_draw::icons::SPARKLE),
+            MenuAction::ManageAgents => Some(koru_draw::icons::FADERS),
             // A profile row wears the launched product's mark (Q-E6 P3/P4).
             // A glyph mark — the *System* row's OS logo — answers here; a
             // vector brand mark answers through [`brand_icon`] instead, and
@@ -1216,17 +1568,33 @@ impl MenuAction {
                 Some(koru_draw::brand::ProfileMark::Glyph(glyph)) => Some(glyph),
                 _ => None,
             },
-            MenuAction::NewAiChat => Some(koru_draw::icons::SPARKLE),
-            MenuAction::Socials | MenuAction::NewSocialPost => Some(koru_draw::icons::MEGAPHONE),
-            MenuAction::OpenWelcome => Some(koru_draw::icons::HOUSE),
+            MenuAction::NewAiChat => Some(koru_draw::icons::CHATS_CIRCLE),
+            // Koru AI's mark, the one the ✦ button this menu replaced wore.
+            MenuAction::OpenInChat => Some(koru_draw::icons::SPARKLE),
+            MenuAction::NewSocialPost => Some(koru_draw::icons::MEGAPHONE),
+            MenuAction::NewTaskIn(crate::panes::explore::rail::RailTarget::Bucket(bucket)) => {
+                Some(crate::panes::explore::rail::bucket_glyph(bucket))
+            }
+            MenuAction::NewTaskIn(_) => Some(koru_draw::icons::LIST),
+            MenuAction::ImportAs | MenuAction::ImportFiles => Some(koru_draw::icons::IMPORT),
+            MenuAction::NewWorkspace => Some(koru_draw::icons::PLUS),
+            MenuAction::InvitePeople => Some(koru_draw::icons::USER_PLUS),
+            MenuAction::OpenTrash => Some(koru_draw::icons::TRASH),
             // The Agents identity glyph, the same one the slash row and
             // the document's row wear: four gestures, one mark.
-            MenuAction::Delegate | MenuAction::TaskDelegate => Some(koru_draw::icons::ROBOT),
+            MenuAction::TaskDelegate => Some(koru_draw::icons::ROBOT),
             // A result is a document, and it opens as one.
             MenuAction::OpenRunResult(_) => Some(koru_draw::icons::FILE),
-            MenuAction::Chats => Some(koru_draw::icons::SPARKLE),
+            MenuAction::Chats => Some(koru_draw::icons::CHATS_CIRCLE),
             MenuAction::HeaderFeedback => Some(koru_draw::icons::USER_SOUND),
             MenuAction::HeaderSupport => Some(koru_draw::icons::HEADSET),
+            // The help popover's rows, as the artboard draws them.
+            MenuAction::HelpDownload => Some(koru_draw::icons::IMPORT),
+            MenuAction::HelpFullChangelog => Some(koru_draw::icons::LIST),
+            MenuAction::HelpSendFeedback => Some(koru_draw::icons::CHAT_CIRCLE),
+            MenuAction::HelpStarOnGitHub => Some(koru_draw::icons::GITHUB),
+            MenuAction::HelpWebsite => Some(koru_draw::icons::GLOBE),
+            MenuAction::HelpSocial(social) => Some(social.glyph()),
             MenuAction::PopOut | MenuAction::SessionMoveToNewWindow => {
                 Some(koru_draw::icons::POP_OUT)
             }
@@ -1239,7 +1607,7 @@ impl MenuAction {
             MenuAction::Restore | MenuAction::RestoreWorkspace => Some(koru_draw::icons::UNDO),
             // The tab glyph, because the row opens one — it is what carries
             // *in a tab of its own* now that the second row is gone.
-            MenuAction::TaskGoToOrigin => Some(koru_draw::icons::TABS),
+            MenuAction::TaskGoToOrigin => Some(koru_draw::icons::DOCUMENT),
             MenuAction::TaskGoToList => Some(koru_draw::icons::LIST),
             MenuAction::TaskCreateDocument => Some(koru_draw::icons::DOCUMENT),
             MenuAction::ListColor => Some(koru_draw::icons::PALETTE),
@@ -1300,7 +1668,11 @@ impl MenuAction {
     pub fn selectable(self) -> bool {
         !matches!(
             self,
-            MenuAction::Divider | MenuAction::SelectionHeader(_) | MenuAction::HeaderZoom
+            MenuAction::Divider
+                | MenuAction::SelectionHeader(_)
+                | MenuAction::HeaderZoom
+                | MenuAction::HelpWhatsNewHeading
+                | MenuAction::HelpSocials
         )
     }
 
@@ -1369,7 +1741,9 @@ impl koru_ui::MenuItem for MenuAction {
     fn height(&self) -> f32 {
         match self {
             // A touch shorter than a real row so the caption sits as a heading.
-            MenuAction::SelectionHeader(_) => theme::ROW_H - 4.0,
+            MenuAction::SelectionHeader(_) | MenuAction::HelpWhatsNewHeading => theme::ROW_H - 4.0,
+            // A touch taller than a row, so six logos have air around them.
+            MenuAction::HelpSocials => theme::ROW_H + 8.0,
             MenuAction::Divider => 8.0,
             _ => theme::ROW_H,
         }
@@ -1390,6 +1764,24 @@ impl koru_ui::MenuItem for MenuAction {
             .collect()
     }
 
+    fn card(&self) -> Option<koru_ui::MenuCard> {
+        matches!(self, MenuAction::HelpRelease).then(|| help_card().menu_card())
+    }
+
+    /// The changelog and the repository leave the app: an `↗` where their
+    /// chord would be.
+    fn trailing_icon(&self) -> Option<char> {
+        matches!(
+            self,
+            MenuAction::HelpFullChangelog | MenuAction::HelpStarOnGitHub
+        )
+        .then_some(koru_draw::icons::POP_OUT)
+    }
+
+    fn unread(&self) -> bool {
+        matches!(self, MenuAction::HelpWhatsNewHeading) && help_card().unread
+    }
+
     /// A dimmed row that does not explain itself is a dead end; the rows that
     /// can be dimmed here are dimmed for reasons a person cannot see from the
     /// row, so each answers with its one reason and needs no subject.
@@ -1406,6 +1798,8 @@ impl koru_ui::MenuItem for MenuAction {
             return Some(Cow::Owned(reason));
         }
         match self {
+            // The help popover's row that waits on a later phase says so
+            // (disabled, never hidden).
             MenuAction::Open | MenuAction::OpenInNewWindow => {
                 Some(Cow::Borrowed("This workspace is already open"))
             }
@@ -1475,8 +1869,9 @@ pub const TAB_ITEMS: [MenuAction; 7] = [
 /// document — Welcome, Manage, Trash, drafts and release notes — keep the
 /// ordinary tab menu rather than showing document actions dimmed.
 ///
-/// `pinnable` is true for tabs that can be pinned even though they have no
-/// document, such as an AI chat tab.
+/// `pinnable` is the tab's own answer (`TabElement::pinnable`), never
+/// derived here from `document`: a second copy of the pin rule in the menu is
+/// how a task list once had no *Pin tab* row.
 #[cfg(test)]
 pub fn tab_items(
     document: bool,
@@ -1500,7 +1895,7 @@ pub fn tab_items_for(
     terminal_look: bool,
 ) -> Vec<MenuAction> {
     let mut items = Vec::new();
-    if (document || pinnable) && !pinned {
+    if pinnable && !pinned {
         items.push(MenuAction::PinTab);
         items.push(MenuAction::Divider);
     }
@@ -1639,25 +2034,6 @@ pub fn export_items() -> Vec<MenuAction> {
         .collect()
 }
 
-/// *Welcome* is always offered, first: it selects the open Welcome tab or
-/// brings a closed one back.
-pub fn new_tab_items() -> Vec<MenuAction> {
-    let mut items = vec![
-        MenuAction::OpenWelcome,
-        MenuAction::Documents,
-        MenuAction::Canvases,
-        MenuAction::NewShell,
-        MenuAction::NewAgent,
-        MenuAction::NewAiChat,
-        MenuAction::Delegate,
-        MenuAction::Chats,
-        MenuAction::Socials,
-    ];
-    items.push(MenuAction::Divider);
-    items.push(MenuAction::ImportAs);
-    items
-}
-
 /// Built-in shell profiles, the lower half of the *Shell* flyout.
 pub fn shell_profile_items() -> Vec<MenuAction> {
     profile_items_of_kind(ProfileKind::Shell)
@@ -1715,15 +2091,24 @@ pub fn shell_plus_items() -> Vec<MenuAction> {
     })
 }
 
-/// Agents flyout: *Active ▸* when any agent is running, then the profile list.
+/// Agents flyout: *Active ▸* when any agent is running, then the agents that
+/// are on **and installed**, then — after a rule — *Manage…*, which opens
+/// Settings on Coding → Agent providers, where an agent left out of this
+/// list is turned back on or installed. With nothing to list it is *Manage…*
+/// alone.
 pub fn agent_plus_items() -> Vec<MenuAction> {
-    PLUS_RUNNING_AGENTS.with(|cell| {
+    let mut items = PLUS_RUNNING_AGENTS.with(|cell| {
         active_then_profiles(
             !cell.borrow().is_empty(),
             MenuAction::ActiveAgents,
             agent_profile_items(),
         )
-    })
+    });
+    if !items.is_empty() {
+        items.push(MenuAction::Divider);
+    }
+    items.push(MenuAction::ManageAgents);
+    items
 }
 
 fn active_then_profiles(
@@ -1867,13 +2252,28 @@ fn terminal_profile_mark(index: usize) -> Option<koru_draw::brand::ProfileMark> 
 }
 
 fn profile_items_of_kind(kind: ProfileKind) -> Vec<MenuAction> {
-    built_in_profiles()
+    let mut profiles: Vec<_> = built_in_profiles()
         .into_iter()
         .enumerate()
-        .filter(|(_, profile)| {
+        .filter(|(index, profile)| {
             profile.kind == kind
                 && profile.label != koru_session_profiles::ProfileLabel::CodexEmbedded
+                && !agent_hidden(profile)
+                && !(profile.kind == ProfileKind::Agent && agent_missing(*index))
         })
+        .collect();
+    // Agents in the person's order (Agent providers); a row with no agent
+    // key — a shell — keeps its place after them, in catalogue order.
+    AGENT_ORDER.with(|cell| {
+        let order = cell.borrow();
+        if !order.is_empty() {
+            profiles.sort_by_key(|(_, profile)| {
+                super::agent_providers::order_rank(&order, profile.label.agent_key())
+            });
+        }
+    });
+    profiles
+        .into_iter()
         .map(|(index, _)| MenuAction::TerminalProfile(index))
         .collect()
 }
@@ -1907,9 +2307,25 @@ pub fn agent_run_items() -> Vec<MenuAction> {
     vec![MenuAction::DeleteRun]
 }
 
-/// A chat row's menu in the Chats navigator: its one verb.
-pub fn ai_chat_items() -> Vec<MenuAction> {
-    vec![MenuAction::DeleteAiChat]
+/// A chat row's menu in the Chats navigator — its right-click and its ⋯
+/// (koru-ai D86): *Rename…*, *Pin* or *Unpin*, a divider, then *Delete
+/// chat*. Rename and the pin are single-only, as a library row's rename is
+/// — one field cannot name several chats.
+pub fn ai_chat_items(count: usize, pinned: bool) -> Vec<MenuAction> {
+    if count > 1 {
+        vec![MenuAction::DeleteAiChat]
+    } else {
+        vec![
+            MenuAction::RenameAiChat,
+            if pinned {
+                MenuAction::UnpinAiChat
+            } else {
+                MenuAction::PinAiChat
+            },
+            MenuAction::Divider,
+            MenuAction::DeleteAiChat,
+        ]
+    }
 }
 
 /// The first schedule-management increment adds rename. The following
@@ -1958,6 +2374,17 @@ pub fn session_items() -> Vec<MenuAction> {
 /// Formats behind *Import…* / *Import content…*. A projection of the shell's
 /// format registry (`koru_workspace_host::formats`): registering an importer with a
 /// `menu_name` lists it here, and nothing else has to change.
+/// **The one Import list**: *Import files…*, a rule, then every content
+/// format [`import_items`] lists. Every *Import…* in the app opens it — the
+/// New… launcher's tile, a menu's *Import… ▸* flyout and the explore
+/// column's `…` — so the choice between files and content is made in one
+/// place, the same way, wherever somebody started.
+pub fn import_menu_items() -> Vec<MenuAction> {
+    let mut items = vec![MenuAction::ImportFiles, MenuAction::Divider];
+    items.extend(import_items());
+    items
+}
+
 pub fn import_items() -> Vec<MenuAction> {
     koru_workspace_host::formats::import_menu_formats()
         .into_iter()
@@ -1982,6 +2409,11 @@ pub fn trashed_items() -> Vec<MenuAction> {
 /// The Trash tab's own `…`.
 pub fn trash_items() -> Vec<MenuAction> {
     vec![MenuAction::EmptyTrash]
+}
+
+/// A document's `…`, in its title row. One row for now.
+pub fn document_items() -> Vec<MenuAction> {
+    vec![MenuAction::OpenInChat]
 }
 
 /// A rail list's menu: the three things you can do to a list.
@@ -2121,6 +2553,72 @@ pub fn window_items(pinned: bool, _maximized: bool, recording: bool) -> Vec<Menu
     items
 }
 
+/// What the help popover's release card says. Built by the window when the
+/// popover opens (`MainView::help_card`) and read through the thread-local
+/// below, the same arrangement the `+` menu's recent titles use: a row's
+/// label, card and controls are read from the action alone.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct HelpCard {
+    /// `STABLE · 1.0.1` — the channel in caps and the version.
+    pub badge: String,
+    /// The release date, the reader's way; empty for a build never released.
+    pub date: String,
+    pub title: String,
+    pub body: String,
+    /// The Download button: `Some(true)` while a build waits for the first
+    /// consent, `Some(false)` drawn dim when there is nothing to fetch,
+    /// `None` for no button.
+    pub download: Option<bool>,
+    /// Whether the heading wears its dot: a build is on offer.
+    pub unread: bool,
+}
+
+impl HelpCard {
+    fn menu_card(&self) -> koru_ui::MenuCard {
+        koru_ui::MenuCard {
+            badge: self.badge.clone(),
+            date: self.date.clone(),
+            title: self.title.clone(),
+            body: self.body.clone(),
+            button: self.download.map(|on| {
+                (
+                    koru_i18n::t(crate::format::lang(), koru_i18n::Key::Download).to_owned(),
+                    on,
+                )
+            }),
+        }
+    }
+}
+
+thread_local! {
+    /// This window's release card, set when the help popover opens.
+    static HELP_CARD: RefCell<HelpCard> = RefCell::new(HelpCard::default());
+}
+
+fn help_card() -> HelpCard {
+    HELP_CARD.with(|c| c.borrow().clone())
+}
+
+/// The help popover's rows (the review's artboard, QUESTIONS.md E33): *WHAT'S
+/// NEW* over the release card, then *Full changelog*, then *Send feedback*
+/// and *Star us on GitHub*, and the strip of the website and the socials at
+/// the foot. Support is not a row: it stays reachable through the Agent's own
+/// asks, and the review hid it here.
+pub fn help_items(card: HelpCard) -> Vec<MenuAction> {
+    HELP_CARD.with(|c| *c.borrow_mut() = card);
+    vec![
+        MenuAction::HelpWhatsNewHeading,
+        MenuAction::HelpRelease,
+        MenuAction::Divider,
+        MenuAction::HelpFullChangelog,
+        MenuAction::Divider,
+        MenuAction::HelpSendFeedback,
+        MenuAction::HelpStarOnGitHub,
+        MenuAction::Divider,
+        MenuAction::HelpSocials,
+    ]
+}
+
 /// **Hidden for now: Feedback is the overflow's only destination.** Support,
 /// Keyboard shortcuts, Get the mobile app, Updates and the session recorder's
 /// row are left out of [`window_items`]. Each is still built and handled, so
@@ -2213,8 +2711,46 @@ pub fn control_tooltip(row: MenuAction, control: usize) -> Option<(String, Optio
 fn row_controls(row: MenuAction) -> Vec<(Control, Option<MenuAction>)> {
     match row {
         MenuAction::HeaderZoom => zoom_controls(theme::zoom()),
+        // The card's one control: its Download button, live only while a
+        // build waits for the first consent.
+        MenuAction::HelpRelease => help_card()
+            .download
+            .map(|enabled| {
+                vec![(
+                    Control::Button {
+                        glyph: koru_draw::icons::IMPORT,
+                        enabled,
+                    },
+                    Some(MenuAction::HelpDownload),
+                )]
+            })
+            .unwrap_or_default(),
+        // The strip: the website's globe, then the socials in their order.
+        MenuAction::HelpSocials => std::iter::once((
+            Control::Button {
+                glyph: koru_draw::icons::GLOBE,
+                enabled: true,
+            },
+            Some(MenuAction::HelpWebsite),
+        ))
+        .chain(Social::ALL.into_iter().map(|social| {
+            (
+                Control::Button {
+                    glyph: social.glyph(),
+                    enabled: true,
+                },
+                Some(MenuAction::HelpSocial(social)),
+            )
+        }))
+        .collect(),
         _ => Vec::new(),
     }
+}
+
+/// How many controls `items` carry between them — the ids a menu reserves
+/// beyond its rows' (see [`ContextMenu::control_instance`]).
+fn controls_total(items: &[MenuAction]) -> usize {
+    items.iter().map(|item| row_controls(*item).len()).sum()
 }
 
 /// What *Arrange Window* opens.
@@ -2258,7 +2794,7 @@ pub fn submenu(self_: MenuAction) -> Option<Vec<MenuAction>> {
         return Some(items);
     }
     if self_ == MenuAction::ImportAs {
-        return Some(import_items());
+        return Some(import_menu_items());
     }
     if self_ == MenuAction::ExportAs {
         return Some(export_items());
@@ -2446,7 +2982,7 @@ impl ContextMenu {
         let items = shown(items);
         Self {
             subject,
-            instance: mint_menu_instance(items.len()),
+            instance: mint_menu_instance(items.len() + controls_total(&items)),
             inner: koru_ui::Menu::aligned(engine, anchor, items, align),
         }
     }
@@ -2481,7 +3017,7 @@ impl ContextMenu {
         let items = shown(items);
         Self {
             subject,
-            instance: mint_menu_instance(items.len()),
+            instance: mint_menu_instance(items.len() + controls_total(&items)),
             inner: koru_ui::Menu::as_submenu(engine, parent, items, viewport),
         }
     }
@@ -2499,7 +3035,7 @@ impl ContextMenu {
         let items = shown(items);
         Self {
             subject,
-            instance: mint_menu_instance(items.len()),
+            instance: mint_menu_instance(items.len() + controls_total(&items)),
             inner: koru_ui::Menu::at_width(anchor, items, align, width),
         }
     }
@@ -2521,6 +3057,34 @@ impl ContextMenu {
         let offset = id.checked_sub(self.instance + 1)?;
         let i = usize::try_from(offset).ok()?;
         (i < self.items().len()).then_some(i)
+    }
+
+    /// The accessibility id of control `c` of row `row` — the ids after the
+    /// rows' in this opening's block, in row order then control order, so a
+    /// stepper's `−` and a strip's logos are each named once and never by a
+    /// row's number.
+    pub fn control_instance(&self, row: usize, c: usize) -> u64 {
+        let before: usize = self
+            .items()
+            .iter()
+            .take(row)
+            .map(|item| row_controls(*item).len())
+            .sum();
+        self.instance + 1 + self.items().len() as u64 + (before + c) as u64
+    }
+
+    /// …and the control an id names, if it is one of this opening's.
+    pub fn control_of_instance(&self, id: u64) -> Option<(usize, usize)> {
+        let offset = id.checked_sub(self.instance + 1 + self.items().len() as u64)?;
+        let mut rest = usize::try_from(offset).ok()?;
+        for (row, item) in self.items().iter().enumerate() {
+            let n = row_controls(*item).len();
+            if rest < n {
+                return Some((row, rest));
+            }
+            rest -= n;
+        }
+        None
     }
 }
 

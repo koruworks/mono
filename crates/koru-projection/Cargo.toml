@@ -27,6 +27,8 @@ koru-time-zone = { path = "../koru-time-zone" }
 chrono.workspace = true
 loro = { workspace = true }
 rusqlite = { workspace = true }
+# The one place that knows how a database lives in memory with no file.
+koru-sqlite = { path = "../koru-sqlite" }
 tracing = "0.1"
 
 [dev-dependencies]

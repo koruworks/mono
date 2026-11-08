@@ -131,6 +131,7 @@ impl Fixture {
                 generation: 1,
                 expires_at_seconds: 600,
             },
+            claim_references: koru_replication::cloud::transfer::ClaimReferences::None,
         };
         let mut sender = Stream::new(
             &accepted,

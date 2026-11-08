@@ -20,7 +20,7 @@ use koru_core::time::Temporal;
 use koru_draw::chip::{self, ChipKind};
 use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
-use koru_draw::{icons, scene, theme};
+use koru_draw::{icons, theme};
 use koru_editor::components::text_input::{InputStyle, TextInput};
 use koru_editor::utils::when::Parsed;
 use koru_ui::menu::{Anchor, Menu, MenuItem};
@@ -29,11 +29,11 @@ use vello::Scene;
 use vello::kurbo::Affine;
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 
-use super::row::paint_chip;
 use super::view::{CHIP_GAP, ListFace, RowChip, RowParts, split_date, temporal_of};
 
-/// What the capture row says before anybody types in it.
-pub(super) const PLACEHOLDER: &str = "Add a task\u{2026}";
+/// What the capture row says before anybody types in it — with the three `/`
+/// commands it takes, since nothing else on the row says they are there.
+pub(super) const PLACEHOLDER: &str = "Add a task\u{2026}  /due  /priority  /list";
 
 /// The three things `/` offers here — the row's own pickers, by name.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -60,9 +60,11 @@ impl SlashRow {
 impl MenuItem for SlashRow {
     fn label(&self) -> std::borrow::Cow<'_, str> {
         std::borrow::Cow::Borrowed(match self {
-            Self::Due => "Due\u{2026}",
-            Self::Priority => "Priority\u{2026}",
-            Self::TaskList => "Task list\u{2026}",
+            Self::Due => "Due",
+            Self::Priority => "Priority",
+            // *List*, as the row's own menu says it — and the word `/list`
+            // finds, by the label's prefix, beside the editor's `/task_list`.
+            Self::TaskList => "List",
         })
     }
 
@@ -109,6 +111,10 @@ pub(super) struct Capture {
     /// under the word being typed, and the caret's place is the field's
     /// origin plus the width of the words before it.
     field: Rect,
+    /// Where the chosen `/command` was typed: a zero-width rectangle at the
+    /// `/`, the field's height. The picker it opens hangs from here, under
+    /// the words, rather than from the row's far-right `…`.
+    trigger: Option<Rect>,
 }
 
 impl Capture {
@@ -122,7 +128,23 @@ impl Capture {
             slash: None,
             anchor: (0.0, 0.0),
             field: Rect::new(0.0, 0.0, 0.0, 0.0),
+            trigger: None,
         }
+    }
+
+    /// Where the last chosen `/command` was typed — see [`Capture::trigger`].
+    pub fn trigger(&self) -> Option<Rect> {
+        self.trigger
+    }
+
+    /// The field's x at byte `at` of its text: its origin plus the width of
+    /// the words before it.
+    fn x_at(&self, engine: &mut TextEngine, value: &str, at: usize) -> f32 {
+        let at = at.min(value.len());
+        self.field.x
+            + engine
+                .simple_layout(&value[..at], theme::role::row())
+                .width()
     }
 
     /// Where the `/` menu opens: at the caret, when the field has been drawn;
@@ -132,11 +154,8 @@ impl Capture {
             return self.anchor;
         }
         let value = self.value();
-        let caret = self.input.caret().min(value.len());
-        let before = engine
-            .simple_layout(&value[..caret], theme::role::row())
-            .width();
-        (self.field.x + before, self.field.y + self.field.h)
+        let x = self.x_at(engine, &value, self.input.caret());
+        (x, self.field.y + self.field.h)
     }
 
     /// The row with words already in it — a refused capture given back.
@@ -298,6 +317,15 @@ impl Capture {
         self.slash = None;
         let value = self.value();
         if let Some((start, _)) = slash_query(&value) {
+            // Where the `/` was, before the word comes out of the field.
+            self.trigger = (self.field.w > 0.0).then(|| {
+                Rect::new(
+                    self.x_at(engine, &value, start),
+                    self.field.y,
+                    0.0,
+                    self.field.h,
+                )
+            });
             let head = value[..start].trim_end().to_owned();
             self.input.set_text(engine, &head);
             self.input.move_to_end(engine);
@@ -382,19 +410,11 @@ impl Capture {
     ) {
         let p = theme::p();
         let _ = table;
-        koru_draw::checkbox::outline(scene, root, parts.control, p.placeholder);
+        koru_draw::checkbox::outline(scene, root, parts.checkbox, p.placeholder);
         let chips = self.chips(today, lists);
         let widths: Vec<f32> = chips
             .iter()
-            .map(|chip| {
-                engine.measure_attr_chip(
-                    chip.kind,
-                    &chip.label,
-                    chip.accent.as_deref(),
-                    None,
-                    false,
-                ) + chip::extra_w(chip.kind)
-            })
+            .map(|chip| chip.label_chip().width(engine))
             .collect();
         let total: f32 =
             widths.iter().sum::<f32>() + chip::CHIP_GAP * (widths.len().saturating_sub(1)) as f32;
@@ -405,27 +425,27 @@ impl Capture {
             r.h,
         );
         self.field = field;
+        // **Typed inline, with no box**: the row is the field. Bare, and laid
+        // out so its words start where the idle row's placeholder does — so
+        // pressing the row changes nothing on screen but the caret.
         self.input.draw(
             scene,
             root,
             engine,
-            field,
-            InputStyle::inline(),
+            input_rect(field),
+            InputStyle::bare(theme::role::row()),
             Some(PLACEHOLDER),
             caret_on,
         );
         let mut x = parts.text.x + parts.text.w - total;
         let y = r.y + (r.h - chip::CHIP_H) * 0.5;
         for (chip, w) in chips.iter().zip(&widths) {
-            paint_chip(
+            chip.label_chip().draw(
                 scene,
                 root,
                 engine,
-                chip.kind,
-                &chip.label,
-                chip.accent.as_deref(),
-                x,
-                y,
+                Rect::new(x, y, *w, chip::CHIP_H),
+                koru_ui::label_chip::State::default(),
             );
             x += w + chip::CHIP_GAP;
         }
@@ -446,11 +466,30 @@ impl Capture {
     }
 }
 
+/// The rectangle the shared field is laid out in for its words to start at
+/// `text`'s left edge. The field insets its words by [`text_field::PAD`]
+/// from its own rectangle, which is right for a field in a box and wrong for
+/// a row typed into inline — so the rectangle reaches that far left of them.
+/// Painting, a press and a drag all use it, so the caret lands where the
+/// pointer is.
+///
+/// [`text_field::PAD`]: koru_ui::text_field::PAD
+pub(super) fn input_rect(text: Rect) -> Rect {
+    let pad = koru_ui::text_field::PAD;
+    Rect::new(text.x - pad, text.y, text.w + pad, text.h)
+}
+
 /// The empty row's ghost: the outline of a control and the placeholder.
+///
+/// **The placeholder is drawn by a field**, `idle`, never focused and always
+/// empty — the same field, style and rectangle the row types into — so the
+/// words sit exactly where they will when the row is pressed.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn paint_empty(
     scene: &mut Scene,
     root: Affine,
     engine: &mut TextEngine,
+    idle: &mut TextInput,
     table: &Table,
     r: Rect,
     parts: RowParts,
@@ -460,17 +499,18 @@ pub(super) fn paint_empty(
     if hovered {
         table.paint_row_fill(scene, root, r, RowState::Hovered);
     }
-    // A dashed-looking ghost: the same circle, drawn in the placeholder tone
+    // A dashed-looking ghost: the same box, drawn in the placeholder tone
     // so it reads as an outline of a control rather than as one.
-    koru_draw::checkbox::outline(scene, root, parts.control, p.placeholder);
-    let layout = engine.simple_layout(PLACEHOLDER, theme::role::row());
-    scene::draw_layout_first_line(
+    koru_draw::checkbox::outline(scene, root, parts.checkbox, p.placeholder);
+    let text = Rect::new(parts.text.x, r.y, parts.text.w, r.h);
+    idle.draw(
         scene,
         root,
-        &layout,
-        parts.text.x,
-        parts.text.y + (r.h - scene::first_line_height(&layout)) * 0.5,
-        Some(p.placeholder),
+        engine,
+        input_rect(text),
+        InputStyle::bare(theme::role::row()),
+        Some(PLACEHOLDER),
+        false,
     );
 }
 
@@ -490,7 +530,8 @@ pub(super) fn slash_query(value: &str) -> Option<(usize, String)> {
 }
 
 /// Whether a row answers to what was typed: its name or its label, by
-/// prefix, case-blind — `du` finds Due, `task` finds Task list.
+/// prefix, case-blind — `du` finds Due, and `task` (its name) and `list`
+/// (its label) both find List.
 fn matches(row: SlashRow, query: &str) -> bool {
     let q = query.to_lowercase();
     q.is_empty() || row.name().starts_with(&q) || row.label().to_lowercase().starts_with(&q)
@@ -515,6 +556,7 @@ mod tests {
         assert!(matches(SlashRow::Due, "du"));
         assert!(matches(SlashRow::TaskList, "task"));
         assert!(matches(SlashRow::TaskList, "task_l"));
+        assert!(matches(SlashRow::TaskList, "list"), "`/list` finds it");
         assert!(!matches(SlashRow::Priority, "task"));
     }
 

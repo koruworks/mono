@@ -173,13 +173,6 @@ pulldown-cmark.workspace = true
 # one test into the simplified product.
 koru-features = { path = "../koru-features", features = ["testing"] }
 tempfile.workspace = true
-# **The check that panicked, run in a test.** `accesskit_consumer` validates an
-# update with `panic!`, and a window died of "TreeUpdate includes duplicate
-# child" while a unit test here counted the same duplicate and passed. The
-# repair in `accessibility/repair.rs` is proved by handing its output to the
-# real consumer, not to a copy of the rule. 0.35 is the version
-# `accesskit_windows` already links, so nothing new is compiled on Windows.
-accesskit_consumer = "0.35"
 # **The golden cases** (`koru_core::tasks::golden`, F-3): the data-only table
 # this crate's wrapper replays to prove it reaches the domain's answers. A
 # feature rather than `cfg(test)` because a dependency is never compiled with

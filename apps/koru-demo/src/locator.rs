@@ -12,7 +12,6 @@
 //! koru:w1/v0/s:window#close                      a caption command
 //! koru:w1/v1/s:body#root                         the document body
 //! koru:w1/v1/n:6f9619ff8b86d011b42d00cf4fc964ff#text   a paragraph
-//! koru:w1/v1/n:<block uuid>.<attribute uuid>#pill     a pill inside it
 //! koru:w1/v1/tab:7#root                          one tab instance
 //! koru:w1/v1/onb:3#status                        one first-run screen instance
 //! ```
@@ -108,10 +107,6 @@ pub enum Object {
     /// `<kind>:<id>` — `tab:7`, `onb:3`. The id may be a wildcard, because an
     /// instance number is handed out at runtime exactly like a slot is.
     Instance { kind: String, id: Slot },
-    /// `n:<host>.<id>` — a model object unique only inside another, which is
-    /// a pill inside its block: `ObjectKey::Within` on the writer's side. Both
-    /// halves are uuids in the [`Model`](Self::Model) form.
-    Within { host: String, id: String },
 }
 
 impl fmt::Display for Object {
@@ -120,7 +115,6 @@ impl fmt::Display for Object {
             Self::Surface(name) => write!(f, "s:{name}"),
             Self::Model(id) => write!(f, "n:{id}"),
             Self::Instance { kind, id } => write!(f, "{kind}:{id}"),
-            Self::Within { host, id } => write!(f, "n:{host}.{id}"),
         }
     }
 }
@@ -167,8 +161,7 @@ impl fmt::Display for LocatorError {
             Self::View(got) => write!(f, "`{got}` is not a view slot: expected `v<n>` or `v*`"),
             Self::Object(got) => write!(
                 f,
-                "`{got}` is not an object: expected `s:<keyword>`, `n:<uuid>`, \
-                 `n:<uuid>.<uuid>` or `<kind>:<id>`"
+                "`{got}` is not an object: expected `s:<keyword>`, `n:<uuid>` or `<kind>:<id>`"
             ),
             Self::WildcardObject => f.write_str(
                 "`*` may stand for a window, a view or an instance number, and never for what \
@@ -264,7 +257,6 @@ impl LocatorPattern {
         let object_matches = match (&self.object, &other.object) {
             (Object::Surface(ours), Object::Surface(theirs)) => ours == theirs,
             (Object::Model(ours), Object::Model(theirs)) => ours == theirs,
-            (Object::Within { .. }, Object::Within { .. }) => self.object == other.object,
             (
                 Object::Instance { kind: ours, id },
                 Object::Instance {
@@ -313,23 +305,14 @@ fn parse_object(text: &str) -> Result<Object, LocatorError> {
             if rest == "*" {
                 return Err(LocatorError::WildcardObject);
             }
-            let model_id = |id: &str| {
-                if id.len() == 32
-                    && id
-                        .bytes()
-                        .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
-                {
-                    Ok(id.to_owned())
-                } else {
-                    Err(LocatorError::ModelId(id.to_owned()))
-                }
-            };
-            match rest.split_once('.') {
-                Some((host, id)) => Ok(Object::Within {
-                    host: model_id(host)?,
-                    id: model_id(id)?,
-                }),
-                None => model_id(rest).map(Object::Model),
+            if rest.len() == 32
+                && rest
+                    .bytes()
+                    .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+            {
+                Ok(Object::Model(rest.to_owned()))
+            } else {
+                Err(LocatorError::ModelId(rest.to_owned()))
             }
         }
         kind => Slot::parse(rest)

@@ -1,0 +1,105 @@
+title = "A new workspace layout, richer chats, and steadier sync"
+
+summary = [
+  "Arrange the app rail, work with chats in tabs, and reorder tasks directly.",
+  "Cloud sync keeps confirmed progress, handles imported documents, and lets documents finish syncing when an attachment's source is unavailable.",
+  "Search results fit their cards, document icons show their colors and priorities, and moving documents no longer triggers the reported Windows accessibility crash.",
+  "Windows users on 0.1.4 need to run the 0.1.5 installer once to repair automatic updates.",
+]
+
+body = """
+## Windows upgrade
+
+If you use Koru 0.1.4 on Windows, download and run this release's setup.exe
+once. The updater in 0.1.4 cannot install the fix itself. This release repairs
+archive extraction so subsequent updates can install normally, and a failed
+preparation no longer repeatedly offers the same update automatically.
+
+## Your workspace
+
+Documents, Files, Tasks and Chats sit in a rail down the left edge. Drag them
+into your preferred order. Alt+1 through Alt+8 follow their positions; on Mac,
+use Control+Command with the number. Settings, Help and your profile remain
+at the foot of the rail.
+
+The workspace chip opens workspace switching, while your profile square
+opens your profiles. Help brings together What's new, the changelog, feedback
+and problem reporting. The window has lighter framing, white panes and more
+readable secondary text.
+
+Use the + button or Ctrl+N to open the New launcher. Tabs of any kind can be
+pinned. Restoring a two-column window keeps the document in the unfocused
+column, and opening a document from Files or Tasks keeps that sidebar open.
+
+## Documents and search
+
+Search focuses on matching results, without New task or New document rows or
+the overflow menu's previews. Selection boxes contain the matching excerpts
+at compact density.
+
+Document outline icons use the document's chosen color. Priority flags sit
+between the icon and title. Adding an image processes it in the background
+so you can keep working. Creating your first document in an empty profile
+creates its workspace too.
+
+Fixed the reported Windows accessibility crash when moving a document between
+workspaces. Repeated updates while Move to is open no longer publish a
+detached document body.
+
+## Tasks
+
+Drag tasks to reorder a list or a queue set to Manual, or drop them on a list
+in the sidebar to move them. Select several tasks to change their list, due
+date, priority or color together. Rename with F2 or a double-click. Creating
+tasks inline keeps the caret ready for the next task after Enter.
+
+## Chats and agents
+
+Chats open as tabs in Koru and return after a restart. The separate Koru AI
+window is retired. Pinned chats stay at the top of the Chats list; other
+chats follow their latest activity. Tabs and rows show when an agent is
+working, needs your answer, or has an unread reply. An unread chat opens at
+its first new message.
+
+Send while an agent is working to queue a message, or use Steer to redirect
+its work. You can edit or remove queued messages; the queue lasts for the
+current window session. Switch between an agent's models for the next
+message, choose its approval mode, and answer questions in the conversation.
+
+Paste images into agent chats, open them at full size, and inspect the
+agent's commands and edits in expandable work details. Agent discovery is
+more reliable for installations outside the app's initial search path,
+including apps launched from Finder on Mac.
+
+## Appearance
+
+Choose installed fonts for the app, document text, headings, code and chats.
+Document text size ranges from 14 to 22 px. Choose a base frame color
+separately for the light and dark themes.
+
+## Koru Cloud
+
+Cloud sync is enabled by default in official builds; your saved profile and
+workspace sync choices still apply. The profile's cloud status opens Koru
+Cloud directly.
+
+Imported documents and verified empty files sync more reliably. Confirmed
+document counts stay visible during routine verification. Missing-file
+details name affected documents and known source devices. An attachment
+whose original source is unavailable remains waiting for that source while
+documents and other workspaces can finish syncing.
+
+## MCP assistants
+
+MCP edits validate requested changes before writing and identify what was
+saved if a request only partly succeeds. Refused edits leave the document
+untouched. Tool descriptions and documentation require less context, and
+the bridge can expose selected toolsets with --toolsets docs,tasks. The tasks
+toolset supports completing, reopening and changing task due dates.
+
+## Mac
+
+Dragging tabs no longer gets intercepted as a window drag, and shell updates
+no longer make window dragging stutter. Native window controls share the
+sidebar lane, with document titles kept clear of the traffic lights.
+"""

@@ -29,12 +29,14 @@
 
 mod agent;
 mod ai_chat_view;
+mod app_menu;
 mod build_stamp;
 mod canvas_view;
 mod console;
 mod diff;
 mod feedback;
 mod format;
+mod input_engine;
 mod leaf;
 pub(crate) mod mainview;
 mod manage;
@@ -75,9 +77,6 @@ struct Manager {
     /// A taskbar *Search* task was chosen on a cold launch — this process is the
     /// one that has to ask the agent for its overlay.
     search: bool,
-    /// A taskbar *AI Chat* task was chosen on a cold launch. Once the Agent is
-    /// connected, ask it to open or focus the singleton standalone chat.
-    ai_chat: bool,
     /// A document a taskbar Recent entry named, when this process is the one
     /// that has to open it — a cold launch, with no Koru already running to
     /// hand it to.
@@ -300,10 +299,6 @@ impl Host for Manager {
         self.agent.take_trouble()
     }
 
-    fn take_agent_notice(&self) -> Option<koru_workspace_host::ErrorReport> {
-        self.agent.take_notice()
-    }
-
     /// A Jump List click asks this window to come forward. The shell focuses
     /// its own window; the taskbar module only signals that one is owed.
     fn take_activation_focus(&self) -> bool {
@@ -329,17 +324,6 @@ impl Host for Manager {
         }
     }
 
-    fn take_ai_chat_activation(&self) -> bool {
-        if crate::taskbar::take_ai_chat() {
-            tracing::info!(target: "koru::taskbar", "AI Chat activation drained");
-            self.agent.grant_foreground();
-            self.agent.open_ai_chat();
-            true
-        } else {
-            false
-        }
-    }
-
     fn open_uri(&self, url: &str) {
         let url = url.to_owned();
         let _ = std::thread::Builder::new()
@@ -349,12 +333,12 @@ impl Host for Manager {
             });
     }
 
-    fn open_chat_link(&self, chat: String, block: String) {
-        self.agent.open_chat_link(chat, block);
-    }
-
     fn open_external_url(&self, url: String) -> Result<(), String> {
         self.agent.open_external_url(&url)
+    }
+
+    fn open_chat_elsewhere(&self, chat: String, block: Option<String>, profile: String) {
+        self.agent.open_chat_elsewhere(chat, block, profile);
     }
 
     fn take_agent_asks(&self) -> Vec<koru_workspace_host::AgentAsk> {
@@ -403,6 +387,16 @@ impl Host for Manager {
                 }
                 agent::FromTheAgent::NewAgentSession => {
                     Some(koru_workspace_host::AgentAsk::NewAgentSession)
+                }
+                // A chat to open as a tab: the same request a chat hit in this
+                // window's own search makes.
+                agent::FromTheAgent::OpenChat { chat, block } => {
+                    Some(koru_workspace_host::AgentAsk::Open(Box::new(
+                        koru_workspace_host::PaneRequest::OpenChatLink {
+                            chat: chat.to_string(),
+                            block: block.map(|block| block.to_string()),
+                        },
+                    )))
                 }
                 agent::FromTheAgent::ShowSupport => {
                     Some(koru_workspace_host::AgentAsk::ShowSupport)
@@ -547,10 +541,6 @@ impl Host for Manager {
             self.agent.grant_foreground();
             self.agent.show_overlay();
         }
-        if std::mem::take(&mut self.ai_chat) {
-            self.agent.grant_foreground();
-            self.agent.open_ai_chat();
-        }
         // Deferred until after `View::restore`: the shell restores the previous
         // session *after* `initial`, and opening here would be wiped by that
         // tab set. Keep the complete target together: deleted search results
@@ -638,6 +628,19 @@ fn main() {
     // happen first, and a startup measurement that began after them would be
     // reporting a launch nobody has.
     koru_core::timing::start();
+    // The element layer's fixture theme, in a build that has it: chosen here,
+    // before the host resolves the preference, and pinned so neither the
+    // preference nor the OS replaces it. Nothing is written anywhere.
+    #[cfg(feature = "fixture-theme")]
+    if koru_env::switch(koru_env::name::KORU_FIXTURE_THEME) {
+        use koru_draw::theme::{Contrast, themes};
+        let contrast = if koru_env::switch(koru_env::name::KORU_FIXTURE_CONTRAST) {
+            Contrast::High
+        } else {
+            Contrast::Standard
+        };
+        themes::pin(&themes::FIXTURE_THEME, contrast);
+    }
     // Parse once before touching the Windows activation channel. A malformed
     // command line must still reach the shell's strict error path rather than
     // being mistaken for a taskbar activation and silently handed off.
@@ -710,9 +713,6 @@ fn main() {
     let new_document = run && std::env::args().any(|arg| arg == "--new-document");
     // `--search` is how the taskbar's *Search* task asks for the global overlay.
     let search = run && std::env::args().any(|arg| arg == "--search");
-    // `--ai-chat` is how the taskbar's *AI Chat* task asks for the singleton
-    // standalone chat window.
-    let ai_chat = run && std::env::args().any(|arg| arg == "--ai-chat");
     // `--open <id>` is how a Recent entry names its document. Read here rather
     // than in the shell because it is the taskbar's business, and the shell's
     // parser has already accepted or rejected the whole line above.
@@ -745,18 +745,16 @@ fn main() {
         target: "koru::taskbar",
         run,
         search,
-        ai_chat,
         new_document,
         open = open.is_some(),
         force_new_window,
         "taskbar launch parsed"
     );
-    let request = match (search, ai_chat, new_document, open_document, open) {
-        (true, _, _, _, _) => Some(taskbar::Activation::Search),
-        (_, true, _, _, _) => Some(taskbar::Activation::AiChat),
-        (_, _, true, _, _) => Some(taskbar::Activation::NewDocument),
-        (_, _, _, Some(id), _) => Some(taskbar::Activation::OpenDocument(id)),
-        (_, _, _, _, Some(id)) => Some(taskbar::Activation::Open(id)),
+    let request = match (search, new_document, open_document, open) {
+        (true, _, _, _) => Some(taskbar::Activation::Search),
+        (_, true, _, _) => Some(taskbar::Activation::NewDocument),
+        (_, _, Some(id), _) => Some(taskbar::Activation::OpenDocument(id)),
+        (_, _, _, Some(id)) => Some(taskbar::Activation::Open(id)),
         _ => None,
     };
     let span = koru_core::timing::Span::start("taskbar");
@@ -775,23 +773,17 @@ fn main() {
         return;
     }
     if run {
-        // Hands the work to a thread and returns; see `install_jump_list`.
         taskbar::install_jump_list();
+        // **After `prepare`, because that is what decides.** Winning the
+        // activation pipe is what makes this the one process on the machine
+        // that may register a machine-wide shortcut; asking any earlier would
     }
     span.stop();
     // **Linux's app-menu entry follows the folder.** An entry naming a `koru`
     // that is gone, because the folder moved, is pointed at this one; an
-    // entry that is fine, or none at all, is left alone. One small file read.
+    // entry that is fine, or none at all, is left alone. Queued off the main thread.
     if run && koru_autostart::app_menu::SUPPORTED {
-        match std::env::current_exe().and_then(|exe| koru_autostart::app_menu::repair(&exe)) {
-            Ok(true) => {
-                tracing::info!(target: "koru::app_menu", "the app menu entry now names this executable")
-            }
-            Ok(false) => {}
-            Err(error) => {
-                tracing::warn!(target: "koru::app_menu", %error, "the app menu entry could not be checked")
-            }
-        }
+        app_menu::repair();
     }
     // ------------------------------------------------------------- the agent
     //
@@ -850,7 +842,6 @@ fn main() {
         Manager {
             new_document,
             search,
-            ai_chat,
             open,
             open_document,
             trash_root,

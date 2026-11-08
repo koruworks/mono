@@ -1246,6 +1246,55 @@ pub fn resolve_link(
         });
 }
 
+/// **Ask the AI service which profile a chat belongs to** (AI schema 13),
+/// then hand the chat back to the loop to open in a window of that profile.
+///
+/// On a thread for [`resolve_link`]'s reason: it is a blocking HTTP call,
+/// and may have to start the gateway. **Whatever happens, the chat comes
+/// back**: a chat the service cannot place, or a service that does not
+/// answer, comes back with no profile and opens in the most recent window,
+/// which hands it on if it is another profile's. A link is never dropped
+/// because a lookup failed.
+pub fn place_chat(
+    paths: Paths,
+    waker: crate::event::Waker,
+    chat: uuid::Uuid,
+    block: Option<uuid::Uuid>,
+) {
+    let answer = waker.clone();
+    let spawned = std::thread::Builder::new()
+        .name("koru-agent chat profile".into())
+        .spawn(move || {
+            let profile = (|| -> Option<koru_store_core::ids::ProfileId> {
+                crate::gateway_host::ensure(&paths).ok()?;
+                let client = koru_api_client::Client::connect_at_with_scopes(
+                    crate::segment(),
+                    paths.root(),
+                    &["ai.chat"],
+                )
+                .ok()?;
+                client
+                    .ai()
+                    .read_chat(koru_ai_core::ChatId::from_uuid(chat))
+                    .ok()?
+                    .chat
+                    .profile_id
+            })();
+            waker.wake(crate::event::AgentEvent::ChatPlaced {
+                chat,
+                block,
+                profile,
+            });
+        });
+    if spawned.is_err() {
+        answer.wake(crate::event::AgentEvent::ChatPlaced {
+            chat,
+            block,
+            profile: None,
+        });
+    }
+}
+
 pub fn open_store_stats(paths: Paths, waker: Option<crate::event::Waker>) {
     let _ = std::thread::Builder::new()
         .name("koru-agent store stats".into())

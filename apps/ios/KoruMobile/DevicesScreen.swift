@@ -276,7 +276,9 @@ private struct PairingOfferView: View {
 }
 
 /// VisionKit's live scanner, narrowed to QR codes. iOS 16+, and this app is
-/// 17+; a simulator has no camera, which is why the manual field stays the
+/// 18+ (iroh's `netdev` strong-imports an iOS 18 Network.framework symbol,
+/// and on iOS 17 dyld refuses the app); a simulator has no camera, which is
+/// why the manual field stays the
 /// path a test can walk.
 private struct QRScanSheet: UIViewControllerRepresentable {
     let found: (String) -> Void

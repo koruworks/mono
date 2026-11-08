@@ -52,17 +52,18 @@ fn a_workspace() -> Vec<ExploreEntry> {
     vec![brief, notes, sketch, board]
 }
 
-/// **The seventh mode is reached the way the other six are** — its icon, its
-/// token, its chord — and says its name in the person's language.
+/// **The canvases mode is reached the way the others are** — its icon (the
+/// seventh, Home hidden for now), its token, its chord — and says its name
+/// in the person's language.
 #[test]
 fn the_canvases_mode_is_the_seventh_icon_and_answers_to_alt_7() {
     let mut view = ExploreView::new();
     let a = area();
-    let (mode, icon) = view.navigator_mode_rects(a)[6];
+    let (mode, icon) = view.navigator_mode_rects(view.rail_of(a))[6];
     assert_eq!(mode, NavigatorMode::Canvases);
     let (x, y) = icon.centre();
     assert_eq!(
-        view.mouse_down(a, VIEW, x, y, false),
+        view.apps_rail_mouse_down(view.rail_of(a), x, y),
         Outcome::Consumed,
         "the column's own business"
     );
@@ -72,9 +73,10 @@ fn the_canvases_mode_is_the_seventh_icon_and_answers_to_alt_7() {
         NavigatorMode::parse("canvases"),
         Some(NavigatorMode::Canvases)
     );
+    // Its chord is the seventh slot's, where it sits by default.
     assert_eq!(
-        NavigatorMode::Canvases.shortcut(),
-        koru_keys::ShortcutId::ShowCanvases
+        view.rail_shortcut(NavigatorMode::Canvases),
+        Some(koru_keys::ShortcutId::ShowRailView7)
     );
     assert_eq!(
         NavigatorMode::Canvases.label(),
@@ -84,7 +86,7 @@ fn the_canvases_mode_is_the_seventh_icon_and_answers_to_alt_7() {
         ExploreView::navigator_mode_icon(NavigatorMode::Canvases),
         koru_draw::icons::CANVAS
     );
-    let chord = koru_keys::registry::get(koru_keys::ShortcutId::ShowCanvases).chord;
+    let chord = koru_keys::registry::get(koru_keys::ShortcutId::ShowRailView7).chord;
     assert!(chord.matches(
         &winit::keyboard::Key::Character("7".into()),
         Some("7"),
@@ -175,9 +177,10 @@ fn a_click_on_a_canvas_row_opens_it() {
 }
 
 /// **Never reordered, never nested.** A drag released over the list is no
-/// move at all; the same drag released on the Trash row bins the canvas.
+/// move at all. (The Trash row it could once be dropped on left the nav's
+/// foot for the floor menu, E63.)
 #[test]
-fn a_canvas_drag_moves_nothing_in_the_list_and_bins_on_the_trash() {
+fn a_canvas_drag_moves_nothing_in_the_list() {
     let rows = a_workspace();
     let mut view = ExploreView::new();
     view.show_canvases();
@@ -190,13 +193,6 @@ fn a_canvas_drag_moves_nothing_in_the_list_and_bins_on_the_trash() {
     view.mouse_move(a, VIEW, x, view.rows_top(a) + 2.0);
     assert!(view.drag_armed());
     assert_eq!(view.mouse_up(), Outcome::Consumed, "no MoveNodes");
-
-    view.rebuild_from_entries(&rows);
-    view.mouse_down(a, VIEW, x, row_centre(&view, a, 0), false);
-    let t = view.trash_rect(a);
-    view.mouse_move(a, VIEW, x, t.centre().1);
-    assert!(view.trash_is_drop_target(a));
-    assert_eq!(view.mouse_up(), Outcome::TrashNodes(vec![node(&rows[2])]));
 }
 
 /// The empty section says what would put something in it, and its button
@@ -217,13 +213,7 @@ fn the_empty_section_offers_new_canvas() {
     let a = area();
     let mut scene = vello::Scene::new();
     let mut engine = TextEngine::new();
-    view.draw(
-        &mut scene,
-        vello::kurbo::Affine::IDENTITY,
-        &mut engine,
-        a,
-        None,
-    );
+    view.draw(&mut scene, vello::kurbo::Affine::IDENTITY, &mut engine, a);
     let cta = view.empty_cta.expect("a button was laid out");
     assert_eq!(
         view.mouse_down(a, VIEW, cta.centre().0, cta.centre().1, false),
@@ -232,15 +222,13 @@ fn the_empty_section_offers_new_canvas() {
 }
 
 /// No library actions — nothing imports as a canvas and a flat list has no
-/// folds — so the search icon takes the `…`'s lane, and empty space offers no
-/// import menu.
+/// folds — so there is no `…`, and empty space offers no import menu.
 #[test]
 fn the_canvases_section_has_no_library_actions() {
     let mut view = ExploreView::new();
     view.show_canvases();
     let a = area();
     assert_eq!(view.actions_button(a).w, 0.0);
-    assert!(view.search_button(a).w > 0.0);
     let below = view.rows_top(a) + theme::NAV_ROW_H * 3.0;
     assert_eq!(
         view.context_menu(a, a.x + a.w * 0.5, below),

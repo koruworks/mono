@@ -276,14 +276,14 @@ impl koru_store_api::state::ReminderProjectionService for ReadPort {
 /// One `Arc`, coerced to each port it serves, so both routes share a single
 /// connection to `projection.db`.
 pub fn read_ports(
-    root: &std::path::Path,
+    derived: &crate::derived::Derived,
     sweeps: Sweeps,
 ) -> Option<(
     Arc<dyn koru_store_api::routes::workspaces::WorkspaceUsageService>,
     Arc<dyn koru_store_api::routes::workspaces::DocumentOutlineService>,
     Arc<dyn koru_store_api::state::ReminderProjectionService>,
 )> {
-    match Projections::open(root) {
+    match derived.projections() {
         Ok(projections) => {
             let port = Arc::new(ReadPort {
                 projections: Mutex::new(projections),
@@ -310,6 +310,11 @@ const IDLE: std::time::Duration = std::time::Duration::from_millis(250);
 struct StoreSource {
     state: Arc<AppState>,
     history: Mutex<HashMap<(WorkspaceId, DocumentId), AutoHistory>>,
+    /// Whether this Store keeps automatic history at all. A device does. An
+    /// in-memory composition does not: history is device-local, a replica held
+    /// in memory is ephemeral, and markers nobody can ever read would only
+    /// grow its memory.
+    automatic: bool,
 }
 
 #[derive(Clone)]
@@ -336,16 +341,20 @@ fn history_due(state: &AutoHistory, now: i64) -> Option<HistoryReason> {
 }
 
 impl StoreSource {
-    fn new(state: Arc<AppState>) -> Self {
+    fn new(state: Arc<AppState>, automatic: bool) -> Self {
         Self {
             state,
             history: Mutex::new(HashMap::new()),
+            automatic,
         }
     }
 
     /// Called by the projection worker, never by the edit/ack path. Snapshot
     /// encoding happens after the O(1) fork and outside the Store lock.
     fn automatic_history(&self, committed: &[Committed], now: i64) {
+        if !self.automatic {
+            return;
+        }
         let mut due = Vec::new();
         let Ok(mut schedule) = self.history.lock() else {
             return;
@@ -625,12 +634,18 @@ impl Source for StoreSource {
 ///
 /// `consumers` are registered before the first tick, so nothing is projected
 /// with a consumer missing.
+///
+/// `stop` ends the thread at its next tick — at most [`IDLE`] later, because
+/// an idle wait is that long. A device never sets it: the process ending is
+/// how its projector stops. An in-memory composition sets it when it is torn
+/// down, and joins.
 pub fn spawn(
     state: Arc<AppState>,
-    root: &std::path::Path,
+    derived: &crate::derived::Derived,
     consumers: Vec<Box<dyn koru_projection::Consumer>>,
+    stop: Arc<std::sync::atomic::AtomicBool>,
 ) -> Option<(std::thread::JoinHandle<()>, Sweeps)> {
-    let projections = match Projections::open(root) {
+    let projections = match derived.projections() {
         Ok(p) => p,
         Err(why) => {
             // **Not fatal.** A store that cannot build a read model is a store
@@ -643,7 +658,7 @@ pub fn spawn(
     };
 
     let published = state.projection.clone();
-    let mut projector = Projector::new(StoreSource::new(state), projections);
+    let mut projector = Projector::new(StoreSource::new(state, !derived.is_memory()), projections);
     // The counting consumer stays: it costs a vector push per projection and it
     // is what proves the seam still works when the real consumer is the thing
     // being debugged.
@@ -657,7 +672,7 @@ pub fn spawn(
     let handle = std::thread::Builder::new()
         .name("koru-projection".into())
         .spawn(move || {
-            loop {
+            while !stop.load(std::sync::atomic::Ordering::Acquire) {
                 let now = koru_store_core::model::Timestamp::now().millis();
                 let busy = projector.tick(now);
                 if let Ok(mut slot) = published.lock() {

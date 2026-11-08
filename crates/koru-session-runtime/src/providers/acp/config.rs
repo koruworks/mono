@@ -5,6 +5,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+// The one dotted-version comparison, shared with the window that words a
+// refusal (`VersionNeed::outgrown_by`).
+use koru_session_protocol::version_at_least;
 use koru_session_protocol::{
     DelegationLaunch, ErrorCode, LaunchSelection, ModelName, ProviderKind,
 };
@@ -32,6 +35,25 @@ pub struct AcpRoute {
 }
 
 impl AcpRoute {
+    /// Whether `version` may start under this route: one of the listed
+    /// versions, or — for a named CLI whose version is a number rather than
+    /// a digest — any release **at or above the qualified pin**, the first
+    /// listed (the review's note, 2026-10-26: the installed CLIs had moved past
+    /// the pins and every agent read *Needs a supported version*). A pin
+    /// stays the floor: a release older than what was qualified is refused,
+    /// and a route built by hand with its own list admits only that list.
+    pub fn supports(&self, version: &ProviderVersion) -> bool {
+        if self.supported_versions.contains(version) {
+            return true;
+        }
+        if !self.dialect.admits_newer_releases() {
+            return false;
+        }
+        self.supported_versions
+            .first()
+            .is_some_and(|pin| version_at_least(version.as_str(), pin.as_str()))
+    }
+
     pub fn new(
         provider: ProviderKind,
         supported_versions: Vec<ProviderVersion>,
@@ -67,7 +89,15 @@ pub struct AcpConfig {
     /// Stdio MCP servers the session asks the agent to start (`session/new`
     /// `mcpServers`), beside any delegated endpoint.
     pub(super) mcp_servers: Vec<crate::providers::McpServerLaunch>,
-    pub(super) maximum_frame_bytes: usize,
+    /// The session's creator draws an agent's questions (protocol v21,
+    /// koru-ai D108): Koru advertises form elicitation at initialize, and
+    /// an `elicitation/create` becomes a question set. Off, nothing is
+    /// advertised and Claude is not offered its question tool.
+    pub(super) questions: bool,
+    /// The bound on a frame read from the agent.
+    pub(super) maximum_inbound_frame_bytes: usize,
+    /// The bound on a frame written to it: a prompt carries its pictures.
+    pub(super) maximum_prompt_frame_bytes: usize,
     pub(super) maximum_input_bytes: usize,
     pub(super) event_capacity: usize,
     pub(super) request_timeout: Duration,
@@ -112,7 +142,9 @@ impl AcpConfig {
             delegation: None,
             selection: None,
             mcp_servers: Vec::new(),
-            maximum_frame_bytes: super::super::DEFAULT_PROVIDER_FRAME_BYTES,
+            questions: false,
+            maximum_inbound_frame_bytes: super::super::DEFAULT_PROVIDER_FRAME_BYTES,
+            maximum_prompt_frame_bytes: super::super::DEFAULT_PROVIDER_PROMPT_FRAME_BYTES,
             maximum_input_bytes: 1024 * 1024,
             event_capacity: 256,
             request_timeout,
@@ -139,6 +171,13 @@ impl AcpConfig {
         self
     }
 
+    /// Whether the agent's questions reach the person (D108).
+    #[must_use]
+    pub fn with_questions(mut self, questions: bool) -> Self {
+        self.questions = questions;
+        self
+    }
+
     /// The model this session was asked for, from whichever launch carried
     /// it: a delegated launch's, or a manual creation's explicit selection.
     pub(super) fn requested_model(&self) -> Option<ModelName> {
@@ -152,6 +191,28 @@ impl AcpConfig {
             })
     }
 
+    /// The approval mode this session was asked to start in; `None` leaves
+    /// the agent in the one it starts in (koru-ai D7).
+    pub(super) fn requested_mode(&self) -> Option<koru_session_protocol::AgentModeId> {
+        self.selection
+            .as_ref()
+            .and_then(|selection| selection.mode.clone())
+    }
+
+    /// Whether this session was asked to start with Fast mode on or off
+    /// (koru-ai D11); `None` leaves the model's own default.
+    pub(super) fn requested_fast(&self) -> Option<bool> {
+        self.selection.as_ref().and_then(|selection| selection.fast)
+    }
+
+    /// The reasoning level this session was asked to start at; `None`
+    /// leaves the agent at its own default.
+    pub(super) fn requested_reasoning(&self) -> Option<koru_session_protocol::LaunchReasoning> {
+        self.selection
+            .as_ref()
+            .and_then(|selection| selection.reasoning)
+    }
+
     pub fn with_limits(mut self, limits: ProbeLimits) -> Result<Self, ProviderFailure> {
         limits.validate()?;
         // A caller's budget never undercuts what the route needs to start.
@@ -159,7 +220,7 @@ impl AcpConfig {
             .timeout
             .max(self.route.dialect.request_timeout_floor());
         self.shutdown_timeout = limits.timeout;
-        self.maximum_frame_bytes = limits.maximum_output_bytes;
+        self.maximum_inbound_frame_bytes = limits.maximum_output_bytes;
         Ok(self)
     }
 }

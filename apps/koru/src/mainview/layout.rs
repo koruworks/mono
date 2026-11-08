@@ -37,8 +37,11 @@ const CHIP_GAP: f32 = 6.0;
 /// the last one — Canvases, the seventh, was the one that stopped fitting.
 /// Socials made eight; `ExploreView::navigator_mode_rects` now narrows the gaps
 /// and then the icons to fit, so the floor did not have to move again.
-pub(crate) const SIDEBAR_MIN_W: f32 = 190.0;
-pub(super) const SIDEBAR_MAX_W: f32 = 500.0;
+/// The sidebar's drag limits: the pane's (`koru_draw::theme`) plus the rail
+/// that sits before it. **One owner** still — the theme's are the pane's,
+/// these the column's, and the clamp is applied here alone.
+pub(crate) const SIDEBAR_MIN_W: f32 = koru_draw::theme::SIDEBAR_MIN_W + koru_draw::theme::RAIL_W;
+pub(crate) const SIDEBAR_MAX_W: f32 = koru_draw::theme::SIDEBAR_MAX_W + koru_draw::theme::RAIL_W;
 pub(super) const AI_MIN_W: f32 = 400.0;
 pub(super) const AI_MAX_W: f32 = 900.0;
 
@@ -103,7 +106,11 @@ impl MainView {
             self.viewport.1,
             sidebar_w,
             ai_w.max(self.context.layout_width()),
-        );
+        )
+        // The ground's lanes at the right edge and the foot, in the rail's
+        // colour (the review's artboard and note): the cards stop short of
+        // the window.
+        .with_ground(koru_draw::theme::EDGE_LANE_W);
     }
 
     pub(super) fn content(&self) -> Rect {
@@ -129,11 +136,12 @@ impl MainView {
     /// lane's intersection with this band. Geometric rather than by pane
     /// identity, so a nested or right-hand pane answers for itself.
     pub(super) fn caption_lane(&self) -> Rect {
-        let full = koru_shell_chrome::caption::tab_strip_with_host_action(
+        let full = koru_shell_chrome::caption::tab_strip_with_leading(
             self.regions.caption,
             super::WINDOW_BUTTONS,
             super::CONTEXT_TOGGLE,
             super::reminder_bell(),
+            self.leading(),
         );
         let taken = self
             .branch_pill()
@@ -320,7 +328,7 @@ impl MainView {
         let r = self.regions.context;
         let w = self.ai_panel.drawn_width();
         Rect::new(
-            self.viewport.0 - w + self.ai_panel.slide_offset(),
+            self.regions.edge.x - w + self.ai_panel.slide_offset(),
             r.y,
             w,
             r.h,
@@ -337,10 +345,40 @@ impl MainView {
     /// pane itself there — only the popover uses this rectangle.
     pub(super) fn explore_popover_area(&self) -> Rect {
         if self.regions.sidebar.w > 0.0 {
-            self.regions.sidebar
+            self.explore_area()
         } else {
-            Rect::new(0.0, 0.0, self.sidebar.full(), self.viewport.1)
+            Self::pane_of(Rect::new(0.0, 0.0, self.sidebar.full(), self.viewport.1))
         }
+    }
+
+    /// The sidebar column is the rail and the pane (the review's artboard 11):
+    /// the rail `RAIL_W` wide at the left under the lane, the pane after it.
+    /// `regions.sidebar` and the lane stay the whole column; the explore
+    /// view is handed the pane, and the rail its own rect.
+    pub(super) fn pane_of(column: Rect) -> Rect {
+        let rail = koru_draw::theme::RAIL_W.min(column.w.max(0.0));
+        Rect::new(
+            column.x + rail,
+            column.y,
+            (column.w - rail).max(0.0),
+            column.h,
+        )
+    }
+
+    pub(super) fn rail_of(column: Rect) -> Rect {
+        let lane = koru_draw::theme::CAPTION_H.min(column.h);
+        let rail = koru_draw::theme::RAIL_W.min(column.w.max(0.0));
+        Rect::new(column.x, column.y + lane, rail, (column.h - lane).max(0.0))
+    }
+
+    /// The settled pane — what the explore view is hit-tested against.
+    pub(super) fn explore_area(&self) -> Rect {
+        Self::pane_of(self.regions.sidebar)
+    }
+
+    /// The settled rail.
+    pub(super) fn rail_area(&self) -> Rect {
+        Self::rail_of(self.regions.sidebar)
     }
 
     /// Where the caption is *drawn*, which is not quite where it lives while the
@@ -370,7 +408,7 @@ impl MainView {
         let r = self.regions.context;
         let w = self.context.drawn_width();
         Rect::new(
-            self.viewport.0 - w + self.context.slide_offset(),
+            self.regions.edge.x - w + self.context.slide_offset(),
             r.y,
             w,
             r.h,
@@ -401,6 +439,10 @@ impl MainView {
     /// O(tabs) — `reflow` is parley over every row, and a live resize drag would
     /// otherwise pay it once per tab per frame.
     pub(super) fn relayout(&mut self) {
+        #[cfg(test)]
+        {
+            self.relayouts += 1;
+        }
         self.resolve_regions();
         let content = self.content();
         let rects = self.panes.leaf_rects(content);
@@ -488,7 +530,7 @@ impl MainView {
             ) {
                 let revealed = self.reveal_tab_in_explore(self.tabs().active());
                 if revealed {
-                    self.explore.focus_tree(self.regions.sidebar);
+                    self.explore.focus_tree(self.explore_area());
                 }
                 return revealed;
             }
@@ -506,7 +548,7 @@ impl MainView {
         }
         if self.sidebar.is_open()
             && !self.explore.has_focus()
-            && self.explore.focus_tree(self.regions.sidebar)
+            && self.explore.focus_tree(self.explore_area())
         {
             return true;
         }
@@ -606,13 +648,13 @@ impl MainView {
         self.explore_stale = true;
         let landed = match place {
             ColumnPlace::Result(version) => {
-                self.explore.reveal_artifact(version, self.regions.sidebar)
+                self.explore.reveal_artifact(version, self.explore_area())
             }
             // A chat the list has not answered with yet is remembered, and
             // the keyboard lands on it when it arrives — so it is not a miss
             // to paper over with the first row.
             ColumnPlace::Chat(chat) => {
-                self.explore.reveal_chat(chat, self.regions.sidebar);
+                self.explore.reveal_chat(chat, self.explore_area());
                 true
             }
             // The rail owns its own rows, so `focus_tree` is a no-op on a Tasks
@@ -620,7 +662,7 @@ impl MainView {
             ColumnPlace::Task(_) | ColumnPlace::Run(_) => false,
         };
         if !landed {
-            self.explore.focus_tree(self.regions.sidebar);
+            self.explore.focus_tree(self.explore_area());
         }
         true
     }
@@ -637,7 +679,7 @@ impl MainView {
         self.explore.set_selected(Some(node));
         self.explore.reveal(node);
         self.explore_stale = true;
-        self.explore.focus_tree(self.regions.sidebar);
+        self.explore.focus_tree(self.explore_area());
         // Correct home after a successful reveal (overwrites a wrong stamp).
         let home = self.current_workspace();
         if let Some(tab) = self.tabs_mut().iter_mut().find(|t| {
@@ -650,7 +692,32 @@ impl MainView {
 
     /// Open or shut the pane. What the logo and the toggle button do.
     pub(super) fn toggle_sidebar(&mut self) -> bool {
-        let open = self.sidebar.toggle(Instant::now());
+        let now = Instant::now();
+        // **The fold** (`theme::motion::pane_fold`): the panel's own slide,
+        // reversed from where it is on interrupt, with the contents' fade
+        // and the chain's ride clocked from here. Under reduced motion both
+        // states land at once — the panel has no zero-duration path, so the
+        // host takes the other door it already has.
+        let open = if self.reduced_motion {
+            let open = !self.sidebar.is_open();
+            self.sidebar.set_immediately(open);
+            self.fold = None;
+            open
+        } else {
+            let open = self.sidebar.toggle(now);
+            self.fold = Some((now, open));
+            open
+        };
+        super::chrome_debug::chrome_debug!(
+            "pane {} (width {}{})",
+            if open { "opening" } else { "closing" },
+            self.sidebar.full(),
+            if self.reduced_motion {
+                ", reduced motion"
+            } else {
+                ""
+            }
+        );
         // Closing the pane closes what was hanging off it: a popover left
         // floating over the content with nothing to anchor it to is a panel
         // from nowhere.
@@ -661,11 +728,45 @@ impl MainView {
         self.relayout();
         // A hidden list must not keep the keyboard.
         if open {
-            self.explore.focus_tree(self.regions.sidebar);
+            self.explore.focus_tree(self.explore_area());
         } else {
             self.explore.clear_focus();
         }
         true
+    }
+
+    /// The fold's clock stops when the panel's slide does. Separate from the
+    /// tick so a test can drive the panel by hand and still see it settle.
+    pub(super) fn settle_fold(&mut self) {
+        if self.fold.is_some() && !self.sidebar.animating() {
+            super::chrome_debug::chrome_debug!(
+                "pane fold settled {}",
+                if self.sidebar.is_open() {
+                    "open"
+                } else {
+                    "shut"
+                }
+            );
+            self.fold = None;
+        }
+    }
+
+    /// How opaque the pane's contents are this frame: 1 at rest, fading out
+    /// over a collapse's first 90 ms and in over an expand's last 90 ms.
+    pub(super) fn fold_content_alpha(&self) -> f32 {
+        match self.fold {
+            Some((started, opening)) if self.sidebar.animating() => {
+                theme::motion::pane_fold().content_alpha(started.elapsed(), opening)
+            }
+            _ => 1.0,
+        }
+    }
+
+    /// Whether the caption's leading chain is drawn this frame: while the
+    /// pane is shut, and through the fold either way — it rides the drawn
+    /// pane's edge out to the corner and back (frame 9's blue note).
+    pub(super) fn chain_drawn(&self) -> bool {
+        !self.sidebar.is_open() || (self.fold.is_some() && self.sidebar.animating())
     }
 
     /// Show the workspaces switcher without changing the Explore pane.
@@ -675,12 +776,20 @@ impl MainView {
     /// keeps all of its width. The popover has the arrows, and `popover_key` is
     /// asked before `nav_key` on every press.
     pub(super) fn open_workspaces_popover(&mut self) -> bool {
-        self.explore
-            .open_popover(crate::panes::explore::PopoverKind::Workspaces)
+        super::chrome_debug::chrome_debug!("who/where popover opened on workspaces");
+        let opened = self
+            .explore
+            .open_popover(crate::panes::explore::PopoverKind::Summary);
+        // The keyboard lands on the current workspace; a long list may have
+        // it below the fold.
+        let area = self.explore_popover_area();
+        self.explore.reveal_popover_hover(area, self.viewport);
+        opened
     }
 
     /// Show the profiles switcher without changing the Explore pane.
     pub(super) fn open_profiles_popover(&mut self) -> bool {
+        super::chrome_debug::chrome_debug!("who/where popover opened on profiles");
         self.explore
             .open_popover(crate::panes::explore::PopoverKind::Profiles)
     }
@@ -728,6 +837,9 @@ impl MainView {
         if !koru_features::ai() {
             return false;
         }
+        // Where the person was is where Back returns from the new chat — the
+        // new tab's rule (Ctrl+T); the chat becomes a place once it is sent.
+        self.record_jump();
         self.tabs_mut().push(Tab::ai_chat());
         true
     }
@@ -882,9 +994,34 @@ impl MainView {
     }
 
     /// Open a recent chat as a tab, focusing one already showing it.
+    ///
+    /// **A jump, written down here** (D102) — the Chats list, `Ctrl+Shift+↑`/
+    /// `↓` and *Recent chats* all come through this door, and so does Back
+    /// reopening a chat whose tab was closed, which `restoring` keeps from
+    /// recording itself. Shaped as `open_run_tab`: `select` records only when
+    /// the active tab changes, and a pushed tab is already active, so the
+    /// path that opens a new tab would otherwise record nothing.
     pub(super) fn open_ai_chat_tab_for(&mut self, id: koru_ai_ui::ChatId) -> bool {
+        self.open_ai_chat_tab_at(id, None)
+    }
+
+    /// **Open `id` as a tab, at `block` when there is one** — a chat hit in
+    /// search, or a `koru://chat/…` link or overlay hit the Agent routed to
+    /// this window. A tab already showing the chat is focused and moved to
+    /// the block; a new tab opens there.
+    pub(super) fn open_ai_chat_tab_at(
+        &mut self,
+        id: koru_ai_ui::ChatId,
+        block: Option<koru_ai_ui::MessageBlockId>,
+    ) -> bool {
         if !koru_features::ai() {
             return false;
+        }
+        // Standing still is not a jump.
+        if matches!(&self.tabs().active_tab().view, TabView::AiChat(view) if view.chat_id() == Some(id))
+        {
+            self.move_active_chat_to(id, block);
+            return true;
         }
         let showing = self.panes.iter_groups().find_map(|(path, group)| {
             group
@@ -896,12 +1033,29 @@ impl MainView {
                 .map(|index| (path, index))
         });
         if let Some((path, index)) = showing {
+            self.record_jump();
             self.panes.set_focus(path);
             let _ = self.select(index);
+            self.move_active_chat_to(id, block);
             return true;
         }
-        self.tabs_mut().push(Tab::ai_chat_existing(id));
+        self.record_jump();
+        self.tabs_mut().push(Tab::ai_chat_existing_at(id, block));
         true
+    }
+
+    /// Move the active chat tab, which shows `id`, to `block`. Nothing when
+    /// there is no block: a tab already showing the chat stays where it is.
+    fn move_active_chat_to(
+        &mut self,
+        id: koru_ai_ui::ChatId,
+        block: Option<koru_ai_ui::MessageBlockId>,
+    ) {
+        if block.is_some()
+            && let TabView::AiChat(view) = &mut self.tabs_mut().active_mut().view
+        {
+            view.open_link(id, block);
+        }
     }
 
     /// Open a recent document, focusing a tab that already shows it.
@@ -925,11 +1079,12 @@ impl MainView {
     /// for tests that verify caption geometry.
     #[cfg(test)]
     pub(super) fn caption_strip(&self) -> Rect {
-        let full = koru_shell_chrome::caption::tab_strip_with_host_action(
+        let full = koru_shell_chrome::caption::tab_strip_with_leading(
             self.regions.caption,
             super::WINDOW_BUTTONS,
             super::CONTEXT_TOGGLE,
             super::reminder_bell(),
+            self.leading(),
         );
         let taken = self
             .branch_pill()
@@ -965,11 +1120,12 @@ impl MainView {
         if w <= 0.0 {
             return None;
         }
-        let full = koru_shell_chrome::caption::tab_strip_with_host_action(
+        let full = koru_shell_chrome::caption::tab_strip_with_leading(
             self.regions.caption,
             super::WINDOW_BUTTONS,
             super::CONTEXT_TOGGLE,
             super::reminder_bell(),
+            self.leading(),
         );
         let band = match self.offline_chip() {
             Some(chip) => Rect::new(
@@ -993,11 +1149,12 @@ impl MainView {
     /// of the time and costs the strip nothing.
     pub(super) fn offline_chip(&self) -> Option<Rect> {
         self.store_trouble.as_ref()?;
-        let full = koru_shell_chrome::caption::tab_strip_with_host_action(
+        let full = koru_shell_chrome::caption::tab_strip_with_leading(
             self.regions.caption,
             super::WINDOW_BUTTONS,
             super::CONTEXT_TOGGLE,
             super::reminder_bell(),
+            self.leading(),
         );
         Some(koru_shell_chrome::status_chip::chip(full))
     }
@@ -1102,7 +1259,7 @@ impl MainView {
             0.0,
             super::WINDOW_BUTTONS,
             super::CONTEXT_TOGGLE,
-            false,
+            self.leading(),
             super::reminder_bell(),
             false,
             x,
@@ -1176,6 +1333,7 @@ impl MainView {
     pub(super) fn advance_panels(&mut self, ws: &WorkspaceDoc) {
         let now = Instant::now();
         self.sidebar.advance(now);
+        self.settle_fold();
         self.ai_panel.advance(now);
         self.context.advance(now);
         self.slides_mut().advance(now);

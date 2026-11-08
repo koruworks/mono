@@ -61,8 +61,11 @@ pub(crate) use modal::{Delegation, Hit, Outcome, Phase};
 /// resolved once by [`begin`].
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(crate) enum DelegationOrigin {
-    /// The tab strip's `+`. It knows nothing, so the modal opens empty.
-    PlusMenu,
+    /// Nothing known, so the modal opens empty. No gesture opens it this
+    /// way since the `+` menu's *Delegate* row went (the New… launcher took
+    /// its place); the tests keep it as the subject-less baseline.
+    #[cfg(test)]
+    Blank,
     /// `/delegate` in the editor. The row it was typed on becomes the context
     /// **and what is left of its words becomes the objective** — the command
     /// itself is erased before the modal opens, so what remains is what the
@@ -122,7 +125,8 @@ impl DelegationOrigin {
                 objective.clone()
             }
             Self::ReRun { seed } => seed.objective.as_str().to_owned(),
-            Self::PlusMenu => String::new(),
+            #[cfg(test)]
+            Self::Blank => String::new(),
         }
     }
 
@@ -153,7 +157,9 @@ impl DelegationOrigin {
     fn pill_anchor(&self) -> Option<(DocumentId, NodeId)> {
         match self {
             // Neither names a row a crumb could go on.
-            Self::PlusMenu | Self::ReRun { .. } => None,
+            #[cfg(test)]
+            Self::Blank => None,
+            Self::ReRun { .. } => None,
             Self::SlashCommand {
                 document, block, ..
             } => block.map(|node| (*document, node)),
@@ -171,7 +177,9 @@ impl DelegationOrigin {
         match self {
             // A re-run's context is the earlier run's pins, not a row this
             // window is looking at -- see `MainView::rerun_context`.
-            Self::PlusMenu | Self::ReRun { .. } => None,
+            #[cfg(test)]
+            Self::Blank => None,
+            Self::ReRun { .. } => None,
             Self::SlashCommand {
                 document, block, ..
             } => Some((*document, *block)),
@@ -199,10 +207,11 @@ impl MainView {
     /// context. First use subscribes through the backend worker, and explicit
     /// Retry requests a new probe without waiting in this call.
     pub(crate) fn begin_delegation(&mut self, origin: DelegationOrigin) -> bool {
-        // **The one door into the modal**, so a build that hides Koru AI
-        // (Delegate included) refuses every gesture here once — the `+` row,
-        // `/delegate`, a task's and a selection's menu (koru-features).
-        if !koru_features::ai() {
+        // **The one door into the modal**, so a build that hides Delegate —
+        // Koru AI off, or the agent views off — refuses every gesture here
+        // once: the `+` row, `/delegate`, a task's and a selection's menu, a
+        // run's *Re-run* (koru-features).
+        if !koru_features::delegate() {
             return false;
         }
         // One outstanding receiver must stay owned until its answer is
@@ -226,7 +235,22 @@ impl MainView {
             .unwrap_or_default();
         let store_workspace = koru_delegate_core::WorkspaceId::from_uuid(workspace.as_uuid());
 
-        let profiles = koru_session_profiles::built_in_profiles();
+        // An agent turned off on *Agent providers* is not a choice here, and
+        // the rest are listed in the person's order.
+        let disabled = self.disabled_agents().to_vec();
+        let order = self.agent_order();
+        let mut profiles: Vec<_> = koru_session_profiles::built_in_profiles()
+            .into_iter()
+            .filter(|profile| {
+                profile
+                    .label
+                    .agent_key()
+                    .is_none_or(|key| !disabled.iter().any(|off| off == key))
+            })
+            .collect();
+        profiles.sort_by_key(|profile| {
+            super::agent_providers::order_rank(&order, profile.label.agent_key())
+        });
         let agents = world::agents_for(
             &profiles,
             koru_session_profiles::MANAGED_PROVIDER_REGISTRATIONS,
@@ -500,12 +524,21 @@ impl MainView {
     /// shows actually moved.
     pub(crate) fn maintain_delegate_folder(&mut self) -> bool {
         let before = self.delegate_temporary_base();
+        let agents_before = self.agent_settings_snapshot();
         if self.delegate_folder.poll().is_none() {
             return false;
         }
+        // The same link carries *Agent providers* — the agents turned off
+        // and where a new chat starts: what another window changed, or the
+        // stored settings arriving at start, reach every surface here.
+        let agents_moved = self.agent_settings_snapshot() != agents_before;
+        if agents_moved {
+            self.apply_hidden_agents();
+            self.sync_agent_providers();
+        }
         let after = self.delegate_temporary_base();
         if after == before {
-            return false;
+            return agents_moved;
         }
         if let Some(modal) = self.delegation.as_mut() {
             modal.chose_temporary_base(Ok(after));

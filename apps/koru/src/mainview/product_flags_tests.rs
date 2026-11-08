@@ -23,26 +23,23 @@ fn off<R>(body: impl FnOnce() -> R) -> R {
     testing::with(Features::ALL_OFF, body)
 }
 
-/// The `+` menu is Welcome, Documents and Shell — no Canvases, no Agents, no
-/// AI chat, no Delegate, no Chats, no Socials — and a hidden row is refused
-/// even when it is asked for by name rather than picked from the menu.
+/// The New… launcher is a document, a shell and import — no task, no chat,
+/// no agent — and a hidden row is refused even when it is asked for by name
+/// rather than picked from a menu.
 #[test]
-fn the_add_menu_offers_documents_shells_and_welcome_only() {
+fn the_launcher_offers_documents_and_shells_only() {
+    use crate::mainview::launcher::NewKind;
     off(|| {
         let (mut v, _workspace) = on_document();
-        assert!(v.open_new_tab_menu());
-        let items = v.menu.as_ref().expect("the menu opened").items().to_vec();
-        assert_eq!(
-            items,
-            [
-                MenuAction::OpenWelcome,
-                MenuAction::Documents,
-                MenuAction::NewShell,
-                MenuAction::Divider,
-                MenuAction::ImportAs,
-            ]
-        );
-        v.menu = None;
+        assert!(v.open_launcher());
+        let kinds = v
+            .launcher
+            .as_ref()
+            .expect("the launcher opened")
+            .kinds
+            .clone();
+        assert_eq!(kinds, [NewKind::Document, NewKind::Shell, NewKind::Import]);
+        v.launcher = None;
 
         let shells = context_menu::shown(context_menu::shell_plus_items());
         assert!(!shells.is_empty(), "the shells are all there");
@@ -57,10 +54,9 @@ fn the_add_menu_offers_documents_shells_and_welcome_only() {
         let before = v.tabs().len();
         for hidden in [
             MenuAction::NewAiChat,
-            MenuAction::Delegate,
+            MenuAction::TaskDelegate,
             MenuAction::NewAgent,
             MenuAction::NewCanvas,
-            MenuAction::Socials,
         ] {
             assert!(
                 !v.run_menu_action(MenuSubject::NewTab, hidden),
@@ -226,7 +222,6 @@ fn socials_does_not_open() {
         let (mut v, mut workspace) = on_document();
         let before = v.tabs().len();
         assert!(!v.open_socials_tab());
-        assert!(!v.run_menu_action(MenuSubject::NewTab, MenuAction::Socials));
         if let Some(document) = v.active_document {
             assert!(!v.social_post_from_document(document));
         }
@@ -247,21 +242,85 @@ fn socials_does_not_open() {
             !context_menu::shown(context_menu::node_items(1)).contains(&MenuAction::NewSocialPost)
         );
         assert!(!MenuAction::NewSocialPost.shown_in_product());
-        assert!(!MenuAction::Socials.shown_in_product());
         assert!(!MenuAction::Canvases.shown_in_product());
         assert!(!MenuAction::NewCanvas.shown_in_product());
     });
 }
 
-/// The control: with every surface on, Socials and Canvases are offered.
+/// The control: with every surface on, the launcher offers all six, and
+/// Socials still opens.
 #[test]
-fn with_every_surface_on_socials_and_canvases_are_offered() {
+fn with_every_surface_on_the_launcher_offers_all_six() {
+    use crate::mainview::launcher::NewKind;
     let (mut v, _workspace) = on_document();
-    assert!(v.open_new_tab_menu());
-    let items = v.menu.as_ref().expect("the menu opened").items().to_vec();
-    assert!(items.contains(&MenuAction::Canvases));
-    assert!(items.contains(&MenuAction::Socials));
-    v.menu = None;
+    assert!(v.open_launcher());
+    assert_eq!(
+        v.launcher.as_ref().expect("the launcher opened").kinds,
+        [
+            NewKind::Document,
+            NewKind::Task,
+            NewKind::Chat,
+            NewKind::Agent,
+            NewKind::Shell,
+            NewKind::Import
+        ]
+    );
+    v.launcher = None;
     assert!(v.open_socials_tab());
     assert!(matches!(v.tabs().active_tab().view, TabView::Socials(_)));
+}
+
+/// **Delegate goes with the agent views** (`koru_features::delegate`): the
+/// build that ships Koru AI chat with the Agents and Artifacts views hidden
+/// offers no way to start a delegation — no `+` row, no task or selection
+/// row, no chord, and the one door refuses every origin — while chat stays,
+/// and so do the menus over runs and schedules already made.
+#[test]
+fn delegate_is_hidden_with_the_agent_views_while_ai_is_on() {
+    use crate::mainview::delegate::{DelegationOrigin, TaskSubject};
+    let chat_ships = Features {
+        agent_views: false,
+        ..Features::ALL_ON
+    };
+    testing::with(chat_ships, || {
+        let (mut v, _workspace) = on_document();
+
+        assert!(!MenuAction::TaskDelegate.shown_in_product());
+        assert!(!koru_document::context_menu::Choice::Delegate.shown_in_product());
+        assert!(!koru_keys::ShortcutId::Delegate.shown_in_product());
+        for kept in [
+            MenuAction::OpenRunResult(0),
+            MenuAction::DeleteRun,
+            MenuAction::ScheduleEdit,
+            MenuAction::NewAiChat,
+        ] {
+            assert!(kept.shown_in_product(), "{kept:?} stays");
+        }
+
+        let document = koru_core::DocumentId::new();
+        let node = koru_core::NodeId::new();
+        for origin in [
+            DelegationOrigin::Blank,
+            DelegationOrigin::SlashCommand {
+                document,
+                block: Some(node),
+                objective: "Write the release notes".into(),
+            },
+            DelegationOrigin::TaskContextMenu {
+                task: TaskSubject {
+                    document,
+                    node,
+                    title: "Write the release notes".into(),
+                },
+            },
+            DelegationOrigin::SelectionContextMenu {
+                document,
+                selection: Some(node),
+                objective: String::new(),
+            },
+        ] {
+            assert!(!v.begin_delegation(origin.clone()), "{origin:?}");
+        }
+        assert!(!v.delegation_open());
+    });
 }

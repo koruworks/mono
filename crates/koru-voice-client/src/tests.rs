@@ -759,3 +759,87 @@ fn a_device_picker_can_start_the_worker_before_it_asks() {
         worker.stop();
     }
 }
+
+// ------------------------------------------------------------ the level meter
+
+/// Wait until `holds` says the client has arrived, or fail.
+fn wait_for(what: &str, holds: impl Fn() -> bool) {
+    let deadline = std::time::Instant::now() + PATIENCE;
+    while !holds() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "waited {PATIENCE:?} for {what}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+/// **A meter's level reaches the meter, not the inbox**, and it arms no
+/// dictation: the host's dictation drain sees nothing, and a stop leaves by
+/// the same one path.
+#[test]
+fn a_meter_reports_the_workers_level_and_arms_no_dictation() {
+    let root = unbound_root();
+    let worker = TestWorker::start(&root);
+    let client = VoiceClient::at(Some(root.clone()));
+    let woken = Arc::new(AtomicU64::new(0));
+    {
+        let woken = Arc::clone(&woken);
+        client.install_wake(move || {
+            woken.fetch_add(1, Ordering::Release);
+        });
+    }
+
+    assert_eq!(client.meter_level(), None);
+    client
+        .meter(InputChoice::named("Yeti Nano"))
+        .expect("the meter could not be enqueued");
+    assert_eq!(
+        client.meter_level(),
+        Some(LevelBucket::SILENT),
+        "a meter starts silent"
+    );
+    let heard = LevelBucket::new(crate::test_worker::METER_LEVEL);
+    wait_for("the worker's level", || client.meter_level() == Some(heard));
+    assert!(
+        woken.load(Ordering::Acquire) > 0,
+        "a level did not wake the host"
+    );
+    assert_eq!(client.live(), None, "a meter armed a dictation");
+    assert!(
+        client.drain().is_empty(),
+        "a meter's level reached the inbox"
+    );
+
+    client.stop_meter().expect("the stop could not be enqueued");
+    assert_eq!(client.meter_level(), None);
+    wait_for("the stop", || worker.requests().contains(&"meter_stop"));
+    assert_eq!(worker.requests(), vec!["meter", "meter_stop"]);
+    // Stopping nothing sends nothing.
+    client.stop_meter().expect("a second stop is a no-op");
+    worker.stop();
+}
+
+/// **An older worker simply gives no meter.** It refuses this build's
+/// greeting, as every protocol bump has it do; the meter stays silent, no
+/// event reaches the host, and the code is there for a diagnostic.
+#[test]
+fn an_older_worker_gives_no_meter_and_no_event() {
+    let root = unbound_root();
+    let worker = TestWorker::start_speaking(&root, koru_voice::PROTOCOL_VERSION - 1);
+    let client = VoiceClient::at(Some(root.clone()));
+
+    client
+        .meter(InputChoice::SystemDefault)
+        .expect("enqueueing never waits on the worker");
+    wait_for("the refusal", || {
+        client.last_error() == Some(ErrorCode::ProtocolMismatch)
+    });
+    assert_eq!(client.meter_level(), Some(LevelBucket::SILENT));
+    assert!(client.drain().is_empty(), "{:?}", client.drain());
+    assert_eq!(worker.requests(), Vec::<&str>::new());
+    client
+        .stop_meter()
+        .expect("stopping a meter that never ran");
+    worker.stop();
+}

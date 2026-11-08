@@ -17,6 +17,7 @@ use koru_store_core::model::{Blob, BlobHash, DocumentEntry, Scope, Workspace};
 use koru_store_core::ports::HistoryReason;
 use koru_store_server::{StoreWorkerClient, WorkerError};
 use koru_store_wire::search::{SearchRequest, SearchResponse};
+use koru_store_wire::tasks::{TaskQuery, TaskQueryResponse};
 use koru_store_wire::{CaptureHistory, HistoryEntry, HistoryPage, HistoryQuery, Status};
 
 /// Executes provider-requested tools through the same catalog, authorization,
@@ -26,13 +27,16 @@ use koru_store_wire::{CaptureHistory, HistoryEntry, HistoryPage, HistoryQuery, S
 pub struct StoreToolAdapter {
     executor: WorkspaceToolExecutor,
     definitions: Vec<AiToolDefinition>,
+    /// The same Store, for which profile owns a granted workspace.
+    store: Arc<WorkerEmbeddedStore>,
 }
 
 impl StoreToolAdapter {
     pub fn new(client: StoreWorkerClient) -> Self {
         let store = Arc::new(WorkerEmbeddedStore { client });
-        let backend = Arc::new(LocalBackend::with_embedded(store));
+        let backend = Arc::new(LocalBackend::with_embedded(store.clone()));
         Self {
+            store,
             executor: WorkspaceToolExecutor::new(backend),
             definitions: workspace_tool_catalog()
                 .into_iter()
@@ -51,6 +55,42 @@ impl StoreToolAdapter {
                 })
                 .collect(),
         }
+    }
+}
+
+impl StoreToolAdapter {
+    /// **The chat's grants in its own profile, and no others** (AI schema
+    /// 13). A grant to another profile's workspace stays in the chat's
+    /// policy, so it is there again if the person grants it in that
+    /// profile's window — but no tool reaches it, lists it or counts it: the
+    /// selection the tools are authorized by is made of these alone. A chat
+    /// not yet placed reaches none.
+    fn readable_workspaces(
+        &self,
+        context: &AiToolExecutionContext,
+    ) -> Result<Vec<WorkspaceId>, AiError> {
+        let Some(profile) = context.profile_id else {
+            return Ok(Vec::new());
+        };
+        if context.workspace_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let granted = context.workspace_ids.clone();
+        let owned = self
+            .store
+            .read(move |store| {
+                Ok(store
+                    .workspaces_including_deleted()?
+                    .into_iter()
+                    .filter(|workspace| workspace.owner == profile)
+                    .map(|workspace| workspace.id)
+                    .collect::<std::collections::HashSet<_>>())
+            })
+            .map_err(tool_failure)?;
+        Ok(granted
+            .into_iter()
+            .filter(|workspace| owned.contains(workspace))
+            .collect())
     }
 }
 
@@ -76,7 +116,7 @@ impl AiToolExecutor for StoreToolAdapter {
             "local",
             format!("koru-ai:{}", context.chat_id),
             [Scope::ReadDocuments, Scope::EditDocuments],
-            context.workspace_ids.iter().copied(),
+            self.readable_workspaces(context)?,
         );
         tracing::info!(
             chat = %context.chat_id,
@@ -122,6 +162,12 @@ impl EmbeddedStore for WorkerEmbeddedStore {
         flatten(self.client.search(request))
     }
 
+    /// The Store worker's task port, through its typed queue: the page
+    /// `POST /v1/tasks/query` answers, so Koru AI lists what the desktop does.
+    fn query_tasks(&self, query: TaskQuery) -> Result<TaskQueryResponse, ToolError> {
+        flatten(self.client.query_tasks(query))
+    }
+
     fn snapshot(&self, workspace: WorkspaceId, document: DocumentId) -> Result<Vec<u8>, ToolError> {
         self.read(move |store| store.snapshot(workspace, document))
     }
@@ -131,11 +177,19 @@ impl EmbeddedStore for WorkerEmbeddedStore {
         workspace: WorkspaceId,
         title: String,
         kind: String,
+        attribution: Option<&str>,
     ) -> Result<DocumentId, ToolError> {
-        flatten(
-            self.client
-                .create_document(workspace, title, kind, Timestamp::now()),
-        )
+        flatten(self.client.create_document_attributed(
+            workspace,
+            title,
+            kind,
+            attribution.map(str::to_owned),
+            Timestamp::now(),
+        ))
+    }
+
+    fn manifest_id(&self, workspace: WorkspaceId) -> Result<DocumentId, ToolError> {
+        self.read(move |store| store.manifest_id(workspace))
     }
 
     fn ensure_file_note(
@@ -163,6 +217,7 @@ impl EmbeddedStore for WorkerEmbeddedStore {
             request.idempotency_key,
             request.request_hash,
             request.initial_update,
+            request.attribution,
             Timestamp::now(),
         ))
         .map(|seeded| EmbeddedSeededDocument {
@@ -329,19 +384,28 @@ fn tool_failure(error: ToolError) -> AiError {
     AiError::new(class, error.message, false)
 }
 
+/// The mutation path's own evidence (Cloud MCP Plan 2.1): local history with
+/// deferred stamps, effects at the port, and the attribution sweep.
+#[cfg(test)]
+mod mutation_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use koru_ai_core::{ChatId, InferenceAttemptId, ToolInvocationId};
+    use koru_ai_core::{ChatId, InferenceAttemptId, ProfileId, ToolInvocationId};
     use koru_store_core::Locale;
     use serde_json::json;
 
-    fn execution_context(workspaces: Vec<WorkspaceId>) -> AiToolExecutionContext {
+    fn execution_context(
+        workspaces: Vec<WorkspaceId>,
+        profile: Option<ProfileId>,
+    ) -> AiToolExecutionContext {
         AiToolExecutionContext {
             chat_id: ChatId::new(),
             attempt_id: InferenceAttemptId::new(),
             invocation_id: ToolInvocationId::new(),
             workspace_ids: workspaces,
+            profile_id: profile,
         }
     }
 
@@ -363,21 +427,21 @@ mod tests {
         .spawn()
         .unwrap();
         let client = worker.client();
-        let workspace = client
+        let (profile, workspace) = client
             .with_store(|store| {
                 let at = Timestamp::from_millis(1);
                 let profile =
                     store.create_profile("Test", None, None, Locale::parse("en").unwrap(), at)?;
-                store.create_workspace(profile.id, "Workspace", at)
+                let workspace = store.create_workspace(profile.id, "Workspace", at)?;
+                Ok::<_, koru_store_core::Error>((profile.id, workspace.id))
             })
             .unwrap()
-            .unwrap()
-            .id;
+            .unwrap();
         let adapter = StoreToolAdapter::new(client.clone());
         let cancellation = Cancellation::default();
 
         let denied = adapter.invoke(
-            &execution_context(Vec::new()),
+            &execution_context(Vec::new(), Some(profile)),
             &call(
                 "create_document",
                 json!({ "workspace_id": workspace, "title": "AI draft" }),
@@ -386,7 +450,7 @@ mod tests {
         );
         assert_eq!(denied.unwrap_err().class, AiErrorClass::Authentication);
 
-        let context = execution_context(vec![workspace]);
+        let context = execution_context(vec![workspace], Some(profile));
         let created = adapter
             .invoke(
                 &context,
@@ -481,6 +545,38 @@ mod tests {
         assert_eq!(worker.join(), koru_store_server::WorkerExit::Clean);
     }
 
+    /// **Koru AI's `list_tasks` is answered**, where the embedded host used
+    /// to refuse it `tasks_unavailable`: the port asks the Store's own task
+    /// port through the worker's queue. Over a Store kept in memory, so the
+    /// test touches no disk.
+    #[test]
+    fn list_tasks_is_answered_from_the_task_port() {
+        let memory = koru_store_server::memory::MemoryStore::open("internal-debug").unwrap();
+        let client = memory.client();
+        let (profile, workspace) = client
+            .with_store(|store| {
+                let at = Timestamp::from_millis(1);
+                let profile =
+                    store.create_profile("Test", None, None, Locale::parse("en").unwrap(), at)?;
+                let workspace = store.create_workspace(profile.id, "Workspace", at)?;
+                Ok::<_, koru_store_core::Error>((profile.id, workspace.id))
+            })
+            .unwrap()
+            .unwrap();
+        let adapter = StoreToolAdapter::new(client);
+        let page = adapter
+            .invoke(
+                &execution_context(vec![workspace], Some(profile)),
+                &call("list_tasks", json!({})),
+                &Cancellation::default(),
+            )
+            .expect("the tasks query is answered, not refused");
+        assert!(page.content["tasks"].is_array(), "{}", page.content);
+        assert!(page.content["updating_workspaces"].is_array());
+        drop(adapter);
+        memory.close();
+    }
+
     #[test]
     fn cancelled_invocation_never_reaches_store() {
         let root = tempfile::tempdir().unwrap();
@@ -493,12 +589,100 @@ mod tests {
         let cancellation = Cancellation::default();
         cancellation.cancel();
         let result = adapter.invoke(
-            &execution_context(Vec::new()),
+            &execution_context(Vec::new(), None),
             &call("list_workspaces", json!({})),
             &cancellation,
         );
         assert_eq!(result.unwrap_err().class, AiErrorClass::Cancelled);
         drop(adapter);
+        assert_eq!(worker.join(), koru_store_server::WorkerExit::Clean);
+    }
+
+    /// **A chat's tools reach only its own profile's workspaces** (AI
+    /// schema 13). The chat is granted a workspace in each of two
+    /// profiles; its tools list, read and write only its own profile's, and
+    /// the other grant is neither listed nor counted. A chat not yet placed
+    /// reaches none.
+    #[test]
+    fn a_grant_to_another_profiles_workspace_is_never_reached() {
+        let root = tempfile::tempdir().unwrap();
+        let worker = koru_store_server::StoreWorker::new(
+            koru_store_server::WorkerConfig::embedded(root.path().to_owned(), "internal-debug"),
+        )
+        .spawn()
+        .unwrap();
+        let client = worker.client();
+        let (private, home, office) = client
+            .with_store(|store| {
+                let at = Timestamp::from_millis(1);
+                let private = store.create_profile(
+                    "Private",
+                    None,
+                    None,
+                    Locale::parse("en").unwrap(),
+                    at,
+                )?;
+                let work =
+                    store.create_profile("Work", None, None, Locale::parse("en").unwrap(), at)?;
+                let home = store.create_workspace(private.id, "Home", at)?;
+                let office = store.create_workspace(work.id, "Office", at)?;
+                Ok::<_, koru_store_core::Error>((private.id, home.id, office.id))
+            })
+            .unwrap()
+            .unwrap();
+        let adapter = StoreToolAdapter::new(client.clone());
+        let cancellation = Cancellation::default();
+        let both = execution_context(vec![home, office], Some(private));
+
+        let listed = adapter
+            .invoke(&both, &call("list_workspaces", json!({})), &cancellation)
+            .unwrap()
+            .content;
+        let listed = listed["workspaces"].as_array().unwrap();
+        assert_eq!(listed.len(), 1, "only the chat's own profile's: {listed:?}");
+        assert_eq!(listed[0]["id"].as_str(), Some(home.to_storage().as_str()));
+
+        let foreign = adapter.invoke(
+            &both,
+            &call(
+                "create_document",
+                json!({
+                    "workspace_id": office,
+                    "title": "Not here",
+                    "idempotency_key": uuid::Uuid::new_v4(),
+                }),
+            ),
+            &cancellation,
+        );
+        assert_eq!(foreign.unwrap_err().class, AiErrorClass::Authentication);
+        adapter
+            .invoke(
+                &both,
+                &call(
+                    "create_document",
+                    json!({
+                        "workspace_id": home,
+                        "title": "Here",
+                        "idempotency_key": uuid::Uuid::new_v4(),
+                    }),
+                ),
+                &cancellation,
+            )
+            .unwrap();
+
+        let unplaced = execution_context(vec![home, office], None);
+        let nothing = adapter
+            .invoke(
+                &unplaced,
+                &call("list_workspaces", json!({})),
+                &cancellation,
+            )
+            .unwrap()
+            .content;
+        assert_eq!(nothing["workspaces"].as_array().map(Vec::len), Some(0));
+
+        drop(adapter);
+        drop(client);
         assert_eq!(worker.join(), koru_store_server::WorkerExit::Clean);
     }
 }

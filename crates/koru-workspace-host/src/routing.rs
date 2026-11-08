@@ -90,17 +90,27 @@ pub enum ModalKind {
     /// Exact-object reminder management has no editable field and blocks the
     /// document beneath it while open.
     ReminderManagement,
-    /// A drawn diagram shown in its own view over the document: the page is
-    /// dimmed, the drawing zooms and drags, and every key and press is the
-    /// viewer's until `Esc` or its close control takes it down. Nothing to
-    /// type into, so a modal and never a prompt.
-    DiagramViewer,
+    /// The shared media viewer (`koru_ui::media_viewer`, ADR-482): a
+    /// document's drawn diagram or a chat's picture in its own view over the
+    /// window. The window is dimmed, the picture zooms and drags, and every
+    /// key and press is the viewer's until `Esc` or its close control takes
+    /// it down. Nothing to type into, so a modal and never a prompt.
+    MediaViewer,
     /// A right-click menu, a caption menu, or a submenu of one.
     ///
     /// Grouped with the modals rather than given a kind of its own because
     /// `menu_key` answers **true whatever the key was**: *"a chord must not,
     /// say, close a tab under a menu that is itself about to dismiss."*
     ContextMenu,
+    /// The place chooser an Alt+click on a reference in a document opens:
+    /// five targets — a split on each side of the pane, and a new tab in the
+    /// middle. A menu's rule: it takes every key while it stands, and a press
+    /// outside it closes it with nothing opened.
+    PlaceChooser,
+    /// The `+` button's New… dialog: a centred grid of what can be made,
+    /// each chosen by its letter. The place chooser's rule: every key is
+    /// its while it stands, a press off it closes it.
+    Launcher,
     /// The internal session recorder's setup modal (F9 / the caption menu).
     ///
     /// It *has* text fields — a prompt, by that token — but dictating into a
@@ -139,6 +149,8 @@ pub enum PromptKind {
     /// The delegation modal's objective — the one field in it, and the reason
     /// the surface is a prompt rather than a modal.
     Delegate,
+    /// The installed-font picker, which has a search field.
+    FontPicker,
 }
 
 /// The key-independent prefix of a view's input chain: what owns **everything**
@@ -205,6 +217,8 @@ pub enum FieldId {
     ReminderCreation,
     /// The delegation modal's objective.
     Delegate,
+    /// The installed-font picker's search field.
+    FontPicker,
 }
 
 impl From<PromptKind> for FieldId {
@@ -220,6 +234,7 @@ impl From<PromptKind> for FieldId {
             PromptKind::NewList => Self::NewList,
             PromptKind::ReminderCreation => Self::ReminderCreation,
             PromptKind::Delegate => Self::Delegate,
+            PromptKind::FontPicker => Self::FontPicker,
         }
     }
 }

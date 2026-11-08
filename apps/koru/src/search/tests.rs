@@ -47,7 +47,7 @@ fn a_surface_built_under_test_dials_nothing() {
 }
 
 #[test]
-fn an_ai_result_routes_the_exact_chat_block_through_agent() {
+fn an_ai_result_opens_the_exact_chat_block_as_a_tab() {
     let chat = koru_ai_core::ChatId::new();
     let message = koru_ai_core::MessageId::new();
     let block = koru_ai_core::MessageBlockId::new();
@@ -56,11 +56,12 @@ fn an_ai_result_routes_the_exact_chat_block_through_agent() {
             chat,
             message,
             block,
+            profile: None,
             disposition: Disposition::CurrentWindow,
         }),
         Some(PaneRequest::OpenChatLink {
             chat: chat.to_string(),
-            block: block.to_string(),
+            block: Some(block.to_string()),
         })
     );
 }

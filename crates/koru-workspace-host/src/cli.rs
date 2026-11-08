@@ -212,16 +212,6 @@ const FLAGS: &[Flag] = &[
         ],
     },
     Flag {
-        name: "--ai-chat",
-        short: None,
-        value: Value::None,
-        args: "--ai-chat",
-        help: &[
-            "Open the machine-wide Koru AI chat. Used by the Windows taskbar's",
-            "AI Chat action.",
-        ],
-    },
-    Flag {
         name: "--open-document",
         short: None,
         value: Value::Required,
@@ -593,7 +583,6 @@ mod tests {
         assert_eq!(parse(argv(&["--new-document"])), Ok(Command::Run));
         assert_eq!(parse(argv(&["--no-search"])), Ok(Command::Run));
         assert_eq!(parse(argv(&["--search"])), Ok(Command::Run));
-        assert_eq!(parse(argv(&["--ai-chat"])), Ok(Command::Run));
         assert_eq!(parse(argv(&["--test-upgrade"])), Ok(Command::Run));
         assert_eq!(
             parse(argv(&["--window-size", "1024x768"])),

@@ -32,6 +32,141 @@ fn id(byte: u8) -> Uuid {
     Uuid::from_bytes([byte; 16])
 }
 
+#[test]
+fn a_recheck_retains_confirmed_progress_without_reusing_pass_counters() {
+    let mut activity = CloudActivity::new();
+    let dataset = id(1);
+    activity.pass_started(dataset, 1);
+    activity.document_progress(dataset, 44, Some(49), 2);
+    activity.pass_refused(dataset, "sync_peer_closed", 3, &[]);
+    activity.pass_started(dataset, 4);
+    activity.document_progress(dataset, 10, Some(49), 5);
+    let pass = activity.dataset(dataset).unwrap();
+    assert_eq!(pass.documents_synced, 10);
+    assert_eq!(pass.confirmed_documents.as_ref().unwrap().synced, 44);
+    assert!(!pass.confirmed_documents.as_ref().unwrap().complete);
+    activity.document_progress(dataset, 49, None, 6);
+    activity.pass_finished(dataset, PassCounts::default(), 7);
+    activity.pass_started(dataset, 8);
+    let pass = activity.dataset(dataset).unwrap();
+    assert_eq!(pass.documents_synced, 0);
+    assert_eq!(pass.finished_at, None);
+    assert_eq!(
+        pass.confirmed_documents.unwrap(),
+        CloudDocumentProgress {
+            required: 49,
+            synced: 49,
+            complete: true,
+        }
+    );
+}
+
+#[test]
+fn an_edit_discards_retained_progress_until_a_new_pass() {
+    let mut activity = CloudActivity::new();
+    let dataset = id(1);
+    activity.pass_started(dataset, 1);
+    activity.document_progress(dataset, 49, Some(49), 2);
+    activity.pass_finished(dataset, PassCounts::default(), 3);
+    activity.documents_changed(dataset);
+    activity.document_progress(dataset, 49, None, 4);
+    activity.pass_finished(dataset, PassCounts::default(), 5);
+    assert!(
+        activity
+            .dataset(dataset)
+            .unwrap()
+            .confirmed_documents
+            .is_none()
+    );
+    activity.pass_started(dataset, 6);
+    activity.document_progress(dataset, 1, Some(50), 7);
+    assert_eq!(
+        activity
+            .dataset(dataset)
+            .unwrap()
+            .confirmed_documents
+            .unwrap(),
+        CloudDocumentProgress {
+            required: 50,
+            synced: 1,
+            complete: false,
+        }
+    );
+}
+
+#[test]
+fn a_changed_inventory_or_failed_final_proof_can_reduce_progress() {
+    let mut activity = CloudActivity::new();
+    let dataset = id(1);
+    activity.pass_started(dataset, 1);
+    activity.document_progress(dataset, 49, Some(49), 2);
+    activity.pass_finished(dataset, PassCounts::default(), 3);
+    activity.pass_started(dataset, 4);
+    activity.document_progress(dataset, 1, Some(50), 5);
+    assert_eq!(
+        activity
+            .dataset(dataset)
+            .unwrap()
+            .confirmed_documents
+            .unwrap()
+            .synced,
+        1
+    );
+    activity.document_progress(dataset, 50, None, 6);
+    activity.document_progress(dataset, 48, None, 7);
+    let confirmed = activity
+        .dataset(dataset)
+        .unwrap()
+        .confirmed_documents
+        .unwrap();
+    assert_eq!(confirmed.synced, 48);
+    assert!(!confirmed.complete);
+}
+
+#[test]
+fn refusals_deferrals_and_remote_hints_prevent_retained_completion() {
+    for counts in [
+        PassCounts {
+            deferred: 1,
+            ..Default::default()
+        },
+        PassCounts {
+            remote_hint: true,
+            ..Default::default()
+        },
+    ] {
+        let mut activity = CloudActivity::new();
+        let dataset = id(1);
+        activity.pass_started(dataset, 1);
+        activity.document_progress(dataset, 49, Some(49), 2);
+        activity.pass_finished(dataset, PassCounts::default(), 3);
+        activity.pass_started(dataset, 4);
+        activity.document_progress(dataset, 49, Some(49), 5);
+        activity.pass_finished(dataset, counts, 6);
+        activity.pass_started(dataset, 7);
+        assert!(
+            !activity
+                .dataset(dataset)
+                .unwrap()
+                .confirmed_documents
+                .unwrap()
+                .complete
+        );
+        activity.document_progress(dataset, 49, Some(49), 8);
+        activity.pass_finished(dataset, PassCounts::default(), 9);
+        activity.pass_refused(dataset, "sync_peer_closed", 10, &[]);
+        activity.pass_started(dataset, 11);
+        assert!(
+            !activity
+                .dataset(dataset)
+                .unwrap()
+                .confirmed_documents
+                .unwrap()
+                .complete
+        );
+    }
+}
+
 /// Twenty passes over one document are one entry naming the newest facts —
 /// the `Store::committed` property, which is what keeps this bounded at all.
 #[test]

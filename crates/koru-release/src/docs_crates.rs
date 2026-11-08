@@ -119,6 +119,20 @@ const FORMER: &[(&str, &[&str])] = &[
     // Deleted in the pre-release gateway cutover; ADR-105-ipc records what it
     // held while it existed.
     ("koru-store-discovery", &["docs/decisions/ADR-101-125.md"]),
+    // The standalone Koru AI window, retired 2026-11-03 (ADR-191's
+    // amendment). The ADRs record decisions taken while it existed and its
+    // retirement; ICONS.md is the dated 2026-09-13 icon scan; the refactor
+    // results and the icon plan's execution log are history.
+    (
+        "koru-ai-chat",
+        &[
+            "docs/decisions/ADR-176-200.md",
+            "docs/decisions/ADR-251-275.md",
+            "docs/features/koruui/ICONS.md",
+            "docs/contributing/refactor-ui/ELEMENTS-RESULTS.md",
+            "docs/koru-icons/EXECUTION.md",
+        ],
+    ),
 ];
 
 fn root() -> PathBuf {

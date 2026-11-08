@@ -53,6 +53,7 @@ pub mod input;
 /// a document raises.
 pub mod objective;
 pub mod paragraph;
+pub mod pending_image;
 pub mod pillinfo;
 /// What typing may turn a row into: everything, or the AI chat composer's
 /// text-and-`@` subset.
@@ -67,7 +68,7 @@ pub mod trigger;
 pub mod utils;
 pub mod view_state;
 
-pub use body::Body;
+pub use body::{Body, TextScale};
 pub use diagram::{DiagramEntry, DiagramRequest, DiagramState};
 pub use dictation::{Affinity, Composition, Mapped, ProvisionalRun};
 pub use editor::{AttrPicker, Editing, Editor, prepare};
@@ -75,8 +76,8 @@ pub use objective::row_words;
 pub use paragraph::{Paragraph, TaskRow};
 pub use policy::Policy;
 pub use view_state::{
-    DelegateRequest, DragRow, Embedded, Hover, OpenWhere, PasteBatch, PasteReplacement,
-    SaveDiagramAs, SearchHighlight, ViewState,
+    ChatTarget, DelegateRequest, DragRow, Embedded, Hover, OpenWhere, PasteBatch, PasteReplacement,
+    Reference, SaveDiagramAs, SearchHighlight, SplitSide, ViewState,
 };
 pub mod emoji;
 

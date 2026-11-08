@@ -180,6 +180,17 @@ impl<C> VerifiedTokenCapability<C> {
     pub fn verify_time_at(&self, now_millis: i64) -> Result<(), TokenCapabilityVerificationError> {
         verify_time(self.issued_at_millis, self.expires_at_millis, now_millis)
     }
+
+    /// The same verified evidence under a projection of its claims, keeping
+    /// its verified times. Crate-private: only a projection this crate defines
+    /// over claims it verified itself may carry the evidence on.
+    pub(crate) fn map<D>(self, project: impl FnOnce(C) -> D) -> VerifiedTokenCapability<D> {
+        VerifiedTokenCapability {
+            claims: project(self.claims),
+            issued_at_millis: self.issued_at_millis,
+            expires_at_millis: self.expires_at_millis,
+        }
+    }
 }
 
 impl<C> std::fmt::Debug for VerifiedTokenCapability<C> {

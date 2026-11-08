@@ -222,7 +222,8 @@ fn an_empty_session_reopens_on_a_welcome_tab() {
         Some("Welcome")
     );
     assert!(back.tabs().active() < back.tabs().len());
-    assert!(!back.sidebar.is_open());
+    // A new window starts with the explore column open (the review's note).
+    assert!(back.sidebar.is_open());
 }
 
 #[test]
@@ -262,7 +263,11 @@ fn restoring_an_open_column_does_not_animate() {
     // pane comes back open. Both are still *set* rather than slid.
     assert!(back.sidebar.is_open());
     assert!(!back.animating(), "no slide on startup");
-    assert_eq!(back.content().x, theme::SIDEBAR_W, "already in place");
+    assert_eq!(
+        back.content().x,
+        theme::SIDEBAR_W + theme::RAIL_W,
+        "already in place"
+    );
 }
 
 /// Scroll comes back too, so a long document reopens where you were reading.
@@ -513,6 +518,222 @@ fn a_session_tab_still_launching_is_not_captured_but_its_neighbours_are() {
         Some(TabRef::Node(a)),
         "the neighbouring document tab is untouched"
     );
+}
+
+// ----------------------------------------------------------- chat tabs (D23)
+
+/// What a tab is, for comparing a strip across a restart: a chat by the chat
+/// it is over, anything else by its label.
+fn tab_kind(tab: &crate::mainview::tab::Tab) -> String {
+    match &tab.view {
+        crate::mainview::tab::TabView::AiChat(chat) => format!("chat {:?}", chat.chat_id()),
+        _ => tab.label.clone(),
+    }
+}
+
+/// Every column's strip and which tab it shows, in tree order.
+fn columns(v: &MainView) -> Vec<(Vec<String>, usize)> {
+    v.panes
+        .iter_groups()
+        .map(|(_, g)| (g.iter_tabs().map(tab_kind).collect(), g.tabs().active()))
+        .collect()
+}
+
+/// **A chat tab comes back on its chat** (ADR-483-chattabrestore), in its
+/// column, at its place, showing if it was — here in a split whose left
+/// column mixes Welcome and a chat and whose right mixes a document and a
+/// chat.
+#[test]
+fn chat_tabs_survive_a_restart_in_a_split_beside_document_tabs() {
+    use crate::mainview::panes::{PanePath, SplitDir};
+    use crate::mainview::tab::Tab;
+
+    let (mut v, mut workspace) = on_document(); // [Welcome, Notes]
+    let (left, right) = (koru_ai_ui::ChatId::new(), koru_ai_ui::ChatId::new());
+    v.tabs_mut().push(Tab::ai_chat_existing(left)); // [Welcome, Notes, left]
+    let notes = v
+        .tabs()
+        .iter()
+        .find(|t| t.label == "Notes")
+        .map(|t| t.id)
+        .expect("the document tab");
+    let notes = v
+        .panes
+        .take_tab_by_id(&PanePath::root(), notes)
+        .expect("took the document tab");
+    v.panes.split(&PanePath::root(), SplitDir::Right, notes);
+    for (_, group) in v.panes.iter_groups_mut() {
+        if group.iter_tabs().any(|t| t.label == "Notes") {
+            group.tabs_mut().push(Tab::ai_chat_existing(right));
+        }
+    }
+    let before = columns(&v);
+    assert_eq!(before.len(), 2, "two columns");
+    let chat = |id: koru_ai_ui::ChatId| format!("chat {:?}", Some(id));
+    assert!(before[0].0.contains(&chat(left)) && before[1].0.contains(&chat(right)));
+
+    let mut settings = Settings::default();
+    v.capture(&mut settings);
+    // The flat list is the focused column's copy; the tree has both.
+    let tree = format!("{:?}", settings.pane_tree);
+    for id in [left, right] {
+        assert!(
+            tree.contains(&format!("{:?}", TabRef::Chat(id.as_uuid()))),
+            "{tree}"
+        );
+    }
+
+    let back = reopened(&mut workspace, &settings);
+    assert_eq!(
+        columns(&back),
+        before,
+        "every column, every tab and its showing one"
+    );
+}
+
+/// **A new chat not sent yet is not saved**: the service holds nothing to
+/// reopen. Its neighbours are untouched.
+#[test]
+fn an_unsent_chat_tab_is_not_saved_but_its_neighbours_are() {
+    let (mut v, mut workspace) = on_document(); // [Welcome, Notes]
+    v.tabs_mut().push(crate::mainview::tab::Tab::ai_chat());
+    let mut settings = Settings::default();
+    v.capture(&mut settings);
+    assert_eq!(
+        settings.tabs.len(),
+        2,
+        "Welcome and Notes: {:?}",
+        settings.tabs
+    );
+    let tree = format!("{:?}", settings.pane_tree);
+    assert!(
+        !tree.contains("Chat("),
+        "nothing in the tree either: {tree}"
+    );
+    let back = reopened(&mut workspace, &settings);
+    assert_eq!(
+        back.tabs().iter().map(tab_kind).collect::<Vec<_>>(),
+        ["Welcome", "Notes"]
+    );
+}
+
+/// A pinned chat tab is pinned again after a restart, on its chat.
+#[test]
+fn a_pinned_chat_tab_comes_back_pinned() {
+    let (mut v, mut workspace) = on_document(); // [Welcome, Notes]
+    let chat = koru_ai_ui::ChatId::new();
+    v.tabs_mut()
+        .push(crate::mainview::tab::Tab::ai_chat_existing(chat));
+    let at = v.tabs().len() - 1;
+    assert!(v.tabs_mut().pin(at, uuid::Uuid::new_v4(), true), "pinned");
+    let mut settings = Settings::default();
+    v.capture(&mut settings);
+    assert_eq!(
+        settings.pinned_tabs.first().map(|pin| pin.target.clone()),
+        Some(TabRef::Chat(chat.as_uuid()))
+    );
+    let back = reopened(&mut workspace, &settings);
+    let pinned: Vec<String> = back
+        .tabs()
+        .iter()
+        .filter(|t| t.is_pinned())
+        .map(tab_kind)
+        .collect();
+    assert_eq!(pinned, [format!("chat {:?}", Some(chat))]);
+}
+
+/// **Any tab may be pinned, and a task list comes back pinned on its list.**
+/// It could not be pinned at all while the pin rule was *a document or a
+/// chat*; the saved pin is now the token the tab is saved as unpinned.
+#[test]
+fn a_pinned_task_list_comes_back_pinned_on_its_list() {
+    use crate::mainview::tab::{Tab, TabView};
+    use crate::panes::explore::rail::RailTarget;
+    let (mut v, mut workspace) = on_document(); // [Welcome, Notes]
+    let list = koru_core::ids::ListId::new();
+    v.tabs_mut().push(Tab::tasks(RailTarget::List(list)));
+    let at = v.tabs().len() - 1;
+    assert!(v.tabs_mut().pin(at, uuid::Uuid::new_v4(), true), "pinned");
+    let mut settings = Settings::default();
+    v.capture(&mut settings);
+    assert_eq!(
+        settings.pinned_tabs.first().map(|pin| pin.target.clone()),
+        Some(TabRef::Tasks(koru_workspace_host::TasksTabRef::List(list)))
+    );
+    let back = reopened(&mut workspace, &settings);
+    let pinned: Vec<_> = back
+        .tabs()
+        .iter()
+        .filter(|t| t.is_pinned())
+        .map(|t| match &t.view {
+            TabView::Tasks(tasks) => Some(tasks.target()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(pinned, [Some(RailTarget::List(list))]);
+}
+
+/// **A pinned tab with no saved form stays pinned for the session only**,
+/// and the showing pin is counted over the pins that were written — so the
+/// one showing is still the one showing after a restart.
+#[test]
+fn a_pin_with_no_saved_form_is_skipped_and_the_showing_pin_still_shows() {
+    use crate::mainview::tab::Tab;
+    let (mut v, mut workspace) = on_document(); // [Welcome, Notes]
+    for tab in [Tab::settings(), Tab::trash()] {
+        v.tabs_mut().push(tab);
+        let at = v.tabs().len() - 1;
+        assert!(v.tabs_mut().pin(at, uuid::Uuid::new_v4(), true), "pinned");
+    }
+    assert_eq!(
+        v.tabs().pinned_showing(),
+        Some(1),
+        "the Trash pin is showing"
+    );
+    let mut settings = Settings::default();
+    v.capture(&mut settings);
+    assert_eq!(
+        settings
+            .pinned_tabs
+            .iter()
+            .map(|pin| pin.target.clone())
+            .collect::<Vec<_>>(),
+        [TabRef::Trash],
+        "Settings is not written"
+    );
+    assert_eq!(
+        settings.pinned_tab,
+        Some(0),
+        "counted over the written pins"
+    );
+    let back = reopened(&mut workspace, &settings);
+    assert_eq!(back.tabs().pinned_showing(), Some(0));
+    assert!(back.tabs().active_tab().is_pinned(), "and it is in front");
+}
+
+/// **A chat nothing answers for does not stop the restore.** A saved chat
+/// that was deleted since comes back as a chat tab opening it, beside every
+/// other tab; the AI service's answer — *missing* — then turns it into a new
+/// chat (`koru_ai_ui`'s boot), on a later pass and off this thread.
+#[test]
+fn a_saved_chat_that_is_gone_restores_without_a_panic() {
+    let (v, mut workspace) = on_document();
+    let mut settings = Settings::default();
+    v.capture(&mut settings);
+    let gone = uuid::Uuid::new_v4();
+    settings.pane_tree = None;
+    settings.tabs.push((TabRef::Chat(gone), 0.0));
+    settings.tab = settings.tabs.len() - 1;
+    let back = reopened(&mut workspace, &settings);
+    assert_eq!(
+        back.tabs().iter().map(tab_kind).collect::<Vec<_>>(),
+        [
+            "Welcome".to_owned(),
+            "Notes".to_owned(),
+            format!("chat {:?}", Some(koru_ai_ui::ChatId::from_uuid(gone)))
+        ]
+    );
+    assert_eq!(back.tabs().active(), 2, "and it is the one showing");
 }
 
 // ------------------------------------------------ the Agents tree's verbs
@@ -791,14 +1012,6 @@ fn a_session_dropped_on_a_project_row_sends_the_move_verb() {
 // drives the right verb or Outcome. These read the verbs off a test backend
 // whose command channel the suite holds, exactly as the project tests do.
 
-fn a_agent_session(id: SessionId, name: &str) -> SessionSummary {
-    use koru_session_protocol::*;
-    let mut session = a_running_session(id, None);
-    session.display_name = name.to_owned();
-    session.profile = SessionProfileKey::BuiltIn("claude".parse::<BuiltInProfileKey>().unwrap());
-    session
-}
-
 fn a_running_session(id: SessionId, project: Option<ProjectId>) -> SessionSummary {
     use koru_session_protocol::*;
     SessionSummary {
@@ -835,111 +1048,6 @@ fn the_session_menu_offers_the_original_four_items() {
             MenuAction::SessionTerminate,
         ]
     );
-}
-
-/// Opening Add… snapshots live sessions into *Active ▸* under Shell or
-/// Agents, partitioned by launch-profile kind — a RawPty Claude still sits
-/// under Agents, not Shell.
-#[test]
-fn the_plus_menu_lists_running_sessions_in_their_kind_flyout() {
-    let (mut v, mut workspace) = container();
-    let shell = SessionId::mint();
-    let agent = SessionId::mint();
-    v.explore.set_agent_sessions(vec![
-        a_running_session(shell, None),
-        a_agent_session(agent, "Claude"),
-    ]);
-    assert!(v.key(&mut workspace.ws, &ch("a"), Some("a"), PRIMARY_SHIFT));
-
-    let shells = context_menu::submenu(MenuAction::NewShell).expect("Shell flyout");
-    assert_eq!(shells[0], MenuAction::ActiveShells);
-    assert_eq!(shells[1], MenuAction::Divider);
-    assert!(!shells.contains(&MenuAction::OpenRunningSession(shell)));
-    assert!(!shells.contains(&MenuAction::OpenRunningSession(agent)));
-    assert_eq!(
-        context_menu::submenu(MenuAction::ActiveShells),
-        Some(vec![MenuAction::OpenRunningSession(shell)])
-    );
-
-    let agents = context_menu::submenu(MenuAction::NewAgent).expect("Agents flyout");
-    assert_eq!(agents[0], MenuAction::ActiveAgents);
-    assert_eq!(agents[1], MenuAction::Divider);
-    assert!(!agents.contains(&MenuAction::OpenRunningSession(agent)));
-    assert_eq!(
-        context_menu::submenu(MenuAction::ActiveAgents),
-        Some(vec![MenuAction::OpenRunningSession(agent)])
-    );
-
-    context_menu::set_plus_snapshots(vec![], vec![], vec![], vec![]);
-}
-
-/// Hovering *Active* opens a second flyout of the running sessions — the
-/// menu widget only holds one flyout, so this is a third panel on the
-/// container, not a nested widget.
-#[test]
-fn the_plus_menu_active_row_opens_the_running_list() {
-    let (mut v, mut workspace) = container();
-    let shell = SessionId::mint();
-    let agent = SessionId::mint();
-    v.explore.set_agent_sessions(vec![
-        a_running_session(shell, None),
-        a_agent_session(agent, "Claude"),
-    ]);
-    assert!(v.key(&mut workspace.ws, &ch("a"), Some("a"), PRIMARY_SHIFT));
-
-    let agents = v
-        .menu
-        .as_ref()
-        .unwrap()
-        .items()
-        .iter()
-        .position(|a| *a == MenuAction::NewAgent)
-        .expect("Agents row");
-    assert!(v.open_submenu(agents));
-    let active = v
-        .submenu
-        .as_ref()
-        .unwrap()
-        .1
-        .items()
-        .iter()
-        .position(|a| *a == MenuAction::ActiveAgents)
-        .expect("Active row");
-    assert!(v.open_nested_submenu(active));
-    assert_eq!(
-        v.nested.as_ref().unwrap().1.items(),
-        &[MenuAction::OpenRunningSession(agent)]
-    );
-
-    let shells = v
-        .menu
-        .as_ref()
-        .unwrap()
-        .items()
-        .iter()
-        .position(|a| *a == MenuAction::NewShell)
-        .expect("Shell row");
-    assert!(v.open_submenu(shells));
-    assert!(
-        v.nested.is_none(),
-        "switching flyout closes the nested list"
-    );
-    let active = v
-        .submenu
-        .as_ref()
-        .unwrap()
-        .1
-        .items()
-        .iter()
-        .position(|a| *a == MenuAction::ActiveShells)
-        .expect("Active row");
-    assert!(v.open_nested_submenu(active));
-    assert_eq!(
-        v.nested.as_ref().unwrap().1.items(),
-        &[MenuAction::OpenRunningSession(shell)]
-    );
-
-    context_menu::set_plus_snapshots(vec![], vec![], vec![], vec![]);
 }
 
 /// Picking a running session from Add… attaches (or focuses) it, the same
@@ -1150,7 +1258,9 @@ fn a_documents_view_mode_is_persisted_when_the_workspace_is_known() {
     v.set_viewport(1200.0, 700.0);
     let doc = a_document(&mut workspace.ws, "Notes");
     v.open_node(&workspace.ws, doc);
-    // Full is the default; cycle to Page so there is a real override to capture.
+    // Narrow is the default; F7 steps Page -> Narrow -> Full, so twice from
+    // Narrow lands on Page — a real override to capture.
+    v.key(&mut workspace.ws, &Key::Named(NamedKey::F7), None, NONE);
     v.key(&mut workspace.ws, &Key::Named(NamedKey::F7), None, NONE);
 
     let mut settings = Settings::default();
@@ -1168,7 +1278,7 @@ fn a_documents_view_mode_is_persisted_when_the_workspace_is_known() {
         "the document's Page override was captured per-document"
     );
 
-    // And it reopens in Page, not the Full default.
+    // And it reopens in Page, not the Narrow default.
     let back = reopened(&mut workspace, &settings);
     let i = back
         .tabs()
@@ -1491,4 +1601,81 @@ fn taking_the_session_asks_and_only_the_host_grants_it() {
             .any(|c| matches!(c, BackendCommand::Observe { session_id } if *session_id == session)),
         "watching again: {sent:?}"
     );
+}
+
+// ------------------------------------------------------------- the rail order
+
+/// The square `mode` sits on in the rail now.
+fn rail_square(
+    v: &MainView,
+    mode: crate::panes::explore::NavigatorMode,
+) -> koru_draw::geometry::Rect {
+    v.explore
+        .apps_rail_rects(v.rail_area())
+        .apps
+        .into_iter()
+        .find(|(m, _)| *m == mode)
+        .map(|(_, r)| r)
+        .expect("the view is on the rail")
+}
+
+/// **The rail's order is this device's, and it survives a restart.** Dragged
+/// with the pointer through the window — press, carry half a square past its
+/// neighbour, release — it is in the session file at the next capture and
+/// comes back on the next launch.
+#[test]
+fn a_rail_order_dragged_with_the_pointer_survives_a_restart() {
+    use crate::panes::explore::NavigatorMode::{Documents, Files};
+    let (mut v, mut workspace) = on_document();
+    v.toggle_sidebar();
+    let (x, y) = rail_square(&v, Files).centre();
+    v.mouse_down(&mut workspace.ws, x, y, false);
+    assert_eq!(
+        v.explore.navigator_mode(),
+        Files,
+        "the press shows the view"
+    );
+    // Half a square and the gap above it: Files is half over Documents.
+    let half =
+        crate::panes::sidebar::apps_rail::SQUARE * 0.5 + crate::panes::sidebar::apps_rail::GAP;
+    v.mouse_move(x, y - half);
+    v.mouse_up(&mut workspace.ws);
+    assert_eq!(&v.explore.rail_modes()[..2], &[Files, Documents]);
+
+    let mut settings = Settings::default();
+    v.capture(&mut settings);
+    assert!(
+        settings.rail_order.contains("files,documents"),
+        "{}",
+        settings.rail_order
+    );
+    let back = reopened(&mut workspace, &settings);
+    assert_eq!(back.explore.rail_modes(), v.explore.rail_modes());
+}
+
+/// **Esc mid-drag puts the view back**, and the session has nothing to save.
+#[test]
+fn escape_mid_drag_leaves_the_rail_as_it_was() {
+    use crate::panes::explore::NavigatorMode::Files;
+    let (mut v, mut workspace) = on_document();
+    v.toggle_sidebar();
+    let before = v.explore.rail_modes();
+    let (x, y) = rail_square(&v, Files).centre();
+    v.mouse_down(&mut workspace.ws, x, y, false);
+    v.mouse_move(x, y - 60.0);
+    assert_ne!(v.explore.rail_modes(), before, "carried past Documents");
+    assert!(v.key(
+        &mut workspace.ws,
+        &winit::keyboard::Key::Named(winit::keyboard::NamedKey::Escape),
+        None,
+        winit::keyboard::ModifiersState::empty(),
+    ));
+    assert!(!v.explore.rail_dragging());
+    assert_eq!(v.explore.rail_modes(), before);
+    // The release that follows has nothing left to drop.
+    v.mouse_up(&mut workspace.ws);
+    assert_eq!(v.explore.rail_modes(), before);
+    let mut settings = Settings::default();
+    v.capture(&mut settings);
+    assert_eq!(settings.rail_order, "");
 }

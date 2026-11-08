@@ -1,0 +1,44 @@
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "result": {
+    "sessionId": "<private-session>",
+    "modes": {
+      "currentModeId": "accept-edits",
+      "availableModes": [
+        {"id": "accept-edits", "name": "Code"},
+        {"id": "smart", "name": "Smart"},
+        {"id": "ask", "name": "Ask"},
+        {"id": "plan", "name": "Plan"},
+        {"id": "bypass", "name": "Bypass Permissions"}
+      ]
+    },
+    "configOptions": [
+      {
+        "id": "mode",
+        "name": "Session Mode",
+        "category": "mode",
+        "type": "select",
+        "currentValue": "accept-edits",
+        "options": [
+          {"value": "accept-edits", "name": "Code", "description": "Write and edit code"},
+          {"value": "smart", "name": "Smart", "description": "Auto-approve actions the model judges safe"},
+          {"value": "ask", "name": "Ask", "description": "Answer questions without code changes"},
+          {"value": "plan", "name": "Plan", "description": "Plan changes before implementing"},
+          {"value": "bypass", "name": "Bypass Permissions", "description": "Auto-approve all tool calls"}
+        ]
+      },
+      {
+        "id": "model",
+        "name": "Model",
+        "description": "AI model to use",
+        "category": "model",
+        "type": "select",
+        "currentValue": "model-a",
+        "options": [
+          {"value": "model-a", "name": "<label>"}
+        ]
+      }
+    ]
+  }
+}

@@ -10,6 +10,7 @@ mod capability_keys;
 mod capability_verification;
 pub mod cloud;
 mod jwt;
+pub mod oauth;
 mod password;
 mod policy;
 mod regional;

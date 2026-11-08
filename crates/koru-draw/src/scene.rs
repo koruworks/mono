@@ -114,6 +114,7 @@ pub fn fill_caret_quad(scene: &mut Scene, root: Affine, color: Color, quad: [(f6
     fill(scene, root, color, &path);
 }
 
+#[track_caller]
 pub fn stroke(
     scene: &mut Scene,
     root: Affine,
@@ -121,6 +122,18 @@ pub fn stroke(
     width: f64,
     shape: &impl vello::kurbo::Shape,
 ) {
+    // Recorded like a fill, so a hairline is evidence too: a panel's border
+    // and a badge's outline were the paints the inspector could not see.
+    if crate::inspect::enabled() && color.components[3] > 0.0 {
+        crate::inspect::leaf("stroke", root, shape.bounding_box(), |record| {
+            record.property(
+                "color",
+                crate::inspect::color(color),
+                "resolved paint; token origin not exposed",
+            );
+            record.property("width", width, "scene::stroke");
+        });
+    }
     scene.stroke(&Stroke::new(width), root, color, None, shape);
 }
 
@@ -139,7 +152,22 @@ pub fn circle(cx: f32, cy: f32, r: f32) -> vello::kurbo::Circle {
     vello::kurbo::Circle::new((cx as f64, cy as f64), r as f64)
 }
 
-/// Draw a standalone layout's glyphs (no inline boxes), optionally recoloring.
+/// **The move handle's six dots** — the "grab me" idiom a paragraph block's
+/// drag grip draws in the editor's margin, two columns of three, at the top
+/// left of `at` (a [`theme::GRIP_W`] × [`theme::GRIP_H`] slot). Here so every
+/// row that can be dragged — a block, an agent on *Agent providers* — wears
+/// the same grip; the caller names it in the inspector.
+pub fn grip_dots(scene: &mut Scene, root: Affine, at: crate::geometry::Rect, color: Color) {
+    for row in 0..3 {
+        for col in 0..2 {
+            let cx = at.x + 3.0 + col as f32 * 5.0;
+            let cy = at.y + 3.0 + row as f32 * 4.5;
+            fill(scene, root, color, &circle(cx, cy, 1.4));
+        }
+    }
+}
+
+/// Draw a standalone layout's glyphs and tagged icon slots, optionally recoloring.
 #[track_caller]
 pub fn draw_layout(
     scene: &mut Scene,
@@ -191,6 +219,17 @@ pub fn draw_line_items(
             let c = color.unwrap_or(gr.style().brush.0);
             draw_glyph_run(scene, root, &gr, ox, oy, c);
             draw_decorations(scene, root, &gr, ox, oy);
+        } else if let PositionedLayoutItem::InlineBox(b) = item {
+            if let Some((icon, filled)) = crate::icons::unpack_box_id(b.id) {
+                crate::icons::draw_vector_icon(
+                    scene,
+                    root,
+                    icon,
+                    filled,
+                    crate::geometry::Rect::new(ox + b.x, oy + b.y, b.width, b.height),
+                    color.unwrap_or(crate::theme::p().text),
+                );
+            }
         }
     }
 }
@@ -337,6 +376,16 @@ fn ink_centre(layout: &Layout<Brush>) -> Option<(f32, f32)> {
     let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
     for line in layout.lines() {
         for item in line.items() {
+            if let PositionedLayoutItem::InlineBox(b) = &item {
+                if crate::icons::unpack_box_id(b.id)
+                    .is_some_and(|(icon, _)| crate::icons::has_vector_icon(icon))
+                {
+                    x0 = x0.min(b.x);
+                    x1 = x1.max(b.x + b.width);
+                    y0 = y0.min(b.y);
+                    y1 = y1.max(b.y + b.height);
+                }
+            }
             let PositionedLayoutItem::GlyphRun(gr) = item else {
                 continue;
             };
@@ -480,6 +529,55 @@ pub fn glyph_pass(
                 y: g.y,
             }),
         );
+}
+
+/// **A soft band of light across a line**, over the same line already drawn:
+/// its glyphs again, in a horizontal gradient that is `peak` at `centre_x`
+/// and fades to nothing `half_w` either side, so only the band adds ink.
+/// The chat's *Working for 25s* wears it while a reply runs (koru-ai D83).
+///
+/// Only the first line, and only glyph runs: the line it shimmers is one
+/// short label. `centre_x` is in the same coordinates as `ox`.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_layout_first_line_sweep(
+    scene: &mut Scene,
+    root: Affine,
+    layout: &Layout<Brush>,
+    ox: f32,
+    oy: f32,
+    peak: Color,
+    centre_x: f32,
+    half_w: f32,
+) {
+    let Some(line) = layout.lines().next() else {
+        return;
+    };
+    let local = (centre_x - ox) as f64;
+    let half = half_w.max(1.0) as f64;
+    let clear = peak.multiply_alpha(0.0);
+    let sweep = peniko::Gradient::new_linear((local - half, 0.0), (local + half, 0.0))
+        .with_stops([(0.0, clear), (0.5, peak), (1.0, clear)]);
+    let transform = root * Affine::translate((ox as f64, oy as f64));
+    for item in line.items() {
+        if let PositionedLayoutItem::GlyphRun(gr) = item {
+            let run = gr.run();
+            scene
+                .draw_glyphs(run.font())
+                .transform(transform)
+                .font_size(run.font_size())
+                .normalized_coords(run.normalized_coords())
+                .brush(&sweep)
+                .hint(true)
+                .draw(
+                    StyleRef::Fill(Fill::NonZero),
+                    gr.positioned_glyphs().map(|g: PGlyph| vello::Glyph {
+                        id: g.id,
+                        x: g.x,
+                        y: g.y,
+                    }),
+                );
+        }
+    }
 }
 
 /// parley computes decoration offset and thickness; drawing them is ours.

@@ -473,7 +473,28 @@ fn v10_managed_and_presented_capabilities_are_explicit() {
     // no chat-origin session and the host treats its creates as manual.
     // **v17 is a tool's own words** (ADR-431, ADR-432): optional fields on
     // the tool events a terminal view leaves unread; no capability.
-    assert_eq!(offer.versions.max, 17);
+    // **v18 is what an agent says about its models** (agent-models D10):
+    // optional fields on a listed model; no capability.
+    // **v19 is an agent's approval modes and Fast** (chat review D7, D11):
+    // a launch and an input may carry a mode, and an agent may report a
+    // mode change, which the host rewrites for an older peer. A terminal
+    // view sends neither and reads the change as one more event.
+    // **v20 is an agent's notices and a turn's level** (chat review D69,
+    // D70): an agent may say a status line, which the host rewrites for an
+    // older peer, and an input may carry a level. A terminal view sends no
+    // level and reads a notice as one more event.
+    // **v21 is an agent's questions** (koru-ai D108): new event tags and an
+    // answer request behind `managed-questions`, which this backend does
+    // not offer — a terminal tab's agent is not asked, and declines as
+    // before; the events read as more events.
+    // **v22 is a turn's model**: an input may carry one. A terminal view
+    // sends none.
+    assert_eq!(offer.versions.max, 22);
+    assert!(
+        !offer
+            .capabilities
+            .supports(koru_session_protocol::capability::MANAGED_QUESTIONS)
+    );
     assert!(offer.capabilities.supports(capability::PROVIDER_MODELS));
     assert!(
         offer
@@ -551,6 +572,7 @@ fn ordinary_raw_policy_profiles_launch_as_raw_ptys() {
             "qwen",
             "antigravity",
             "muse",
+            "devin",
         ]
     );
     for profile in profiles {

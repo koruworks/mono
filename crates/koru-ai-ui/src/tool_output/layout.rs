@@ -1,0 +1,255 @@
+// SPDX-License-Identifier: MPL-2.0
+
+//! A call's [`Piece`]s laid out: each piece one or more layouts, stacked by
+//! the work view. Laid out once per change — the surface keeps the result
+//! under a fingerprint of the pieces, the width and the theme
+//! (`crate::ChatSurface::call_detail`).
+
+use std::borrow::Cow;
+use std::hash::{Hash, Hasher};
+use std::rc::Rc;
+
+use koru_draw::text::TextEngine;
+use koru_draw::theme::{self, Brush, role};
+use parley::Layout;
+use parley::style::{FontFamily, LineHeight, OverflowWrap, StyleProperty};
+use vello::peniko::Color;
+
+use super::{CodeLine, Ink, Piece};
+
+/// What a line of a detail does when it is clicked.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum DetailHit {
+    /// Show all of a folded block, or fold it again.
+    Toggle,
+    /// Open the n-th link of the detail.
+    Link(usize),
+    /// Open, or show in its folder, the n-th changed file's path (D62).
+    Path(usize),
+}
+
+/// One laid-out line of a detail.
+pub(crate) struct DetailLine {
+    pub layout: Rc<Layout<Brush>>,
+    /// `None`: the layout's own colors (a block of several inks).
+    pub ink: Option<Ink>,
+    /// Drawn on the code background.
+    pub panel: bool,
+    pub hit: Option<DetailHit>,
+    /// Where a link line goes: a web address, or a changed file's path as
+    /// the agent wrote it.
+    pub url: Option<String>,
+    /// A picture drawn in the line's place (D38); its layout is empty.
+    pub picture: Option<DetailPicture>,
+}
+
+/// A picture in a detail: the image cache's key for it — the file's
+/// resolved path — and the size it is drawn at.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct DetailPicture {
+    pub key: String,
+    pub width: f32,
+    pub height: f32,
+}
+
+/// The color an ink is drawn in, from the theme now.
+pub(crate) fn color(ink: Ink) -> Color {
+    let p = theme::p();
+    let terminal = theme::terminal_palette();
+    match ink {
+        Ink::Dim => p.text_dim,
+        Ink::Text => p.text,
+        Ink::Error | Ink::Removed => terminal.ansi[1],
+        Ink::Added => terminal.ansi[2],
+        Ink::Link => p.accent,
+    }
+}
+
+/// A fingerprint of what a detail looks like: its pieces, its width, and
+/// the theme its colors were baked in.
+pub(crate) fn fingerprint(pieces: &[Piece], width: f32) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    pieces.hash(&mut hasher);
+    width.to_bits().hash(&mut hasher);
+    for color in [color(Ink::Text), color(Ink::Dim), color(Ink::Added)] {
+        color.to_rgba8().to_u32().hash(&mut hasher);
+    }
+    theme::code_stack().hash(&mut hasher);
+    theme::ui_stack().hash(&mut hasher);
+    // Markdown in an output is the chat's text, set in the chat font.
+    theme::chat_stack().hash(&mut hasher);
+    // Markdown is set at the density-aware `ui` size; the rest at `meta`.
+    for style in [theme::role::ui(), theme::role::meta()] {
+        style.metrics.size.to_bits().hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+/// Lay `pieces` out `width` wide.
+pub(crate) fn lay_out(engine: &mut TextEngine, pieces: &[Piece], width: f32) -> Vec<DetailLine> {
+    let width = width.max(1.0);
+    let mut lines = Vec::new();
+    let mut links = 0;
+    let mut paths = 0;
+    let line = |layout: Layout<Brush>, ink: Option<Ink>| DetailLine {
+        layout: Rc::new(layout),
+        ink,
+        panel: false,
+        hit: None,
+        url: None,
+        picture: None,
+    };
+    for piece in pieces {
+        match piece {
+            Piece::Meta(text) => lines.push(line(
+                engine.simple_layout_wrapped(text, role::meta(), width),
+                Some(Ink::Dim),
+            )),
+            Piece::Header { text, mono } => {
+                let layout = if *mono {
+                    engine.simple_layout_wrapped_in(text, role::meta(), theme::code_stack(), width)
+                } else {
+                    engine.simple_layout_wrapped(text, role::meta(), width)
+                };
+                lines.push(line(layout, Some(Ink::Text)));
+            }
+            Piece::Markdown(markdown) => {
+                for block in koru_ai_core::cut_markdown(markdown) {
+                    let code = block.kind == koru_ai_core::MessageBlockKind::Code;
+                    let layout = markdown_block(engine, &block.markdown, width);
+                    lines.push(DetailLine {
+                        panel: code,
+                        ..line(layout, Some(Ink::Text))
+                    });
+                }
+            }
+            Piece::Code(code) => lines.push(DetailLine {
+                panel: true,
+                ..line(code_layout(engine, code, width), None)
+            }),
+            Piece::Link { title, site, url } => {
+                let text = if site.is_empty() {
+                    title.clone()
+                } else {
+                    format!("{title} \u{00B7} {site}")
+                };
+                lines.push(DetailLine {
+                    hit: Some(DetailHit::Link(links)),
+                    url: Some(url.clone()),
+                    ..line(
+                        engine.simple_layout_wrapped(&text, role::meta(), width),
+                        Some(Ink::Link),
+                    )
+                });
+                links += 1;
+            }
+            Piece::Path(path) => {
+                lines.push(DetailLine {
+                    hit: Some(DetailHit::Path(paths)),
+                    url: Some(path.clone()),
+                    ..line(
+                        engine.simple_layout_wrapped(path, role::meta(), width),
+                        Some(Ink::Link),
+                    )
+                });
+                paths += 1;
+            }
+            Piece::Toggle(text) => lines.push(DetailLine {
+                hit: Some(DetailHit::Toggle),
+                ..line(
+                    engine.simple_layout_wrapped(text, role::meta(), width),
+                    Some(Ink::Link),
+                )
+            }),
+            // Only a loaded picture has a size; one still loading, or not
+            // there, takes no room.
+            Piece::Picture {
+                path,
+                size: Some((picture_width, picture_height)),
+            } => {
+                let (drawn_width, drawn_height) =
+                    super::picture::fitted(*picture_width, *picture_height, width);
+                lines.push(DetailLine {
+                    picture: Some(DetailPicture {
+                        key: path.clone(),
+                        width: drawn_width,
+                        height: drawn_height,
+                    }),
+                    ..line(engine.simple_layout("", role::meta()), None)
+                });
+            }
+            Piece::Picture { size: None, .. } => {}
+        }
+    }
+    lines
+}
+
+/// One block of Markdown, through the chat's own renderer.
+fn markdown_block(engine: &mut TextEngine, markdown: &str, width: f32) -> Layout<Brush> {
+    match koru_markdown::render_block(engine, markdown, width, &koru_markdown::Styles::chat()) {
+        koru_markdown::Rendered::Text { layout, .. } => layout,
+        // A table or a picture in a tool's output reads as its source.
+        koru_markdown::Rendered::Table(_) => {
+            engine.simple_layout_wrapped_in(markdown, role::meta(), theme::code_stack(), width)
+        }
+        koru_markdown::Rendered::Image { alt, .. } => crate::chat_text_layout(engine, &alt, width),
+        koru_markdown::Rendered::Rule => {
+            crate::chat_text_layout(engine, &"\u{2500}".repeat(12), width)
+        }
+    }
+}
+
+/// A block of monospace lines as one layout, each line's gutter dim and
+/// its text in its own ink, wrapping at `width`.
+fn code_layout(engine: &mut TextEngine, code: &[CodeLine], width: f32) -> Layout<Brush> {
+    let gutter = code
+        .iter()
+        .map(|line| line.gutter.chars().count())
+        .max()
+        .unwrap_or(0);
+    let mut text = String::new();
+    let mut ranges = Vec::new();
+    for (index, line) in code.iter().enumerate() {
+        if index > 0 {
+            text.push('\n');
+        }
+        if gutter > 0 {
+            let start = text.len();
+            text.push_str(&format!("{:>gutter$}  ", line.gutter));
+            ranges.push((start..text.len(), Ink::Dim));
+        }
+        let start = text.len();
+        text.push_str(&line.text);
+        ranges.push((start..text.len(), line.ink));
+    }
+    let style = role::meta();
+    let mut builder = engine
+        .layout_cx
+        .ranged_builder(&mut engine.font_cx, &text, 1.0, true);
+    builder.push_default(StyleProperty::FontFamily(FontFamily::Source(
+        Cow::Borrowed(theme::code_stack()),
+    )));
+    builder.push_default(StyleProperty::FontSize(style.metrics.size));
+    builder.push_default(StyleProperty::LineHeight(LineHeight::Absolute(
+        style.metrics.line_height,
+    )));
+    builder.push_default(StyleProperty::OverflowWrap(OverflowWrap::Anywhere));
+    koru_draw::text::push_axes(
+        &mut builder,
+        style.metrics.size,
+        theme::code_font().weight_for(None),
+    );
+    builder.push_default(StyleProperty::Brush(Brush(color(Ink::Text))));
+    for (range, ink) in ranges {
+        if !range.is_empty() && ink != Ink::Text {
+            builder.push(StyleProperty::Brush(Brush(color(ink))), range);
+        }
+    }
+    let mut layout = builder.build(&text);
+    layout.break_all_lines(Some(width));
+    layout.align(
+        parley::Alignment::Start,
+        parley::AlignmentOptions::default(),
+    );
+    layout
+}

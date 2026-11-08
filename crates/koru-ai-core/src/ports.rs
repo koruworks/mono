@@ -7,11 +7,12 @@ use uuid::Uuid;
 use crate::{
     AiError, AiErrorClass, AiEvent, AiRequest, AiSearchPage, AiSearchQuery, AiSettings, AiToolCall,
     AiToolDefinition, AiToolResult, BranchCopy, Cancellation, Chat, ChatId, ChatOverview,
-    ChatToolPolicy, ContextCommit, DocumentContext, DocumentDestination, DocumentExport,
-    DocumentExportId, DocumentId, FeedbackEvent, InferenceAttempt, InferenceAttemptId, Message,
-    MessageBlock, MessageBlockContext, MessageId, ModelSelection, PendingRetry, PendingTurn,
-    PinnedDocument, ProviderStream, RecoveryCounts, SourceLink, Timestamp, ToolActivity,
-    ToolInvocationId, ToolMode, UsageClearResult, UsageReport, WorkspaceId,
+    ChatPlacementEvidence, ChatToolPolicy, ContextCommit, DocumentContext, DocumentDestination,
+    DocumentExport, DocumentExportId, DocumentId, FeedbackEvent, InferenceAttempt,
+    InferenceAttemptId, Message, MessageBlock, MessageBlockContext, MessageId, ModelSelection,
+    PendingRetry, PendingTurn, PinnedDocument, ProfileCatalog, ProfileId, ProviderStream,
+    RecoveryCounts, SourceLink, Timestamp, ToolActivity, ToolInvocationId, ToolMode,
+    UsageClearResult, UsageReport, WorkspaceId,
 };
 
 /// The only persistence surface visible to AI application behavior.
@@ -19,42 +20,65 @@ pub trait AiPersistence: Send {
     fn settings(&self) -> Result<Option<AiSettings>, AiError>;
     fn save_settings(&mut self, settings: &AiSettings) -> Result<(), AiError>;
     fn create_chat(&mut self, chat: &Chat) -> Result<(), AiError>;
-    fn rename_chat(
-        &mut self,
-        chat: ChatId,
-        title: &str,
-        updated_at: Timestamp,
-    ) -> Result<bool, AiError>;
-    fn update_chat_model(
-        &mut self,
-        chat: ChatId,
-        model: &ModelSelection,
-        updated_at: Timestamp,
-    ) -> Result<bool, AiError>;
-    fn set_chat_private(
-        &mut self,
-        chat: ChatId,
-        private: bool,
-        updated_at: Timestamp,
-    ) -> Result<Option<Chat>, AiError>;
+    /// The title only: a rename is not activity, so the chat keeps its place
+    /// in a list ordered by recency.
+    fn rename_chat(&mut self, chat: ChatId, title: &str) -> Result<bool, AiError>;
+    /// The chat's model. **Not activity** (koru-ai D85, the user's call
+    /// 2026-11-03): only a message sent and a reply ending move a chat in
+    /// the Chats list, so this leaves `updated_at` alone.
+    fn update_chat_model(&mut self, chat: ChatId, model: &ModelSelection) -> Result<bool, AiError>;
+    /// Private or not. Not activity, as the model is not.
+    fn set_chat_private(&mut self, chat: ChatId, private: bool) -> Result<Option<Chat>, AiError>;
     /// The folder a local agent works in for this chat; `None` returns the
-    /// chat to the home-folder default.
+    /// chat to the home-folder default. Not activity.
     fn set_chat_working_folder(
         &mut self,
         chat: ChatId,
         folder: Option<&str>,
-        updated_at: Timestamp,
+    ) -> Result<Option<Chat>, AiError>;
+    /// The approval mode a local agent runs the chat's next message in
+    /// (koru-ai D7); `None` is the agent's own default. Like a rename, it
+    /// leaves the chat where it is in the list.
+    fn set_chat_agent_mode(
+        &mut self,
+        chat: ChatId,
+        mode: Option<&str>,
+    ) -> Result<Option<Chat>, AiError>;
+    /// Whether a local agent runs the chat's next message in Fast mode
+    /// (koru-ai D11); `None` is the model's own default. Leaves the chat
+    /// where it is in the list.
+    fn set_chat_agent_fast(
+        &mut self,
+        chat: ChatId,
+        fast: Option<bool>,
+    ) -> Result<Option<Chat>, AiError>;
+    /// Pin the chat at `pinned_at`, or unpin it with `None` (AI schema 12).
+    /// Like a rename, it leaves the chat where it is in the list.
+    fn set_chat_pinned(
+        &mut self,
+        chat: ChatId,
+        pinned_at: Option<Timestamp>,
     ) -> Result<Option<Chat>, AiError>;
     fn chat_tool_policy(&self, chat: ChatId) -> Result<Option<ChatToolPolicy>, AiError>;
+    /// The chat's tools and the workspaces they may reach; `granted_at`
+    /// stamps the grants. Not activity: the chat keeps its place.
     fn replace_chat_tool_policy(
         &mut self,
         chat: ChatId,
         mode: ToolMode,
         workspace_ids: &[WorkspaceId],
-        updated_at: Timestamp,
+        granted_at: Timestamp,
     ) -> Result<Option<ChatToolPolicy>, AiError>;
     fn chat(&self, id: ChatId) -> Result<Option<Chat>, AiError>;
     fn chats(&self) -> Result<Vec<Chat>, AiError>;
+    /// Every chat with no profile yet (AI schema 13), with what the store
+    /// holds about where it was working: what it read and what it was
+    /// granted, for [`crate::place_chat`].
+    fn unplaced_chats(&self) -> Result<Vec<ChatPlacementEvidence>, AiError>;
+    /// Give a chat with no profile its profile. A chat that has one keeps
+    /// it — a chat never moves between profiles here — and answers `false`.
+    /// Not activity.
+    fn assign_chat_profile(&mut self, chat: ChatId, profile: ProfileId) -> Result<bool, AiError>;
     fn chat_overviews(&self) -> Result<Vec<ChatOverview>, AiError>;
     fn messages(&self, chat: ChatId) -> Result<Vec<Message>, AiError>;
     fn blocks(&self, chat: ChatId) -> Result<Vec<MessageBlock>, AiError>;
@@ -76,6 +100,15 @@ pub trait AiPersistence: Send {
     fn attempt_by_operation(&self, id: Uuid) -> Result<Option<InferenceAttempt>, AiError>;
     fn tool_activity(&self, id: ToolInvocationId) -> Result<Option<ToolActivity>, AiError>;
     fn tool_activities(&self, chat: ChatId) -> Result<Vec<ToolActivity>, AiError>;
+    /// A local agent's notices on the chat's replies, in the order they
+    /// came (koru-ai D69).
+    fn agent_notices(&self, chat: ChatId) -> Result<Vec<crate::AgentNotice>, AiError>;
+    /// Write a notice at the reply's current length, and answer it with
+    /// that offset.
+    fn create_agent_notice(
+        &mut self,
+        notice: &crate::AgentNotice,
+    ) -> Result<crate::AgentNotice, AiError>;
     fn create_tool_activity(&mut self, activity: &ToolActivity) -> Result<(), AiError>;
     fn update_tool_activity(&mut self, activity: &ToolActivity) -> Result<bool, AiError>;
     /// Move a local agent's activity row through its lifecycle. Unlike
@@ -91,6 +124,11 @@ pub trait AiPersistence: Send {
     /// Atomically insert the user message, pending assistant, and attempt.
     fn begin_turn(&mut self, turn: &PendingTurn) -> Result<InferenceAttempt, AiError>;
     fn begin_retry(&mut self, retry: &PendingRetry) -> Result<InferenceAttempt, AiError>;
+    /// Record a message the person steered into a running reply: a
+    /// complete user message after every message the chat has — the
+    /// running reply's pending one included — its ordinal assigned here.
+    /// Idempotent by id: a message already recorded is answered as it was.
+    fn append_user_message(&mut self, message: &Message) -> Result<Message, AiError>;
     fn create_branch(&mut self, branch: &BranchCopy) -> Result<(), AiError>;
     fn begin_export(&mut self, export: &DocumentExport) -> Result<DocumentExport, AiError>;
     fn export(&self, id: DocumentExportId) -> Result<Option<DocumentExport>, AiError>;
@@ -149,16 +187,67 @@ pub struct AiToolExecutionContext {
     pub chat_id: ChatId,
     pub attempt_id: InferenceAttemptId,
     pub invocation_id: ToolInvocationId,
+    /// The chat's grants. **Only those in [`Self::profile_id`]'s profile
+    /// are ever read** (AI schema 13): an executor that reaches a workspace
+    /// drops the rest before it reaches any, and they are not counted.
     pub workspace_ids: Vec<WorkspaceId>,
+    /// The calling chat's profile, from the stored chat — never from a
+    /// request. `None` (a chat not yet placed) reaches no workspace.
+    pub profile_id: Option<ProfileId>,
 }
 
 /// Narrow Store authority used for exact context and retry-safe export.
 pub trait StoreContextPort: Send + Sync {
-    fn resolve_document(&self, document: DocumentId) -> Result<DocumentContext, AiError>;
+    /// The document as context for a chat of `reader`'s profile. **A
+    /// document in a workspace of another profile is not available**, the
+    /// same answer as a missing one, and neither is any document for a
+    /// chat with no profile (AI schema 13).
+    fn resolve_document(
+        &self,
+        document: DocumentId,
+        reader: Option<ProfileId>,
+    ) -> Result<DocumentContext, AiError>;
     fn create_document(
         &self,
         idempotency_key: Uuid,
         destination: &DocumentDestination,
         markdown: &str,
     ) -> Result<DocumentId, AiError>;
+    /// Koru's profiles in their order and who owns each workspace: what
+    /// placing a chat and holding a chat to its profile read. A port with
+    /// no Store has none to give.
+    fn profile_catalog(&self) -> Result<ProfileCatalog, AiError> {
+        Err(AiError::new(
+            AiErrorClass::Storage,
+            "Koru's profiles are not available.",
+            true,
+        ))
+    }
+    /// The workspace that holds `document`; `None` when the Store has no
+    /// such document.
+    fn document_workspace(&self, _document: DocumentId) -> Result<Option<WorkspaceId>, AiError> {
+        Ok(None)
+    }
+    /// The profiles whose deletion from this computer is **final**: removed
+    /// longer ago than the Trash keeps their workspaces. A chat of one of
+    /// these goes with its profile.
+    ///
+    /// Only a profile the Store holds and records as removed is ever named.
+    /// One it does not know — not loaded, not synced, another root's — is
+    /// never in the answer: not knowing a profile is not knowing it is
+    /// gone. A port with no Store has none to give, and retires nothing.
+    fn retired_profiles(&self) -> Result<Vec<ProfileId>, AiError> {
+        Ok(Vec::new())
+    }
+    /// Every profile removed from this computer, **whether or not it can
+    /// still be restored**: a chat of one of these is hidden everywhere —
+    /// listed, searched and opened by nobody — until its profile is
+    /// restored or its removal is final ([`Self::retired_profiles`]).
+    ///
+    /// The same rule as [`Self::retired_profiles`]: only a profile the Store
+    /// holds and records as removed is ever named, never an absent one. A
+    /// port with no Store has none to give, and hides nothing.
+    fn removed_profiles(&self) -> Result<Vec<ProfileId>, AiError> {
+        Ok(Vec::new())
+    }
 }

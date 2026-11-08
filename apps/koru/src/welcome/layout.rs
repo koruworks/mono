@@ -26,7 +26,6 @@ pub(super) const SECTION_GAP: f32 = 32.0;
 /// A section's label line and the air under it.
 pub(super) const LABEL_H: f32 = 16.0;
 const LABEL_GAP: f32 = 10.0;
-const LINK_GAP: f32 = 10.0;
 /// The tick circle.
 pub(super) const TICK: f32 = 19.0;
 const TICK_GAP: f32 = 12.0;
@@ -39,9 +38,12 @@ pub(super) const HINT_CHORD_W: f32 = 112.0;
 /// The key / command chip at a row's right end.
 pub(super) const KEY_H: f32 = koru_ui::KeyChip::H;
 const CARET_W: f32 = 16.0;
-/// The pairing square and its caption.
-pub(super) const QR: f32 = 92.0;
-const QR_CAPTION_GAP: f32 = 8.0;
+/// The pairing square, at most: a pointer to *Link another device*, never
+/// the code itself, so it is drawn the row's height or a little less and the
+/// card stays one row tall.
+pub(super) const QR: f32 = 44.0;
+/// The least air above and below the pairing square, inside its row.
+const QR_INSET: f32 = 8.0;
 const BOTTOM_PAD: f32 = 64.0;
 
 pub(super) fn title_style() -> theme::TextStyle {
@@ -76,20 +78,33 @@ pub(super) struct SectionLayout {
     pub section: Section,
     pub label_y: f32,
     pub progress: Option<(String, Rect)>,
-    pub toggle: Option<(&'static str, Rect)>,
     pub card: Rect,
     pub dividers: Vec<f32>,
     pub rows: Vec<RowLayout>,
-    /// The one line a completed section folds to.
-    pub folded: Option<Rect>,
-    pub qr: Option<QrLayout>,
+    /// The pairing square: what is drawn and what is pressed.
+    pub qr: Option<Rect>,
 }
 
-pub(super) struct QrLayout {
-    /// The square and its caption together: what is pressed.
-    pub hit: Rect,
-    pub square: Rect,
-    pub caption: (f32, f32),
+/// The MCP row's agent chips: one line, scrolled sideways inside `window`
+/// when it is wider than the row.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub(super) struct AgentStrip {
+    /// What is shown of the line; a chip is clipped to it.
+    pub window: Rect,
+    /// How far the line is scrolled, clamped to `0..=overflow`.
+    pub scroll: f32,
+    /// How much wider the line is than `window`.
+    pub overflow: f32,
+}
+
+impl AgentStrip {
+    /// What of `chip` shows through the window — and is pressed. Empty for a
+    /// chip scrolled out of it.
+    pub fn visible(&self, chip: Rect) -> Rect {
+        let left = chip.x.max(self.window.x);
+        let right = (chip.x + chip.w).min(self.window.x + self.window.w);
+        Rect::new(left, chip.y, (right - left).max(0.0), chip.h)
+    }
 }
 
 pub(super) struct RowLayout {
@@ -105,6 +120,11 @@ pub(super) struct RowLayout {
     /// A command to copy, in a code chip under the sentence: what is drawn,
     /// shortened in the middle when it does not fit.
     pub code: Option<(String, Rect)>,
+    /// The MCP row's agents, one chip each where it is drawn (scrolled), and
+    /// whether it is the one chosen.
+    pub agents: Vec<(super::mcp::Agent, Rect, bool)>,
+    /// The line [`agents`](Self::agents) sit on.
+    pub agents_strip: Option<AgentStrip>,
 }
 
 /// A stretch of one sentence line in one style.
@@ -161,7 +181,13 @@ fn copy(row: RowId, workspace: &str) -> RowCopy {
         RowId::Documents => (DOCUMENTS_TITLE, plain(DOCUMENTS_HINT)),
         RowId::Files => (FILES_TITLE, plain(&files_hint(workspace))),
         RowId::Learn => (LEARN_TITLE, plain(LEARN_HINT)),
-        RowId::AppMenu => (APP_MENU_TITLE, plain(APP_MENU_HINT)),
+        RowId::AppMenu => (
+            koru_i18n::t(crate::format::lang(), koru_i18n::Key::WelcomeAppMenu),
+            plain(koru_i18n::t(
+                crate::format::lang(),
+                koru_i18n::Key::SettingsShowInAppMenuHint,
+            )),
+        ),
         RowId::TaskList => (TASK_LIST_TITLE, Vec::new()),
         RowId::Reminder => (REMINDER_TITLE, plain(REMINDER_HINT)),
         RowId::Feedback => (
@@ -205,11 +231,20 @@ pub(super) fn key_w(engine: &mut TextEngine, text: &str) -> f32 {
     koru_ui::KeyChip::width(engine, text)
 }
 
-/// `text` cut in the middle, with an ellipsis, to fit a key chip no wider than
-/// `max_w`. A path's end says the most — the bridge's name and its flags — so
-/// the end keeps two thirds of what is kept.
+/// The command field's inset either side of its text.
+pub(super) const FIELD_PAD_X: f32 = 10.0;
+
+/// How wide the command field is around `text`: set like the *Copy* button
+/// beside it ([`theme::role::row`]), so the two read as one line.
+pub(super) fn field_w(engine: &mut TextEngine, text: &str) -> f32 {
+    engine.simple_layout(text, theme::role::row()).width() + FIELD_PAD_X * 2.0
+}
+
+/// `text` cut in the middle, with an ellipsis, to fit a command field no
+/// wider than `max_w`. A path's end says the most — the bridge's name and its
+/// flags — so the end keeps two thirds of what is kept.
 pub(super) fn elide_middle(engine: &mut TextEngine, text: &str, max_w: f32) -> String {
-    if key_w(engine, text) <= max_w {
+    if field_w(engine, text) <= max_w {
         return text.to_owned();
     }
     let chars: Vec<char> = text.chars().collect();
@@ -225,7 +260,7 @@ pub(super) fn elide_middle(engine: &mut TextEngine, text: &str, max_w: f32) -> S
     let (mut lo, mut hi) = (0, chars.len());
     while hi - lo > 1 {
         let mid = (lo + hi) / 2;
-        if key_w(engine, &cut(mid)) <= max_w {
+        if field_w(engine, &cut(mid)) <= max_w {
             lo = mid;
         } else {
             hi = mid;
@@ -309,16 +344,11 @@ pub(super) fn measure(view: &mut WelcomeView) -> Layout {
     let identity = view.identity.clone();
     let learn_open = view.learn_open;
     let mcp_command = view.mcp_command.clone();
-    let progress: Vec<(Section, (usize, usize), bool, bool)> = Section::ALL
+    let mcp_agent = view.mcp_agent;
+    let agents_scroll = view.agents_scroll;
+    let progress: Vec<(Section, (usize, usize))> = Section::ALL
         .into_iter()
-        .map(|s| {
-            (
-                s,
-                view.progress_of(s),
-                view.collapsed(s),
-                view.shown.contains(&s),
-            )
-        })
+        .map(|s| (s, view.progress_of(s)))
         .collect();
     let engine = &mut view.engine;
 
@@ -359,108 +389,83 @@ pub(super) fn measure(view: &mut WelcomeView) -> Layout {
 
     // ----------------------------------------------------------- sections
     let mut sections = Vec::new();
-    for (section, (n, m), collapsed, shown) in progress {
+    for (section, (n, m)) in progress {
         let label_y = y;
-        let mut right = x + w;
-        let toggle = (section.counts() && m > 0 && n == m).then(|| {
-            let label = if shown { super::HIDE } else { super::SHOW };
-            let lw = engine.simple_layout(label, sentence_style()).width();
-            let rect = Rect::new(right - lw, label_y, lw, LABEL_H);
-            right -= lw + LINK_GAP;
-            (label, rect)
-        });
         let progress = section.counts().then(|| {
             let text = super::progress(n, m);
             let pw = engine.simple_layout(&text, sentence_style()).width();
-            (text, Rect::new(right - pw, label_y, pw, LABEL_H))
+            (text, Rect::new(x + w - pw, label_y, pw, LABEL_H))
         });
-        if let Some((_, rect)) = toggle {
-            hits.push((Target::Toggle(section), rect));
-        }
         y += LABEL_H + LABEL_GAP;
 
         let card_top = y;
         let mut rows = Vec::new();
         let mut dividers = Vec::new();
-        let mut folded = None;
         let mut qr = None;
-        if collapsed {
-            let rect = Rect::new(x, y, w, CardRow::MIN_H);
-            folded = Some(rect);
-            y += rect.h;
+        let rows_w = if section == Section::Devices {
+            (w - QR - CardRow::PAD_X * 2.0).max(120.0)
         } else {
-            let rows_w = if section == Section::Devices {
-                (w - QR - CardRow::PAD_X * 2.0).max(120.0)
-            } else {
-                w
-            };
-            for (i, &id) in section.rows().iter().enumerate() {
-                if i > 0 {
-                    dividers.push(y);
-                }
-                let laid = measure_row(
-                    engine,
-                    id,
-                    &identity.workspace,
-                    Rect::new(x, y, rows_w, 0.0),
-                    learn_open,
-                    &mcp_command,
-                );
-                if row_is_target(id) {
-                    hits.push((Target::Row(id), laid.rect));
-                }
-                for run in &laid.sentence {
-                    if let Some(link) = run.link {
-                        hits.push((link, run.rect()));
-                    }
-                }
-                for (format, _, rect) in &laid.chips {
-                    hits.push((Target::Import(format), *rect));
-                }
-                if let Some((_, rect)) = &laid.code {
-                    hits.push((Target::CopyMcp, *rect));
-                }
-                if let Trailing::Button(_, target, rect) = &laid.trailing {
-                    hits.push((*target, *rect));
-                }
-                y += laid.rect.h;
-                rows.push(laid);
+            w
+        };
+        for (i, &id) in section.rows().iter().enumerate() {
+            if i > 0 {
+                dividers.push(y);
             }
-            if section == Section::Devices {
-                let rows_h = y - card_top;
-                let caption_h = sentence_style().metrics.line_height;
-                let block = QR + QR_CAPTION_GAP + caption_h;
-                let qx = x + w - CardRow::PAD_X - QR;
-                let qy = card_top + ((rows_h - block) * 0.5).max(CardRow::PAD_Y);
-                let caption_w = engine
-                    .simple_layout(super::SCAN_TO_PAIR, sentence_style())
-                    .width();
-                let square = Rect::new(qx, qy, QR, QR);
-                let hit = Rect::new(
-                    qx.min(qx + (QR - caption_w) * 0.5),
-                    qy,
-                    QR.max(caption_w),
-                    block,
-                );
-                hits.push((Target::PairQr, hit));
-                qr = Some(QrLayout {
-                    hit,
-                    square,
-                    caption: (qx + (QR - caption_w) * 0.5, qy + QR + QR_CAPTION_GAP),
-                });
-                y = y.max(qy + block + CardRow::PAD_Y);
+            let laid = measure_row(
+                engine,
+                id,
+                &identity.workspace,
+                Rect::new(x, y, rows_w, 0.0),
+                learn_open,
+                (&mcp_command, mcp_agent, agents_scroll),
+            );
+            if row_is_target(id) {
+                hits.push((Target::Row(id), laid.rect));
             }
+            for run in &laid.sentence {
+                if let Some(link) = run.link {
+                    hits.push((link, run.rect()));
+                }
+            }
+            for (format, _, rect) in &laid.chips {
+                hits.push((Target::Import(format), *rect));
+            }
+            if let Some(strip) = laid.agents_strip {
+                for (agent, rect, _) in &laid.agents {
+                    hits.push((Target::McpAgent(*agent), strip.visible(*rect)));
+                }
+            }
+            if let Some((_, rect)) = &laid.code {
+                hits.push((Target::CopyMcp, *rect));
+            }
+            if let Trailing::Button(_, target, rect) = &laid.trailing {
+                hits.push((*target, *rect));
+            }
+            y += laid.rect.h;
+            rows.push(laid);
+        }
+        if section == Section::Devices {
+            // Centred on the rows, never taller than they are: the card is
+            // as tall as its rows.
+            let rows_h = y - card_top;
+            let size = (rows_h - QR_INSET * 2.0).clamp(0.0, QR);
+            let square = Rect::new(
+                x + w - CardRow::PAD_X - size,
+                card_top + (rows_h - size) * 0.5,
+                size,
+                size,
+            );
+            hits.push((Target::PairQr, square));
+            qr = Some(square);
         }
         let card = Rect::new(x, card_top, w, y - card_top);
         sections.push(SectionLayout {
             section,
             label_y,
             progress,
-            toggle,
             card,
             dividers,
             rows,
-            folded,
             qr,
         });
         y += SECTION_GAP;
@@ -485,16 +490,17 @@ fn measure_row(
     workspace: &str,
     at: Rect,
     learn_open: bool,
-    mcp_command: &str,
+    (mcp_command, mcp_agent, agents_scroll): (&str, super::mcp::Agent, f32),
 ) -> RowLayout {
     let RowCopy { title, sentence } = copy(id, workspace);
+    // The MCP row's *Copy* sits beside its command, under the text, so the
+    // row has nothing at its right end.
     let trailing_w = match id {
         RowId::FirstDocument => {
             super::hints::new_document_chord().map(|chord| key_w(engine, &chord))
         }
         RowId::Files => Some(koru_ui::button::button_width(engine, super::FILES_BUTTON)),
         RowId::Learn => Some(CARET_W),
-        RowId::Mcp => Some(koru_ui::button::button_width(engine, super::MCP_COPY)),
         RowId::TerminalAgent => Some(key_w(engine, super::AGENT_COMMAND)),
         _ => None,
     };
@@ -542,17 +548,49 @@ fn measure_row(
             .map(|((format, label), rect)| (format, label, rect))
             .collect();
     }
+    let mut agents = Vec::new();
+    let mut agents_strip = None;
+    let mut copy_button = None;
     let mut code = None;
     if id == RowId::Mcp {
-        let shown = elide_middle(engine, mcp_command, text_w);
-        let rect = Rect::new(
+        // **Every agent on one line**, never wrapped: a line wider than the
+        // row scrolls sideways inside it (the wheel, and Tab to a chip).
+        let y = bottom + CHIPS_GAP;
+        let line = koru_ui::chip::wrap(
+            engine,
             text_x,
-            bottom + CODE_GAP,
-            key_w(engine, &shown).min(text_w),
-            KEY_H,
+            y,
+            f32::INFINITY,
+            super::mcp::Agent::ALL.iter().map(|agent| agent.label()),
         );
-        bottom = rect.y + rect.h;
-        code = Some((shown, rect));
+        let line_w = line.last().map_or(0.0, |last| last.x + last.w - text_x);
+        let overflow = (line_w - text_w).max(0.0);
+        let scroll = agents_scroll.clamp(0.0, overflow);
+        agents_strip = Some(AgentStrip {
+            window: Rect::new(text_x, y, text_w, koru_ui::chip::Chip::H),
+            scroll,
+            overflow,
+        });
+        bottom = koru_ui::chip::bottom(&line, bottom);
+        agents = super::mcp::Agent::ALL
+            .into_iter()
+            .zip(line)
+            .map(|(agent, rect)| {
+                let shifted = Rect::new(rect.x - scroll, rect.y, rect.w, rect.h);
+                (agent, shifted, agent == mcp_agent)
+            })
+            .collect();
+
+        // The command, as wide as the text less *Copy* at its right, and as
+        // tall as *Copy*, in its text size: one line of two controls.
+        let copy_w = koru_ui::button::button_width(engine, super::MCP_COPY);
+        let line_h = koru_ui::button::H;
+        let y = bottom + CODE_GAP;
+        let field_w = (text_w - copy_w - CODE_GAP).max(40.0);
+        let shown = elide_middle(engine, mcp_command, field_w);
+        code = Some((shown, Rect::new(text_x, y, field_w, line_h)));
+        copy_button = Some(Rect::new(text_x + field_w + CODE_GAP, y, copy_w, line_h));
+        bottom = y + line_h;
     }
     let mut hints = Vec::new();
     if id == RowId::Learn && learn_open {
@@ -571,7 +609,7 @@ fn measure_row(
     }
     let content_h = (bottom - top).max(TICK);
     let trailing_h = match id {
-        RowId::Files | RowId::Mcp => koru_ui::button::H,
+        RowId::Files => koru_ui::button::H,
         _ => KEY_H,
     };
     let h = (content_h.max(if trailing_w.is_some() {
@@ -593,12 +631,11 @@ fn measure_row(
             slot(tw, koru_ui::button::H),
         ),
         (RowId::Learn, Some(tw)) => Trailing::Caret(learn_open, slot(tw, KEY_H)),
-        (RowId::Mcp, Some(tw)) => Trailing::Button(
-            super::MCP_COPY,
-            Target::CopyMcp,
-            slot(tw, koru_ui::button::H),
-        ),
         (RowId::TerminalAgent, Some(tw)) => Trailing::Code(super::AGENT_COMMAND, slot(tw, KEY_H)),
+        // Not in the row's right-hand slot but beside the command it copies.
+        (RowId::Mcp, _) => copy_button.map_or(Trailing::None, |rect| {
+            Trailing::Button(super::MCP_COPY, Target::CopyMcp, rect)
+        }),
         _ => Trailing::None,
     };
     // The circle sits on the title's first line.
@@ -622,5 +659,7 @@ fn measure_row(
         chips,
         hints,
         code,
+        agents,
+        agents_strip,
     }
 }

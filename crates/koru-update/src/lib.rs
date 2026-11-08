@@ -10,6 +10,7 @@
 mod archive;
 mod client;
 mod controller;
+mod download;
 mod exe;
 mod lease;
 mod manifest;
@@ -29,6 +30,7 @@ pub use archive::{
 // caller already looks for it.
 pub use client::{FetchResult, UpdateClient};
 pub use controller::{PendingInstall, UpdateController};
+pub use download::download_verified_package;
 pub use exe::{
     AGENT as AGENT_EXE, AI_CHAT as AI_CHAT_EXE, ALL as ALL_EXE, APP as APP_EXE, BUNDLE_PREFIX,
     COM_NOTIFICATION as COM_NOTIFICATION_EXE, DATA_PREFIX, GATEWAY as GATEWAY_EXE,

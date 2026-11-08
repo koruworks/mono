@@ -648,14 +648,130 @@ impl SessionClient {
         controller_lease: ControllerLeaseToken,
         input: PendingInput,
     ) -> Result<SendPendingInputResult, ClientError> {
+        // An approval mode is v19: an older host would send the turn in
+        // whatever mode the agent is in (koru-ai D7).
+        if input.needs_agent_modes()
+            && self.host.agreement.version < koru_session_protocol::AGENT_MODES_PROTOCOL_VERSION
+        {
+            return Err(ClientError::Session(failure(
+                ErrorCode::CapabilityNotNegotiated,
+            )));
+        }
+        // A turn's level is v20: a v19 host would read and ignore it, and
+        // run the turn at the session's old level (koru-ai D70).
+        if input.needs_turn_reasoning() && !self.supports_turn_reasoning() {
+            return Err(ClientError::Session(failure(
+                ErrorCode::CapabilityNotNegotiated,
+            )));
+        }
+        // A turn's model is v22: an older host would read past it and run
+        // the turn on the session's old model.
+        if input.needs_turn_model() && !self.supports_turn_model() {
+            return Err(ClientError::Session(failure(
+                ErrorCode::CapabilityNotNegotiated,
+            )));
+        }
+        // Skills named with the input are `agent-commands`: an older host
+        // would read past them and send `$name` as words alone (koru-ai
+        // D121).
+        if input.needs_agent_commands() && !self.supports_agent_commands() {
+            return Err(ClientError::Session(failure(
+                ErrorCode::CapabilityNotNegotiated,
+            )));
+        }
+        self.send_input(session_id, controller_lease, input, None)
+    }
+
+    /// Whether the host lists what an agent can be told to do and takes
+    /// the skills an input names (protocol v21, koru-ai D121).
+    pub fn supports_agent_commands(&self) -> bool {
+        self.host.agreement.version >= koru_session_protocol::AGENT_COMMANDS_PROTOCOL_VERSION
+            && self
+                .host
+                .agreement
+                .capabilities
+                .supports(koru_session_protocol::capability::AGENT_COMMANDS)
+    }
+
+    /// **What an agent can be told to do by name in a folder** (protocol
+    /// v21, koru-ai D121) — Codex's skills — in a picker's order. Refused
+    /// before it is sent to a host that did not negotiate `agent-commands`.
+    pub fn discover_provider_commands(
+        &self,
+        provider: koru_session_protocol::ProviderKind,
+        working_directory: PathBuf,
+    ) -> Result<Vec<koru_session_protocol::AgentCommand>, ClientError> {
+        if !self.supports_agent_commands() {
+            return Err(ClientError::Session(failure(
+                ErrorCode::CapabilityNotNegotiated,
+            )));
+        }
+        match self.request_with_timeout(
+            Request::DiscoverProviderCommands {
+                provider,
+                working_directory,
+            },
+            Duration::from_secs(30),
+        )? {
+            Response::ProviderCommands { commands } => Ok(commands),
+            _ => Err(ClientError::UnexpectedResponse),
+        }
+    }
+
+    /// **Send a set's answers as the person's next message** (protocol
+    /// v21, koru-ai D108): the input of a set the agent asked in its reply
+    /// and moved on from. The host starts a turn with them, or steers them
+    /// into the one running, as with any input. Refused before it is sent
+    /// to a host that did not negotiate questions.
+    pub fn send_pending_answers(
+        &self,
+        session_id: SessionId,
+        controller_lease: ControllerLeaseToken,
+        input: PendingInput,
+        answers: koru_session_protocol::QuestionsReply,
+    ) -> Result<SendPendingInputResult, ClientError> {
+        if !self.supports_questions()
+            || (input.needs_turn_reasoning() && !self.supports_turn_reasoning())
+            || (input.needs_turn_model() && !self.supports_turn_model())
+        {
+            return Err(ClientError::Session(failure(
+                ErrorCode::CapabilityNotNegotiated,
+            )));
+        }
+        self.send_input(session_id, controller_lease, input, Some(answers))
+    }
+
+    fn send_input(
+        &self,
+        session_id: SessionId,
+        controller_lease: ControllerLeaseToken,
+        input: PendingInput,
+        answers: Option<koru_session_protocol::QuestionsReply>,
+    ) -> Result<SendPendingInputResult, ClientError> {
         match self.request(Request::SendPendingInput {
             session_id,
             controller_lease,
             input,
+            answers,
         })? {
             Response::PendingInputSent { result } => Ok(result),
             _ => Err(ClientError::UnexpectedResponse),
         }
+    }
+
+    /// Whether the host takes a turn's reasoning level with its input
+    /// (protocol v20, koru-ai D70). Against an older host a chat's level is
+    /// the one its session started at.
+    pub fn supports_turn_reasoning(&self) -> bool {
+        self.host.agreement.version >= koru_session_protocol::TURN_REASONING_PROTOCOL_VERSION
+    }
+
+    /// Whether the host takes a turn's model with its input (protocol v22):
+    /// a begun agent chat may then move to another of its agent's models
+    /// from its next message. Against an older host a chat's model is the
+    /// one its session started on.
+    pub fn supports_turn_model(&self) -> bool {
+        self.host.agreement.version >= koru_session_protocol::TURN_MODEL_PROTOCOL_VERSION
     }
 
     pub fn supports_provider_models(&self) -> bool {
@@ -672,6 +788,23 @@ impl SessionClient {
         provider: koru_session_protocol::ProviderKind,
         working_directory: PathBuf,
     ) -> Result<koru_session_protocol::ProviderModels, ClientError> {
+        self.discover_provider_catalog(provider, working_directory)
+            .map(|(models, _)| models)
+    }
+
+    /// An agent's models and, beside them, its approval modes (koru-ai D7);
+    /// `None` from a host that sends none, or for an agent with none.
+    pub fn discover_provider_catalog(
+        &self,
+        provider: koru_session_protocol::ProviderKind,
+        working_directory: PathBuf,
+    ) -> Result<
+        (
+            koru_session_protocol::ProviderModels,
+            Option<koru_session_protocol::AgentModes>,
+        ),
+        ClientError,
+    > {
         if !self.supports_provider_models() {
             return Err(ClientError::Session(failure(
                 ErrorCode::CapabilityNotNegotiated,
@@ -684,7 +817,7 @@ impl SessionClient {
             },
             Duration::from_secs(30),
         )? {
-            Response::ProviderModels { models } => Ok(models),
+            Response::ProviderModels { models, modes } => Ok((models, modes)),
             _ => Err(ClientError::UnexpectedResponse),
         }
     }
@@ -751,6 +884,42 @@ impl SessionClient {
             decision,
             choice,
         })?)
+    }
+
+    /// **Answer the questions an agent asked, or skip them** (`None`)
+    /// (protocol v21, koru-ai D108). Refused before it is sent to a host
+    /// that did not negotiate questions — which has none pending anyway.
+    pub fn answer_questions(
+        &self,
+        session_id: SessionId,
+        controller_lease: ControllerLeaseToken,
+        idempotency_key: IdempotencyKey,
+        request_id: koru_session_protocol::QuestionRequestId,
+        answers: Option<Vec<koru_session_protocol::QuestionAnswer>>,
+    ) -> Result<(), ClientError> {
+        if !self.supports_questions() {
+            return Err(ClientError::Session(failure(
+                ErrorCode::CapabilityNotNegotiated,
+            )));
+        }
+        expect_ok(self.request(Request::AnswerQuestions {
+            session_id,
+            controller_lease,
+            idempotency_key,
+            request_id,
+            answers,
+        })?)
+    }
+
+    /// Whether the host asks this client an agent's questions and takes
+    /// their answers (protocol v21, `managed-questions`).
+    pub fn supports_questions(&self) -> bool {
+        self.host.agreement.version >= koru_session_protocol::QUESTIONS_PROTOCOL_VERSION
+            && self
+                .host
+                .agreement
+                .capabilities
+                .supports(koru_session_protocol::capability::MANAGED_QUESTIONS)
     }
 
     pub fn supports_dynamic_approvals(&self) -> bool {
@@ -867,6 +1036,27 @@ impl SessionClient {
             .as_ref()
             .is_some_and(koru_session_protocol::LaunchSelection::is_explicit)
             && !self.supports_launch_selection()
+        {
+            return Err(ClientError::Session(failure(
+                ErrorCode::CapabilityNotNegotiated,
+            )));
+        }
+        // An approval mode is v19: an older host would ignore it and start
+        // the agent in whatever mode it starts in (koru-ai D7).
+        if selection
+            .as_ref()
+            .is_some_and(koru_session_protocol::LaunchSelection::needs_agent_modes)
+            && self.host.agreement.version < koru_session_protocol::AGENT_MODES_PROTOCOL_VERSION
+        {
+            return Err(ClientError::Session(failure(
+                ErrorCode::CapabilityNotNegotiated,
+            )));
+        }
+        // `xhigh` is a v18 token: an older host could not read the request.
+        if selection.as_ref().is_some_and(|selection| {
+            selection.reasoning == Some(koru_session_protocol::LaunchReasoning::XHigh)
+        }) && self.host.agreement.version
+            < koru_session_protocol::PROVIDER_MODEL_FACTS_PROTOCOL_VERSION
         {
             return Err(ClientError::Session(failure(
                 ErrorCode::CapabilityNotNegotiated,

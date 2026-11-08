@@ -649,130 +649,44 @@ fn take_shortcut_is_consumed_and_distinguishes_none_from_nothing() {
     assert_eq!(link.take_shortcut(), None, "and it is said once");
 }
 
+/// **A chat push becomes a tab ask, its ids parsed at the boundary**: a
+/// chat with or without a block opens; an id that is not a uuid is refused
+/// rather than half-opened.
 #[test]
-fn a_correlated_ai_chat_failure_becomes_one_actionable_notice() {
-    let link = AgentLink::absent();
-    link.pending_ai_chat.lock().unwrap().insert(73);
-    assert_eq!(
-        handle_ai_chat_response(
-            &link.pending_ai_chat,
-            &link.notices,
-            73,
-            &Response::Failed {
-                code: "launch_failed".into(),
-                message: "C:/Koru/koru-ai-chat.exe is not beside this executable".into(),
-            },
-        ),
-        (true, true)
-    );
-
-    let notice = link.take_notice().expect("the requester sees the failure");
-    assert_eq!(notice.title, "Koru AI Chat couldn't open");
-    assert!(
-        notice
-            .body
-            .contains("standalone chat window was not opened")
-    );
-    assert!(
-        notice
-            .body
-            .contains("workspace and your conversations were not changed")
-    );
-    assert!(notice.body.contains("Reinstall this Koru build"));
-    assert_eq!(
-        notice.details.as_deref(),
-        Some(
-            "Koru AI Chat was not found beside Koru Agent. Reinstall this Koru build or restore the missing application file, then try again."
-        )
-    );
-    assert!(link.take_notice().is_none(), "a report is consumed once");
-}
-
-#[test]
-fn only_the_matching_ai_chat_response_is_claimed() {
-    let link = AgentLink::absent();
-    link.pending_ai_chat.lock().unwrap().insert(73);
-    assert_eq!(
-        handle_ai_chat_response(
-            &link.pending_ai_chat,
-            &link.notices,
-            72,
-            &Response::Failed {
-                code: "unrelated".into(),
-                message: "another request failed".into(),
-            },
-        ),
-        (false, false),
-        "an unrelated correlated response stays available to its own handler"
-    );
-    assert!(link.take_notice().is_none());
-    assert_eq!(
-        handle_ai_chat_response(&link.pending_ai_chat, &link.notices, 73, &Response::Ok),
-        (true, false),
-        "success completes the tracked ask without manufacturing an error"
-    );
-    assert!(link.take_notice().is_none());
-}
-
-#[test]
-fn asking_for_ai_chat_without_an_agent_is_visible_and_safe() {
-    let link = AgentLink::absent();
-    link.open_ai_chat();
-    let notice = link.take_notice().expect("the click must not appear inert");
-    assert_eq!(notice.title, "Koru AI Chat couldn't open");
-    assert_eq!(
-        notice.details.as_deref(),
-        Some("Koru Agent is not connected")
-    );
-}
-
-#[test]
-fn a_disconnect_answers_every_ai_chat_request_that_was_in_flight() {
-    let link = AgentLink::absent();
-    link.pending_ai_chat.lock().unwrap().extend([7, 9]);
-    assert_eq!(
-        fail_pending_ai_chat(
-            &link.pending_ai_chat,
-            &link.notices,
-            "the test connection ended",
-        ),
-        2
-    );
-    assert!(link.pending_ai_chat.lock().unwrap().is_empty());
-    for _ in 0..2 {
-        assert_eq!(
-            link.take_notice().and_then(|notice| notice.details),
-            Some("the test connection ended".into())
-        );
-    }
-    assert!(link.take_notice().is_none());
-}
-
-#[test]
-fn a_failed_send_reports_only_when_it_wins_the_disconnect_race() {
-    let link = AgentLink::absent();
-    link.pending_ai_chat.lock().unwrap().insert(7);
-    assert!(fail_ai_chat_send(
-        &link.pending_ai_chat,
-        &link.notices,
-        7,
-        "the writer ended",
+fn a_chat_push_is_parsed_at_the_boundary() {
+    let chat = uuid::Uuid::new_v4();
+    let block = uuid::Uuid::new_v4();
+    assert!(matches!(
+        translate(Push::OpenChat {
+            chat: chat.to_string(),
+            block: Some(block.to_string()),
+        }),
+        Some(FromTheAgent::OpenChat {
+            chat: seen,
+            block: Some(at),
+        }) if seen == chat && at == block
     ));
-    assert_eq!(
-        link.take_notice().and_then(|notice| notice.details),
-        Some("the writer ended".into())
-    );
-
-    // The reader won the real race: it already drained this id and queued the
-    // connection-ended notice. The failed `send` must not manufacture a
-    // second report for the same request.
-    assert!(!fail_ai_chat_send(
-        &link.pending_ai_chat,
-        &link.notices,
-        7,
-        "duplicate",
+    assert!(matches!(
+        translate(Push::OpenChat {
+            chat: chat.to_string(),
+            block: None,
+        }),
+        Some(FromTheAgent::OpenChat { chat: seen, block: None }) if seen == chat
     ));
-    assert!(link.take_notice().is_none());
+    assert!(
+        translate(Push::OpenChat {
+            chat: "not-a-uuid".into(),
+            block: None,
+        })
+        .is_none()
+    );
+    assert!(
+        translate(Push::OpenChat {
+            chat: chat.to_string(),
+            block: Some("not-a-uuid".into()),
+        })
+        .is_none()
+    );
 }
 
 #[test]
@@ -789,6 +703,7 @@ fn launchservices_links_use_the_existing_agent_routes() {
         Ok(Request::OpenChatLink {
             chat,
             block: None,
+            profile: None,
         }) if chat == D
     ));
     assert!(matches!(
@@ -796,6 +711,7 @@ fn launchservices_links_use_the_existing_agent_routes() {
         Ok(Request::OpenChatLink {
             chat,
             block: Some(block),
+            profile: None,
         }) if chat == D && block == B
     ));
 }

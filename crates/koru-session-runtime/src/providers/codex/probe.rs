@@ -5,10 +5,10 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use koru_session_protocol::{ErrorCode, ProviderKind, SessionId};
+use koru_session_protocol::{ErrorCode, ProviderKind, SessionId, VersionNeed};
 
 use super::config::{DEFAULT_EVENT_CAPACITY, DEFAULT_INPUT_BYTES};
-use super::{CodexConfig, CodexControl, SUPPORTED_CODEX_VERSIONS, failure, provider_kind};
+use super::{CodexConfig, CodexControl, failure, provider_kind};
 use crate::AttachmentPathResolver;
 use crate::providers::{
     AgentCapabilities, AgentControl, AgentStart, CompatibilityProbe, ManagedProvider,
@@ -41,29 +41,51 @@ impl CodexCompatibilityProbe {
             ProbeCommand::new(self.executable.clone()).arg("--version"),
             limits,
         )?;
-        if !output.success() {
-            return Err(failure(
-                ErrorCode::ProviderIncompatible,
-                ProviderStage::Version,
-                ProviderDiagnostic::InvalidVersion,
-            ));
-        }
-        let output = std::str::from_utf8(output.stdout()).map_err(|_| {
-            failure(
-                ErrorCode::ProviderIncompatible,
-                ProviderStage::Version,
-                ProviderDiagnostic::InvalidVersion,
-            )
-        })?;
-        let version = output.split_ascii_whitespace().last().ok_or_else(|| {
-            failure(
-                ErrorCode::ProviderIncompatible,
-                ProviderStage::Version,
-                ProviderDiagnostic::InvalidVersion,
-            )
-        })?;
-        ProviderVersion::from_str(version)
+        read_print(output.success(), output.stdout())
     }
+}
+
+/// **A `codex --version` run's answer**: the last word it printed
+/// (`codex-cli 0.166.0`), as a version. A run that failed or printed nothing
+/// is the program not starting (`version_print`), never a refused version;
+/// a print with no readable version is refused with none found. Whether
+/// Koru accepts it is [`admit`]'s question.
+pub(super) fn read_print(success: bool, stdout: &[u8]) -> Result<ProviderVersion, ProviderFailure> {
+    let unreadable = || refused(None);
+    let printed =
+        crate::providers::discovery::version_print(success, stdout)?.ok_or_else(unreadable)?;
+    let version = printed
+        .split_ascii_whitespace()
+        .last()
+        .ok_or_else(unreadable)?;
+    ProviderVersion::from_str(version).map_err(|_| unreadable())
+}
+
+/// `version`, if Koru runs it (`codex_version_supported`); refused, naming
+/// it and the floor, if not.
+pub(super) fn admit(version: ProviderVersion) -> Result<ProviderVersion, ProviderFailure> {
+    if super::codex_version_supported(version.as_str()) {
+        Ok(version)
+    } else {
+        Err(refused(Some(version)))
+    }
+}
+
+fn refused(found: Option<ProviderVersion>) -> ProviderFailure {
+    // Anything at or above the newest reviewed release runs, so a refusal
+    // names that release as the one to update to.
+    let newest = Some(VersionNeed::AtLeast(super::CODEX_FLOOR.to_owned()));
+    let diagnostic = if found.is_some() {
+        ProviderDiagnostic::VersionRejected
+    } else {
+        ProviderDiagnostic::InvalidVersion
+    };
+    failure(
+        ErrorCode::ProviderIncompatible,
+        ProviderStage::Version,
+        diagnostic,
+    )
+    .refusing(found, newest)
 }
 
 /// Root-owned production factory. It resolves no paths and performs the exact
@@ -101,14 +123,7 @@ impl ManagedProviderFactory for CodexFactory {
             working_directory.clone(),
             Arc::clone(&self.attachment_paths),
         );
-        let version = probe.version(self.limits)?;
-        if !SUPPORTED_CODEX_VERSIONS.contains(&version.as_str()) {
-            return Err(failure(
-                ErrorCode::ProviderIncompatible,
-                ProviderStage::Version,
-                ProviderDiagnostic::VersionRejected,
-            ));
-        }
+        let version = admit(probe.version(self.limits)?)?;
         let config = CodexConfig::new(
             executable,
             working_directory,
@@ -116,6 +131,35 @@ impl ManagedProviderFactory for CodexFactory {
             Arc::clone(&self.attachment_paths),
         )?;
         CodexControl::new(config).discover_models()
+    }
+
+    /// The folder's skills from the app-server's own `skills/list` (koru-ai
+    /// D121), from a process started for the question and shut down after
+    /// it.
+    fn discover_commands(
+        &self,
+        executable: OsString,
+        working_directory: PathBuf,
+    ) -> Result<Vec<koru_session_protocol::AgentCommand>, ProviderFailure> {
+        let executable = crate::providers::resolve_probe_executable(&executable)?;
+        let probe = CodexCompatibilityProbe::new(
+            executable.clone(),
+            working_directory.clone(),
+            Arc::clone(&self.attachment_paths),
+        );
+        let version = admit(probe.version(self.limits)?)?;
+        let config = CodexConfig::new(
+            executable,
+            working_directory,
+            version,
+            Arc::clone(&self.attachment_paths),
+        )?;
+        CodexControl::new(config).discover_commands()
+    }
+
+    /// Codex advertises no modes; Koru gives it three (koru-ai D7).
+    fn fixed_modes(&self) -> Option<koru_session_protocol::AgentModes> {
+        Some(super::modes::offered())
     }
 
     fn compatibility_probe(
@@ -132,20 +176,9 @@ impl ManagedProviderFactory for CodexFactory {
     }
 
     fn create(&self, request: ManagedProviderRequest) -> Result<ManagedProvider, ProviderFailure> {
-        // A chosen model rides to `thread/start`; a chosen effort has no
-        // Codex route yet and is refused rather than ignored (protocol v16,
-        // `LaunchSelection`).
-        if request
-            .selection
-            .as_ref()
-            .is_some_and(|selection| selection.reasoning.is_some())
-        {
-            return Err(failure(
-                ErrorCode::CapabilityNotNegotiated,
-                ProviderStage::Initialize,
-                ProviderDiagnostic::HandshakeRejected,
-            ));
-        }
+        // A chosen model rides to `thread/start` and a chosen effort to
+        // every `turn/start`; one the model does not list is refused when the
+        // thread starts (protocol v16, `LaunchSelection`).
         if request
             .delegation
             .as_ref()
@@ -169,14 +202,7 @@ impl ManagedProviderFactory for CodexFactory {
             request.working_directory.clone(),
             Arc::clone(&self.attachment_paths),
         );
-        let version = probe.version(self.limits)?;
-        if !SUPPORTED_CODEX_VERSIONS.contains(&version.as_str()) {
-            return Err(failure(
-                ErrorCode::ProviderIncompatible,
-                ProviderStage::Version,
-                ProviderDiagnostic::VersionRejected,
-            ));
-        }
+        let version = admit(probe.version(self.limits)?)?;
         let config = CodexConfig::new(
             request.executable,
             request.working_directory,
@@ -185,7 +211,8 @@ impl ManagedProviderFactory for CodexFactory {
         )?
         .with_delegation(request.delegation)
         .with_selection(request.selection)
-        .with_mcp_servers(request.mcp_servers);
+        .with_mcp_servers(request.mcp_servers)
+        .with_questions(request.questions);
         let wake: Arc<dyn ProviderWake> = config.wake.clone();
         Ok(ManagedProvider {
             control: Box::new(CodexControl::new(config)),
@@ -208,14 +235,7 @@ impl CompatibilityProbe for CodexCompatibilityProbe {
     }
 
     fn probe(&self, limits: ProbeLimits) -> Result<AgentCapabilities, ProviderFailure> {
-        let version = self.version(limits)?;
-        if !SUPPORTED_CODEX_VERSIONS.contains(&version.as_str()) {
-            return Err(failure(
-                ErrorCode::ProviderIncompatible,
-                ProviderStage::Version,
-                ProviderDiagnostic::VersionRejected,
-            ));
-        }
+        let version = admit(self.version(limits)?)?;
         let config = CodexConfig::new(
             self.executable.clone(),
             self.working_directory.clone(),

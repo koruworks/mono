@@ -4,7 +4,7 @@
 //!
 //! Geometry and paint deliberately match the caption `+` and pane toggles:
 //! one square hover chip, a dim resting glyph, a normal hover glyph, and the
-//! filled Phosphor family for an on state.
+//! selected pack's filled variant or heavier outline for an on state.
 
 use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
@@ -134,6 +134,15 @@ impl Metrics {
         radius: 6.0,
     };
 
+    /// A control inside a page or a row rather than a strip: the standard
+    /// glyph, with none of the tab strip's insets, so its hover square is
+    /// the slot it is given — a page's `…`, a list row's `…`.
+    pub const INLINE: Self = Self {
+        inset_top: 0.0,
+        inset_bottom: 0.0,
+        ..Self::STANDARD
+    };
+
     /// Search-panel controls: 10% smaller glyphs with 4 px on every side.
     pub const COMPACT: Self = Self {
         icon_size: theme::CAPTION_ICON * 0.90,
@@ -202,6 +211,7 @@ pub fn draw_toned(
         state,
         Metrics::STANDARD,
         tone,
+        theme::p(),
     );
 }
 
@@ -225,6 +235,34 @@ pub fn draw_with(
         state,
         metrics,
         Tone::Default,
+        theme::p(),
+    );
+}
+
+/// [`draw_with`] in `palette`, the table of the theme the control is shown
+/// under: an element subtree with its own theme paints its buttons in it.
+#[allow(clippy::too_many_arguments)]
+#[track_caller]
+pub fn draw_with_in(
+    canvas: &mut Scene,
+    root: Affine,
+    engine: &mut TextEngine,
+    slot: Rect,
+    glyph: char,
+    state: State,
+    metrics: Metrics,
+    palette: &theme::Palette,
+) {
+    paint(
+        canvas,
+        root,
+        engine,
+        slot,
+        glyph,
+        state,
+        metrics,
+        Tone::Default,
+        palette,
     );
 }
 
@@ -238,6 +276,7 @@ fn paint(
     state: State,
     metrics: Metrics,
     tone: Tone,
+    palette: &theme::Palette,
 ) {
     let _inspection = inspect_icon(root, slot, state, metrics, tone, Some(glyph));
     let chip = hover_chip_with(slot, metrics);
@@ -246,7 +285,7 @@ fn paint(
         scene::fill(
             canvas,
             root,
-            theme::p()
+            palette
                 .accent
                 .multiply_alpha(if state.hovered { 0.20 } else { 0.12 }),
             &scene::rrect(chip.x, chip.y, chip.w, chip.h, metrics.radius),
@@ -256,9 +295,9 @@ fn paint(
             canvas,
             root,
             if danger {
-                theme::p().close_hover
+                palette.close_hover
             } else {
-                theme::p().hover_tint
+                palette.hover_tint
             },
             &scene::rrect(chip.x, chip.y, chip.w, chip.h, metrics.radius),
         );
@@ -269,17 +308,17 @@ fn paint(
         engine.icon_layout(glyph, metrics.icon_size)
     };
     let colour = if state.disabled {
-        theme::p().text_dim.multiply_alpha(0.45)
+        palette.text_dim.multiply_alpha(0.45)
     } else if state.active {
-        theme::p().accent
+        palette.accent
     } else if state.hovered {
         if danger {
-            theme::p().close_hover_fg
+            palette.close_hover_fg
         } else {
-            theme::p().text
+            palette.text
         }
     } else {
-        theme::p().text_dim
+        palette.text_dim
     };
     scene::draw_layout(
         canvas,
@@ -405,10 +444,18 @@ fn inspect_icon(
                     r.property("icon name", name, "icons::ALL; aliases may share a glyph");
                 }
                 r.property(
-                    "Phosphor codepoint",
+                    "icon codepoint",
                     format!("U+{:04X}", glyph as u32),
                     "caller icon; docs/features/koruui/ICONS.md",
                 );
+                if let Some(def) = icons::vector_def(glyph) {
+                    r.property(
+                        "icon pack",
+                        icons::rendered_pack().label(),
+                        "selected icon pack",
+                    );
+                    r.property("icon source", def.source, "artwork provenance");
+                }
             }
             r.property("layout", "centered glyph or label", "shared implementation");
             r.property("docs", "docs/features/koruui/COMPONENTS.md", "catalog");

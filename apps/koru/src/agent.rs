@@ -166,6 +166,13 @@ pub enum FromTheAgent {
     /// Start a new agent session — the Agents menu's New. Answered by opening
     /// the `+` chooser, because which agent to start is the person's choice.
     NewAgentSession,
+    /// Open this chat as a tab, at `block` when there is one — a
+    /// `koru://chat/…` link from outside Koru or a chat hit in the Agent's
+    /// overlay. Parsed here, at the boundary, like [`Self::ShowSession`].
+    OpenChat {
+        chat: uuid::Uuid,
+        block: Option<uuid::Uuid>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -445,10 +452,6 @@ pub struct AgentLink {
     /// `Arc` because [`UpdateFeed`] writes on the same stream and mints from the
     /// same counter.
     next_id: Arc<AtomicU64>,
-    /// Requests whose answer is user-facing rather than a statement we may
-    /// discard. Tracking the correlation id keeps an unrelated Agent failure
-    /// from being mislabeled as a standalone-chat launch problem.
-    pending_ai_chat: Arc<Mutex<HashSet<u64>>>,
     notification_controls: Arc<Mutex<VecDeque<(u64, koru_agent_wire::NotificationControlResult)>>>,
     pending_notification_controls: Arc<Mutex<HashSet<u64>>>,
     reminder_status: Arc<Mutex<VecDeque<(u64, Result<koru_agent_wire::ReminderDiagnostics, ()>)>>>,
@@ -482,10 +485,6 @@ pub struct AgentLink {
     /// whenever the link ends: hiding behind an icon is safe only while there
     /// is an Agent to show it.
     notification_area: Arc<AtomicBool>,
-    /// In-pane reports produced by the reader thread, drained one at a time by
-    /// the shell. A queue preserves two rapid gestures instead of letting the
-    /// latter overwrite the first before the event loop wakes.
-    notices: Arc<Mutex<VecDeque<koru_workspace_host::ErrorReport>>>,
     /// The agent's last [`UpdateReport`], and whether it has been looked at.
     /// Handed out by [`Self::update_feed`]; see [`UpdateFeed`] for why this is
     /// held as state rather than queued into `inbox`.
@@ -568,7 +567,6 @@ impl AgentLink {
             live: Arc::new(AtomicBool::new(false)),
             inbox: Arc::new(Mutex::new(Vec::new())),
             next_id: Arc::new(AtomicU64::new(1)),
-            pending_ai_chat: Arc::new(Mutex::new(HashSet::new())),
             notification_controls: Arc::new(Mutex::new(VecDeque::new())),
             pending_notification_controls: Arc::new(Mutex::new(HashSet::new())),
             reminder_status: Arc::new(Mutex::new(VecDeque::new())),
@@ -583,7 +581,6 @@ impl AgentLink {
             reconnect_enabled: false,
             quit_announced: Arc::new(AtomicBool::new(false)),
             notification_area: Arc::new(AtomicBool::new(false)),
-            notices: Arc::new(Mutex::new(VecDeque::new())),
             update: Arc::new(Mutex::new(None)),
             update_dirty: Arc::new(AtomicBool::new(false)),
             account: Arc::new(Mutex::new(koru_agent_wire::AccountState::default())),
@@ -1014,18 +1011,6 @@ impl AgentLink {
             .take()
     }
 
-    /// One asynchronous Agent failure that belongs in this workspace.
-    ///
-    /// The reader queues before waking. The shell takes one per maintenance
-    /// pass, matching the view's existing rule that a newer failure may replace
-    /// one already showing.
-    pub fn take_notice(&self) -> Option<koru_workspace_host::ErrorReport> {
-        self.notices
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .pop_front()
-    }
-
     /// Everything the agent has asked for since this was last called.
     pub fn drain(&self) -> Vec<FromTheAgent> {
         std::mem::take(&mut *self.inbox.lock().unwrap_or_else(|e| e.into_inner()))
@@ -1327,30 +1312,6 @@ impl AgentLink {
         self.request(Request::ShowOverlay);
     }
 
-    /// Open the machine-wide Koru AI chat window, or bring its existing
-    /// instance forward. The agent owns the singleton decision so two Koru
-    /// windows cannot race to start two chat processes.
-    pub fn open_ai_chat(&self) {
-        // `--ai-chat` and a stale jump-list task both land here; a build that
-        // hides Koru AI asks for nothing (koru-features).
-        if !koru_features::ai() {
-            return;
-        }
-        self.request_ai_chat(Request::OpenAiChat);
-    }
-
-    pub fn open_chat_link(&self, chat: String, block: String) {
-        // A chat link is document content and still draws; following it opens
-        // nothing in a build that hides Koru AI (koru-features).
-        if !koru_features::ai() {
-            return;
-        }
-        self.request_ai_chat(Request::OpenChatLink {
-            chat,
-            block: Some(block),
-        });
-    }
-
     /// Validate a LaunchServices URL with the shared grammar, then use the
     /// same Agent requests as Windows URL activation and in-product links.
     pub fn open_external_url(&self, raw: &str) -> Result<(), String> {
@@ -1362,17 +1323,30 @@ impl AgentLink {
             .into());
         }
         let request = request_for_external_url(raw)?;
-        if matches!(request, Request::OpenChatLink { .. }) {
-            // The same answer as an in-document chat link: nothing, in a
-            // build that hides Koru AI. The Agent refuses it too.
-            if !koru_features::ai() {
-                return Ok(());
-            }
-            self.request_ai_chat(request);
-        } else {
-            self.request(request);
+        // The same answer as an in-document chat link: nothing, in a build
+        // that hides Koru AI. The Agent refuses it too.
+        if matches!(request, Request::OpenChatLink { .. }) && !koru_features::ai() {
+            return Ok(());
         }
+        // A chat link comes back as `Push::OpenChat`, to the Workspace window
+        // the Agent chooses, as a document link comes back as `Push::Open`.
+        self.request(request);
         Ok(())
+    }
+
+    /// **A chat of another profile, for a window of that profile** (AI
+    /// schema 13): this window would not show it. The Agent opens it in the
+    /// profile's most recent window, or opens one; the profile goes with it
+    /// so the Agent never routes it back here.
+    pub fn open_chat_elsewhere(&self, chat: String, block: Option<String>, profile: String) {
+        if !koru_features::ai() {
+            return;
+        }
+        self.request(Request::OpenChatLink {
+            chat,
+            block,
+            profile: Some(profile),
+        });
     }
 
     /// Pass this window's foreground grant on to the agent, so its overlay can
@@ -1595,47 +1569,6 @@ impl AgentLink {
         let _ = writer.send(FromShell::Request { id, body });
     }
 
-    fn request_ai_chat(&self, body: Request) {
-        let Some(writer) = self.current_writer() else {
-            queue_ai_chat_notice(
-                &self.notices,
-                koru_i18n::t(crate::format::lang(), koru_i18n::Key::AgentNotConnected),
-            );
-            let _ = wake_the_loop(&self.wake);
-            return;
-        };
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let mut pending = self
-            .pending_ai_chat
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        // Check while holding the same lock the reader takes after recording
-        // EOF. An ask that raced the disconnect is then either in the set the
-        // reader drains or sees `false` here; it cannot land just after that
-        // drain and wait forever for an answer from a dead connection.
-        if !self.live.load(Ordering::Acquire) {
-            drop(pending);
-            queue_ai_chat_notice(
-                &self.notices,
-                koru_i18n::t(crate::format::lang(), koru_i18n::Key::AgentConnectionEnded),
-            );
-            let _ = wake_the_loop(&self.wake);
-            return;
-        }
-        pending.insert(id);
-        drop(pending);
-        if writer.send(FromShell::Request { id, body }).is_err() {
-            if fail_ai_chat_send(
-                &self.pending_ai_chat,
-                &self.notices,
-                id,
-                koru_i18n::t(crate::format::lang(), koru_i18n::Key::AgentConnectionEnded),
-            ) {
-                let _ = wake_the_loop(&self.wake);
-            }
-        }
-    }
-
     /// Take a connected stream and start the two threads that own it.
     fn adopt(&self, stream: koru_ipc::Stream) {
         // Read before the split consumes the stream: the pid is the only thing
@@ -1673,14 +1606,12 @@ impl AgentLink {
             .unwrap_or_else(|error| error.into_inner()) = None;
 
         let inbox = self.inbox.clone();
-        let pending_ai_chat = Arc::clone(&self.pending_ai_chat);
         let notification_controls = Arc::clone(&self.notification_controls);
         let pending_notification_controls = Arc::clone(&self.pending_notification_controls);
         let reminder_status = Arc::clone(&self.reminder_status);
         let pending_reminder_status = Arc::clone(&self.pending_reminder_status);
         let reminder_diagnostics = Arc::clone(&self.reminder_diagnostics);
         let reminder_diagnostics_dirty = Arc::clone(&self.reminder_diagnostics_dirty);
-        let notices = Arc::clone(&self.notices);
         let wake = Arc::clone(&self.wake);
         let update = Arc::clone(&self.update);
         let update_dirty = Arc::clone(&self.update_dirty);
@@ -1763,16 +1694,6 @@ impl AgentLink {
                             });
                             drop(reset);
                             let _ = wake_the_loop(&wake);
-                            continue;
-                        }
-                    }
-                    if let FromAgent::Response { id, body } = &message {
-                        let (tracked, failed) =
-                            handle_ai_chat_response(&pending_ai_chat, &notices, *id, body);
-                        if tracked {
-                            if failed {
-                                let _ = wake_the_loop(&wake);
-                            }
                             continue;
                         }
                     }
@@ -2143,6 +2064,11 @@ impl AgentLink {
                                     // log.
                                     FromTheAgent::ShowSession(_) => "show-session".to_owned(),
                                     FromTheAgent::NewAgentSession => "new-agent-session".to_owned(),
+                                    // Whether it names a block; never which
+                                    // chat.
+                                    FromTheAgent::OpenChat { block, .. } => {
+                                        format!("open-chat block_present={}", block.is_some())
+                                    }
                                     FromTheAgent::Open(target) => match target.as_ref() {
                                         koru_search_ui::Target::Store {
                                             profile,
@@ -2171,8 +2097,7 @@ impl AgentLink {
                             }
                         }
                         // **The remaining responses are read and dropped, on
-                        // purpose.** Standalone-chat opens are correlated and
-                        // handled above; nothing else this window sends has an
+                        // purpose.** Nothing else this window sends has an
                         // answer it acts on:
                         // `EnsureService` is followed by the ordinary store
                         // connect, which is the real test of whether it worked,
@@ -2336,17 +2261,6 @@ impl AgentLink {
                 .extend(abandoned.into_iter().map(|id| (id, Err(()))));
             wake = true;
         }
-        if fail_pending_ai_chat(
-            &self.pending_ai_chat,
-            &self.notices,
-            koru_i18n::t(
-                crate::format::lang(),
-                koru_i18n::Key::AgentConnectionEndedBeforeAnswer,
-            ),
-        ) > 0
-        {
-            wake = true;
-        }
         if wake {
             let _ = wake_the_loop(&self.wake);
         }
@@ -2496,89 +2410,6 @@ fn fail_pending_notification_controls(
                 },
             )
         }));
-    count
-}
-
-fn handle_ai_chat_response(
-    pending: &Mutex<HashSet<u64>>,
-    notices: &Mutex<VecDeque<koru_workspace_host::ErrorReport>>,
-    id: u64,
-    body: &Response,
-) -> (bool, bool) {
-    if !pending
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .remove(&id)
-    {
-        return (false, false);
-    }
-    if let Response::Failed { code, message } = body {
-        let lang = crate::format::lang();
-        let details = match code.as_str() {
-            "update_in_progress" => koru_i18n::t(lang, koru_i18n::Key::UpdateInstallInProgress),
-            "launch_failed" if message.contains("is not beside this executable") => {
-                koru_i18n::t(lang, koru_i18n::Key::AiChatAppMissing)
-            }
-            _ => koru_i18n::t(lang, koru_i18n::Key::AiChatOpenFailed),
-        };
-        queue_ai_chat_notice(notices, details);
-        (true, true)
-    } else {
-        (true, false)
-    }
-}
-
-fn queue_ai_chat_notice(
-    notices: &Mutex<VecDeque<koru_workspace_host::ErrorReport>>,
-    details: impl Into<String>,
-) {
-    notices
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .push_back(
-            koru_workspace_host::ErrorReport::new(
-                koru_i18n::t(crate::format::lang(), koru_i18n::Key::AiChatOpenErrorTitle),
-                koru_i18n::t(crate::format::lang(), koru_i18n::Key::AiChatOpenErrorBody),
-            )
-            .with_details(details.into()),
-        );
-}
-
-/// Complete an AI-chat request whose writer queue has closed.
-///
-/// The reader can observe EOF and drain the pending set between `send` and this
-/// call. Only the side that actually removes the correlation id owns its
-/// failure notice; otherwise that race would show the same error twice.
-fn fail_ai_chat_send(
-    pending: &Mutex<HashSet<u64>>,
-    notices: &Mutex<VecDeque<koru_workspace_host::ErrorReport>>,
-    id: u64,
-    details: &str,
-) -> bool {
-    if !pending
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .remove(&id)
-    {
-        return false;
-    }
-    queue_ai_chat_notice(notices, details);
-    true
-}
-
-fn fail_pending_ai_chat(
-    pending: &Mutex<HashSet<u64>>,
-    notices: &Mutex<VecDeque<koru_workspace_host::ErrorReport>>,
-    details: &str,
-) -> usize {
-    let count = pending
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .drain()
-        .count();
-    for _ in 0..count {
-        queue_ai_chat_notice(notices, details);
-    }
     count
 }
 
@@ -3020,6 +2851,15 @@ fn translate(push: Push) -> Option<FromTheAgent> {
             },
             None => Some(FromTheAgent::NewAgentSession),
         },
+        // A chat to open as a tab. Ids that will not parse are refused rather
+        // than half-opened, as `Open`'s are.
+        Push::OpenChat { chat, block } => Some(FromTheAgent::OpenChat {
+            chat: uuid_id(&chat)?,
+            block: match block.as_deref() {
+                None => None,
+                Some(raw) => Some(uuid_id(raw)?),
+            },
+        }),
         Push::Open { target } => {
             let profile = uuid_id(&target.profile)?;
             let workspace = uuid_id(&target.workspace)?;
@@ -3078,6 +2918,8 @@ fn request_for_external_url(raw: &str) -> Result<Request, String> {
         Ok(koru_link::KoruLink::Chat { chat, block }) => Ok(Request::OpenChatLink {
             chat: chat.to_string(),
             block: block.map(|block| block.to_string()),
+            // A link names no profile: the Agent asks the chat's.
+            profile: None,
         }),
         Ok(koru_link::KoruLink::Node(_)) => {
             Err(koru_i18n::t(crate::format::lang(), koru_i18n::Key::LinkMissingDocument).into())

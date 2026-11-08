@@ -214,6 +214,75 @@ fn an_identity_problem_offers_start_over_behind_a_confirmation() {
     assert_eq!(modal.start_over, StartOver::Failed);
 }
 
+/// **The panel is one component in the inspector**: `QRFloatingPanel`, with
+/// the floating panel's body, the header, the tabs, the QR code, the buttons
+/// and the footer under it, and nothing it paints beside it but the scrim.
+#[test]
+fn the_link_device_panel_is_one_component_with_its_parts_inside() {
+    use koru_draw::inspect;
+    let mut engine = TextEngine::new();
+    let mut modal = LinkDevice::new(&mut engine);
+    modal.set_pairing(
+        &mut engine,
+        displaying("https://koru.do/link-device#koru-pair:v1c:example"),
+    );
+    let viewport = (900.0, 700.0);
+    let root = Affine::IDENTITY;
+    let capture = inspect::Frame::begin(1, root, scene::rect(0.0, 0.0, viewport.0, viewport.1));
+    modal.draw(&mut Scene::new(), root, &mut engine, viewport);
+    let records = capture.finish().records;
+    let panel = records
+        .iter()
+        .position(|r| r.name == "QRFloatingPanel")
+        .expect("the panel is a component");
+    assert_eq!(records[panel].kind, "component");
+    let under = |mut i: usize| {
+        while let Some(parent) = records[i].parent {
+            if parent == panel {
+                return true;
+            }
+            i = parent;
+        }
+        false
+    };
+    for part in [
+        "FloatingPanel",
+        "QRPanelHeader",
+        "QRPanelTabs",
+        "QRPanelBody",
+        "QRPanelActions",
+        "QRPanelFooter",
+    ] {
+        let i = records
+            .iter()
+            .position(|r| r.name == part)
+            .unwrap_or_else(|| panic!("{part} is drawn"));
+        assert_eq!(records[i].parent, Some(panel), "{part} is the panel's part");
+    }
+    let code = records
+        .iter()
+        .position(|r| r.name == "QRCode")
+        .expect("the QR code is a part");
+    assert!(under(code), "the QR code is inside the panel");
+    assert!(
+        records.iter().any(|r| r.parent == Some(code)),
+        "the code's modules are inside it"
+    );
+    // Everything but the scrim, and what the scrim holds, is the panel's.
+    let roots: Vec<&str> = records
+        .iter()
+        .filter(|r| r.parent.is_none())
+        .map(|r| r.name)
+        .collect();
+    assert_eq!(roots, ["Scrim", "QRFloatingPanel"]);
+    let scrim = records.iter().position(|r| r.name == "Scrim").unwrap();
+    for (i, record) in records.iter().enumerate() {
+        if i != panel && i != scrim && record.parent != Some(scrim) {
+            assert!(under(i), "{} is outside the panel", record.name);
+        }
+    }
+}
+
 /// A working identity never offers it.
 #[test]
 fn a_working_identity_has_no_start_over() {

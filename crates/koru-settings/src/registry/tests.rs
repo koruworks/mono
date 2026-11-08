@@ -116,19 +116,25 @@ fn the_plan_frozen_registry_is_exactly_this_size() {
     };
     assert_eq!(
         count(Section::Global, StorageClass::Roaming),
-        21,
-        "Global roaming: theme, three caret values, four fonts, density, \
+        27,
+        "Global roaming: theme, icon pack, three caret values, four fonts and \
+         the chat font (koru-ai D79, the user's call 2026-11-04), the \
+         document text size (DOCFONTSIZE, 2026-10-30), the base color per \
+         theme (2026-10-31), density, \
          zoom, view mode, canvas background, pinned title, popout close, \
-         skin tone, four dictation values, and two spelling values \
-         (spell-check plan P5, D7)"
+         skin tone, four dictation values, two spelling values \
+         (spell-check plan P5, D7) and the model picker's favorites (D46)"
     );
     assert_eq!(
         count(Section::Global, StorageClass::DeviceLocal),
-        9,
+        14,
         "Global device-local: close behavior, global shortcut, start on \
          login, its reminder explanation record, automatic update checks, \
          global dictation enable + chord, where a delegated run's own folder \
-         is made (ADR-365), and the session recorder's prefill (SESSIONRECORD)"
+         is made (ADR-365), the session recorder's prefill (SESSIONRECORD), \
+         the coding agents turned off (Agent providers, 2026-11-02), the \
+         two default permissions for new chats (D39), the default agent \
+         (D40) and the agents' order (D41)"
     );
     assert_eq!(
         count(Section::Terminal, StorageClass::Roaming),
@@ -151,7 +157,7 @@ fn the_plan_frozen_registry_is_exactly_this_size() {
         "every AI row is delegated: the authority faces `ai.db` and the vault, \
          it does not own them"
     );
-    assert_eq!(REGISTRY.len(), 45);
+    assert_eq!(REGISTRY.len(), 56);
 }
 
 #[test]
@@ -190,7 +196,7 @@ fn a_setting_lands_in_the_file_its_storage_class_implies() {
 }
 
 #[test]
-fn the_font_roles_are_the_four_that_can_follow_the_app() {
+fn the_font_roles_are_the_five_that_can_follow_the_app() {
     let fonts: Vec<_> = REGISTRY
         .iter()
         .filter(|spec| spec.kind == ValueKind::Font && spec.section == Section::Global)
@@ -198,8 +204,15 @@ fn the_font_roles_are_the_four_that_can_follow_the_app() {
         .collect();
     assert_eq!(
         fonts,
-        ["ui_font", "body_font", "headings_font", "code_font"],
-        "exactly four Global font roles model follow-the-app explicitly"
+        [
+            "ui_font",
+            "body_font",
+            "headings_font",
+            "code_font",
+            "chat_font"
+        ],
+        "exactly five Global font roles model follow-the-app explicitly; the \
+         chat's follows the app font rather than a default of its own"
     );
     // The terminal's font is a fifth font role and deliberately not one of
     // these: it is its own value, mono-restricted, in its own section.

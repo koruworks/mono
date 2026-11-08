@@ -1,0 +1,48 @@
+{
+  "jsonrpc": "2.0",
+  "id": 7,
+  "method": "elicitation/create",
+  "params": {
+    "mode": "form",
+    "sessionId": "<session>",
+    "toolCallId": "toolu_fixture_questions",
+    "message": "Please answer the following questions.",
+    "requestedSchema": {
+      "type": "object",
+      "properties": {
+        "question_0": {
+          "type": "string",
+          "title": "Framework",
+          "description": "Which web framework should the service use?",
+          "oneOf": [
+            { "const": "Axum (Recommended)", "title": "Axum (Recommended)", "description": "Tokio-native, and already a dependency." },
+            { "const": "Actix Web", "title": "Actix Web", "description": "Mature, with its own runtime." }
+          ]
+        },
+        "question_0_custom": {
+          "type": "string",
+          "title": "Other",
+          "description": "Type your own answer instead of choosing an option above (optional).",
+          "_meta": { "_askUserQuestionCustomAnswer": { "questionId": "question_0", "isCustomAnswer": true } }
+        },
+        "question_1": {
+          "type": "array",
+          "title": "Targets",
+          "description": "Which platform ships first?",
+          "items": {
+            "anyOf": [
+              { "const": "Windows", "title": "Windows" },
+              { "const": "macOS", "title": "macOS" }
+            ]
+          }
+        },
+        "question_1_custom": {
+          "type": "string",
+          "title": "Other",
+          "description": "Type your own answer instead of choosing an option above (optional).",
+          "_meta": { "_askUserQuestionCustomAnswer": { "questionId": "question_1", "isCustomAnswer": true } }
+        }
+      }
+    }
+  }
+}

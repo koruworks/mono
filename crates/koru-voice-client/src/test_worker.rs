@@ -20,9 +20,12 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use koru_voice::{
-    ClientHello, EndReason, ErrorCode, Event, FRAME_VERSION, InputDevice, PROTOCOL_VERSION,
-    Request, SessionId, State, Transcript, WorkerGreeting,
+    ClientHello, EndReason, ErrorCode, Event, FRAME_VERSION, InputDevice, LevelBucket,
+    PROTOCOL_VERSION, Request, SessionId, State, Transcript, WorkerGreeting,
 };
+
+/// The level this fictional microphone always hears.
+pub const METER_LEVEL: u8 = 5;
 
 /// **What this fictional installation says is plugged in.**
 ///
@@ -68,6 +71,12 @@ pub struct TestWorker {
 impl TestWorker {
     /// Bind the voice endpoint on `root` and answer until [`Self::stop`].
     pub fn start(root: &Path) -> TestWorker {
+        TestWorker::start_speaking(root, PROTOCOL_VERSION)
+    }
+
+    /// A worker that speaks `protocol` — an older build's, to show what a
+    /// client meets when the two were not shipped together.
+    pub fn start_speaking(root: &Path, protocol: u32) -> TestWorker {
         let endpoint =
             koru_ipc::Endpoint::for_service_root(koru_ipc::VOICE, koru_channel::segment(), root)
                 .expect("the voice endpoint could not be named");
@@ -87,7 +96,7 @@ impl TestWorker {
                     }
                     let held = Arc::clone(&held);
                     let handshakes = Arc::clone(&handshakes);
-                    std::thread::spawn(move || connection(stream, &held, &handshakes));
+                    std::thread::spawn(move || connection(stream, &held, &handshakes, protocol));
                 }
             })
         };
@@ -148,15 +157,20 @@ impl TestWorker {
     }
 }
 
-fn connection(stream: koru_ipc::Stream, held: &Arc<Mutex<Held>>, handshakes: &Arc<AtomicU64>) {
+fn connection(
+    stream: koru_ipc::Stream,
+    held: &Arc<Mutex<Held>>,
+    handshakes: &Arc<AtomicU64>,
+    protocol: u32,
+) {
     let (mut read, mut write) = koru_ipc::split(stream);
     let Ok((version, hello)) = koru_ipc::frame::read_frame::<_, ClientHello>(&mut read) else {
         return;
     };
-    if version != FRAME_VERSION || hello.protocol_version != PROTOCOL_VERSION {
+    if version != FRAME_VERSION || hello.protocol_version != protocol {
         let refusal = WorkerGreeting::Refused {
             what: "protocol".into(),
-            ours: PROTOCOL_VERSION,
+            ours: protocol,
             theirs: hello.protocol_version,
             message: "a test worker".into(),
         };
@@ -165,7 +179,7 @@ fn connection(stream: koru_ipc::Stream, held: &Arc<Mutex<Held>>, handshakes: &Ar
     }
     let welcome = WorkerGreeting::Welcome {
         worker_version: "0.0.0-test".into(),
-        protocol_version: PROTOCOL_VERSION,
+        protocol_version: protocol,
     };
     if koru_ipc::frame::write_frame(&mut write, FRAME_VERSION, &welcome).is_err() {
         return;
@@ -219,6 +233,8 @@ fn answer(
         Request::Finish { .. } => "finish",
         Request::Cancel { .. } => "cancel",
         Request::Devices { .. } => "devices",
+        Request::Meter { .. } => "meter",
+        Request::MeterStop { .. } => "meter_stop",
     });
     match request {
         Request::Begin {
@@ -293,6 +309,28 @@ fn answer(
                 devices: fixture_devices(),
             }];
         }
+        // **A meter, which arms nothing.** A busy microphone refuses it, as
+        // the real worker's does; otherwise one level comes straight back.
+        Request::Meter {
+            session,
+            generation,
+            ..
+        } => {
+            if state.live.is_some() {
+                return vec![Event::Refused {
+                    session,
+                    generation,
+                    code: ErrorCode::Busy,
+                    message: "a dictation has the microphone".into(),
+                }];
+            }
+            vec![Event::Level {
+                session,
+                generation,
+                bucket: LevelBucket::new(METER_LEVEL),
+            }]
+        }
+        Request::MeterStop { .. } => Vec::new(),
         Request::Cancel {
             session,
             generation,

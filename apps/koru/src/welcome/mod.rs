@@ -23,14 +23,18 @@
 //!   and hit-testing both read the one [`layout::Layout`], so a control can
 //!   never be pressable somewhere other than where it is painted.
 //! - [`draw`] — painting, every element inside a named inspector scope.
-//! - [`hints`] — the *Learn your way around* lines, from `koru_keys`.
+//! - [`hints`] — the *Learn your way around* lines, from `koru_keys` (the
+//!   row is off the page for now), and the chord beside the first row.
 //! - [`mcp`] — the command an MCP host runs to reach this installation.
 //! - [`build`] — the build stamp and channel copy the update surface uses.
 //!
 //! The view never performs an effect. It raises [`WelcomeWant`]s and newly
 //! ticked rows, and the container drains both: the wants become the existing
-//! commands (new document, import, Settings, Link another device, …) and the
+//! commands (new tab, import, Settings, Link another device, …) and the
 //! ticks are written machine-wide to the Store's `store_state` table.
+//!
+//! **A card never folds.** Each counted card keeps its *n of m done* and
+//! stays open when it reaches *m of m*; there is no *Show* / *Hide*.
 
 use std::collections::BTreeSet;
 
@@ -54,7 +58,6 @@ pub(crate) mod mcp;
 mod rows;
 
 pub(crate) use build::{DOWNLOAD_URL, build_stamp, channel_label, channel_note};
-pub(crate) use mcp::command as mcp_command;
 pub(crate) use rows::RowId;
 use rows::Section;
 
@@ -68,14 +71,10 @@ const CUSTOMIZE_HINT: &str = "Theme, fonts, caret color and the default page wid
 const CUSTOMIZE_BUTTON: &str = "Customize\u{2026}";
 
 const FIRST_MINUTES_LABEL: &str = "Your first five minutes";
-const FIRST_MINUTES_DONE: &str = "All done — you know your way around.";
 const DEVICES_LABEL: &str = "Connect your devices";
 const FURTHER_LABEL: &str = "When you're ready to go further";
-const FURTHER_DONE: &str = "All set up — Koru is fully yours.";
 /// `{n} of {m} done`.
 const PROGRESS: &str = "{n} of {m} done";
-const SHOW: &str = "Show";
-const HIDE: &str = "Hide";
 
 const FIRST_DOCUMENT_TITLE: &str = "Make your first document";
 const FIRST_DOCUMENT_BEFORE: &str = "Type it, or ";
@@ -91,9 +90,6 @@ const FILES_BUTTON: &str = "Choose files\u{2026}";
 
 const LEARN_TITLE: &str = "Learn your way around";
 const LEARN_HINT: &str = "The handful of shortcuts that make Koru feel fast.";
-
-const APP_MENU_TITLE: &str = "Add Koru to your app menu";
-const APP_MENU_HINT: &str = "Find Koru in your app list, with its own icon in the dock.";
 
 const TASK_LIST_TITLE: &str = "Turn one document into a task list";
 
@@ -113,12 +109,11 @@ const COMPUTER_TITLE: &str = "Another computer";
 const COMPUTER_HINT: &str = "Keep this workspace in step across your machines.";
 const WATCH_TITLE: &str = "Watch";
 const WATCH_HINT: &str = "Reminders and quick task ticks on your wrist.";
-const SCAN_TO_PAIR: &str = "Scan to pair";
 
 const AI_TITLE: &str = "Set up your AI";
 const AI_HINT: &str = "Pick a model and connect a key — Koru works fine without it.";
 const MCP_TITLE: &str = "Manage documents over MCP";
-const MCP_HINT: &str = "Let outside tools read and write your workspace through the MCP service.";
+const MCP_HINT: &str = "Let your coding agent read and write this workspace. Pick it, then run the command in a terminal.";
 const MCP_COPY: &str = "Copy";
 const AGENT_TITLE: &str = "Run an agent in a terminal";
 const AGENT_HINT: &str = "Point a coding agent at your workspace from the command line.";
@@ -153,7 +148,8 @@ fn progress(done: usize, of: usize) -> String {
 /// performs — each of these is an existing command the container already has.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum WelcomeWant {
-    /// *Make your first document* — the Ctrl+T name prompt.
+    /// *Make your first document* — what Ctrl+T does: a new tab with a page
+    /// to type on, no name asked first.
     NewDocument,
     /// *set up your mic* — Settings, scrolled to Voice.
     VoiceSettings,
@@ -167,8 +163,9 @@ pub enum WelcomeWant {
     Feedback,
     /// *email* — the support mailto.
     Email,
-    /// *Copy* — the MCP command, [`mcp_command`], on the clipboard.
-    CopyMcpCommand,
+    /// *Copy* — the registration command for this agent,
+    /// [`mcp::command`], on the clipboard.
+    CopyMcpCommand(mcp::Agent),
     /// *Phone*, *Another computer*, the pairing square — Link another device.
     LinkDevice,
     /// *Customize…* — the Settings tab.
@@ -208,8 +205,8 @@ pub(crate) enum Target {
     Email,
     /// The MCP row's *Copy* button and the command beside it.
     CopyMcp,
-    /// The *Show* / *Hide* link of a section whose counted rows are all done.
-    Toggle(Section),
+    /// One agent's chip on the MCP row: the command becomes that agent's.
+    McpAgent(mcp::Agent),
     /// The pairing square beside the device rows.
     PairQr,
 }
@@ -230,8 +227,6 @@ pub struct WelcomeView {
     wants: Vec<WelcomeWant>,
     /// *Learn your way around* is open.
     learn_open: bool,
-    /// A completed section the person asked to see again with *Show*.
-    shown: BTreeSet<Section>,
     focus: Option<Target>,
     viewport: (f32, f32),
     engine: TextEngine,
@@ -246,9 +241,15 @@ pub struct WelcomeView {
     /// Whether a pinned tab shows its title: a window preference the tab strip
     /// reads from any open Welcome tab.
     pinned_show_title: bool,
-    /// What the MCP row shows, read once: the executable's path does not move
-    /// while it runs.
+    /// The agent the MCP row registers the bridge with: Claude Code until
+    /// the person picks another.
+    mcp_agent: mcp::Agent,
+    /// What the MCP row shows: [`mcp_agent`](Self::mcp_agent)'s command.
+    /// The executable's path does not move while it runs.
     mcp_command: String,
+    /// How far the MCP row's agent chips are scrolled sideways. They keep to
+    /// one line, which is wider than the row; the measure clamps this.
+    agents_scroll: f32,
 }
 
 impl Default for WelcomeView {
@@ -265,7 +266,6 @@ impl WelcomeView {
             newly_done: Vec::new(),
             wants: Vec::new(),
             learn_open: false,
-            shown: BTreeSet::new(),
             focus: None,
             viewport: (900.0, 560.0),
             engine: TextEngine::new(),
@@ -274,7 +274,9 @@ impl WelcomeView {
             laid: None,
             drawn: Vec::new(),
             pinned_show_title: false,
-            mcp_command: mcp::command(),
+            mcp_agent: mcp::Agent::ClaudeCode,
+            mcp_command: mcp::command(mcp::Agent::ClaudeCode),
+            agents_scroll: 0.0,
         }
     }
 
@@ -352,11 +354,53 @@ impl WelcomeView {
         (done, counted.len())
     }
 
-    /// A section with a count whose counted rows are all done folds to one
-    /// line, until *Show* opens it again.
-    pub(crate) fn collapsed(&self, section: Section) -> bool {
-        let (done, of) = self.progress_of(section);
-        section.counts() && of > 0 && done == of && !self.shown.contains(&section)
+    /// The MCP row's line of agent chips, as last measured.
+    fn agents_strip(&mut self) -> Option<layout::AgentStrip> {
+        self.ensure_laid()
+            .sections
+            .iter()
+            .flat_map(|s| s.rows.iter())
+            .find_map(|row| row.agents_strip)
+    }
+
+    /// Scroll the agent chips sideways to `to`, clamped to the line.
+    fn scroll_agents_to(&mut self, to: f32) -> bool {
+        let Some(strip) = self.agents_strip() else {
+            return false;
+        };
+        let to = to.clamp(0.0, strip.overflow);
+        if (to - strip.scroll).abs() < 0.01 {
+            return false;
+        }
+        self.agents_scroll = to;
+        self.laid = None;
+        true
+    }
+
+    /// Scroll the agent chips just far enough that `agent`'s is whole.
+    fn reveal_agent(&mut self, agent: mcp::Agent) {
+        let Some(strip) = self.agents_strip() else {
+            return;
+        };
+        let Some(rect) = self
+            .ensure_laid()
+            .sections
+            .iter()
+            .flat_map(|s| s.rows.iter())
+            .flat_map(|row| row.agents.iter())
+            .find(|(a, _, _)| *a == agent)
+            .map(|(_, rect, _)| *rect)
+        else {
+            return;
+        };
+        let window = strip.window;
+        // Where the chip starts along the whole line, scroll undone.
+        let along = rect.x - window.x + strip.scroll;
+        if rect.x < window.x {
+            self.scroll_agents_to(along);
+        } else if rect.x + rect.w > window.x + window.w {
+            self.scroll_agents_to(along + rect.w - window.w);
+        }
     }
 
     fn activate(&mut self, target: Target) {
@@ -380,16 +424,19 @@ impl WelcomeView {
                 self.tick(RowId::Feedback);
             }
             Target::CopyMcp => {
-                self.wants.push(WelcomeWant::CopyMcpCommand);
+                self.wants.push(WelcomeWant::CopyMcpCommand(self.mcp_agent));
                 self.tick(RowId::Mcp);
             }
-            Target::PairQr => self.wants.push(WelcomeWant::LinkDevice),
-            Target::Toggle(section) => {
-                if !self.shown.remove(&section) {
-                    self.shown.insert(section);
+            Target::McpAgent(agent) => {
+                if agent != self.mcp_agent {
+                    self.mcp_agent = agent;
+                    self.mcp_command = mcp::command(agent);
+                    self.laid = None;
                 }
-                self.laid = None;
+                // A chip picked half out of view comes all the way in.
+                self.reveal_agent(agent);
             }
+            Target::PairQr => self.wants.push(WelcomeWant::LinkDevice),
             Target::Row(row) => match row {
                 RowId::FirstDocument => {
                     self.wants.push(WelcomeWant::NewDocument);
@@ -449,9 +496,13 @@ impl WelcomeView {
     }
 
     /// What is under a content-space point: anything drawn over a row wins
-    /// over the row itself.
+    /// over the row itself. An agent chip scrolled out of its line has an
+    /// empty rect: it keeps its place in the Tab order and cannot be pressed.
     fn target_at(laid: &layout::Layout, x: f32, y: f32) -> Option<Target> {
-        let hits = laid.hits.iter().filter(|(_, rect)| rect.contains(x, y));
+        let hits = laid
+            .hits
+            .iter()
+            .filter(|(_, rect)| rect.w > 0.0 && rect.h > 0.0 && rect.contains(x, y));
         let mut row = None;
         for (target, _) in hits {
             if !target.is_row() {
@@ -494,6 +545,9 @@ impl WelcomeView {
         let Some(focus) = self.focus else {
             return;
         };
+        if let Target::McpAgent(agent) = focus {
+            self.reveal_agent(agent);
+        }
         let Some(rect) = self
             .ensure_laid()
             .hits
@@ -580,14 +634,25 @@ impl View for WelcomeView {
     }
 
     fn scroll_by(&mut self, delta: MouseScrollDelta) {
-        let lines = match delta {
-            MouseScrollDelta::LineDelta(_, y) => {
-                y * theme::text_metrics::DOC_BODY.line_height * WHEEL_LINES
-            }
+        let step = theme::text_metrics::DOC_BODY.line_height * WHEEL_LINES;
+        let (across, lines) = match delta {
+            MouseScrollDelta::LineDelta(x, y) => (x * step, y * step),
             // A trackpad or precision wheel already reports pixels, and those
             // are the distance the finger asked for.
-            MouseScrollDelta::PixelDelta(p) => p.y as f32,
+            MouseScrollDelta::PixelDelta(p) => (p.x as f32, p.y as f32),
         };
+        // Over the MCP row's agent chips the wheel moves them sideways first,
+        // and the page only once they are at their end.
+        let (px, py) = (self.pointer.0, self.pointer.1 + self.scroll);
+        if let Some(strip) = self.agents_strip()
+            && strip.overflow > 0.0
+            && strip.window.contains(px, py)
+        {
+            let along = if across != 0.0 { across } else { lines };
+            if self.scroll_agents_to(strip.scroll - along) {
+                return;
+            }
+        }
         self.ensure_laid();
         self.scroll = (self.scroll - lines).clamp(0.0, self.max_scroll());
     }

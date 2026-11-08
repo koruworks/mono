@@ -349,6 +349,9 @@
 				CLANG_ENABLE_MODULES = YES;
 				ENABLE_TESTABILITY = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				KORU_APP_DISPLAY_NAME = Koru;
+				KORU_APP_GROUP = "group.$(KORU_APP_ID)";
+				KORU_APP_ID = do.koru.app;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
@@ -361,6 +364,9 @@
 			buildSettings = {
 				CLANG_ENABLE_MODULES = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				KORU_APP_DISPLAY_NAME = Koru;
+				KORU_APP_GROUP = "group.$(KORU_APP_ID)";
+				KORU_APP_ID = do.koru.app;
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 6.0;
 			};
@@ -377,12 +383,15 @@
 				ENABLE_PREVIEWS = YES;
 				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = Koru;
+				INFOPLIST_FILE = Config/KoruMobile-Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "$(KORU_APP_DISPLAY_NAME)";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Koru uses the camera to scan the QR code another Koru device shows, so this phone can link to it.";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = "$(SRCROOT)/../../target/aarch64-apple-ios/debug";
 				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = "$(SRCROOT)/../../target/aarch64-apple-ios-sim/debug";
 				MARKETING_VERSION = 0.0.3;
@@ -393,7 +402,7 @@
 					"-framework",
 					Network,
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = do.koru.app;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(KORU_APP_ID)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
@@ -414,12 +423,15 @@
 				DEVELOPMENT_TEAM = S9AYD7YJ9F;
 				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = Koru;
+				INFOPLIST_FILE = Config/KoruMobile-Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "$(KORU_APP_DISPLAY_NAME)";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Koru uses the camera to scan the QR code another Koru device shows, so this phone can link to it.";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = "$(SRCROOT)/../../target/aarch64-apple-ios/release";
 				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = "$(SRCROOT)/../../target/aarch64-apple-ios-sim/release";
 				MARKETING_VERSION = 0.0.3;
@@ -430,7 +442,7 @@
 					"-framework",
 					Network,
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = do.koru.app;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(KORU_APP_ID)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
@@ -487,7 +499,7 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = KoruShare/Info.plist;
 				MARKETING_VERSION = 0.0.3;
-				PRODUCT_BUNDLE_IDENTIFIER = do.koru.app.share;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(KORU_APP_ID).share";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -508,7 +520,7 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = KoruShare/Info.plist;
 				MARKETING_VERSION = 0.0.3;
-				PRODUCT_BUNDLE_IDENTIFIER = do.koru.app.share;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(KORU_APP_ID).share";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;

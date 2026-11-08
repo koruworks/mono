@@ -255,6 +255,10 @@ struct Pending {
     id: koru_core::DocumentId,
     title: String,
     after: Option<koru_core::DocumentId>,
+    /// The document it was made inside, when it was
+    /// ([`create_document_in`](Workspace::create_document_in)): the
+    /// provisional row sits under it rather than at the root.
+    parent: Option<koru_core::DocumentId>,
     kind: String,
 }
 
@@ -594,6 +598,36 @@ impl Workspace {
             after,
             koru_core::explore::KIND_DOCUMENT,
         )?;
+        self.seed_new_document(title, koru_core::explore::KIND_DOCUMENT);
+        Ok(id)
+    }
+
+    /// Create a document as the **last child** of `parent` and return its id
+    /// — a row's `+` in the sidebar (the review's note). Placed by the store
+    /// under that parent, and shown there at once by the provisional entry,
+    /// so the row does not appear at the root and then hop.
+    pub fn create_document_in(
+        &mut self,
+        title: &str,
+        parent: koru_core::DocumentId,
+    ) -> Result<koru_core::DocumentId, koru_store_core::errors::Error> {
+        let anchor = explore::store_document(parent);
+        let index = self.manifest.as_ref().map_or(0, |manifest| {
+            manifest
+                .entries()
+                .into_iter()
+                .filter(|entry| entry.parent == Some(anchor))
+                .count()
+        });
+        let id = self.register_document_placed(
+            title,
+            (Some(anchor), Some(index)),
+            None,
+            koru_core::explore::KIND_DOCUMENT,
+        )?;
+        if let Some(pending) = self.pending_documents.iter_mut().find(|p| p.id == id) {
+            pending.parent = Some(parent);
+        }
         self.seed_new_document(title, koru_core::explore::KIND_DOCUMENT);
         Ok(id)
     }
@@ -997,6 +1031,7 @@ impl Workspace {
                 id,
                 title: title.to_owned(),
                 after: near,
+                parent: None,
                 kind: kind.to_owned(),
             });
             self.entries_changed = true;
@@ -1251,28 +1286,6 @@ impl Workspace {
             )
         })?;
         self.open_document_in(workspace, id)
-    }
-
-    /// Open the first document in the manifest that still resolves, so a
-    /// window has something to show. Nothing to open is not an error.
-    ///
-    /// A manifest entry can outlive its lifecycle row after an interrupted or
-    /// historically broken import. That is damaged content, not an unreachable
-    /// Store: keep the workspace manager usable and try the next entry. Every
-    /// other failure is returned, because storage or corrupt CRDT bytes cannot
-    /// be made safe by silently opening an empty placeholder.
-    pub fn open_first_document(&mut self) -> Result<(), koru_store_core::errors::Error> {
-        let ids: Vec<_> = self.entries().iter().map(|entry| entry.id).collect();
-        for id in ids {
-            match self.open_document(id) {
-                Ok(()) => break,
-                Err(error) if error.code() == koru_store_core::errors::Code::DocumentNotFound => {
-                    continue;
-                }
-                Err(error) => return Err(error),
-            }
-        }
-        Ok(())
     }
 
     pub fn open_document_in(
@@ -1823,6 +1836,10 @@ impl Workspace {
                     let anchor = pending
                         .after
                         .and_then(|after| live.iter().position(|entry| entry.id == after));
+                    // A document made *inside* another sits last under it.
+                    let under = pending
+                        .parent
+                        .and_then(|parent| live.iter().position(|entry| entry.id == parent));
                     let row = |parent, ordinal| koru_core::explore::ExploreEntry {
                         id: pending.id,
                         parent,
@@ -1834,12 +1851,21 @@ impl Workspace {
                         trashed_at: None,
                         trashed_by: None,
                     };
-                    match anchor {
-                        Some(at) => {
+                    match (under, anchor) {
+                        (Some(at), _) => {
+                            let parent = live[at].id;
+                            let ordinal = live
+                                .iter()
+                                .filter(|entry| entry.parent == Some(parent))
+                                .count() as u32;
+                            let entry = row(Some(parent), ordinal);
+                            live.insert(subtree_end(&live, at), entry);
+                        }
+                        (None, Some(at)) => {
                             let entry = row(live[at].parent, live[at].ordinal + 1);
                             live.insert(subtree_end(&live, at), entry);
                         }
-                        None => {
+                        (None, None) => {
                             live.push(row(None, ordinal));
                             ordinal += 1;
                         }

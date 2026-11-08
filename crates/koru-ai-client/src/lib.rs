@@ -77,8 +77,20 @@ impl Client {
         &self,
         context: RequestContext,
         provider: AiProviderId,
+        request: koru_ai_wire::DiscoverAgentModelsRequest,
     ) -> Result<koru_ai_wire::AgentModelsResponse> {
-        self.server.discover_agent_models(context, provider)
+        self.server
+            .discover_agent_models(context, provider, request)
+    }
+
+    pub fn discover_agent_commands(
+        &self,
+        context: RequestContext,
+        provider: AiProviderId,
+        request: koru_ai_wire::DiscoverAgentCommandsRequest,
+    ) -> Result<koru_ai_wire::AgentCommandsResponse> {
+        self.server
+            .discover_agent_commands(context, provider, request)
     }
 
     pub fn pull_ollama_model(
@@ -101,8 +113,12 @@ impl Client {
         self.server.create_chat(context, request)
     }
 
-    pub fn list_chats(&self, context: RequestContext) -> Result<koru_ai_wire::ListChatsResponse> {
-        self.server.list_chats(context)
+    pub fn list_chats(
+        &self,
+        context: RequestContext,
+        profile: Option<koru_ai_core::ProfileId>,
+    ) -> Result<koru_ai_wire::ListChatsResponse> {
+        self.server.list_chats(context, profile)
     }
 
     pub fn read_chat(&self, context: RequestContext, chat: ChatId) -> Result<ChatTranscript> {
@@ -116,6 +132,15 @@ impl Client {
         request: RenameChatRequest,
     ) -> Result<RenameChatResponse> {
         self.server.rename_chat(context, chat, request)
+    }
+
+    pub fn pin_chat(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        request: koru_ai_wire::PinChatRequest,
+    ) -> Result<koru_ai_wire::PinChatResponse> {
+        self.server.pin_chat(context, chat, request)
     }
 
     pub fn update_chat_model(
@@ -143,6 +168,16 @@ impl Client {
         request: koru_ai_wire::UpdateChatFolderRequest,
     ) -> Result<koru_ai_wire::UpdateChatFolderResponse> {
         self.server.update_chat_folder(context, chat, request)
+    }
+
+    pub fn update_chat_agent_settings(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        request: koru_ai_wire::UpdateChatAgentSettingsRequest,
+    ) -> Result<koru_ai_wire::UpdateChatAgentSettingsResponse> {
+        self.server
+            .update_chat_agent_settings(context, chat, request)
     }
 
     pub fn tool_list_chats(
@@ -252,13 +287,22 @@ impl Client {
         self.server.cancel_attempt(context, attempt)
     }
 
+    pub fn steer_attempt(
+        &self,
+        context: RequestContext,
+        attempt: InferenceAttemptId,
+        request: koru_ai_wire::SteerAttemptRequest,
+    ) -> Result<koru_ai_wire::SteerAttemptResponse> {
+        self.server.steer_attempt(context, attempt, request)
+    }
+
     pub fn approve_tool_call(
         &self,
         context: RequestContext,
         tool: ToolInvocationId,
-        choice: Option<String>,
+        decision: koru_ai_wire::ToolDecisionRequest,
     ) -> Result<ToolDecisionResponse> {
-        self.server.approve_tool_call(context, tool, choice)
+        self.server.approve_tool_call(context, tool, decision)
     }
 
     pub fn deny_tool_call(
@@ -294,5 +338,44 @@ impl Client {
         export: DocumentExportId,
     ) -> Result<ExportChatResponse> {
         self.server.read_export(context, export)
+    }
+
+    pub fn put_attachment(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        attachment: koru_ai_core::ChatAttachmentId,
+        upload: koru_ai_api::AttachmentUpload,
+    ) -> Result<koru_ai_wire::ChatAttachmentResponse> {
+        self.server
+            .put_attachment(context, chat, attachment, upload)
+    }
+
+    pub fn remove_attachment(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        attachment: koru_ai_core::ChatAttachmentId,
+    ) -> Result<koru_ai_wire::RemoveAttachmentResponse> {
+        self.server.remove_attachment(context, chat, attachment)
+    }
+
+    pub fn read_attachment(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        attachment: koru_ai_core::ChatAttachmentId,
+    ) -> Result<koru_ai_api::AttachmentContent> {
+        self.server.read_attachment(context, chat, attachment)
+    }
+
+    pub fn read_attachment_thumbnail(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        attachment: koru_ai_core::ChatAttachmentId,
+    ) -> Result<Vec<u8>> {
+        self.server
+            .read_attachment_thumbnail(context, chat, attachment)
     }
 }

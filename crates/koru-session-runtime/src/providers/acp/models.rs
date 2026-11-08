@@ -3,7 +3,10 @@
 //! OpenCode owns configuration, credentials and catalog resolution. No prompt is sent.
 use super::*;
 use crate::AttachmentPathResolver;
-use koru_session_protocol::{ModelName, ProviderModel, ProviderModels};
+use koru_session_protocol::{
+    LaunchReasoning, ModelFast, ModelLabel, ModelName, ModelReasoning, ProviderModel,
+    ProviderModels,
+};
 use std::{ffi::OsString, path::PathBuf, sync::Arc};
 
 mod accounts;
@@ -51,17 +54,37 @@ pub(super) fn discover(
                 &cwd,
                 &["debug", "paths"],
                 remaining(deadline)?.min(Duration::from_secs(5)),
+                CATALOG_OUTPUT_BYTES,
             )?;
             accounts::read(accounts::data_path(output.stdout())?)?
         };
-        let output = catalog_command(
+        // `--verbose` carries each model's own name. A listing that fails,
+        // overflows or does not parse falls back to the plain one: the ids
+        // are what a chat needs, the names only what the picker shows.
+        let verbose = catalog_command(
             route,
             &executable,
             &cwd,
-            &["models"],
+            &["models", "--verbose"],
             remaining(deadline)?.min(Duration::from_secs(20)),
-        )?;
-        let models = parse_catalog(output.stdout())?;
+            VERBOSE_CATALOG_OUTPUT_BYTES,
+        )
+        .and_then(|output| parse_verbose_catalog(output.stdout()));
+        let models = match verbose {
+            Ok(models) => models,
+            Err(_) => {
+                tracing::warn!(target: "koru::acp", event = "acp.models.verbose.fallback", provider = "opencode", operation = %operation);
+                let output = catalog_command(
+                    route,
+                    &executable,
+                    &cwd,
+                    &["models"],
+                    remaining(deadline)?.min(Duration::from_secs(20)),
+                    CATALOG_OUTPUT_BYTES,
+                )?;
+                parse_catalog(output.stdout())?
+            }
+        };
         tracing::info!(target: "koru::acp", event = "acp.models.connections.filtered", provider = "opencode", operation = %operation,
             resolved_models = models.models().len(), explicit_connections = connections.len());
         remaining(deadline)?;
@@ -111,11 +134,181 @@ fn discover_session_options(
 /// has been seen to cut short under load.
 const SESSION_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(20);
 
+/// **The session's reasoning levels** (agent-models D15): the one `select`
+/// config option whose `category` is `thought_level`, ACP's own *Thought /
+/// reasoning level selector*, read in Koru's vocabulary. It describes the
+/// session's current model.
+pub(super) struct ThoughtLevel {
+    /// The option's id, which `session/set_config_option` names.
+    pub id: String,
+    /// The levels it offers; `None` when no value is one of Koru's.
+    pub reasoning: Option<ModelReasoning>,
+    /// The agent's own value for each Koru level, and for *off*.
+    pub values: Vec<(LaunchReasoning, String)>,
+    /// The option's `currentValue`, as the agent spells it.
+    pub current: Option<String>,
+    /// Values outside Koru's vocabulary, dropped (D17).
+    pub dropped: usize,
+}
+
+impl ThoughtLevel {
+    /// The agent's own value for `level`, when the option offers it.
+    pub fn value_for(&self, level: LaunchReasoning) -> Option<&str> {
+        self.values
+            .iter()
+            .find(|(offered, _)| *offered == level)
+            .map(|(_, value)| value.as_str())
+    }
+}
+
+/// The `thought_level` option of a `session/new` or `set_config_option`
+/// answer, or `None` when it carries none — or more than one, which is no
+/// single answer.
+pub(super) fn thought_level(response: &Value) -> Option<ThoughtLevel> {
+    let options = response.get("configOptions")?.as_array()?;
+    let mut matching = options
+        .iter()
+        .filter(|option| option["category"] == "thought_level" && option["type"] == "select");
+    let option = matching.next()?;
+    if matching.next().is_some() {
+        return None;
+    }
+    let id = option["id"]
+        .as_str()
+        .filter(|id| !id.is_empty())?
+        .to_owned();
+    let mut tokens = Vec::new();
+    for entry in option["options"].as_array()? {
+        match entry["options"].as_array() {
+            Some(members) => tokens.extend(members.iter().filter_map(|m| m["value"].as_str())),
+            None => tokens.extend(entry["value"].as_str()),
+        }
+    }
+    let current = option["currentValue"].as_str().map(str::to_owned);
+    let (reasoning, dropped) =
+        ModelReasoning::from_agent_tokens(tokens.iter().copied(), current.as_deref());
+    let values = tokens
+        .iter()
+        .filter_map(|token| {
+            let lowered = token.trim().to_ascii_lowercase();
+            let level = match lowered.as_str() {
+                "off" | "none" => LaunchReasoning::Off,
+                other => other
+                    .parse::<LaunchReasoning>()
+                    .ok()
+                    .filter(|level| *level != LaunchReasoning::On)?,
+            };
+            Some((level, (*token).to_owned()))
+        })
+        .collect();
+    Some(ThoughtLevel {
+        id,
+        reasoning,
+        values,
+        current,
+        dropped,
+    })
+}
+
+/// **Claude Code's Fast mode option** (koru-ai D11): the config option whose
+/// id is `fast` (category `model_config`). The wrapper offers it only for a
+/// model that supports fast mode, as a `select` of `on` and `off` to a
+/// client that, like Koru, does not advertise boolean config options, and as
+/// a `boolean` to one that does; both are read.
+pub(super) struct FastOption {
+    pub id: String,
+    pub on: bool,
+    boolean: bool,
+}
+
+impl FastOption {
+    /// The value `session/set_config_option` takes for `on`.
+    pub fn value(&self, on: bool) -> Value {
+        match (self.boolean, on) {
+            (true, on) => json!(on),
+            (false, true) => json!("on"),
+            (false, false) => json!("off"),
+        }
+    }
+}
+
+/// The `fast` option of an answer or a `config_option_update`, or `None`
+/// when it carries none — the session's model has no Fast mode.
+pub(super) fn fast_option(response: &Value) -> Option<FastOption> {
+    let options = response.get("configOptions")?.as_array()?;
+    let option = options.iter().find(|option| option["id"] == "fast")?;
+    let id = option["id"].as_str()?.to_owned();
+    match option["type"].as_str()? {
+        "boolean" => Some(FastOption {
+            id,
+            on: option["currentValue"].as_bool()?,
+            boolean: true,
+        }),
+        "select" => {
+            let values: Vec<&str> = option["options"]
+                .as_array()?
+                .iter()
+                .filter_map(|entry| entry["value"].as_str())
+                .collect();
+            if !(values.contains(&"on") && values.contains(&"off")) {
+                return None;
+            }
+            Some(FastOption {
+                id,
+                on: option["currentValue"].as_str()? == "on",
+                boolean: false,
+            })
+        }
+        _ => None,
+    }
+}
+
+/// The model's Fast mode as the catalog carries it.
+pub(super) fn model_fast(response: &Value) -> Option<ModelFast> {
+    fast_option(response).map(|option| ModelFast {
+        on_by_default: option.on,
+    })
+}
+
+/// A count of agent level values Koru has no word for, as the catalog's
+/// event says it; none is ever shown.
+pub(super) fn levels_dropped(provider: &str, count: usize) {
+    if count > 0 {
+        tracing::info!(target: "koru::provider_models", event = "catalog.levels.dropped",
+            provider, count);
+    }
+}
+
 /// The `model` option's values as a catalog: a flat list under the route's
 /// own kind, or ACP's groups under each group's id. A value that is not a
-/// model name, or a repeat, is left out; nothing else the option carries
-/// (names, descriptions) is kept.
+/// model name, or a repeat, is left out. Each option's `name` and
+/// `description`, and each group's `name`, are kept as the agent sent them,
+/// within `ModelLabel`'s bounds; one past them is dropped, not refused. The
+/// session's `thought_level` option describes its current model, so that
+/// model alone carries levels here (D15); the others' are read by walking
+/// them (D16).
 pub(super) fn config_models(session: &Value, fallback_group: &str) -> Vec<ProviderModel> {
+    let mut models = config_model_list(session, fallback_group);
+    let current = option(session)
+        .ok()
+        .and_then(|option| option["currentValue"].as_str());
+    let current_model = models
+        .iter_mut()
+        .find(|model| Some(model.id.as_str()) == current);
+    if let Some(model) = current_model {
+        // Fast mode, like the levels, is said of the current model (D11).
+        model.fast = model_fast(session);
+        if let Some(level) = thought_level(session) {
+            levels_dropped(fallback_group, level.dropped);
+            model.reasoning = level.reasoning;
+        }
+    } else if let Some(level) = thought_level(session) {
+        levels_dropped(fallback_group, level.dropped);
+    }
+    models
+}
+
+fn config_model_list(session: &Value, fallback_group: &str) -> Vec<ProviderModel> {
     let Ok(option) = option(session) else {
         return Vec::new();
     };
@@ -124,7 +317,7 @@ pub(super) fn config_models(session: &Value, fallback_group: &str) -> Vec<Provid
     };
     let mut seen = std::collections::BTreeSet::new();
     let mut models = Vec::new();
-    let mut keep = |value: &Value, group: &str| {
+    let mut keep = |value: &Value, group: &str, group_name: Option<ModelLabel>, legacy: bool| {
         let Some(id) = value["value"]
             .as_str()
             .and_then(|value| value.parse::<ModelName>().ok())
@@ -139,7 +332,14 @@ pub(super) fn config_models(session: &Value, fallback_group: &str) -> Vec<Provid
             },
         };
         if seen.insert(id.clone()) && models.len() < koru_session_protocol::MAX_PROVIDER_MODELS {
-            models.push(ProviderModel { id, group });
+            let mut model = ProviderModel::new(id, group);
+            model.name = value["name"].as_str().and_then(ModelLabel::name);
+            model.description = value["description"]
+                .as_str()
+                .and_then(ModelLabel::description);
+            model.group_name = group_name;
+            model.legacy = legacy;
+            models.push(model);
         }
     };
     for entry in entries {
@@ -149,14 +349,28 @@ pub(super) fn config_models(session: &Value, fallback_group: &str) -> Vec<Provid
                     .as_str()
                     .or_else(|| entry["name"].as_str())
                     .unwrap_or(fallback_group);
+                let group_name = entry["name"].as_str().and_then(ModelLabel::name);
+                let legacy = legacy_group(entry["group"].as_str(), entry["name"].as_str());
                 for member in members {
-                    keep(member, group);
+                    keep(member, group, group_name.clone(), legacy);
                 }
             }
-            None => keep(entry, fallback_group),
+            None => keep(entry, fallback_group, None, false),
         }
     }
     models
+}
+
+/// **Legacy is the agent's own word** (D11, S4): a group whose id is
+/// `legacy`, or whose name starts with *Legacy*, without case. Nothing is
+/// inferred from dates, versions or names, and `_meta` is never read.
+fn legacy_group(id: Option<&str>, name: Option<&str>) -> bool {
+    id.is_some_and(|id| id.trim().eq_ignore_ascii_case("legacy"))
+        || name.is_some_and(|name| {
+            name.trim()
+                .get(..6)
+                .is_some_and(|start| start.eq_ignore_ascii_case("legacy"))
+        })
 }
 
 fn remaining(deadline: Instant) -> Result<Duration, ProviderFailure> {
@@ -172,12 +386,19 @@ fn remaining(deadline: Instant) -> Result<Duration, ProviderFailure> {
         })
 }
 
+/// The most a plain catalog command may print.
+const CATALOG_OUTPUT_BYTES: usize = 1024 * 1024;
+/// The most `opencode models --verbose` may print: about 1.5 KB a model,
+/// 350 KB for the 233 models seen on one machine (1.19.5).
+const VERBOSE_CATALOG_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
+
 fn catalog_command(
     route: &AcpRoute,
     executable: &std::ffi::OsStr,
     cwd: &std::path::Path,
     tokens: &[&'static str],
     timeout: Duration,
+    maximum_output_bytes: usize,
 ) -> Result<super::super::discovery::ProbeOutput, ProviderFailure> {
     // Only fixed adapter-owned tokens reach Windows batch launchers.
     let (program, mut args) = route.launch(executable, true)?;
@@ -195,7 +416,7 @@ fn catalog_command(
         command,
         ProbeLimits {
             timeout,
-            maximum_output_bytes: 1024 * 1024,
+            maximum_output_bytes,
         },
     )?;
     if !output.success() {
@@ -216,13 +437,8 @@ fn parse_catalog(bytes: &[u8]) -> Result<ProviderModels, ProviderFailure> {
     let text = std::str::from_utf8(bytes).map_err(|_| invalid_catalog())?;
     let mut models = std::collections::BTreeMap::new();
     for line in text.lines().filter(|line| !line.is_empty()) {
-        let id: ModelName = line.parse().map_err(|_| invalid_catalog())?;
-        let (group, name) = line.split_once('/').ok_or_else(invalid_catalog)?;
-        if name.is_empty() {
-            return Err(invalid_catalog());
-        }
-        let group = group.parse().map_err(|_| invalid_catalog())?;
-        models.insert(id.clone(), ProviderModel { id, group });
+        let model = catalog_model(line)?;
+        models.insert(model.id.clone(), model);
         if models.len() > koru_session_protocol::MAX_PROVIDER_MODELS {
             return Err(invalid_catalog());
         }
@@ -232,6 +448,61 @@ fn parse_catalog(bytes: &[u8]) -> Result<ProviderModels, ProviderFailure> {
         .collect::<Vec<_>>()
         .try_into()
         .map_err(|_| invalid_catalog())
+}
+
+/// `opencode models --verbose`: each `provider/model` id on a line of its
+/// own, then a JSON object about that model. The id line is held to the
+/// plain listing's rules, and the object's `name` is kept, and its
+/// `variants`' names as the model's levels (D15's vocabulary; OpenCode
+/// states no default). OpenCode applies them over ACP through the same
+/// `thought_level` option as any agent, seen on 1.19.5. Anything else in
+/// the output refuses the whole listing, and the plain one is used instead.
+fn parse_verbose_catalog(bytes: &[u8]) -> Result<ProviderModels, ProviderFailure> {
+    let text = std::str::from_utf8(bytes).map_err(|_| invalid_catalog())?;
+    let mut models = std::collections::BTreeMap::new();
+    let mut rest = text.trim_start();
+    while !rest.is_empty() {
+        let (line, after) = rest.split_once('\n').ok_or_else(invalid_catalog)?;
+        let mut model = catalog_model(line.trim_end_matches('\r'))?;
+        let mut facts = serde_json::Deserializer::from_str(after).into_iter::<Value>();
+        let Some(Ok(facts_value)) = facts.next() else {
+            return Err(invalid_catalog());
+        };
+        if !facts_value.is_object() {
+            return Err(invalid_catalog());
+        }
+        rest = after[facts.byte_offset()..].trim_start();
+        model.name = facts_value["name"].as_str().and_then(ModelLabel::name);
+        // OpenCode's own mark for an older model (D11).
+        model.legacy = facts_value["status"].as_str() == Some("deprecated");
+        if let Some(variants) = facts_value["variants"].as_object() {
+            let (reasoning, dropped) =
+                ModelReasoning::from_agent_tokens(variants.keys().map(String::as_str), None);
+            model.reasoning = reasoning;
+            levels_dropped("opencode", dropped);
+        }
+        models.insert(model.id.clone(), model);
+        if models.len() > koru_session_protocol::MAX_PROVIDER_MODELS {
+            return Err(invalid_catalog());
+        }
+    }
+    models
+        .into_values()
+        .collect::<Vec<_>>()
+        .try_into()
+        .map_err(|_| invalid_catalog())
+}
+
+/// One `provider/model` line: the provider is the group, and a line with no
+/// model after the slash is not a model.
+fn catalog_model(line: &str) -> Result<ProviderModel, ProviderFailure> {
+    let id: ModelName = line.parse().map_err(|_| invalid_catalog())?;
+    let (group, name) = line.split_once('/').ok_or_else(invalid_catalog)?;
+    if name.is_empty() {
+        return Err(invalid_catalog());
+    }
+    let group = group.parse().map_err(|_| invalid_catalog())?;
+    Ok(ProviderModel::new(id, group))
 }
 
 pub(super) fn selection_unavailable() -> ProviderFailure {
@@ -276,6 +547,15 @@ pub(super) fn validate_selection(
     } else {
         Err(selection_unavailable())
     }
+}
+
+/// The model an answer's `model` option says the session is on; `None`
+/// where it carries no such option, or names nothing Koru can hold.
+pub(super) fn current_model(response: &Value) -> Option<ModelName> {
+    option(response).ok()?["currentValue"]
+        .as_str()?
+        .parse()
+        .ok()
 }
 
 pub(super) fn validate_applied(

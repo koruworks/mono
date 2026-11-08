@@ -80,11 +80,11 @@ pub struct TaskPort {
 /// per the `read_ports` note: WAL lets it answer without the worker's mutex or
 /// the Store's authoritative lock.
 pub fn task_port(
-    root: &std::path::Path,
+    derived: &crate::derived::Derived,
     sweeps: Sweeps,
     state: &Arc<AppState>,
 ) -> Option<Arc<TaskPort>> {
-    match Projections::open(root) {
+    match derived.projections() {
         Ok(projections) => Some(Arc::new(TaskPort {
             projections: Mutex::new(projections),
             sweeps,
@@ -358,6 +358,7 @@ fn translate(query: &wire::TaskQuery) -> Result<TaskRowQuery, TaskServiceError> 
             wire::TaskSort::Due => TaskSort::Due,
             wire::TaskSort::Priority => TaskSort::Priority,
             wire::TaskSort::Modified => TaskSort::Modified,
+            wire::TaskSort::Manual => TaskSort::Manual,
         },
         // Already clamped at the boundary (`routes::tasks::query`); clamping it
         // again here would be a second answer to one question.

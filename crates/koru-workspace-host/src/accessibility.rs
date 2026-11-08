@@ -48,7 +48,6 @@ pub mod dump;
 pub mod identity;
 pub mod lifecycle;
 pub mod projection;
-pub mod repair;
 
 pub use dump::Redaction;
 pub use identity::{ControlPart, ObjectKey, Occurrence, Slots, ViewSlot, WindowSlot, part};

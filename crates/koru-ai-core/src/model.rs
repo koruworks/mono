@@ -6,9 +6,9 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    AiErrorClass, AiProviderId, AiUsage, ChatId, DocumentExportId, DocumentId, FeedbackEventId,
-    InferenceAttemptId, MessageBlockId, MessageId, ModelSelection, ProfileId, ReasoningChoice,
-    RequestMeasurements, Timestamp, ToolInvocationId, WorkspaceId,
+    AgentNoticeId, AiErrorClass, AiProviderId, AiUsage, ChatId, DocumentExportId, DocumentId,
+    FeedbackEventId, InferenceAttemptId, MessageBlockId, MessageId, ModelSelection, ProfileId,
+    ReasoningChoice, RequestMeasurements, Timestamp, ToolInvocationId, WorkspaceId,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,8 +25,53 @@ pub struct Chat {
     /// first message, and a branch copies it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_working_folder: Option<String>,
+    /// The approval mode a local agent runs this chat's next message in
+    /// (koru-ai D7): the agent's own id, `None` for the agent's default.
+    /// Chosen at any time; a choice made during a reply applies to the next
+    /// message. A branch starts with none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_mode: Option<String>,
+    /// Whether a local agent runs this chat's next message in its model's
+    /// Fast mode (koru-ai D11); `None` is the model's own default. Like the
+    /// mode, chosen at any time and applied from the next message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_fast: Option<bool>,
+    /// When the person pinned this chat (AI schema 12); `None` when it is
+    /// not pinned. The pinned chats are listed oldest pin first. Pinning is
+    /// not activity: the chat keeps its place among the others.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned_at: Option<Timestamp>,
+    /// **The profile the chat belongs to** (AI schema 13, koru-ai D120): the
+    /// profile of the window it was started in, its source's for a branch.
+    /// Its list, its search hits and the workspaces it may read are that
+    /// profile's. `None` only for a chat written before schema 13 that the
+    /// service has not yet placed (it places each one as soon as the Store
+    /// answers: [`crate::place_chat`]), and on an older server's answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<ProfileId>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
+}
+
+/// **A short status line a local agent said during a reply that is not
+/// part of the reply** (koru-ai D69, AI schema 12): Devin's *Hook failed:
+/// …* about a hook on the person's machine. Kept with the reply it came
+/// with, in the order it came, and where in the reply it came.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct AgentNotice {
+    pub id: AgentNoticeId,
+    pub attempt_id: InferenceAttemptId,
+    pub chat_id: ChatId,
+    pub assistant_message_id: MessageId,
+    /// The agent's words, bounded to 500 characters by the session host
+    /// before they reach the chat.
+    pub text: String,
+    /// How much of the reply's Markdown, in bytes, had arrived when the
+    /// notice came; `None` until the store has written it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_offset: Option<u32>,
+    pub created_at: Timestamp,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -138,6 +183,13 @@ pub struct ToolActivity {
     /// [`crate::AGENT_CONTENT_CHARS`], kept since schema 8 (UC17).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_output: Option<String>,
+    /// How much of the reply's Markdown, in bytes, had arrived when the
+    /// call began: the text before it was said before it, the text after
+    /// it after. Kept since schema 10 on a local agent's rows, so a reopened
+    /// reply can still tell the agent's running commentary from its final
+    /// answer. `None` on earlier rows and on Koru's own tool rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_offset: Option<u32>,
     /// Current display text resolved from Store by a trusted local client. It
     /// is neither public wire data nor durable AI state, so renames cannot make
     /// the audit database stale.
@@ -313,6 +365,9 @@ pub struct DocumentContext {
 pub struct MessageBlockContext {
     pub chat_id: ChatId,
     pub chat_private: bool,
+    /// The profile of the chat the block is in (AI schema 13): a block is
+    /// context only for a chat of the same profile.
+    pub chat_profile: Option<ProfileId>,
     pub message_id: MessageId,
     pub block_id: MessageBlockId,
     pub role: ChatRole,
@@ -325,6 +380,7 @@ pub struct ChatOverview {
     pub chat_id: ChatId,
     pub title: String,
     pub private: bool,
+    pub profile_id: Option<ProfileId>,
     pub message_count: u32,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
@@ -446,6 +502,9 @@ pub struct PendingTurn {
     pub user_message: Message,
     pub assistant_message: Message,
     pub attempt: InferenceAttempt,
+    /// Staged attachments bound to the user message, in order, in the same
+    /// transaction.
+    pub attachment_ids: Vec<crate::ChatAttachmentId>,
 }
 
 /// One retry creates a fresh assistant entry and attempt without rewriting the
@@ -466,6 +525,9 @@ pub struct BranchCopy {
     pub blocks: Vec<MessageBlock>,
     pub citations: Vec<(MessageId, SourceLink)>,
     pub pinned_documents: Vec<PinnedDocument>,
+    /// The copied user messages' attachments, already re-identified and
+    /// bound to the copies; their folders are linked before the commit.
+    pub attachments: Vec<crate::AttachmentRecord>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -611,6 +673,11 @@ pub struct AiSearchHit {
     pub snippet: String,
     pub spans: Vec<AiSearchSpan>,
     pub score: f32,
+    /// The profile the hit's chat belongs to (AI schema 13), so a surface
+    /// that lists every profile's hits opens one in its own profile's
+    /// window. `None` from an older server, or for a chat not yet placed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<ProfileId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -628,6 +695,17 @@ pub struct AiSearchQuery {
     pub cursor: Option<String>,
     #[serde(default)]
     pub visibility: ChatAccessLens,
+    /// Only this profile's chats (AI schema 13); `None` is every profile's.
+    /// A tool surface with a calling chat is held to that chat's profile
+    /// whatever this says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<ProfileId>,
+    /// **Never these profiles' chats**: the profiles removed from this
+    /// computer ([`crate::StoreContextPort::removed_profiles`]), whose
+    /// chats are hidden from every search until a restore. Empty hides
+    /// nothing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub removed_profiles: Vec<ProfileId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

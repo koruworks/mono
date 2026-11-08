@@ -17,8 +17,8 @@
 
 use std::collections::HashMap;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use koru_ai_core::{AiError, AiErrorClass, AiProvider, AiProviderId, ChatId};
@@ -93,10 +93,25 @@ pub struct AgentSessions {
     commands: SyncSender<Command>,
     endpoint: koru_ipc::Endpoint,
     live: Arc<LiveTurns>,
-    /// Each agent's listed models, once asked. One slot per agent so a
-    /// second picker waits for the first listing instead of starting its
-    /// own; a failed listing keeps nothing and is asked again.
-    catalogs: Arc<Mutex<HashMap<ProviderKind, Arc<Mutex<Option<ProviderModels>>>>>>,
+    /// The manual refreshes under way, one per agent: a second joins the
+    /// first rather than asking the host to re-probe again.
+    refreshes: Arc<crate::joined::Joined<ProviderKind, Result<AgentCatalog, ErrorCode>>>,
+}
+
+/// What an agent offers a picker: its models and, beside them, its approval
+/// modes (koru-ai D7), `None` when it has none.
+#[derive(Clone, Debug)]
+pub struct AgentCatalog {
+    pub models: ProviderModels,
+    pub modes: Option<koru_session_protocol::AgentModes>,
+    /// The session host takes a level with each message (protocol v20), so
+    /// a begun chat's level can change from its next message (koru-ai
+    /// D70). `false` against an older host.
+    pub levels_per_turn: bool,
+    /// The session host takes a model with each message (protocol v22), so
+    /// a begun chat can move to another of its agent's models from its
+    /// next message. `false` against an older host.
+    pub models_per_turn: bool,
 }
 
 /// Where a chat's agent works until a folder is chosen (I8): the person's
@@ -108,30 +123,59 @@ pub(crate) fn default_working_directory() -> std::path::PathBuf {
 impl AgentSessions {
     /// The models an agent lists, on a connection of its own so a slow
     /// catalog never holds the control connection. An agent whose route
-    /// lists nothing answers with an empty catalog.
-    pub fn discover_models(&self, kind: &AgentProviderKind) -> Result<ProviderModels, ErrorCode> {
-        let slot = self
-            .catalogs
-            .lock()
-            .unwrap_or_else(|held| held.into_inner())
-            .entry(kind.kind.clone())
-            .or_default()
-            .clone();
-        let mut slot = slot.lock().unwrap_or_else(|held| held.into_inner());
-        if let Some(models) = slot.as_ref() {
-            return Ok(models.clone());
+    /// lists nothing answers with an empty catalog. Nothing is kept here:
+    /// the session host's catalog is the one cache, and a copy here would
+    /// hide every refresh it makes (agent-models D2).
+    ///
+    /// With `refresh` — the manual refresh (D13) — the host is first asked
+    /// to re-probe the agent, which drops its list, and the answer is the
+    /// list the re-probe rebuilt; the host's catalog waits for it within
+    /// the adapter's budget. A refresh already under way for the agent is
+    /// joined.
+    pub fn discover_models(
+        &self,
+        kind: &AgentProviderKind,
+        refresh: bool,
+    ) -> Result<AgentCatalog, ErrorCode> {
+        if refresh {
+            return self
+                .refreshes
+                .run(kind.kind.clone(), || self.list_models(kind, true));
         }
+        self.list_models(kind, false)
+    }
+
+    fn list_models(
+        &self,
+        kind: &AgentProviderKind,
+        refresh: bool,
+    ) -> Result<AgentCatalog, ErrorCode> {
         let started = Instant::now();
+        let mut levels_per_turn = false;
+        let mut models_per_turn = false;
         let listed = SessionClient::connect(&self.endpoint, "koru-ai-agent-models", offer())
             .and_then(|client| {
-                client.discover_provider_models(kind.kind.clone(), default_working_directory())
+                levels_per_turn = client.supports_turn_reasoning();
+                models_per_turn = client.supports_turn_model();
+                if refresh {
+                    client.refresh_provider(kind.kind.clone())?;
+                    tracing::info!(
+                        target: "koru_ai::agent",
+                        provider = %kind.kind,
+                        "agent models refresh requested"
+                    );
+                }
+                client.discover_provider_catalog(kind.kind.clone(), default_working_directory())
             });
-        let models = match listed {
-            Ok(models) => models,
+        let (models, modes) = match listed {
+            Ok(listed) => listed,
             Err(ClientError::Session(failure))
                 if failure.code == ErrorCode::CapabilityNotNegotiated =>
             {
-                ProviderModels::try_from(Vec::new()).expect("an empty catalog is valid")
+                (
+                    ProviderModels::try_from(Vec::new()).expect("an empty catalog is valid"),
+                    None,
+                )
             }
             Err(error) => {
                 tracing::warn!(
@@ -147,11 +191,57 @@ impl AgentSessions {
             target: "koru_ai::agent",
             provider = %kind.kind,
             count = models.models().len(),
+            modes = modes.as_ref().map_or(0, |modes| modes.modes().len()),
             elapsed_ms = started.elapsed().as_millis() as u64,
             "agent models listed"
         );
-        *slot = Some(models.clone());
-        Ok(models)
+        Ok(AgentCatalog {
+            models,
+            modes,
+            levels_per_turn,
+            models_per_turn,
+        })
+    }
+
+    /// **What an agent can be told to do by name in `folder`** (koru-ai
+    /// D121) — Codex's skills — on a connection of its own, as the models
+    /// are. `None` is the home folder a chat's agent starts in. A host too
+    /// old to list them answers an empty list, and nothing is kept here:
+    /// the agent is asked each time.
+    pub fn discover_commands(
+        &self,
+        kind: &AgentProviderKind,
+        folder: Option<std::path::PathBuf>,
+    ) -> Result<Vec<koru_session_protocol::AgentCommand>, ErrorCode> {
+        let started = Instant::now();
+        let folder = folder.unwrap_or_else(default_working_directory);
+        let listed = SessionClient::connect(&self.endpoint, "koru-ai-agent-commands", offer())
+            .and_then(|client| client.discover_provider_commands(kind.kind.clone(), folder));
+        let commands = match listed {
+            Ok(commands) => commands,
+            Err(ClientError::Session(failure))
+                if failure.code == ErrorCode::CapabilityNotNegotiated =>
+            {
+                Vec::new()
+            }
+            Err(error) => {
+                tracing::warn!(
+                    target: "koru_ai::agent",
+                    provider = %kind.kind,
+                    error = %error,
+                    "listing an agent's skills failed"
+                );
+                return Err(client_code(&error));
+            }
+        };
+        tracing::info!(
+            target: "koru_ai::agent",
+            provider = %kind.kind,
+            count = commands.len(),
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "agent skills listed"
+        );
+        Ok(commands)
     }
 
     /// Start the control thread for the session host at `endpoint`. The
@@ -168,7 +258,7 @@ impl AgentSessions {
             commands,
             endpoint,
             live: Arc::new(LiveTurns::default()),
-            catalogs: Arc::new(Mutex::new(HashMap::new())),
+            refreshes: Arc::new(crate::joined::Joined::new()),
         })
     }
 
@@ -281,6 +371,12 @@ pub(crate) fn offer() -> ProtocolOffer {
         capability::PROJECTS,
         capability::SESSION_ORIGIN,
         capability::LAUNCH_SELECTION,
+        // The chat draws an agent's questions and answers them (koru-ai
+        // D108): its sessions' agents may ask.
+        capability::MANAGED_QUESTIONS,
+        // The composer offers an agent's skills under `$`, and a message
+        // names the ones picked (koru-ai D121).
+        capability::AGENT_COMMANDS,
         // A turn is `SendPendingInput`, which the host answers only to a peer
         // that negotiated attachments (protocol v4); the first live turn
         // failed for its absence here.
@@ -319,6 +415,15 @@ pub(crate) fn session_error(operation: &'static str, error: ClientError) -> AiEr
                 true,
                 "The agent could not be started.",
             ),
+            ErrorCode::ProviderModelUnavailable
+                if failure.message == koru_session_protocol::REASONING_REJECTED =>
+            {
+                (
+                    AiErrorClass::ModelUnavailable,
+                    false,
+                    koru_ai_core::AGENT_REASONING_REJECTED,
+                )
+            }
             ErrorCode::ProviderModelUnavailable => (
                 AiErrorClass::ModelUnavailable,
                 false,
@@ -352,6 +457,19 @@ pub(crate) fn session_error(operation: &'static str, error: ClientError) -> AiEr
         "agent session call failed"
     );
     AiError::new(class, message, retryable)
+}
+
+/// What a refused start refused, as the refresh event says it: the level
+/// (D19) or the model (D7).
+fn refusal_reason(error: &ClientError) -> &'static str {
+    match error {
+        ClientError::Session(failure)
+            if failure.message == koru_session_protocol::REASONING_REJECTED =>
+        {
+            "reasoning"
+        }
+        _ => "model",
+    }
 }
 
 fn is_code(error: &ClientError, code: ErrorCode) -> bool {
@@ -541,7 +659,12 @@ impl Control {
                     self.drop_client();
                     continue;
                 }
-                Err(error) => return Err(session_error("create", error)),
+                Err(error) => {
+                    if is_code(&error, ErrorCode::ProviderModelUnavailable) {
+                        self.refresh_after_refusal(&kind.kind, refusal_reason(&error));
+                    }
+                    return Err(session_error("create", error));
+                }
             }
         }
     }
@@ -646,16 +769,12 @@ impl Control {
             ));
         }
         let row = self.readiness.iter().find(|row| &row.kind == kind).cloned();
-        // A failed check is a moment, not a verdict — a probe that timed out
-        // under load says nothing about the agent. Ask the host to look
-        // again, once per window, and report the check as running.
+        // A failed or missing check is a moment, not a verdict. Ask the host
+        // to look again, once per window, and report the check as running.
         if row
             .as_ref()
-            .is_some_and(|row| matches!(row.availability, ExecutableAvailability::Failed { .. }))
-            && self
-                .refreshed
-                .get(kind)
-                .is_none_or(|at| at.elapsed() >= REFRESH_WINDOW)
+            .is_some_and(|row| looks_again(&row.availability))
+            && refresh_due(&self.refreshed, kind, Instant::now())
         {
             let client = self.client.as_ref().expect("connected above");
             match client.refresh_provider(kind.clone()) {
@@ -676,8 +795,63 @@ impl Control {
     }
 }
 
-/// How long a failed readiness row stands before a look is asked for again.
+impl Control {
+    /// A model the agent refused at the start of a chat's session says its
+    /// list may be out of date — an account disconnected, a model withdrawn
+    /// — so the host is asked to re-probe the agent, which rebuilds its
+    /// list, at most once per window (agent-models D7). The turn still
+    /// fails visibly; the next open of the picker shows the list as it is.
+    fn refresh_after_refusal(&mut self, kind: &ProviderKind, reason: &'static str) {
+        if !refresh_due(&self.refreshed, kind, Instant::now()) {
+            return;
+        }
+        let Some(client) = self.client.as_ref() else {
+            return;
+        };
+        match client.refresh_provider(kind.clone()) {
+            Ok(()) => {
+                self.refreshed.insert(kind.clone(), Instant::now());
+                tracing::info!(target: "koru_ai::agent", event = "agent.model_refused.refresh",
+                    provider = %kind, reason, "agent refused a model or level; its list is being rebuilt");
+            }
+            Err(error) => {
+                tracing::warn!(target: "koru_ai::agent", provider = %kind, error = %error,
+                    "agent refused a model and its list could not be refreshed");
+            }
+        }
+    }
+}
+
+/// How long a failed readiness row stands before a look is asked for again,
+/// and how long after one re-probe a refused model may ask for another.
 const REFRESH_WINDOW: Duration = Duration::from_secs(30);
+
+/// **Which readiness rows the chat asks the host to look at again** (once per
+/// [`REFRESH_WINDOW`]). A failed probe — one that timed out under load —
+/// says nothing about the agent. A missing one is only as current as the
+/// host's last look: the host probes at start and when asked, so an agent
+/// (or Claude's `claude-agent-acp`) installed while Koru runs stayed "Not
+/// installed" in every chat until a restart or Settings' *Refresh status*.
+/// A missing program's probe fails at discovery, before anything is
+/// spawned, so looking again costs a `PATH` search.
+fn looks_again(availability: &ExecutableAvailability) -> bool {
+    matches!(
+        availability,
+        ExecutableAvailability::Failed { .. } | ExecutableAvailability::Missing
+    )
+}
+
+/// Whether `kind` may be re-probed again: never asked, or asked longer than
+/// a window ago.
+fn refresh_due(
+    refreshed: &HashMap<ProviderKind, Instant>,
+    kind: &ProviderKind,
+    now: Instant,
+) -> bool {
+    refreshed
+        .get(kind)
+        .is_none_or(|at| now.saturating_duration_since(*at) >= REFRESH_WINDOW)
+}
 
 /// End one session through the one lease this connection may hold: take
 /// it, say terminate, give it back. A session that already exited answers
@@ -712,3 +886,6 @@ fn client_code(error: &ClientError) -> ErrorCode {
         _ => ErrorCode::ProviderUnavailable,
     }
 }
+
+#[cfg(test)]
+mod tests;

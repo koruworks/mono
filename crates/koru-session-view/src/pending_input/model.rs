@@ -266,6 +266,7 @@ impl PendingInputModel {
             return None;
         }
         let input = PendingInput {
+            model: None,
             idempotency_key: IdempotencyKey::mint(),
             text: self.draft.clone(),
             attachment_ids: self
@@ -274,6 +275,10 @@ impl PendingInputModel {
                 .filter(|item| item.is_ready_to_send())
                 .map(|item| item.id)
                 .collect(),
+            mode: None,
+            fast: None,
+            reasoning: None,
+            skills: Vec::new(),
         };
         self.submitting = true;
         self.last_submission = Some(input.clone());

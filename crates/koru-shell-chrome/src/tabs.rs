@@ -42,6 +42,36 @@ pub struct Tab<'a> {
     /// How far left or right of its slot to *draw* this tab.
     pub slide: f32,
     pub dragging: bool,
+    /// Air the slot carries after the chip that is **not the chip's**: the pin
+    /// group's gap, folded into the last pin's width so [`layout`] stays pure
+    /// arithmetic. The chip stops short of it; the slot (and the hit) keep it.
+    /// Drawn as chip, it made the last pin six pixels wider than its
+    /// neighbours and its icon sit left of centre (the review's note).
+    pub gap_after: f32,
+    /// A chat's status (koru-ai D83): a turning ring **in place of** the
+    /// icon while it works, a dot on the icon's corner when it needs the
+    /// person or holds something unseen. `None` on every other tab.
+    pub status: Option<crate::status_mark::StatusMark>,
+}
+
+impl Tab<'_> {
+    /// An icon and nothing else: the pin with Show title off. Its icon
+    /// centres in the chip rather than sitting where a label's would start.
+    pub fn is_icon_only(&self) -> bool {
+        self.label.is_empty() && !self.closable
+    }
+}
+
+/// Where a tab's icon slot starts: at the label's padding for a titled tab,
+/// centred in the pill for an icon-only pin — there is no label and no close
+/// box to leave room for, so left-aligning it read as space kept for a hidden
+/// `×` (the review's note).
+pub fn icon_slot_x(pill: Rect, icon_only: bool) -> f32 {
+    if icon_only {
+        pill.x + ((pill.w - crate::PAGE_ICON_SLOT) * 0.5).max(0.0)
+    } else {
+        pill.x + theme::PANEL_PAD
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -217,31 +247,23 @@ pub fn new_tab(strip: Rect, widths: &[f32], scroll_x: f32) -> Rect {
 /// as tabs are added, and a drag limit that moved with it would let a tab be
 /// carried further the more tabs there were. The left bound is slot zero's
 /// left edge, one [`TAB_GAP`](theme::TAB_GAP) in — where the tab will actually
-/// rest.
+/// rest. The clamp itself is [`reorder::carry`](crate::reorder::carry), which
+/// the apps rail shares.
 pub fn carry_x(strip: Rect, w: f32, x: f32) -> f32 {
     let lane = lane(strip);
-    let right = (lane.x + lane.w - w).max(strip.x + theme::TAB_GAP);
-    x.clamp(strip.x + theme::TAB_GAP, right)
+    crate::reorder::carry(x, strip.x + theme::TAB_GAP, lane.x + lane.w, w)
 }
 
 /// Which index a tab being dragged should land at, given its centre `x`.
+///
+/// [`reorder::drop_index`](crate::reorder::drop_index) over the tabs' bodies:
+/// the half-way rule is written once, and the apps rail reads it too.
 pub fn drop_index(strip: Rect, widths: &[f32], scroll_x: f32, from: usize, x: f32) -> usize {
-    let rects = layout(strip, widths, scroll_x);
-    let (Some(first), Some(last)) = (rects.first(), rects.last()) else {
-        return 0;
-    };
-    if x <= first.body.x {
-        return first.index;
-    }
-    if x >= last.body.x + last.body.w {
-        return last.index;
-    }
-    for t in &rects {
-        if x >= t.body.x && x <= t.body.x + t.body.w {
-            return t.index;
-        }
-    }
-    from.min(last.index)
+    let slots: Vec<(f32, f32)> = layout(strip, widths, scroll_x)
+        .iter()
+        .map(|t| (t.body.x, t.body.w))
+        .collect();
+    crate::reorder::drop_index(&slots, from, x)
 }
 
 /// Horizontal scrollbar track under the strip when content overflows.
@@ -490,7 +512,13 @@ fn draw_tab(
     if t.pill.w <= 0.0 || t.pill.h <= 0.0 {
         return;
     }
-    let pill = Rect::new(t.pill.x + tab.slide, t.pill.y, t.pill.w, t.pill.h);
+    // The chip ends where the pin group's gap begins; see `Tab::gap_after`.
+    let pill = Rect::new(
+        t.pill.x + tab.slide,
+        t.pill.y,
+        (t.pill.w - tab.gap_after).max(0.0),
+        t.pill.h,
+    );
     let _inspect_tab = koru_draw::inspect::scope(
         "Tab (legacy shared)",
         "container",
@@ -529,18 +557,17 @@ fn draw_tab(
     let hot = hovered == Some(t.index) || tab.dragging;
     let chip = scene::rrect(pill.x, pill.y, pill.w, pill.h, 6.0);
     if selected {
-        // **The active tab wears the explore column's active card** — the same
-        // `panel_bg` fill and `panel_border` outline `explore::draw_row_card`
-        // gives the open document, at the same radius. The two say the same
-        // thing in two places, so they are drawn the same way: the row in the
-        // library and the tab in the strip are one document, and a reader
-        // should not have to learn that twice.
+        // **The active tab is a shade of the strip** — `tab_chosen`, the
+        // strip's colour darkened by a twentieth — the way the explore column's
+        // open row wears `row_chosen`: a grey fill, no card. Lighter than the
+        // row's grey because the strip it sits on is already darker than the
+        // column.
         //
-        // This *replaces* "one grey for the whole strip": the active tab shared
-        // `hover_tint` with every hovered control, which made the thing you are
-        // looking at indistinguishable from the thing under your pointer.
-        scene::fill(scene, root, p.panel_bg, &chip);
-        scene::stroke(scene, root, p.panel_border, theme::BORDER_W, &chip);
+        // Not `hover_tint`: when the active tab shared the hover grey with
+        // every hovered control, the thing you are looking at was
+        // indistinguishable from the thing under your pointer. `tab_chosen`
+        // is a step lighter than it instead.
+        scene::fill(scene, root, p.tab_chosen, &chip);
     } else if hot {
         // A merely hovered tab keeps the caption's one hover grey, shared with
         // the `+` and the pane toggle.
@@ -559,6 +586,7 @@ fn draw_tab(
     };
     let text_x = pill.x + theme::PANEL_PAD + icon_w;
     let text_w = (pill.w - theme::PANEL_PAD * 2.0 - close_w - icon_w).max(0.0);
+    let icon_x = icon_slot_x(pill, tab.is_icon_only());
     let colour = if selected { p.text } else { p.text_dim };
     let label = if text_w > 0.0 && !tab.label.is_empty() {
         Some(engine.simple_layout_wrapped(tab.label, theme::role::row(), text_w))
@@ -577,27 +605,34 @@ fn draw_tab(
     let label_bl = label
         .as_ref()
         .and_then(|l| l.lines().next().map(|line| y + line.metrics().baseline));
-    match tab.icon {
-        Some(TabIcon::Emoji(icon)) => crate::draw_page_emoji(
-            scene,
-            root,
-            engine,
-            icon,
-            pill.x + theme::PANEL_PAD,
-            pill,
-            label_bl,
-        ),
+    // A working chat's ring, and a waiting chat's question mark, take the
+    // icon's slot; the icon comes back when the work ends or the question
+    // is answered (koru-ai D83).
+    let icon_slot = Rect::new(icon_x, pill.y, crate::PAGE_ICON_SLOT, pill.h);
+    let replaced = matches!(
+        tab.status,
+        Some(
+            crate::status_mark::StatusMark::Spinner { .. }
+                | crate::status_mark::StatusMark::Question(_)
+        )
+    );
+    if let Some(
+        mark @ (crate::status_mark::StatusMark::Spinner { .. }
+        | crate::status_mark::StatusMark::Question(_)),
+    ) = tab.status
+    {
+        crate::status_mark::draw(scene, root, engine, icon_slot, mark);
+    }
+    match tab.icon.filter(|_| !replaced) {
+        Some(TabIcon::Emoji(icon)) => {
+            crate::draw_page_emoji(scene, root, engine, icon, icon_x, pill, label_bl)
+        }
         Some(TabIcon::Glyph(glyph)) => draw_icon(
             scene,
             root,
             engine,
             glyph,
-            Rect::new(
-                pill.x + theme::PANEL_PAD,
-                pill.y,
-                crate::PAGE_ICON_SLOT,
-                pill.h,
-            ),
+            Rect::new(icon_x, pill.y, crate::PAGE_ICON_SLOT, pill.h),
             colour,
         ),
         Some(TabIcon::Swatch(token)) => {
@@ -605,12 +640,7 @@ fn draw_tab(
             // own line reads at rather than a constant: a tab is the one place
             // this mark sits beside text of the strip's size, and a square
             // fixed in pixels would drift from it the first time density moved.
-            let slot = Rect::new(
-                pill.x + theme::PANEL_PAD,
-                pill.y,
-                crate::PAGE_ICON_SLOT,
-                pill.h,
-            );
+            let slot = Rect::new(icon_x, pill.y, crate::PAGE_ICON_SLOT, pill.h);
             let side = (slot.w * 0.55).max(6.0);
             let fill = token
                 .and_then(theme::accent_tone)
@@ -635,7 +665,7 @@ fn draw_tab(
             scene,
             root,
             Rect::new(
-                pill.x + theme::PANEL_PAD + (crate::PAGE_ICON_SLOT - theme::CAPTION_ICON) * 0.5,
+                icon_x + (crate::PAGE_ICON_SLOT - theme::CAPTION_ICON) * 0.5,
                 pill.y,
                 theme::CAPTION_ICON,
                 pill.h,
@@ -644,6 +674,17 @@ fn draw_tab(
             brand,
         ),
         None => {}
+    }
+    // The dot sits on the icon's corner, over the mark at its visible size.
+    if let Some(crate::status_mark::StatusMark::Dot(dot)) = tab.status {
+        let side = theme::CAPTION_ICON;
+        let mark = Rect::new(
+            icon_slot.x + (icon_slot.w - side) * 0.5,
+            icon_slot.y + (icon_slot.h - side) * 0.5,
+            side,
+            side,
+        );
+        crate::status_mark::draw_badge(scene, root, mark, dot);
     }
     if let Some(label) = &label {
         scene::draw_layout_first_line(scene, root, label, text_x, y, Some(colour));

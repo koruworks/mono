@@ -10,7 +10,6 @@ Chords are shown as this platform writes them.
 
 | | |
 | --- | --- |
-| `Ctrl+N` | New window |
 | `Ctrl+Alt+A` | Keep window on top |
 | `Ctrl+=` | Zoom in |
 | `Ctrl+-` | Zoom out |
@@ -37,19 +36,20 @@ Chords are shown as this platform writes them.
 | | |
 | --- | --- |
 | `Ctrl+T` | New tab |
-| `Ctrl+Shift+A` | Add… |
+| `Ctrl+N` | New… |
 | `Ctrl+W` | Close tab |
 | `Ctrl+Shift+W` | Close all tabs |
 | `Ctrl+P` | Search |
 | `Ctrl+Shift+E` | Explore |
-| `Alt+1` | Documents |
-| `Alt+2` | Files |
-| `Alt+3` | Tasks |
-| `Alt+4` | Chats |
-| `Alt+5` | Agents |
-| `Alt+6` | Artifacts |
-| `Alt+7` | Canvases |
-| `Alt+8` | Socials |
+| `Alt+H` | Home |
+| `Alt+1` | Rail view 1 |
+| `Alt+2` | Rail view 2 |
+| `Alt+3` | Rail view 3 |
+| `Alt+4` | Rail view 4 |
+| `Alt+5` | Rail view 5 |
+| `Alt+6` | Rail view 6 |
+| `Alt+7` | Rail view 7 |
+| `Alt+8` | Rail view 8 |
 | `Ctrl+J` | Context |
 | `Ctrl+Shift+J` | Koru AI pane |
 | `Ctrl+Shift+T` | Reopen closed tab |
@@ -119,3 +119,13 @@ Chords are shown as this platform writes them.
 | `Shift+Tab` | Outdent |
 | `Ctrl+Shift+↑` | Move line up |
 | `Ctrl+Shift+↓` | Move line down |
+
+## AI chat
+
+| | |
+| --- | --- |
+| `Shift+Tab` | Next approval mode |
+| `Ctrl+End` | Jump to latest |
+| `Ctrl+Shift+↑` | Previous chat |
+| `Ctrl+Shift+↓` | Next chat |
+| `Ctrl+L` | Add to chat |

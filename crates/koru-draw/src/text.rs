@@ -211,33 +211,46 @@ impl TextEngine {
         layout.align(Alignment::Start, AlignmentOptions::default());
         layout
     }
-    #[allow(dead_code)]
-    /// Lay out a single icon glyph.
-    ///
-    /// Its own family stack with no fallback: an icon codepoint sits in the
-    /// Private Use Area, so falling through to a text face would produce
-    /// whatever that face happens to have there rather than nothing. A missing
-    /// glyph box is the honest answer when Phosphor is not installed.
+    /// Lay out a compiled vector icon in a square slot, with no font dependency.
+    /// Unknown identities retain the legacy font fallback.
     pub fn icon_layout(&mut self, icon: char, size: f32) -> Layout<Brush> {
+        if crate::icons::has_vector_icon(icon) {
+            return self.vector_icon_layout(icon, size, false);
+        }
         self.icon_layout_in(crate::icons::FAMILY, icon, size)
     }
 
-    /// The same glyph in Phosphor's **Fill** weight: solid rather than stroked.
-    ///
-    /// For a state that is genuinely on, where the fill *is* the signal — the
-    /// caption's pin while the window is above the others.
-    ///
-    /// **Falls back to the regular face when the fill file is not bundled.** A
-    /// fresh clone that has not re-run `scripts/setup/fetch-fonts` has no such family,
-    /// and the rule that a missing font is never an error means the honest
-    /// answer there is an unfilled pin, not a missing-glyph box.
+    /// Use the pack's filled variant, or a heavier outline when none exists.
     pub fn icon_layout_filled(&mut self, icon: char, size: f32) -> Layout<Brush> {
+        if crate::icons::has_vector_icon(icon) {
+            return self.vector_icon_layout(icon, size, true);
+        }
         let family = if fill_is_bundled() {
             crate::icons::FAMILY_FILL
         } else {
             crate::icons::FAMILY
         };
         self.icon_layout_in(family, icon, size)
+    }
+
+    fn vector_icon_layout(&mut self, icon: char, size: f32, filled: bool) -> Layout<Brush> {
+        let mut b = self
+            .layout_cx
+            .ranged_builder(&mut self.font_cx, "", 1.0, true);
+        b.push_default(StyleProperty::FontSize(size));
+        b.push_default(StyleProperty::LineHeight(LineHeight::Absolute(size)));
+        b.push_default(StyleProperty::Brush(Brush(theme::p().text)));
+        b.push_inline_box(InlineBox {
+            id: crate::icons::pack_box_id(icon, filled),
+            kind: InlineBoxKind::InFlow,
+            index: 0,
+            width: size,
+            height: size,
+        });
+        let mut layout = b.build("");
+        layout.break_all_lines(None);
+        layout.align(Alignment::Start, AlignmentOptions::default());
+        layout
     }
 
     fn icon_layout_in(&mut self, family: &str, icon: char, size: f32) -> Layout<Brush> {
@@ -486,7 +499,9 @@ impl TextEngine {
             | PillKind::Link
             | PillKind::Run
             | PillKind::Schedule
-            | PillKind::SchedulePaused => 0.0,
+            | PillKind::SchedulePaused
+            | PillKind::Quote
+            | PillKind::Skill => 0.0,
             PillKind::File | PillKind::Contact | PillKind::Date => theme::PILL_PAD_X,
         };
         // Document titles: peel a leading emoji into the icon slot (Explore/tabs
@@ -572,6 +587,11 @@ impl TextEngine {
             Some(self.icon_layout(crate::icons::CLOCK_COUNTDOWN, icon_slot.max(1.0)))
         } else if kind == PillKind::SchedulePaused {
             Some(self.icon_layout(crate::icons::PAUSE, icon_slot.max(1.0)))
+        } else if kind == PillKind::Quote {
+            Some(self.icon_layout(crate::icons::QUOTES, icon_slot.max(1.0)))
+        } else if kind == PillKind::Skill {
+            // A skill is something the agent knows how to do: the tool glyph.
+            Some(self.icon_layout(crate::icons::WRENCH, icon_slot.max(1.0)))
         } else {
             None
         };
@@ -712,12 +732,36 @@ impl TextEngine {
         base: Option<peniko::Color>,
         ranges: &[RangeStyle],
     ) -> Layout<Brush> {
+        self.styled_layout_in(
+            text,
+            metrics,
+            theme::ui_stack(),
+            weight,
+            max_w,
+            base,
+            ranges,
+        )
+    }
+
+    /// [`styled_layout`](Self::styled_layout) in an explicit font stack —
+    /// the chat's messages, set in the chat font.
+    #[allow(clippy::too_many_arguments)]
+    pub fn styled_layout_in(
+        &mut self,
+        text: &str,
+        metrics: theme::TextMetrics,
+        stack: &str,
+        weight: f32,
+        max_w: f32,
+        base: Option<peniko::Color>,
+        ranges: &[RangeStyle],
+    ) -> Layout<Brush> {
         let size = metrics.size;
         let mut b = self
             .layout_cx
             .ranged_builder(&mut self.font_cx, text, 1.0, true);
         b.push_default(StyleProperty::FontFamily(FontFamily::Source(
-            Cow::Borrowed(theme::ui_stack()),
+            Cow::Borrowed(stack),
         )));
         b.push_default(StyleProperty::FontSize(size));
         b.push_default(StyleProperty::LineHeight(LineHeight::Absolute(
@@ -900,6 +944,11 @@ pub fn push_axes(b: &mut RangedBuilder<'_, Brush>, size: f32, weight: f32) {
 /// bytes instead of duplicating them, and every engine after the first touches
 /// no disk at all.
 static BUNDLED: OnceLock<Vec<(Blob<u8>, &'static str)>> = OnceLock::new();
+
+/// Whether `family` is one of the faces Koru ships.
+pub(crate) fn is_bundled_family(family: &str) -> bool {
+    bundled().iter().any(|(_, name)| *name == family)
+}
 
 fn bundled() -> &'static [(Blob<u8>, &'static str)] {
     BUNDLED.get_or_init(|| {
@@ -1101,79 +1150,6 @@ mod tests {
     fn no_room_is_no_label() {
         let mut e = TextEngine::new();
         assert_eq!(e.elided("Brief", theme::role::row(), 0.0), "");
-    }
-
-    /// The icon font has to actually register and actually resolve, or every
-    /// toolbar button silently becomes a missing-glyph box.
-    ///
-    /// Skipped when `assets/fonts/Phosphor.ttf` is absent — a missing font is
-    /// never a build error, and a fresh clone that has not run `fonts` yet
-    /// should not fail its test suite over it.
-    #[test]
-    fn an_icon_glyph_resolves_to_the_phosphor_family() {
-        if read_asset(theme::PHOSPHOR_FILE).is_none() {
-            eprintln!("skipping: run ./koru.sh fonts to exercise this");
-            return;
-        }
-        let mut engine = TextEngine::new();
-        let layout = engine.icon_layout(crate::icons::BOLD, theme::ICON_SIZE);
-
-        assert_eq!(layout.len(), 1, "one line");
-        assert!(layout.width() > 0.0, "the glyph has advance");
-
-        // A codepoint in the Private Use Area resolving to a *text* face would
-        // mean Phosphor never registered and something else claimed it.
-        let family = layout
-            .lines()
-            .flat_map(|l| l.items())
-            .find_map(|item| match item {
-                parley::layout::PositionedLayoutItem::GlyphRun(gr) => Some(gr.run().font().clone()),
-                _ => None,
-            });
-        assert!(family.is_some(), "the icon produced a glyph run");
-    }
-
-    /// **An icon codepoint asked of a text role is not the same glyph**, and
-    /// the difference is a missing-glyph box on screen.
-    ///
-    /// The run views' Good / Not good chips shipped as tofu because their
-    /// Phosphor codepoint went through [`TextEngine::simple_layout`] in the
-    /// row role: the Private Use Area is empty in every text face, so parley
-    /// shapes `.notdef`. The two calls therefore have to resolve to two
-    /// different fonts, and this says so once for every surface that draws a
-    /// mark beside a word.
-    ///
-    /// Skipped when the font is absent, like the two tests around it.
-    #[test]
-    fn a_text_role_does_not_reach_the_icon_family() {
-        if read_asset(theme::PHOSPHOR_FILE).is_none() {
-            eprintln!("skipping: run ./koru.sh fonts to exercise this");
-            return;
-        }
-        let font_of = |layout: &Layout<Brush>| {
-            layout
-                .lines()
-                .flat_map(|line| line.items())
-                .find_map(|item| match item {
-                    parley::layout::PositionedLayoutItem::GlyphRun(run) => {
-                        Some(run.run().font().clone())
-                    }
-                    _ => None,
-                })
-        };
-        let mut engine = TextEngine::new();
-        let icon = engine.icon_layout(crate::icons::THUMBS_UP, 12.0);
-        let icon_font = font_of(&icon).expect("the icon produced a glyph run");
-        let mut buf = [0u8; 4];
-        let as_text = engine.simple_layout(
-            crate::icons::THUMBS_UP.encode_utf8(&mut buf),
-            theme::role::row(),
-        );
-        let text_font = font_of(&as_text).expect("the text role produced a glyph run too");
-        assert_ne!(
-            icon_font, text_font,
-            "the icon family is the only place a Phosphor codepoint has a glyph"
-        );
     }
 
     /// A link pill carries a scheme icon — a Phosphor glyph chosen by the URL —

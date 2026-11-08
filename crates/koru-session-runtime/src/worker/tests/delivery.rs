@@ -51,6 +51,9 @@ struct NativeInner {
     /// A provider that takes text into the running turn.
     steerable: bool,
     steered: Vec<AgentInput>,
+    /// A set's answers sent as the next message (D108), and whether they
+    /// were steered into the running turn.
+    answered: Vec<(AgentInput, koru_session_protocol::QuestionsReply, bool)>,
 }
 
 struct NativeWake(Arc<NativeState>);
@@ -134,6 +137,35 @@ impl AgentControl for NativeControl {
             ));
         }
         inner.steered.push(input);
+        Ok(())
+    }
+
+    fn submit_answers(
+        &mut self,
+        input: AgentInput,
+        answers: koru_session_protocol::QuestionsReply,
+    ) -> Result<(), ProviderFailure> {
+        let mut inner = self.state.inner.lock().unwrap();
+        inner.events.push_back(AgentEvent::TurnStarted {
+            turn_id: input.turn_id,
+        });
+        inner.answered.push((input, answers, false));
+        drop(inner);
+        self.state.ready.notify_one();
+        Ok(())
+    }
+
+    fn steer_answers(
+        &mut self,
+        input: AgentInput,
+        answers: koru_session_protocol::QuestionsReply,
+    ) -> Result<(), ProviderFailure> {
+        self.state
+            .inner
+            .lock()
+            .unwrap()
+            .answered
+            .push((input, answers, true));
         Ok(())
     }
 
@@ -267,6 +299,7 @@ fn managed_harness(capabilities: CapabilitySet) -> ManagedHarness {
                 delegation: None,
                 selection: None,
                 mcp_servers: Vec::new(),
+                questions: false,
             },
             created_at_ms: 10,
             origin: Default::default(),
@@ -330,9 +363,14 @@ fn quoted_path_submission_is_ordered_partial_retryable_and_idempotent() {
     paths.set(second, Err(ErrorCode::DeliveryFailed));
 
     let input = PendingInput {
+        model: None,
         idempotency_key: IdempotencyKey::mint(),
         text: "echo".into(),
         attachment_ids: vec![first, second],
+        mode: None,
+        fast: None,
+        reasoning: None,
+        skills: Vec::new(),
     };
     let first_result = handle
         .send_pending_input(attached.lease.token, input.clone())
@@ -416,9 +454,14 @@ fn unsupported_delivery_stays_pending_visible_and_does_not_write_binary() {
         )
         .unwrap();
     let input = PendingInput {
+        model: None,
         idempotency_key: IdempotencyKey::mint(),
         text: String::new(),
         attachment_ids: vec![attachment_id],
+        mode: None,
+        fast: None,
+        reasoning: None,
+        skills: Vec::new(),
     };
     let result = handle
         .send_pending_input(attached.lease.token, input.clone())
@@ -454,9 +497,14 @@ fn pending_input_idempotency_survives_the_whole_live_session() {
     let handle = harness.owner.handle();
     let attached = handle.attach(viewport(1, 0, 6), 20).unwrap();
     let first = PendingInput {
+        model: None,
         idempotency_key: IdempotencyKey::mint(),
         text: "first".into(),
         attachment_ids: Vec::new(),
+        mode: None,
+        fast: None,
+        reasoning: None,
+        skills: Vec::new(),
     };
     let first_result = handle
         .send_pending_input(attached.lease.token, first.clone())
@@ -466,9 +514,14 @@ fn pending_input_idempotency_survives_the_whole_live_session() {
             .send_pending_input(
                 attached.lease.token,
                 PendingInput {
+                    model: None,
                     idempotency_key: IdempotencyKey::mint(),
                     text: format!("next-{index}"),
                     attachment_ids: Vec::new(),
+                    mode: None,
+                    fast: None,
+                    reasoning: None,
+                    skills: Vec::new(),
                 },
             )
             .unwrap();
@@ -513,9 +566,14 @@ fn native_delivery_uses_only_an_advertised_adapter_and_retries_the_same_turn() {
         )
         .unwrap();
     let input = PendingInput {
+        model: None,
         idempotency_key: IdempotencyKey::mint(),
         text: "inspect these".into(),
         attachment_ids: vec![first, second],
+        mode: None,
+        fast: None,
+        reasoning: None,
+        skills: Vec::new(),
     };
     let initial = handle
         .send_pending_input(attached.lease.token, input.clone())
@@ -579,9 +637,14 @@ fn native_profile_without_the_negotiated_capability_never_calls_the_adapter() {
         .send_pending_input(
             attached.lease.token,
             PendingInput {
+                model: None,
                 idempotency_key: IdempotencyKey::mint(),
                 text: String::new(),
                 attachment_ids: vec![attachment_id],
+                mode: None,
+                fast: None,
+                reasoning: None,
+                skills: Vec::new(),
             },
         )
         .unwrap();
@@ -601,9 +664,14 @@ fn managed_text_without_images_preserves_the_accepted_turn_until_immediate_cance
     let handle = &harness.handle;
     let attached = handle.attach(viewport(1, 0, 6), 20).unwrap();
     let input = PendingInput {
+        model: None,
         idempotency_key: IdempotencyKey::mint(),
         text: "text fixture".into(),
         attachment_ids: Vec::new(),
+        mode: None,
+        fast: None,
+        reasoning: None,
+        skills: Vec::new(),
     };
     let accepted = handle
         .send_pending_input(attached.lease.token, input.clone())
@@ -621,9 +689,14 @@ fn managed_text_without_images_preserves_the_accepted_turn_until_immediate_cance
         accepted.turn_id
     );
     let competing = PendingInput {
+        model: None,
         idempotency_key: IdempotencyKey::mint(),
         text: "another input".into(),
         attachment_ids: Vec::new(),
+        mode: None,
+        fast: None,
+        reasoning: None,
+        skills: Vec::new(),
     };
     assert_eq!(
         handle
@@ -672,9 +745,14 @@ fn managed_text_does_not_smuggle_unsupported_images_into_the_provider() {
         .send_pending_input(
             attached.lease.token,
             PendingInput {
+                model: None,
                 idempotency_key: IdempotencyKey::mint(),
                 text: "text with an unsupported image".into(),
                 attachment_ids: vec![attachment],
+                mode: None,
+                fast: None,
+                reasoning: None,
+                skills: Vec::new(),
             },
         )
         .unwrap();
@@ -697,9 +775,14 @@ fn a_refused_managed_text_submission_retries_without_replacing_another_turn() {
     let attached = handle.attach(viewport(1, 0, 6), 20).unwrap();
     harness.state.inner.lock().unwrap().reject_submit = true;
     let input = PendingInput {
+        model: None,
         idempotency_key: IdempotencyKey::mint(),
         text: "refused fixture".into(),
         attachment_ids: Vec::new(),
+        mode: None,
+        fast: None,
+        reasoning: None,
+        skills: Vec::new(),
     };
     assert_eq!(
         handle
@@ -719,9 +802,14 @@ fn a_refused_managed_text_submission_retries_without_replacing_another_turn() {
         inner.hold_events = true;
     }
     let other = PendingInput {
+        model: None,
         idempotency_key: IdempotencyKey::mint(),
         text: "different turn".into(),
         attachment_ids: Vec::new(),
+        mode: None,
+        fast: None,
+        reasoning: None,
+        skills: Vec::new(),
     };
     let first = handle
         .send_pending_input(attached.lease.token, other.clone())
@@ -782,9 +870,14 @@ fn an_accepted_managed_submission_survives_lease_loss_before_its_reply() {
         inner.hold_events = true;
     }
     let input = PendingInput {
+        model: None,
         idempotency_key: IdempotencyKey::mint(),
         text: "accepted before lease loss".into(),
         attachment_ids: Vec::new(),
+        mode: None,
+        fast: None,
+        reasoning: None,
+        skills: Vec::new(),
     };
     let sender = handle.clone();
     let submitted = input.clone();
@@ -824,17 +917,27 @@ fn text_sent_during_a_turn_steers_it_when_the_provider_can_and_is_refused_when_i
         .send_pending_input(
             attached.lease.token,
             PendingInput {
+                model: None,
                 idempotency_key: IdempotencyKey::mint(),
                 text: "first".into(),
                 attachment_ids: Vec::new(),
+                mode: None,
+                fast: None,
+                reasoning: None,
+                skills: Vec::new(),
             },
         )
         .unwrap();
 
     let steer = PendingInput {
+        model: None,
         idempotency_key: IdempotencyKey::mint(),
         text: "and also this".into(),
         attachment_ids: Vec::new(),
+        mode: None,
+        fast: None,
+        reasoning: None,
+        skills: Vec::new(),
     };
     // A provider with no steer call says what it has always said.
     assert_eq!(
@@ -873,6 +976,253 @@ fn text_sent_during_a_turn_steers_it_when_the_provider_can_and_is_refused_when_i
     handle
         .cancel_turn(
             attached.lease.token,
+            IdempotencyKey::mint(),
+            accepted.turn_id,
+            CancelReason::Run,
+        )
+        .unwrap();
+    harness.state.inner.lock().unwrap().hold_events = false;
+    harness.state.ready.notify_one();
+    eventually(|| handle.summary().active_turn_id.is_none());
+}
+
+/// **A set's answers go as the person's next message** (koru-ai D108): an
+/// input with nothing of its own reaches the adapter's answers call — a new
+/// turn when none runs, into the running one when one does — while an
+/// empty input without answers is refused as ever, and so are answers with
+/// words of their own. The same key with other answers is a conflict.
+#[test]
+fn answers_sent_as_the_next_message_reach_the_adapter_as_input() {
+    let capabilities = CapabilitySet::new([
+        capability::MANAGED_EVENTS.parse().unwrap(),
+        capability::MANAGED_CANCEL.parse().unwrap(),
+    ]);
+    let harness = managed_harness(capabilities);
+    harness.state.inner.lock().unwrap().hold_events = true;
+    let handle = &harness.handle;
+    let attached = handle.attach(viewport(1, 0, 6), 20).unwrap();
+    let lease = attached.lease.token;
+    let reply = koru_session_protocol::QuestionsReply {
+        request_id: koru_session_protocol::QuestionRequestId::mint(),
+        answers: vec![koru_session_protocol::QuestionAnswer {
+            question_id: "q".into(),
+            value: koru_session_protocol::QuestionAnswerValue::Text {
+                text: "words".into(),
+            },
+        }],
+    };
+    let input = || PendingInput {
+        model: None,
+        idempotency_key: IdempotencyKey::mint(),
+        text: String::new(),
+        attachment_ids: Vec::new(),
+        mode: None,
+        fast: None,
+        reasoning: None,
+        skills: Vec::new(),
+    };
+    assert_eq!(
+        handle.send_pending_input(lease, input()).unwrap_err(),
+        ErrorCode::InvalidRequest
+    );
+    let mut worded = input();
+    worded.text = "and words".into();
+    assert_eq!(
+        handle
+            .send_pending_answers(lease, worded, reply.clone())
+            .unwrap_err(),
+        ErrorCode::InvalidRequest
+    );
+
+    let first = input();
+    let accepted = handle
+        .send_pending_answers(lease, first.clone(), reply.clone())
+        .unwrap();
+    assert_eq!(handle.summary().active_turn_id, Some(accepted.turn_id));
+    {
+        let inner = harness.state.inner.lock().unwrap();
+        assert!(inner.calls.is_empty(), "never an ordinary turn");
+        assert_eq!(inner.answered.len(), 1);
+        let (sent, answers, steered) = &inner.answered[0];
+        assert_eq!(sent.turn_id, accepted.turn_id);
+        assert!(sent.text.is_empty() && sent.attachments.is_empty());
+        assert_eq!(answers, &reply);
+        assert!(!steered);
+    }
+
+    let mut other = reply.clone();
+    other.answers[0].value = koru_session_protocol::QuestionAnswerValue::Text {
+        text: "other words".into(),
+    };
+    assert_eq!(
+        handle
+            .send_pending_answers(lease, first.clone(), other)
+            .unwrap_err(),
+        ErrorCode::IdempotencyConflict
+    );
+
+    let steered = handle
+        .send_pending_answers(lease, input(), reply.clone())
+        .unwrap();
+    assert_eq!(steered.turn_id, accepted.turn_id, "into the running turn");
+    let inner = harness.state.inner.lock().unwrap();
+    assert_eq!(inner.answered.len(), 2);
+    assert!(inner.answered[1].2);
+    assert_eq!(inner.answered[1].0.turn_id, accepted.turn_id);
+}
+
+/// **The skills an input names reach the adapter with it** (koru-ai D121):
+/// a new turn carries them by name beside the text; an input naming one is
+/// never steered into a running turn — it waits for a turn of its own, and
+/// is refused meanwhile as any second turn is — and the same key naming
+/// other skills is a conflict, never a replay.
+/// **A turn's model reaches the adapter with its input** (protocol v22) and
+/// becomes the model the session asks for, the one reported before it
+/// cleared; an input naming one never rides a steer, and the same key
+/// naming another model is a conflict, never a replay.
+#[test]
+fn an_inputs_model_reaches_the_adapter_and_moves_the_sessions_model() {
+    use koru_session_protocol::{ModelIdentity, ModelName};
+    let capabilities = CapabilitySet::new([
+        capability::MANAGED_EVENTS.parse().unwrap(),
+        capability::MANAGED_CANCEL.parse().unwrap(),
+    ]);
+    let harness = managed_harness(capabilities);
+    {
+        let mut inner = harness.state.inner.lock().unwrap();
+        inner.hold_events = true;
+        inner.steerable = true;
+    }
+    let handle = &harness.handle;
+    let attached = handle.attach(viewport(1, 0, 6), 20).unwrap();
+    let lease = attached.lease.token;
+    let name = |model: &str| model.parse::<ModelName>().unwrap();
+    let input = |text: &str, model: Option<&str>| PendingInput {
+        model: model.map(name),
+        idempotency_key: IdempotencyKey::mint(),
+        text: text.into(),
+        attachment_ids: Vec::new(),
+        mode: None,
+        fast: None,
+        reasoning: None,
+        skills: Vec::new(),
+    };
+    let first = input("go on", Some("sonnet"));
+    let accepted = handle.send_pending_input(lease, first.clone()).unwrap();
+    {
+        let inner = harness.state.inner.lock().unwrap();
+        assert_eq!(inner.calls.len(), 1);
+        assert_eq!(inner.calls[0].model, Some(name("sonnet")));
+    }
+    assert_eq!(
+        handle
+            .summary()
+            .model
+            .map(|ModelIdentity { requested, .. }| requested),
+        Some(Some(name("sonnet")))
+    );
+    let mut other = first.clone();
+    other.model = Some(name("haiku"));
+    assert_eq!(
+        handle.send_pending_input(lease, other).unwrap_err(),
+        ErrorCode::IdempotencyConflict
+    );
+
+    // While the turn runs, text alone steers and a model does not.
+    assert_eq!(
+        handle
+            .send_pending_input(lease, input("now on haiku", Some("haiku")))
+            .unwrap_err(),
+        ErrorCode::InvalidTransition
+    );
+    handle
+        .send_pending_input(lease, input("and this", None))
+        .unwrap();
+    {
+        let inner = harness.state.inner.lock().unwrap();
+        assert_eq!(inner.steered.len(), 1);
+        assert_eq!(inner.steered[0].model, None);
+        assert_eq!(inner.calls.len(), 1, "no second turn");
+    }
+    handle
+        .cancel_turn(
+            lease,
+            IdempotencyKey::mint(),
+            accepted.turn_id,
+            CancelReason::Run,
+        )
+        .unwrap();
+    harness.state.inner.lock().unwrap().hold_events = false;
+    harness.state.ready.notify_one();
+    eventually(|| handle.summary().active_turn_id.is_none());
+}
+
+#[test]
+fn an_inputs_skills_reach_the_adapter_and_never_ride_a_steer() {
+    let capabilities = CapabilitySet::new([
+        capability::MANAGED_EVENTS.parse().unwrap(),
+        capability::MANAGED_CANCEL.parse().unwrap(),
+    ]);
+    let harness = managed_harness(capabilities);
+    {
+        let mut inner = harness.state.inner.lock().unwrap();
+        inner.hold_events = true;
+        inner.steerable = true;
+    }
+    let handle = &harness.handle;
+    let attached = handle.attach(viewport(1, 0, 6), 20).unwrap();
+    let lease = attached.lease.token;
+    let input = |text: &str, skills: &[&str]| PendingInput {
+        model: None,
+        idempotency_key: IdempotencyKey::mint(),
+        text: text.into(),
+        attachment_ids: Vec::new(),
+        mode: None,
+        fast: None,
+        reasoning: None,
+        skills: skills.iter().map(|name| (*name).to_owned()).collect(),
+    };
+    let first = input("Use $review-pr then $lint", &["review-pr", "lint"]);
+    let accepted = handle.send_pending_input(lease, first.clone()).unwrap();
+    {
+        let inner = harness.state.inner.lock().unwrap();
+        assert_eq!(inner.calls.len(), 1);
+        assert_eq!(inner.calls[0].skills, vec!["review-pr", "lint"]);
+        assert_eq!(inner.calls[0].text, "Use $review-pr then $lint");
+    }
+    let mut other = first.clone();
+    other.skills = vec!["lint".into()];
+    assert_eq!(
+        handle.send_pending_input(lease, other).unwrap_err(),
+        ErrorCode::IdempotencyConflict
+    );
+
+    // While the turn runs, text alone steers and a skill does not.
+    assert_eq!(
+        handle
+            .send_pending_input(lease, input("now $lint", &["lint"]))
+            .unwrap_err(),
+        ErrorCode::InvalidTransition
+    );
+    handle
+        .send_pending_input(lease, input("and this", &[]))
+        .unwrap();
+    {
+        let inner = harness.state.inner.lock().unwrap();
+        assert_eq!(inner.steered.len(), 1);
+        assert!(inner.steered[0].skills.is_empty());
+        assert_eq!(inner.calls.len(), 1, "no second turn");
+    }
+    assert_eq!(
+        handle
+            .send_pending_input(lease, input("x", &["a", "a"]))
+            .unwrap_err(),
+        ErrorCode::InvalidRequest,
+        "a skill named twice"
+    );
+    handle
+        .cancel_turn(
+            lease,
             IdempotencyKey::mint(),
             accepted.turn_id,
             CancelReason::Run,

@@ -176,15 +176,9 @@ impl ImageCache {
     /// the cache; a master yields at most `log2(native)` entries.
     pub fn scaled(&self, hash: &str, wanted: u32) -> Option<Arc<ImageBrush>> {
         let full = self.get(hash)?.clone();
-        let (iw, ih) = (full.image.width, full.image.height);
-        let native = iw.max(ih);
-        if wanted == 0 || native <= wanted {
+        let Some(size) = mip_size(&full, wanted) else {
             return Some(full);
-        }
-        let size = wanted.next_power_of_two().min(native);
-        if size >= native {
-            return Some(full);
-        }
+        };
         let key = (hash.to_string(), size);
         {
             let mips = self.mips.lock().unwrap_or_else(|p| p.into_inner());
@@ -192,23 +186,27 @@ impl ImageCache {
                 return Some(mip.clone());
             }
         }
-        let (tw, th) = if iw >= ih {
-            (size, ((ih as u64 * size as u64) / iw as u64).max(1) as u32)
-        } else {
-            (((iw as u64 * size as u64) / ih as u64).max(1) as u32, size)
-        };
-        let rgba = image::RgbaImage::from_raw(iw, ih, full.image.data.data().to_vec())?;
-        let small = image::imageops::resize(&rgba, tw, th, image::imageops::FilterType::Lanczos3);
-        let brush = ImageBrush::new(ImageData {
-            data: Blob::new(Arc::new(small.into_raw())),
-            format: ImageFormat::Rgba8,
-            alpha_type: ImageAlphaType::Alpha,
-            width: tw,
-            height: th,
-        });
-        let brush = Arc::new(brush);
+        let brush = Arc::new(downscale(&full, size)?);
         let mut mips = self.mips.lock().unwrap_or_else(|p| p.into_inner());
         Some(mips.entry(key).or_insert_with(|| brush.clone()).clone())
+    }
+
+    /// **File a mip somebody else already paid for**, so the first
+    /// [`scaled`](Self::scaled) at that size is a lookup.
+    ///
+    /// The lazy path above runs on whichever thread draws — the event loop —
+    /// and a Lanczos pass over a full-screen screenshot is hundreds of
+    /// milliseconds there. An image the shell has just decoded on a worker
+    /// can have its display-sized mip built on the same worker; `size` must be
+    /// the [`mip_size`] of the master for the size the view will ask for, or
+    /// the entry is simply never hit. Ignored unless the master is here.
+    pub fn insert_mip(&self, hash: &str, size: u32, mip: ImageBrush) {
+        if !self.pixels.contains_key(hash) {
+            return;
+        }
+        let mut mips = self.mips.lock().unwrap_or_else(|p| p.into_inner());
+        mips.entry((hash.to_string(), size))
+            .or_insert_with(|| Arc::new(mip));
     }
 
     /// Record the devices a parked hydration is waiting on for this hash.
@@ -253,9 +251,77 @@ impl ImageCache {
     }
 }
 
+/// The quantised larger axis [`ImageCache::scaled`] files a mip of `full`
+/// under for a draw that wants `wanted` device pixels, or `None` when the
+/// master itself is drawn (it is already that small, or nothing was asked).
+///
+/// Powers of two, so a resize or zoom cannot thrash the cache. Public so a
+/// worker can build the same entry ahead of the draw ([`downscale`],
+/// [`ImageCache::insert_mip`]) without a second copy of the rule.
+pub fn mip_size(full: &ImageBrush, wanted: u32) -> Option<u32> {
+    let native = full.image.width.max(full.image.height);
+    if wanted == 0 || native <= wanted {
+        return None;
+    }
+    let size = wanted.next_power_of_two().min(native);
+    (size < native).then_some(size)
+}
+
+/// `full` resampled so its larger axis is `size` pixels, aspect kept.
+///
+/// **Expensive** — a Lanczos pass over every source pixel — which is why it is
+/// its own function: [`ImageCache::scaled`] calls it lazily at draw time, and a
+/// worker that has just decoded an image calls it before the draw ever asks.
+pub fn downscale(full: &ImageBrush, size: u32) -> Option<ImageBrush> {
+    let (iw, ih) = (full.image.width, full.image.height);
+    let (tw, th) = if iw >= ih {
+        (size, ((ih as u64 * size as u64) / iw as u64).max(1) as u32)
+    } else {
+        (((iw as u64 * size as u64) / ih as u64).max(1) as u32, size)
+    };
+    let rgba = image::RgbaImage::from_raw(iw, ih, full.image.data.data().to_vec())?;
+    let small = image::imageops::resize(&rgba, tw, th, image::imageops::FilterType::Lanczos3);
+    Some(ImageBrush::new(ImageData {
+        data: Blob::new(Arc::new(small.into_raw())),
+        format: ImageFormat::Rgba8,
+        alpha_type: ImageAlphaType::Alpha,
+        width: tw,
+        height: th,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A mip built off the draw thread is the one the draw uses: the first
+    /// `scaled` at that size hands back the filed entry rather than resampling
+    /// the master again on the event loop.
+    #[test]
+    fn a_mip_filed_ahead_is_the_one_a_draw_gets() {
+        let mut cache = ImageCache::new();
+        let master = brush(64, 32);
+        let size = mip_size(&master, 20).expect("a 64px master is mipped for 20px");
+        assert_eq!(size, 32);
+        let mip = downscale(&master, size).expect("downscaled");
+        assert_eq!((mip.image.width, mip.image.height), (32, 16));
+        let filed = mip.image.data.data().as_ptr();
+        cache.insert(ONE, "h", master);
+        cache.set_scope(ONE);
+        cache.insert_mip("h", size, mip);
+        let drawn = cache.scaled("h", 20).expect("drawn");
+        assert_eq!(drawn.image.data.data().as_ptr(), filed);
+        // A master already small enough is drawn as itself.
+        assert_eq!(mip_size(&brush(16, 8), 20), None);
+    }
+
+    #[test]
+    fn a_mip_for_pixels_that_are_not_here_is_not_filed() {
+        let cache = ImageCache::new();
+        let mip = brush(4, 4);
+        cache.insert_mip("h", 4, mip);
+        assert!(cache.mips.lock().unwrap().is_empty());
+    }
 
     fn brush(w: u32, h: u32) -> ImageBrush {
         let rgba = image::RgbaImage::from_pixel(w, h, image::Rgba([128, 64, 32, 255]));

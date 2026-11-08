@@ -16,6 +16,14 @@ enum Row {
         value: &'static str,
         floor: bool,
     },
+    /// A release card, with or without its button, and whether the button
+    /// can be pressed.
+    Card {
+        title: &'static str,
+        button: Option<bool>,
+    },
+    /// A row that is nothing but `n` buttons — the social strip.
+    Strip(usize),
 }
 
 impl MenuItem for Row {
@@ -24,29 +32,55 @@ impl MenuItem for Row {
             Row::Item(label) | Row::Toggle(label, _) | Row::Stepper { label, .. } => {
                 (*label).into()
             }
-            Row::Rule => "".into(),
+            Row::Card { title, .. } => (*title).into(),
+            Row::Rule | Row::Strip(_) => "".into(),
         }
     }
 
     fn selectable(&self) -> bool {
-        !matches!(self, Row::Rule | Row::Stepper { .. })
+        !matches!(self, Row::Rule | Row::Stepper { .. } | Row::Strip(_))
+    }
+
+    fn card(&self) -> Option<MenuCard> {
+        let Row::Card { title, button } = self else {
+            return None;
+        };
+        Some(MenuCard {
+            badge: "STABLE · 1.0.1".into(),
+            date: "24 Oct".into(),
+            title: (*title).into(),
+            body: "A line under the title.".into(),
+            button: button.map(|on| ("Download".into(), on)),
+        })
     }
 
     fn controls(&self) -> Vec<Control> {
-        let Row::Stepper { value, floor, .. } = self else {
-            return Vec::new();
-        };
-        vec![
-            Control::Button {
-                glyph: '-',
-                enabled: !floor,
-            },
-            Control::Readout((*value).into()),
-            Control::Button {
-                glyph: '+',
-                enabled: true,
-            },
-        ]
+        match self {
+            Row::Stepper { value, floor, .. } => vec![
+                Control::Button {
+                    glyph: '-',
+                    enabled: !floor,
+                },
+                Control::Readout((*value).into()),
+                Control::Button {
+                    glyph: '+',
+                    enabled: true,
+                },
+            ],
+            Row::Card {
+                button: Some(on), ..
+            } => vec![Control::Button {
+                glyph: 'v',
+                enabled: *on,
+            }],
+            Row::Strip(n) => (0..*n)
+                .map(|_| Control::Button {
+                    glyph: 'o',
+                    enabled: true,
+                })
+                .collect(),
+            _ => Vec::new(),
+        }
     }
 
     fn divider(&self) -> bool {
@@ -96,6 +130,21 @@ fn a_button_anchored_menu_hangs_back_under_the_button() {
     assert_eq!(p.x + p.w, 300.0, "the point is the menu's right edge");
 }
 
+/// A centred menu sits with its middle on the point — what a key opens it
+/// with, in the window's middle.
+#[test]
+fn a_centred_menu_sits_with_its_middle_on_the_point() {
+    let m = Menu::at_width(
+        (640.0, 360.0),
+        vec![Row::Item("one"), Row::Item("two")],
+        Anchor::Centre,
+        200.0,
+    );
+    let p = m.panel((1280.0, 720.0));
+    assert!((p.x + p.w * 0.5 - 640.0).abs() < 0.01);
+    assert!((p.y + p.h * 0.5 - 360.0).abs() < 0.01);
+}
+
 #[test]
 fn item_at_hits_rows_and_misses_dividers_and_padding() {
     let m = menu(vec![Row::Item("one"), Row::Rule, Row::Item("two")]);
@@ -140,14 +189,20 @@ fn step_skips_disabled_rows() {
     assert_eq!(m.hover, Some(2), "the dimmed row is stepped over");
 }
 
-/// A toggle row is still measured with its check column, set or not — the
-/// label must not shift when the state flips under an open menu.
+/// A toggle row reserves its check lane **at the right-hand end**, set or
+/// not — nothing moves when the state flips under an open menu — and leads
+/// with nothing, so its label lines up with every other row's.
 #[test]
-fn a_toggle_row_reserves_its_check_column_either_way() {
+fn a_toggle_row_reserves_its_check_lane_at_the_end_either_way() {
+    let mut engine = TextEngine::new();
     let set = Row::Toggle("Keyboard hints", true);
     let unset = Row::Toggle("Keyboard hints", false);
-    assert_eq!(leading(&set), leading(&unset));
-    assert!(leading(&unset).is_some());
+    assert!(leading(&set).is_none() && leading(&unset).is_none());
+    let lane = check_lane(&mut engine, &unset);
+    assert!(lane > 0.0, "the lane is reserved while unset");
+    assert_eq!(lane, check_lane(&mut engine, &set));
+    assert_eq!(trailing_width(&mut engine, &set), lane);
+    assert_eq!(check_lane(&mut engine, &Row::Item("one")), 0.0);
 }
 
 // --------------------------------------------------------------- the stepper
@@ -284,4 +339,113 @@ fn set_anchor_moves_the_panel_without_touching_the_rows() {
     assert_eq!((after.x, after.y), (300.0, 220.0));
     assert_eq!((after.w, after.h), (before.w, before.h));
     assert_eq!(m.items().len(), 2);
+}
+
+// ------------------------------------------------------------- card rows
+
+/// Without a font a card is `CARD_FALLBACK_H` tall; the rows after it sit
+/// under it, the panel grows by it, and its button — its one control — is at
+/// the card's foot, inset like the card is from the row.
+#[test]
+fn a_card_row_is_its_fallback_height_with_its_button_at_its_foot() {
+    let m = menu(vec![
+        Row::Item("What's new"),
+        Row::Card {
+            title: "Faster sync",
+            button: Some(true),
+        },
+        Row::Item("Full changelog"),
+    ]);
+    let card_row = m.item_rect(VIEWPORT, 1);
+    assert_eq!(card_row.h, CARD_FALLBACK_H);
+    assert_eq!(
+        m.item_rect(VIEWPORT, 2).y,
+        card_row.y + CARD_FALLBACK_H,
+        "the next row sits under the card"
+    );
+    assert_eq!(m.height(), PAD * 2.0 + ITEM_H * 2.0 + CARD_FALLBACK_H);
+    let card = m.card_rect(VIEWPORT, 1).expect("a card");
+    assert_eq!(
+        (card.x, card.y, card.w, card.h),
+        (
+            card_row.x + CARD_INSET,
+            card_row.y + CARD_INSET,
+            card_row.w - CARD_INSET * 2.0,
+            card_row.h - CARD_INSET * 2.0
+        )
+    );
+    assert!(m.card_rect(VIEWPORT, 0).is_none(), "a plain row is no card");
+    let button = m.control_rect(VIEWPORT, 1, 0).expect("the card's button");
+    assert_eq!(button.x, card.x + CARD_PAD, "at the card's left pad");
+    assert_eq!(
+        button.y + button.h,
+        card.y + card.h - CARD_PAD,
+        "and its bottom pad"
+    );
+    assert_eq!((button.w, button.h), (CARD_BUTTON_MIN_W, CARD_BUTTON_H));
+    assert!(m.control_rect(VIEWPORT, 1, 1).is_none(), "one control only");
+    // The press finds the button where it is drawn, and the row elsewhere.
+    let (bx, by) = button.centre();
+    assert_eq!(m.control_at(VIEWPORT, bx, by), Some((1, 0)));
+    assert_eq!(m.pressable_control_at(VIEWPORT, bx, by), Some((1, 0)));
+    let (tx, ty) = (card.x + card.w * 0.5, card.y + CARD_PAD + 4.0);
+    assert_eq!(m.control_at(VIEWPORT, tx, ty), None, "the title is the row");
+    assert_eq!(m.item_at(VIEWPORT, tx, ty), Some(1), "chosen as a whole");
+}
+
+/// A dimmed button is found and refused; a card without one has no control
+/// and no button rect, and keeps its height.
+#[test]
+fn a_cards_button_is_found_but_not_pressable_when_dimmed_and_absent_when_none() {
+    let dimmed = menu(vec![Row::Card {
+        title: "Up to date",
+        button: Some(false),
+    }]);
+    let b = dimmed.control_rect(VIEWPORT, 0, 0).expect("drawn dim");
+    let (x, y) = b.centre();
+    assert_eq!(dimmed.control_at(VIEWPORT, x, y), Some((0, 0)));
+    assert_eq!(dimmed.pressable_control_at(VIEWPORT, x, y), None);
+    let none = menu(vec![Row::Card {
+        title: "Up to date",
+        button: None,
+    }]);
+    assert!(none.control_rect(VIEWPORT, 0, 0).is_none());
+    assert_eq!(none.item_rect(VIEWPORT, 0).h, CARD_FALLBACK_H);
+}
+
+/// A strip — a row that is only its buttons — spreads them across the row
+/// in equal cells between the pads, so six logos read as one line rather
+/// than a huddle in the chord column; the keyboard steps past it like a
+/// stepper.
+#[test]
+fn a_strip_spreads_its_buttons_across_the_row() {
+    let mut m = menu(vec![
+        Row::Item("Report a problem"),
+        Row::Strip(6),
+        Row::Item("After"),
+    ]);
+    let row = m.item_rect(VIEWPORT, 1);
+    let cells: Vec<Rect> = (0..6)
+        .map(|c| m.control_rect(VIEWPORT, 1, c).expect("six cells"))
+        .collect();
+    assert_eq!(cells[0].x, row.x + ROW_PAD_X, "from the leading pad");
+    assert!(
+        (cells[5].x + cells[5].w - (row.x + row.w - ROW_PAD_X)).abs() < 0.01,
+        "to the trailing pad"
+    );
+    for pair in cells.windows(2) {
+        assert!(
+            (pair[0].x + pair[0].w - pair[1].x).abs() < 0.01,
+            "cells tile"
+        );
+        assert!((pair[0].w - pair[1].w).abs() < 0.01, "and are equal");
+    }
+    for (c, cell) in cells.iter().enumerate() {
+        let (x, y) = cell.centre();
+        assert_eq!(m.control_at(VIEWPORT, x, y), Some((1, c)));
+    }
+    let enabled = [true, true, true];
+    m.step(&enabled, 1);
+    m.step(&enabled, 1);
+    assert_eq!(m.hover, Some(2), "straight past the strip");
 }

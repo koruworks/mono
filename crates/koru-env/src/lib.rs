@@ -396,6 +396,11 @@ pub const VARS: &[EnvVar] = &[
         "koru.exe",
     ),
     switch_var(
+        name::KORU_CHROME_DEBUG,
+        "One line per thing the sidebar's chrome does: a pane toggle, an app switch, the who/where or help popover opening. Control names and app tokens, never a document's text.",
+        "koru.exe",
+    ),
+    switch_var(
         name::KORU_CANVAS_DEBUG,
         "One line per request a canvas tab applies to its document (add, move, width, arrow, delete, text, agent, run, stop, undo) and whether it was refused — object ids, kinds and refusal tokens, never a card's text or a canvas's name.",
         "koru.exe",
@@ -443,7 +448,7 @@ pub const VARS: &[EnvVar] = &[
     switch_var(
         name::KORU_AI_PAYLOAD_DEBUG,
         "Logs one complete provider-neutral AI request JSON record and one terminal response JSON record per attempt, including authored context and provider output; never logs provider credentials. Also exposes the per-window system-prompt override in AI Settings.",
-        "koru.exe, koru-ai-chat, koru-ai-server, koru-api-gateway",
+        "koru.exe, koru-ai-server, koru-api-gateway",
     ),
     value_var(
         name::KORU_AI_HOST_ENDPOINT,
@@ -461,6 +466,16 @@ pub const VARS: &[EnvVar] = &[
         name::KORU_AI_PAYLOAD_TEST_CHILD,
         "Test-only: marks the isolated child process used to prove payload-debug records are opt-in and ordinary AI lifecycle logs remain content-free.",
         "koru-ai-server tests",
+    ),
+    switch_var(
+        name::KORU_FIXTURE_THEME,
+        "Developer preview: start in the element layer's fixture theme instead of the preference and the OS, writing neither. Read only in a build with the `fixture-theme` feature (`cargo run -p koru --features fixture-theme`).",
+        "koru.exe built with the fixture-theme feature",
+    ),
+    switch_var(
+        name::KORU_FIXTURE_CONTRAST,
+        "Developer preview: with KORU_FIXTURE_THEME, use the fixture theme's high-contrast table. Not production high contrast, which is not delivered yet.",
+        "koru.exe built with the fixture-theme feature",
     ),
     switch_var(
         name::KORU_FRAME_STATS,
@@ -565,7 +580,7 @@ pub const VARS: &[EnvVar] = &[
     // overridable at run time — see guide/contributing/FEATURE-FLAGS.md.
     switch_var(
         name::KORU_ENABLE_CLOUD_SYNC,
-        "Shows Koru Cloud: account sign-in (email, Google, Apple), the Koru Cloud page and its pointers. Off by default; a release bakes it on by setting it for koru-release, and a set value overrides the baked one at run time.",
+        "Shows Koru Cloud: account sign-in (email, Google, Apple), the Koru Cloud page and its pointers. On by default; a release bakes it off by setting it to 0 for koru-release, and a set value overrides the baked one at run time.",
         "koru.exe, koru-agent (product surfaces)",
     ),
     switch_var(
@@ -575,17 +590,17 @@ pub const VARS: &[EnvVar] = &[
     ),
     switch_var(
         name::KORU_ENABLE_AGENT_VIEWS,
-        "Shows Explore's Agents and Artifacts views, which also need KORU_ENABLE_AGENTS on. Off by default; a release bakes it on by setting it for koru-release, and a set value overrides the baked one at run time.",
+        "Shows Explore's Agents and Artifacts views, which also need KORU_ENABLE_AGENTS on, and with KORU_ENABLE_AI every way to start Delegate. Off by default; a release bakes it on by setting it for koru-release, and a set value overrides the baked one at run time.",
         "koru.exe (product surfaces)",
     ),
     switch_var(
         name::KORU_ENABLE_TASKS,
-        "Shows the Tasks view and its entry points (`/due` still creates a task). Off by default; a release bakes it on by setting it for koru-release, and a set value overrides the baked one at run time.",
+        "Shows the Tasks view and its entry points (`/due` still creates a task). On by default; a release bakes it off by setting it to 0 for koru-release, and a set value overrides the baked one at run time.",
         "koru.exe (product surfaces)",
     ),
     switch_var(
         name::KORU_ENABLE_AI,
-        "Shows Koru AI chat and Delegate. Off by default; a release bakes it on by setting it for koru-release, and a set value overrides the baked one at run time.",
+        "Shows Koru AI chat (the Chats view) and Delegate's runs; starting Delegate also needs KORU_ENABLE_AGENT_VIEWS. On by default; a release bakes it off by setting it to 0 for koru-release, and a set value overrides the baked one at run time.",
         "koru.exe, koru-agent (product surfaces)",
     ),
     switch_var(
@@ -595,12 +610,12 @@ pub const VARS: &[EnvVar] = &[
     ),
     switch_var(
         name::KORU_ENABLE_CANVAS,
-        "Shows canvases: the Canvases view (Alt+7), the `+` menu's Canvases flyout and canvas tabs. Off by default; a release bakes it on by setting it for koru-release, and a set value overrides the baked one at run time.",
+        "Shows canvases: the Canvases view on the rail, the `+` menu's Canvases flyout and canvas tabs. Off by default; a release bakes it on by setting it for koru-release, and a set value overrides the baked one at run time.",
         "koru.exe (product surfaces)",
     ),
     switch_var(
         name::KORU_ENABLE_SOCIALS,
-        "Shows Socials: the Socials view (Alt+8), New social post and the Socials tab, and starts the Agent's Socials publisher (off, nothing publishes; scheduled posts wait). Off by default; a release bakes it on by setting it for koru-release, and a set value overrides the baked one at run time.",
+        "Shows Socials: the Socials view on the rail, New social post and the Socials tab, and starts the Agent's Socials publisher (off, nothing publishes; scheduled posts wait). Off by default; a release bakes it on by setting it for koru-release, and a set value overrides the baked one at run time.",
         "koru.exe (product surfaces), koru-agent.exe (the Socials publisher)",
     ),
     // -------------------------------------------- behaviour / test switches
@@ -818,7 +833,7 @@ pub const VARS: &[EnvVar] = &[
         name::RUST_LOG,
         "a tracing filter directive",
         "Overrides a binary's default tracing filter — e.g. `koru_replication=debug`.",
-        "koru, koru-ai-chat, koru-api-gateway, koru-store-server, koru-agent, koru-mcp, koru-relay, koru-voice-worker",
+        "koru, koru-api-gateway, koru-store-server, koru-agent, koru-mcp, koru-relay, koru-voice-worker",
     ),
     value_var(
         name::WGPU_BACKEND,
@@ -1011,6 +1026,7 @@ pub mod name {
     pub const KORU_UNDO_DEBUG: &str = "KORU_UNDO_DEBUG";
     pub const KORU_NAV_DEBUG: &str = "KORU_NAV_DEBUG";
     pub const KORU_CANVAS_DEBUG: &str = "KORU_CANVAS_DEBUG";
+    pub const KORU_CHROME_DEBUG: &str = "KORU_CHROME_DEBUG";
     pub const KORU_ACCESSIBILITY_DEBUG: &str = "KORU_ACCESSIBILITY_DEBUG";
     pub const KORU_ACCESSIBILITY_DUMP: &str = "KORU_ACCESSIBILITY_DUMP";
     pub const KORU_ACCESSIBILITY_DUMP_CONTENT: &str = "KORU_ACCESSIBILITY_DUMP_CONTENT";
@@ -1022,6 +1038,8 @@ pub mod name {
     pub const KORU_AI_PAYLOAD_TEST_CHILD: &str = "KORU_AI_PAYLOAD_TEST_CHILD";
     pub const KORU_AI_HOST_ENDPOINT: &str = "KORU_AI_HOST_ENDPOINT";
     pub const KORU_AI_HOST_KEY: &str = "KORU_AI_HOST_KEY";
+    pub const KORU_FIXTURE_THEME: &str = "KORU_FIXTURE_THEME";
+    pub const KORU_FIXTURE_CONTRAST: &str = "KORU_FIXTURE_CONTRAST";
     pub const KORU_FRAME_STATS: &str = "KORU_FRAME_STATS";
     pub const KORU_STARTUP_STATS: &str = "KORU_STARTUP_STATS";
     pub const KORU_SESSION_STATS: &str = "KORU_SESSION_STATS";

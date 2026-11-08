@@ -113,6 +113,11 @@ impl Recorder {
         self.changed
     }
 
+    fn on_navigate_history(&mut self, delta: i32) -> bool {
+        self.say(format!("navigate_history {delta}"));
+        self.changed
+    }
+
     fn on_rich_mouse(&mut self, event: RichMouseEvent) -> bool {
         self.say(format!(
             "rich_mouse {:?} {:?} count={} at {} {} {:?}",
@@ -336,6 +341,10 @@ impl WindowApp for Recorder {
         self.on_scroll_by(delta, mods)
     }
 
+    fn navigate_history(&mut self, delta: i32) -> bool {
+        self.on_navigate_history(delta)
+    }
+
     fn rich_mouse(&mut self, _engine: &mut TextEngine, event: RichMouseEvent) -> bool {
         self.on_rich_mouse(event)
     }
@@ -537,6 +546,11 @@ impl MultiWindowApp for Recorder {
     fn scroll_by(&mut self, key: WindowKey, delta: f32, mods: ModifiersState) -> bool {
         self.keys.push(key);
         self.on_scroll_by(delta, mods)
+    }
+
+    fn navigate_history(&mut self, key: WindowKey, delta: i32) -> bool {
+        self.keys.push(key);
+        self.on_navigate_history(delta)
     }
 
     fn rich_mouse(
@@ -1084,6 +1098,27 @@ fn middle_and_right_transitions_are_invisible_without_rich_mouse_in_both_runners
         rich[2]
     );
     assert!(rich[3].contains("rich_mouse Right Released"), "{}", rich[3]);
+}
+
+/// **The thumb buttons walk history in both runners** (koru-ai D102): Back
+/// is a step back, Forward a step forward, the release is nobody's, and a
+/// rich-mouse surface is not handed them as buttons it cannot report.
+#[test]
+fn thumb_buttons_walk_history_in_both_runners() {
+    for rich in [false, true] {
+        let trace = parity(
+            &[
+                Step::CursorMoved(5.0, 5.0),
+                Step::Press(MouseButton::Back),
+                Step::Release(MouseButton::Back),
+                Step::Press(MouseButton::Forward),
+            ],
+            |app| app.wants_rich_mouse = rich,
+        );
+        assert!(trace[1].contains("navigate_history -1"), "{}", trace[1]);
+        assert!(trace[2].contains("app=[]"), "{}", trace[2]);
+        assert!(trace[3].contains("navigate_history 1"), "{}", trace[3]);
+    }
 }
 
 // --------------------------------------------------------------- keyboard

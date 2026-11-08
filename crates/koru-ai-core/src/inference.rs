@@ -40,6 +40,11 @@ pub struct AiRequest {
 pub struct AiRequestMessage {
     pub role: ChatRole,
     pub markdown: String,
+    /// The pictures and files sent with this message, in order. Only the
+    /// local agent provider reads them; every other provider is refused
+    /// attachments before a request is built.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<crate::AttachmentInput>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -300,6 +305,34 @@ pub struct AiRequestOptions {
     /// the API providers ignore it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub working_folder: Option<String>,
+    /// The approval mode a local agent runs this message in (koru-ai D7),
+    /// the agent's own id; `None` leaves the agent's default. The API
+    /// providers ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_mode: Option<String>,
+    /// Whether a local agent runs this message in its model's Fast mode
+    /// (koru-ai D11); `None` leaves the model's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_fast: Option<bool>,
+    /// The level a local agent runs this message at (koru-ai D70): the
+    /// chat's own, or for *Default* the level the model's listing names as
+    /// its default; `None` when neither is known. Sent with the message to
+    /// a session host that takes it, so a level chosen after the chat began
+    /// applies from its next message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_turn_reasoning: Option<ReasoningChoice>,
+    /// This message is a local agent's question set answered (koru-ai
+    /// D108): a set the agent asked in its reply and moved on from, whose
+    /// answers go to it as the person's next message. The agent's provider
+    /// sends them in place of the message; the API providers ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_answers: Option<crate::NextMessageAnswers>,
+    /// The skills the person picked for a local agent (koru-ai D121), by
+    /// the name the agent lists each under; the message says `$name` where
+    /// each was. The agent's provider names them to the agent beside the
+    /// text; the API providers ignore them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub agent_skills: Vec<String>,
 }
 
 impl Default for AiRequestOptions {
@@ -311,6 +344,11 @@ impl Default for AiRequestOptions {
             web_search: false,
             chat_id: None,
             working_folder: None,
+            agent_mode: None,
+            agent_fast: None,
+            agent_turn_reasoning: None,
+            agent_answers: None,
+            agent_skills: Vec::new(),
         }
     }
 }
@@ -360,6 +398,12 @@ pub enum AiEvent {
     ToolActivity {
         attempt_id: InferenceAttemptId,
         activity: ToolActivity,
+    },
+    /// A local agent's status line beside its reply, as kept (koru-ai
+    /// D69). The worker publishes it once the row is written.
+    AgentNotice {
+        attempt_id: InferenceAttemptId,
+        notice: crate::AgentNotice,
     },
     /// Worker-internal, like `ToolCalls`: a local agent's tool or permission
     /// fact, which the worker turns into a durable row write and a public
@@ -412,6 +456,7 @@ impl AiEvent {
             | Self::Usage { attempt_id, .. }
             | Self::ToolCalls { attempt_id, .. }
             | Self::ToolActivity { attempt_id, .. }
+            | Self::AgentNotice { attempt_id, .. }
             | Self::AgentActivity { attempt_id, .. }
             | Self::Notice { attempt_id, .. }
             | Self::WebSearch { attempt_id, .. }

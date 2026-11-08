@@ -504,6 +504,7 @@ mod tests {
             messages: vec![AiRequestMessage {
                 role: ChatRole::User,
                 markdown: "Reply with pong".into(),
+                attachments: Vec::new(),
             }],
             context: Vec::new(),
             tools: Vec::new(),

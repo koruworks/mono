@@ -29,7 +29,7 @@ use std::{fmt, str::FromStr};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{ChatOriginId, ModelName, SessionSummary, TokenParseError};
+use crate::{AgentModeId, ChatOriginId, ModelName, SessionSummary, TokenParseError};
 
 /// What created a session. Defaulted to `Manual` on every peer that
 /// predates it, which is the truth: before v16 only windows created
@@ -99,6 +99,10 @@ pub enum LaunchReasoning {
     Low,
     Medium,
     High,
+    /// v18: an older peer cannot read it, so it is sent only to a v18 host.
+    /// Spelled `xhigh`, as the agents and the AI core spell it.
+    #[serde(rename = "xhigh")]
+    XHigh,
     Max,
 }
 
@@ -111,6 +115,7 @@ impl LaunchReasoning {
             Self::Low => "low",
             Self::Medium => "medium",
             Self::High => "high",
+            Self::XHigh => "xhigh",
             Self::Max => "max",
         }
     }
@@ -127,6 +132,7 @@ impl FromStr for LaunchReasoning {
             "low" => Self::Low,
             "medium" => Self::Medium,
             "high" => Self::High,
+            "xhigh" => Self::XHigh,
             "max" => Self::Max,
             _ => return Err(TokenParseError("invalid reasoning token")),
         })
@@ -135,7 +141,7 @@ impl FromStr for LaunchReasoning {
 
 /// An explicit model and effort a creator asks a managed session for.
 ///
-/// `None` in either field is "the provider's own default", which is never
+/// `None` in any field is "the provider's own default", which is never
 /// gated. A `Some` is acknowledged by the adapter before the first prompt
 /// or refused visibly; it is never silently replaced by the default.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -144,11 +150,27 @@ pub struct LaunchSelection {
     pub model: Option<ModelName>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<LaunchReasoning>,
+    /// v19 (koru-ai D7): the approval mode the session starts in, one of
+    /// those the agent offers. Sent only to a v19 host.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<AgentModeId>,
+    /// v19 (koru-ai D11): the session starts with the model's Fast mode on
+    /// or off. Ignored by an adapter whose model offers no Fast mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fast: Option<bool>,
 }
 
 impl LaunchSelection {
     pub fn is_explicit(&self) -> bool {
-        self.model.is_some() || self.reasoning.is_some()
+        self.model.is_some()
+            || self.reasoning.is_some()
+            || self.mode.is_some()
+            || self.fast.is_some()
+    }
+
+    /// Whether only a v19 host can honor it.
+    pub fn needs_agent_modes(&self) -> bool {
+        self.mode.is_some() || self.fast.is_some()
     }
 }
 

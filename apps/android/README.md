@@ -209,7 +209,8 @@ environment. Origin and issuer must be hosted HTTPS, including explicit Gradle
 overrides. It clears any inherited API forwarding request; ADB is used only
 to install, launch and view logs. Disconnect it for
 [hosted acceptance S](../../docs/features/oauth/TESTPLAN.md#s-hosted-oauth-release-without-local-api-infrastructure-about-25-minutes).
-The APK's actual signing certificate still needs its Android OAuth registration.
+The APK's signing certificate is the one already registered for that package.
+This repository does not contain that Google registration or `assetlinks.json`.
 
 The configuration-loader regression checks use a fake runner and need no SDK or
 device: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-configured.tests.ps1`.
@@ -491,6 +492,65 @@ To reinstall on or launch against one specific device, use its serial:
 & $adb -s emulator-5554 shell am start -n do.koru.app/app.koru.mobile.MainActivity
 ```
 
+## Release build and the nightly APK
+
+`assembleRelease` builds the Rust library release-optimized for both ABIs
+(`cargo build --release`, copied from `target/<triple>/release/`), then
+packages the app (R8 minification is not enabled):
+
+```powershell
+.\gradlew.bat assembleRelease
+```
+
+Without signing properties the APK is unsigned,
+`app\build\outputs\apk\release\app-release-unsigned.apk`, which a phone will
+not install. Gradle project properties (`-P` on the command line, or
+`ORG_GRADLE_PROJECT_<name>` in the environment) shape a published build
+(TECHNICAL.final §5.4):
+
+| Property | Effect |
+| --- | --- |
+| `koruNightly=true` | The nightly app: `do.koru.app.nightly`, labelled *Koru Nightly*, installable beside Koru. It reuses Koru's icons. |
+| `koruVersionCode` | Android's `versionCode`, 1 to 2,100,000,000; 1 when absent. The nightly's is the build time in minutes since 2026-01-01 UTC (`koru-release android-version-code`). |
+| `koruVersionName` | The version the app shows, the release's full version; the workspace's when absent. |
+| `koruSigningStoreFile`, `koruSigningStorePassword`, `koruSigningKeyAlias`, `koruSigningKeyPassword` | Signs the release build with that key. All four or none: a partial set fails the build. |
+| `koruUpdateBaseUrl`, `koruUpdatePublicKey` | The nightly's update feed (an HTTPS base URL) and the Minisign public key its APKs are signed with (the bare `RW…` line). Only with `koruNightly=true`; both or neither. Without them the app never checks for updates. |
+
+The nightly workflow (`.github/workflows/release-build.yml`, job
+`android`) passes all of them, the key from the `nightly` environment's
+`ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD` and
+`ANDROID_KEY_PASSWORD` secrets and its `ANDROID_KEY_ALIAS` variable. Until
+those exist it builds the APK unsigned and does not publish it. The release
+key is permanent (D12, D13): it lives in the vault and is never generated or
+replaced in this repository.
+
+### The nightly's update notice
+
+Koru Nightly is sideloaded, so nothing else tells it a newer nightly exists
+(TECHNICAL.final §5.5). A nightly built with `koruUpdateBaseUrl` and
+`koruUpdatePublicKey` — the workflow derives the key from the
+`NIGHTLY_MINISIGN_KEY` secret and points the feed at the release's download
+base — checks the release's `nightly-android-aarch64.json` when it comes to
+the foreground, at most every three hours (`services/AppUpdates.kt`). The
+feed is the desktop manifest format with platform `android` and package
+format `apk`; `koru-update` fetches and validates it through
+`koru-mobile-native` (`UpdateNative`), so the phone has no parser of its own.
+
+A newer build (by `versionCode`) shows a card at the foot of the profiles
+screen: *Download* fetches the APK into the app's cache and `koru-update`
+checks its size, SHA-256 and Minisign signature; *Install* hands it to the
+system package installer through the app's `FileProvider`, which asks before
+it installs, and refuses an APK not signed with the nightly's key. The first
+time, Android asks to allow Koru Nightly to install unknown apps. *Not now*
+hides that build until a newer one. The check sends nothing but an HTTP
+request with a `Koru-Android/<version>` user agent; offline or on any error it
+shows nothing and logs only on the device.
+
+Only the nightly asks for `REQUEST_INSTALL_PACKAGES`
+(`src/nightly/AndroidManifest.xml`, merged only with `koruNightly=true`). The
+stable app and any copy Play installed (D21) never check: Play updates what
+it installed.
+
 ## Inspect logs with adb logcat
 
 Koru's structured development logger uses the `KoruMobile` tag and deliberately
@@ -541,6 +601,36 @@ rerunning `run-local` restores forwarding after a device reconnect. Remote API
 origins skip forwarding. For a remote API use
 HTTPS, and keep the issuer exactly equal to the server's configured issuer.
 The Android OAuth client/package/signing setup below is still required.
+
+## Official Cloud builds
+
+Nightly Android was built with no account settings, the same choice as the old
+desktop nightly (NIGHTLY N5). The installed app then shows account sign-in as
+unavailable and does not attach Cloud sync. A Cloud build of this job now
+passes the public settings the desktop already bakes in:
+
+| Gradle property | Existing value |
+| --- | --- |
+| `koruAccountOrigin` | `KORU_PUBLIC_API_ORIGIN` |
+| `koruAccountIssuer` | `KORU_PUBLIC_API_ISSUER` |
+| `koruAccountCredentialRollout` | `KORU_PUBLIC_API_CREDENTIAL_ROLLOUT` |
+| `koruGoogleServerClientId` | `KORU_PUBLIC_API_GOOGLE_CLIENT_ID`, the public web client id `.env.example` already names. Not `KORU_GOOGLE_DOCS_CLIENT_ID`. |
+| `koruAccountChannel` | `nightly` or `stable`, the same channel segment the desktop uses |
+
+`scripts/release/android-account-config.py` checks those values and prints the
+`-P` arguments. With Cloud off it prints nothing, so `android-check` and a
+local build without the properties stay offline. The nightly package is
+`do.koru.app.nightly`. The same job with channel `stable` uses `do.koru.app`.
+The stable tag workflow does not build Android. Signing is the existing release
+keystore; an unsigned nightly is still not published.
+
+Sign-in on that build offers Google and Apple. Email is not offered: the
+mobile host refuses that action until its journey exists. Credential rollout
+is required together with sign-in, because that is what attaches Cloud sync.
+Passing the build does not show that a device completed sign-in or sync. The
+Google Android client for the package and signing certificate, and the
+verified App Link on `www.koru.do`, stay where they already are; this change
+does not create them.
 
 ## Google account build configuration
 

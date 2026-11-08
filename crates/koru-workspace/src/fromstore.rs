@@ -69,11 +69,6 @@ pub struct OpenedFromStore {
     /// Whether `current` names Store content. False means `workspace` is the
     /// local welcome placeholder used when this profile has no active rows.
     pub has_workspace: bool,
-    /// Every workspace the Store holds, in every profile, deleted ones
-    /// included — the catalog this open already read. Handed out so the
-    /// launch's settings reconciliation does not ask the Store for the same
-    /// list a second time before the first frame.
-    pub all_workspaces: std::collections::HashSet<WorkspaceId>,
 }
 
 /// What follows a successful, durable local Profile creation.
@@ -450,7 +445,7 @@ pub fn open_from_store_preferring(
     root: Option<&Path>,
     wanted: Option<WorkspaceId>,
 ) -> Result<StoreLaunch> {
-    open_from_store_with_policy(segment, root, None, wanted, Policy::CREATE_IF_EMPTY)
+    open_from_store_with_policy(segment, root, None, wanted, true)
 }
 
 /// App startup variant: an existing profile with no active workspaces opens on
@@ -460,34 +455,7 @@ pub fn open_from_store_preferring_empty(
     root: Option<&Path>,
     wanted: Option<WorkspaceId>,
 ) -> Result<StoreLaunch> {
-    open_from_store_with_policy(segment, root, None, wanted, Policy::PREFER_EMPTY)
-}
-
-/// The launch's open: [`open_from_store_preferring_empty`], or the profile
-/// variant when one is selected, **without opening a document**.
-///
-/// The other opens fetch the workspace's first document so a window has
-/// something to show. A launch then restores its remembered tabs, and when
-/// the first document was not one of them it was fetched, decoded and closed
-/// again for nothing — a snapshot round trip in front of every first frame.
-/// So the launch restores its tabs first and calls
-/// [`Workspace::open_first_document`] only if none of them resolved.
-pub fn open_for_launch(
-    segment: &str,
-    root: Option<&Path>,
-    selected_profile: Option<ProfileId>,
-    wanted: Option<WorkspaceId>,
-) -> Result<StoreLaunch> {
-    open_from_store_with_policy(
-        segment,
-        root,
-        selected_profile,
-        wanted,
-        Policy {
-            open_first_document: false,
-            ..Policy::PREFER_EMPTY
-        },
-    )
+    open_from_store_with_policy(segment, root, None, wanted, false)
 }
 
 /// App startup variant for a profile chosen from the Store-backed switcher.
@@ -501,35 +469,7 @@ pub fn open_from_store_profile_preferring_empty(
     selected_profile: ProfileId,
     wanted: Option<WorkspaceId>,
 ) -> Result<StoreLaunch> {
-    open_from_store_with_policy(
-        segment,
-        root,
-        Some(selected_profile),
-        wanted,
-        Policy::PREFER_EMPTY,
-    )
-}
-
-/// How an open behaves where the variants differ. Named fields rather than
-/// two positional booleans, which read the same at every call site.
-#[derive(Clone, Copy)]
-struct Policy {
-    /// A profile with no active workspace gets one, rather than the welcome
-    /// placeholder.
-    create_workspace_if_empty: bool,
-    /// Fetch the first document that resolves, so the window opens on it.
-    open_first_document: bool,
-}
-
-impl Policy {
-    const CREATE_IF_EMPTY: Self = Self {
-        create_workspace_if_empty: true,
-        open_first_document: true,
-    };
-    const PREFER_EMPTY: Self = Self {
-        create_workspace_if_empty: false,
-        open_first_document: true,
-    };
+    open_from_store_with_policy(segment, root, Some(selected_profile), wanted, false)
 }
 
 fn open_from_store_with_policy(
@@ -537,7 +477,7 @@ fn open_from_store_with_policy(
     root: Option<&Path>,
     selected_profile: Option<ProfileId>,
     wanted: Option<WorkspaceId>,
-    policy: Policy,
+    create_workspace_if_empty: bool,
 ) -> Result<StoreLaunch> {
     let client = match root {
         Some(root) => Client::open_at(segment, root),
@@ -577,7 +517,7 @@ fn open_from_store_with_policy(
         .collect();
     let workspace_row = match choose_workspace(&mine, wanted, selected_profile.is_some()).cloned() {
         Some(workspace) => Some(workspace),
-        None if policy.create_workspace_if_empty => {
+        None if create_workspace_if_empty => {
             Some(client.create_workspace(profile_row.id, "My Workspace")?)
         }
         None => None,
@@ -623,8 +563,18 @@ fn open_from_store_with_policy(
         workspace.open_from_store(segment, root, current)?;
     }
 
-    if policy.open_first_document {
-        workspace.open_first_document()?;
+    // Open the first document that still resolves, so the window opens on
+    // something. A manifest entry can outlive its lifecycle row after an
+    // interrupted or historically broken import. That is damaged content, not
+    // an unreachable Store: keep the workspace manager usable and try the next
+    // entry. Every other failure remains fatal because storage or corrupt CRDT
+    // bytes cannot be made safe by silently opening an empty placeholder.
+    for id in workspace.entries().iter().map(|entry| entry.id) {
+        match workspace.open_document(id) {
+            Ok(()) => break,
+            Err(error) if error.code() == Code::DocumentNotFound => continue,
+            Err(error) => return Err(error),
+        }
     }
 
     if workspace_row.is_some() {
@@ -636,10 +586,6 @@ fn open_from_store_with_policy(
         workspace,
         current,
         has_workspace: workspace_row.is_some(),
-        all_workspaces: workspace_rows
-            .iter()
-            .map(|row| WorkspaceId::from_uuid(row.id.as_uuid()))
-            .collect(),
     }))
 }
 

@@ -9,8 +9,8 @@ use koru_core::{Heading, Mark, MarkSet, WorkspaceId};
 use koru_draw::theme::ViewMode;
 use koru_window::snap;
 use koru_workspace_host::{
-    DocViewPrefs, PasteTarget, PastedImage, RichBlock, RichListSpec, RichTableBlock, RichTextBlock,
-    RichTextKind, RichTextLink, RichTextRun, Settings, View,
+    DocViewPrefs, ImageTicket, PasteTarget, PastedImage, RichBlock, RichListSpec, RichTableBlock,
+    RichTextBlock, RichTextKind, RichTextLink, RichTextRun, Settings, View,
 };
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::CursorIcon;
@@ -1810,17 +1810,15 @@ fn f7_cycles_the_view_mode() {
     };
     assert_eq!(
         view.editor.view.view_mode,
-        ViewMode::Full,
-        "the default is Full"
+        ViewMode::Narrow,
+        "the default is Narrow"
     );
-    f7(&mut view, &mut ws);
-    assert_eq!(view.editor.view.view_mode, ViewMode::Page);
-    f7(&mut view, &mut ws);
-    assert_eq!(view.editor.view.view_mode, ViewMode::Narrow);
     f7(&mut view, &mut ws);
     assert_eq!(view.editor.view.view_mode, ViewMode::Full);
     f7(&mut view, &mut ws);
     assert_eq!(view.editor.view.view_mode, ViewMode::Page, "it wraps");
+    f7(&mut view, &mut ws);
+    assert_eq!(view.editor.view.view_mode, ViewMode::Narrow);
 }
 
 /// A mode and page colour set on one view reach a fresh view on the same
@@ -2978,8 +2976,9 @@ fn the_title_dots_open_the_page_menu_and_a_row_sets_the_width() {
     assert!(view.menu.is_some(), "the page menu is open");
 
     // Walk to Narrow and take it. In Full there is no page-color row, so the
-    // widths are rows 1, 2, 3.
-    for _ in 0..2 {
+    // widths are rows 1, 2, 3 — after the heading's *Global settings* link,
+    // which is the first stop.
+    for _ in 0..3 {
         view.key(&mut ws, &named(NamedKey::ArrowDown), None, NONE);
     }
     view.key(&mut ws, &named(NamedKey::Enter), None, NONE);
@@ -2990,6 +2989,22 @@ fn the_title_dots_open_the_page_menu_and_a_row_sets_the_width() {
     // Esc is what closes it.
     view.key(&mut ws, &named(NamedKey::Escape), None, NONE);
     assert!(view.menu.is_none());
+}
+
+/// *Global settings*, at the right of the heading, is the one page-menu row
+/// that leaves the document: chosen — here by the keyboard, its first stop —
+/// it closes the menu and asks the host for the Settings tab, once.
+#[test]
+fn the_page_menus_global_settings_link_asks_the_host_and_closes() {
+    let (mut ws, mut view) = laid_out();
+    let (x, y) = dots_at(&view);
+    assert!(view.mouse_down(&mut ws, x, y, false));
+    assert!(view.menu.is_some(), "the page menu is open");
+    view.key(&mut ws, &named(NamedKey::ArrowDown), None, NONE);
+    view.key(&mut ws, &named(NamedKey::Enter), None, NONE);
+    assert!(view.menu.is_none(), "leaving the document closes the menu");
+    assert!(View::take_wants_global_settings(&mut view));
+    assert!(!View::take_wants_global_settings(&mut view), "asked once");
 }
 
 /// The width chords name a mode outright, and work with the menu open so the
@@ -5399,9 +5414,9 @@ fn the_viewer_opens_only_on_a_drawing() {
     let (_ws, mut view, node) = drawn_diagram_document();
     assert!(view.open_diagram_viewer(node));
     assert!(view.diagram_viewer_open());
-    assert_eq!(view.blockers(), Blockers::Modal(ModalKind::DiagramViewer));
+    assert_eq!(view.blockers(), Blockers::Modal(ModalKind::MediaViewer));
     let viewer = view.diagram_viewer().expect("open");
-    assert_eq!(viewer.node(), node);
+    assert_eq!(view.diagram_viewer_node(), Some(node));
     assert_eq!(viewer.zoom(), 1.0, "400 × 300 fits a 900 × 560 window");
 }
 
@@ -5415,6 +5430,44 @@ fn the_editors_ask_opens_the_viewer_after_the_press() {
     view.mouse_down(&mut ws, 880.0, 540.0, false);
     assert!(view.diagram_viewer_open());
     assert_eq!(view.editor.view.wants_open_diagram, None, "spent");
+}
+
+#[test]
+fn a_diagram_double_click_opens_without_a_third_press() {
+    let (mut ws, mut view, node) = drawn_diagram_document();
+    view.editor.reflow();
+    let row = view
+        .editor
+        .body
+        .rows
+        .iter()
+        .find(|row| row.id == node)
+        .unwrap();
+    let drawing = koru_editor::rowlayout::diagram_layout(
+        row,
+        row.diagram.as_ref().unwrap(),
+        row.height,
+        view.editor
+            .view
+            .view_mode
+            .effective_w(view.editor.view.viewport.0),
+    )
+    .drawing
+    .unwrap();
+    let x = view.editor.view.content_x + drawing.x + drawing.w * 0.5;
+    let y = row.y + drawing.y + drawing.h * 0.5 - view.editor.view.scroll;
+    view.mouse_down(&mut ws, x, y, false);
+    assert!(!view.diagram_viewer_open(), "one click selects the drawing");
+    // The shell sends the second ordinary press before its double-click hook.
+    view.mouse_down(&mut ws, x, y, false);
+    assert!(!view.diagram_viewer_open());
+    assert!(view.mouse_double_click(&ws, x, y));
+    assert!(
+        view.diagram_viewer_open(),
+        "the second click opens immediately"
+    );
+    assert_eq!(view.editor.view.wants_open_diagram, None);
+    assert_eq!(view.diagram_viewer_node(), Some(node));
 }
 
 /// The editor's *Copy image* control asks the same way, and the drawing it
@@ -5504,7 +5557,7 @@ fn zoom_gestures_are_the_viewers_while_it_is_up() {
     ));
     assert_eq!(
         view.diagram_viewer().unwrap().zoom(),
-        crate::diagram_viewer::ZOOM_STEP
+        koru_ui::media_viewer::ZOOM_STEP
     );
     assert!(View::zoom_wheel(
         &mut view,
@@ -5589,4 +5642,169 @@ fn the_menu_opens_the_viewer_and_copies_the_image() {
     assert!(!view.diagram_viewer_open());
     view.wants_copy_diagram = view.drawn_diagram(context.node);
     assert!(View::take_wants_copy_diagram(&mut view).is_some());
+}
+
+// ------------------------------------------------- an image on its way in
+
+/// The block target a paste below `anchor` records.
+fn below(anchor: NodeId) -> koru_workspace_host::ImagePlace {
+    koru_workspace_host::ImagePlace::Paste(Some(PasteTarget {
+        anchor,
+        replacing: Vec::new(),
+    }))
+}
+
+fn png_block() -> PastedImage {
+    PastedImage {
+        hash: "loaded".into(),
+        mime: "image/png".into(),
+        width: Some(300),
+        height: Some(150),
+        name: None,
+    }
+}
+
+/// Put the caret at the end of `id`'s text and lay the body out.
+fn caret_at_end(view: &mut BuiltInDocument, id: NodeId) {
+    view.editor.body.focus_on(id);
+    view.editor.view.active = true;
+    if let Some(row) = view.editor.body.focused_mut() {
+        let end = row.text.len();
+        row.place_caret(end);
+    }
+    view.reflow();
+}
+
+fn body_rows(view: &BuiltInDocument) -> Vec<(Kind, String)> {
+    view.editor.body.rows[view.editor.body.first_body_row()..]
+        .iter()
+        .map(|row| (row.kind, row.text.clone()))
+        .collect()
+}
+
+/// The moment of the paste: a placeholder where the picture will land, and
+/// the document exactly as it was — nothing is synced until there is a blob.
+#[test]
+fn an_image_on_its_way_is_a_placeholder_and_not_an_edit() {
+    let (ws, mut view) = laid_out();
+    let one = view.editor.body.rows[view.editor.body.first_body_row()].id;
+    let version = ws.version();
+    View::begin_image_import(&mut view, &ws, ImageTicket(1), &below(one));
+    // Whatever this machine's Reduce Motion says, the pulse is under test.
+    view.editor.view.reduced_motion = false;
+    view.reflow();
+    assert_eq!(ws.version(), version, "the document is untouched");
+    assert_eq!(view.editor.body.rows.len(), 3, "no row was made for it");
+    let band = &view.editor.body.reserved()[0];
+    assert_eq!(band.before_row, view.editor.body.index_of(one).unwrap() + 1);
+    assert!(
+        View::animating(&view),
+        "the skeleton breathes while it loads"
+    );
+
+    // The header arrives: the block takes the picture's shape.
+    View::size_image_import(&mut view, ImageTicket(1), &[(300, 150)]);
+    view.reflow();
+    let block = view.editor.body.reserved()[0].blocks().next().unwrap();
+    assert_eq!((block.w, block.h), (300.0, 150.0));
+}
+
+/// Somebody types on while the picture loads — a new line above the anchor
+/// and more words on it. Nothing they typed is lost, the picture lands below
+/// the anchor it was pasted under, the caret stays theirs, and one undo takes
+/// the picture away and nothing else.
+#[test]
+fn typing_while_an_image_loads_is_kept_and_the_image_lands_below_its_anchor() {
+    let (mut ws, mut view) = laid_out();
+    ws.enable_undo();
+    let first = view.editor.body.first_body_row();
+    let (one, two) = (
+        view.editor.body.rows[first].id,
+        view.editor.body.rows[first + 1].id,
+    );
+    caret_at_end(&mut view, two);
+    View::begin_image_import(&mut view, &ws, ImageTicket(1), &below(two));
+
+    // A peer — or this person, in a line above — adds a row before the anchor.
+    ws.insert_after(one, Node::paragraph("added meanwhile").unwrap())
+        .unwrap();
+    view.editor.body.rebuild(&ws);
+    caret_at_end(&mut view, two);
+    for letter in [" ", "a", "n", "d"] {
+        assert!(view.key(&mut ws, &ch(letter), Some(letter), ModifiersState::empty()));
+    }
+
+    ws.checkpoint();
+    View::finish_image_import(
+        &mut view,
+        &mut ws,
+        ImageTicket(1),
+        below(two),
+        &[png_block()],
+    );
+    ws.checkpoint();
+
+    assert_eq!(
+        body_rows(&view),
+        vec![
+            (Kind::Paragraph, "one".into()),
+            (Kind::Paragraph, "added meanwhile".into()),
+            (Kind::Paragraph, "two and".into()),
+            (Kind::Image, String::new()),
+        ]
+    );
+    assert!(view.editor.view.pending_images.is_empty());
+    let focused = view.editor.body.focused().expect("a caret");
+    assert_eq!(focused.id, two, "the caret stayed on the line being typed");
+    assert_eq!(focused.caret(), "two and".len());
+
+    assert!(view.key(&mut ws, &ch("z"), Some("z"), koru_keys::PRIMARY));
+    assert_eq!(
+        body_rows(&view),
+        vec![
+            (Kind::Paragraph, "one".into()),
+            (Kind::Paragraph, "added meanwhile".into()),
+            (Kind::Paragraph, "two and".into()),
+        ],
+        "one undo removes the image and only the image"
+    );
+}
+
+/// Nobody moved: the image takes the caret, the way a paste that lands at
+/// once always has.
+#[test]
+fn an_untouched_caret_moves_onto_the_image_that_lands() {
+    let (mut ws, mut view) = laid_out();
+    let one = view.editor.body.rows[view.editor.body.first_body_row()].id;
+    caret_at_end(&mut view, one);
+    View::begin_image_import(&mut view, &ws, ImageTicket(4), &below(one));
+    View::finish_image_import(
+        &mut view,
+        &mut ws,
+        ImageTicket(4),
+        below(one),
+        &[png_block()],
+    );
+    let focused = view.editor.body.focused().expect("a caret");
+    assert_eq!(focused.kind, Kind::Image);
+}
+
+/// A failure takes the placeholder away and leaves the document as it was;
+/// the shell reports it (`image_import::failure_report`).
+#[test]
+fn a_failed_image_leaves_nothing_behind() {
+    let (ws, mut view) = laid_out();
+    let one = view.editor.body.rows[view.editor.body.first_body_row()].id;
+    let version = ws.version();
+    View::begin_image_import(&mut view, &ws, ImageTicket(2), &below(one));
+    view.reflow();
+    assert!(View::end_image_import(&mut view, ImageTicket(2)));
+    view.reflow();
+    assert!(view.editor.body.reserved().is_empty());
+    assert!(!View::animating(&view));
+    assert_eq!(ws.version(), version);
+    assert!(
+        !View::end_image_import(&mut view, ImageTicket(2)),
+        "a ticket this tab never drew is not its business"
+    );
 }

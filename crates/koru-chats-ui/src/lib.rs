@@ -3,17 +3,11 @@
 //! **The Chats surface** — every AI chat, newest first, with who answered it.
 //!
 //! A chat is kept (AGENTUX §1): it has a home of its own, revealed the way a
-//! document is. This crate is that home, and it is **one component with two
-//! hosts** (I5):
-//!
-//! - the workspace window's navigator, as the *Chats* view right of Tasks
-//!   (`Alt+4`), where a row opens the chat as a tab;
-//! - the standalone chat window, as the floating pane its *Chats* button
-//!   opens, where a row reads the chat in place.
-//!
-//! Both hosts get the same rows, the same keys and the same accessibility
-//! names, because both draw *this* — the old popover inside the chat is gone
-//! (R1), and a second list would be a second answer to drift.
+//! document is. This crate is that home (I5): the workspace window's
+//! navigator shows it as the *Chats* view right of Tasks (`Alt+4` while it
+//! sits fourth on the rail), where a row opens the chat as a tab. The old
+//! popover inside the chat is gone (R1), and a second list would be a second
+//! answer to drift.
 //!
 //! ## What a row says
 //!
@@ -21,6 +15,18 @@
 //! knows it by, the model for OpenAI and Ollama, the hosted model's label for
 //! Koru — and **when**, as a relative time in the person's language. A private
 //! chat wears the detective mark the chat's own header wears.
+//!
+//! ## The order
+//!
+//! **Pinned chats first**, under a *Pinned* heading, the oldest pin first;
+//! then the rest by their **last activity** — the newest message, the
+//! person's or the agent's — newest first ([`sort_for_list`], koru-ai D85).
+//! A chat moves when a message is sent in it and again when its reply
+//! arrives: the host says so ([`ChatsSurface::touch`]) and the next listing
+//! confirms it, because the service moves `updated_at` on both — and on
+//! nothing else: only messages are activity (the user's call, 2026-11-03).
+//! A rename, a pin, and a change of model, privacy, folder or tools leave
+//! the chat where it is.
 //!
 //! ## Three rules it is built under
 //!
@@ -48,13 +54,23 @@
 //! host's own confirmation. Deleting, once confirmed, is this crate's to do
 //! ([`delete`](ChatsSurface::delete)) so a refusal lands on the row it is about.
 //!
+//! **Renaming is the host's too.** Each host draws its own field over the
+//! row's text area ([`rename_rect`](ChatsSurface::rename_rect)) and renames
+//! through the chat surface's rename command, the one the chat's title row
+//! used — so a chat open in a tab or in the window takes its new name with
+//! the list. While it does, the host says which row
+//! ([`set_renaming`](ChatsSurface::set_renaming)) and that row stands aside:
+//! the field is the only box on it (koru-ai D89).
+//!
 //! [`refresh`]: ChatsSurface::refresh
 //! [`poll`]: ChatsSurface::poll
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use koru_ai_core::Chat;
+/// Re-exported so a host can hold a listed chat without a `koru-ai-core`
+/// dependency of its own.
+pub use koru_ai_core::Chat;
 use koru_ai_wire::{AgentProviderView, Failure};
 use koru_i18n::Lang;
 
@@ -63,13 +79,20 @@ mod gateway;
 mod input;
 mod reader;
 mod rows;
+pub mod seen;
+pub mod status;
 pub mod text;
 
 pub use draw::MODE_ICON;
 /// Re-exported so a host names the id a row carries without a
 /// `koru-ai-core` dependency of its own.
 pub use koru_ai_core::ChatId;
-pub use rows::{Notice, Row, RowParts};
+/// Re-exported so a host names whose chats these are
+/// ([`ChatsSurface::set_profile`]) without a `koru-ai-core` dependency.
+pub use koru_ai_core::ProfileId;
+pub use rows::{Notice, Row, RowButton, RowParts};
+pub use seen::{SeenBook, SeenMark};
+pub use status::ChatStatus;
 
 /// What the surface built, so a test can assert a count rather than a wall
 /// clock. Both are per call, reset at the start of each.
@@ -95,6 +118,9 @@ pub enum Press {
     Space,
     Delete,
     Escape,
+    /// The menu key, or `Shift+F10`: the keyboard row's menu — what a
+    /// right-click and the row's ⋯ open (D91).
+    Menu,
 }
 
 impl Press {
@@ -103,6 +129,7 @@ impl Press {
     pub fn of(key: &winit::keyboard::Key) -> Option<Self> {
         use winit::keyboard::{Key, NamedKey};
         match key {
+            Key::Named(NamedKey::ContextMenu) => Some(Self::Menu),
             Key::Named(NamedKey::ArrowUp) => Some(Self::Up),
             Key::Named(NamedKey::ArrowDown) => Some(Self::Down),
             Key::Named(NamedKey::Home) => Some(Self::Home),
@@ -114,6 +141,20 @@ impl Press {
             Key::Character(text) if text == " " => Some(Self::Space),
             _ => None,
         }
+    }
+
+    /// [`of`](Self::of), with the modifiers a chord needs: `Shift+F10` is
+    /// the menu key by another name, the platform's own convention. What
+    /// a host passes its keys through.
+    pub fn of_with(
+        key: &winit::keyboard::Key,
+        mods: winit::keyboard::ModifiersState,
+    ) -> Option<Self> {
+        use winit::keyboard::{Key, ModifiersState, NamedKey};
+        if matches!(key, Key::Named(NamedKey::F10)) && mods == ModifiersState::SHIFT {
+            return Some(Self::Menu);
+        }
+        Self::of(key)
     }
 }
 
@@ -141,11 +182,11 @@ pub struct Listing {
 }
 
 /// Where the keyboard is. An id rather than a row index, so a refresh that
-/// reorders the list does not move the keyboard to another chat.
+/// reorders the list does not move the keyboard to another chat. One
+/// variant since *New chat* left the list for the heading's button (the
+/// review's note); kept as an enum so a host's match reads the same.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Focus {
-    /// The *New chat* row at the head of the list.
-    New,
     Chat(ChatId),
 }
 
@@ -165,7 +206,8 @@ pub struct ChatsSurface {
     /// crate has none, the discipline `koru_i18n::time` keeps.
     pub(crate) now_ms: i64,
     pub(crate) load: Load,
-    /// Newest first, by `updated_at`.
+    /// In the list's order ([`sort_for_list`]): pinned first, then the
+    /// rest by `updated_at`, newest first.
     pub(crate) chats: Vec<Chat>,
     pub(crate) agents: Vec<AgentProviderView>,
     /// The chat the host has open. It wears the card, the way the document
@@ -184,13 +226,43 @@ pub struct ChatsSurface {
     pub(crate) reveal_owed: bool,
     pub(crate) wants_open: Option<ChatId>,
     pub(crate) wants_new: bool,
-    pub(crate) wants_delete: Option<ChatId>,
+    /// The chats a delete was asked for — one, or the selection.
+    pub(crate) wants_delete: Vec<ChatId>,
+    /// **The picked chats**, the library's multi-selection one column over
+    /// (the review's note): a plain press picks one, Ctrl toggles, Shift
+    /// extends from the anchor, and a right-click on a picked row raises
+    /// the menu about all of them. Kept as ids; read in list order.
+    pub(crate) selection: Vec<ChatId>,
+    pub(crate) anchor: Option<ChatId>,
     pub(crate) deleted: Vec<ChatId>,
     pub(crate) scroll: f32,
     pub(crate) work: Work,
     /// A refresh has been sent and not answered — the one reason a host keeps
     /// its wake clock running for this surface.
     pub(crate) in_flight: bool,
+    /// Each chat's status as the host last said (D83): working, needs you,
+    /// unread. A chat not in the map is idle. The host derives it
+    /// ([`ChatStatus::of`]); the list only draws and announces it.
+    pub(crate) statuses: HashMap<ChatId, ChatStatus>,
+    /// The person asked for less motion: a working chat's ring holds still.
+    pub(crate) reduced_motion: bool,
+    /// The row button under the pointer (D86), for its plate.
+    pub(crate) hover_button: Option<RowButton>,
+    /// A pin pressed: the chat, and whether it is now pinned. The row has
+    /// already moved; the host sends it.
+    pub(crate) wants_pin: Option<(ChatId, bool)>,
+    /// ⋯ pressed: the chats the host's menu is about and where it opens —
+    /// under the button.
+    pub(crate) wants_menu: Option<(Vec<ChatId>, (f32, f32))>,
+    /// The chat whose row the host is renaming, said by the host
+    /// ([`set_renaming`](Self::set_renaming)). That row gives itself up to
+    /// the host's field: no card, tint or ring, no title, no status mark, no
+    /// pin and no ⋯ — one box, the field's.
+    pub(crate) renaming: Option<ChatId>,
+    /// **The profile whose chats these are** (AI schema 13), as the host
+    /// says: the window's. Every listing asks for this profile's alone, and
+    /// a listing that names another is never shown.
+    pub(crate) profile: Option<ProfileId>,
     reader_link: Option<reader::Reader>,
     seq: u64,
 }
@@ -240,11 +312,20 @@ impl ChatsSurface {
             reveal_owed: false,
             wants_open: None,
             wants_new: false,
-            wants_delete: None,
+            wants_delete: Vec::new(),
+            selection: Vec::new(),
+            anchor: None,
             deleted: Vec::new(),
             scroll: 0.0,
             work: Work::default(),
             in_flight: false,
+            statuses: HashMap::new(),
+            reduced_motion: false,
+            hover_button: None,
+            wants_pin: None,
+            wants_menu: None,
+            renaming: None,
+            profile: None,
             reader_link: None,
             seq: 0,
         }
@@ -272,7 +353,7 @@ impl ChatsSurface {
         self.load
     }
 
-    /// Every chat, newest first.
+    /// Every chat, in the list's order: pinned, then newest first.
     pub fn chats(&self) -> &[Chat] {
         &self.chats
     }
@@ -308,6 +389,56 @@ impl ChatsSurface {
         self.current
     }
 
+    /// **Which chat's row the host is renaming** (koru-ai D89), `None` when
+    /// it is renaming none. The host says so on every frame it draws the
+    /// list, from the one field it holds, so the two cannot disagree. That
+    /// row then draws only a private chat's mark beside the field, and has
+    /// no buttons to hit. `true` when it changed.
+    pub fn set_renaming(&mut self, chat: Option<ChatId>) -> bool {
+        let changed = self.renaming != chat;
+        self.renaming = chat;
+        changed
+    }
+
+    pub fn renaming(&self) -> Option<ChatId> {
+        self.renaming
+    }
+
+    /// **Every chat's status, as the host derived it** (D83) — idle chats
+    /// left out. `true` when a row's mark changed and a repaint is owed.
+    pub fn set_statuses(&mut self, mut statuses: HashMap<ChatId, ChatStatus>) -> bool {
+        statuses.retain(|_, status| *status != ChatStatus::Idle);
+        if statuses == self.statuses {
+            return false;
+        }
+        self.statuses = statuses;
+        true
+    }
+
+    pub fn status(&self, chat: ChatId) -> ChatStatus {
+        self.statuses.get(&chat).copied().unwrap_or_default()
+    }
+
+    /// The person asked for less motion (the system setting): a working
+    /// chat's ring holds still and asks for no frames.
+    pub fn set_reduced_motion(&mut self, reduced: bool) -> bool {
+        let changed = self.reduced_motion != reduced;
+        self.reduced_motion = reduced;
+        changed
+    }
+
+    /// **Whether a row's ring is turning** — the one reason this list wants
+    /// frames, paced by the host at `status_mark::FRAME`. `false` for an idle
+    /// list, under reduced motion, and when no listed chat is working.
+    pub fn animating(&self) -> bool {
+        !self.reduced_motion
+            && self.chats.iter().any(|chat| {
+                self.statuses
+                    .get(&chat.id)
+                    .is_some_and(|status| status.animating(false))
+            })
+    }
+
     /// How far a delete of `chat` has got, if one was confirmed.
     pub fn deleting(&self, chat: ChatId) -> Option<&Deleting> {
         self.deleting.get(&chat)
@@ -318,10 +449,41 @@ impl ChatsSurface {
     /// Ask again. **The host calls this when the surface is shown and when a
     /// chat surface says a chat was created, renamed or deleted** — never on
     /// a timer. Harmless without a reader.
+    /// **Whose chats this is** (AI schema 13, koru-ai D120): the window's
+    /// profile. Switching it empties the list at once — no chat of the old
+    /// profile stays on screen, picked, hovered or asked about — and lists
+    /// again; the same profile again changes nothing.
+    pub fn set_profile(&mut self, profile: Option<ProfileId>) -> bool {
+        if self.profile == profile {
+            return false;
+        }
+        self.profile = profile;
+        self.chats.clear();
+        self.selection.clear();
+        self.anchor = None;
+        self.hover = None;
+        self.hover_button = None;
+        self.pending_reveal = None;
+        self.wants_open = None;
+        self.wants_delete.clear();
+        self.wants_pin = None;
+        self.wants_menu = None;
+        self.renaming = None;
+        self.scroll = 0.0;
+        self.load = Load::Cold;
+        self.refresh();
+        true
+    }
+
+    /// The profile whose chats this is, as the host last said.
+    pub fn profile(&self) -> Option<ProfileId> {
+        self.profile
+    }
+
     pub fn refresh(&mut self) {
         self.seq = self.seq.wrapping_add(1);
         if let Some(reader) = &self.reader_link
-            && reader.list(self.seq)
+            && reader.list(self.seq, self.profile)
         {
             self.in_flight = true;
             // A refresh over a list that is already showing does not blank
@@ -364,8 +526,15 @@ impl ChatsSurface {
     /// Accept a listing — the reader's seam, and the one every test drives.
     pub fn take_listing(&mut self, result: Result<Listing, Failure>) {
         match result {
-            Ok(listing) => {
+            Ok(mut listing) => {
                 self.agents = listing.agents;
+                // The service lists one profile's; a chat of another never
+                // shows here, whoever listed it.
+                if let Some(profile) = self.profile {
+                    listing
+                        .chats
+                        .retain(|chat| chat.profile_id.is_none_or(|theirs| theirs == profile));
+                }
                 self.replace_chats(listing.chats);
                 self.load = Load::Ready;
                 // A delete whose chat the service no longer lists is done,
@@ -415,13 +584,48 @@ impl ChatsSurface {
         }
     }
 
+    /// **A chat moved** (D85): a message was sent in it or its reply
+    /// arrived, at `at_ms`. It takes its new place now, without asking the
+    /// service again; the next listing is the authority. `true` when the
+    /// list changed.
+    pub fn touch(&mut self, chat: ChatId, at_ms: i64) -> bool {
+        let Some(found) = self.chats.iter_mut().find(|candidate| candidate.id == chat) else {
+            return false;
+        };
+        if found.updated_at.millis() >= at_ms {
+            return false;
+        }
+        found.updated_at = koru_ai_core::Timestamp::from_millis(at_ms);
+        let chats = std::mem::take(&mut self.chats);
+        self.replace_chats(chats);
+        true
+    }
+
+    /// **Pinned, or not, now** (D80, D85): the row moves into or out of the
+    /// Pinned group at once while the service is asked; its answer, and
+    /// the next listing, are the authority. A chat pinned again keeps its
+    /// first pin time, as the service keeps it. `true` when the list
+    /// changed.
+    pub fn set_pinned(&mut self, chat: ChatId, pinned: bool, at_ms: i64) -> bool {
+        let Some(found) = self.chats.iter_mut().find(|candidate| candidate.id == chat) else {
+            return false;
+        };
+        if found.pinned_at.is_some() == pinned {
+            return false;
+        }
+        found.pinned_at = pinned.then(|| koru_ai_core::Timestamp::from_millis(at_ms));
+        let chats = std::mem::take(&mut self.chats);
+        self.replace_chats(chats);
+        true
+    }
+
     /// Replace the rows, newest first, keeping the keyboard on the same chat
     /// — or, when that chat has gone, on **its neighbour**: the chat that took
-    /// its place, else the one above it, else *New chat*. A list that dropped
+    /// its place, else the one above it, else nowhere. A list that dropped
     /// the keyboard on a delete would send a keyboard-only person back to the
-    /// top of it.
+    /// top of it. The selection keeps what is still listed.
     fn replace_chats(&mut self, mut chats: Vec<Chat>) {
-        chats.sort_by(|a, b| b.updated_at.millis().cmp(&a.updated_at.millis()));
+        sort_for_list(&mut chats);
         if let Some(Focus::Chat(focused)) = self.focus
             && !chats.iter().any(|chat| chat.id == focused)
         {
@@ -430,11 +634,18 @@ impl ChatsSurface {
                 .iter()
                 .position(|chat| chat.id == focused)
                 .unwrap_or(0);
-            self.focus = Some(match chats.get(was.min(chats.len().saturating_sub(1))) {
-                Some(neighbour) => Focus::Chat(neighbour.id),
-                None => Focus::New,
-            });
+            self.focus = chats
+                .get(was.min(chats.len().saturating_sub(1)))
+                .map(|neighbour| Focus::Chat(neighbour.id));
             self.reveal_owed = true;
+        }
+        self.selection
+            .retain(|picked| chats.iter().any(|chat| chat.id == *picked));
+        if self
+            .anchor
+            .is_some_and(|anchor| !chats.iter().any(|chat| chat.id == anchor))
+        {
+            self.anchor = None;
         }
         self.chats = chats;
         // The rows moved under the pointer; an index into them means
@@ -462,15 +673,104 @@ impl ChatsSurface {
         self.wants_open.take()
     }
 
+    /// **A row's pin was pressed** (D86): the chat, and whether it is now
+    /// pinned. The row has moved already; the host sends the pin through a
+    /// chat surface (`ChatSurface::pin_chat`).
+    pub fn take_wants_pin(&mut self) -> Option<(ChatId, bool)> {
+        self.wants_pin.take()
+    }
+
+    /// **A row's ⋯ was pressed** (D86): the chats its menu is about — the
+    /// pick when the row is in it, else that chat — and where the menu
+    /// opens. The host opens the menu a right-click opens.
+    pub fn take_wants_menu(&mut self) -> Option<(Vec<ChatId>, (f32, f32))> {
+        self.wants_menu.take()
+    }
+
+    /// Pin or unpin `chat` — the row's pin, and an accessibility client's
+    /// *Pin chat*. The row moves at once.
+    pub fn ask_pin(&mut self, chat: ChatId, pinned: bool) {
+        if self.chats.iter().any(|candidate| candidate.id == chat) {
+            self.set_pinned(chat, pinned, self.now_ms);
+            self.wants_pin = Some((chat, pinned));
+        }
+    }
+
+    /// Ask for `chat`'s menu at `at` — the row's ⋯, the menu key, and an
+    /// accessibility client's *More*. About the pick when the chat is in it.
+    pub fn ask_menu(&mut self, chat: ChatId, at: (f32, f32)) {
+        if !self.chats.iter().any(|candidate| candidate.id == chat) {
+            return;
+        }
+        self.focus = Some(Focus::Chat(chat));
+        if !self.selection.contains(&chat) {
+            self.select_only(chat);
+        }
+        self.wants_menu = Some((self.selected(), at));
+    }
+
+    /// Whether `chat` is pinned, as the list has it.
+    pub fn is_pinned(&self, chat: ChatId) -> bool {
+        self.chats
+            .iter()
+            .any(|candidate| candidate.id == chat && candidate.pinned_at.is_some())
+    }
+
     /// *New chat* was chosen.
     pub fn take_wants_new(&mut self) -> bool {
         std::mem::take(&mut self.wants_new)
     }
 
-    /// A chat the person asked to delete. **Nothing is deleted yet**: the host
-    /// asks in its own confirmation and calls [`delete`](Self::delete) on yes.
-    pub fn take_wants_delete(&mut self) -> Option<ChatId> {
-        self.wants_delete.take()
+    /// The chats the person asked to delete — one, or the selection; empty
+    /// most of the time. **Nothing is deleted yet**: the host asks in its own
+    /// confirmation and calls [`delete`](Self::delete) for each on yes.
+    pub fn take_wants_delete(&mut self) -> Vec<ChatId> {
+        std::mem::take(&mut self.wants_delete)
+    }
+
+    /// The picked chats, in list order.
+    pub fn selected(&self) -> Vec<ChatId> {
+        self.chats
+            .iter()
+            .map(|chat| chat.id)
+            .filter(|chat| self.selection.contains(chat))
+            .collect()
+    }
+
+    pub fn is_selected(&self, chat: ChatId) -> bool {
+        self.selection.contains(&chat)
+    }
+
+    /// Pick `chat` alone, and anchor a later Shift there.
+    pub fn select_only(&mut self, chat: ChatId) {
+        if self.chats.iter().any(|candidate| candidate.id == chat) {
+            self.selection = vec![chat];
+            self.anchor = Some(chat);
+            self.focus = Some(Focus::Chat(chat));
+        }
+    }
+
+    /// Ctrl+click: in or out of the pick, and the anchor moves here.
+    pub(crate) fn toggle_selected(&mut self, chat: ChatId) {
+        if let Some(at) = self.selection.iter().position(|picked| *picked == chat) {
+            self.selection.remove(at);
+        } else {
+            self.selection.push(chat);
+        }
+        self.anchor = Some(chat);
+        self.focus = Some(Focus::Chat(chat));
+    }
+
+    /// Shift+click: every chat between the anchor and `chat`, in list order.
+    pub(crate) fn select_through(&mut self, chat: ChatId) {
+        let index = |id: ChatId| self.chats.iter().position(|candidate| candidate.id == id);
+        let (Some(to), Some(from)) = (index(chat), self.anchor.and_then(index)) else {
+            self.select_only(chat);
+            return;
+        };
+        let (first, last) = if from <= to { (from, to) } else { (to, from) };
+        self.selection = self.chats[first..=last].iter().map(|c| c.id).collect();
+        self.focus = Some(Focus::Chat(chat));
     }
 
     /// Chats this surface deleted since the last call, so a host can close
@@ -488,17 +788,36 @@ impl ChatsSurface {
         }
     }
 
-    /// Ask to delete `chat` — the Delete key, the context menu and an
-    /// accessibility client's *Delete chat*.
+    /// Ask to delete `chat` alone — an accessibility client's *Delete chat*.
     pub fn ask_delete(&mut self, chat: ChatId) {
         if self.chats.iter().any(|candidate| candidate.id == chat) {
             self.focus = Some(Focus::Chat(chat));
-            self.wants_delete = Some(chat);
+            self.wants_delete = vec![chat];
         }
     }
 
+    /// Ask to delete what is picked — the Delete key and the context menu:
+    /// the selection when the chat under the keyboard is in it, else that
+    /// chat alone. `false` with nothing to delete.
+    pub fn ask_delete_selected(&mut self) -> bool {
+        let Some(Focus::Chat(focused)) = self.focus else {
+            return false;
+        };
+        let chats = if self.selection.contains(&focused) {
+            self.selected()
+        } else {
+            vec![focused]
+        };
+        if chats.is_empty() {
+            return false;
+        }
+        self.wants_delete = chats;
+        true
+    }
+
+    /// *New chat* was asked for — by the host's heading button, or an
+    /// accessibility client. The keyboard stays where it is.
     pub fn ask_new(&mut self) {
-        self.focus = Some(Focus::New);
         self.wants_new = true;
     }
 
@@ -540,13 +859,56 @@ impl ChatsSurface {
     /// is private, when it is.
     pub fn accessible_name(&self, chat: ChatId) -> Option<String> {
         let found = self.chats.iter().find(|candidate| candidate.id == chat)?;
-        Some(text::accessible_name(
-            self.lang,
-            found,
-            &self.agents,
-            self.now_ms,
-        ))
+        let name = text::accessible_name(self.lang, found, &self.agents, self.now_ms);
+        // What the row's mark says, said after its name (D83).
+        Some(match self.status(chat).spoken(self.lang) {
+            Some(status) => format!("{name}, {status}"),
+            None => name,
+        })
     }
+}
+
+/// **A step through the Chats list** (koru-ai D87): `Ctrl+Shift+↑` and
+/// `Ctrl+Shift+↓` in a chat.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum ChatStep {
+    Previous,
+    Next,
+}
+
+impl ChatStep {
+    /// The chat a step from `current` lands on in `chats`, which are in the
+    /// list's order ([`sort_for_list`]). `None` at either end — a step does
+    /// not wrap — and for a chat the list does not hold.
+    pub fn from(self, chats: &[Chat], current: ChatId) -> Option<ChatId> {
+        let at = chats.iter().position(|chat| chat.id == current)?;
+        let to = match self {
+            Self::Previous => at.checked_sub(1)?,
+            Self::Next => at + 1,
+        };
+        chats.get(to).map(|chat| chat.id)
+    }
+}
+
+/// **The list's order** (D85), one function for every host and for the
+/// keys that step through it: the pinned chats first, the oldest pin
+/// first (D80), then the rest by their last activity — the newest message,
+/// the person's or the agent's — newest first. Only messages are
+/// activity: not a pin, a rename, or a change of the chat's settings.
+pub fn sort_for_list(chats: &mut [Chat]) {
+    chats.sort_by(|a, b| match (a.pinned_at, b.pinned_at) {
+        (Some(a_pin), Some(b_pin)) => a_pin
+            .millis()
+            .cmp(&b_pin.millis())
+            .then_with(|| a.id.cmp(&b.id)),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => b
+            .updated_at
+            .millis()
+            .cmp(&a.updated_at.millis())
+            .then_with(|| a.id.cmp(&b.id)),
+    });
 }
 
 #[cfg(test)]

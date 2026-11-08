@@ -1,0 +1,88 @@
+{
+  "data": [
+    {
+      "cwd": "<cwd>",
+      "errors": [
+        {
+          "path": "/fixture/repo/skills/broken/SKILL.md",
+          "message": "missing frontmatter"
+        }
+      ],
+      "skills": [
+        {
+          "name": "review-pr",
+          "description": "Review the open pull request against the repository's rules.\nRead the diff first.",
+          "path": "/fixture/repo/skills/review-pr/SKILL.md",
+          "scope": "repo",
+          "enabled": true,
+          "pluginId": null
+        },
+        {
+          "name": "release-notes",
+          "description": "Draft release notes from the merged changes.",
+          "shortDescription": "Draft release notes",
+          "interface": {
+            "displayName": "Release Notes",
+            "shortDescription": "Write the notes for a release",
+            "defaultPrompt": null,
+            "brandColor": null,
+            "iconSmall": null,
+            "iconLarge": null,
+            "iconSmallUrl": null,
+            "iconLargeUrl": null
+          },
+          "path": "/fixture/home/skills/release-notes/SKILL.md",
+          "scope": "user",
+          "enabled": true,
+          "pluginId": null
+        },
+        {
+          "name": "review-pr",
+          "description": "The person's own review skill, shadowed by the folder's.",
+          "path": "/fixture/home/skills/review-pr/SKILL.md",
+          "scope": "user",
+          "enabled": true,
+          "pluginId": null
+        },
+        {
+          "name": "turned-off",
+          "description": "A skill the person disabled.",
+          "path": "/fixture/home/skills/turned-off/SKILL.md",
+          "scope": "user",
+          "enabled": false,
+          "pluginId": null
+        },
+        {
+          "name": "docs:docs",
+          "description": "Create and edit documents.",
+          "interface": {
+            "displayName": "Docs"
+          },
+          "path": "/fixture/plugins/docs/skills/docs/SKILL.md",
+          "scope": "user",
+          "enabled": true,
+          "pluginId": "docs@fixture"
+        },
+        {
+          "name": "skill-creator",
+          "description": "Create or update a skill.",
+          "interface": {
+            "displayName": "Skill Creator"
+          },
+          "path": "/fixture/system/skills/skill-creator/SKILL.md",
+          "scope": "system",
+          "enabled": true,
+          "pluginId": null
+        },
+        {
+          "name": "org-policy",
+          "description": "",
+          "path": "/fixture/admin/skills/org-policy/SKILL.md",
+          "scope": "admin",
+          "enabled": true,
+          "pluginId": null
+        }
+      ]
+    }
+  ]
+}

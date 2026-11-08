@@ -41,6 +41,9 @@ use std::{fmt, path::Path, time::Duration};
 
 use rusqlite::Connection;
 
+mod memory;
+pub use memory::{MemoryName, is_memory_only, open_memory};
+
 /// One forward step. `sql` runs inside a transaction; if it fails, the
 /// version does not move and nothing is left half-applied.
 pub struct Migration {

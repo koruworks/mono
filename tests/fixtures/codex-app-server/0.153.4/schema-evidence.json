@@ -32,5 +32,11 @@
     "hook/completed",
     "account/rateLimits/updated",
     "remoteControl/status/changed"
-  ]
+  ],
+  "skill_client_methods": ["skills/list"],
+  "skill_server_notifications": ["skills/changed"],
+  "skill_input_items": ["skill"],
+  "recording_provenance": {
+    "skills": "Read from the rust-v0.153.4 tag of github.com/openai/codex on 2026-11-03: codex-rs/app-server-protocol/src/protocol/common.rs lists SkillsList => \"skills/list\" (params SkillsListParams {cwds, forceReload}) and SkillsChanged => \"skills/changed\", neither behind #[experimental]; protocol/v2/turn.rs's UserInput has Skill {name, path}; protocol/v2/plugin.rs's SkillMetadata has name, description, shortDescription, interface {displayName, shortDescription, ...}, path, scope (user|repo|system|admin), enabled and pluginId. The same in all eight supported versions, so the feature has no version gate (koru-ai D121)."
+  }
 }

@@ -96,6 +96,7 @@ pub struct SettingsView {
     dictionary_version: u64,
     /// `spelling::overlay_version` when the dictionary count was last read.
     overlay_version: u64,
+    app_menu_read: Option<std::sync::mpsc::Receiver<crate::app_menu::Outcome>>,
 }
 
 impl Default for SettingsView {
@@ -127,8 +128,10 @@ impl SettingsView {
         surface.set_lang(crate::format::lang());
         surface.set_renderer(renderer_row());
         surface.set_ai_slot(ai_slot());
+        // Koru has panes: *Document fonts* may open its sample beside this tab.
+        surface.offer_sample_document(true);
         surface.set_telemetry_consent(koru_workspace_host::telemetry_consent::current().toggle());
-        surface.set_app_menu_entry(app_menu_reading());
+
         // Read the record again as the page opens: another window may have
         // answered since this process last looked, or the Gateway may not have
         // been answering then. Off the event loop; the maintenance pass pushes
@@ -144,6 +147,7 @@ impl SettingsView {
             wants_voice_devices: false,
             dictionary_version: 0,
             overlay_version: 0,
+            app_menu_read: koru_autostart::app_menu::SUPPORTED.then(crate::app_menu::read),
         };
         // **The world, asked once.** The kill switch and a walk of the model
         // cache — neither may happen on a frame, and neither may happen under
@@ -175,10 +179,49 @@ impl SettingsView {
         self.surface.scroll_to_voice()
     }
 
+    /// The coding agents *Agent providers* lists. Answers whether one moved.
+    pub fn set_agent_providers(&mut self, rows: Vec<koru_settings_ui::AgentProviderRow>) -> bool {
+        self.surface.set_agent_providers(rows)
+    }
+
+    /// Where a new chat starts, as *Agent providers* shows it. Answers
+    /// whether it moved.
+    pub fn set_agent_defaults(&mut self, defaults: koru_settings_ui::AgentDefaults) -> bool {
+        self.surface.set_agent_defaults(defaults)
+    }
+
+    /// The defaults as the page holds them.
+    #[cfg(test)]
+    pub fn agent_defaults(&self) -> &koru_settings_ui::AgentDefaults {
+        self.surface.agent_defaults()
+    }
+
+    /// The page showing.
+    #[cfg(test)]
+    pub fn page(&self) -> koru_settings_ui::PageId {
+        self.surface.page()
+    }
+
+    /// The rows as the page holds them.
+    #[cfg(test)]
+    pub fn agent_providers(&self) -> &[koru_settings_ui::AgentProviderRow] {
+        self.surface.agent_providers()
+    }
+
+    /// Show one page from its top — a document's *Global settings* link
+    /// lands on Editor.
+    pub fn show_page(&mut self, page: koru_settings_ui::PageId) -> bool {
+        self.surface.show_page(page)
+    }
+
     /// The keyboard into the search box, its query selected — where `Ctrl+,`
     /// lands.
     pub fn focus_search(&mut self) {
         self.surface.focus_search();
+    }
+
+    pub(crate) fn dismiss_menu(&mut self) {
+        self.surface.dismiss_menu();
     }
 
     /// Whether the search box has the keyboard — what the container's test
@@ -256,6 +299,8 @@ impl SettingsView {
 
     /// Whether Koru's app-menu entry is there, as the host just read it.
     pub fn set_app_menu_entry(&mut self, added: Option<bool>) -> bool {
+        // An initial read queued before this change must not overwrite it.
+        self.app_menu_read = None;
         self.surface.set_app_menu_entry(added)
     }
 
@@ -390,6 +435,14 @@ impl SettingsView {
             self.refresh_voice();
         }
         true
+    }
+
+    /// **Read `renderer.conf` again** after the host wrote a pick, so the row
+    /// shows what is stored rather than what was pressed: a write that failed
+    /// leaves the old backend showing, which is the truth. One small file,
+    /// read once per pick — the same moment the write already happens.
+    pub(crate) fn refresh_renderer(&mut self) {
+        self.surface.set_renderer(renderer_row());
     }
 
     /// The host cycled the canvas colour and hands back what it landed on.
@@ -550,6 +603,7 @@ impl View for SettingsView {
     fn restore(&mut self, _ws: &Workspace, settings: &Settings) {
         self.adopt_preferences(settings);
         theme::set_caret_color(settings.caret_color);
+        koru_draw::icons::set_icon_pack_setting(settings.icon_pack);
         theme::set_caret_width(settings.caret_width);
         theme::set_caret_height(settings.caret_height);
     }
@@ -573,12 +627,21 @@ impl View for SettingsView {
         settings.pinned_show_title = self.surface.pinned_show_title();
         settings.canvas_bg = self.surface.canvas_background();
         settings.caret_color = theme::caret_color();
+        settings.icon_pack = koru_draw::icons::chosen_pack();
         settings.caret_width = theme::caret_width();
         settings.caret_height = theme::caret_height();
     }
 
     fn maintenance_deadline(&self) -> Option<std::time::Instant> {
-        self.surface.maintenance_deadline()
+        [
+            self.surface.maintenance_deadline(),
+            self.app_menu_read
+                .as_ref()
+                .map(|_| std::time::Instant::now() + std::time::Duration::from_millis(50)),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
     }
 
     fn maintain(&mut self, _ws: &mut WorkspaceDoc, _now: std::time::Instant) -> bool {
@@ -594,11 +657,20 @@ impl View for SettingsView {
         }
         // The Terminal section's link, and the liveness the read-only state
         // reads off it. Never blocks: a `try_recv` and a clock comparison.
+        let app_menu = self
+            .app_menu_read
+            .as_ref()
+            .and_then(|reply| match reply.try_recv() {
+                Ok(outcome) => Some(outcome.added),
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(None),
+                Err(std::sync::mpsc::TryRecvError::Empty) => None,
+            });
+        let app_menu_changed = app_menu.is_some_and(|added| self.set_app_menu_entry(added));
         let polled = self.surface.poll();
         // What this page shows is what open terminals should draw — a press
         // here reaches them now, not after the authority's round trip.
         crate::terminal_prefs::adopt(self.surface.terminal());
-        polled || downloaded
+        polled || downloaded || app_menu_changed
     }
 
     fn dictation_refused(&mut self, refusal: koru_dictation::Refusal) -> bool {
@@ -870,11 +942,4 @@ fn sections() -> Sections {
         reminders: koru_features::reminders(),
         ..Sections::koru()
     }
-}
-
-/// *Show Koru in the app menu*'s reading: the file's answer on Linux, and no
-/// row anywhere else. Never under test, which must not read the person's
-/// `~/.local/share`.
-pub(crate) fn app_menu_reading() -> Option<bool> {
-    (koru_autostart::app_menu::SUPPORTED && !cfg!(test)).then(koru_autostart::app_menu::is_added)
 }

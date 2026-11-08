@@ -7,6 +7,27 @@ license files at the exact revisions we build, and the shipped binaries of the
 the people whose work it contains. Open items are marked **⚑** and collected
 at the end, and settled ones are marked ✅.
 
+## Compiled icon artwork (2026-10-30)
+
+Desktop icon paths are generated from the pinned Phosphor 2.1.2 fonts (MIT),
+`@tabler/icons` 3.31.0 (MIT), `lucide-static` 0.477.0 (ISC, with Feather portions
+under MIT), and `remixicon` 4.6.0 (Apache-2.0). Remix is pinned to this release's
+Apache license; later releases changed licensing. SVG archives are
+checksum-pinned in `third-party/fetch.manifest` and fetched, not committed.
+Every catalog retains the full notices in its generated Rust header, along with
+the statement that Koru converts the artwork into compiled vector paths.
+`icons-tabler.txt`, `icons-lucide.txt`, `icons-remix.txt` and `font-phosphor.txt`
+in the release's bundled licenses carry their versions and platform applicability.
+All are kept because the packs are selectable at runtime and Lucide uses Tabler brand
+fallbacks. Lucide's pinned license identifies Cole Bemis's 2013-2022 Feather
+portions; the full MIT terms are included alongside its ISC text.
+
+The document ICO and chat sparkle overlays are generated from that same
+catalog. Original Koru Tux and Return-key centerlines are MPL-2.0; existing
+provider logos and the product logo retain their separate terms. Ordinary
+builds do not read the archives or require the legacy icon font. See the
+[icon contributor guide](../guide/contributing/ICONS.md).
+
 ## Summary
 
 - **Every package now carries its notices.** `LICENSE`, `NOTICE` and a
@@ -24,7 +45,8 @@ at the end, and settled ones are marked ✅.
 ## Rust crates
 
 The shipped binaries reach **647 third-party crates** on Windows, 656 on macOS
-(Apple silicon; 658 on Intel) and 496 in the iOS app, through normal
+(Apple silicon; 658 for an Intel build from source, which is not released)
+and 496 in the iOS app, through normal
 dependencies (2026-10-14). Proc-macros are excluded because they run in the
 compiler and none of their code is in a binary. No crate comes from git; all
 come from crates.io, `onenote_parser`, `sherpa-onnx`, `sherpa-onnx-sys` and
@@ -107,7 +129,7 @@ static and TTS-free, for every platform, so Koru links those and builds nothing:
 | --- | --- | --- |
 | Windows x64 | `sherpa-onnx-v1.13.6-win-x64-static-MT-Release-no-tts-lib.tar.bz2` | `6c746e0f…` |
 | macOS arm64 | `sherpa-onnx-v1.13.6-osx-arm64-static-no-tts-lib.tar.bz2` | `5df455ff…` |
-| macOS x64 | `sherpa-onnx-v1.13.6-osx-x64-static-no-tts-lib.tar.bz2` | `adcc1de3…` |
+| macOS x64 (source builds only; releases are Apple silicon) | `sherpa-onnx-v1.13.6-osx-x64-static-no-tts-lib.tar.bz2` | `adcc1de3…` |
 
 - **What is in them.** None has `espeak-ng`, `ucd` or `piper_phonemize`, and
   none contains eSpeak NG's code: a byte search of every library for its API

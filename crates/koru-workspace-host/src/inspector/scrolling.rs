@@ -9,6 +9,8 @@ use koru_ui::scrollbar::ScrollbarGeom;
 #[derive(Default)]
 pub(super) struct DetailsCache {
     lines: Vec<String>,
+    selected: Option<usize>,
+    hits: Vec<(Rect, super::details::Hit)>,
     width: f32,
     stack: &'static str,
     color: Option<vello::peniko::Color>,
@@ -71,36 +73,44 @@ impl Inspector {
         }
     }
 
+    /// The Details link under the pointer: an ancestor, or the notes' fold.
+    pub(super) fn details_hit(&self) -> Option<super::details::Hit> {
+        let area = self.control_rect(5);
+        if !area.contains(self.pointer.0, self.pointer.1) {
+            return None;
+        }
+        let (x, y) = (
+            self.pointer.0 - area.x,
+            self.pointer.1 - area.y + self.scroll as f32,
+        );
+        self.details_cache
+            .hits
+            .iter()
+            .find(|(r, _)| r.contains(x, y))
+            .map(|(_, hit)| *hit)
+    }
+
     pub(super) fn draw_details(&mut self, canvas: &mut Scene, root: Affine) {
         let area = self.control_rect(5);
         let width = (area.w - theme::SCROLLBAR_GUTTER_W).max(1.0);
         let color = theme::p().text;
         let cache = &mut self.details_cache;
         if cache.lines != self.lines
+            || cache.selected != self.selected
             || cache.width != width
             || cache.color != Some(color)
             || cache.stack != diagnostic_stack()
         {
-            cache.scene.reset();
-            let layout = self
-                .engine
-                .get_or_insert_with(TextEngine::new)
-                .simple_layout_wrapped_in(
-                    &self.lines.join("\n\n"),
-                    diagnostic_style(),
-                    diagnostic_stack(),
-                    width,
-                );
-            cache.height = layout.height();
-            scene::draw_layout(
-                &mut cache.scene,
-                Affine::IDENTITY,
-                &layout,
-                0.0,
-                0.0,
-                Some(color),
+            let laid = super::details::lay_out(
+                self.engine.get_or_insert_with(TextEngine::new),
+                &self.details_lines,
+                width,
             );
+            cache.scene = laid.scene;
+            cache.height = laid.height;
+            cache.hits = laid.hits;
             cache.lines.clone_from(&self.lines);
+            cache.selected = self.selected;
             cache.width = width;
             cache.color = Some(color);
             cache.stack = diagnostic_stack();

@@ -14,7 +14,7 @@ use koru_draw::scene::{draw_layout, fill, rrect, stroke};
 use koru_draw::text::TextEngine;
 use koru_draw::theme::{self, Brush};
 
-use crate::Styles;
+use crate::{LinkHit, LinkSpan, Styles};
 
 pub const CELL_PAD_X: f32 = 10.0;
 pub const CELL_PAD_Y: f32 = 7.0;
@@ -30,6 +30,9 @@ pub struct TableGrid {
     pub parsed: ParsedTable,
     pub columns: Vec<f32>,
     pub rows: Vec<Vec<Layout<Brush>>>,
+    /// Each cell's links, beside [`rows`](Self::rows): ranges in that cell's
+    /// laid-out text, which is the cell's [`TableCell::text`].
+    pub links: Vec<Vec<Vec<LinkSpan>>>,
     pub row_heights: Vec<f32>,
     pub width: f32,
     pub viewport_width: f32,
@@ -45,6 +48,18 @@ pub fn layout(
 ) -> Result<TableGrid, Vec<SyntaxError>> {
     let parsed = parse(source)?;
     let count = parsed.columns().max(1);
+    let links = std::iter::once(&parsed.header)
+        .chain(parsed.rows.iter())
+        .map(|row| {
+            (0..count)
+                .map(|column| {
+                    row.get(column)
+                        .map(|cell| cell_links(cell, styles))
+                        .unwrap_or_default()
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
     let mut preferred = vec![MIN_COLUMN_W; count];
     for (row_index, row) in std::iter::once(&parsed.header)
         .chain(parsed.rows.iter())
@@ -54,6 +69,7 @@ pub fn layout(
             let laid = layout_cell(
                 engine,
                 cell,
+                &links[row_index][column],
                 styles,
                 row_index == 0,
                 None,
@@ -86,6 +102,7 @@ pub fn layout(
             let laid = layout_cell(
                 engine,
                 &row[column],
+                &links[row_index][column],
                 styles,
                 row_index == 0,
                 Some((columns[column] - CELL_PAD_X * 2.0).max(20.0)),
@@ -102,6 +119,7 @@ pub fn layout(
         parsed,
         columns,
         rows,
+        links,
         row_heights,
         width,
         viewport_width,
@@ -109,9 +127,46 @@ pub fn layout(
     })
 }
 
+/// A cell's links: each `[…](…)` and `<…>` as one span however many marks
+/// it crosses, and — when the surface asked ([`Styles::with_bare_links`]) —
+/// each address written out bare outside them and outside code.
+fn cell_links(cell: &TableCell, styles: &Styles) -> Vec<LinkSpan> {
+    let mut links: Vec<LinkSpan> = Vec::new();
+    for span in &cell.spans {
+        let Some(url) = &span.link else {
+            continue;
+        };
+        match links.last_mut() {
+            Some(last) if last.url == *url && last.range.end == span.range.start => {
+                last.range.end = span.range.end;
+            }
+            _ => links.push(LinkSpan {
+                range: span.range.clone(),
+                url: url.clone(),
+            }),
+        }
+    }
+    if styles.bare_links {
+        let taken = links
+            .iter()
+            .map(|link| link.range.clone())
+            .chain(
+                cell.spans
+                    .iter()
+                    .filter(|span| span.marks.has(Mark::Code))
+                    .map(|span| span.range.clone()),
+            )
+            .collect::<Vec<_>>();
+        links.extend(crate::bare_links(&cell.text, &taken));
+        links.sort_by_key(|link| link.range.start);
+    }
+    links
+}
+
 fn layout_cell(
     engine: &mut TextEngine,
     cell: &TableCell,
+    links: &[LinkSpan],
     styles: &Styles,
     header: bool,
     width: Option<f32>,
@@ -153,14 +208,15 @@ fn layout_cell(
                 range.clone(),
             );
         }
-        if span.link.is_some() {
-            builder.push(StyleProperty::Underline(true), range.clone());
-            builder.push(
-                StyleProperty::UnderlineBrush(Some(Brush(theme::p().accent))),
-                range.clone(),
-            );
-            builder.push(StyleProperty::Brush(Brush(theme::p().accent)), range);
-        }
+    }
+    for link in links {
+        let range = link.range.clone();
+        builder.push(StyleProperty::Underline(true), range.clone());
+        builder.push(
+            StyleProperty::UnderlineBrush(Some(Brush(theme::p().accent))),
+            range.clone(),
+        );
+        builder.push(StyleProperty::Brush(Brush(theme::p().accent)), range);
     }
     let mut layout = builder.build(&cell.text);
     layout.break_all_lines(width);
@@ -209,6 +265,30 @@ pub fn cell_at(
         hit.then_some(index)
     })?;
     Some((row, column))
+}
+
+/// **The link under `(x, y)` in a table**, measured from where the grid's
+/// first cell is drawn (a caller that scrolls the grid sideways adds its
+/// scroll to `x`). Answered by the same [`crate::link_at`] a paragraph's
+/// text is, inside the cell's text, so a link in a cell is found, lit and
+/// followed exactly as one in a sentence.
+pub fn link_at(grid: &TableGrid, x: f32, y: f32) -> Option<LinkHit<'_>> {
+    let (row, column) = cell_at(grid, (0.0, 0.0), x, y, 0.0)?;
+    let cell = if row == 0 {
+        grid.parsed.header.get(column)?
+    } else {
+        grid.parsed.rows.get(row - 1)?.get(column)?
+    };
+    let layout = grid.rows.get(row)?.get(column)?;
+    let links = grid.links.get(row)?.get(column)?;
+    let left = grid.columns[..column].iter().sum::<f32>() + CELL_PAD_X;
+    let top = grid.row_heights[..row].iter().sum::<f32>() + CELL_PAD_Y;
+    let hit = crate::link_at(&cell.text, layout, links, x - left, y - top)?;
+    Some(LinkHit {
+        origin: (left, top),
+        cell: Some((row, column)),
+        ..hit
+    })
 }
 
 pub trait CellOverlay {
@@ -283,6 +363,7 @@ pub fn draw_grid(
 mod tests {
     use super::*;
     use parley::layout::PositionedLayoutItem;
+    use std::ops::Range;
 
     fn first_glyph_x(layout: &Layout<Brush>) -> f32 {
         layout
@@ -304,6 +385,68 @@ mod tests {
                 _ => None,
             })
             .unwrap()
+    }
+
+    /// The middle of the first line of `range` in `grid`'s cell, in the
+    /// grid's space.
+    fn point_in(grid: &TableGrid, row: usize, column: usize, range: Range<usize>) -> (f32, f32) {
+        use parley::editing::{Cursor, Selection};
+        use parley::layout::Affinity;
+        let layout = &grid.rows[row][column];
+        let selection = Selection::new(
+            Cursor::from_byte_index(layout, range.start, Affinity::Downstream),
+            Cursor::from_byte_index(layout, range.end, Affinity::Upstream),
+        );
+        let mut first = None;
+        selection.geometry_with(layout, |bb, _| {
+            first.get_or_insert(bb);
+        });
+        let bb = first.expect("the range is drawn");
+        let left = grid.columns[..column].iter().sum::<f32>() + CELL_PAD_X;
+        let top = grid.row_heights[..row].iter().sum::<f32>() + CELL_PAD_Y;
+        (
+            left + ((bb.x0 + bb.x1) / 2.0) as f32,
+            top + ((bb.y0 + bb.y1) / 2.0) as f32,
+        )
+    }
+
+    /// **A link in a table's cell is a link** (koru-ai D95): found under the
+    /// pointer with its address, its title and its cell — in the header and
+    /// in the body, inside bold, and written bare when the surface asks.
+    #[test]
+    fn a_link_in_any_cell_is_found_under_the_pointer() {
+        let source = "| [Guide](https://koru.test/h) | Video |\n| --- | --- |\n| Intro | [**Walk**through](https://youtu.test/1) |\n| Bare | see https://koru.test/b. |";
+        let mut engine = TextEngine::new();
+        let styles = Styles::ui().with_bare_links();
+        let grid = layout(&mut engine, source, 600.0, Sizing::Fit, &styles).unwrap();
+
+        let walk = grid.links[1][1].clone();
+        assert_eq!(walk.len(), 1, "one link however many marks it crosses");
+        let (x, y) = point_in(&grid, 1, 1, walk[0].range.clone());
+        let hit = link_at(&grid, x, y).expect("the body cell's link");
+        assert_eq!(hit.url, "https://youtu.test/1");
+        assert_eq!(hit.title, "Walkthrough");
+        assert_eq!(hit.cell, Some((1, 1)));
+
+        let head = grid.links[0][0][0].range.clone();
+        let (x, y) = point_in(&grid, 0, 0, head);
+        assert_eq!(link_at(&grid, x, y).unwrap().url, "https://koru.test/h");
+
+        let bare = grid.links[2][1][0].range.clone();
+        let (x, y) = point_in(&grid, 2, 1, bare);
+        let hit = link_at(&grid, x, y).unwrap();
+        assert_eq!(
+            (hit.url, hit.title),
+            ("https://koru.test/b", "https://koru.test/b")
+        );
+
+        // Plain text in a cell, and the space between cells, is no link.
+        let (x, y) = point_in(&grid, 1, 0, 0..5);
+        assert!(link_at(&grid, x, y).is_none());
+        assert!(link_at(&grid, -4.0, 4.0).is_none());
+        // Without asking, a bare address stays text.
+        let plain = layout(&mut engine, source, 600.0, Sizing::Fit, &Styles::ui()).unwrap();
+        assert!(plain.links[2][1].is_empty());
     }
 
     #[test]

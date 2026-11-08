@@ -31,7 +31,6 @@ runtime: crates/koru-channel/src/tint.rs. The TINTS table below and tint_of()
 there must stay in step, or the tray disagrees with the window.
 """
 import colorsys
-import subprocess
 import sys
 from pathlib import Path
 
@@ -98,15 +97,6 @@ def main() -> int:
     save_ico(rgba, ICO)
     for segment, tint in TINTS.items():
         save_ico(tinted(rgba, tint), ICO.parent / f"koru-{segment}.ico")
-
-    # The standalone AI window is deliberately the same mark with a sparkle
-    # badge. Keep its five channel variants in step whenever the brand master
-    # changes rather than relying on a second manual command nobody will
-    # remember during a release.
-    subprocess.run(
-        [sys.executable, str(ROOT / "scripts" / "icons" / "make-ai-chat-icon.py")],
-        check=True,
-    )
 
     print(
         "ico     koru.ico + "

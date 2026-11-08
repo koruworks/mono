@@ -9,3 +9,12 @@ description = "Shared raw terminal-session launch profiles and executable presen
 
 [dependencies]
 koru-session-protocol = { path = "../koru-session-protocol" }
+
+# The registry binding the search path reads the current user and machine
+# `Path` through (`search_path.rs`): a long-lived process's inherited `PATH`
+# misses anything installed after it started.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_System_Registry",
+] }

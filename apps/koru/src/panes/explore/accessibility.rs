@@ -71,28 +71,36 @@ pub(crate) mod parts {
     /// The column itself.
     pub const COLUMN: ControlPart = ControlPart::new("column");
     /// The header's two halves.
-    pub const PROFILE: ControlPart = ControlPart::new("profile");
-    pub const WORKSPACE: ControlPart = ControlPart::new("workspace");
     /// The strip of projection buttons.
     pub const MODES: ControlPart = ControlPart::new("modes");
+    /// The heading band's title: the app's name.
+    pub const HEADING: ControlPart = ControlPart::new("heading");
     /// The library heading's `…` and magnifier.
     pub const ACTIONS: ControlPart = ControlPart::new("actions");
-    pub const SEARCH: ControlPart = ControlPart::new("search");
     /// The tree of rows, and what stands in its place when there are none.
     pub const TREE: ControlPart = ControlPart::new("tree");
     pub const EMPTY: ControlPart = ControlPart::new("empty");
     pub const EMPTY_ACTION: ControlPart = ControlPart::new("empty-action");
     /// The pinned floor row.
     pub const TRASH: ControlPart = ControlPart::new("trash");
+    pub const FLOOR_CHIP: ControlPart = ControlPart::new("floor-chip");
+    /// The `…` right of the chip: the workspace's menu.
+    pub const FLOOR_MENU: ControlPart = ControlPart::new("floor-menu");
+    /// The rail's foot: Help, Settings and the profile square.
+    pub const RAIL_SETTINGS: ControlPart = ControlPart::new("rail-settings");
+    pub const RAIL_HELP: ControlPart = ControlPart::new("rail-help");
+    pub const RAIL_PROFILE: ControlPart = ControlPart::new("rail-profile");
     /// The open popover, and the rows of it that name no object.
     pub const POPOVER: ControlPart = ControlPart::new("popover");
-    pub const NEW_WORKSPACE: ControlPart = ControlPart::new("new-workspace");
-    pub const MANAGE_PROFILES: ControlPart = ControlPart::new("manage-profiles");
-    pub const LINK_DEVICE: ControlPart = ControlPart::new("link-device");
-    pub const BACK: ControlPart = ControlPart::new("back");
+    /// The Profiles page's foot: its `+`, its devices and its sync state.
     pub const NEW_PROFILE: ControlPart = ControlPart::new("new-profile");
-    pub const IMPORT_CONTENT: ControlPart = ControlPart::new("import-content");
-    pub const MANAGE_WORKSPACES: ControlPart = ControlPart::new("manage-workspaces");
+    pub const PROFILE_DEVICES: ControlPart = ControlPart::new("profile-devices");
+    pub const PROFILE_STATUS: ControlPart = ControlPart::new("profile-status");
+    /// The chip's page's heading `+`, and its import button.
+    pub const NEW_WORKSPACE: ControlPart = ControlPart::new("new-workspace");
+    /// A workspace's or Profile's gear: the Manage tab on it
+    /// (ELEMENTS.final D2). The row's own part stays `root`.
+    pub const MANAGE: ControlPart = ControlPart::new("manage");
 }
 
 /// Everything the pane needs from the window it is drawn in, which is nothing
@@ -106,7 +114,10 @@ pub(crate) mod parts {
 pub(crate) struct Context {
     pub window: WindowSlot,
     pub view: ViewSlot,
+    /// The pane: the nav and its floor, after the rail.
     pub area: Rect,
+    /// The rail beside it, under the lane.
+    pub rail: Rect,
     /// The whole window, which the popover clamps itself inside.
     pub viewport: (f32, f32),
     pub lang: Lang,
@@ -123,19 +134,10 @@ impl Context {
 }
 
 /// The name of the projection now showing, which is also the tree's own name.
+/// The mode's name in `lang`: the same word the apps row draws, so a screen
+/// reader and the chip cannot disagree.
 fn mode_label(mode: NavigatorMode, lang: Lang) -> &'static str {
-    match mode {
-        // Reused rather than respelled: the row was in the table with nothing
-        // reading it.
-        NavigatorMode::Documents => t(lang, Key::DocumentsHeading),
-        NavigatorMode::Files => t(lang, Key::A11yFilesHeading),
-        NavigatorMode::Tasks => t(lang, Key::A11yTasksHeading),
-        NavigatorMode::Agents => t(lang, Key::A11yAgentsHeading),
-        NavigatorMode::Artifacts => t(lang, Key::ArtifactsTitle),
-        NavigatorMode::Chats => t(lang, Key::ChatsTitle),
-        NavigatorMode::Canvases => t(lang, Key::CanvasesTitle),
-        NavigatorMode::Socials => koru_i18n::socials::t(lang, koru_i18n::socials::Key::Title),
-    }
+    mode.label_in(lang)
 }
 
 impl ExploreView {
@@ -144,10 +146,12 @@ impl ExploreView {
     /// `&self` throughout: nothing here lays out, folds, scrolls or reads the
     /// Store, and the signature is what makes that true rather than a comment.
     pub(crate) fn semantics(&self, cx: &Context) -> SemanticNode {
-        let mut children = self.header_semantics(cx);
+        let mut children = Vec::new();
         children.push(self.modes_semantics(cx));
         children.extend(self.heading_semantics(cx));
-        if self.showing_tasks() {
+        if self.showing_home() {
+            children.push(self.home_nav.semantics(cx, self.rows_top(cx.area)));
+        } else if self.showing_tasks() {
             children.push(self.rail.queue_semantics(cx, self.rows_top(cx.area)));
         } else if self.showing_chats() {
             // The Chats view replaces the tree, on the rail's model: a list
@@ -157,6 +161,8 @@ impl ExploreView {
             children.push(self.tree_semantics(cx));
         }
         children.extend(self.footer_semantics(cx));
+        children.extend(self.rail_foot_semantics(cx));
+        children.extend(self.floor_semantics(cx));
         children.extend(self.popover_semantics(cx));
         SemanticNode::new(cx.surface(EXPLORE, parts::COLUMN), Role::Group)
             .with_label(t(cx.lang, Key::A11yNavigator))
@@ -196,11 +202,13 @@ impl ExploreView {
             Some(popover) => {
                 rev.byte(1);
                 rev.str(match popover.kind {
-                    PopoverKind::Workspaces => "workspaces",
+                    PopoverKind::Summary => "summary",
                     PopoverKind::Profiles => "profiles",
                     PopoverKind::LibraryActions => "library",
                 });
                 rev.u64(popover.hover.map_or(u64::MAX, |i| i as u64));
+                // Right onto a gear moves the focus without moving the row.
+                rev.bool(self.popover_part == Some(super::PopoverPart::Gear));
                 for row in self.popover_rows() {
                     rev.str(&self.popover_row_label(row, Lang::En));
                 }
@@ -223,6 +231,24 @@ impl ExploreView {
             let rows = self.popover_rows();
             let hovered = popover.hover.and_then(|i| rows.get(i).copied());
             return Some(match hovered {
+                // The keyboard on a workspace's or Profile's gear is on the
+                // gear (ELEMENTS.final D2): its node, not the row's.
+                Some(PopoverRow::Workspace(i))
+                    if self.popover_part == Some(super::PopoverPart::Gear) =>
+                {
+                    match self.workspaces.get(i) {
+                        Some(w) => cx.model(w.id.as_uuid(), parts::MANAGE),
+                        None => cx.surface(POPOVER, parts::POPOVER),
+                    }
+                }
+                Some(PopoverRow::Profile(i))
+                    if self.popover_part == Some(super::PopoverPart::Gear) =>
+                {
+                    match self.profiles.get(i) {
+                        Some(profile) => cx.model(profile.id.as_uuid(), parts::MANAGE),
+                        None => cx.surface(POPOVER, parts::POPOVER),
+                    }
+                }
                 Some(row) => self.popover_row_occurrence(cx, row),
                 None => cx.surface(POPOVER, parts::POPOVER),
             });
@@ -262,6 +288,14 @@ impl ExploreView {
         if self.showing_tasks() {
             let top = self.rows_top(area);
             return self.rail.queue_action(area, top, target, action);
+        }
+        // Home's nav replaces the tree the same way; a press is the row's.
+        if self.showing_home() {
+            return match action {
+                Action::Click => self.home_nav.accessibility_press(target),
+                Action::Focus | Action::ScrollIntoView => Some(Outcome::Consumed),
+                _ => None,
+            };
         }
         // Chats replaces the tree the same way, and a request for a hidden
         // document row must not reach the library behind it either.
@@ -313,60 +347,8 @@ impl ExploreView {
         }
     }
 
-    // ------------------------------------------------------------- the header
-
-    fn header_semantics(&self, cx: &Context) -> Vec<SemanticNode> {
-        let rects = Self::header_rects(cx.area);
-        let profile = self
-            .current_profile
-            .and_then(|id| self.profiles.iter().find(|p| p.id == id))
-            .map(|p| p.name.clone())
-            .unwrap_or_default();
-        let workspace = self
-            .current
-            .and_then(|id| self.workspaces.iter().find(|w| w.id == id))
-            .map(|w| w.name.clone())
-            .unwrap_or_default();
-        // **The name is the accessible name, and the action is the
-        // description a client already has.** Both halves open a list, so the
-        // person needs to hear where they are — not "switch profile" over and
-        // over.
-        let named = |occurrence, name: String, fallback: Key, rect: Rect| {
-            let label = if name.is_empty() {
-                t(cx.lang, fallback).to_string()
-            } else {
-                name
-            };
-            // **No `expanded`.** It would say the popover is open, and it
-            // would cost this button its Invoke pattern:
-            // `accesskit_consumer` excludes an expand-collapse control from
-            // `is_invocable`, and `accesskit_windows` 0.32.1 implements no
-            // ExpandCollapse pattern to replace it with -- so the state would
-            // be unreadable *and* the button unusable. See
-            // `guide/contributing/deps/ACCESSKIT.md`.
-            SemanticNode::new(occurrence, Role::Button)
-                .with_label(label)
-                .with_bounds(rect)
-                .with_action(Action::Click)
-        };
-        vec![
-            named(
-                cx.surface(EXPLORE, parts::PROFILE),
-                profile,
-                Key::TerminalSwitchProfile,
-                rects.avatar_hit,
-            ),
-            named(
-                cx.surface(EXPLORE, parts::WORKSPACE),
-                workspace,
-                Key::TerminalSwitchWorkspace,
-                rects.name_hit,
-            ),
-        ]
-    }
-
     fn modes_semantics(&self, cx: &Context) -> SemanticNode {
-        let rects = self.navigator_mode_rects(cx.area);
+        let rects = self.navigator_mode_rects(cx.rail);
         let total = rects.len();
         let children = rects
             .iter()
@@ -424,21 +406,28 @@ impl ExploreView {
     /// pane's own hit test reads.
     fn heading_semantics(&self, cx: &Context) -> Vec<SemanticNode> {
         let mut out = Vec::new();
-        let actions = self.actions_button(cx.area);
-        if actions.w > 0.0 {
+        // The band's title says which app the rows below belong to, as the
+        // drawn heading does (the review's note).
+        let title = self.heading_title_rect(cx.area);
+        if title.w > 0.0 {
             out.push(
-                SemanticNode::new(cx.surface(EXPLORE, parts::ACTIONS), Role::Button)
-                    .with_label(t(cx.lang, Key::A11yMoreActions))
-                    .with_bounds(actions)
-                    .with_action(Action::Click),
+                SemanticNode::new(cx.surface(EXPLORE, parts::HEADING), Role::Heading)
+                    .with_label(self.mode.label_in(cx.lang))
+                    .with_bounds(title),
             );
         }
-        let search = self.search_button(cx.area);
-        if search.w > 0.0 {
+        let actions = self.actions_button(cx.area);
+        if actions.w > 0.0 {
+            // The Chats heading's button is *New chat* (the review's note).
+            let label = if self.mode == NavigatorMode::Chats {
+                Key::ChatsNew
+            } else {
+                Key::A11yMoreActions
+            };
             out.push(
-                SemanticNode::new(cx.surface(EXPLORE, parts::SEARCH), Role::Button)
-                    .with_label(t(cx.lang, Key::A11ySearch))
-                    .with_bounds(search)
+                SemanticNode::new(cx.surface(EXPLORE, parts::ACTIONS), Role::Button)
+                    .with_label(t(cx.lang, label))
+                    .with_bounds(actions)
                     .with_action(Action::Click),
             );
         }
@@ -543,6 +532,7 @@ impl ExploreView {
     /// the same three cases in the same order.
     fn empty_accessible_names(&self, lang: Lang) -> (&'static str, Option<Key>) {
         match self.mode {
+            NavigatorMode::Home => (t(lang, Key::HomeTitle), None),
             NavigatorMode::Tasks | NavigatorMode::Agents => (t(lang, Key::A11yEmptySessions), None),
             NavigatorMode::Artifacts => (t(lang, Key::ArtifactsEmpty), None),
             NavigatorMode::Chats => (t(lang, Key::ChatsEmpty), None),
@@ -575,6 +565,86 @@ impl ExploreView {
             .collect()
     }
 
+    /// The occurrence of a chrome control `F6` has the keyboard on, for the
+    /// window's `accessibility_focus`: a chip by its mode's token, the rest by
+    /// their parts.
+    pub(crate) fn chrome_focus_occurrence(
+        &self,
+        cx: &Context,
+        focus: super::ExploreChromeFocus,
+    ) -> Option<Occurrence> {
+        use super::ExploreChromeFocus;
+        Some(match focus {
+            ExploreChromeFocus::App(i) => {
+                let mode = *self.rail_modes().get(i)?;
+                cx.surface(MODE, ControlPart::new(mode.token()))
+            }
+            ExploreChromeFocus::RailSettings => cx.surface(EXPLORE, parts::RAIL_SETTINGS),
+            ExploreChromeFocus::RailHelp => cx.surface(EXPLORE, parts::RAIL_HELP),
+            ExploreChromeFocus::RailProfile => cx.surface(EXPLORE, parts::RAIL_PROFILE),
+            ExploreChromeFocus::FloorChip => cx.surface(EXPLORE, parts::FLOOR_CHIP),
+        })
+    }
+
+    /// The rail's foot: Help, Settings and the profile square, each a
+    /// button with its name.
+    fn rail_foot_semantics(&self, cx: &Context) -> Vec<SemanticNode> {
+        let r = self.apps_rail_rects(cx.rail);
+        if r.band.w <= 0.0 {
+            return Vec::new();
+        }
+        let person = self
+            .profile()
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| t(cx.lang, Key::TerminalSwitchProfile).to_string());
+        vec![
+            SemanticNode::new(cx.surface(EXPLORE, parts::RAIL_HELP), Role::Button)
+                .with_label(t(cx.lang, Key::Help))
+                .with_bounds(r.help)
+                .with_action(Action::Click),
+            SemanticNode::new(cx.surface(EXPLORE, parts::RAIL_SETTINGS), Role::Button)
+                .with_label(t(cx.lang, Key::SettingsTab))
+                .with_bounds(r.settings)
+                .with_action(Action::Click),
+            SemanticNode::new(cx.surface(EXPLORE, parts::RAIL_PROFILE), Role::Button)
+                .with_label(format!("{person}, {}", t(cx.lang, Key::FloorChipAction)))
+                .with_bounds(r.profile)
+                .with_action(Action::Click),
+        ]
+    }
+
+    /// The floor: the who/where chip, named by where and who, with its
+    /// action as the description.
+    fn floor_semantics(&self, cx: &Context) -> Vec<SemanticNode> {
+        let r = crate::panes::sidebar::floor::solve(cx.area);
+        if r.chip.w <= 0.0 {
+            return Vec::new();
+        }
+        let workspace = self
+            .current
+            .and_then(|id| self.workspaces.iter().find(|w| w.id == id))
+            .map(|w| w.name.clone())
+            .unwrap_or_else(|| t(cx.lang, Key::TerminalSwitchWorkspace).to_string());
+        let person = self
+            .profile()
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| t(cx.lang, Key::TerminalSwitchProfile).to_string());
+        vec![
+            SemanticNode::new(cx.surface(EXPLORE, parts::FLOOR_CHIP), Role::Button)
+                // The name says where and who; the Click action a client
+                // already has is what pressing does (`FloorChipAction` is
+                // the tooltip's sentence).
+                .with_label(format!("{workspace}, {person}"))
+                .with_bounds(r.chip)
+                .with_action(Action::Click),
+            // The `…` beside it: the workspace's menu (the review's artboard).
+            SemanticNode::new(cx.surface(EXPLORE, parts::FLOOR_MENU), Role::Button)
+                .with_label(t(cx.lang, Key::A11yMoreActions))
+                .with_bounds(r.dots)
+                .with_action(Action::Click),
+        ]
+    }
+
     // ------------------------------------------------------------ the popover
 
     /// The open header list, if one is taking input.
@@ -585,31 +655,39 @@ impl ExploreView {
     /// that is on its way off the screen.
     fn popover_semantics(&self, cx: &Context) -> Option<SemanticNode> {
         let popover = self.live()?;
+        // The switcher's pages publish their element frames: the Menu, its
+        // heading, each row's primary beside its gear (P4, P5), and the
+        // Profiles page's three foot items.
+        if popover.kind != PopoverKind::LibraryActions {
+            return self
+                .with_page(cx.area, cx.viewport, |frame| {
+                    self.element_semantics(cx, frame)
+                })
+                .and_then(|mut roots| roots.pop());
+        }
         let panel = self.popover_panel(cx.area, cx.viewport)?;
         let rects = self.popover_rects(cx.area, cx.viewport);
-        let selectable = rects.iter().filter(|(row, _)| row.selectable()).count();
-        let mut index = 0;
-        let children = rects
-            .iter()
-            .filter(|(row, _)| row.selectable())
-            .map(|(row, rect)| {
-                let node = SemanticNode::new(self.popover_row_occurrence(cx, *row), Role::MenuItem)
+        let mut children = Vec::with_capacity(rects.len());
+        for (row, rect) in rects.iter().filter(|(row, _)| row.selectable()) {
+            children.push(
+                SemanticNode::new(self.popover_row_occurrence(cx, *row), Role::MenuItem)
                     .with_label(self.popover_row_label(*row, cx.lang))
                     .with_bounds(*rect)
-                    .with_actions([Action::Click, Action::Focus])
-                    .with_position(index);
-                index += 1;
-                node
-            })
-            .collect();
+                    .with_actions([Action::Click, Action::Focus]),
+            );
+        }
+        let size = children.len();
+        for (index, child) in children.iter_mut().enumerate() {
+            *child = std::mem::replace(
+                child,
+                SemanticNode::new(cx.surface(POPOVER, parts::POPOVER), Role::MenuItem),
+            )
+            .with_position(index);
+        }
         Some(
             SemanticNode::new(cx.surface(POPOVER, parts::POPOVER), Role::Menu)
-                .with_size_of_set(selectable)
-                .with_label(match popover.kind {
-                    PopoverKind::Workspaces => t(cx.lang, Key::TerminalSwitchWorkspace),
-                    PopoverKind::Profiles => t(cx.lang, Key::TerminalSwitchProfile),
-                    PopoverKind::LibraryActions => t(cx.lang, Key::A11yMoreActions),
-                })
+                .with_size_of_set(size)
+                .with_label(t(cx.lang, Key::A11yMoreActions))
                 .with_bounds(panel)
                 .with_children(children),
         )
@@ -622,7 +700,7 @@ impl ExploreView {
     /// rows carry a keyword. Neither is a position, and neither is a label.
     fn popover_row_occurrence(&self, cx: &Context, row: PopoverRow) -> Occurrence {
         match row {
-            PopoverRow::Workspace(i) => match self.browsed_workspaces().get(i) {
+            PopoverRow::Workspace(i) => match self.workspaces.get(i) {
                 Some(w) => cx.model(w.id.as_uuid(), ControlPart::ROOT),
                 None => cx.surface(POPOVER, parts::POPOVER),
             },
@@ -630,28 +708,34 @@ impl ExploreView {
                 Some(p) => cx.model(p.id.as_uuid(), ControlPart::ROOT),
                 None => cx.surface(POPOVER, parts::POPOVER),
             },
-            PopoverRow::NewWorkspace => cx.surface(POPOVER, parts::NEW_WORKSPACE),
-            PopoverRow::Back => cx.surface(POPOVER, parts::BACK),
-            PopoverRow::NewProfile => cx.surface(POPOVER, parts::NEW_PROFILE),
-            PopoverRow::ImportContent => cx.surface(POPOVER, parts::IMPORT_CONTENT),
-            PopoverRow::ManageWorkspaces => cx.surface(POPOVER, parts::MANAGE_WORKSPACES),
-            PopoverRow::ManageProfiles => cx.surface(POPOVER, parts::MANAGE_PROFILES),
-            PopoverRow::LinkDevice => cx.surface(POPOVER, parts::LINK_DEVICE),
-            PopoverRow::AddAccount => cx.surface(POPOVER, ControlPart::new("add-account")),
-            PopoverRow::OpenProfile => cx.surface(POPOVER, ControlPart::new("open-profile")),
+            // A fixed row's buttons publish themselves; the row is what
+            // Enter presses on it.
+            PopoverRow::WorkspacesHeading => cx.surface(POPOVER, parts::NEW_WORKSPACE),
+            PopoverRow::ProfilesHeading => cx.surface(POPOVER, parts::POPOVER),
+            PopoverRow::ProfilesFooter => cx.surface(POPOVER, parts::NEW_PROFILE),
             PopoverRow::LibraryAction(action) => {
                 cx.surface(POPOVER, ControlPart::new(super::actions::token(action)))
             }
-            PopoverRow::WorkspacesHeading | PopoverRow::ProfilesHeading | PopoverRow::Divider => {
-                cx.surface(POPOVER, parts::POPOVER)
-            }
+        }
+    }
+
+    /// Which of a fixed row's buttons an accessibility target names.
+    fn head_button_of(part: ControlPart) -> Option<super::HeadButton> {
+        if part == parts::NEW_PROFILE {
+            Some(super::HeadButton::New)
+        } else if part == parts::PROFILE_DEVICES {
+            Some(super::HeadButton::Devices)
+        } else if part == parts::PROFILE_STATUS {
+            Some(super::HeadButton::Status)
+        } else {
+            None
         }
     }
 
     fn popover_row_label(&self, row: PopoverRow, lang: Lang) -> String {
         match row {
             PopoverRow::Workspace(i) => self
-                .browsed_workspaces()
+                .workspaces
                 .get(i)
                 .map(|w| w.name.clone())
                 .unwrap_or_default(),
@@ -660,21 +744,11 @@ impl ExploreView {
                 .get(i)
                 .map(|p| p.name.clone())
                 .unwrap_or_default(),
-            PopoverRow::NewWorkspace => t(lang, Key::CreateWorkspace).to_string(),
-            PopoverRow::Back => t(lang, Key::Back).to_string(),
-            PopoverRow::NewProfile => "New profile".to_string(),
-            PopoverRow::ImportContent => t(lang, Key::WorkspacesImport).to_string(),
-            PopoverRow::ManageWorkspaces => "Manage workspaces".to_string(),
-            PopoverRow::ManageProfiles => t(lang, Key::WorkspacesProfiles).to_string(),
-            PopoverRow::LinkDevice => t(lang, Key::TerminalLinkDevice).to_string(),
-            PopoverRow::AddAccount | PopoverRow::OpenProfile => {
-                t(lang, Key::ProfileChooserOpen).to_string()
-            }
+            PopoverRow::WorkspacesHeading => t(lang, Key::TerminalNewWorkspace).to_string(),
+            PopoverRow::ProfilesHeading => t(lang, Key::WorkspacesProfiles).to_string(),
+            PopoverRow::ProfilesFooter => t(lang, Key::NewProfile).to_string(),
             PopoverRow::LibraryAction(action) => {
                 super::actions::label(action, self.mode).to_string()
-            }
-            PopoverRow::WorkspacesHeading | PopoverRow::ProfilesHeading | PopoverRow::Divider => {
-                String::new()
             }
         }
     }
@@ -695,16 +769,47 @@ impl ExploreView {
         let index = rows
             .iter()
             .position(|row| row.selectable() && self.popover_row_matches(*row, target))?;
+        // **A request for the gear acts on the gear** (ELEMENTS.final D2):
+        // Focus lights it without choosing anything, Click opens Manage on
+        // that row, whatever the keyboard was on.
+        if target.part == parts::MANAGE
+            && matches!(
+                rows[index],
+                PopoverRow::Workspace(_) | PopoverRow::Profile(_)
+            )
+        {
+            return match action {
+                Action::Focus => {
+                    self.popover.as_mut()?.hover = Some(index);
+                    self.popover_part = Some(super::PopoverPart::Gear);
+                    Some(Outcome::Consumed)
+                }
+                Action::Click => {
+                    self.popover.as_mut()?.hover = Some(index);
+                    Some(self.press(rows[index], super::PopoverPart::Gear))
+                }
+                _ => None,
+            };
+        }
         let popover = self.popover.as_mut()?;
         match action {
             // The highlight the arrows move — the popover's own keyboard
             // state, not a second one.
             Action::Focus => {
                 popover.hover = Some(index);
+                // The row itself, not its gear: the keyboard's lit part.
+                self.popover_part = None;
                 Some(Outcome::Consumed)
             }
+            // Enter, except that a fixed row's other buttons are not what
+            // Enter presses there: each is pressed as itself.
             Action::Click => {
                 popover.hover = Some(index);
+                if let Some(button) = Self::head_button_of(target.part)
+                    && matches!(rows[index], PopoverRow::ProfilesFooter)
+                {
+                    return Some(self.press(rows[index], super::PopoverPart::Button(button)));
+                }
                 self.popover_key(&WKey::Named(NamedKey::Enter))
             }
             _ => None,
@@ -714,24 +819,23 @@ impl ExploreView {
     fn popover_row_matches(&self, row: PopoverRow, target: Occurrence) -> bool {
         match row {
             PopoverRow::Workspace(i) => self
-                .browsed_workspaces()
+                .workspaces
                 .get(i)
                 .is_some_and(|w| target.object == object_of(w.id.as_uuid())),
             PopoverRow::Profile(i) => self
                 .profiles
                 .get(i)
                 .is_some_and(|p| target.object == object_of(p.id.as_uuid())),
-            PopoverRow::NewWorkspace => target.part == parts::NEW_WORKSPACE,
-            PopoverRow::Back => target.part == parts::BACK,
-            PopoverRow::NewProfile => target.part == parts::NEW_PROFILE,
-            PopoverRow::ImportContent => target.part == parts::IMPORT_CONTENT,
-            PopoverRow::ManageWorkspaces => target.part == parts::MANAGE_WORKSPACES,
-            PopoverRow::ManageProfiles => target.part == parts::MANAGE_PROFILES,
-            PopoverRow::LinkDevice => target.part == parts::LINK_DEVICE,
+            PopoverRow::WorkspacesHeading => target.part == parts::NEW_WORKSPACE,
+            PopoverRow::ProfilesHeading => false,
+            PopoverRow::ProfilesFooter => {
+                target.part == parts::NEW_PROFILE
+                    || target.part == parts::PROFILE_DEVICES
+                    || target.part == parts::PROFILE_STATUS
+            }
             PopoverRow::LibraryAction(action) => {
                 target.part.name() == super::actions::token(action)
             }
-            _ => false,
         }
     }
 
@@ -755,7 +859,7 @@ impl ExploreView {
         match surface {
             MODE => {
                 let (mode, _) = self
-                    .navigator_mode_rects(area)
+                    .navigator_mode_rects(self.rail_of(area))
                     .into_iter()
                     .find(|(mode, _)| mode.token() == target.part.name())?;
                 // The same call the press makes, two lines below the popover
@@ -768,19 +872,21 @@ impl ExploreView {
                 })
             }
             EXPLORE => match target.part {
-                p if p == parts::PROFILE => {
-                    self.toggle_popover(PopoverKind::Profiles);
+                p if p == parts::FLOOR_CHIP => {
+                    self.toggle_popover(PopoverKind::Summary);
                     Some(Outcome::Consumed)
                 }
-                p if p == parts::WORKSPACE => {
-                    self.toggle_popover(PopoverKind::Workspaces);
+                p if p == parts::FLOOR_MENU => Some(self.floor_menu(area)),
+                p if p == parts::RAIL_SETTINGS => Some(Outcome::OpenSettings),
+                p if p == parts::RAIL_HELP => Some(Outcome::OpenHelp),
+                p if p == parts::RAIL_PROFILE => {
+                    self.toggle_profile_popover();
                     Some(Outcome::Consumed)
                 }
                 p if p == parts::ACTIONS => {
                     self.toggle_popover(PopoverKind::LibraryActions);
                     Some(Outcome::Consumed)
                 }
-                p if p == parts::SEARCH => Some(Outcome::Search),
                 p if p == parts::TRASH => Some(Outcome::OpenTrash),
                 p if p == parts::EMPTY_ACTION => Some(self.empty_state().2),
                 _ => None,
@@ -799,6 +905,91 @@ impl ExploreView {
             _ => None,
         }
     }
+}
+
+impl ExploreView {
+    /// An element frame's accessibility tree as this window's nodes: each
+    /// element key becomes the occurrence it names — a model's part, or a
+    /// surface's — and a Menu's items carry their place in the set.
+    // Read by the element pages' tests until P4 publishes from it.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn element_semantics(
+        &self,
+        cx: &Context,
+        frame: &koru_draw::el::Frame,
+    ) -> Vec<SemanticNode> {
+        frame
+            .semantics()
+            .iter()
+            .map(|node| element_node(cx, node))
+            .collect()
+    }
+}
+
+// Read by the element pages' tests until P4 publishes from it.
+#[cfg_attr(not(test), allow(dead_code))]
+fn element_occurrence(cx: &Context, key: koru_draw::el::Key) -> Occurrence {
+    let part = ControlPart::new(key.part);
+    match key.object {
+        koru_draw::el::Object::Surface(name) => cx.surface(name, part),
+        koru_draw::el::Object::Model(id) => cx.model(uuid::Uuid::from_u128(id), part),
+    }
+}
+
+// Read by the element pages' tests until P4 publishes from it.
+#[cfg_attr(not(test), allow(dead_code))]
+fn element_node(cx: &Context, node: &koru_draw::el::SemNode) -> SemanticNode {
+    use koru_draw::el;
+    let role = match node.role {
+        el::Role::Menu => Role::Menu,
+        el::Role::MenuItem => Role::MenuItem,
+        el::Role::Heading => Role::Heading,
+        el::Role::Button => Role::Button,
+        el::Role::Group => Role::Group,
+        el::Role::List => Role::List,
+        el::Role::ListItem => Role::ListItem,
+        el::Role::Image => Role::Image,
+    };
+    let occurrence = match node.key {
+        Some(key) => element_occurrence(cx, key),
+        None => cx.surface(POPOVER, parts::POPOVER),
+    };
+    let mut out = SemanticNode::new(occurrence, role).with_bounds(node.bounds);
+    match &node.name {
+        Some(el::Name::Key(key)) => out = out.with_label(t(cx.lang, *key)),
+        Some(el::Name::Text(content)) => out = out.with_label(content.clone()),
+        None => {}
+    }
+    if let Some(selected) = node.selected {
+        out = out.with_selected(selected);
+    }
+    out = out.with_actions(node.actions.iter().map(|action| match action {
+        el::Action::Click => Action::Click,
+        el::Action::Focus => Action::Focus,
+    }));
+    let items = node
+        .children
+        .iter()
+        .filter(|child| child.role == el::Role::MenuItem)
+        .count();
+    let mut position = 0;
+    let children = node
+        .children
+        .iter()
+        .map(|child| {
+            let built = element_node(cx, child);
+            if node.role == el::Role::Menu && child.role == el::Role::MenuItem {
+                position += 1;
+                built.with_position(position - 1)
+            } else {
+                built
+            }
+        })
+        .collect();
+    if node.role == el::Role::Menu {
+        out = out.with_size_of_set(items);
+    }
+    out.with_children(children)
 }
 
 fn object_of(id: uuid::Uuid) -> koru_workspace_host::accessibility::ObjectKey {

@@ -274,6 +274,12 @@ pub struct FederatedSearchRequest {
     pub include_ai: bool,
     #[serde(default)]
     pub cursor: Option<String>,
+    /// **Only this profile's chats** among the AI results (AI schema 13):
+    /// a window searches its own profile's. Absent searches every
+    /// profile's, each hit naming its own. The Store results are scoped by
+    /// `workspaces`, as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<koru_ai_core::ProfileId>,
 }
 
 impl Default for FederatedSearchRequest {
@@ -284,6 +290,7 @@ impl Default for FederatedSearchRequest {
             recent_queries: None,
             include_ai: true,
             cursor: None,
+            profile: None,
         }
     }
 }

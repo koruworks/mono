@@ -12,22 +12,22 @@
 //! `Session::open` reaches a directory, and only `App::new` calls it.
 use super::*;
 use crate::mainview::harness::*;
-use crate::mainview::panes::TEAR_OFF_PX;
+use crate::mainview::panes::{PaneNode, PanePath, SplitAxis, TEAR_OFF_PX};
 use koru_core::node::Node;
 use koru_core::schema::Parent;
 use koru_editor::Editing;
 
 #[test]
-fn socials_menu_focuses_one_tab_and_keeps_it_out_of_document_reuse() {
+fn socials_focuses_one_tab_and_keeps_it_out_of_document_reuse() {
     let (mut view, _) = container();
-    assert!(view.run_menu_action(MenuSubject::NewTab, MenuAction::Socials));
+    assert!(view.open_socials_tab());
     let count = view.tabs().len();
     assert!(matches!(view.tabs().active_tab().view, TabView::Socials(_)));
     assert!(!view.tabs().active_tab().is_reusable());
     assert!(view.explore.showing_socials());
     assert!(view.sidebar.is_open());
     let shared = view.explore.socials().expect("navigator owns the surface");
-    assert!(view.run_menu_action(MenuSubject::NewTab, MenuAction::Socials));
+    assert!(view.open_socials_tab());
     assert_eq!(view.tabs().len(), count);
     assert!(std::rc::Rc::ptr_eq(
         &shared,
@@ -298,7 +298,7 @@ fn the_library_background_opens_import_as_a_submenu() {
     assert!(v.open_submenu(0));
     assert_eq!(
         v.submenu.as_ref().unwrap().1.items(),
-        context_menu::import_items()
+        context_menu::import_menu_items()
     );
 }
 
@@ -1271,6 +1271,33 @@ fn a_leading_title_emoji_becomes_the_tab_icon() {
     assert_eq!(tab.label, "Craft.do Pricing");
 }
 
+/// **A row's `+` makes a document inside the row** (the review's note): the
+/// same name prompt, and the shell is asked to place the document as the
+/// row's last child, the row unfolded so it shows where it lands.
+#[test]
+fn a_rows_plus_prompts_for_a_document_inside_the_row() {
+    let (mut v, mut workspace) = container();
+    let parent = NodeId::new();
+    assert!(v.apply(
+        &mut workspace.ws,
+        crate::panes::Outcome::NewChildDocument(parent)
+    ));
+    assert!(v.new_document.is_some(), "the name prompt is open");
+    assert!(v.key(&mut workspace.ws, &ch("Inside"), Some("Inside"), NONE,));
+    assert!(v.key(
+        &mut workspace.ws,
+        &Key::Named(winit::keyboard::NamedKey::Enter),
+        None,
+        NONE,
+    ));
+    assert!(v.new_document.is_none(), "commit closes the modal");
+    assert!(matches!(
+        koru_workspace_host::View::take_pane_request(&mut v),
+        Some(koru_workspace_host::PaneRequest::CreateDocumentIn { parent: p, title })
+            if title == "Inside" && p == koru_core::DocumentId::from_uuid(parent.as_uuid())
+    ));
+}
+
 #[test]
 fn the_taskbar_prompt_creates_a_named_document_and_opens_its_tab() {
     let (mut v, mut workspace) = container();
@@ -1356,13 +1383,13 @@ fn a_new_workspace_is_named_before_the_shell_is_asked_to_create_it() {
     ));
 }
 
-/// The switcher's *New workspace* while another Profile's workspaces are
-/// listed: the same name prompt, but the host is asked to make it **there**.
+/// *New workspace* for another Profile (the workspace menu's): the same
+/// name prompt, but the host is asked to make it **there**.
 #[test]
 fn a_new_workspace_in_another_profile_names_its_owner() {
     let (mut v, mut workspace) = container();
     let owner = koru_core::ProfileId::new();
-    assert!(v.apply(&workspace.ws, crate::panes::Outcome::NewWorkspaceIn(owner)));
+    assert!(v.prompt_new_workspace_in(owner));
     assert!(v.new_document.is_some(), "the shared name prompt is open");
 
     assert!(v.key(&mut workspace.ws, &ch("Research"), Some("Research"), NONE,));
@@ -1397,8 +1424,8 @@ fn a_cancelled_new_workspace_in_prompt_forgets_its_owner() {
     ));
     assert!(v.new_document.is_none());
 
-    // No workspace is open, so a new document asks for one first.
-    v.prompt_new_document();
+    // The next workspace prompt is the open Profile's.
+    assert!(v.prompt_new_workspace());
     assert!(v.key(&mut workspace.ws, &ch("Research"), Some("Research"), NONE,));
     assert!(v.key(
         &mut workspace.ws,
@@ -1412,8 +1439,12 @@ fn a_cancelled_new_workspace_in_prompt_forgets_its_owner() {
     ));
 }
 
+/// With no workspace open, a new document still asks for the document: the
+/// shell makes a default workspace for it (`ensure_live_workspace`). Asking
+/// for a workspace's name instead made only the workspace, and the document
+/// that was asked for never appeared.
 #[test]
-fn document_creation_asks_for_a_workspace_when_none_is_open() {
+fn document_creation_with_no_workspace_open_still_asks_for_the_document() {
     let (mut v, mut workspace) = container();
     let (_, profile, _, _) = v.pane_context.clone().expect("pane context");
     View::set_pane_context(&mut v, Vec::new(), profile, Vec::new(), None);
@@ -1429,80 +1460,7 @@ fn document_creation_asks_for_a_workspace_when_none_is_open() {
 
     assert!(matches!(
         koru_workspace_host::View::take_pane_request(&mut v),
-        Some(koru_workspace_host::PaneRequest::NewWorkspace(name)) if name == "Research"
-    ));
-}
-
-/// A cold taskbar *New document* asks from `Manager::initial`, before the shell
-/// has said which workspace the window holds. That is "not known yet", not
-/// "none": the prompt waits for the context and then asks for a **document**.
-/// Deciding on the spot opened *New workspace* on every cold launch.
-#[test]
-fn a_cold_new_document_waits_for_the_workspace_and_asks_for_a_document() {
-    let ws = koru_core::schema::WorkspaceDoc::create(koru_core::WorkspaceId::new(), "t")
-        .expect("create");
-    let workspace_id = ws.id().expect("workspace id");
-    let mut workspace = koru_workspace::Workspace::new(ws);
-    let mut v = MainView::new();
-    v.set_viewport(1200.0, 700.0);
-
-    v.prompt_new_document();
-    assert!(
-        v.new_document.is_none(),
-        "no prompt is chosen before the window knows its workspace"
-    );
-
-    View::set_pane_context(
-        &mut v,
-        Vec::new(),
-        koru_core::ProfileId::new(),
-        Vec::new(),
-        Some(workspace_id),
-    );
-    assert!(v.new_document.is_some(), "the context answers the request");
-
-    assert!(v.key(&mut workspace.ws, &ch("Roadmap"), Some("Roadmap"), NONE,));
-    assert!(v.key(
-        &mut workspace.ws,
-        &Key::Named(winit::keyboard::NamedKey::Enter),
-        None,
-        NONE,
-    ));
-    assert!(matches!(
-        koru_workspace_host::View::take_pane_request(&mut v),
-        Some(koru_workspace_host::PaneRequest::CreateDocument(title)) if title == "Roadmap"
-    ));
-}
-
-/// …and when the context says there is no Store workspace, the same request
-/// asks for one first, as it always has.
-#[test]
-fn a_cold_new_document_with_no_workspace_asks_for_one() {
-    let ws = koru_core::schema::WorkspaceDoc::create(koru_core::WorkspaceId::new(), "t")
-        .expect("create");
-    let mut workspace = koru_workspace::Workspace::new(ws);
-    let mut v = MainView::new();
-    v.set_viewport(1200.0, 700.0);
-
-    v.prompt_new_document();
-    View::set_pane_context(
-        &mut v,
-        Vec::new(),
-        koru_core::ProfileId::new(),
-        Vec::new(),
-        None,
-    );
-
-    assert!(v.key(&mut workspace.ws, &ch("Research"), Some("Research"), NONE,));
-    assert!(v.key(
-        &mut workspace.ws,
-        &Key::Named(winit::keyboard::NamedKey::Enter),
-        None,
-        NONE,
-    ));
-    assert!(matches!(
-        koru_workspace_host::View::take_pane_request(&mut v),
-        Some(koru_workspace_host::PaneRequest::NewWorkspace(name)) if name == "Research"
+        Some(koru_workspace_host::PaneRequest::CreateDocument(title)) if title == "Research"
     ));
 }
 
@@ -1559,15 +1517,16 @@ fn ctrl_w_closes_and_ctrl_t_opens() {
     assert_eq!(v.tabs().len(), before);
 }
 
+/// **Ctrl+N opens the New… launcher**, the `+` button's dialog; Ctrl+Shift+A,
+/// the old Add… chord, opens nothing.
 #[test]
-fn ctrl_shift_a_opens_the_same_add_menu_as_the_plus() {
+fn ctrl_n_opens_the_launcher_the_plus_opens() {
     let (mut v, mut workspace) = container();
-    assert!(v.menu.is_none());
-    assert!(v.key(&mut workspace.ws, &ch("a"), Some("a"), PRIMARY_SHIFT,));
-    assert_eq!(
-        v.menu.as_ref().unwrap().items(),
-        context_menu::new_tab_items()
-    );
+    assert!(v.launcher.is_none());
+    let _ = v.key(&mut workspace.ws, &ch("a"), Some("a"), PRIMARY_SHIFT);
+    assert!(v.launcher.is_none() && v.menu.is_none());
+    assert!(v.key(&mut workspace.ws, &ch("n"), Some("n"), PRIMARY));
+    assert!(v.launcher.is_some());
 }
 
 #[test]
@@ -1617,33 +1576,22 @@ fn the_welcome_page_greets_the_owner_onboarding_named_for_this_profile() {
 }
 
 #[test]
-fn the_add_menu_always_offers_one_welcome_row_that_selects_the_welcome_tab() {
+fn opening_welcome_selects_the_one_welcome_tab() {
     let (mut v, _workspace) = on_document();
     let welcome = v
         .tabs()
         .iter()
         .position(|t| matches!(t.view, TabView::Welcome(_)))
         .expect("the document fixture opens beside Welcome");
-    assert!(v.open_new_tab_menu());
-    let items = v.menu.as_ref().unwrap().items().to_vec();
-    assert_eq!(
-        items
-            .iter()
-            .filter(|a| **a == MenuAction::OpenWelcome)
-            .count(),
-        1,
-        "one Welcome row, open or not"
-    );
-    v.menu = None;
     let before = v.tabs().len();
-    assert!(v.run_menu_action(MenuSubject::NewTab, MenuAction::OpenWelcome));
+    assert!(v.open_welcome_tab());
     assert_eq!(v.tabs().active(), welcome, "it selects the open one");
     assert_eq!(v.tabs().len(), before, "and adds nothing");
 
-    // Where a Welcome tab can be closed, the same row brings it back.
+    // Where a Welcome tab can be closed, the same call brings it back.
     if v.close(welcome) {
         assert!(!v.tabs().has_welcome());
-        assert!(v.run_menu_action(MenuSubject::NewTab, MenuAction::OpenWelcome));
+        assert!(v.open_welcome_tab());
         assert!(v.tabs().has_welcome());
     }
 }
@@ -1745,52 +1693,26 @@ fn the_plus_menu_focuses_a_tab_already_showing_the_recent() {
     );
 }
 
-/// A Chats flyout opened before the list has landed stays empty; when the
-/// snapshot is filled, the open flyout is rebuilt rather than waiting for
-/// the next Add….
-#[test]
-fn the_plus_menu_chats_flyout_fills_when_the_list_arrives() {
-    let (mut v, mut workspace) = container();
-    assert!(v.key(&mut workspace.ws, &ch("a"), Some("a"), PRIMARY_SHIFT));
-    let chats = v
-        .menu
-        .as_ref()
-        .unwrap()
-        .items()
-        .iter()
-        .position(|a| *a == MenuAction::Chats)
-        .expect("Chats row");
-    assert!(v.open_submenu(chats));
-    assert_eq!(
-        v.submenu.as_ref().unwrap().1.items(),
-        &[MenuAction::NewAiChat]
-    );
-
-    let id = koru_ai_ui::ChatId::new();
-    context_menu::set_plus_snapshots(vec![], vec![], vec![], vec![(id, "Chat with Qwen".into())]);
-    v.rebuild_plus_chats_flyout();
-    assert_eq!(
-        v.submenu.as_ref().unwrap().1.items(),
-        &[
-            MenuAction::NewAiChat,
-            MenuAction::Divider,
-            MenuAction::OpenRecentChat(id),
-        ]
-    );
-    context_menu::set_plus_snapshots(vec![], vec![], vec![], vec![]);
-}
-
-/// **A machine missing a program's executable dims that program's row** with
-/// the *Not installed* note — one uniform rule for shells and agents, the
-/// same as Koru Terminal's launch menus (W4.4a). The probe's answer is
+/// **A machine missing a shell dims its row; a missing agent is not
+/// listed** (product decision, 2026-11-05). A shell row keeps Koru
+/// Terminal's rule — dimmed with the *Not installed* note — while the
+/// *Agents* flyout lists only the agents this machine can launch, and ends in
+/// *Manage…*, where the rest are installed. The probe's answer is
 /// **injected**: what is under test is the menu's reflection of an answer,
 /// never what happens to be on the test machine's real `PATH` — the menus
-/// are built directly rather than through `open_new_tab_menu`, whose refresh
+/// are built directly rather than through the launcher, whose refresh
 /// would race a real probe against the injection.
 #[test]
-fn a_missing_program_dims_its_profile_row_shell_or_agent() {
+fn a_missing_shell_dims_and_a_missing_agent_is_not_listed() {
     let (v, _workspace) = container();
+    let profiles = koru_session_profiles::built_in_profiles();
+    let is_agent = |index: usize| profiles[index].kind == koru_session_protocol::ProfileKind::Agent;
+    // Before any probe has answered the menu lists every agent rather than
+    // none: the last known answer is "everything", and a person opening the
+    // menu at launch is not shown an empty list.
+    context_menu::set_profile_presence(v.profile_probe.snapshot());
     let agents = context_menu::agent_profile_items();
+    assert!(!agents.is_empty(), "no answer yet leaves nothing out");
     let agent_menu = ContextMenu::at_width(
         MenuSubject::NewTab,
         (100.0, 100.0),
@@ -1798,6 +1720,54 @@ fn a_missing_program_dims_its_profile_row_shell_or_agent() {
         MenuAnchor::Cursor,
         200.0,
     );
+    assert!(
+        v.enabled_items(&agent_menu).iter().all(|&row| row),
+        "no answer yet dims nothing"
+    );
+
+    // This "machine": every shell present, and of the agents only the first
+    // the menu lists.
+    let MenuAction::TerminalProfile(kept) = agents[0] else {
+        panic!("an agent row is a TerminalProfile action")
+    };
+    v.profile_probe.set_for_test(
+        (0..profiles.len())
+            .map(|index| !is_agent(index) || index == kept)
+            .collect(),
+    );
+    context_menu::set_profile_presence(v.profile_probe.snapshot());
+    assert_eq!(
+        context_menu::agent_profile_items(),
+        vec![MenuAction::TerminalProfile(kept)],
+        "only the installed agent is listed"
+    );
+    assert_eq!(
+        context_menu::agent_plus_items(),
+        vec![
+            MenuAction::TerminalProfile(kept),
+            MenuAction::Divider,
+            MenuAction::ManageAgents,
+        ]
+    );
+    // A menu whose rows were fixed before the answer still cannot launch a
+    // missing agent: its row dims with the note instead.
+    let enabled = v.enabled_items(&agent_menu);
+    for (action, enabled) in agents.iter().zip(enabled) {
+        assert_eq!(enabled, *action == MenuAction::TerminalProfile(kept));
+    }
+
+    // No agent installed: the flyout is *Manage…* alone.
+    v.profile_probe
+        .set_for_test((0..profiles.len()).map(|index| !is_agent(index)).collect());
+    context_menu::set_profile_presence(v.profile_probe.snapshot());
+    assert!(context_menu::agent_profile_items().is_empty());
+    assert_eq!(
+        context_menu::agent_plus_items(),
+        vec![MenuAction::ManageAgents]
+    );
+
+    // A shell is never left out: present, it is live; probed missing, it is
+    // dimmed with the note, the same as Koru Terminal's menu.
     let shells = context_menu::shell_profile_items();
     let shell_menu = ContextMenu::at_width(
         MenuSubject::NewTab,
@@ -1806,53 +1776,17 @@ fn a_missing_program_dims_its_profile_row_shell_or_agent() {
         MenuAnchor::Cursor,
         200.0,
     );
-    // Before any probe has answered, the last known answer is "everything":
-    // the menu opens without waiting on the world and dims when told.
-    assert!(
-        v.enabled_items(&agent_menu).iter().all(|&row| row),
-        "no answer yet dims nothing"
-    );
-
-    // This "machine": every shell present, every agent missing.
-    v.profile_probe.set_for_test(
-        koru_session_profiles::built_in_profiles()
-            .iter()
-            .map(|profile| profile.kind != koru_session_protocol::ProfileKind::Agent)
-            .collect(),
-    );
-    let enabled = v.enabled_items(&agent_menu);
-    assert!(!agents.is_empty());
-    assert!(
-        enabled.iter().all(|&row| !row),
-        "every missing agent is dimmed: {enabled:?}"
-    );
-    // Dimmed, not hidden — the rows are still in the menu, and each explains
-    // itself with the note the widget shows beside a disabled row.
-    for action in agents {
-        assert_eq!(
-            koru_ui::MenuItem::disabled_reason(&action).as_deref(),
-            Some("Not installed")
-        );
-    }
-    // The shells this answer found installed stay live — presence, not kind,
-    // is what enables a row.
     assert!(
         v.enabled_items(&shell_menu).iter().all(|&row| row),
         "an installed shell stays live"
     );
-
-    // And a probed-missing shell dims exactly like a missing agent, with the
-    // same note: the two surfaces match, with no shell special case.
-    v.profile_probe.set_for_test(
-        koru_session_profiles::built_in_profiles()
-            .iter()
-            .map(|_| false)
-            .collect(),
-    );
+    v.profile_probe.set_for_test(vec![false; profiles.len()]);
+    context_menu::set_profile_presence(v.profile_probe.snapshot());
+    assert_eq!(context_menu::shell_profile_items(), shells, "still listed");
     assert!(!shells.is_empty());
     assert!(
         v.enabled_items(&shell_menu).iter().all(|&row| !row),
-        "a missing shell is dimmed too"
+        "a missing shell is dimmed"
     );
     for action in shells {
         assert_eq!(
@@ -1860,6 +1794,7 @@ fn a_missing_program_dims_its_profile_row_shell_or_agent() {
             Some("Not installed")
         );
     }
+    context_menu::set_profile_presence(None);
 }
 
 /// **Only the active session tab is live** — the active-tab-exclusive rule.
@@ -2637,15 +2572,14 @@ fn a_second_click_inside_one_document_reuses_its_tab() {
 fn tab_offers(v: &mut MainView, ws: &mut WorkspaceDoc, tab: usize, action: MenuAction) -> bool {
     right_click_tab(v, ws, tab);
     let menu = v.menu.clone().expect("the menu opened");
-    v.enabled_items(&menu)[item_of(action)]
+    v.enabled_items(&menu)[item_of(&menu, action)]
 }
 
-/// The index in [`TAB_ITEMS`] of `action`.
-fn item_of(action: MenuAction) -> usize {
-    context_menu::TAB_ITEMS
-        .iter()
-        .position(|&a| a == action)
-        .unwrap()
+/// The index of `action` in the open menu. **Read off the menu, not off
+/// [`TAB_ITEMS`]**: every tab may be pinned, so a tab's menu leads with *Pin
+/// tab* (or *Unpin*) and a divider before the items `TAB_ITEMS` lists.
+fn item_of(menu: &ContextMenu, action: MenuAction) -> usize {
+    menu.items().iter().position(|&a| a == action).unwrap()
 }
 
 /// Right-click the middle of tab `tab_index`, opening its menu.
@@ -2659,7 +2593,7 @@ fn right_click_tab(v: &mut MainView, ws: &mut WorkspaceDoc, tab_index: usize) {
 /// reading it out for the click point does not dismiss it.
 fn choose(v: &mut MainView, ws: &mut WorkspaceDoc, action: MenuAction) {
     let menu = v.menu.clone().expect("the menu is open");
-    let (x, y) = menu.item_rect(v.viewport, item_of(action)).centre();
+    let (x, y) = menu.item_rect(v.viewport, item_of(&menu, action)).centre();
     v.mouse_down(ws, x, y, false);
 }
 
@@ -2707,7 +2641,7 @@ fn a_store_document_tab_offers_rename_and_move_to_trash() {
     let menu = v.menu.as_ref().expect("the document tab menu opened");
     assert_eq!(
         menu.items(),
-        context_menu::tab_items(true, false, false, false)
+        context_menu::tab_items(true, true, false, false)
     );
     assert!(v.item_is_enabled(menu, MenuAction::Rename));
     assert!(v.item_is_enabled(menu, MenuAction::MoveToTrash));
@@ -2738,8 +2672,8 @@ fn a_store_document_tab_offers_rename_and_move_to_trash() {
     right_click_tab(&mut v, &mut workspace.ws, 0);
     assert_eq!(
         v.menu.as_ref().unwrap().items(),
-        context_menu::tab_items(false, false, false, false),
-        "Welcome does not show document-only actions"
+        context_menu::tab_items(false, true, false, false),
+        "Welcome does not show document-only actions (it may be pinned, like every tab)"
     );
 }
 
@@ -2839,20 +2773,19 @@ fn every_tabs_close_item_is_offered() {
     }
     // The bulk items still depend on there being something to bulk-close.
     right_click_tab(&mut v, &mut workspace.ws, 0);
-    let enabled = v.enabled_items(&v.menu.clone().unwrap());
-    assert!(enabled[item_of(MenuAction::CloseOthers)]);
+    let menu = v.menu.clone().unwrap();
+    let enabled = v.enabled_items(&menu);
+    assert!(enabled[item_of(&menu, MenuAction::CloseOthers)]);
     assert!(
-        !enabled[item_of(MenuAction::CloseLeft)],
+        !enabled[item_of(&menu, MenuAction::CloseLeft)],
         "nothing to the left"
     );
-    assert!(enabled[item_of(MenuAction::CloseRight)]);
-    // Pop Out still leads and a welcome tab is not poppable, so the menu opens
-    // on the first *enabled* item — which is Close, no longer dimmed.
+    assert!(enabled[item_of(&menu, MenuAction::CloseRight)]);
+    // The menu opens on the first *enabled* item — *Pin tab*, now that a
+    // welcome tab may be pinned too.
     right_click_tab(&mut v, &mut workspace.ws, 0);
-    assert_eq!(
-        v.menu.as_ref().unwrap().hover,
-        Some(item_of(MenuAction::Close))
-    );
+    let menu = v.menu.clone().unwrap();
+    assert_eq!(menu.hover, Some(item_of(&menu, MenuAction::PinTab)));
 
     // And choosing it does close the tab, rather than being inert.
     let before = labels(&v);
@@ -2876,9 +2809,13 @@ fn arrow_keys_drive_the_menu_and_enter_chooses() {
         v.key(ws, &Key::Named(NamedKey::ArrowDown), None, NONE);
     };
     // Down steps through every *selectable* item and wraps — it steps over the
-    // divider. Counted off `TAB_ITEMS` rather than a literal, so adding a row
-    // does not make this a lie.
-    let selectable: Vec<usize> = context_menu::TAB_ITEMS
+    // dividers. Counted off the open menu rather than a literal, so adding a
+    // row does not make this a lie.
+    let selectable: Vec<usize> = v
+        .menu
+        .as_ref()
+        .unwrap()
+        .items()
         .iter()
         .enumerate()
         .filter(|(_, a)| a.selectable())
@@ -2901,7 +2838,7 @@ fn arrow_keys_drive_the_menu_and_enter_chooses() {
         "Down wraps back to the top"
     );
     // Step down to Close Others, and Enter runs it.
-    let target = item_of(MenuAction::CloseOthers);
+    let target = item_of(v.menu.as_ref().unwrap(), MenuAction::CloseOthers);
     while v.menu.as_ref().unwrap().hover != Some(target) {
         down(&mut v, &mut workspace.ws);
     }
@@ -3442,7 +3379,7 @@ fn sidebar_with_a_document() -> (MainView, Workspace, Rect, koru_core::NodeId) {
     v.toggle_sidebar();
     v.adopt(&workspace.ws);
     v.refresh_explore(&workspace.ws, true);
-    let sb = v.regions.sidebar;
+    let sb = v.explore_area();
     let (_, row) = v
         .explore
         .row_rects(sb)
@@ -3450,6 +3387,152 @@ fn sidebar_with_a_document() -> (MainView, Workspace, Rect, koru_core::NodeId) {
         .find(|(i, _)| v.explore.row_node(*i) == Some(doc))
         .expect("Brief has a row");
     (v, workspace, row, doc)
+}
+
+/// Brief open from a click on its row, then a second document, "Other", in
+/// the tree: the view, its workspace, Brief, Other and where Other's row
+/// is pressed.
+fn sidebar_with_brief_open_and_other() -> (MainView, Workspace, NodeId, NodeId, (f32, f32)) {
+    let (mut v, mut workspace, row, brief) = sidebar_with_a_document();
+    let (x, y) = (row.x + row.w * 0.4, row.centre().1);
+    v.mouse_down(&mut workspace.ws, x, y, false);
+    v.mouse_up(&mut workspace.ws);
+    assert_eq!(v.document_root(), Some(brief), "a click opens it");
+    let other = a_document(&mut workspace.ws, "Other");
+    v.adopt(&workspace.ws);
+    v.refresh_explore(&workspace.ws, true);
+    let (_, r) = v
+        .explore
+        .row_rects(v.explore_area())
+        .into_iter()
+        .find(|(i, _)| v.explore.row_node(*i) == Some(other))
+        .expect("Other has a row");
+    (v, workspace, brief, other, (r.x + r.w * 0.4, r.centre().1))
+}
+
+/// An Alt press and release on a row, the way the shell delivers it.
+fn alt_press(v: &mut MainView, ws: &mut WorkspaceDoc, (x, y): (f32, f32)) {
+    v.set_mods(winit::keyboard::ModifiersState::ALT);
+    v.mouse_down(ws, x, y, false);
+    v.mouse_up(ws);
+    v.set_mods(winit::keyboard::ModifiersState::empty());
+}
+
+/// The window's split, as the axis and the focused pane's side of it —
+/// `None` while it is one pane.
+fn split_shape(v: &MainView) -> Option<(SplitAxis, Vec<u8>)> {
+    match v.panes.root() {
+        PaneNode::Split { axis, .. } => Some((*axis, v.panes.focused_path().as_bytes().to_vec())),
+        PaneNode::Group(_) => None,
+    }
+}
+
+/// **Alt+click on a row asks where it opens** — the place chooser a
+/// reference in a document shows, at the press (ADR-58; it was a background
+/// tab, E49). Nothing opens and nothing moves until a place is chosen, and
+/// the chooser is the window's blocker. A double-click on a row opens
+/// nothing beyond the first click.
+#[test]
+fn an_alt_click_on_a_row_opens_the_place_chooser_at_the_press() {
+    let (mut v, mut workspace, row, brief) = sidebar_with_a_document();
+    let (x, y) = (row.x + row.w * 0.4, row.centre().1);
+    v.mouse_down(&mut workspace.ws, x, y, false);
+    v.mouse_up(&mut workspace.ws);
+    assert_eq!(v.document_root(), Some(brief), "a click opens it");
+    let tabs = v.tabs().len();
+    // Consumed, so the press does not fall through — but nothing opens.
+    v.mouse_double_click(&workspace.ws, x, y);
+    assert_eq!(v.tabs().len(), tabs, "a double-click opens nothing more");
+
+    let other = a_document(&mut workspace.ws, "Other");
+    v.adopt(&workspace.ws);
+    v.refresh_explore(&workspace.ws, true);
+    let (_, r) = v
+        .explore
+        .row_rects(v.explore_area())
+        .into_iter()
+        .find(|(i, _)| v.explore.row_node(*i) == Some(other))
+        .expect("Other has a row");
+    let at = (r.x + r.w * 0.4, r.centre().1);
+    alt_press(&mut v, &mut workspace.ws, at);
+
+    let ask = v.place_chooser.as_ref().expect("the chooser is up");
+    assert_eq!(ask.target, koru_editor::Reference::Node(other).into());
+    assert_eq!(ask.chooser.at(), at, "at the press");
+    assert_eq!(&ask.pane, v.panes.focused_path(), "over the focused pane");
+    assert_eq!(
+        ask.chooser.highlight(),
+        koru_ui::place_chooser::Place::Middle
+    );
+    assert_eq!(
+        v.blockers(),
+        koru_workspace_host::routing::Blockers::Modal(
+            koru_workspace_host::routing::ModalKind::PlaceChooser
+        )
+    );
+    assert_eq!(v.tabs().len(), tabs, "nothing opens until it is chosen");
+    assert_eq!(v.document_root(), Some(brief));
+    assert!(split_shape(&v).is_none());
+}
+
+/// **An arm splits, from a row as from a reference**: choosing one opens
+/// the row's document in a new pane on that side of the focused one, which
+/// takes the focus, and the pane it was asked from keeps showing Brief.
+#[test]
+fn choosing_an_arm_for_a_row_opens_it_in_a_split_on_that_side() {
+    use koru_ui::place_chooser::Place;
+    for (place, axis, side) in [
+        (Place::Up, SplitAxis::Horizontal, 0u8),
+        (Place::Right, SplitAxis::Vertical, 1),
+        (Place::Down, SplitAxis::Horizontal, 1),
+        (Place::Left, SplitAxis::Vertical, 0),
+    ] {
+        let (mut v, mut workspace, brief, other, at) = sidebar_with_brief_open_and_other();
+        alt_press(&mut v, &mut workspace.ws, at);
+
+        assert!(v.choose_place(&workspace.ws, place), "{place:?}");
+
+        assert!(v.place_chooser.is_none(), "{place:?}: the chooser closed");
+        assert_eq!(split_shape(&v), Some((axis, vec![side])), "{place:?}");
+        assert_eq!(v.document_root(), Some(other), "{place:?}: Other in front");
+        let beside = PanePath::root().child(1 - side as usize);
+        assert_eq!(
+            v.panes
+                .group(&beside)
+                .and_then(|group| group.active_tab().view.root()),
+            Some(brief),
+            "{place:?}: Brief stays in the pane it was asked from"
+        );
+    }
+}
+
+/// **The middle is a new tab, and no split** — from a row as from a
+/// reference: Other in front in a tab of its own, Brief's tab still there.
+/// Pressed with the pointer here, the whole way through the window.
+#[test]
+fn choosing_the_middle_for_a_row_opens_it_in_a_new_tab() {
+    let (mut v, mut workspace, brief, other, at) = sidebar_with_brief_open_and_other();
+    let tabs = v.tabs().len();
+    alt_press(&mut v, &mut workspace.ws, at);
+    let viewport = v.viewport;
+    let (mx, my) = v
+        .place_chooser
+        .as_ref()
+        .expect("the chooser is up")
+        .chooser
+        .cell_rect(viewport, koru_ui::place_chooser::Place::Middle)
+        .centre();
+
+    assert!(v.mouse_down(&mut workspace.ws, mx, my, false));
+
+    assert!(v.place_chooser.is_none(), "the chooser closed");
+    assert!(split_shape(&v).is_none(), "no split");
+    assert_eq!(v.tabs().len(), tabs + 1, "a new tab");
+    assert_eq!(v.document_root(), Some(other), "Other in front");
+    assert!(
+        v.tabs().iter().any(|tab| tab.view.root() == Some(brief)),
+        "Brief's tab is still there"
+    );
 }
 
 /// Press a row, arm the drag inside the column, and carry it out.
@@ -3485,7 +3568,7 @@ fn dragging_a_document_into_a_pane_opens_it_there() {
     v.refresh_explore(&workspace.ws, true);
     assert!(
         v.explore
-            .row_rects(v.regions.sidebar)
+            .row_rects(v.explore_area())
             .iter()
             .any(|(i, _)| v.explore.row_node(*i) == Some(doc)),
         "the node stayed in the tree"
@@ -3556,7 +3639,7 @@ fn sidebar_with_a_manifest_document() -> (MainView, Workspace, Rect, koru_core::
     let node = koru_core::NodeId::from_uuid(document.as_uuid());
     let (_, row) = v
         .explore
-        .row_rects(v.regions.sidebar)
+        .row_rects(v.explore_area())
         .into_iter()
         .find(|(i, _)| v.explore.row_node(*i) == Some(node))
         .expect("Brief has a row");
@@ -3751,7 +3834,7 @@ fn dragging_a_document_over_a_pane_hides_the_tree_ghost() {
         "over a pane the ghost is hidden"
     );
 
-    let sb = v.regions.sidebar;
+    let sb = v.explore_area();
     v.mouse_move(sb.x + sb.w * 0.5, row.y + row.h * 0.5);
     assert!(
         !v.explore.carried_hidden(),
@@ -3911,8 +3994,9 @@ fn a_foreign_drop_over_no_pane_is_refused() {
 
 // ------------------------------------------- the popover overhangs its column
 
-/// A pane with two profiles and the profiles popover already showing.
-fn with_profiles_open() -> (MainView, Workspace, Vec<koru_core::ProfileSummary>) {
+/// A pane with two profiles and the switcher's summary showing, opened
+/// from the floor chip.
+fn with_summary_open() -> (MainView, Workspace, Vec<koru_core::ProfileSummary>) {
     let (v, w) = container();
     let profiles: Vec<koru_core::ProfileSummary> = ["mine", "theirs"]
         .iter()
@@ -3942,11 +4026,24 @@ fn with_profiles_open() -> (MainView, Workspace, Vec<koru_core::ProfileSummary>)
         list.clone(),
         Some(list[0].id),
     );
-    // The avatar opens the profiles.
-    let h = crate::panes::explore::ExploreView::header_rects(v.regions.sidebar);
-    let (x, y) = h.avatar.centre();
+    // The floor chip opens the switcher; its Profiles page is one page away.
+    let chip = crate::panes::sidebar::floor::solve(v.explore_area()).chip;
+    let (x, y) = chip.centre();
     v.mouse_down(&mut w.ws, x, y, false);
-    assert!(v.explore.popover_open(), "the avatar opens the profiles");
+    assert!(v.explore.popover_open(), "the chip opens the switcher");
+    (v, w, profiles)
+}
+
+/// ...and on its Profiles page, one slide from the summary.
+fn with_profiles_open() -> (MainView, Workspace, Vec<koru_core::ProfileSummary>) {
+    let (mut v, w, profiles) = with_summary_open();
+    v.explore
+        .open_popover(crate::panes::explore::PopoverKind::Profiles);
+    // The slide from the chip's page to the Profiles page, finished: the
+    // window hit-tests the panel where it is *drawn*, and mid-slide that is
+    // still the shorter page's panel.
+    v.explore
+        .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
     (v, w, profiles)
 }
 
@@ -3958,7 +4055,7 @@ fn with_profiles_open() -> (MainView, Workspace, Vec<koru_core::ProfileSummary>)
 #[test]
 fn moving_onto_the_popovers_overhang_keeps_the_row_it_is_over_hovered() {
     let (mut v, _w, _) = with_profiles_open();
-    let sb = v.regions.sidebar;
+    let sb = v.explore_area();
     let vp = v.viewport;
     let (row, r) = v
         .explore
@@ -3966,7 +4063,11 @@ fn moving_onto_the_popovers_overhang_keeps_the_row_it_is_over_hovered() {
         .into_iter()
         .find(|(row, _)| *row == crate::panes::explore::PopoverRow::Profile(1))
         .expect("the other profile's row");
-    let (x, y) = koru_ui::profile_picker::row_parts(r).trailing.centre();
+    // The popover is `PANEL_W` wide from `NAV_PAD`, so it overhangs a column
+    // at its 256 px floor by ten pixels; the point this is about is one pixel
+    // into that overhang, on the row.
+    let (x, y) = (sb.x + sb.w + 1.0, r.centre().1);
+    assert!(r.contains(x, y), "the point is on the row");
     assert!(
         x > sb.x + sb.w,
         "the point this is about is outside the column: {x} vs {}",
@@ -3987,12 +4088,12 @@ fn moving_onto_the_popovers_overhang_keeps_the_row_it_is_over_hovered() {
     );
 }
 
-/// ...and the press that follows reaches it: the Profile row drills into its
-/// workspaces, asking the host for nothing and leaving the switcher open.
+/// ...and the press that follows reaches it: the Profile row switches to
+/// that Profile and slides back to the main page, leaving the switcher open.
 #[test]
 fn a_press_on_the_overhang_reaches_the_profile_row() {
-    let (mut v, mut w, _) = with_profiles_open();
-    let sb = v.regions.sidebar;
+    let (mut v, mut w, profiles) = with_profiles_open();
+    let sb = v.explore_area();
     let vp = v.viewport;
     let (_, r) = v
         .explore
@@ -4000,21 +4101,112 @@ fn a_press_on_the_overhang_reaches_the_profile_row() {
         .into_iter()
         .find(|(row, _)| *row == crate::panes::explore::PopoverRow::Profile(1))
         .expect("the other profile's row");
-    let (x, y) = koru_ui::profile_picker::row_parts(r).trailing.centre();
+    let (x, y) = (sb.x + sb.w + 1.0, r.centre().1);
+    assert!(r.contains(x, y), "the point is on the row");
     assert!(x > sb.x + sb.w, "the point is outside the column");
     v.mouse_move(x, y);
     v.mouse_down(&mut w.ws, x, y, false);
     assert_eq!(
         v.take_pane_request(),
-        None,
-        "choosing a Profile does not switch"
+        Some(PaneRequest::SwitchProfile(profiles[1].id)),
+        "choosing a Profile switches to it"
     );
-    assert!(v.explore.popover_open(), "the switcher stays open");
+    assert!(v.explore.popover_open(), "the list stays up");
     assert_eq!(
         v.explore.popover_rects(sb, vp).first().map(|(row, _)| *row),
-        Some(crate::panes::explore::PopoverRow::Back),
-        "on that Profile's workspaces"
+        Some(crate::panes::explore::PopoverRow::ProfilesHeading),
+        "still the Profiles page"
     );
+}
+
+/// **Your card keeps the switcher open.** It slides to the Profiles page,
+/// so the press that chooses it must not also dismiss the panel — it did,
+/// and the slide then ran on a popover that was already fading, which read
+/// as the chip no longer opening anything. The chip still shuts it from
+/// that page and opens the main page again afterwards.
+#[test]
+fn the_chip_and_the_square_open_their_own_pages_and_shut_them() {
+    use crate::panes::explore::PopoverRow;
+    let (mut v, mut w, _) = with_summary_open();
+    let sb = v.explore_area();
+    let vp = v.viewport;
+    let first = |v: &MainView| v.explore.popover_rects(sb, vp).first().map(|(row, _)| *row);
+    assert_eq!(
+        first(&v),
+        Some(PopoverRow::WorkspacesHeading),
+        "the chip's page lists the workspaces only"
+    );
+    // The rail's profile square: the Profiles page.
+    let rail = v.rail_area();
+    let (sx, sy) = v.explore.apps_rail_rects(rail).profile.centre();
+    v.mouse_down(&mut w.ws, sx, sy, false);
+    assert!(v.explore.popover_open(), "the square opens its page");
+    assert_eq!(
+        first(&v),
+        Some(PopoverRow::ProfilesHeading),
+        "the Profiles page"
+    );
+
+    v.mouse_down(&mut w.ws, sx, sy, false);
+    assert!(!v.explore.popover_open(), "the square shuts it");
+    v.explore
+        .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
+    let chip = crate::panes::sidebar::floor::solve(sb).chip;
+    let (cx, cy) = chip.centre();
+    v.mouse_down(&mut w.ws, cx, cy, false);
+    assert!(v.explore.popover_open(), "and the chip opens its page");
+    assert_eq!(first(&v), Some(PopoverRow::WorkspacesHeading));
+}
+
+/// **The floor answers in every app.** Tasks, Home, Artifacts, Chats and
+/// Socials each own everything below the heading in their mode, and the
+/// floor asked after them was unreachable there: the chip worked on Files
+/// and did nothing on Home (the review's second note). Every app the build
+/// shows gets the chip pressed, and the popover's `?` opens the help
+/// popover beside the page, which stays.
+#[test]
+fn the_chip_and_the_help_open_whichever_app_is_showing() {
+    use crate::mainview::context_menu::MenuSubject;
+    use crate::panes::explore::NavigatorMode;
+    let (mut v, mut w, _) = with_summary_open();
+    v.explore.close_popover();
+    v.explore
+        .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
+    for mode in NavigatorMode::visible() {
+        v.show_navigator(mode);
+        // Read after the switch: a mode that opens a tab can relay out the
+        // pane, and the floor moves with it.
+        let floor = crate::panes::sidebar::floor::solve(v.explore_area());
+        let (cx, cy) = floor.chip.centre();
+        v.mouse_down(&mut w.ws, cx, cy, false);
+        assert!(
+            v.explore.popover_open(),
+            "the chip opens the switcher on {mode:?}"
+        );
+        v.mouse_down(&mut w.ws, cx, cy, false);
+        assert!(!v.explore.popover_open(), "the chip shuts it on {mode:?}");
+        v.explore
+            .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
+        let rail = v.explore.apps_rail_rects(v.rail_area());
+        let (sx, sy) = rail.profile.centre();
+        v.mouse_down(&mut w.ws, sx, sy, false);
+        assert!(
+            v.explore.popover_open(),
+            "the square opens its page on {mode:?}"
+        );
+        v.mouse_down(&mut w.ws, sx, sy, false);
+        assert!(!v.explore.popover_open(), "the square shuts it on {mode:?}");
+        v.explore
+            .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
+        let (hx, hy) = rail.help.centre();
+        v.mouse_down(&mut w.ws, hx, hy, false);
+        assert_eq!(
+            v.menu.as_ref().map(|m| m.subject.clone()),
+            Some(MenuSubject::Help),
+            "the rail's ? opens the help popover on {mode:?}"
+        );
+        v.menu = None;
+    }
 }
 
 // ------------------------------------------------------------------- drafts
@@ -5274,7 +5466,7 @@ fn f2_over_a_file_row_renames_that_file() {
     v.explore.show_files();
     v.refresh_explore(&workspace.ws, true);
 
-    let sb = v.regions.sidebar;
+    let sb = v.explore_area();
     let (_, r) = v
         .explore
         .row_rects(sb)
@@ -5310,7 +5502,7 @@ fn f2_over_a_tree_row_renames_that_document() {
     v.adopt(&workspace.ws);
     v.refresh_explore(&workspace.ws, true);
 
-    let sb = v.regions.sidebar;
+    let sb = v.explore_area();
     let (i, r) = v
         .explore
         .row_rects(sb)
@@ -5876,7 +6068,7 @@ fn a_prompt_takes_enter_back_from_the_tree() {
 
     // Hand the tree the keyboard back *while the prompt is up*, which is the
     // state the guard is for.
-    v.explore.focus_tree(v.regions.sidebar);
+    v.explore.focus_tree(v.explore_area());
     v.key(&mut workspace.ws, &ch("Brief"), Some("Brief"), NONE);
     v.key(
         &mut workspace.ws,
@@ -5967,6 +6159,319 @@ fn ctrl_alt_w_leaves_the_switcher_open() {
     assert!(!v.explore.popover_open());
 }
 
+/// **The chord lands the keyboard on the workspace you are in** (the review's
+/// note): ↵ straight away is a no-op switch, and ↑↓ walk from there, rather
+/// than from the top of a list that may have the current one below the
+/// fold.
+#[test]
+fn ctrl_alt_w_puts_the_keyboard_on_the_current_workspace() {
+    use crate::panes::explore::PopoverRow;
+    let (mut v, mut w, profiles) = with_summary_open();
+    v.explore.close_popover();
+    v.explore
+        .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
+    // Two workspaces; the second is the one open.
+    let list = vec![
+        koru_core::WorkspaceEntry::new(WorkspaceId::new(), "First", 0),
+        koru_core::WorkspaceEntry::new(WorkspaceId::new(), "Second", 1),
+    ];
+    v.set_pane_context(
+        profiles.clone(),
+        profiles[0].id,
+        list.clone(),
+        Some(list[1].id),
+    );
+    // The column takes the list on the next frame; the chord reads the
+    // column, so hand it over the way a frame would.
+    v.refresh_explore(&mut w.ws, true);
+
+    assert!(v.key(&mut w.ws, &ch("w"), Some("w"), PRIMARY_ALT));
+    assert!(v.explore.popover_open());
+    let rows = v
+        .explore
+        .popover_rects(v.explore_area(), v.viewport)
+        .into_iter()
+        .map(|(row, _)| row)
+        .collect::<Vec<_>>();
+    let second = rows
+        .iter()
+        .position(|row| *row == PopoverRow::Workspace(1))
+        .unwrap_or_else(|| panic!("the second workspace is listed: {rows:?}"));
+    assert_eq!(
+        v.explore.popover_hover(),
+        Some(second),
+        "the keyboard starts on the open workspace"
+    );
+}
+
+/// **A right-click on a workspace row opens its menu over the page** (the
+/// review's note): the same menu a Manage row's `•••` opens, at the pointer,
+/// with the row lit as its subject and the page still under it. A verb that
+/// changes the list in place leaves the page up; one that leaves the list
+/// shuts it. A right-click anywhere else on the page is swallowed.
+#[test]
+fn a_right_click_on_a_workspace_row_opens_its_menu_over_the_page() {
+    use crate::mainview::context_menu::{MenuAction, MenuSubject};
+    use crate::panes::explore::PopoverRow;
+    let (mut v, mut w, _) = with_summary_open();
+    let vp = v.viewport;
+    let area = v.explore_popover_area();
+    let id = v.workspaces()[0].id;
+    let (_, r) = v
+        .explore
+        .popover_rects(area, vp)
+        .into_iter()
+        .find(|(row, _)| *row == PopoverRow::Workspace(0))
+        .expect("the row");
+    // On the name, clear of the trailing lane's gear.
+    let (x, y) = (r.x + r.w * 0.4, r.centre().1);
+    assert!(v.context_menu(&mut w.ws, x, y));
+    let menu = v.menu.as_ref().expect("the workspace menu opened");
+    assert_eq!(menu.subject, MenuSubject::Workspace(id));
+    assert_eq!(
+        menu.items(),
+        context_menu::workspace_items(false, false, false).as_slice(),
+        "the Manage row's menu"
+    );
+    assert!(v.explore.popover_open(), "the page stays under the menu");
+    let row = v
+        .explore
+        .popover_rects(area, vp)
+        .iter()
+        .position(|(row, _)| *row == PopoverRow::Workspace(0));
+    assert_eq!(v.explore.popover_hover(), row, "the row is the subject");
+
+    // Copy ID changes nothing about the list and leaves the page up.
+    v.run_menu_action_for_test(MenuSubject::Workspace(id), MenuAction::CopyWorkspaceId);
+    assert!(v.explore.popover_open(), "a copy leaves the page up");
+    // Export leaves the list, and shuts the page it was chosen from.
+    v.run_menu_action_for_test(MenuSubject::Workspace(id), MenuAction::Export);
+    assert_eq!(
+        v.take_pane_request(),
+        Some(PaneRequest::ExportWorkspace(id))
+    );
+    assert!(
+        !v.explore.popover_open(),
+        "a verb that leaves the list shuts it"
+    );
+
+    // A right-click on the heading is swallowed: no menu, page still up.
+    v.menu = None;
+    v.explore
+        .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
+    let chip = crate::panes::sidebar::floor::solve(v.explore_area()).chip;
+    let (cx, cy) = chip.centre();
+    v.mouse_down(&mut w.ws, cx, cy, false);
+    assert!(v.explore.popover_open());
+    let (_, h) = v
+        .explore
+        .popover_rects(area, vp)
+        .into_iter()
+        .find(|(row, _)| *row == PopoverRow::WorkspacesHeading)
+        .expect("the heading");
+    assert!(v.context_menu(&mut w.ws, h.x + 20.0, h.centre().1));
+    assert!(v.menu.is_none(), "nothing to open on the heading");
+    assert!(v.explore.popover_open(), "and the page stays");
+}
+
+/// **The rail's Settings tooltip carries its chord** (the review's note), the
+/// way the lane's controls carry theirs; the `?` has no chord to carry.
+#[test]
+fn the_rails_settings_tooltip_carries_its_chord() {
+    let (mut v, _w) = container();
+    v.toggle_sidebar();
+    let rects = v.explore.apps_rail_rects(v.rail_area());
+    let (x, y) = rects.settings.centre();
+    v.mouse_move(x, y);
+    assert_eq!(
+        v.tooltip.label(),
+        Some(koru_i18n::t(
+            crate::format::lang(),
+            koru_i18n::Key::SettingsTab
+        ))
+    );
+    assert_eq!(
+        v.tooltip.shortcut(),
+        Some(koru_keys::label_of(koru_keys::ShortcutId::Settings).as_str())
+    );
+    let (hx, hy) = rects.help.centre();
+    v.mouse_move(hx, hy);
+    assert_eq!(v.tooltip.shortcut(), None, "the ? has no chord");
+}
+
+/// **The profile tile and the chip's tile share a baseline** (the review's
+/// note): the same size, their centres level, side by side at the foot.
+#[test]
+fn the_profile_tile_sits_level_with_the_chips_tile() {
+    let (mut v, _w) = container();
+    v.toggle_sidebar();
+    let square = v.explore.apps_rail_rects(v.rail_area()).profile;
+    let tile = crate::panes::sidebar::apps_rail::PROFILE_TILE;
+    let profile_centre = square.y + square.h * 0.5;
+    let chip_tile = crate::panes::sidebar::floor::solve(v.explore_area()).avatar;
+    assert_eq!(chip_tile.h, tile, "the same size");
+    assert!(
+        (profile_centre - chip_tile.centre().1).abs() < 0.5,
+        "level: the square's centre {profile_centre} vs the chip tile's {:?}",
+        chip_tile
+    );
+}
+
+/// **The lane has no `+`** (the review's note, E44): search and the toggle
+/// only, and the keyboard's lane walk has no New stop.
+#[test]
+fn the_lane_has_no_plus() {
+    let (mut v, _w) = container();
+    v.toggle_sidebar();
+    let lane = v.lane_controls();
+    assert_eq!(lane.new.w, 0.0, "no New square");
+    assert!(lane.search.w > 0.0 && lane.toggle.w > 0.0);
+}
+
+/// **Rename… from a right-click shows its field** (the review's issue: nothing
+/// appeared). The field is drawn over the row of whichever list shows the
+/// workspace: the page's row when the page lists it — so the page stays up
+/// for it — and the Manage tab's row otherwise, the tab opened on the
+/// workspace's Profile first.
+#[test]
+fn rename_from_a_right_click_has_a_row_to_draw_on() {
+    use crate::mainview::context_menu::{MenuAction, MenuSubject};
+    let (mut v, mut w, _) = with_summary_open();
+    let id = v.workspaces()[0].id;
+    v.run_menu_action_for_test(MenuSubject::Workspace(id), MenuAction::Rename);
+    assert!(v.explore.popover_open(), "the page stays for the field");
+    assert!(v.workspace_rename.is_some(), "the field is open");
+    assert!(
+        v.workspace_rename_row().is_some(),
+        "over the page's row, with nothing else showing the workspace"
+    );
+    assert!(
+        !matches!(v.tabs().active_tab().view, TabView::Manage(_)),
+        "no Manage tab was needed"
+    );
+
+    // Put the field and the page away, and rename with nothing listing the
+    // workspace: the Manage tab opens to carry the field.
+    v.workspace_rename = None;
+    let chip = crate::panes::sidebar::floor::solve(v.explore_area()).chip;
+    let (cx, cy) = chip.centre();
+    v.mouse_down(&mut w.ws, cx, cy, false);
+    assert!(!v.explore.popover_open());
+    v.explore
+        .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
+    v.run_menu_action_for_test(MenuSubject::Workspace(id), MenuAction::Rename);
+    assert!(
+        matches!(v.tabs().active_tab().view, TabView::Manage(_)),
+        "the Manage tab opens on the workspace's Profile"
+    );
+    assert!(v.workspace_rename.is_some(), "and the field is open");
+}
+
+/// **A right-click on the floor chip opens the open workspace's menu** (the
+/// review's note): the chip is the workspace's tile, so it gets the menu its
+/// row gets, at the pointer.
+#[test]
+fn a_right_click_on_the_floor_chip_opens_the_open_workspaces_menu() {
+    use crate::mainview::context_menu::MenuSubject;
+    let (mut v, mut w, _) = with_summary_open();
+    let id = v.workspaces()[0].id;
+    let chip = crate::panes::sidebar::floor::solve(v.explore_area()).chip;
+    let (cx, cy) = chip.centre();
+    // Shut the page the fixture opened; the chip is its door.
+    v.mouse_down(&mut w.ws, cx, cy, false);
+    assert!(!v.explore.popover_open());
+    v.explore
+        .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
+    assert!(v.context_menu(&mut w.ws, cx, cy));
+    let menu = v.menu.as_ref().expect("the workspace menu opened");
+    assert_eq!(menu.subject, MenuSubject::Workspace(id));
+    assert_eq!(
+        menu.items(),
+        context_menu::workspace_items(false, false, false).as_slice()
+    );
+    assert!(!v.explore.popover_open(), "the chip's page was not opened");
+}
+
+/// **The floor's `…` opens the workspace's menu** (the review's artboard, E60):
+/// New workspace, Import… with the formats behind it, Invite people (dimmed
+/// until there is a flow), Trash. It hangs from the button's top-right
+/// corner and lifts itself to stay on screen at the window's foot; a chosen
+/// format imports, Trash opens the tab, New workspace the name prompt.
+#[test]
+fn the_floor_dots_open_the_workspace_menu() {
+    use crate::mainview::context_menu::{MenuAction, MenuSubject};
+    let (mut v, mut w, _) = with_summary_open();
+    let vp = v.viewport;
+    let dots = crate::panes::sidebar::floor::solve(v.explore_area()).dots;
+    let (x, y) = dots.centre();
+    v.mouse_down(&mut w.ws, x, y, false);
+    assert!(!v.explore.popover_open(), "the page shut under the menu");
+    let menu = v.menu.as_ref().expect("the menu opened");
+    assert_eq!(menu.subject, MenuSubject::Floor);
+    assert_eq!(menu.items(), context_menu::floor_items());
+    let m = menu.panel(vp);
+    assert!(m.y + m.h <= vp.1 + 0.5, "on screen: {m:?} vs {vp:?}");
+    assert!(m.y < dots.y, "lifted above the button: {m:?} vs {dots:?}");
+    assert!(
+        m.x >= dots.x + dots.w - 0.5,
+        "beside the button, to its right (the review's note): {m:?} vs {dots:?}"
+    );
+    let enabled = v.enabled_items(menu);
+    let dimmed: Vec<_> = menu
+        .items()
+        .iter()
+        .zip(enabled)
+        .filter(|(_, on)| !on)
+        .map(|(item, _)| *item)
+        .collect();
+    assert_eq!(
+        dimmed,
+        vec![MenuAction::InvitePeople],
+        "only Invite people waits"
+    );
+
+    let format = koru_workspace_host::formats::import_menu_formats()[0].id;
+    assert!(v.run_menu_action_for_test(MenuSubject::Floor, MenuAction::ImportFormat(format)));
+    assert!(v.run_menu_action_for_test(MenuSubject::Floor, MenuAction::OpenTrash));
+    assert!(
+        matches!(v.tabs().active_tab().view, TabView::Trash(_)),
+        "Trash opened its tab"
+    );
+    assert!(v.run_menu_action_for_test(MenuSubject::Floor, MenuAction::NewWorkspace));
+    assert!(v.new_document.is_some(), "the name prompt is open");
+}
+
+/// **The toolbar's sync icon opens the Sync settings tab**, once; the
+/// settings icon the Settings tab. Both shut the page. The sync tab says
+/// only its name for now, and comes back from a session as itself.
+#[test]
+fn the_sync_settings_tab_opens_once_and_the_rail_opens_settings() {
+    let (mut v, mut w, _) = with_summary_open();
+    v.explore.close_popover();
+    let tabs = v.tabs().len();
+    assert!(v.open_sync_settings_tab());
+    assert_eq!(v.tabs().len(), tabs + 1, "one tab opened");
+    let lang = crate::format::lang();
+    assert_eq!(
+        v.tabs().active_tab().label,
+        koru_i18n::t(lang, koru_i18n::Key::SyncSettingsTab)
+    );
+    assert_eq!(
+        v.tabs().active_tab().whats_new.as_ref().map(|n| n.page),
+        Some(tab::PrivatePage::SyncSettings)
+    );
+    assert!(v.open_sync_settings_tab(), "the same tab comes forward");
+    assert_eq!(v.tabs().len(), tabs + 1, "and no second one opens");
+
+    // The rail's settings square opens Settings.
+    let (x, y) = v.explore.apps_rail_rects(v.rail_area()).settings.centre();
+    v.mouse_down(&mut w.ws, x, y, false);
+    assert!(
+        matches!(v.tabs().active_tab().view, TabView::Settings(_)),
+        "the Settings tab"
+    );
+}
+
 /// And it must not be confused with `Ctrl+W`, which closes a tab.
 #[test]
 fn ctrl_alt_w_does_not_close_a_tab() {
@@ -5974,45 +6479,6 @@ fn ctrl_alt_w_does_not_close_a_tab() {
     let before = v.tabs().len();
     v.key(&mut workspace.ws, &ch("w"), Some("w"), PRIMARY_ALT);
     assert_eq!(v.tabs().len(), before, "Alt is what tells the two apart");
-}
-
-/// *Import content…* is a switcher row now: it shuts the switcher and opens
-/// the import formats as a menu, whose rows import through the picker.
-#[test]
-fn import_content_closes_the_switcher_and_offers_the_formats() {
-    let (mut v, mut workspace) = on_document();
-    v.key(&mut workspace.ws, &ch("w"), Some("w"), PRIMARY_ALT);
-    let row = v
-        .explore
-        .popover_rects(v.explore_popover_area(), v.viewport)
-        .into_iter()
-        .find(|(row, _)| *row == crate::panes::explore::PopoverRow::ImportContent)
-        .map(|(_, rect)| rect)
-        .expect("the Import content row");
-    let (x, y) = row.centre();
-    v.mouse_down(&mut workspace.ws, x, y, false);
-    assert!(
-        !v.explore.popover_open(),
-        "the switcher closes after choosing"
-    );
-
-    let markdown = v
-        .menu
-        .as_ref()
-        .map(|menu| {
-            assert_eq!(menu.items(), context_menu::import_items().as_slice());
-            menu.item_rect(v.viewport, 0)
-        })
-        .expect("the import format menu");
-    let (x, y) = markdown.centre();
-    v.mouse_down(&mut workspace.ws, x, y, false);
-    assert_eq!(
-        v.take_pane_request(),
-        Some(PaneRequest::ImportContent {
-            format: "markdown",
-            source: koru_workspace_host::ImportSourceSelection::Picker,
-        })
-    );
 }
 
 #[test]
@@ -6039,11 +6505,18 @@ fn the_workspace_popover_owns_the_resize_grip_under_its_rows() {
         .find(|(row, _)| matches!(row, crate::panes::explore::PopoverRow::Workspace(0)))
         .expect("the workspace row");
     let grip = v.sidebar_grip();
-    let left = rect.x.max(grip.x);
-    let right = (rect.x + rect.w).min(grip.x + grip.w);
+    // Where the row's gear and the grip overlap. Since ELEMENTS P4 a
+    // target owns its start edge and not its end edge, so the point is the
+    // middle of the overlap, not the gear's last line.
+    let gear = v
+        .explore
+        .workspace_row_parts(crate::panes::explore::PopoverRow::Workspace(0), rect)
+        .trailing;
+    let left = gear.x.max(grip.x);
+    let right = (gear.x + gear.w).min(grip.x + grip.w);
     assert!(
         left < right,
-        "this test point is where the row and the grip overlap"
+        "this test point is where the gear and the grip overlap"
     );
     let x = (left + right) * 0.5;
     let y = rect.centre().1;
@@ -6055,11 +6528,13 @@ fn the_workspace_popover_owns_the_resize_grip_under_its_rows() {
         v.sidebar_drag.is_none(),
         "the underlying grip did not start"
     );
-    // The press is the row's: it switches to that workspace.
-    assert_eq!(
-        v.take_pane_request(),
-        Some(PaneRequest::Switch(workspace_id))
+    // The press is the row's — its trailing end, where the grip overlaps,
+    // is the gear, so the Manage tab opens on the workspace.
+    assert!(
+        matches!(v.tabs().active_tab().view, TabView::Manage(_)),
+        "the gear under the grip opened Manage"
     );
+    let _ = workspace_id;
 }
 
 // ------------------------------------------------- Ctrl+Alt+P, the profiles
@@ -6288,6 +6763,8 @@ fn clear_recents_is_the_last_row_of_the_documents_flyout_and_clears_them() {
 fn a_welcome_tick_reaches_the_container_and_runs_the_existing_command() {
     let (mut v, mut workspace) = container();
     v.sync_welcome_lists();
+    let tabs = v.tabs().len();
+    let welcome_at = v.tabs().active();
     let TabView::Welcome(welcome) = &mut v.tabs_mut().active_mut().view else {
         panic!("a fresh container opens Welcome")
     };
@@ -6312,15 +6789,21 @@ fn a_welcome_tick_reaches_the_container_and_runs_the_existing_command() {
         ModifiersState::empty()
     ));
     v.drain_welcome();
+    // What Ctrl+T does: a new tab with a page to type on, and no name asked.
     assert!(
-        v.new_document.is_some(),
-        "Make your first document opened the name prompt"
+        v.new_document.is_none(),
+        "Make your first document asked for a name"
+    );
+    assert_eq!(v.tabs().len(), tabs + 1);
+    assert!(
+        v.tabs().active_tab().draft.is_some(),
+        "the new tab is Ctrl+T's draft page"
     );
     assert_eq!(
         v.welcome_progress.done().collect::<Vec<_>>(),
         ["first-document"]
     );
-    let TabView::Welcome(welcome) = &v.tabs().active_tab().view else {
+    let TabView::Welcome(welcome) = &v.tabs().get(welcome_at).expect("still open").view else {
         panic!("still Welcome")
     };
     assert!(welcome.is_done(crate::welcome::RowId::FirstDocument));
@@ -6331,9 +6814,11 @@ fn a_welcome_tick_reaches_the_container_and_runs_the_existing_command() {
 #[test]
 fn welcome_opens_the_plus_menus_list_of_agents() {
     let (mut v, _w) = container();
-    let agents = context_menu::shown(context_menu::agent_plus_items());
-    assert!(!agents.is_empty(), "agents are on unless set off");
     assert!(v.open_agents_menu());
+    // Read after the open: the list follows the probe answer the open
+    // handed the menus, which a real probe on this machine may have given.
+    let agents = context_menu::shown(context_menu::agent_plus_items());
+    assert!(!agents.is_empty(), "at least Manage…");
     let menu = v.menu.as_ref().expect("the list is open");
     assert_eq!(menu.subject, MenuSubject::NewTab);
     assert_eq!(menu.items(), agents.as_slice());
@@ -6451,6 +6936,12 @@ fn entering_a_title_refreshes_nothing() {
 /// profile switcher in a container, while a standalone document retains its
 /// direct Page-width chord. This drives the container's whole key path, which
 /// is where a chord claimed higher up would show.
+/// Put the active document at Full width with its own chord, Ctrl+Shift+G.
+fn full_width(v: &mut MainView, workspace: &mut Workspace) {
+    let ctrl_shift = koru_keys::PRIMARY.union(ModifiersState::SHIFT);
+    assert!(v.key(&mut workspace.ws, &ch("g"), Some("g"), ctrl_shift));
+}
+
 #[test]
 fn the_layout_chords_reach_the_document_through_the_container() {
     use koru_draw::theme::ViewMode;
@@ -7409,16 +7900,121 @@ fn following_a_link_in_place_is_recorded_in_the_history() {
     assert_eq!(v.document_root(), Some(a));
 }
 
+/// **Home is hidden for now** (the user, 2026-11-03:
+/// `koru_features::HOME_SHOWN`). The rail starts at Documents; `Alt+H`
+/// resolves to nothing and is taught nowhere, while the other views keep
+/// their digits; asking for Home — a restored token, the chord's own
+/// request, the Home tab's `Outcome` — lands on Documents or opens nothing.
 #[test]
-fn search_modal_is_620_by_400_and_centered() {
+fn home_is_hidden_and_every_way_in_lands_on_documents() {
+    use crate::panes::explore::NavigatorMode;
+    assert!(!koru_features::HOME_SHOWN);
+    assert_eq!(NavigatorMode::visible()[0], NavigatorMode::Documents);
+    assert!(!NavigatorMode::visible().contains(&NavigatorMode::Home));
+    let alt = koru_keys::VIEW;
+    assert_eq!(
+        crate::mainview::keys::resolve(&Key::Character("h".into()), Some("h"), alt),
+        None,
+        "Alt+H does nothing"
+    );
+    assert_eq!(
+        crate::mainview::keys::resolve(&Key::Character("1".into()), Some("1"), alt),
+        Some(crate::mainview::keys::Chord::ShowRailSlot(0)),
+        "Alt+1 is the first slot"
+    );
+    let (v, _) = container();
+    assert_eq!(
+        v.explore.rail_mode_at(0),
+        Some(NavigatorMode::Documents),
+        "and Documents is in it: a hidden Home takes no slot"
+    );
+    assert_eq!(
+        koru_keys::show_hint(koru_keys::ShortcutId::ShowHome, koru_keys::Section::Tooltip),
+        None,
+        "and Alt+H is taught nowhere"
+    );
+
+    let (mut view, mut workspace) = container();
+    view.show_navigator(NavigatorMode::Home);
+    assert_eq!(view.explore.navigator_mode(), NavigatorMode::Documents);
+    let before = view.tabs().len();
+    assert!(!view.apply(&mut workspace.ws, Outcome::OpenHome));
+    assert_eq!(view.tabs().len(), before, "no Home tab");
+    assert!(
+        !view
+            .tabs()
+            .iter()
+            .any(|t| matches!(t.view, TabView::Home(_)))
+    );
+}
+
+/// The command bar: 640 wide, 400 tall, 96 px from the top (frame 2).
+#[test]
+fn search_modal_is_640_by_400_and_hangs_96_from_the_top() {
     let bounds = search_modal_bounds((1200.0, 700.0));
-    assert_eq!(bounds, Rect::new(290.0, 150.0, 620.0, 400.0));
+    assert_eq!(bounds, Rect::new(280.0, 96.0, 640.0, 400.0));
 }
 
 #[test]
 fn search_modal_keeps_a_margin_in_a_small_window() {
     let bounds = search_modal_bounds((500.0, 300.0));
     assert_eq!(bounds, Rect::new(16.0, 16.0, 468.0, 268.0));
+}
+
+/// Search text and result navigation never create a task or document.
+#[test]
+fn search_with_no_results_does_not_create_from_the_typed_text() {
+    use winit::keyboard::{Key, ModifiersState, NamedKey};
+    let (mut view, mut workspace) = container();
+    assert!(view.open_search());
+    {
+        let search = view.search.as_mut().expect("open");
+        for ch in "fix login".chars() {
+            let s = ch.to_string();
+            View::key(
+                search,
+                &mut workspace.ws,
+                &Key::Character(s.clone().into()),
+                Some(&s),
+                ModifiersState::empty(),
+            );
+        }
+        // The old creation shortcuts were reachable by moving above the hits.
+        View::key(
+            search,
+            &mut workspace.ws,
+            &Key::Named(NamedKey::ArrowUp),
+            None,
+            ModifiersState::empty(),
+        );
+        View::key(
+            search,
+            &mut workspace.ws,
+            &Key::Named(NamedKey::ArrowUp),
+            None,
+            ModifiersState::empty(),
+        );
+        View::key(
+            search,
+            &mut workspace.ws,
+            &Key::Named(NamedKey::Enter),
+            None,
+            ModifiersState::empty(),
+        );
+    }
+    view.service_search_outputs();
+    assert!(
+        view.search.is_some(),
+        "Enter without a result leaves search open"
+    );
+    let commands = view.take_wants_task_commands();
+    assert!(!commands.iter().any(|command| matches!(
+        command,
+        koru_workspace_host::tasks::TaskCommand::Create { .. }
+    )));
+    let asked = std::iter::from_fn(|| View::take_pane_request(&mut view))
+        .any(|r| matches!(r, koru_workspace_host::PaneRequest::CreateDocument(_)));
+    assert!(!asked, "search never asks the shell to create a document");
 }
 
 #[test]
@@ -7552,8 +8148,8 @@ fn successful_search_navigation_retains_the_surface_for_the_next_ctrl_p() {
     ));
     assert_eq!(
         view.explore.navigator_mode(),
-        crate::panes::explore::NavigatorMode::Documents,
-        "opening a page result must leave the Files projection"
+        crate::panes::explore::NavigatorMode::Files,
+        "opening a page leaves the sidebar's view where the person had it"
     );
     assert!(view.search.is_none());
     assert!(view.retained_search.is_some());
@@ -7599,7 +8195,7 @@ fn opening_a_search_result_unfolds_the_tree_to_its_document() {
     v.explore
         .set_collapsed(vec![NodeId::from_uuid(parent.as_uuid())]);
     v.refresh_explore(&workspace.ws, true);
-    let area = v.regions.sidebar;
+    let area = v.explore_area();
     assert_eq!(
         v.explore.row_rects(area).len(),
         1,
@@ -7810,7 +8406,7 @@ fn opening_a_binned_result_leaves_the_tree_folded() {
         None,
     ));
     v.refresh_explore(&workspace.ws, true);
-    assert_eq!(v.explore.row_rects(v.regions.sidebar).len(), 1);
+    assert_eq!(v.explore.row_rects(v.explore_area()).len(), 1);
 }
 
 #[test]
@@ -7851,7 +8447,7 @@ fn search_navigation_lands_before_the_matched_text() {
 #[test]
 fn pressing_the_pane_toggle_mutes_its_tooltip() {
     let (mut v, mut workspace) = container();
-    let (x, y) = koru_shell_chrome::caption::sidebar_toggle(v.regions.caption).centre();
+    let (x, y) = v.lane_controls().toggle.centre();
 
     v.mouse_move(x, y);
     assert!(!v.toggle_tip_muted, "pointing at it asks the question");
@@ -7866,7 +8462,7 @@ fn pressing_the_pane_toggle_mutes_its_tooltip() {
 #[test]
 fn leaving_the_pane_toggle_re_arms_its_tooltip() {
     let (mut v, mut workspace) = container();
-    let (x, y) = koru_shell_chrome::caption::sidebar_toggle(v.regions.caption).centre();
+    let (x, y) = v.lane_controls().toggle.centre();
     v.mouse_down(&mut workspace.ws, x, y, false);
     assert!(v.toggle_tip_muted);
 
@@ -7874,7 +8470,7 @@ fn leaving_the_pane_toggle_re_arms_its_tooltip() {
     v.mouse_move(v.viewport.0 * 0.5, v.viewport.1 * 0.75);
     assert!(!v.toggle_tip_muted);
 
-    let (x2, y2) = koru_shell_chrome::caption::sidebar_toggle(v.regions.caption).centre();
+    let (x2, y2) = v.lane_controls().toggle.centre();
     v.mouse_move(x2, y2);
     assert!(!v.toggle_tip_muted, "still armed while merely hovering");
 }
@@ -7885,7 +8481,10 @@ fn caption_search_explains_both_the_action_and_its_chord() {
     let tip = v
         .caption_tooltip(Hit::Search)
         .expect("search has a tooltip");
-    assert_eq!(tip.label, "Search");
+    assert_eq!(
+        tip.label,
+        koru_i18n::t(crate::format::lang(), koru_i18n::Key::SearchOrTypeACommand)
+    );
     // **Against the registry, not against `"Ctrl+P"`.** The literal was here
     // and in the tooltip both, so the pair agreed with each other and with
     // nothing else — on macOS the chord is ⌘P and this assertion was the reason
@@ -7894,14 +8493,28 @@ fn caption_search_explains_both_the_action_and_its_chord() {
         tip.shortcut,
         Some(koru_keys::label_of(koru_keys::ShortcutId::Search))
     );
+    assert_eq!(tip.anchor, v.lane_controls().search);
+}
+
+/// **Search teaches the agent's global chord too**, once the agent has said
+/// which it registered: this window's chord, then the one that opens search
+/// from any app.
+#[test]
+fn caption_search_also_teaches_the_global_chord() {
+    let (mut v, _workspace) = container();
+    v.global_search_chord = Some("Ctrl+Shift+K".into());
+    let tip = v
+        .caption_tooltip(Hit::Search)
+        .expect("search has a tooltip");
     assert_eq!(
-        tip.anchor,
-        koru_shell_chrome::caption::search_button_with_host_action(
-            v.drawn_caption(),
-            WINDOW_BUTTONS,
-            CONTEXT_TOGGLE,
-            reminder_bell(),
-        )
+        tip.shortcut,
+        Some(koru_i18n::fill(
+            koru_i18n::t(crate::format::lang(), koru_i18n::Key::SearchChordsAnywhere),
+            &[
+                &koru_keys::label_of(koru_keys::ShortcutId::Search),
+                "Ctrl+Shift+K"
+            ],
+        ))
     );
 }
 
@@ -7980,7 +8593,7 @@ fn every_caption_tooltip_takes_its_chord_from_the_registry() {
         (Hit::Search, ShortcutId::Search),
         // The historical hit name is the caption `+`; it now opens Add rather
         // than directly creating the Ctrl+T document.
-        (Hit::NewTab, ShortcutId::AddContent),
+        (Hit::NewTab, ShortcutId::New),
     ] {
         let Some(tip) = v.caption_tooltip(hit) else {
             continue;
@@ -8023,9 +8636,9 @@ fn dragging_a_list_on_the_rail_writes_the_sections_order() {
     );
 }
 
-/// **`Alt+1..3` show the column's three views**, opening the column when it
-/// is closed, and each icon's tooltip names its view and teaches that chord
-/// from the registry.
+/// **`Alt+1..3` show the views in the rail's first three slots**, opening
+/// the column when it is closed, and each icon's tooltip names its view and
+/// teaches its slot's chord from the registry.
 #[test]
 fn alt_digits_show_the_views_and_the_icons_teach_them() {
     use crate::panes::explore::NavigatorMode;
@@ -8044,21 +8657,26 @@ fn alt_digits_show_the_views_and_the_icons_teach_them() {
     // The tooltips wait for the column's slide to end, as the caption's do.
     v.sidebar.advance(Instant::now() + Duration::from_secs(5));
     v.relayout();
-    for mode in NavigatorMode::ALL {
+    for mode in NavigatorMode::visible() {
         let (x, y) = mode_icon(&v, mode).centre();
         let tip = v
             .navigator_mode_tooltip(x, y)
             .unwrap_or_else(|| panic!("{mode:?} has a tooltip"));
         assert_eq!(tip.label, mode.label());
+        // Each icon teaches its slot's chord, from the registry.
         assert_eq!(
             tip.shortcut,
-            Some(koru_keys::label_of(mode.shortcut())),
+            v.explore.rail_shortcut(mode).map(koru_keys::label_of),
             "{mode:?} teaches the chord the registry binds"
         );
         assert_eq!(tip.anchor, mode_icon(&v, mode), "anchored on its own icon");
     }
     assert_eq!(
-        koru_keys::label_of(NavigatorMode::Tasks.shortcut()),
+        koru_keys::label_of(
+            v.explore
+                .rail_shortcut(NavigatorMode::Tasks)
+                .expect("Tasks has a chord")
+        ),
         // The registry's label, in the platform's own spelling.
         // ⌃⌘ on a Mac, where ⌥digit types a character (M42).
         if cfg!(target_os = "macos") {
@@ -8073,37 +8691,62 @@ fn alt_digits_show_the_views_and_the_icons_teach_them() {
     assert_eq!(v.tooltip.label(), Some("Tasks"));
 }
 
+/// **No tooltip while a rail view is carried** (the user's screenshot,
+/// 2026-11-03: *Chats* hanging over the rail while a square was dragged).
+/// The press takes the one showing down, no move of the drag — over every
+/// square on the way — raises one, and neither does the release: the next
+/// is asked for by a move after it.
 #[test]
-fn the_plus_tooltip_names_add_and_its_own_shortcut() {
-    let (v, _workspace) = container();
-    let tip = v
-        .caption_tooltip(Hit::NewTab)
-        .expect("the visible plus has a tooltip");
-    assert_eq!(tip.label, "Add…");
+fn no_tooltip_shows_while_a_rail_view_is_carried() {
+    use crate::panes::explore::NavigatorMode;
+    let (mut v, mut w) = on_document();
+    v.toggle_sidebar();
+    v.sidebar.advance(Instant::now() + Duration::from_secs(5));
+    v.relayout();
+    let (x, y) = mode_icon(&v, NavigatorMode::Chats).centre();
+    View::mouse_move(&mut v, x, y);
+    assert_eq!(v.tooltip.label(), Some(NavigatorMode::Chats.label()));
+
+    v.mouse_down(&mut w.ws, x, y, false);
+    assert!(v.explore.rail_dragging());
+    assert!(!v.tooltip.is_present(), "the press takes it down");
+    // Up the rail to the top, a few pixels at a time, and back down past
+    // where it started: over every square the run has.
+    let top = mode_icon(&v, NavigatorMode::Documents).y;
+    let mut at = y;
+    while at > top {
+        at -= 3.0;
+        View::mouse_move(&mut v, x, at);
+        assert!(!v.tooltip.is_present(), "carried up, at {at}");
+    }
+    while at < y + 80.0 {
+        at += 3.0;
+        View::mouse_move(&mut v, x, at);
+        assert!(!v.tooltip.is_present(), "carried down, at {at}");
+    }
+    v.mouse_up(&mut w.ws);
+    assert!(!v.explore.rail_dragging());
+    assert!(!v.tooltip.is_present(), "the release asks for none");
+    let (fx, fy) = mode_icon(&v, NavigatorMode::Files).centre();
+    View::mouse_move(&mut v, fx, fy);
     assert_eq!(
-        tip.shortcut,
-        Some(koru_keys::label_of(koru_keys::ShortcutId::AddContent))
+        v.tooltip.label(),
+        Some(NavigatorMode::Files.label()),
+        "a move after the release asks again"
     );
 }
 
 #[test]
-fn the_document_context_icon_explains_itself() {
-    let (mut v, _workspace) = on_document();
-    v.size_visible_groups();
-    let button = v
-        .document_context_button()
-        .expect("a document tab offers the page icon");
-    let (x, y) = button.rect().centre();
-    v.pointer = (x, y);
+fn the_plus_tooltip_names_new_and_its_own_shortcut() {
+    let (v, _workspace) = container();
     let tip = v
-        .document_context_tooltip()
-        .expect("hovering the icon teaches the chord");
-    assert_eq!(tip.label, "Document context");
+        .caption_tooltip(Hit::NewTab)
+        .expect("the visible plus has a tooltip");
+    assert_eq!(tip.label, "New…");
     assert_eq!(
         tip.shortcut,
-        Some(koru_keys::label_of(koru_keys::ShortcutId::ToggleContext))
+        Some(koru_keys::label_of(koru_keys::ShortcutId::New))
     );
-    assert_eq!(tip.anchor, button.rect());
 }
 
 #[test]
@@ -8111,7 +8754,7 @@ fn pressing_a_caption_control_clears_its_tooltip() {
     // Drives the sidebar toggle: the search control left the caption for the
     // Explore header, so this is the caption's remaining hoverable control.
     let (mut v, mut workspace) = container();
-    let toggle = koru_shell_chrome::caption::sidebar_toggle(v.drawn_caption());
+    let toggle = v.lane_controls().toggle;
     let (x, y) = toggle.centre();
     v.mouse_move(x, y);
     assert!(v.tooltip.is_present());
@@ -9197,6 +9840,9 @@ fn a_checkbox_completion_reaches_the_task_wrapper_through_the_container() {
     use koru_draw::{geometry, theme};
 
     let (mut v, mut workspace) = on_document();
+    // These coordinates are read in the full-width layout; a new document
+    // opens Narrow, whose centred column would move the checkbox.
+    full_width(&mut v, &mut workspace);
     let doc = v.document_root().expect("a document tab is showing");
     let item = workspace
         .ws
@@ -9325,6 +9971,9 @@ fn a_task_changed_in_a_document_refreshes_the_tasks_page_at_once() {
         v.tabs_mut().select(leaf),
         "the document comes forward to be typed in"
     );
+    // These coordinates are read in the full-width layout; a new document
+    // opens Narrow, whose centred column would move the checkbox.
+    full_width(&mut v, &mut workspace);
 
     let doc = v.document_root().expect("a document tab is showing");
     let item = workspace
@@ -9559,6 +10208,7 @@ fn every_task_command_leaves_through_the_pane_the_shell_holds() {
             due: None,
             list: None,
             priority: None,
+            rank: None,
         },
         TaskCommand::Remove { document, node },
         TaskCommand::SetList {
@@ -9601,6 +10251,7 @@ fn every_task_command_leaves_through_the_pane_the_shell_holds() {
                 due: None,
                 list: None,
                 priority: None,
+                rank: None,
             },
             "the store would not take it"
         ),
@@ -9744,7 +10395,7 @@ fn revealing_a_task_due_today_opens_today() {
 
 /// Where the rail's rows are, given a container with its sidebar open.
 fn rail_row(v: &MainView, want: crate::panes::explore::rail::RailRow) -> koru_draw::geometry::Rect {
-    let sb = v.regions.sidebar;
+    let sb = v.explore_area();
     let top = v.explore.rail_top(sb);
     v.explore
         .rail()
@@ -9771,7 +10422,7 @@ fn mode_icon(
     want: crate::panes::explore::NavigatorMode,
 ) -> koru_draw::geometry::Rect {
     v.explore
-        .navigator_mode_rects(v.regions.sidebar)
+        .navigator_mode_rects(v.rail_area())
         .into_iter()
         .find(|(mode, _)| *mode == want)
         .map(|(_, r)| r)
@@ -9876,7 +10527,7 @@ fn the_list_table_reaches_the_rail_with_its_names_and_swatches() {
 fn a_list_is_made_inline_and_handed_to_the_shell() {
     let (mut v, mut w) = on_tasks();
     let plus = {
-        let sb = v.regions.sidebar;
+        let sb = v.explore_area();
         let heading = rail_row(&v, crate::panes::explore::rail::RailRow::ListsHeading);
         let _ = sb;
         v.explore
@@ -10065,6 +10716,45 @@ fn a_second_bucket_re_points_the_one_tasks_tab() {
         panic!("still a Tasks tab");
     };
     assert_eq!(tab.target(), RailTarget::Bucket(Bucket::Later));
+}
+
+/// **A pinned Tasks tab keeps its queue.** Pressing another bucket opens (or
+/// re-points) an unpinned page beside it; pressing the pinned queue again
+/// selects the pin rather than opening a second page on it.
+#[test]
+fn a_pinned_tasks_tab_is_not_re_pointed_by_the_rail() {
+    use crate::panes::explore::rail::{Bucket, RailRow, RailTarget};
+    let (mut v, mut w) = on_tasks();
+    let press = |v: &mut MainView, w: &mut Workspace, bucket| {
+        let (x, y) = rail_row(v, RailRow::Bucket(bucket)).centre();
+        v.mouse_down(&mut w.ws, x, y, false);
+    };
+    press(&mut v, &mut w, Bucket::Upcoming);
+    let at = v.tabs().active();
+    assert!(v.tabs_mut().pin(at, uuid::Uuid::new_v4(), true), "pinned");
+
+    press(&mut v, &mut w, Bucket::Later);
+    let targets = |v: &MainView| -> Vec<(bool, RailTarget)> {
+        v.tabs()
+            .iter()
+            .filter_map(|t| match &t.view {
+                TabView::Tasks(tasks) => Some((t.is_pinned(), tasks.target())),
+                _ => None,
+            })
+            .collect()
+    };
+    assert_eq!(
+        targets(&v),
+        [
+            (true, RailTarget::Bucket(Bucket::Upcoming)),
+            (false, RailTarget::Bucket(Bucket::Later)),
+        ],
+        "the pin kept Upcoming; Later opened beside it"
+    );
+
+    press(&mut v, &mut w, Bucket::Upcoming);
+    assert_eq!(targets(&v).len(), 2, "no second Upcoming page");
+    assert!(v.tabs().active_tab().is_pinned(), "the pin is in front");
 }
 
 /// The rail and the tab hold one answer, and the rail is the half put back:
@@ -10373,6 +11063,92 @@ fn remove_from_tasks_goes_through_the_confirm() {
     );
 }
 
+/// **A selection's menu acts on every task in it**: *Complete* is one command
+/// per task, *Remove from Tasks* is one question for the set and one command
+/// per task on its yes, and *Add document* gives each page-made task a
+/// home and opens none of them.
+#[test]
+fn a_selections_menu_acts_on_every_task() {
+    use koru_workspace_host::tasks::TaskCommand;
+    let (mut v, _w) = on_tasks();
+    let tasks: Vec<_> = (0..3)
+        .map(|_| (koru_core::DocumentId::new(), NodeId::new()))
+        .collect();
+    let native = tasks[1..].to_vec();
+    let subject = MenuSubject::Tasks {
+        tasks: tasks.clone(),
+        native: native.clone(),
+    };
+
+    v.run_menu_action_for_test(subject.clone(), MenuAction::TaskComplete);
+    assert_eq!(
+        View::take_wants_task_commands(&mut v),
+        tasks
+            .iter()
+            .map(|&(document, node)| TaskCommand::Complete {
+                document,
+                node,
+                completed: true,
+            })
+            .collect::<Vec<_>>()
+    );
+
+    v.run_menu_action_for_test(subject.clone(), MenuAction::TaskRemove);
+    assert!(
+        View::take_wants_task_commands(&mut v).is_empty(),
+        "asked first"
+    );
+    assert!(v.confirm.is_some(), "one question for the set");
+    v.settle_confirm(true);
+    assert_eq!(
+        View::take_wants_task_commands(&mut v),
+        tasks
+            .iter()
+            .map(|&(document, node)| TaskCommand::Remove { document, node })
+            .collect::<Vec<_>>()
+    );
+
+    v.run_menu_action_for_test(subject, MenuAction::TaskCreateDocument);
+    assert_eq!(
+        View::take_wants_task_commands(&mut v),
+        native
+            .iter()
+            .map(|&(document, node)| TaskCommand::CreateHome { document, node })
+            .collect::<Vec<_>>(),
+        "a home for each page-made task, and only those"
+    );
+    assert!(
+        v.pending_landings
+            .iter()
+            .all(|landing| *landing == super::Landing::Plain),
+        "none of the new documents is opened"
+    );
+}
+
+/// The selection's menu offers what applies to every task, and nothing that
+/// names one.
+#[test]
+fn a_selections_menu_holds_what_applies_to_every_task() {
+    let a = (koru_core::DocumentId::new(), NodeId::new());
+    let b = (koru_core::DocumentId::new(), NodeId::new());
+    let (_, items) = crate::tasks_view::rows_menu(vec![a, b], vec![b], false);
+    assert_eq!(
+        items,
+        vec![
+            MenuAction::TaskCreateDocument,
+            MenuAction::Divider,
+            MenuAction::TaskComplete,
+            MenuAction::TaskDue,
+            MenuAction::TaskPriority,
+            MenuAction::TaskList,
+            MenuAction::Divider,
+            MenuAction::TaskRemove,
+        ]
+    );
+    let (_, done) = crate::tasks_view::rows_menu(vec![a, b], Vec::new(), true);
+    assert_eq!(done.first(), Some(&MenuAction::TaskReopen));
+}
+
 /// A failed capture gives the typing back rather than only naming it.
 #[test]
 fn a_failed_capture_puts_the_words_back_in_the_row() {
@@ -10386,6 +11162,7 @@ fn a_failed_capture_puts_the_words_back_in_the_row() {
         due: None,
         list: None,
         priority: None,
+        rank: None,
     };
     assert!(View::task_command_failed(
         &mut v,
@@ -10591,6 +11368,7 @@ fn a_capture_that_lands_elsewhere_raises_a_toast_with_a_way_there_and_back() {
             due: Some(Temporal::Date(DateOnly::new(today))),
             list: None,
             priority: None,
+            rank: None,
         },
         false,
     );
@@ -10603,6 +11381,7 @@ fn a_capture_that_lands_elsewhere_raises_a_toast_with_a_way_there_and_back() {
             due: Some(far.clone()),
             list: None,
             priority: None,
+            rank: None,
         },
         false,
     );
@@ -10677,6 +11456,7 @@ fn a_capture_that_lands_elsewhere_raises_a_toast_with_a_way_there_and_back() {
             due: Some(far),
             list: Some(birthday),
             priority: None,
+            rank: None,
         },
         false,
     );
@@ -10880,7 +11660,10 @@ fn on_a_context_column() -> (MainView, Workspace, NodeId) {
         .expect("the paragraph the fixture wrote");
     due_on(&mut w.ws, task, "2099-01-02");
     v.toggle_context();
-    v.context_view.select(crate::panes::context::Section::Tasks);
+    // Hidden for now (`koru_features::CONTEXT_TASKS_SHOWN`), so `select`
+    // refuses it; the section's machinery keeps its tests regardless.
+    v.context_view
+        .show_hidden_section(crate::panes::context::Section::Tasks);
     (v, w, task)
 }
 
@@ -10926,6 +11709,26 @@ fn a_shut_column_costs_nothing_and_keeps_its_flag() {
     View::maintain(&mut v, &mut w.ws, std::time::Instant::now());
     assert!(v.context_view.tasks().is_empty());
     assert!(v.context_tasks_stale, "still owed when it opens");
+}
+
+/// **Tasks is hidden for now** (`koru_features::CONTEXT_TASKS_SHOWN`): the
+/// column opens on History, asking for Tasks by name is refused, and an open
+/// column never walks the document for tasks it cannot show.
+#[test]
+fn the_context_column_opens_on_history_while_tasks_is_hidden() {
+    use crate::panes::context::Section;
+    let (mut v, mut w) = on_document();
+    assert!(v.next_context_section(), "the keyboard opens the column");
+    assert!(v.context.is_open());
+    assert_eq!(v.context_view.section(), Section::History);
+    assert!(!v.context_view.select(Section::Tasks));
+    assert_eq!(v.context_view.section(), Section::History);
+    View::maintain(&mut v, &mut w.ws, std::time::Instant::now());
+    assert!(v.context_view.tasks().is_empty());
+    assert!(
+        v.context_tasks_stale,
+        "nothing was walked for a section nobody can see"
+    );
 }
 
 /// **A row reveals the task where it lives** — the ordinary navigation to a
@@ -11172,6 +11975,162 @@ fn right_clicking_a_task_row_opens_its_menu_on_that_press() {
     ));
     let menu = v.menu.as_ref().expect("the row's menu, on this press");
     assert_eq!(menu.subject, MenuSubject::Task { document, node });
+}
+
+// --------------------------------------------- Alt+click on tasks (ADR-58)
+//
+// The user's decision (2026-11-04): "Alt + clicking tasks should also open the
+// split component." The Tasks rail's rows and the Tasks page's rows ask where
+// they open, with the chooser a reference in a document shows.
+
+/// The split an arm makes: its axis, and the new, focused pane's side.
+fn arm_split(place: koru_ui::place_chooser::Place) -> Option<(SplitAxis, Vec<u8>)> {
+    use koru_ui::place_chooser::Place;
+    match place {
+        Place::Up => Some((SplitAxis::Horizontal, vec![0])),
+        Place::Down => Some((SplitAxis::Horizontal, vec![1])),
+        Place::Left => Some((SplitAxis::Vertical, vec![0])),
+        Place::Right => Some((SplitAxis::Vertical, vec![1])),
+        Place::Middle => None,
+    }
+}
+
+/// Where the seeded task row's own open target is pressed, in the window.
+fn task_row_at(v: &MainView) -> (f32, f32) {
+    let page = v.focused_view_rect();
+    let TabView::Tasks(tab) = &v.tabs().active_tab().view else {
+        panic!("a Tasks tab is open");
+    };
+    let (x, y) = tab
+        .task_row_rect_for_test(0)
+        .expect("the seeded row is drawn")
+        .centre();
+    (page.x + x, page.y + y)
+}
+
+/// **Alt+click on a queue asks where its page opens**, and each place opens
+/// it there: an arm, a Tasks page of its own in a new pane on that side, the
+/// document it was asked over still in the other; the middle, a new tab in
+/// front with no split. Nothing is selected until a place is chosen; then
+/// the rail cards the page in front.
+#[test]
+fn an_alt_click_on_a_rail_row_opens_its_page_where_it_is_chosen() {
+    use crate::mainview::place_chooser::PlaceTarget;
+    use crate::panes::explore::rail::{Bucket, RailRow, RailTarget};
+    use koru_ui::place_chooser::Place;
+    let upcoming = RailTarget::Bucket(Bucket::Upcoming);
+    for place in Place::ALL {
+        let (mut v, mut w) = on_tasks();
+        let notes = v.document_root().expect("a document in front");
+        let tabs = v.tabs().len();
+        let at = rail_row(&v, RailRow::Bucket(Bucket::Upcoming)).centre();
+        alt_press(&mut v, &mut w.ws, at);
+
+        let ask = v.place_chooser.as_ref().expect("the chooser is up");
+        assert_eq!(ask.target, PlaceTarget::TasksPage(upcoming));
+        assert_eq!(ask.chooser.at(), at, "at the press");
+        assert_eq!(v.tasks_selection(), None, "nothing selected yet");
+        assert_eq!(v.tabs().len(), tabs, "nothing opens until it is chosen");
+
+        assert!(v.choose_place(&w.ws, place), "{place:?}");
+
+        assert!(v.place_chooser.is_none(), "{place:?}: the chooser closed");
+        let TabView::Tasks(page) = &v.tabs().active_tab().view else {
+            panic!("{place:?}: the Tasks page in front")
+        };
+        assert_eq!(page.target(), upcoming, "{place:?}");
+        assert_eq!(v.tasks_selection(), Some(upcoming), "{place:?}: carded");
+        assert_eq!(split_shape(&v), arm_split(place), "{place:?}");
+        match arm_split(place) {
+            None => assert_eq!(v.tabs().len(), tabs + 1, "a new tab"),
+            Some((_, side)) => {
+                let beside = PanePath::root().child(1 - side[0] as usize);
+                assert_eq!(
+                    v.panes
+                        .group(&beside)
+                        .and_then(|group| group.active_tab().view.root()),
+                    Some(notes),
+                    "{place:?}: the document stays in the pane it was asked over"
+                );
+            }
+        }
+    }
+}
+
+/// **Alt+click on a task row asks where the task opens**, and each place
+/// opens what the row's own open names — its node in its document, flashed
+/// when it lands — there: an arm splits the Tasks page's pane when the
+/// document lands, pinned to this window; the middle is a new tab. The open
+/// is latched like the row's own, so a task gone since the page was fetched
+/// is refused at the landing.
+#[test]
+fn an_alt_click_on_a_task_row_opens_the_task_where_it_is_chosen() {
+    use crate::mainview::place_chooser::{PlaceTarget, where_};
+    use koru_ui::place_chooser::Place;
+    for place in Place::ALL {
+        let (mut v, mut w, document, node) = on_a_task_row(Vec::new());
+        let at = task_row_at(&v);
+        while View::take_pane_request(&mut v).is_some() {}
+        let lands = v.pending_lands.len();
+        alt_press(&mut v, &mut w.ws, at);
+
+        let ask = v.place_chooser.as_ref().expect("the chooser is up");
+        assert_eq!(ask.target, PlaceTarget::Task { document, node });
+        assert_eq!(ask.chooser.at(), at, "at the press");
+        assert_eq!(&ask.pane, v.panes.focused_path(), "over the page's pane");
+        assert!(
+            View::take_pane_request(&mut v).is_none(),
+            "nothing opens until a place is chosen"
+        );
+
+        assert!(v.choose_place(&w.ws, place), "{place:?}");
+
+        assert!(v.place_chooser.is_none(), "{place:?}: the chooser closed");
+        assert_eq!(v.pending_lands.len(), lands + 1, "{place:?}");
+        assert_eq!(
+            v.pending_lands.back().copied(),
+            Some((document, where_(place))),
+            "{place:?}: the landing knows where"
+        );
+        let disposition = match place {
+            Place::Middle => koru_workspace_host::SearchTargetDisposition::CurrentWindow,
+            _ => koru_workspace_host::SearchTargetDisposition::SourceWindow,
+        };
+        assert_eq!(
+            View::take_pane_request(&mut v),
+            Some(koru_workspace_host::PaneRequest::Navigate {
+                target: koru_workspace_host::NavigationTarget::Document {
+                    document,
+                    node: Some(node),
+                },
+                match_text: Some(String::new()),
+                disposition,
+            }),
+            "{place:?}"
+        );
+        assert!(
+            matches!(v.pending_task_open, Some((d, n, _)) if d == document && n == node),
+            "{place:?}: latched against a task that has gone"
+        );
+    }
+}
+
+/// **Alt with Ctrl or Shift on a task row is that press**, never the chooser.
+#[test]
+fn alt_with_ctrl_or_shift_on_a_task_row_does_not_ask() {
+    use winit::keyboard::ModifiersState;
+    for (mods, ctrl) in [
+        (ModifiersState::ALT | ModifiersState::CONTROL, true),
+        (ModifiersState::ALT | ModifiersState::SHIFT, false),
+    ] {
+        let (mut v, mut w, _, _) = on_a_task_row(Vec::new());
+        let (x, y) = task_row_at(&v);
+        v.set_mods(mods);
+        v.mouse_down(&mut w.ws, x, y, ctrl);
+        v.mouse_up(&mut w.ws);
+        v.set_mods(ModifiersState::empty());
+        assert!(v.place_chooser.is_none(), "{mods:?}: no chooser");
+    }
 }
 
 /// **A right-click on a queue opens one row.** It used to open nothing, on the
@@ -11434,6 +12393,84 @@ fn a_settings_tab_opened_later_starts_from_what_is_stored() {
     assert!(opened.pinned_show_title());
 }
 
+/// **Preview in sample document** puts the sample beside Settings: a split,
+/// the sample on the right, read-only and over a workspace of its own, titled
+/// in the person's language. Asking again brings that one forward rather than
+/// opening a second, and a session never saves it.
+#[test]
+fn the_sample_document_opens_beside_settings_once() {
+    let mut view = MainView::new();
+    assert!(view.open_settings_tab());
+    let settings_pane = view.panes.focused_path().clone();
+    view.perform_settings_request(koru_settings_ui::Request::OpenSampleDocument);
+
+    assert_eq!(
+        view.panes.iter_groups().count(),
+        2,
+        "two panes, side by side"
+    );
+    let sample = view.tabs().active_tab();
+    assert!(sample.is_sample_document());
+    assert_eq!(
+        sample.label,
+        koru_i18n::t(crate::format::lang(), koru_i18n::Key::SampleDocumentTitle)
+    );
+    assert_eq!(sample.document, None, "not a document in the workspace");
+    assert!(matches!(&sample.view, TabView::Leaf(l) if l.view().read_only));
+    let settings_still_there = view
+        .panes
+        .group(&settings_pane.child(0))
+        .is_some_and(|g| matches!(g.active_tab().view, TabView::Settings(_)));
+    assert!(settings_still_there, "Settings keeps the left");
+
+    // Again, from Settings: the same sample comes forward.
+    view.panes.set_focus(settings_pane.child(0));
+    view.perform_settings_request(koru_settings_ui::Request::OpenSampleDocument);
+    assert_eq!(view.panes.iter_groups().count(), 2, "no third pane");
+    let samples = view
+        .panes
+        .iter_groups()
+        .map(|(_, g)| g.iter_tabs().filter(|t| t.is_sample_document()).count())
+        .sum::<usize>();
+    assert_eq!(samples, 1, "and no second sample");
+    assert!(view.tabs().active_tab().is_sample_document());
+}
+
+/// The sample holds one of each thing the document fonts draw — headings,
+/// a bulleted, a numbered and a task list with one done item, a quote and a
+/// code block — in every language.
+#[test]
+fn the_sample_document_has_one_of_each_thing_in_every_language() {
+    use koru_core::{Heading, Kind, ListStyle};
+    for lang in koru_i18n::Lang::ALL {
+        let tab = Tab::sample_document_in(lang).expect("the sample builds");
+        let ws = &tab.whats_new.as_ref().expect("a private page").workspace.ws;
+        let nodes: Vec<_> = ws
+            .walk_all()
+            .expect("walk")
+            .into_iter()
+            .filter_map(|(id, _)| ws.read(id).ok())
+            .collect();
+        let has = |f: &dyn Fn(&koru_core::Node) -> bool| nodes.iter().any(f);
+        let tag = lang.tag();
+        assert!(has(&|n| n.meta.heading == Some(Heading::H1)), "{tag}: H1");
+        assert!(has(&|n| n.meta.heading == Some(Heading::H2)), "{tag}: H2");
+        for style in [ListStyle::Bullet, ListStyle::Numbered, ListStyle::Checkbox] {
+            assert!(
+                has(&|n| n.kind == Kind::ListBlock && n.meta.list_style == Some(style)),
+                "{tag}: {style:?} list"
+            );
+        }
+        assert_eq!(
+            nodes.iter().filter(|n| n.meta.done).count(),
+            1,
+            "{tag}: one done task"
+        );
+        assert!(has(&|n| n.kind == Kind::Quote), "{tag}: quote");
+        assert!(has(&|n| n.kind == Kind::Code), "{tag}: code block");
+    }
+}
+
 /// `Ctrl+,` is a keyboard's way into Settings, so it lands the keyboard in
 /// the search box: the next thing typed is what to find. Pressed again over
 /// an open Settings tab it returns there and focuses the box again, and
@@ -11488,10 +12525,10 @@ fn a_documents_diagram_viewer_takes_the_whole_window() {
         panic!("the document is active");
     };
     assert_eq!(document.diagram_viewer().unwrap().viewport(), view.viewport);
-    // The title row's Context and AI buttons are painted after the pane's
-    // content, which put them over the viewer's scrim; while the viewer is
-    // up there are none to paint or to press.
-    assert!(view.document_context_button().is_none());
+    // The title row's AI button is painted after the pane's content, which
+    // put it over the viewer's scrim; while the viewer is up there is none to
+    // paint or to press. (The Context toggle is the caption's, under the
+    // press guard below like the rest of the chrome.)
     assert!(view.document_ai_button().is_none());
     // A press on that chrome reaches the viewer, not the strip, and closes
     // it on release — the way a press on the dimmed page does.
@@ -11500,6 +12537,36 @@ fn a_documents_diagram_viewer_takes_the_whole_window() {
     view.mouse_up(&mut workspace.ws);
     assert_eq!(view.tabs().len(), tabs_before, "the strip was not pressed");
     assert!(view.diagram_viewer_pane().is_none(), "the viewer closed");
+}
+
+/// The display-zoom chords and `Ctrl`+wheel zoom a lifted viewer's picture,
+/// wherever the pointer is, rather than the app: the viewer is the standing
+/// blocker, and the canvas path that used to hand them on declines under any
+/// blocker.
+#[test]
+fn the_zoom_gestures_are_the_lifted_viewers() {
+    let (mut view, mut workspace) = container();
+    let (leaf, node) = crate::leaf::tests::leaf_with_a_drawing(&mut workspace.ws, (400.0, 300.0));
+    view.tabs_mut().push(Tab::document(leaf, "Diagrams"));
+    let TabView::Leaf(Leaf::Document(document)) = &mut view.tabs_mut().active_mut().view else {
+        panic!("the document is active");
+    };
+    assert!(document.open_diagram_viewer(node));
+    view.sync_viewer_lift();
+    assert!(View::zoom_key(&mut view, ZoomIntent::In));
+    let zoom = |view: &MainView| match &view.tabs().active_tab().view {
+        TabView::Leaf(Leaf::Document(document)) => document.diagram_viewer().unwrap().zoom(),
+        _ => panic!("the document is active"),
+    };
+    assert_eq!(zoom(&view), koru_ui::media_viewer::ZOOM_STEP);
+    // Over the sidebar, outside the pane, the wheel still zooms the picture.
+    assert!(View::zoom_wheel(
+        &mut view,
+        MouseScrollDelta::LineDelta(0.0, -1.0),
+        2.0,
+        200.0
+    ));
+    assert!((zoom(&view) - 1.0).abs() < 1e-9);
 }
 
 /// The comment on `adopt_preferences` says it reaches every Settings tab. When
@@ -11716,6 +12783,9 @@ fn a_checkbox_in_a_document_becomes_a_requirement_at_least_the_write() {
         .position(|tab| matches!(tab.view, TabView::Leaf(_)))
         .expect("the document this window opened on");
     assert!(v.tabs_mut().select(leaf));
+    // These coordinates are read in the full-width layout; a new document
+    // opens Narrow, whose centred column would move the checkbox.
+    full_width(&mut v, &mut workspace);
     let doc = v.document_root().expect("a document tab is showing");
     let item = workspace
         .ws
@@ -12520,10 +13590,11 @@ fn a_peer_import_does_the_windows_housekeeping_once_and_the_containers_not_at_al
 
 mod task_queue_focus;
 
-/// Settings' *Open Koru AI setup…* opens a tab on the provider setup, not the
-/// side panel.
+/// Settings' and Welcome's *Open Koru AI setup…* opens a tab, not the side
+/// panel — and, while the setup is dormant, a chat rather than the setup:
+/// the model is chosen in the chat's composer now.
 #[test]
-fn opening_ai_setup_from_settings_is_a_tab_not_the_side_panel() {
+fn opening_ai_setup_from_settings_is_a_chat_tab_not_the_setup() {
     let (mut v, _workspace) = container();
     let before = v.tabs().len();
     let panel_was = v.ai_visible();
@@ -12532,7 +13603,56 @@ fn opening_ai_setup_from_settings_is_a_tab_not_the_side_panel() {
     let TabView::AiChat(chat) = &v.tabs().active_tab().view else {
         panic!("an AI tab is showing");
     };
-    assert!(chat.setup_open(), "it opens on the provider setup");
+    assert!(!chat.setup_open(), "no door opens the provider setup");
+    assert_eq!(v.ai_visible(), panel_was, "the side panel did not move");
+}
+
+/// **The page's `…` replaces the ✦.** It opens a menu whose one row,
+/// *Open in chat*, puts a new chat in a split beside the document with the
+/// document already a chip in its composer; the side panel is not touched.
+#[test]
+fn a_documents_more_menu_opens_it_in_a_chat_beside_it() {
+    let (mut v, _workspace) = on_document();
+    // In-memory tabs carry no `DocumentId`; a Store document's tab does.
+    let document = koru_core::DocumentId::new();
+    let i = v.tabs().active();
+    v.tabs_mut()
+        .get_mut(i)
+        .expect("the document's tab")
+        .document = Some(document);
+    let groups_before = v.panes.iter_groups().count();
+    let panel_was = v.ai_visible();
+
+    let button = v.document_ai_button().expect("a document has its `…`");
+    assert_eq!(button.glyph(), koru_draw::icons::DOTS_THREE, "a `…`, no ✦");
+    let rect = button.rect();
+    assert!(v.open_document_menu(rect));
+    let menu = v.menu.as_ref().expect("the menu is open");
+    let MenuSubject::Document {
+        document: subject, ..
+    } = &menu.subject
+    else {
+        panic!("the page's menu: {:?}", menu.subject);
+    };
+    assert_eq!(*subject, document, "about the page it opened over");
+    assert_eq!(menu.items(), &[MenuAction::OpenInChat][..]);
+    let subject = menu.subject.clone();
+    v.menu = None;
+
+    assert!(v.run_menu_action_for_test(subject, MenuAction::OpenInChat));
+    assert_eq!(
+        v.panes.iter_groups().count(),
+        groups_before + 1,
+        "a split, not a tab"
+    );
+    let TabView::AiChat(chat) = &mut v.tabs_mut().active_mut().view else {
+        panic!("the new pane shows a chat");
+    };
+    let text = chat.composer_text();
+    assert!(
+        text.contains(&koru_link::document_link(document.as_uuid(), None)),
+        "the document is a chip in the composer: {text:?}"
+    );
     assert_eq!(v.ai_visible(), panel_was, "the side panel did not move");
 }
 
@@ -12592,6 +13712,333 @@ fn workspace_verbs_find_a_workspace_of_a_profile_that_is_not_open() {
     assert!(!view.start_workspace_icon(WorkspaceId::new()));
 }
 
+// ------------------------------------------------------- the help popover
+
+/// Press the rail's `?`: the help popover opens beside the rail. Returns the
+/// rail and the `?`.
+fn press_help(
+    v: &mut MainView,
+    w: &mut Workspace,
+) -> (koru_draw::geometry::Rect, koru_draw::geometry::Rect) {
+    let rail = v.rail_area();
+    let help = v.explore.apps_rail_rects(rail).help;
+    let (x, y) = help.centre();
+    v.mouse_down(&mut w.ws, x, y, false);
+    (rail, help)
+}
+
+/// The rail's `?` opens the help popover beside the rail, its foot level with
+/// the `?`, as the review's artboard draws it (QUESTIONS.md E33): *WHAT'S NEW*
+/// over the release card, *Full changelog*, *Send feedback* and *Star us on
+/// GitHub*, and the strip of the website and the socials at the foot. With
+/// nothing on offer the card is this build: the shipped notes' first section
+/// for a title, the next two for its line, Download drawn dim.
+#[test]
+fn the_help_popover_is_the_artboards_rows_beside_the_rail() {
+    use crate::mainview::context_menu::{self, MenuAction};
+    use koru_ui::MenuItem;
+    let (mut v, mut workspace, _) = with_summary_open();
+    v.explore.close_popover();
+    v.help_headlines_rx = None;
+    v.help_headlines = Some(vec![
+        "Welcome".to_owned(),
+        "Sync".to_owned(),
+        "Agents".to_owned(),
+        "A fourth that does not show".to_owned(),
+    ]);
+    let (rail, help) = press_help(&mut v, &mut workspace);
+    let menu = v.menu.as_ref().expect("the help popover opened");
+    let items = menu.items();
+    assert_eq!(
+        items,
+        &[
+            MenuAction::HelpWhatsNewHeading,
+            MenuAction::HelpRelease,
+            MenuAction::Divider,
+            MenuAction::HelpFullChangelog,
+            MenuAction::Divider,
+            MenuAction::HelpSendFeedback,
+            MenuAction::HelpStarOnGitHub,
+            MenuAction::Divider,
+            MenuAction::HelpSocials,
+        ]
+    );
+    assert!(!MenuAction::HelpWhatsNewHeading.selectable());
+    assert!(
+        !MenuAction::HelpSocials.selectable(),
+        "the strip is its buttons"
+    );
+    assert_eq!(
+        MenuAction::HelpWhatsNewHeading.label().as_ref(),
+        "WHAT'S NEW",
+        "a heading, in caps"
+    );
+    // The card: this build, since nothing is on offer.
+    let card = MenuItem::card(&MenuAction::HelpRelease).expect("a card");
+    assert_eq!(card.title, "Welcome");
+    assert_eq!(card.body, "Sync · Agents");
+    let info = koru_channel::build_info();
+    assert_eq!(
+        card.badge,
+        format!("{} · {}", info.channel.to_uppercase(), info.version)
+    );
+    assert_eq!(
+        card.button
+            .as_ref()
+            .map(|(label, on)| (label.as_str(), *on)),
+        Some(("Download", false)),
+        "nothing to download: the button is there, drawn dim"
+    );
+    assert!(
+        !MenuItem::unread(&MenuAction::HelpWhatsNewHeading),
+        "no dot without an offer"
+    );
+    let button = menu
+        .control_rect(v.viewport, 1, 0)
+        .expect("the card's button");
+    let (bx, by) = button.centre();
+    assert_eq!(menu.control_at(v.viewport, bx, by), Some((1, 0)));
+    assert!(
+        menu.pressable_control_at(v.viewport, bx, by).is_none(),
+        "and refuses the press"
+    );
+    // The changelog leaves the app, and says so where a chord would be.
+    assert_eq!(
+        MenuItem::trailing_icon(&MenuAction::HelpFullChangelog),
+        Some(koru_draw::icons::POP_OUT)
+    );
+    // So does the repository: the GitHub mark at its start, `↗` at its end,
+    // and its name is what a screen reader reads.
+    assert_eq!(
+        MenuItem::trailing_icon(&MenuAction::HelpStarOnGitHub),
+        Some(koru_draw::icons::POP_OUT)
+    );
+    assert_eq!(
+        MenuAction::HelpStarOnGitHub.icon(),
+        Some(koru_draw::icons::GITHUB)
+    );
+    assert_eq!(
+        MenuAction::HelpStarOnGitHub.label().as_ref(),
+        "Star us on GitHub"
+    );
+    assert!(MenuAction::HelpStarOnGitHub.selectable());
+    // The strip: the globe, then the socials, each named for its tooltip.
+    let strip = items
+        .iter()
+        .position(|i| *i == MenuAction::HelpSocials)
+        .unwrap();
+    let names: Vec<String> = (0..6)
+        .map(|c| {
+            context_menu::control_tooltip(MenuAction::HelpSocials, c)
+                .expect("a named button")
+                .0
+        })
+        .collect();
+    assert_eq!(
+        names,
+        ["koru.do", "X", "Reddit", "Instagram", "TikTok", "YouTube"]
+    );
+    assert!(menu.control_rect(v.viewport, strip, 5).is_some());
+    assert!(
+        menu.control_rect(v.viewport, strip, 6).is_none(),
+        "six, not seven"
+    );
+    // Beside the rail, its foot level with the ?, and wide enough for a card.
+    let panel = menu.panel(v.viewport);
+    assert!(
+        panel.x >= rail.x + rail.w - 0.5,
+        "the popover hangs beside the rail: {panel:?} vs {rail:?}"
+    );
+    assert!(
+        (panel.y + panel.h - (help.y + help.h)).abs() < 0.5,
+        "its foot level with the ?: {panel:?} vs {help:?}"
+    );
+    assert!(panel.y >= 0.0);
+    assert!(panel.w >= koru_ui::menu::CARD_MIN_W);
+    // Every row can be chosen; the Keyboard shortcuts row is gone until its
+    // page exists (the review's note).
+    let enabled = v.enabled_items(menu);
+    let at = |a: MenuAction| items.iter().position(|i| *i == a).unwrap();
+    for row in [
+        MenuAction::HelpRelease,
+        MenuAction::HelpFullChangelog,
+        MenuAction::HelpSendFeedback,
+        MenuAction::HelpStarOnGitHub,
+    ] {
+        assert!(enabled[at(row)], "{row:?}");
+    }
+    // Its own subject, not the window menu's: the caption's ⋯ tracker shuts
+    // a `Window` menu the moment the pointer leaves its button.
+    assert!(!v.window_menu_open());
+    let content = v.content();
+    v.mouse_move(content.x + content.w * 0.5, content.y + content.h * 0.5);
+    assert!(
+        v.menu.is_some(),
+        "a pointer move leaves the help popover up"
+    );
+    // Without notes the card says so, and the popover still opens.
+    v.menu = None;
+    v.help_headlines = None;
+    press_help(&mut v, &mut workspace);
+    assert!(v.menu.is_some(), "opens without notes too");
+    let card = MenuItem::card(&MenuAction::HelpRelease).expect("a card");
+    assert_eq!(card.title, format!("Koru {}", info.version));
+    assert_eq!(card.body, "Not shipped with this build");
+}
+
+/// Each row's destination: the changelog, the repository, the website and
+/// the socials open in the browser through the shell's URI port; feedback
+/// and a problem open the Feedback tab — the second on *Something isn't working*, turning an
+/// open Feedback tab rather than doubling it; the card opens What's new.
+#[test]
+fn the_help_rows_open_their_destinations() {
+    use crate::mainview::context_menu::{GITHUB_URL, MenuAction, MenuSubject, Social, WEBSITE_URL};
+    use koru_workspace_host::{PaneRequest, View};
+    let (mut v, _w) = container();
+    while View::take_pane_request(&mut v).is_some() {}
+    assert!(v.run_menu_action_for_test(MenuSubject::Help, MenuAction::HelpFullChangelog));
+    assert_eq!(
+        View::take_pane_request(&mut v),
+        Some(PaneRequest::OpenUri(crate::whatsnew::RELEASES_URL))
+    );
+    assert_eq!(
+        crate::whatsnew::RELEASES_URL,
+        "https://www.koru.do/en/releases"
+    );
+    assert!(v.run_menu_action_for_test(MenuSubject::Help, MenuAction::HelpStarOnGitHub));
+    assert_eq!(
+        View::take_pane_request(&mut v),
+        Some(PaneRequest::OpenUri(GITHUB_URL))
+    );
+    assert_eq!(GITHUB_URL, "https://github.com/koruworks/mono");
+    assert!(v.run_menu_action_for_test(MenuSubject::Help, MenuAction::HelpWebsite));
+    assert_eq!(
+        View::take_pane_request(&mut v),
+        Some(PaneRequest::OpenUri(WEBSITE_URL))
+    );
+    for social in Social::ALL {
+        assert!(v.run_menu_action_for_test(MenuSubject::Help, MenuAction::HelpSocial(social)));
+        assert_eq!(
+            View::take_pane_request(&mut v),
+            Some(PaneRequest::OpenUri(social.url())),
+            "{social:?}"
+        );
+        assert!(
+            social.url().contains("korudo"),
+            "{social:?}: {}",
+            social.url()
+        );
+    }
+    assert!(
+        View::take_pane_request(&mut v).is_none(),
+        "one row, one request"
+    );
+    // Feedback: the one feedback row (the review's note).
+    assert!(v.run_menu_action_for_test(MenuSubject::Help, MenuAction::HelpSendFeedback));
+    assert!(
+        matches!(v.tabs().active_tab().view, TabView::Feedback(_)),
+        "the Feedback tab"
+    );
+    // The card opens What's new.
+    assert!(v.run_menu_action_for_test(MenuSubject::Help, MenuAction::HelpRelease));
+    assert!(v.tabs().active_tab().whats_new.is_some());
+    crate::feedback::draft::reset();
+}
+
+/// With a build on offer the card is that build — the manifest's title and
+/// summary, the heading's dot on — and its Download is live: pressing it in
+/// the popover the `?` opened sends the update's first consent and leaves
+/// the popover up, the way a stepper's button does.
+#[test]
+fn the_cards_download_sends_the_first_consent_when_a_build_is_offered() {
+    use crate::mainview::context_menu::MenuAction;
+    use koru_ui::MenuItem;
+    let (mut v, mut workspace, _) = with_summary_open();
+    v.explore.close_popover();
+    v.help_headlines_rx = None;
+    v.help_headlines = Some(vec!["Welcome".to_owned()]);
+    let report = a_build_is_available();
+    let (feed, sent) = crate::agent::UpdateFeed::for_test(report);
+    v.updates = feed;
+    press_help(&mut v, &mut workspace);
+    let menu = v.menu.clone().expect("the help popover opened");
+    let card = MenuItem::card(&MenuAction::HelpRelease).expect("a card");
+    assert_eq!(card.badge, "NIGHTLY · 0.9.1", "the offer, not this build");
+    assert_eq!(card.title, "Faster documents, quieter windows");
+    assert_eq!(card.body, "Opening a large workspace is nine times faster.");
+    assert_eq!(
+        card.button.as_ref().map(|(_, on)| *on),
+        Some(true),
+        "Download is live"
+    );
+    assert!(
+        MenuItem::unread(&MenuAction::HelpWhatsNewHeading),
+        "the heading wears its dot"
+    );
+    let button = menu
+        .control_rect(v.viewport, 1, 0)
+        .expect("the card's button");
+    let (x, y) = button.centre();
+    assert_eq!(menu.pressable_control_at(v.viewport, x, y), Some((1, 0)));
+    assert!(v.mouse_down(&mut workspace.ws, x, y, false));
+    assert!(v.menu.is_some(), "the popover stays up");
+    let koru_agent_wire::FromShell::Request { body, .. } =
+        sent.try_recv().expect("the press sent the consent");
+    assert_eq!(
+        body,
+        koru_agent_wire::Request::UpdateChoice {
+            choice: koru_agent_wire::UpdateChoice::Download
+        }
+    );
+    assert!(sent.try_recv().is_err(), "one press, one message");
+}
+
+/// A press on the rail is a press outside the who/where popover, so it shuts
+/// — and the press still does what it does (the review's note: the Profiles
+/// list stayed up beside the help popover the `?` opened). The profile
+/// square is the list's own door and toggles it instead.
+#[test]
+fn a_press_on_the_rail_shuts_the_popover_and_still_acts() {
+    use crate::mainview::context_menu::MenuSubject;
+    let settle = |v: &mut MainView| {
+        v.explore
+            .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
+    };
+    let (mut v, mut w, _) = with_summary_open();
+    let rail = v.rail_area();
+    let rects = v.explore.apps_rail_rects(rail);
+    // Settings on the rail, with the chip's page up.
+    let (x, y) = rects.settings.centre();
+    assert!(v.mouse_down(&mut w.ws, x, y, false));
+    assert!(
+        !v.explore.popover_open(),
+        "a press outside the popover shuts it"
+    );
+    assert!(
+        matches!(v.tabs().active_tab().view, TabView::Settings(_)),
+        "and still acts"
+    );
+    settle(&mut v);
+    // The square's list, then the ?: the list goes, the help popover comes.
+    let (sx, sy) = rects.profile.centre();
+    v.mouse_down(&mut w.ws, sx, sy, false);
+    assert!(v.explore.popover_open(), "the square opens its list");
+    let (hx, hy) = rects.help.centre();
+    v.mouse_down(&mut w.ws, hx, hy, false);
+    assert!(!v.explore.popover_open(), "the ? is outside the list");
+    assert_eq!(
+        v.menu.as_ref().map(|m| m.subject.clone()),
+        Some(MenuSubject::Help)
+    );
+    v.menu = None;
+    settle(&mut v);
+    // The square shuts its own list.
+    v.mouse_down(&mut w.ws, sx, sy, false);
+    assert!(v.explore.popover_open());
+    v.mouse_down(&mut w.ws, sx, sy, false);
+    assert!(!v.explore.popover_open(), "the square is the list's door");
+}
+
 /// **A page beside the focused pane still takes an external edit.**
 ///
 /// A document in one pane and a different tab focused in the next: an edit
@@ -12646,4 +14093,214 @@ fn rows_of_single(v: &mut MainView) -> usize {
         TabView::Leaf(leaf) => leaf.body().rows.len(),
         _ => 0,
     }
+}
+
+/// **A document nobody is looking at lays out when it is shown** (D13). An
+/// invalidation — what every font, size, theme or density change sends —
+/// lays out the shown tab now and only marks the hidden ones; showing one
+/// lays it out once, before its first frame, and not again.
+#[test]
+fn an_invalidation_lays_out_the_shown_document_and_marks_the_hidden_ones() {
+    let (mut v, mut w) = in_a_tab(&["first"]);
+    for i in 0..3 {
+        let doc =
+            w.ws.insert(Parent::Root, Node::document(format!("Other {i}")).unwrap())
+                .unwrap();
+        w.ws.insert(Parent::Node(doc), Node::paragraph("text").unwrap())
+            .unwrap();
+        assert!(v.open_node_in_new_tab(&w.ws, doc));
+    }
+    // The document tabs, wherever the strip puts them beside its own.
+    let docs: Vec<usize> = v
+        .tabs()
+        .iter()
+        .enumerate()
+        .filter(|(_, t)| matches!(t.view, TabView::Leaf(Leaf::Document(_))))
+        .map(|(i, _)| i)
+        .collect();
+    assert_eq!(docs.len(), 4);
+    // Every tab shown once, as a person moving through them would.
+    for &i in &docs {
+        v.tabs_mut().select(i);
+        v.tabs_mut().active_mut().ensure_sized(1200.0, 700.0);
+    }
+    v.tabs_mut().select(docs[0]);
+    fn reflows(v: &MainView, docs: &[usize]) -> Vec<u64> {
+        docs.iter()
+            .map(|&i| match &v.tabs().get(i).expect("a tab").view {
+                TabView::Leaf(Leaf::Document(d)) => d.editor.view.reflows,
+                _ => panic!("a document tab"),
+            })
+            .collect()
+    }
+    let before = reflows(&v, &docs);
+    View::invalidate(&mut v);
+    let after = reflows(&v, &docs);
+    assert_eq!(after[0], before[0] + 1, "the shown tab lays out now");
+    assert_eq!(&after[1..], &before[1..], "the hidden ones do not");
+
+    v.tabs_mut().select(docs[2]);
+    assert!(v.tabs_mut().active_mut().ensure_sized(1200.0, 700.0));
+    assert_eq!(
+        reflows(&v, &docs)[2],
+        before[2] + 1,
+        "shown, it lays out once"
+    );
+    assert!(
+        !v.tabs_mut().active_mut().ensure_sized(1200.0, 700.0),
+        "and only once"
+    );
+}
+
+/// **A result page nobody is looking at lays out when it is shown** (D13,
+/// R5-1). A Markdown result holds a whole document; an invalidation marks it
+/// while its tab is hidden, and showing the tab lays it out once.
+#[test]
+fn a_hidden_result_page_lays_out_when_shown_and_not_before() {
+    let (mut v, _w) = in_a_tab(&["first"]);
+    let result = crate::result_view::tests::reading();
+    v.tabs_mut()
+        .push(crate::mainview::tab::Tab::result(result, "Findings"));
+    let at = v
+        .tabs()
+        .iter()
+        .position(|t| matches!(t.view, TabView::Result(_)))
+        .expect("the result tab");
+    let doc = v
+        .tabs()
+        .iter()
+        .position(|t| matches!(t.view, TabView::Leaf(Leaf::Document(_))))
+        .expect("the document tab");
+    v.tabs_mut().select(at);
+    v.tabs_mut().active_mut().ensure_sized(1200.0, 700.0);
+    v.tabs_mut().select(doc);
+    fn reflows(v: &MainView, at: usize) -> u64 {
+        match &v.tabs().get(at).expect("a tab").view {
+            TabView::Result(result) => {
+                Editing::view(result.document().expect("a page").leaf()).reflows
+            }
+            _ => panic!("the result tab"),
+        }
+    }
+    let before = reflows(&v, at);
+    View::invalidate(&mut v);
+    assert_eq!(reflows(&v, at), before, "hidden, the page is only marked");
+    v.tabs_mut().select(at);
+    assert!(v.tabs_mut().active_mut().ensure_sized(1200.0, 700.0));
+    assert_eq!(reflows(&v, at), before + 1, "shown, it lays out once");
+}
+
+/// **A document in another pane group follows a font change too.** With the
+/// Settings side focused and a document split beside it, an invalidation —
+/// what a font preview or choice sends — lays out the document in the other
+/// group, not only the focused group's tab.
+#[test]
+fn an_invalidation_reaches_the_document_in_another_pane_group() {
+    use crate::mainview::panes::{PanePath, SplitDir};
+    let (mut v, _w) = in_a_tab(&["first"]);
+    let active = v.tabs().active_tab().id;
+    let tab = v
+        .panes
+        .take_tab_by_id(&PanePath::root(), active)
+        .expect("took the document tab");
+    v.panes.split(&PanePath::root(), SplitDir::Right, tab);
+    let right = PanePath::root().child(1);
+    v.panes.set_focus(PanePath::root().child(0));
+    fn reflows(v: &MainView, path: &PanePath) -> u64 {
+        match &v
+            .panes
+            .group(path)
+            .expect("the group")
+            .tabs()
+            .active_tab()
+            .view
+        {
+            TabView::Leaf(Leaf::Document(d)) => d.editor.view.reflows,
+            _ => panic!("the split side holds the document"),
+        }
+    }
+    v.panes
+        .group_mut(&right)
+        .expect("the group")
+        .tabs_mut()
+        .active_mut()
+        .ensure_sized(600.0, 700.0);
+    let before = reflows(&v, &right);
+    View::invalidate(&mut v);
+    assert_eq!(
+        reflows(&v, &right),
+        before + 1,
+        "the document beside the focused group lays out again"
+    );
+}
+
+/// **Settings and Welcome move to the other tab group like any tab.** Torn
+/// off its strip a tab becomes a cross-group drag, and dropped on the other
+/// group it lands there; only a document may leave the window.
+#[test]
+fn the_settings_tab_can_be_carried_to_another_group() {
+    use crate::mainview::panes::{PanePath, SplitDir};
+    let (mut v, _w) = in_a_tab(&["first"]);
+    let active = v.tabs().active_tab().id;
+    let doc = v
+        .panes
+        .take_tab_by_id(&PanePath::root(), active)
+        .expect("took the document tab");
+    v.panes.split(&PanePath::root(), SplitDir::Right, doc);
+    v.panes.set_focus(PanePath::root().child(0));
+    v.tabs_mut().push(crate::mainview::tab::Tab::settings());
+    let settings = v
+        .tabs()
+        .iter()
+        .position(|t| matches!(t.view, TabView::Settings(_)))
+        .expect("the Settings tab");
+    assert!(
+        v.is_pane_draggable(settings),
+        "Settings can leave its group"
+    );
+    let welcome = v
+        .tabs()
+        .iter()
+        .position(|t| matches!(t.view, TabView::Welcome(_)));
+    if let Some(welcome) = welcome {
+        assert!(v.is_pane_draggable(welcome), "Welcome moves too");
+    }
+    let id = v.tabs().get(settings).expect("a tab").id;
+    let tab = v
+        .panes
+        .take_tab_by_id(&PanePath::root().child(0), id)
+        .expect("took Settings");
+    assert!(
+        !tab.view.pops_out(),
+        "and only a document leaves the window"
+    );
+    v.panes.insert_into_group(&PanePath::root().child(1), tab);
+    assert!(
+        v.panes
+            .group(&PanePath::root().child(1))
+            .expect("the right group")
+            .iter_tabs()
+            .any(|t| matches!(t.view, TabView::Settings(_)))
+    );
+}
+
+/// **Opening a task's document keeps the Tasks view.** The page opens in a
+/// tab; the sidebar stays where the person was looking.
+#[test]
+fn opening_a_document_from_tasks_keeps_the_tasks_view() {
+    let (mut view, mut workspace) = container();
+    let document = a_document(&mut workspace.ws, "A task's page");
+    view.explore.show_tasks();
+    assert!(View::open_search_target(
+        &mut view,
+        &workspace.ws,
+        None,
+        Some(document),
+        None,
+        None,
+    ));
+    assert_eq!(
+        view.explore.navigator_mode(),
+        crate::panes::explore::NavigatorMode::Tasks
+    );
 }

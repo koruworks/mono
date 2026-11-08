@@ -34,6 +34,87 @@ impl<R> Future for StoreReply<R> {
     }
 }
 
+impl<R> StoreReply<R> {
+    /// The reply half of a job an executor other than the Store worker owns —
+    /// a per-replica actor, an in-memory composition's own thread. The
+    /// executor sends the job's result, or the reason it never ran, on the
+    /// other half; dropping that half unanswered reads as `Stopped`.
+    pub fn from_channel(response: tokio::sync::oneshot::Receiver<Result<R, WorkerError>>) -> Self {
+        Self { response }
+    }
+}
+
+/// What a Cloud pass needs from whoever owns the Store it reconciles.
+///
+/// **The seam the driver is generic over**, so a pass runs the same against
+/// the Store worker's queue ([`StoreWorkerClient`]) and against any other
+/// executor of bounded Store jobs — a host that keeps each replica's Store on
+/// its own actor thread, with the pass's jobs at a lower priority than a tool
+/// call's. Two things, and nothing about transport or authority:
+///
+/// - **one bounded job, admitted now.** Admission is eager and the reply lazy:
+///   once `submit_store` answers `Ok`, the executor owns the job even if the
+///   reply is never polled, exactly as the worker's queue does. A job never
+///   waits for Cloud; the pass awaits its reply off the executor's thread.
+/// - **a subscription to a dataset's durable commits**, so an idle pass wakes
+///   on a local change instead of polling.
+pub trait StoreJobs: Clone + Send + Sync + 'static {
+    fn submit_store<R, F>(&self, task: F) -> Result<StoreReply<R>, WorkerError>
+    where
+        R: Send + 'static,
+        F: FnOnce(&mut crate::WorkerStore) -> R + Send + 'static;
+
+    fn watch_cloud(
+        &self,
+        dataset: koru_store_api::cloud_changes::Dataset,
+    ) -> impl Future<Output = Result<koru_store_api::cloud_changes::Subscription, WorkerError>> + Send;
+
+    /// [`StoreWorkerClient::submit_cloud_export`], over any executor.
+    fn submit_cloud_export<F>(
+        &self,
+        request: ExportRequest,
+        at: Timestamp,
+        authorize: F,
+    ) -> Result<StoreReply<Result<Option<Export>, Failure>>, WorkerError>
+    where
+        F: FnOnce(&mut crate::WorkerStore, Scope, Unit) -> Result<(), Refusal> + Send + 'static,
+    {
+        self.submit_store(move |store| request.run(store, at, authorize))
+    }
+
+    /// [`StoreWorkerClient::submit_cloud`], over any executor.
+    fn submit_cloud<F>(
+        &self,
+        scope: Scope,
+        complete: Completed,
+        at: Timestamp,
+        authorize: F,
+    ) -> Result<StoreReply<Result<Receipt, Failure>>, WorkerError>
+    where
+        F: FnOnce(&mut crate::WorkerStore, Scope, Unit) -> Result<(), Refusal> + Send + 'static,
+    {
+        self.submit_store(move |store| client_store::receive(store, scope, complete, at, authorize))
+    }
+}
+
+impl StoreJobs for StoreWorkerClient {
+    fn submit_store<R, F>(&self, task: F) -> Result<StoreReply<R>, WorkerError>
+    where
+        R: Send + 'static,
+        F: FnOnce(&mut crate::WorkerStore) -> R + Send + 'static,
+    {
+        StoreWorkerClient::submit_store(self, task)
+    }
+
+    fn watch_cloud(
+        &self,
+        dataset: koru_store_api::cloud_changes::Dataset,
+    ) -> impl Future<Output = Result<koru_store_api::cloud_changes::Subscription, WorkerError>> + Send
+    {
+        StoreWorkerClient::watch_cloud(self, dataset)
+    }
+}
+
 impl StoreWorkerClient {
     pub async fn watch_cloud(
         &self,

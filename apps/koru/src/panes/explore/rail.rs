@@ -43,7 +43,7 @@ use koru_draw::{icons, scene};
 use vello::Scene;
 use vello::kurbo::Affine;
 
-use super::{FOOTER_PAD, SECTION_H, draw_row_card, icon_lane, row_chip};
+use super::{FOOTER_PAD, SECTION_H, draw_chosen_row, icon_lane, row_chip};
 use koru_shell_chrome::tabs::draw_icon;
 
 /// SPEC §7's bucket, from the domain.
@@ -205,6 +205,14 @@ pub enum TasksRailRequest {
     OpenReminders {
         new_tab: bool,
     },
+    /// Alt alone on a queue, a list or the Reminders row: ask where its page
+    /// opens, with the place chooser at `at` (window coordinates) — the one
+    /// a reference in a document shows (ADR-58). Nothing is selected and no
+    /// drag is armed: the chooser is the answer.
+    ChoosePlace {
+        target: RailTarget,
+        at: (f32, f32),
+    },
     /// A list row was dragged to index `to` in the Lists section. The rows
     /// are already in that order here; what the container owes is the write
     /// that makes the table agree.
@@ -284,6 +292,10 @@ pub struct TasksRail {
     /// is pushed from a document a peer also writes, so the row a name is being
     /// typed over may move under the field.
     renaming: Option<ListId>,
+    /// **The list a dragged task would join**: tasks carried off a Tasks
+    /// page over this list's row. Pushed by the container, which owns the
+    /// drag; the rail only lights the row.
+    drop_target: Option<ListId>,
     scroll: f32,
 }
 
@@ -777,6 +789,24 @@ impl TasksRail {
         }
     }
 
+    /// The page a press here would open — a queue, a list or the Reminders
+    /// row — without opening it: nothing is selected, no drag is armed and
+    /// the keyboard position stays. What the column asks before giving a
+    /// modified press a meaning of its own (Alt, which asks where the page
+    /// opens). The heading's `+` and the "+ New list" row name no page.
+    pub fn target_at(&self, area: Rect, top: f32, x: f32, y: f32) -> Option<RailTarget> {
+        let (row, _) = self
+            .rows(area, top)
+            .into_iter()
+            .find(|(_, r)| r.contains(x, y))?;
+        match row {
+            RailRow::Bucket(bucket) => Some(RailTarget::Bucket(bucket)),
+            RailRow::Reminders => Some(RailTarget::Reminders),
+            RailRow::List(i) => Some(RailTarget::List(self.lists.get(i)?.id)),
+            RailRow::ListsHeading | RailRow::NewList => None,
+        }
+    }
+
     /// A right-click in the column while the rail is showing.
     ///
     /// **Every row that names a page has a menu; the furniture does not.** A
@@ -793,16 +823,7 @@ impl TasksRail {
     /// rename something is a side effect nobody asked for — unlike the library's
     /// `…`, where the menu's verbs *are* about what is selected.
     pub fn context_menu(&self, area: Rect, top: f32, x: f32, y: f32) -> Option<TasksRailRequest> {
-        let (row, _) = self
-            .rows(area, top)
-            .into_iter()
-            .find(|(_, r)| r.contains(x, y))?;
-        let target = match row {
-            RailRow::Bucket(bucket) => RailTarget::Bucket(bucket),
-            RailRow::Reminders => RailTarget::Reminders,
-            RailRow::List(i) => RailTarget::List(self.lists.get(i)?.id),
-            RailRow::ListsHeading | RailRow::NewList => return None,
-        };
+        let target = self.target_at(area, top, x, y)?;
         Some(TasksRailRequest::RowMenu { target, at: (x, y) })
     }
 
@@ -823,6 +844,18 @@ impl TasksRail {
         let changed = self.hover != hover;
         self.hover = hover;
         changed
+    }
+
+    /// Light `list`'s row as where dragged tasks would land, or none.
+    /// Answers whether that changed.
+    pub fn set_drop_target(&mut self, list: Option<ListId>) -> bool {
+        let changed = self.drop_target != list;
+        self.drop_target = list;
+        changed
+    }
+
+    pub fn drop_target(&self) -> Option<ListId> {
+        self.drop_target
     }
 
     pub fn clear_hover(&mut self) -> bool {
@@ -929,8 +962,22 @@ impl TasksRail {
                     record.property("active", active, "view state");
                 },
             );
-            if active {
-                draw_row_card(scene, root, r, p);
+            let dropping = matches!(row, RailRow::List(i)
+                if self.drop_target.is_some()
+                    && self.lists.get(i).map(|list| list.id) == self.drop_target);
+            if dropping {
+                // Where the carried tasks would land: lit, and ringed in the
+                // accent so it reads as a target rather than a hover.
+                scene::fill(scene, root, p.hover_tint, &row_chip(r));
+                scene::stroke(
+                    scene,
+                    root,
+                    p.accent,
+                    1.5,
+                    &row_chip(Rect::new(r.x + 0.75, r.y + 0.75, r.w - 1.5, r.h - 1.5)),
+                );
+            } else if active {
+                draw_chosen_row(scene, root, r, p);
             } else if self.hover == Some(row) && !matches!(row, RailRow::ListsHeading) {
                 scene::fill(scene, root, p.hover_tint, &row_chip(r));
             }
@@ -945,7 +992,7 @@ impl TasksRail {
             }
             // The library's ink rule, so one column does not tell the same
             // story in two greys: a row's icon is always `text_dim`, and its
-            // label is full-strength only while the row wears the card — a
+            // label is full-strength only while the row wears the chosen grey — a
             // chosen row drawn dim would read as half-disabled, the opposite
             // of what choosing it meant.
             let fg = if active { p.text } else { p.text_dim };

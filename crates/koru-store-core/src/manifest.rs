@@ -155,6 +155,25 @@ impl Manifest {
         self.doc.peer_id()
     }
 
+    /// Label every commit this manifest makes, while the returned subscription
+    /// lives, with `message` as its Loro commit message.
+    ///
+    /// **For the commits the Store makes on behalf of an app connection** —
+    /// the entry a created or extracted document gets, the registration of a
+    /// workspace's system document — which carry the connection's `actor/1`
+    /// attribution (`contracts/connector-attribution-v1.md`). A subscription
+    /// rather than `set_next_commit_message`, deliberately: a message set on
+    /// the pending transaction would survive a write refused before it made
+    /// an operation, and label the next commit somebody else makes. Dropping
+    /// the subscription ends it.
+    pub fn attribute_commits(&self, message: &str) -> loro::Subscription {
+        let message: std::sync::Arc<str> = message.into();
+        self.doc.subscribe_pre_commit(Box::new(move |commit| {
+            commit.modifier.set_message(&message);
+            true
+        }))
+    }
+
     // ------------------------------------------------------------ transport
 
     pub fn export_snapshot(&self) -> Result<Vec<u8>> {

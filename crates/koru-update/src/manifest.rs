@@ -173,6 +173,9 @@ pub enum PackageFormat {
     /// An Apple disk image: `Koru.app` plus an Applications symlink, the
     /// drag-install every mac user already knows.
     Dmg,
+    /// An Android package, which the phone hands to the system installer
+    /// (TECHNICAL.final A6, rung 3). Only an `android` manifest carries it.
+    Apk,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -260,12 +263,14 @@ impl UpdateManifest {
         // The format follows the platform: Windows installs from the zip the
         // updater already extracts; macOS ships a disk image (zip is still
         // legal there — it is what pre-dmg releases published); Linux ships
-        // a gzipped tarball, which carries Unix modes natively. The updater
-        // chooses its extractor by platform, so a format outside the
-        // platform's set is a package nothing on that machine can open.
+        // a gzipped tarball, which carries Unix modes natively; Android ships
+        // the APK its package installer opens. The updater chooses its
+        // extractor by platform, so a format outside the platform's set is a
+        // package nothing on that machine can open.
         let format_fits = match self.platform.as_str() {
             "macos" => matches!(self.package.format, PackageFormat::Dmg | PackageFormat::Zip),
             "linux" => matches!(self.package.format, PackageFormat::TarGz),
+            "android" => matches!(self.package.format, PackageFormat::Apk),
             _ => matches!(self.package.format, PackageFormat::Zip),
         };
         reject(
@@ -485,6 +490,59 @@ mod tests {
         on_mac.architecture = "aarch64".into();
         on_mac.package.format = PackageFormat::TarGz;
         assert!(on_mac.validate(&mac).is_err());
+    }
+
+    fn android() -> UpdateTarget {
+        UpdateTarget {
+            channel: ReleaseChannel::Nightly,
+            platform: "android".into(),
+            architecture: "aarch64".into(),
+        }
+    }
+
+    /// **The APK is an Android package and nobody else's** (A6): an Android
+    /// manifest takes it and only it, and a desktop manifest that names one
+    /// is refused, as any package its updater cannot open is.
+    #[test]
+    fn an_apk_is_an_android_package_and_nobody_elses() {
+        let mut m = manifest();
+        m.channel = ReleaseChannel::Nightly;
+        m.platform = "android".into();
+        m.architecture = "aarch64".into();
+        m.package.format = PackageFormat::Apk;
+        m.validate(&android()).unwrap();
+        for other in [
+            PackageFormat::Zip,
+            PackageFormat::Dmg,
+            PackageFormat::TarGz,
+            PackageFormat::AppImage,
+        ] {
+            m.package.format = other;
+            assert!(m.validate(&android()).is_err(), "{other:?} on android");
+        }
+
+        let mut windows = manifest();
+        windows.package.format = PackageFormat::Apk;
+        assert!(windows.validate(&target()).is_err());
+        let mut linux_apk = manifest();
+        linux_apk.channel = ReleaseChannel::Nightly;
+        linux_apk.platform = "linux".into();
+        linux_apk.package.format = PackageFormat::Apk;
+        assert!(linux_apk.validate(&linux()).is_err());
+        // A desktop asking for its own target never accepts the phone's
+        // manifest, whatever it carries.
+        let mut phone = manifest();
+        phone.platform = "android".into();
+        phone.package.format = PackageFormat::Apk;
+        assert!(phone.validate(&target()).is_err());
+    }
+
+    #[test]
+    fn the_apk_format_is_spelled_apk_on_the_wire() {
+        assert_eq!(
+            serde_json::to_string(&PackageFormat::Apk).unwrap(),
+            "\"apk\""
+        );
     }
 
     /// The wire spelling is the one `koru-release` writes: `"tar.gz"`.

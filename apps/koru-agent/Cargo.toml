@@ -79,6 +79,9 @@ koru-artifact-sqlite = { path = "../../crates/koru-artifact-sqlite" }
 # results sit, so the disk report and the register path cannot disagree.
 koru-artifact-core = { path = "../../crates/koru-artifact-core" }
 koru-api-client = { path = "../../crates/koru-api-client" }
+# A chat's id, to ask the AI service which profile the chat belongs to
+# (`service::place_chat`). Already in the graph through `koru-api-client`.
+koru-ai-core = { path = "../../crates/koru-ai-core" }
 koru-settings = { path = "../../crates/koru-settings" }
 # The event model, for the overlay's fire-and-forget `search.opened`.
 koru-events = { path = "../../crates/koru-events" }

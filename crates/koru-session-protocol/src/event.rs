@@ -238,6 +238,94 @@ pub enum AgentEvent {
         provider: ProviderKind,
         state: crate::ManagedState,
     },
+    /// Protocol v19 (koru-ai D7). The agent moved its approval mode itself
+    /// during the turn — Claude leaving plan mode once a plan is approved,
+    /// or taking another mode when the one asked for is not offered by its
+    /// model. A new tag, so the host sends it only to a v19 peer.
+    ModeChanged {
+        turn_id: AgentTurnId,
+        mode: crate::AgentModeId,
+    },
+    /// Protocol v20 (koru-ai D69). A short status line from the agent that
+    /// is not part of its reply — a hook that failed on the person's machine,
+    /// a warning about the session — bounded to [`AGENT_NOTICE_CHARS`]
+    /// characters. One the agent said before any turn is said with the
+    /// next. A new tag, so the host sends it only to a v20 peer.
+    Notice {
+        turn_id: AgentTurnId,
+        text: String,
+    },
+    /// Protocol v21 (koru-ai D108). The agent stopped to ask the person —
+    /// Codex's `request_user_input`, Claude's `AskUserQuestion` — bounded by
+    /// [`crate::bound_questions`]. A set is answered once, through
+    /// `answer_questions`, and closed by [`AgentEvent::QuestionsResolved`].
+    /// `blocking: false` is a set the agent does not wait on: its turn runs
+    /// on, and the set may be answered until the agent closes it. A new tag,
+    /// so the host sends it only to a v21 peer; a session created by an
+    /// older peer is never asked at all (the adapter declines for it).
+    ///
+    /// `delivery: next_message` is a set the agent asked in its reply and
+    /// moved on from (Codex's `request_user_input_async`): never blocking,
+    /// it outlives its turn, and its answers go as the person's next
+    /// message — [`crate::QuestionsReply`] on `send_pending_input`, or
+    /// `answer_questions` while its turn still runs, which steers them in.
+    /// A skip sends the agent nothing; another message passes it over and
+    /// it expires.
+    QuestionsRequired {
+        turn_id: AgentTurnId,
+        request_id: crate::QuestionRequestId,
+        questions: Vec<crate::AgentQuestion>,
+        #[serde(default = "blocking_default")]
+        blocking: bool,
+        #[serde(default, skip_serializing_if = "crate::QuestionsDelivery::is_in_turn")]
+        delivery: crate::QuestionsDelivery,
+    },
+    /// Protocol v21. How a set of questions ended: answered — a secret's
+    /// answer withheld — skipped, or expired with its turn.
+    QuestionsResolved {
+        turn_id: AgentTurnId,
+        request_id: crate::QuestionRequestId,
+        outcome: crate::QuestionsOutcome,
+    },
+}
+
+fn blocking_default() -> bool {
+    true
+}
+
+/// The most characters an agent's notice keeps; the rest is cut at a
+/// character boundary with an ellipsis.
+pub const AGENT_NOTICE_CHARS: usize = 500;
+
+/// `text` bounded for [`AgentEvent::Notice`]: trimmed, at most
+/// [`AGENT_NOTICE_CHARS`] characters, `None` when nothing is left.
+pub fn bound_agent_notice(text: &str) -> Option<String> {
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    if text.chars().count() <= AGENT_NOTICE_CHARS {
+        return Some(text.to_owned());
+    }
+    let mut bounded: String = text.chars().take(AGENT_NOTICE_CHARS - 1).collect();
+    bounded.push('…');
+    Some(bounded)
+}
+
+impl AgentEvent {
+    /// First negotiated protocol version that can read this event. A host
+    /// forwards nothing a subscriber could not parse: an unknown tag would
+    /// end the subscriber's connection, not one event.
+    pub fn minimum_protocol_version(&self) -> u32 {
+        match self {
+            Self::ModeChanged { .. } => crate::AGENT_MODES_PROTOCOL_VERSION,
+            Self::Notice { .. } => crate::AGENT_NOTICES_PROTOCOL_VERSION,
+            Self::QuestionsRequired { .. } | Self::QuestionsResolved { .. } => {
+                crate::QUESTIONS_PROTOCOL_VERSION
+            }
+            _ => 1,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -276,6 +364,10 @@ impl std::fmt::Debug for AgentEvent {
             Self::TurnCancelled { turn_id, .. } => ("TurnCancelled", Some(turn_id)),
             Self::TurnFailed { turn_id, .. } => ("TurnFailed", Some(turn_id)),
             Self::ProviderState { .. } => ("ProviderState", None),
+            Self::ModeChanged { turn_id, .. } => ("ModeChanged", Some(turn_id)),
+            Self::Notice { turn_id, .. } => ("Notice", Some(turn_id)),
+            Self::QuestionsRequired { turn_id, .. } => ("QuestionsRequired", Some(turn_id)),
+            Self::QuestionsResolved { turn_id, .. } => ("QuestionsResolved", Some(turn_id)),
         };
         f.debug_struct(kind)
             .field("turn_id", &turn)

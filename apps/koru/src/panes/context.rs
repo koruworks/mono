@@ -13,6 +13,12 @@
 //! [`Section::VISIBLE`]. While one section is visible the tab row is not drawn
 //! at all — a single tab is a button that does nothing.
 //!
+//! **Tasks is hidden for now** (`koru_features::CONTEXT_TASKS_SHOWN`, the
+//! user, 2026-11-03): it stays in `VISIBLE` with its model and its rows, and
+//! [`Section::shown_in_product`] keeps it off the screen. In a build that also
+//! hides Reminders and Cloud sync that leaves History alone, so the column
+//! opens on it with no tab row — the lone-tab rule above, not a new one.
+//!
 //! **Chrome still holds no model.** The filled sections are handed rows of
 //! pre-formatted strings by the container and report a press back out; nothing
 //! here reads a document, formats a date or knows what a lifecycle is. That is
@@ -77,9 +83,14 @@ impl Section {
     /// Whether this build shows the section (`koru_features`,
     /// guide/contributing/FEATURE-FLAGS.md): Tasks with tasks, Reminders with
     /// reminders, Cloud sync with Koru Cloud. History always.
+    ///
+    /// **Tasks is also hidden for now**, by a constant rather than a flag
+    /// (`koru_features::CONTEXT_TASKS_SHOWN`): it stays in [`Self::VISIBLE`]
+    /// and keeps its code, and this is the one answer every way in asks —
+    /// the tab row, a press, [`ContextView::select`] and so `Ctrl+Alt+J`.
     pub fn shown_in_product(self) -> bool {
         match self {
-            Self::Tasks => koru_features::tasks(),
+            Self::Tasks => koru_features::tasks() && koru_features::context_tasks(),
             Self::Reminders => koru_features::reminders(),
             Self::CloudSync => koru_features::cloud_sync(),
             Self::Comments | Self::Assets | Self::History => true,
@@ -286,6 +297,14 @@ impl ContextView {
         }
         self.section = section;
         true
+    }
+
+    /// Show `section` even while this build hides it — for the suite alone,
+    /// so a section hidden for now (Tasks, `koru_features::CONTEXT_TASKS_SHOWN`)
+    /// keeps its tests rather than losing them with its tab.
+    #[cfg(test)]
+    pub fn show_hidden_section(&mut self, section: Section) {
+        self.section = section;
     }
 
     /// Localized reminder copy is injected by the app during maintenance so
@@ -722,7 +741,7 @@ impl ContextView {
         scene::fill(
             scene,
             root,
-            p.status_bg,
+            p.pane_bg,
             &scene::rect(area.x, area.y, area.w, area.h),
         );
         scene::fill(

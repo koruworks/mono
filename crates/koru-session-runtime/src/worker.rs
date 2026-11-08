@@ -153,6 +153,9 @@ pub enum SessionLaunch {
         /// MCP servers the agent starts beside itself (a chat's desktop
         /// bridge); empty for every other launch.
         mcp_servers: Vec<crate::providers::McpServerLaunch>,
+        /// The creator draws an agent's questions (protocol v21, koru-ai
+        /// D108); every other launch's agent declines them.
+        questions: bool,
     },
 }
 
@@ -277,6 +280,11 @@ enum SessionMutation {
         approval_id: ApprovalId,
         decision: ApprovalDecision,
         choice: Option<koru_session_protocol::ApprovalChoiceId>,
+    },
+    /// An answer to an agent's questions, or a skip (protocol v21).
+    Questions {
+        request_id: koru_session_protocol::QuestionRequestId,
+        answers: Option<Vec<koru_session_protocol::QuestionAnswer>>,
     },
 }
 
@@ -405,6 +413,7 @@ impl SessionOwner {
                 delegation,
                 selection,
                 mcp_servers,
+                questions,
             } => Self::start_managed(
                 create.clone(),
                 config,
@@ -413,6 +422,7 @@ impl SessionOwner {
                 delegation.clone(),
                 selection.clone(),
                 mcp_servers.clone(),
+                *questions,
                 started,
             ),
         }
@@ -551,6 +561,7 @@ impl SessionOwner {
         delegation: Option<DelegationLaunch>,
         selection: Option<LaunchSelection>,
         mcp_servers: Vec<crate::providers::McpServerLaunch>,
+        questions: bool,
         started: Instant,
     ) -> Result<Self, SessionFailure> {
         let id = SessionId::mint();
@@ -565,6 +576,7 @@ impl SessionOwner {
                 delegation,
                 selection,
                 mcp_servers,
+                questions,
             })
             .map_err(|failure| {
                 log_provider_launch_failure(&provider, &failure);
@@ -1313,6 +1325,42 @@ impl SessionHandle {
         result
     }
 
+    /// **Answer the questions an agent asked, or skip them** (protocol v21,
+    /// koru-ai D108): the controller's, once per key, like an approval.
+    pub fn answer_questions(
+        &self,
+        lease: ControllerLeaseToken,
+        idempotency_key: IdempotencyKey,
+        request_id: koru_session_protocol::QuestionRequestId,
+        answers: Option<Vec<koru_session_protocol::QuestionAnswer>>,
+    ) -> Result<(), ErrorCode> {
+        let mut state = self.shared.lock();
+        require_lease(&state, lease)?;
+        if state.summary.process != ProcessState::Running {
+            return Err(ErrorCode::SessionExited);
+        }
+        if begin_mutation(
+            &mut state,
+            idempotency_key,
+            SessionMutation::Questions {
+                request_id,
+                answers: answers.clone(),
+            },
+        )? {
+            return Ok(());
+        }
+        let SessionIo::Managed(managed) = &self.shared.io else {
+            finish_mutation(&mut state, idempotency_key, false);
+            return Err(ErrorCode::CapabilityNotNegotiated);
+        };
+        let managed = managed.clone();
+        drop(state);
+        let result = managed.answer_questions(request_id, answers);
+        let mut state = self.shared.lock();
+        finish_mutation(&mut state, idempotency_key, result.is_ok());
+        result
+    }
+
     pub fn cancel_turn(
         &self,
         lease: ControllerLeaseToken,
@@ -1678,6 +1726,11 @@ impl Shared {
                 state.summary.managed =
                     Some(koru_session_protocol::ManagedState::WaitingForApproval);
             }
+            // A set the agent waits on is the person's to answer; one it
+            // does not wait on leaves the turn running (D108).
+            AgentEvent::QuestionsRequired { blocking: true, .. } => {
+                state.summary.managed = Some(koru_session_protocol::ManagedState::WaitingForInput);
+            }
             AgentEvent::AttachmentAccepted {
                 turn_id,
                 attachment_id,
@@ -1751,7 +1804,8 @@ impl Shared {
             }
             AgentEvent::Usage { usage, .. } => {
                 // The last model the provider named is the session's
-                // reported model; the requested one never moves.
+                // reported model; the requested one moves only with a turn
+                // that chose another (protocol v22).
                 if let Some(model) = &usage.model {
                     state
                         .summary
@@ -1765,7 +1819,11 @@ impl Shared {
             | AgentEvent::ToolCompleted { .. }
             | AgentEvent::ApprovalResolved { .. }
             | AgentEvent::ApprovalExpired { .. }
-            | AgentEvent::ChildSessionCreated { .. } => {}
+            | AgentEvent::ChildSessionCreated { .. }
+            | AgentEvent::ModeChanged { .. }
+            | AgentEvent::Notice { .. }
+            | AgentEvent::QuestionsRequired { .. }
+            | AgentEvent::QuestionsResolved { .. } => {}
         }
         if let Some((turn_id, attachment_id, _, outcome)) = delivery_report
             && !delivery::mark_reported(&mut state, turn_id, attachment_id, outcome)
@@ -2106,8 +2164,15 @@ fn log_provider_launch_failure(
     );
 }
 
+/// The failure a client is told. Its message is the code's token, except
+/// for a refused reasoning level, which says so (`reasoning_rejected`): the
+/// code is the refused model's, and the chat says which it was (D19).
 fn provider_failure(failure: crate::providers::ProviderFailure) -> SessionFailure {
-    self::failure(failure.code)
+    let mut told = self::failure(failure.code);
+    if failure.diagnostic == koru_session_protocol::ProviderDiagnostic::ReasoningRejected {
+        told.message = koru_session_protocol::REASONING_REJECTED.to_owned();
+    }
+    told
 }
 
 fn millis(duration: std::time::Duration) -> u64 {

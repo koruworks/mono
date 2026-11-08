@@ -49,4 +49,4 @@ pub use modifiers::{
     NONE, PRIMARY, PRIMARY_ALT, PRIMARY_SHIFT, SHIFT, VIEW, has_foreign_primary, has_primary,
     is_chord, primary_only, without_primary,
 };
-pub use registry::{Layer, REGISTRY, Shortcut, ShortcutId, label_of};
+pub use registry::{Layer, RAIL_SLOTS, REGISTRY, Shortcut, ShortcutId, label_of, rail_slot};

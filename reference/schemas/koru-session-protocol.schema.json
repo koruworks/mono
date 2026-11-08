@@ -1,6 +1,134 @@
 {
+  "AgentCommand": {
+    "$defs": {
+      "AgentCommandKind": {
+        "description": "**Where an entry comes from**: the folder's own, the person's, what the\nagent ships, what an administrator set. A picker lists the first two\ngroups first and the last two together ([`AgentCommandKind::group`]).",
+        "oneOf": [
+          {
+            "const": "repo_skill",
+            "description": "A skill of the folder the agent works in (Codex's `repo` scope).",
+            "type": "string"
+          },
+          {
+            "const": "user_skill",
+            "description": "A skill of the person's own (`user`).",
+            "type": "string"
+          },
+          {
+            "const": "system_skill",
+            "description": "A skill the agent ships with (`system`).",
+            "type": "string"
+          },
+          {
+            "const": "admin_skill",
+            "description": "A skill an administrator installed (`admin`).",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "**One entry an agent offers.** `name` is what the person's message says\nand what goes back; `description` is one line about it, empty when the\nagent gave none; `display_name` is the agent's own name to show, when it\ngives one.",
+    "properties": {
+      "description": {
+        "type": "string"
+      },
+      "display_name": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "input_hint": {
+        "description": "What the entry takes after its name, in the agent's words, when it\nsays. No skill has one; it is the ACP command's `input.hint`.",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "kind": {
+        "$ref": "#/$defs/AgentCommandKind"
+      },
+      "name": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "name",
+      "kind"
+    ],
+    "title": "AgentCommand",
+    "type": "object"
+  },
+  "AgentCommandKind": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "**Where an entry comes from**: the folder's own, the person's, what the\nagent ships, what an administrator set. A picker lists the first two\ngroups first and the last two together ([`AgentCommandKind::group`]).",
+    "oneOf": [
+      {
+        "const": "repo_skill",
+        "description": "A skill of the folder the agent works in (Codex's `repo` scope).",
+        "type": "string"
+      },
+      {
+        "const": "user_skill",
+        "description": "A skill of the person's own (`user`).",
+        "type": "string"
+      },
+      {
+        "const": "system_skill",
+        "description": "A skill the agent ships with (`system`).",
+        "type": "string"
+      },
+      {
+        "const": "admin_skill",
+        "description": "A skill an administrator installed (`admin`).",
+        "type": "string"
+      }
+    ],
+    "title": "AgentCommandKind"
+  },
   "AgentEvent": {
     "$defs": {
+      "AgentModeId": {
+        "description": "One agent's own id for one of its modes: printable ASCII with no space,\nat most [`MAX_AGENT_MODE_ID_BYTES`].",
+        "type": "string"
+      },
+      "AgentQuestion": {
+        "description": "One question. `id` is the agent's own key for it, returned with the\nanswer; `header` is the short label above it, empty when the agent gave\nnone. With no options the question takes text only.",
+        "properties": {
+          "allow_other": {
+            "default": false,
+            "description": "The agent takes an answer of the person's own words beside its\noptions (*Other*).",
+            "type": "boolean"
+          },
+          "header": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "options": {
+            "description": "In the agent's order: the first is the one it recommends.",
+            "items": {
+              "$ref": "#/$defs/QuestionOption"
+            },
+            "type": "array"
+          },
+          "question": {
+            "type": "string"
+          },
+          "secret": {
+            "default": false,
+            "description": "The answer is a secret: typed into a masked box and never repeated.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "question"
+        ],
+        "type": "object"
+      },
       "AgentTurnId": {
         "format": "uuid",
         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
@@ -164,6 +292,160 @@
       "ProviderKind": {
         "description": "Provider category, never a provider-native identity.",
         "type": "string"
+      },
+      "QuestionAnswer": {
+        "description": "One question's answer, by the question's id.",
+        "properties": {
+          "question_id": {
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/$defs/QuestionAnswerValue"
+          }
+        },
+        "required": [
+          "question_id",
+          "value"
+        ],
+        "type": "object"
+      },
+      "QuestionAnswerValue": {
+        "description": "What a question was answered with.",
+        "oneOf": [
+          {
+            "description": "One of its options, by label.",
+            "properties": {
+              "kind": {
+                "const": "option",
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "label"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The person's own words: *Other*, a secret, or a question with no\noptions.",
+            "properties": {
+              "kind": {
+                "const": "text",
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "text"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A secret was given and is not repeated. Only ever in\n[`QuestionsOutcome::Answered`]; an answer sent with it is refused.",
+            "properties": {
+              "kind": {
+                "const": "withheld",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "QuestionOption": {
+        "description": "One option a question offers. `label` is what is sent back when it is\nchosen; `description` is the line under it, empty when the agent gave\nnone.",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "label"
+        ],
+        "type": "object"
+      },
+      "QuestionRequestId": {
+        "format": "uuid",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        "type": "string"
+      },
+      "QuestionsDelivery": {
+        "description": "**How a set's answers reach the agent** (koru-ai D108).\n\nMost agents ask and wait: the answer goes back on the request that\nasked, through `answer_questions`, while the asking turn is open. Some\nask in their reply and move on — Codex's `request_user_input_async` —\nand take the answers as the person's next message: the set outlives its\nturn, an answer goes as input (`send_pending_input` with\n[`QuestionsReply`], or into the turn still running through\n`answer_questions`), and a skip sends the agent nothing.",
+        "oneOf": [
+          {
+            "const": "in_turn",
+            "description": "Answered on the request that asked, within its turn.",
+            "type": "string"
+          },
+          {
+            "const": "next_message",
+            "description": "Answered by the person's next message; the set stays answerable\nafter its turn ends, until it is answered, skipped, or passed over\nby another message.",
+            "type": "string"
+          }
+        ]
+      },
+      "QuestionsOutcome": {
+        "description": "How a set of questions ended.",
+        "oneOf": [
+          {
+            "description": "The person answered; a secret answer is [`QuestionAnswerValue::Withheld`].",
+            "properties": {
+              "answers": {
+                "items": {
+                  "$ref": "#/$defs/QuestionAnswer"
+                },
+                "type": "array"
+              },
+              "kind": {
+                "const": "answered",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "answers"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The person skipped the set; the agent was told so.",
+            "properties": {
+              "kind": {
+                "const": "skipped",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "It closed unanswered: the turn ended or was stopped, the agent took\nit back, or the session went away.",
+            "properties": {
+              "kind": {
+                "const": "expired",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "SessionFailure": {
         "description": "A content-free developer diagnostic. UI maps `code` to localized copy.",
@@ -649,6 +931,108 @@
           "state"
         ],
         "type": "object"
+      },
+      {
+        "description": "Protocol v19 (koru-ai D7). The agent moved its approval mode itself\nduring the turn — Claude leaving plan mode once a plan is approved,\nor taking another mode when the one asked for is not offered by its\nmodel. A new tag, so the host sends it only to a v19 peer.",
+        "properties": {
+          "kind": {
+            "const": "mode_changed",
+            "type": "string"
+          },
+          "mode": {
+            "$ref": "#/$defs/AgentModeId"
+          },
+          "turn_id": {
+            "$ref": "#/$defs/AgentTurnId"
+          }
+        },
+        "required": [
+          "kind",
+          "turn_id",
+          "mode"
+        ],
+        "type": "object"
+      },
+      {
+        "description": "Protocol v20 (koru-ai D69). A short status line from the agent that\nis not part of its reply — a hook that failed on the person's machine,\na warning about the session — bounded to [`AGENT_NOTICE_CHARS`]\ncharacters. One the agent said before any turn is said with the\nnext. A new tag, so the host sends it only to a v20 peer.",
+        "properties": {
+          "kind": {
+            "const": "notice",
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "turn_id": {
+            "$ref": "#/$defs/AgentTurnId"
+          }
+        },
+        "required": [
+          "kind",
+          "turn_id",
+          "text"
+        ],
+        "type": "object"
+      },
+      {
+        "description": "Protocol v21 (koru-ai D108). The agent stopped to ask the person —\nCodex's `request_user_input`, Claude's `AskUserQuestion` — bounded by\n[`crate::bound_questions`]. A set is answered once, through\n`answer_questions`, and closed by [`AgentEvent::QuestionsResolved`].\n`blocking: false` is a set the agent does not wait on: its turn runs\non, and the set may be answered until the agent closes it. A new tag,\nso the host sends it only to a v21 peer; a session created by an\nolder peer is never asked at all (the adapter declines for it).\n\n`delivery: next_message` is a set the agent asked in its reply and\nmoved on from (Codex's `request_user_input_async`): never blocking,\nit outlives its turn, and its answers go as the person's next\nmessage — [`crate::QuestionsReply`] on `send_pending_input`, or\n`answer_questions` while its turn still runs, which steers them in.\nA skip sends the agent nothing; another message passes it over and\nit expires.",
+        "properties": {
+          "blocking": {
+            "default": true,
+            "type": "boolean"
+          },
+          "delivery": {
+            "$ref": "#/$defs/QuestionsDelivery"
+          },
+          "kind": {
+            "const": "questions_required",
+            "type": "string"
+          },
+          "questions": {
+            "items": {
+              "$ref": "#/$defs/AgentQuestion"
+            },
+            "type": "array"
+          },
+          "request_id": {
+            "$ref": "#/$defs/QuestionRequestId"
+          },
+          "turn_id": {
+            "$ref": "#/$defs/AgentTurnId"
+          }
+        },
+        "required": [
+          "kind",
+          "turn_id",
+          "request_id",
+          "questions"
+        ],
+        "type": "object"
+      },
+      {
+        "description": "Protocol v21. How a set of questions ended: answered — a secret's\nanswer withheld — skipped, or expired with its turn.",
+        "properties": {
+          "kind": {
+            "const": "questions_resolved",
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/$defs/QuestionsOutcome"
+          },
+          "request_id": {
+            "$ref": "#/$defs/QuestionRequestId"
+          },
+          "turn_id": {
+            "$ref": "#/$defs/AgentTurnId"
+          }
+        },
+        "required": [
+          "kind",
+          "turn_id",
+          "request_id",
+          "outcome"
+        ],
+        "type": "object"
       }
     ],
     "title": "AgentEvent"
@@ -1045,8 +1429,150 @@
               "state"
             ],
             "type": "object"
+          },
+          {
+            "description": "Protocol v19 (koru-ai D7). The agent moved its approval mode itself\nduring the turn — Claude leaving plan mode once a plan is approved,\nor taking another mode when the one asked for is not offered by its\nmodel. A new tag, so the host sends it only to a v19 peer.",
+            "properties": {
+              "kind": {
+                "const": "mode_changed",
+                "type": "string"
+              },
+              "mode": {
+                "$ref": "#/$defs/AgentModeId"
+              },
+              "turn_id": {
+                "$ref": "#/$defs/AgentTurnId"
+              }
+            },
+            "required": [
+              "kind",
+              "turn_id",
+              "mode"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Protocol v20 (koru-ai D69). A short status line from the agent that\nis not part of its reply — a hook that failed on the person's machine,\na warning about the session — bounded to [`AGENT_NOTICE_CHARS`]\ncharacters. One the agent said before any turn is said with the\nnext. A new tag, so the host sends it only to a v20 peer.",
+            "properties": {
+              "kind": {
+                "const": "notice",
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              },
+              "turn_id": {
+                "$ref": "#/$defs/AgentTurnId"
+              }
+            },
+            "required": [
+              "kind",
+              "turn_id",
+              "text"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Protocol v21 (koru-ai D108). The agent stopped to ask the person —\nCodex's `request_user_input`, Claude's `AskUserQuestion` — bounded by\n[`crate::bound_questions`]. A set is answered once, through\n`answer_questions`, and closed by [`AgentEvent::QuestionsResolved`].\n`blocking: false` is a set the agent does not wait on: its turn runs\non, and the set may be answered until the agent closes it. A new tag,\nso the host sends it only to a v21 peer; a session created by an\nolder peer is never asked at all (the adapter declines for it).\n\n`delivery: next_message` is a set the agent asked in its reply and\nmoved on from (Codex's `request_user_input_async`): never blocking,\nit outlives its turn, and its answers go as the person's next\nmessage — [`crate::QuestionsReply`] on `send_pending_input`, or\n`answer_questions` while its turn still runs, which steers them in.\nA skip sends the agent nothing; another message passes it over and\nit expires.",
+            "properties": {
+              "blocking": {
+                "default": true,
+                "type": "boolean"
+              },
+              "delivery": {
+                "$ref": "#/$defs/QuestionsDelivery"
+              },
+              "kind": {
+                "const": "questions_required",
+                "type": "string"
+              },
+              "questions": {
+                "items": {
+                  "$ref": "#/$defs/AgentQuestion"
+                },
+                "type": "array"
+              },
+              "request_id": {
+                "$ref": "#/$defs/QuestionRequestId"
+              },
+              "turn_id": {
+                "$ref": "#/$defs/AgentTurnId"
+              }
+            },
+            "required": [
+              "kind",
+              "turn_id",
+              "request_id",
+              "questions"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Protocol v21. How a set of questions ended: answered — a secret's\nanswer withheld — skipped, or expired with its turn.",
+            "properties": {
+              "kind": {
+                "const": "questions_resolved",
+                "type": "string"
+              },
+              "outcome": {
+                "$ref": "#/$defs/QuestionsOutcome"
+              },
+              "request_id": {
+                "$ref": "#/$defs/QuestionRequestId"
+              },
+              "turn_id": {
+                "$ref": "#/$defs/AgentTurnId"
+              }
+            },
+            "required": [
+              "kind",
+              "turn_id",
+              "request_id",
+              "outcome"
+            ],
+            "type": "object"
           }
         ]
+      },
+      "AgentModeId": {
+        "description": "One agent's own id for one of its modes: printable ASCII with no space,\nat most [`MAX_AGENT_MODE_ID_BYTES`].",
+        "type": "string"
+      },
+      "AgentQuestion": {
+        "description": "One question. `id` is the agent's own key for it, returned with the\nanswer; `header` is the short label above it, empty when the agent gave\nnone. With no options the question takes text only.",
+        "properties": {
+          "allow_other": {
+            "default": false,
+            "description": "The agent takes an answer of the person's own words beside its\noptions (*Other*).",
+            "type": "boolean"
+          },
+          "header": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "options": {
+            "description": "In the agent's order: the first is the one it recommends.",
+            "items": {
+              "$ref": "#/$defs/QuestionOption"
+            },
+            "type": "array"
+          },
+          "question": {
+            "type": "string"
+          },
+          "secret": {
+            "default": false,
+            "description": "The answer is a secret: typed into a masked box and never repeated.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "question"
+        ],
+        "type": "object"
       },
       "AgentTurnId": {
         "format": "uuid",
@@ -1212,6 +1738,160 @@
         "description": "Provider category, never a provider-native identity.",
         "type": "string"
       },
+      "QuestionAnswer": {
+        "description": "One question's answer, by the question's id.",
+        "properties": {
+          "question_id": {
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/$defs/QuestionAnswerValue"
+          }
+        },
+        "required": [
+          "question_id",
+          "value"
+        ],
+        "type": "object"
+      },
+      "QuestionAnswerValue": {
+        "description": "What a question was answered with.",
+        "oneOf": [
+          {
+            "description": "One of its options, by label.",
+            "properties": {
+              "kind": {
+                "const": "option",
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "label"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The person's own words: *Other*, a secret, or a question with no\noptions.",
+            "properties": {
+              "kind": {
+                "const": "text",
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "text"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A secret was given and is not repeated. Only ever in\n[`QuestionsOutcome::Answered`]; an answer sent with it is refused.",
+            "properties": {
+              "kind": {
+                "const": "withheld",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "QuestionOption": {
+        "description": "One option a question offers. `label` is what is sent back when it is\nchosen; `description` is the line under it, empty when the agent gave\nnone.",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "label"
+        ],
+        "type": "object"
+      },
+      "QuestionRequestId": {
+        "format": "uuid",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        "type": "string"
+      },
+      "QuestionsDelivery": {
+        "description": "**How a set's answers reach the agent** (koru-ai D108).\n\nMost agents ask and wait: the answer goes back on the request that\nasked, through `answer_questions`, while the asking turn is open. Some\nask in their reply and move on — Codex's `request_user_input_async` —\nand take the answers as the person's next message: the set outlives its\nturn, an answer goes as input (`send_pending_input` with\n[`QuestionsReply`], or into the turn still running through\n`answer_questions`), and a skip sends the agent nothing.",
+        "oneOf": [
+          {
+            "const": "in_turn",
+            "description": "Answered on the request that asked, within its turn.",
+            "type": "string"
+          },
+          {
+            "const": "next_message",
+            "description": "Answered by the person's next message; the set stays answerable\nafter its turn ends, until it is answered, skipped, or passed over\nby another message.",
+            "type": "string"
+          }
+        ]
+      },
+      "QuestionsOutcome": {
+        "description": "How a set of questions ended.",
+        "oneOf": [
+          {
+            "description": "The person answered; a secret answer is [`QuestionAnswerValue::Withheld`].",
+            "properties": {
+              "answers": {
+                "items": {
+                  "$ref": "#/$defs/QuestionAnswer"
+                },
+                "type": "array"
+              },
+              "kind": {
+                "const": "answered",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "answers"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The person skipped the set; the agent was told so.",
+            "properties": {
+              "kind": {
+                "const": "skipped",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "It closed unanswered: the turn ended or was stopped, the agent took\nit back, or the session went away.",
+            "properties": {
+              "kind": {
+                "const": "expired",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "SequencedAgentEvent": {
         "properties": {
           "event": {
@@ -1352,6 +2032,182 @@
       "earlier_truncated"
     ],
     "title": "AgentEventObservation",
+    "type": "object"
+  },
+  "AgentMode": {
+    "$defs": {
+      "AgentModeId": {
+        "description": "One agent's own id for one of its modes: printable ASCII with no space,\nat most [`MAX_AGENT_MODE_ID_BYTES`].",
+        "type": "string"
+      },
+      "ModelLabel": {
+        "description": "Text an agent sends about a model — its name, its group's name, its\ndescription — for a person to read.\n\nUntrusted: trimmed, never empty, free of control characters and bounded.\nIts `Debug` is redacted; the text never reaches a log.",
+        "type": "string"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "One mode, with what the agent itself says about it.",
+    "properties": {
+      "description": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ModelLabel"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "id": {
+        "$ref": "#/$defs/AgentModeId"
+      },
+      "name": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ModelLabel"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "The agent's own name for it: ACP's mode `name`."
+      }
+    },
+    "required": [
+      "id"
+    ],
+    "title": "AgentMode",
+    "type": "object"
+  },
+  "AgentModeId": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "One agent's own id for one of its modes: printable ASCII with no space,\nat most [`MAX_AGENT_MODE_ID_BYTES`].",
+    "title": "AgentModeId",
+    "type": "string"
+  },
+  "AgentModes": {
+    "$defs": {
+      "AgentMode": {
+        "description": "One mode, with what the agent itself says about it.",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ModelLabel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "$ref": "#/$defs/AgentModeId"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ModelLabel"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The agent's own name for it: ACP's mode `name`."
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "AgentModeId": {
+        "description": "One agent's own id for one of its modes: printable ASCII with no space,\nat most [`MAX_AGENT_MODE_ID_BYTES`].",
+        "type": "string"
+      },
+      "ModelLabel": {
+        "description": "Text an agent sends about a model — its name, its group's name, its\ndescription — for a person to read.\n\nUntrusted: trimmed, never empty, free of control characters and bounded.\nIts `Debug` is redacted; the text never reaches a log.",
+        "type": "string"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "**The modes an agent offers**, in the agent's order, and the one it\nreports it is in. Never empty: an agent that offers none has no\n`AgentModes` at all, and a surface shows no mode control for it.",
+    "properties": {
+      "current": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/AgentModeId"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "modes": {
+        "items": {
+          "$ref": "#/$defs/AgentMode"
+        },
+        "type": "array"
+      }
+    },
+    "required": [
+      "modes"
+    ],
+    "title": "AgentModes",
+    "type": "object"
+  },
+  "AgentQuestion": {
+    "$defs": {
+      "QuestionOption": {
+        "description": "One option a question offers. `label` is what is sent back when it is\nchosen; `description` is the line under it, empty when the agent gave\nnone.",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "label"
+        ],
+        "type": "object"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "One question. `id` is the agent's own key for it, returned with the\nanswer; `header` is the short label above it, empty when the agent gave\nnone. With no options the question takes text only.",
+    "properties": {
+      "allow_other": {
+        "default": false,
+        "description": "The agent takes an answer of the person's own words beside its\noptions (*Other*).",
+        "type": "boolean"
+      },
+      "header": {
+        "type": "string"
+      },
+      "id": {
+        "type": "string"
+      },
+      "options": {
+        "description": "In the agent's order: the first is the one it recommends.",
+        "items": {
+          "$ref": "#/$defs/QuestionOption"
+        },
+        "type": "array"
+      },
+      "question": {
+        "type": "string"
+      },
+      "secret": {
+        "default": false,
+        "description": "The answer is a secret: typed into a masked box and never repeated.",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "id",
+      "question"
+    ],
+    "title": "AgentQuestion",
     "type": "object"
   },
   "AgentTurnId": {
@@ -3339,6 +4195,45 @@
         "description": "Stable error token; unknown values remain errors.",
         "minLength": 1,
         "type": "string"
+      },
+      "VersionNeed": {
+        "description": "**What a managed route accepts of an agent's version**, said when it\nrefused one. The two policies read differently to a person: under a\nfloor, updating fixes it; under a reviewed list, a release newer than\nthe newest reviewed is refused until it has been reviewed too.",
+        "oneOf": [
+          {
+            "description": "This release or any newer one.",
+            "properties": {
+              "kind": {
+                "const": "at_least",
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "version"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Only the releases on a reviewed list, of which this is the newest.",
+            "properties": {
+              "kind": {
+                "const": "reviewed",
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "version"
+            ],
+            "type": "object"
+          }
+        ]
       }
     },
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -3402,13 +4297,30 @@
         "type": "object"
       },
       {
+        "description": "The managed route refused the agent. When the refusal was its\nversion, `found` is the version the agent printed (absent when none\ncould be read) and `needed` what the route accepts, so a person is\ntold both rather than \"not supported\". Both are optional and skipped\nwhen absent, so a peer that predates them reads and writes the same\n`{\"kind\":\"incompatible\",\"code\":…}` it always did.",
         "properties": {
           "code": {
             "$ref": "#/$defs/ErrorCode"
           },
+          "found": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "kind": {
             "const": "incompatible",
             "type": "string"
+          },
+          "needed": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/VersionNeed"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -3858,22 +4770,8 @@
   "LaunchReasoning": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "description": "How hard a model should think, as a closed token a provider adapter maps\nonto its own vocabulary. Not the AI core's reasoning choice: this crate\nis a leaf, and a protocol token must be spelled here.",
-    "enum": [
-      "off",
-      "on",
-      "minimal",
-      "low",
-      "medium",
-      "high",
-      "max"
-    ],
-    "title": "LaunchReasoning",
-    "type": "string"
-  },
-  "LaunchSelection": {
-    "$defs": {
-      "LaunchReasoning": {
-        "description": "How hard a model should think, as a closed token a provider adapter maps\nonto its own vocabulary. Not the AI core's reasoning choice: this crate\nis a leaf, and a protocol token must be spelled here.",
+    "oneOf": [
+      {
         "enum": [
           "off",
           "on",
@@ -3885,14 +4783,68 @@
         ],
         "type": "string"
       },
+      {
+        "const": "xhigh",
+        "description": "v18: an older peer cannot read it, so it is sent only to a v18 host.\nSpelled `xhigh`, as the agents and the AI core spell it.",
+        "type": "string"
+      }
+    ],
+    "title": "LaunchReasoning"
+  },
+  "LaunchSelection": {
+    "$defs": {
+      "AgentModeId": {
+        "description": "One agent's own id for one of its modes: printable ASCII with no space,\nat most [`MAX_AGENT_MODE_ID_BYTES`].",
+        "type": "string"
+      },
+      "LaunchReasoning": {
+        "description": "How hard a model should think, as a closed token a provider adapter maps\nonto its own vocabulary. Not the AI core's reasoning choice: this crate\nis a leaf, and a protocol token must be spelled here.",
+        "oneOf": [
+          {
+            "enum": [
+              "off",
+              "on",
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "max"
+            ],
+            "type": "string"
+          },
+          {
+            "const": "xhigh",
+            "description": "v18: an older peer cannot read it, so it is sent only to a v18 host.\nSpelled `xhigh`, as the agents and the AI core spell it.",
+            "type": "string"
+          }
+        ]
+      },
       "ModelName": {
         "description": "A provider's model name, as the provider spells it.\n\nBounded and printable, and otherwise opaque: Koru compares it, stores it\nbeside a run's economics and prices it at display, but never interprets\nit. It is not an event attribute — `AttrValue` has no free string, and\nthe bus carries an `Id` reference to retained metadata instead (§17.3).",
         "type": "string"
       }
     },
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "description": "An explicit model and effort a creator asks a managed session for.\n\n`None` in either field is \"the provider's own default\", which is never\ngated. A `Some` is acknowledged by the adapter before the first prompt\nor refused visibly; it is never silently replaced by the default.",
+    "description": "An explicit model and effort a creator asks a managed session for.\n\n`None` in any field is \"the provider's own default\", which is never\ngated. A `Some` is acknowledged by the adapter before the first prompt\nor refused visibly; it is never silently replaced by the default.",
     "properties": {
+      "fast": {
+        "description": "v19 (koru-ai D11): the session starts with the model's Fast mode on\nor off. Ignored by an adapter whose model offers no Fast mode.",
+        "type": [
+          "boolean",
+          "null"
+        ]
+      },
+      "mode": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/AgentModeId"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "v19 (koru-ai D7): the approval mode the session starts in, one of\nthose the agent offers. Sent only to a v19 host."
+      },
       "model": {
         "anyOf": [
           {
@@ -3964,6 +4916,44 @@
     "title": "McpToolName",
     "type": "string"
   },
+  "ModelContext": {
+    "$defs": {
+      "ModelName": {
+        "description": "A provider's model name, as the provider spells it.\n\nBounded and printable, and otherwise opaque: Koru compares it, stores it\nbeside a run's economics and prices it at display, but never interprets\nit. It is not an event attribute — `AttrValue` has no free string, and\nthe bus carries an `Id` reference to retained metadata instead (§17.3).",
+        "type": "string"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "**A model's longer context window** (koru-ai D10): the id that runs the\nsame model with it, and its size. Choosing it only chooses which id a\nsession is started with; the id is the agent's, opaque to Koru.",
+    "properties": {
+      "id": {
+        "$ref": "#/$defs/ModelName"
+      },
+      "tokens": {
+        "description": "The window, in tokens: `1000000` for a 1M window.",
+        "format": "uint32",
+        "minimum": 0,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "id",
+      "tokens"
+    ],
+    "title": "ModelContext",
+    "type": "object"
+  },
+  "ModelFast": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "**A model's Fast mode** (koru-ai D11), and whether the agent runs the\nmodel in it when a chat says nothing. Codex's catalog runs some of its\nmodels fast by default; Claude Code reports its own state.",
+    "properties": {
+      "on_by_default": {
+        "type": "boolean"
+      }
+    },
+    "title": "ModelFast",
+    "type": "object"
+  },
   "ModelIdentity": {
     "$defs": {
       "ModelName": {
@@ -4000,11 +4990,73 @@
     "title": "ModelIdentity",
     "type": "object"
   },
+  "ModelLabel": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "Text an agent sends about a model — its name, its group's name, its\ndescription — for a person to read.\n\nUntrusted: trimmed, never empty, free of control characters and bounded.\nIts `Debug` is redacted; the text never reaches a log.",
+    "title": "ModelLabel",
+    "type": "string"
+  },
   "ModelName": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "description": "A provider's model name, as the provider spells it.\n\nBounded and printable, and otherwise opaque: Koru compares it, stores it\nbeside a run's economics and prices it at display, but never interprets\nit. It is not an event attribute — `AttrValue` has no free string, and\nthe bus carries an `Id` reference to retained metadata instead (§17.3).",
     "title": "ModelName",
     "type": "string"
+  },
+  "ModelReasoning": {
+    "$defs": {
+      "LaunchReasoning": {
+        "description": "How hard a model should think, as a closed token a provider adapter maps\nonto its own vocabulary. Not the AI core's reasoning choice: this crate\nis a leaf, and a protocol token must be spelled here.",
+        "oneOf": [
+          {
+            "enum": [
+              "off",
+              "on",
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "max"
+            ],
+            "type": "string"
+          },
+          {
+            "const": "xhigh",
+            "description": "v18: an older peer cannot read it, so it is sent only to a v18 host.\nSpelled `xhigh`, as the agents and the AI core spell it.",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "The reasoning levels one model offers, in Koru's own vocabulary.",
+    "properties": {
+      "default": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/LaunchReasoning"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "The agent's stated default level; `None` when the agent decides unseen."
+      },
+      "levels": {
+        "description": "Koru's order: minimal < low < medium < high < xhigh < max. Never Off/On.",
+        "items": {
+          "$ref": "#/$defs/LaunchReasoning"
+        },
+        "type": "array"
+      },
+      "off": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "levels"
+    ],
+    "title": "ModelReasoning",
+    "type": "object"
   },
   "MouseAction": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -4564,6 +5616,10 @@
   },
   "PendingInput": {
     "$defs": {
+      "AgentModeId": {
+        "description": "One agent's own id for one of its modes: printable ASCII with no space,\nat most [`MAX_AGENT_MODE_ID_BYTES`].",
+        "type": "string"
+      },
       "AttachmentId": {
         "format": "uuid",
         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
@@ -4572,6 +5628,32 @@
       "IdempotencyKey": {
         "format": "uuid",
         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        "type": "string"
+      },
+      "LaunchReasoning": {
+        "description": "How hard a model should think, as a closed token a provider adapter maps\nonto its own vocabulary. Not the AI core's reasoning choice: this crate\nis a leaf, and a protocol token must be spelled here.",
+        "oneOf": [
+          {
+            "enum": [
+              "off",
+              "on",
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "max"
+            ],
+            "type": "string"
+          },
+          {
+            "const": "xhigh",
+            "description": "v18: an older peer cannot read it, so it is sent only to a v18 host.\nSpelled `xhigh`, as the agents and the AI core spell it.",
+            "type": "string"
+          }
+        ]
+      },
+      "ModelName": {
+        "description": "A provider's model name, as the provider spells it.\n\nBounded and printable, and otherwise opaque: Koru compares it, stores it\nbeside a run's economics and prices it at display, but never interprets\nit. It is not an event attribute — `AttrValue` has no free string, and\nthe bus carries an `Id` reference to retained metadata instead (§17.3).",
         "type": "string"
       }
     },
@@ -4584,8 +5666,55 @@
         },
         "type": "array"
       },
+      "fast": {
+        "description": "v19 (koru-ai D11): this turn runs with the model's Fast mode on or\noff. `None` leaves it as it is; a model without one ignores it.",
+        "type": [
+          "boolean",
+          "null"
+        ]
+      },
       "idempotency_key": {
         "$ref": "#/$defs/IdempotencyKey"
+      },
+      "mode": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/AgentModeId"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "v19 (koru-ai D7): the approval mode this turn runs in. The adapter\nmoves the session to it before the prompt when it is elsewhere, and\nrefuses the turn visibly when it cannot. `None` leaves the mode as\nit is. Sent only to a v19 host."
+      },
+      "model": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ModelName"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "v22: the model this turn runs on, another of the session's agent's\nmodels chosen after the start. The adapter moves the session to it\nbefore the prompt when it is on another, and refuses the turn\nvisibly when the agent cannot take it; the level and Fast mode the\ninput carries are then the new model's. `None` leaves the model as\nit is. Sent only to a v22 host: an older one would read past it and\nrun the turn on the session's old model."
+      },
+      "reasoning": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/LaunchReasoning"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "v20 (koru-ai D70): the reasoning level this turn runs at. The adapter\nmoves the session to it before the prompt when it is elsewhere, and\nrefuses the turn visibly when the agent cannot take it. `None` leaves\nthe level as it is. Sent only to a v20 host: a v19 host would read\nand ignore it, and run the turn at the old level."
+      },
+      "skills": {
+        "description": "v21 (koru-ai D121): the skills the person picked, by the name the\nagent listed them under, in the order they appear; the text says\n`$name` where each was. The adapter names each to the agent beside\nthe text, and sends the text alone for one it no longer lists. Only\nto a host that negotiated `agent-commands`: an older one would read\npast it.",
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
       },
       "text": {
         "type": "string"
@@ -4970,25 +6099,34 @@
   "ProviderDiagnostic": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "description": "Closed, content-free diagnostic detail suitable for developer support logs.",
-    "enum": [
-      "missing_executable",
-      "authentication_required",
-      "runtime_unavailable",
-      "invalid_version",
-      "version_rejected",
-      "handshake_rejected",
-      "timeout",
-      "spawn",
-      "io",
-      "malformed_frame",
-      "frame_too_large",
-      "backpressure",
-      "unexpected_exit",
-      "invalid_state",
-      "invalid_input"
+    "oneOf": [
+      {
+        "enum": [
+          "missing_executable",
+          "authentication_required",
+          "runtime_unavailable",
+          "invalid_version",
+          "version_rejected",
+          "handshake_rejected",
+          "timeout",
+          "spawn",
+          "io",
+          "malformed_frame",
+          "frame_too_large",
+          "backpressure",
+          "unexpected_exit",
+          "invalid_state",
+          "invalid_input"
+        ],
+        "type": "string"
+      },
+      {
+        "const": "reasoning_rejected",
+        "description": "The agent did not offer, or did not apply, the reasoning level a\nsession was started with (agent-models D19). The failure's code is\n`ProviderModelUnavailable`; this says it was the level, not the model.",
+        "type": "string"
+      }
     ],
-    "title": "ProviderDiagnostic",
-    "type": "string"
+    "title": "ProviderDiagnostic"
   },
   "ProviderKind": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -4998,18 +6136,172 @@
   },
   "ProviderModel": {
     "$defs": {
+      "LaunchReasoning": {
+        "description": "How hard a model should think, as a closed token a provider adapter maps\nonto its own vocabulary. Not the AI core's reasoning choice: this crate\nis a leaf, and a protocol token must be spelled here.",
+        "oneOf": [
+          {
+            "enum": [
+              "off",
+              "on",
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "max"
+            ],
+            "type": "string"
+          },
+          {
+            "const": "xhigh",
+            "description": "v18: an older peer cannot read it, so it is sent only to a v18 host.\nSpelled `xhigh`, as the agents and the AI core spell it.",
+            "type": "string"
+          }
+        ]
+      },
+      "ModelContext": {
+        "description": "**A model's longer context window** (koru-ai D10): the id that runs the\nsame model with it, and its size. Choosing it only chooses which id a\nsession is started with; the id is the agent's, opaque to Koru.",
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/ModelName"
+          },
+          "tokens": {
+            "description": "The window, in tokens: `1000000` for a 1M window.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "tokens"
+        ],
+        "type": "object"
+      },
+      "ModelFast": {
+        "description": "**A model's Fast mode** (koru-ai D11), and whether the agent runs the\nmodel in it when a chat says nothing. Codex's catalog runs some of its\nmodels fast by default; Claude Code reports its own state.",
+        "properties": {
+          "on_by_default": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "ModelLabel": {
+        "description": "Text an agent sends about a model — its name, its group's name, its\ndescription — for a person to read.\n\nUntrusted: trimmed, never empty, free of control characters and bounded.\nIts `Debug` is redacted; the text never reaches a log.",
+        "type": "string"
+      },
       "ModelName": {
         "description": "A provider's model name, as the provider spells it.\n\nBounded and printable, and otherwise opaque: Koru compares it, stores it\nbeside a run's economics and prices it at display, but never interprets\nit. It is not an event attribute — `AttrValue` has no free string, and\nthe bus carries an `Id` reference to retained metadata instead (§17.3).",
         "type": "string"
+      },
+      "ModelReasoning": {
+        "description": "The reasoning levels one model offers, in Koru's own vocabulary.",
+        "properties": {
+          "default": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/LaunchReasoning"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The agent's stated default level; `None` when the agent decides unseen."
+          },
+          "levels": {
+            "description": "Koru's order: minimal < low < medium < high < xhigh < max. Never Off/On.",
+            "items": {
+              "$ref": "#/$defs/LaunchReasoning"
+            },
+            "type": "array"
+          },
+          "off": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "levels"
+        ],
+        "type": "object"
       }
     },
     "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "One model an agent offers, with what the agent itself says about it.\n\nEvery field after `group` is v18 (`PROVIDER_MODEL_FACTS_PROTOCOL_VERSION`)\nand optional: an older peer leaves it unread, and an older agent that\nsends none leaves the picker to format the id.",
     "properties": {
+      "context": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ModelContext"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "A longer context window the model runs with under an id of its own,\nwhich the adapter folded into this model rather than list it twice.\nOptional and defaulted: an older peer leaves it unread and sees the\nmodel as before, so it needs no protocol version of its own."
+      },
+      "description": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ModelLabel"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "fast": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ModelFast"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "The model offers the agent's **Fast mode** (koru-ai D11): Claude\nCode's `fast` option, Codex's *Fast* service tier. Optional and\ndefaulted, like `context`: an older peer leaves it unread."
+      },
       "group": {
         "$ref": "#/$defs/ModelName"
       },
+      "group_name": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ModelLabel"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "The agent's own name for the group: ACP's group `name`."
+      },
       "id": {
         "$ref": "#/$defs/ModelName"
+      },
+      "legacy": {
+        "description": "The agent marks the model as older. Never inferred by Koru.",
+        "type": "boolean"
+      },
+      "name": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ModelLabel"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "The agent's own name for the model: ACP's option `name`, Codex's\n`displayName`, OpenCode's `name`."
+      },
+      "reasoning": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ModelReasoning"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "The reasoning levels the agent offers for this model."
       }
     },
     "required": [
@@ -5021,17 +6313,171 @@
   },
   "ProviderModels": {
     "$defs": {
+      "LaunchReasoning": {
+        "description": "How hard a model should think, as a closed token a provider adapter maps\nonto its own vocabulary. Not the AI core's reasoning choice: this crate\nis a leaf, and a protocol token must be spelled here.",
+        "oneOf": [
+          {
+            "enum": [
+              "off",
+              "on",
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "max"
+            ],
+            "type": "string"
+          },
+          {
+            "const": "xhigh",
+            "description": "v18: an older peer cannot read it, so it is sent only to a v18 host.\nSpelled `xhigh`, as the agents and the AI core spell it.",
+            "type": "string"
+          }
+        ]
+      },
+      "ModelContext": {
+        "description": "**A model's longer context window** (koru-ai D10): the id that runs the\nsame model with it, and its size. Choosing it only chooses which id a\nsession is started with; the id is the agent's, opaque to Koru.",
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/ModelName"
+          },
+          "tokens": {
+            "description": "The window, in tokens: `1000000` for a 1M window.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "tokens"
+        ],
+        "type": "object"
+      },
+      "ModelFast": {
+        "description": "**A model's Fast mode** (koru-ai D11), and whether the agent runs the\nmodel in it when a chat says nothing. Codex's catalog runs some of its\nmodels fast by default; Claude Code reports its own state.",
+        "properties": {
+          "on_by_default": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "ModelLabel": {
+        "description": "Text an agent sends about a model — its name, its group's name, its\ndescription — for a person to read.\n\nUntrusted: trimmed, never empty, free of control characters and bounded.\nIts `Debug` is redacted; the text never reaches a log.",
+        "type": "string"
+      },
       "ModelName": {
         "description": "A provider's model name, as the provider spells it.\n\nBounded and printable, and otherwise opaque: Koru compares it, stores it\nbeside a run's economics and prices it at display, but never interprets\nit. It is not an event attribute — `AttrValue` has no free string, and\nthe bus carries an `Id` reference to retained metadata instead (§17.3).",
         "type": "string"
       },
-      "ProviderModel": {
+      "ModelReasoning": {
+        "description": "The reasoning levels one model offers, in Koru's own vocabulary.",
         "properties": {
+          "default": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/LaunchReasoning"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The agent's stated default level; `None` when the agent decides unseen."
+          },
+          "levels": {
+            "description": "Koru's order: minimal < low < medium < high < xhigh < max. Never Off/On.",
+            "items": {
+              "$ref": "#/$defs/LaunchReasoning"
+            },
+            "type": "array"
+          },
+          "off": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "levels"
+        ],
+        "type": "object"
+      },
+      "ProviderModel": {
+        "description": "One model an agent offers, with what the agent itself says about it.\n\nEvery field after `group` is v18 (`PROVIDER_MODEL_FACTS_PROTOCOL_VERSION`)\nand optional: an older peer leaves it unread, and an older agent that\nsends none leaves the picker to format the id.",
+        "properties": {
+          "context": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ModelContext"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A longer context window the model runs with under an id of its own,\nwhich the adapter folded into this model rather than list it twice.\nOptional and defaulted: an older peer leaves it unread and sees the\nmodel as before, so it needs no protocol version of its own."
+          },
+          "description": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ModelLabel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "fast": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ModelFast"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The model offers the agent's **Fast mode** (koru-ai D11): Claude\nCode's `fast` option, Codex's *Fast* service tier. Optional and\ndefaulted, like `context`: an older peer leaves it unread."
+          },
           "group": {
             "$ref": "#/$defs/ModelName"
           },
+          "group_name": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ModelLabel"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The agent's own name for the group: ACP's group `name`."
+          },
           "id": {
             "$ref": "#/$defs/ModelName"
+          },
+          "legacy": {
+            "description": "The agent marks the model as older. Never inferred by Koru.",
+            "type": "boolean"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ModelLabel"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The agent's own name for the model: ACP's option `name`, Codex's\n`displayName`, OpenCode's `name`."
+          },
+          "reasoning": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ModelReasoning"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The reasoning levels the agent offers for this model."
           }
         },
         "required": [
@@ -5129,13 +6575,30 @@
             "type": "object"
           },
           {
+            "description": "The managed route refused the agent. When the refusal was its\nversion, `found` is the version the agent printed (absent when none\ncould be read) and `needed` what the route accepts, so a person is\ntold both rather than \"not supported\". Both are optional and skipped\nwhen absent, so a peer that predates them reads and writes the same\n`{\"kind\":\"incompatible\",\"code\":…}` it always did.",
             "properties": {
               "code": {
                 "$ref": "#/$defs/ErrorCode"
               },
+              "found": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "kind": {
                 "const": "incompatible",
                 "type": "string"
+              },
+              "needed": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/VersionNeed"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             },
             "required": [
@@ -5164,24 +6627,33 @@
       },
       "ProviderDiagnostic": {
         "description": "Closed, content-free diagnostic detail suitable for developer support logs.",
-        "enum": [
-          "missing_executable",
-          "authentication_required",
-          "runtime_unavailable",
-          "invalid_version",
-          "version_rejected",
-          "handshake_rejected",
-          "timeout",
-          "spawn",
-          "io",
-          "malformed_frame",
-          "frame_too_large",
-          "backpressure",
-          "unexpected_exit",
-          "invalid_state",
-          "invalid_input"
-        ],
-        "type": "string"
+        "oneOf": [
+          {
+            "enum": [
+              "missing_executable",
+              "authentication_required",
+              "runtime_unavailable",
+              "invalid_version",
+              "version_rejected",
+              "handshake_rejected",
+              "timeout",
+              "spawn",
+              "io",
+              "malformed_frame",
+              "frame_too_large",
+              "backpressure",
+              "unexpected_exit",
+              "invalid_state",
+              "invalid_input"
+            ],
+            "type": "string"
+          },
+          {
+            "const": "reasoning_rejected",
+            "description": "The agent did not offer, or did not apply, the reasoning level a\nsession was started with (agent-models D19). The failure's code is\n`ProviderModelUnavailable`; this says it was the level, not the model.",
+            "type": "string"
+          }
+        ]
       },
       "ProviderKind": {
         "description": "Provider category, never a provider-native identity.",
@@ -5216,6 +6688,45 @@
           "shutdown"
         ],
         "type": "string"
+      },
+      "VersionNeed": {
+        "description": "**What a managed route accepts of an agent's version**, said when it\nrefused one. The two policies read differently to a person: under a\nfloor, updating fixes it; under a reviewed list, a release newer than\nthe newest reviewed is refused until it has been reviewed too.",
+        "oneOf": [
+          {
+            "description": "This release or any newer one.",
+            "properties": {
+              "kind": {
+                "const": "at_least",
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "version"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Only the releases on a reviewed list, of which this is the newest.",
+            "properties": {
+              "kind": {
+                "const": "reviewed",
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "version"
+            ],
+            "type": "object"
+          }
+        ]
       }
     },
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -5253,24 +6764,33 @@
     "$defs": {
       "ProviderDiagnostic": {
         "description": "Closed, content-free diagnostic detail suitable for developer support logs.",
-        "enum": [
-          "missing_executable",
-          "authentication_required",
-          "runtime_unavailable",
-          "invalid_version",
-          "version_rejected",
-          "handshake_rejected",
-          "timeout",
-          "spawn",
-          "io",
-          "malformed_frame",
-          "frame_too_large",
-          "backpressure",
-          "unexpected_exit",
-          "invalid_state",
-          "invalid_input"
-        ],
-        "type": "string"
+        "oneOf": [
+          {
+            "enum": [
+              "missing_executable",
+              "authentication_required",
+              "runtime_unavailable",
+              "invalid_version",
+              "version_rejected",
+              "handshake_rejected",
+              "timeout",
+              "spawn",
+              "io",
+              "malformed_frame",
+              "frame_too_large",
+              "backpressure",
+              "unexpected_exit",
+              "invalid_state",
+              "invalid_input"
+            ],
+            "type": "string"
+          },
+          {
+            "const": "reasoning_rejected",
+            "description": "The agent did not offer, or did not apply, the reasoning level a\nsession was started with (agent-models D19). The failure's code is\n`ProviderModelUnavailable`; this says it was the level, not the model.",
+            "type": "string"
+          }
+        ]
       },
       "ProviderStage": {
         "enum": [
@@ -5326,6 +6846,392 @@
     ],
     "title": "ProviderStage",
     "type": "string"
+  },
+  "QuestionAnswer": {
+    "$defs": {
+      "QuestionAnswerValue": {
+        "description": "What a question was answered with.",
+        "oneOf": [
+          {
+            "description": "One of its options, by label.",
+            "properties": {
+              "kind": {
+                "const": "option",
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "label"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The person's own words: *Other*, a secret, or a question with no\noptions.",
+            "properties": {
+              "kind": {
+                "const": "text",
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "text"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A secret was given and is not repeated. Only ever in\n[`QuestionsOutcome::Answered`]; an answer sent with it is refused.",
+            "properties": {
+              "kind": {
+                "const": "withheld",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "One question's answer, by the question's id.",
+    "properties": {
+      "question_id": {
+        "type": "string"
+      },
+      "value": {
+        "$ref": "#/$defs/QuestionAnswerValue"
+      }
+    },
+    "required": [
+      "question_id",
+      "value"
+    ],
+    "title": "QuestionAnswer",
+    "type": "object"
+  },
+  "QuestionAnswerValue": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "What a question was answered with.",
+    "oneOf": [
+      {
+        "description": "One of its options, by label.",
+        "properties": {
+          "kind": {
+            "const": "option",
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "label"
+        ],
+        "type": "object"
+      },
+      {
+        "description": "The person's own words: *Other*, a secret, or a question with no\noptions.",
+        "properties": {
+          "kind": {
+            "const": "text",
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "text"
+        ],
+        "type": "object"
+      },
+      {
+        "description": "A secret was given and is not repeated. Only ever in\n[`QuestionsOutcome::Answered`]; an answer sent with it is refused.",
+        "properties": {
+          "kind": {
+            "const": "withheld",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object"
+      }
+    ],
+    "title": "QuestionAnswerValue"
+  },
+  "QuestionOption": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "One option a question offers. `label` is what is sent back when it is\nchosen; `description` is the line under it, empty when the agent gave\nnone.",
+    "properties": {
+      "description": {
+        "type": "string"
+      },
+      "label": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "label"
+    ],
+    "title": "QuestionOption",
+    "type": "object"
+  },
+  "QuestionRequestId": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "format": "uuid",
+    "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+    "title": "QuestionRequestId",
+    "type": "string"
+  },
+  "QuestionsDelivery": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "**How a set's answers reach the agent** (koru-ai D108).\n\nMost agents ask and wait: the answer goes back on the request that\nasked, through `answer_questions`, while the asking turn is open. Some\nask in their reply and move on — Codex's `request_user_input_async` —\nand take the answers as the person's next message: the set outlives its\nturn, an answer goes as input (`send_pending_input` with\n[`QuestionsReply`], or into the turn still running through\n`answer_questions`), and a skip sends the agent nothing.",
+    "oneOf": [
+      {
+        "const": "in_turn",
+        "description": "Answered on the request that asked, within its turn.",
+        "type": "string"
+      },
+      {
+        "const": "next_message",
+        "description": "Answered by the person's next message; the set stays answerable\nafter its turn ends, until it is answered, skipped, or passed over\nby another message.",
+        "type": "string"
+      }
+    ],
+    "title": "QuestionsDelivery"
+  },
+  "QuestionsOutcome": {
+    "$defs": {
+      "QuestionAnswer": {
+        "description": "One question's answer, by the question's id.",
+        "properties": {
+          "question_id": {
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/$defs/QuestionAnswerValue"
+          }
+        },
+        "required": [
+          "question_id",
+          "value"
+        ],
+        "type": "object"
+      },
+      "QuestionAnswerValue": {
+        "description": "What a question was answered with.",
+        "oneOf": [
+          {
+            "description": "One of its options, by label.",
+            "properties": {
+              "kind": {
+                "const": "option",
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "label"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The person's own words: *Other*, a secret, or a question with no\noptions.",
+            "properties": {
+              "kind": {
+                "const": "text",
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "text"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A secret was given and is not repeated. Only ever in\n[`QuestionsOutcome::Answered`]; an answer sent with it is refused.",
+            "properties": {
+              "kind": {
+                "const": "withheld",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "How a set of questions ended.",
+    "oneOf": [
+      {
+        "description": "The person answered; a secret answer is [`QuestionAnswerValue::Withheld`].",
+        "properties": {
+          "answers": {
+            "items": {
+              "$ref": "#/$defs/QuestionAnswer"
+            },
+            "type": "array"
+          },
+          "kind": {
+            "const": "answered",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "answers"
+        ],
+        "type": "object"
+      },
+      {
+        "description": "The person skipped the set; the agent was told so.",
+        "properties": {
+          "kind": {
+            "const": "skipped",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object"
+      },
+      {
+        "description": "It closed unanswered: the turn ended or was stopped, the agent took\nit back, or the session went away.",
+        "properties": {
+          "kind": {
+            "const": "expired",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object"
+      }
+    ],
+    "title": "QuestionsOutcome"
+  },
+  "QuestionsReply": {
+    "$defs": {
+      "QuestionAnswer": {
+        "description": "One question's answer, by the question's id.",
+        "properties": {
+          "question_id": {
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/$defs/QuestionAnswerValue"
+          }
+        },
+        "required": [
+          "question_id",
+          "value"
+        ],
+        "type": "object"
+      },
+      "QuestionAnswerValue": {
+        "description": "What a question was answered with.",
+        "oneOf": [
+          {
+            "description": "One of its options, by label.",
+            "properties": {
+              "kind": {
+                "const": "option",
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "label"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The person's own words: *Other*, a secret, or a question with no\noptions.",
+            "properties": {
+              "kind": {
+                "const": "text",
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "text"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A secret was given and is not repeated. Only ever in\n[`QuestionsOutcome::Answered`]; an answer sent with it is refused.",
+            "properties": {
+              "kind": {
+                "const": "withheld",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "QuestionRequestId": {
+        "format": "uuid",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        "type": "string"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "**A set's answers sent as the person's next message** (koru-ai D108):\nthe input of a [`QuestionsDelivery::NextMessage`] set, checked against\nit like any answer. The agent's adapter writes the message in the\nagent's own form; the person's words and the set stay theirs.",
+    "properties": {
+      "answers": {
+        "items": {
+          "$ref": "#/$defs/QuestionAnswer"
+        },
+        "type": "array"
+      },
+      "request_id": {
+        "$ref": "#/$defs/QuestionRequestId"
+      }
+    },
+    "required": [
+      "request_id",
+      "answers"
+    ],
+    "title": "QuestionsReply",
+    "type": "object"
   },
   "RawCommand": {
     "$defs": {
@@ -8089,8 +9995,150 @@
               "state"
             ],
             "type": "object"
+          },
+          {
+            "description": "Protocol v19 (koru-ai D7). The agent moved its approval mode itself\nduring the turn — Claude leaving plan mode once a plan is approved,\nor taking another mode when the one asked for is not offered by its\nmodel. A new tag, so the host sends it only to a v19 peer.",
+            "properties": {
+              "kind": {
+                "const": "mode_changed",
+                "type": "string"
+              },
+              "mode": {
+                "$ref": "#/$defs/AgentModeId"
+              },
+              "turn_id": {
+                "$ref": "#/$defs/AgentTurnId"
+              }
+            },
+            "required": [
+              "kind",
+              "turn_id",
+              "mode"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Protocol v20 (koru-ai D69). A short status line from the agent that\nis not part of its reply — a hook that failed on the person's machine,\na warning about the session — bounded to [`AGENT_NOTICE_CHARS`]\ncharacters. One the agent said before any turn is said with the\nnext. A new tag, so the host sends it only to a v20 peer.",
+            "properties": {
+              "kind": {
+                "const": "notice",
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              },
+              "turn_id": {
+                "$ref": "#/$defs/AgentTurnId"
+              }
+            },
+            "required": [
+              "kind",
+              "turn_id",
+              "text"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Protocol v21 (koru-ai D108). The agent stopped to ask the person —\nCodex's `request_user_input`, Claude's `AskUserQuestion` — bounded by\n[`crate::bound_questions`]. A set is answered once, through\n`answer_questions`, and closed by [`AgentEvent::QuestionsResolved`].\n`blocking: false` is a set the agent does not wait on: its turn runs\non, and the set may be answered until the agent closes it. A new tag,\nso the host sends it only to a v21 peer; a session created by an\nolder peer is never asked at all (the adapter declines for it).\n\n`delivery: next_message` is a set the agent asked in its reply and\nmoved on from (Codex's `request_user_input_async`): never blocking,\nit outlives its turn, and its answers go as the person's next\nmessage — [`crate::QuestionsReply`] on `send_pending_input`, or\n`answer_questions` while its turn still runs, which steers them in.\nA skip sends the agent nothing; another message passes it over and\nit expires.",
+            "properties": {
+              "blocking": {
+                "default": true,
+                "type": "boolean"
+              },
+              "delivery": {
+                "$ref": "#/$defs/QuestionsDelivery"
+              },
+              "kind": {
+                "const": "questions_required",
+                "type": "string"
+              },
+              "questions": {
+                "items": {
+                  "$ref": "#/$defs/AgentQuestion"
+                },
+                "type": "array"
+              },
+              "request_id": {
+                "$ref": "#/$defs/QuestionRequestId"
+              },
+              "turn_id": {
+                "$ref": "#/$defs/AgentTurnId"
+              }
+            },
+            "required": [
+              "kind",
+              "turn_id",
+              "request_id",
+              "questions"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Protocol v21. How a set of questions ended: answered — a secret's\nanswer withheld — skipped, or expired with its turn.",
+            "properties": {
+              "kind": {
+                "const": "questions_resolved",
+                "type": "string"
+              },
+              "outcome": {
+                "$ref": "#/$defs/QuestionsOutcome"
+              },
+              "request_id": {
+                "$ref": "#/$defs/QuestionRequestId"
+              },
+              "turn_id": {
+                "$ref": "#/$defs/AgentTurnId"
+              }
+            },
+            "required": [
+              "kind",
+              "turn_id",
+              "request_id",
+              "outcome"
+            ],
+            "type": "object"
           }
         ]
+      },
+      "AgentModeId": {
+        "description": "One agent's own id for one of its modes: printable ASCII with no space,\nat most [`MAX_AGENT_MODE_ID_BYTES`].",
+        "type": "string"
+      },
+      "AgentQuestion": {
+        "description": "One question. `id` is the agent's own key for it, returned with the\nanswer; `header` is the short label above it, empty when the agent gave\nnone. With no options the question takes text only.",
+        "properties": {
+          "allow_other": {
+            "default": false,
+            "description": "The agent takes an answer of the person's own words beside its\noptions (*Other*).",
+            "type": "boolean"
+          },
+          "header": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "options": {
+            "description": "In the agent's order: the first is the one it recommends.",
+            "items": {
+              "$ref": "#/$defs/QuestionOption"
+            },
+            "type": "array"
+          },
+          "question": {
+            "type": "string"
+          },
+          "secret": {
+            "default": false,
+            "description": "The answer is a secret: typed into a masked box and never repeated.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "question"
+        ],
+        "type": "object"
       },
       "AgentTurnId": {
         "format": "uuid",
@@ -8255,6 +10303,160 @@
       "ProviderKind": {
         "description": "Provider category, never a provider-native identity.",
         "type": "string"
+      },
+      "QuestionAnswer": {
+        "description": "One question's answer, by the question's id.",
+        "properties": {
+          "question_id": {
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/$defs/QuestionAnswerValue"
+          }
+        },
+        "required": [
+          "question_id",
+          "value"
+        ],
+        "type": "object"
+      },
+      "QuestionAnswerValue": {
+        "description": "What a question was answered with.",
+        "oneOf": [
+          {
+            "description": "One of its options, by label.",
+            "properties": {
+              "kind": {
+                "const": "option",
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "label"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The person's own words: *Other*, a secret, or a question with no\noptions.",
+            "properties": {
+              "kind": {
+                "const": "text",
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "text"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A secret was given and is not repeated. Only ever in\n[`QuestionsOutcome::Answered`]; an answer sent with it is refused.",
+            "properties": {
+              "kind": {
+                "const": "withheld",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "QuestionOption": {
+        "description": "One option a question offers. `label` is what is sent back when it is\nchosen; `description` is the line under it, empty when the agent gave\nnone.",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "label"
+        ],
+        "type": "object"
+      },
+      "QuestionRequestId": {
+        "format": "uuid",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        "type": "string"
+      },
+      "QuestionsDelivery": {
+        "description": "**How a set's answers reach the agent** (koru-ai D108).\n\nMost agents ask and wait: the answer goes back on the request that\nasked, through `answer_questions`, while the asking turn is open. Some\nask in their reply and move on — Codex's `request_user_input_async` —\nand take the answers as the person's next message: the set outlives its\nturn, an answer goes as input (`send_pending_input` with\n[`QuestionsReply`], or into the turn still running through\n`answer_questions`), and a skip sends the agent nothing.",
+        "oneOf": [
+          {
+            "const": "in_turn",
+            "description": "Answered on the request that asked, within its turn.",
+            "type": "string"
+          },
+          {
+            "const": "next_message",
+            "description": "Answered by the person's next message; the set stays answerable\nafter its turn ends, until it is answered, skipped, or passed over\nby another message.",
+            "type": "string"
+          }
+        ]
+      },
+      "QuestionsOutcome": {
+        "description": "How a set of questions ended.",
+        "oneOf": [
+          {
+            "description": "The person answered; a secret answer is [`QuestionAnswerValue::Withheld`].",
+            "properties": {
+              "answers": {
+                "items": {
+                  "$ref": "#/$defs/QuestionAnswer"
+                },
+                "type": "array"
+              },
+              "kind": {
+                "const": "answered",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "answers"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The person skipped the set; the agent was told so.",
+            "properties": {
+              "kind": {
+                "const": "skipped",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "It closed unanswered: the turn ended or was stopped, the agent took\nit back, or the session went away.",
+            "properties": {
+              "kind": {
+                "const": "expired",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "SessionFailure": {
         "description": "A content-free developer diagnostic. UI maps `code` to localized copy.",
@@ -10285,13 +12487,30 @@
             "type": "object"
           },
           {
+            "description": "The managed route refused the agent. When the refusal was its\nversion, `found` is the version the agent printed (absent when none\ncould be read) and `needed` what the route accepts, so a person is\ntold both rather than \"not supported\". Both are optional and skipped\nwhen absent, so a peer that predates them reads and writes the same\n`{\"kind\":\"incompatible\",\"code\":…}` it always did.",
             "properties": {
               "code": {
                 "$ref": "#/$defs/ErrorCode"
               },
+              "found": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "kind": {
                 "const": "incompatible",
                 "type": "string"
+              },
+              "needed": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/VersionNeed"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             },
             "required": [
@@ -10449,6 +12668,45 @@
           "powershell"
         ],
         "type": "string"
+      },
+      "VersionNeed": {
+        "description": "**What a managed route accepts of an agent's version**, said when it\nrefused one. The two policies read differently to a person: under a\nfloor, updating fixes it; under a reviewed list, a release newer than\nthe newest reviewed is refused until it has been reviewed too.",
+        "oneOf": [
+          {
+            "description": "This release or any newer one.",
+            "properties": {
+              "kind": {
+                "const": "at_least",
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "version"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Only the releases on a reviewed list, of which this is the newest.",
+            "properties": {
+              "kind": {
+                "const": "reviewed",
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "version"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "WorkingDirectoryPolicy": {
         "oneOf": [
@@ -10726,13 +12984,30 @@
             "type": "object"
           },
           {
+            "description": "The managed route refused the agent. When the refusal was its\nversion, `found` is the version the agent printed (absent when none\ncould be read) and `needed` what the route accepts, so a person is\ntold both rather than \"not supported\". Both are optional and skipped\nwhen absent, so a peer that predates them reads and writes the same\n`{\"kind\":\"incompatible\",\"code\":…}` it always did.",
             "properties": {
               "code": {
                 "$ref": "#/$defs/ErrorCode"
               },
+              "found": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "kind": {
                 "const": "incompatible",
                 "type": "string"
+              },
+              "needed": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/VersionNeed"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             },
             "required": [
@@ -10871,6 +13146,45 @@
           "powershell"
         ],
         "type": "string"
+      },
+      "VersionNeed": {
+        "description": "**What a managed route accepts of an agent's version**, said when it\nrefused one. The two policies read differently to a person: under a\nfloor, updating fixes it; under a reviewed list, a release newer than\nthe newest reviewed is refused until it has been reviewed too.",
+        "oneOf": [
+          {
+            "description": "This release or any newer one.",
+            "properties": {
+              "kind": {
+                "const": "at_least",
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "version"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Only the releases on a reviewed list, of which this is the newest.",
+            "properties": {
+              "kind": {
+                "const": "reviewed",
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "version"
+            ],
+            "type": "object"
+          }
+        ]
       }
     },
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -12364,6 +14678,47 @@
       }
     ],
     "title": "ToolKind"
+  },
+  "VersionNeed": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "**What a managed route accepts of an agent's version**, said when it\nrefused one. The two policies read differently to a person: under a\nfloor, updating fixes it; under a reviewed list, a release newer than\nthe newest reviewed is refused until it has been reviewed too.",
+    "oneOf": [
+      {
+        "description": "This release or any newer one.",
+        "properties": {
+          "kind": {
+            "const": "at_least",
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "version"
+        ],
+        "type": "object"
+      },
+      {
+        "description": "Only the releases on a reviewed list, of which this is the newest.",
+        "properties": {
+          "kind": {
+            "const": "reviewed",
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "version"
+        ],
+        "type": "object"
+      }
+    ],
+    "title": "VersionNeed"
   },
   "ViewportGeneration": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",

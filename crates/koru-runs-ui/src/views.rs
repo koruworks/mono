@@ -45,6 +45,9 @@ pub(crate) struct Sections<'a> {
     /// Whether this platform can show a folder in a file manager at all.
     /// A control that cannot work is not laid out (`set_can_reveal`).
     pub(crate) can_reveal: bool,
+    /// Whether this build lets a person start a delegation; *Re-run* is not
+    /// laid out without it (`set_can_re_run`).
+    pub(crate) can_re_run: bool,
 }
 
 impl Sections<'_> {
@@ -71,8 +74,10 @@ impl Sections<'_> {
         // **Not gated on which device this is**, unlike every other control
         // here: those act on *this* run and need the session this device may
         // not hold. This one makes a new run, which any window that can
-        // delegate at all can do.
-        match snapshot.re_runnable() {
+        // delegate at all can do — and only such a window (`can_re_run`):
+        // a build that hides Delegate shows the run and no way to start one.
+        let re_run = snapshot.re_runnable() && self.can_re_run;
+        match re_run {
             true => column.line_beside(
                 Line::Body,
                 &words::status(lang, &snapshot.header.status),
@@ -89,7 +94,7 @@ impl Sections<'_> {
         {
             column.wrapped(Line::Meta, &words::failure_reason(lang, reason));
         }
-        if snapshot.re_runnable() {
+        if re_run {
             column.consequence(t(lang, Key::RunReRunNote));
         }
         for marker in words::attention(lang, &snapshot.header.status) {

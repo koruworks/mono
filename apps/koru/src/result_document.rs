@@ -247,6 +247,12 @@ impl ResultDocument {
         View::invalidate(&mut self.leaf);
     }
 
+    /// [`invalidate`](Self::invalidate) for a tab that is not shown: the
+    /// page is marked and laid out when it is next sized.
+    pub fn invalidate_deferred(&mut self) {
+        koru_editor::Editing::invalidate_deferred(&mut self.leaf);
+    }
+
     pub fn draw(
         &mut self,
         scene: &mut Scene,

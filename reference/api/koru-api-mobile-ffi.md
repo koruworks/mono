@@ -55,15 +55,18 @@ These public HTTP/client operations are catalogued but have no mobile FFI or Pro
 | `ai.update_ollama_settings` | `client.ai().update_ollama_settings` | PUT /v1/ai/providers/ollama | Phase 1 provider setup is desktop-only |
 | `ai.validate_provider` | `client.ai().validate_provider` | POST /v1/ai/providers/{provider}/validate | Phase 1 provider setup is desktop-only |
 | `ai.discover_agent_models` | `client.ai().discover_agent_models` | POST /v1/ai/providers/{provider}/models | Local agents run on the desktop that installed them |
+| `ai.discover_agent_commands` | `client.ai().discover_agent_commands` | POST /v1/ai/providers/{provider}/commands | Local agents run on the desktop that installed them |
 | `ai.pull_ollama_model` | `client.ai().pull_ollama_model` | POST /v1/ai/providers/ollama/pulls | Desktop-local Ollama lifecycle is unavailable on mobile |
 | `ai.cancel_ollama_pull` | `client.ai().cancel_ollama_pull` | POST /v1/ai/providers/ollama/pulls/cancel | Desktop-local Ollama lifecycle is unavailable on mobile |
 | `ai.create_chat` | `client.ai().create_chat` | POST /v1/ai/chats | Phase 1 ships desktop chat before a mobile chat host |
 | `ai.list_chats` | `client.ai().list_chats` | GET /v1/ai/chats | Phase 1 ships desktop chat before a mobile chat host |
 | `ai.read_chat` | `client.ai().read_chat` | GET /v1/ai/chats/{chat} | Phase 1 ships desktop chat before a mobile chat host |
 | `ai.rename_chat` | `client.ai().rename_chat` | PATCH /v1/ai/chats/{chat} | Phase 1 ships desktop chat before a mobile chat host |
+| `ai.pin_chat` | `client.ai().pin_chat` | PATCH /v1/ai/chats/{chat}/pin | Phase 1 ships desktop chat before a mobile chat host |
 | `ai.update_chat_model` | `client.ai().update_chat_model` | PATCH /v1/ai/chats/{chat}/model | Phase 1 ships desktop chat before a mobile chat host |
 | `ai.update_chat_privacy` | `client.ai().update_chat_privacy` | PATCH /v1/ai/chats/{chat}/privacy | Per-chat AI privacy is not yet exposed by a mobile chat host |
 | `ai.update_chat_folder` | `client.ai().update_chat_folder` | PATCH /v1/ai/chats/{chat}/folder | Local agents run on the desktop that installed them |
+| `ai.update_chat_agent_settings` | `client.ai().update_chat_agent_settings` | PATCH /v1/ai/chats/{chat}/agent-settings | Local agents run on the desktop that installed them |
 | `ai.tool_list_chats` | `client.ai().tool_list_chats` | POST /v1/ai/tools/chats/list | Chat tools are an MCP and provider-facing surface, not a mobile chat operation |
 | `ai.tool_search_chats` | `client.ai().tool_search_chats` | POST /v1/ai/tools/chats/search | Chat tools are an MCP and provider-facing surface, not a mobile chat operation |
 | `ai.tool_read_chat` | `client.ai().tool_read_chat` | POST /v1/ai/tools/chats/read | Chat tools are an MCP and provider-facing surface, not a mobile chat operation |
@@ -78,10 +81,15 @@ These public HTTP/client operations are catalogued but have no mobile FFI or Pro
 | `ai.send_turn` | `client.ai().send_turn` | POST /v1/ai/chats/{chat}/turns | Mobile SSE/stream projection is not yet implemented |
 | `ai.read_attempt` | `client.ai().read_attempt` | GET /v1/ai/attempts/{attempt} | Phase 1 ships desktop chat before a mobile chat host |
 | `ai.cancel_attempt` | `client.ai().cancel_attempt` | POST /v1/ai/attempts/{attempt}/cancel | Phase 1 ships desktop chat before a mobile chat host |
+| `ai.steer_attempt` | `client.ai().steer_attempt` | POST /v1/ai/attempts/{attempt}/steer | Phase 1 ships desktop chat before a mobile chat host |
 | `ai.approve_tool_call` | `client.ai().approve_tool_call` | POST /v1/ai/tool-calls/{tool}/approve | Workspace-tool approval is not yet exposed by a mobile chat host |
 | `ai.deny_tool_call` | `client.ai().deny_tool_call` | POST /v1/ai/tool-calls/{tool}/deny | Workspace-tool approval is not yet exposed by a mobile chat host |
 | `ai.delete_chat` | `client.ai().delete_chat` | DELETE /v1/ai/chats/{chat} | Phase 1 ships desktop history management before a mobile chat host |
 | `ai.clear_history` | `client.ai().clear_history` | DELETE /v1/ai/chats | Phase 1 ships desktop history management before a mobile chat host |
+| `ai.put_attachment` | `client.ai().put_attachment` | PUT /v1/ai/chats/{chat}/attachments/{attachment} | Attachments go to local agents, which run on the desktop that installed them |
+| `ai.remove_attachment` | `client.ai().remove_attachment` | DELETE /v1/ai/chats/{chat}/attachments/{attachment} | Attachments go to local agents, which run on the desktop that installed them |
+| `ai.read_attachment` | `client.ai().attachment_bytes` | GET /v1/ai/chats/{chat}/attachments/{attachment} | Attachments go to local agents, which run on the desktop that installed them |
+| `ai.read_attachment_thumbnail` | `client.ai().attachment_thumbnail` | GET /v1/ai/chats/{chat}/attachments/{attachment}/thumbnail | Attachments go to local agents, which run on the desktop that installed them |
 | `ai.usage` | `client.ai().usage` | GET /v1/ai/usage | Private local AI usage is desktop-only in Phase 1 |
 | `ai.chat_usage` | `client.ai().usage(Some(chat))` | GET /v1/ai/chats/{chat}/usage | Private local AI usage is desktop-only in Phase 1 |
 | `ai.clear_usage` | `client.ai().clear_usage` | DELETE /v1/ai/usage | Private local AI usage is desktop-only in Phase 1 |

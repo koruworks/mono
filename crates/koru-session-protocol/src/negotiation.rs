@@ -59,7 +59,59 @@ pub const MIN_PROTOCOL_VERSION: u32 = 1;
 /// host would ignore them and run the provider's default, so a client
 /// checks the negotiated capability before sending either and refuses to
 /// start a chat session against a host that cannot own it.
-pub const MAX_PROTOCOL_VERSION: u32 = 17;
+///
+/// v18 adds what an agent says about each model it lists — its name,
+/// description, group name, legacy mark and reasoning levels — as optional
+/// fields on `ProviderModel`, and the `xhigh` reasoning token.
+///
+/// v19 adds an agent's **approval mode** (koru-ai D7) and **Fast mode**
+/// (D11): the defaulted `mode` and `fast` on a launch selection and on a
+/// turn's pending input, and the `mode_changed` agent event — and, needing
+/// no version of its own, `ProviderModel::fast`. The fields are readable by
+/// an older host,
+/// which is the hazard v16 names: it would ignore them and run the agent in
+/// whatever mode it starts in, so a client sends them only to a v19 host.
+/// The event is a new tag, so a host sends it only to a v19 peer.
+///
+/// v20 adds an agent's **notice** (koru-ai D69) and a turn's **reasoning
+/// level** (D70): the `notice` agent event — a short status line from the
+/// agent that is not part of its reply, a new tag, so a host sends it only
+/// to a v20 peer and an older one gets an empty delta in its place, as with
+/// `mode_changed` — and the defaulted `reasoning` on a turn's pending input.
+/// The field is readable by a v19 host, which would ignore it and run the
+/// turn at the session's old level: the v16 hazard again, so a client sends
+/// it only to a v20 host, and a chat against an older one keeps its level
+/// from its start.
+///
+/// v21 adds an agent's **questions** (koru-ai D108): the
+/// `questions_required` and `questions_resolved` agent events and the
+/// `answer_questions` request, behind the `managed-questions` capability. A
+/// session asks only when the peer that created it negotiated both — the
+/// host tells the adapter at launch, and for any other session the adapter
+/// declines the agent's question as Koru always has (Codex is answered
+/// "unsupported", Claude is not offered its question tool). The events are
+/// new tags, so a host sends them only to a v21 peer and an older one gets
+/// an empty delta in their place, as with `notice`. A set the agent asked in
+/// its reply and moved on from (`delivery: next_message`, Codex's
+/// `request_user_input_async`) is answered by the person's next message:
+/// `send_pending_input` carries its `answers` beside the input, again only
+/// for a `managed-questions` peer.
+///
+/// v21 also adds what an agent can be told to do by name (koru-ai D121),
+/// behind the `agent-commands` capability: the `discover_provider_commands`
+/// request — an agent's skills for a folder, Codex's `skills/list` — and the
+/// defaulted `skills` on a turn's pending input, the skills the person
+/// picked, by name. An older host would read past the field and send
+/// `$name` as words alone, so a client sends it only to a host that
+/// negotiated the capability, and the host refuses it from any other peer.
+///
+/// v22 adds a turn's model: the defaulted `model` on a turn's pending
+/// input, another of the session's agent's models chosen after the start,
+/// which the adapter moves the session to before the prompt. An older host
+/// would read past it and run the turn on the session's old model, so a
+/// client sends it only to a v22 host, and the host refuses it from an
+/// older peer.
+pub const MAX_PROTOCOL_VERSION: u32 = 22;
 pub const PROVIDER_MODELS_PROTOCOL_VERSION: u32 = 15;
 /// The first version whose tool events may carry the tool's own words: a
 /// failed call's message (`ToolCompleted.detail`), what the call was asked
@@ -67,6 +119,27 @@ pub const PROVIDER_MODELS_PROTOCOL_VERSION: u32 = 15;
 /// Optional fields an older peer leaves unread: no capability, the number
 /// alone.
 pub const TOOL_DETAIL_PROTOCOL_VERSION: u32 = 17;
+/// The first version whose provider models may carry the agent's own facts
+/// about each model, and whose launch selection may carry `xhigh`. The
+/// fields are optional and an older peer leaves them unread: no capability,
+/// the number alone. The token is not, so `xhigh` goes only to a v18 host.
+pub const PROVIDER_MODEL_FACTS_PROTOCOL_VERSION: u32 = 18;
+/// The first version whose launch selection and pending input may carry an
+/// approval mode, and whose agent events may carry `mode_changed`.
+pub const AGENT_MODES_PROTOCOL_VERSION: u32 = 19;
+/// The first version whose agent events may carry `notice`.
+pub const AGENT_NOTICES_PROTOCOL_VERSION: u32 = 20;
+/// The first version whose pending input may carry a turn's reasoning
+/// level. The same bump as the notice.
+pub const TURN_REASONING_PROTOCOL_VERSION: u32 = 20;
+/// The first version whose agent events may carry `questions_required` and
+/// `questions_resolved`, and that takes `answer_questions`.
+pub const QUESTIONS_PROTOCOL_VERSION: u32 = 21;
+/// The first version that takes `discover_provider_commands` and whose
+/// pending input may name skills. The same version as the questions.
+pub const AGENT_COMMANDS_PROTOCOL_VERSION: u32 = 21;
+/// The first version whose pending input may carry a turn's model.
+pub const TURN_MODEL_PROTOCOL_VERSION: u32 = 22;
 /// The first version that can carry the session-origin family's tags.
 pub const SESSION_ORIGIN_PROTOCOL_VERSION: u32 = 16;
 /// The first version that can carry the delegation family's tags.

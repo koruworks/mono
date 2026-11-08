@@ -137,20 +137,6 @@ pub enum AgentEvent {
     /// Raw hold notices stay on the coordinator queue; only this routed action
     /// crosses winit, and it carries no transcript or target.
     LocalDictation(LocalDictationGesture),
-    /// The dedicated Koru AI shortcut was pressed.
-    AiHotkey,
-    /// The blocking singleton status probe requested by `AiHotkey` finished.
-    AiChatProbed {
-        process: Option<crate::ai_chat::Process>,
-    },
-    /// An Agent-owned standalone-chat open finished on its worker thread.
-    ///
-    /// Shell-originated opens answer their correlated request directly. Tray,
-    /// hotkey, and Search-result opens have no requesting socket, so their
-    /// completion returns here instead; a failure can then be drawn on the
-    /// Agent's existing overlay without either process launch or a native
-    /// dialog blocking the event loop.
-    AiChatOpened { error: Option<String> },
     /// Which chord the hotkey thread actually managed to register, once it
     /// knows — or `None` when every candidate was taken, and when an explicit
     /// `--root` meant none was ever attempted.
@@ -179,8 +165,6 @@ pub enum AgentEvent {
         generation: u64,
         active: Option<String>,
     },
-    /// Whether Ctrl+Shift+I was successfully reserved for Koru AI.
-    AiHotkeyRegistered { available: bool },
     /// The notification-area icon became visible or stopped being. Raised by
     /// Linux's StatusNotifierItem service when a watcher (KDE's panel, GNOME's
     /// AppIndicator extension) comes or goes; the windows are told, because a
@@ -346,6 +330,19 @@ pub enum AgentEvent {
     LinkResolved {
         target: Box<koru_agent_wire::Target>,
     },
+    /// A `koru://chat/…` link the Agent was started with: open the chat as a
+    /// tab in a Koru window, once the loop is running.
+    ChatLink {
+        chat: uuid::Uuid,
+        block: Option<uuid::Uuid>,
+    },
+    /// The AI service said which profile a chat belongs to (AI schema 13),
+    /// or could not (`None`): open it in a window of that profile.
+    ChatPlaced {
+        chat: uuid::Uuid,
+        block: Option<uuid::Uuid>,
+        profile: Option<koru_store_core::ids::ProfileId>,
+    },
     /// The agents-menu watcher read a fresh session-host catalog. The loop
     /// only stores it; the tray re-projects on the wake that delivered it.
     /// Boxed for the reason [`AgentEvent::LinkResolved`] is: every other event
@@ -384,8 +381,6 @@ pub enum TrayAsk {
     /// Focus or launch Koru Workspace and open this running session's tab —
     /// one of the Agents menu's session rows.
     ShowAgentSession(koru_session_protocol::SessionId),
-    /// Open or foreground the standalone Koru AI chat window.
-    AiChat,
     /// Open the root this agent is running from in the platform file browser.
     OpenLocation,
     /// Open machine-local Koru settings (window geometry and Agent data).
@@ -484,13 +479,9 @@ impl AgentEvent {
             Self::SettingsChanged => "SettingsChanged",
             Self::GlobalConsentRefreshed { .. } => "GlobalConsentRefreshed",
             Self::LocalDictation(..) => "LocalDictation",
-            Self::AiHotkey => "AiHotkey",
-            Self::AiChatProbed { .. } => "AiChatProbed",
-            Self::AiChatOpened { .. } => "AiChatOpened",
             Self::HotkeyRegistered { .. } => "HotkeyRegistered",
             Self::DictationHotkeyPrepared { .. } => "DictationHotkeyPrepared",
             Self::DictationHotkeySettled { .. } => "DictationHotkeySettled",
-            Self::AiHotkeyRegistered { .. } => "AiHotkeyRegistered",
             Self::NotificationArea { .. } => "NotificationArea",
             Self::Tray(_) => "Tray",
             Self::VoiceWorkerRead { .. } => "VoiceWorkerRead",
@@ -519,6 +510,8 @@ impl AgentEvent {
             Self::SessionHostStopped { .. } => "SessionHostStopped",
             Self::AgentQuitDecided { .. } => "AgentQuitDecided",
             Self::LinkResolved { .. } => "LinkResolved",
+            Self::ChatLink { .. } => "ChatLink",
+            Self::ChatPlaced { .. } => "ChatPlaced",
             Self::AgentsCatalog { .. } => "AgentsCatalog",
         }
     }

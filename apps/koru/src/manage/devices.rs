@@ -97,9 +97,6 @@ const RENAMING: &str = "Enter to save \u{b7} Esc to cancel";
 const BADGE_W: f32 = 38.0;
 const BADGE_H: f32 = 22.0;
 const BADGE_GAP: f32 = 12.0;
-/// The *This computer* tag.
-const TAG_PAD: f32 = 6.0;
-const TAG_H: f32 = 18.0;
 /// The rename field over this computer's name.
 const FIELD_H: f32 = 30.0;
 
@@ -367,12 +364,10 @@ impl ManageView {
         let unlink = (index.is_some() && device.introduced_by.is_none()).then(|| {
             ActionButton::new(UNLINK, ActionStyle::Destructive, None).width(&mut self.engine)
         });
-        let tag_w = index.is_none().then(|| {
-            self.engine
-                .simple_layout(THIS_COMPUTER, theme::role::hint())
-                .width()
-                + TAG_PAD * 2.0
-        });
+        // The *This computer* tag: the one chip component, compact and
+        // neutral, as the workspace list's tags are.
+        let tag_chip = koru_ui::LabelChip::new(THIS_COMPUTER);
+        let tag_w = index.is_none().then(|| tag_chip.width(&mut self.engine));
         let trailing_w = unlink.or(tag_w);
         let text_x = x + BADGE_W + BADGE_GAP;
         let text_right = trailing_w.map_or(right_edge, |w| right_edge - w - BADGE_GAP);
@@ -416,11 +411,16 @@ impl ManageView {
                     w,
                     ActionButton::H,
                 ),
-                label: format!("Unlink {}\u{2026}", device.display_name),
+                // *Unlink…* alone (the review's note): the row names the device,
+                // and the button is measured for this word — the name made it
+                // overflow and elide. The screen reader still hears the name
+                // (`control_name`).
+                label: UNLINK.to_owned(),
                 look: Look::Action(ActionStyle::Destructive),
             });
         }
-        let tag = tag_w.map(|w| Rect::new(right_edge - w, y + (h - TAG_H) * 0.5, w, TAG_H));
+        let tag_h = tag_chip.height();
+        let tag = tag_w.map(|w| Rect::new(right_edge - w, y + (h - tag_h) * 0.5, w, tag_h));
         DeviceRow {
             index,
             rect,
@@ -835,25 +835,12 @@ impl ManageView {
         )
         .draw(canvas, root, &mut self.engine, row.sub);
         if let Some(tag) = row.tag {
-            scene::fill(
-                canvas,
-                root,
-                p.chip_bg,
-                &scene::rrect(tag.x, tag.y, tag.w, tag.h, tag.h * 0.5),
-            );
-            let style = theme::role::hint();
-            let text = self.engine.simple_layout(THIS_COMPUTER, style);
-            let (w, h) = (text.width(), scene::first_line_height(&text));
-            koru_ui::text_paragraph::draw_line(
+            koru_ui::LabelChip::new(THIS_COMPUTER).draw(
                 canvas,
                 root,
                 &mut self.engine,
-                THIS_COMPUTER,
-                tag.x + (tag.w - w) * 0.5,
-                tag.y + (tag.h - h) * 0.5,
-                style,
-                "theme::role::hint() — a tag",
-                p.text_dim,
+                tag,
+                koru_ui::label_chip::State::default(),
             );
         }
         if let Some(index) = row.index

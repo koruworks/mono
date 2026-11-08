@@ -116,6 +116,8 @@ impl MainView {
                     // its restore is the `TabRef` arm that rebuilt the tab.
                     TabView::Reminders(r) => View::restore(r, workspace, settings),
                     TabView::Settings(s) => View::restore(s, workspace, settings),
+                    // Home keeps no per-document prefs; it is fed each frame.
+                    TabView::Home(_) => {}
                     TabView::Feedback(f) => View::restore(f, workspace, settings),
                     TabView::Diff(d) => View::restore(d, workspace, settings),
                     // A chat is a live conversation rather than a place in the
@@ -186,124 +188,10 @@ impl MainView {
                 _ => None,
             })
             .unwrap_or(self.pinned_show_title);
-        settings.pinned_tabs = self
-            .panes
-            .focused()
-            .tabs()
-            .iter()
-            .filter(|t| t.is_pinned())
-            .filter_map(|t| {
-                Some(PinnedTabRef {
-                    document: t.document?,
-                    workspace: t.pinned?,
-                    scroll: t.view.scroll(),
-                    show_title: t.show_title,
-                })
-            })
-            .collect();
-        settings.pinned_tab = self.panes.focused().tabs().pinned_showing();
-        settings.tabs = self
-            .panes
-            .focused()
-            .tabs()
-            .iter()
-            // A diff tab is a working artifact over two fetched snapshots;
-            // restoring it would need a re-fetch that can fail at startup, so
-            // it is deliberately not part of the session. AI chat tabs are
-            // likewise not restored: there is no `TabRef` for them, and a chat
-            // is a live conversation rather than a place in the library.
-            .filter(|t| {
-                !t.is_pinned()
-                    && !matches!(
-                        t.view,
-                        TabView::Diff(_) | TabView::AiChat(_) | TabView::Socials(_)
-                    )
-            })
-            .filter_map(|t| {
-                // A draft names nothing in this document, so it comes back as
-                // an empty draft rather than as a node that will not parse.
-                // What it *was* is a blank page, and a blank page restores
-                // perfectly.
-                let which = match &t.view {
-                    _ if t.draft.is_some() => TabRef::Draft,
-                    // **Before the `Leaf` arm, and that ordering is the whole
-                    // of it.** A notes tab *is* a `Leaf`, so the arm below
-                    // matches it perfectly well and would write
-                    // `View::document_root` — a `NodeId` in a private in-memory
-                    // workspace that no future launch can resolve. It degrades
-                    // rather than breaks (the entry is skipped and the strip
-                    // silently shortens), which is exactly why the compiler
-                    // will not tell you.
-                    _ if t.whats_new.is_some() => TabRef::WhatsNew,
-                    TabView::Welcome(_) => TabRef::Welcome,
-                    TabView::Manage(_) => TabRef::Manage,
-                    TabView::Trash(_) => TabRef::Trash,
-                    TabView::Tasks(t) => TabRef::Tasks(tasks_tab_ref(t.target())),
-                    // A Reminders page comes back as a Reminders page: one
-                    // target, one spelling, restored through `Tab::tasks` like
-                    // every other rail target.
-                    TabView::Reminders(_) => {
-                        TabRef::Tasks(koru_workspace_host::TasksTabRef::Reminders)
-                    }
-                    // **A Settings tab comes back as a Welcome tab**, which is
-                    // what it already did: until SP-7 it *was* a `WelcomeView`
-                    // with a flag set, and a flag is not a `TabRef`. Recording
-                    // it properly means a new `TabRef` variant in
-                    // `koru-workspace-host`'s session file — so the behaviour
-                    // is preserved rather than quietly improved.
-                    TabView::Settings(_) | TabView::Feedback(_) => TabRef::Welcome,
-                    // Filtered out above; spelled for exhaustiveness. Were the
-                    // filter ever lost, degrading to a welcome tab is the same
-                    // tolerance a leaf over nothing already gets.
-                    TabView::Diff(_) => TabRef::Welcome,
-                    TabView::AiChat(_) => TabRef::Welcome,
-                    TabView::Socials(_) => TabRef::Welcome,
-                    // **The saved record is `{session_id, profile_key}`**
-                    // (TERMINATAB), in tab order with the rest of the strip.
-                    // A tab whose launch has not come back named yet has no
-                    // session id to save and skips itself (the `?`s) — a
-                    // window killed inside that heartbeat loses one tab that
-                    // never held a session, never a session. Capturing
-                    // terminates nothing; it is a read.
-                    TabView::Session(s) => TabRef::Session {
-                        session: s.session?,
-                        profile: s.profile_key.clone()?,
-                        recovery: self.session_recovery(s),
-                    },
-                    // **A run view is not reopened.** It is a live reading of
-                    // a run through the gateway, and a tab strip that brought
-                    // one back would be asking a worker about a run before
-                    // anybody had asked to look at it. The run itself is
-                    // durable and is reopened from wherever it was reached,
-                    // and so is a result: it is reopened from its run.
-                    TabView::Run(_) | TabView::Result(_) => return None,
-                    // **A canvas persists as a document**, like a page: the
-                    // settings format does not change, and the kind is read
-                    // again from the manifest when it comes back.
-                    TabView::Canvas(c) => {
-                        TabRef::document(t.document.unwrap_or(c.document()), t.home_workspace())
-                    }
-                    // **What the tab is over, by preference.** `Tab.document`
-                    // is the manifest's id and survives the round trip; the
-                    // `NodeId` under it is a node in *that document's* tree,
-                    // which the next launch will not have opened and cannot
-                    // resolve. The node spelling stays for a workspace with no
-                    // manifest — every workspace in the editor's own suite.
-                    //
-                    // A leaf with neither is nothing this build can reopen, so
-                    // it comes back as a welcome tab rather than as a slot that
-                    // parses to nothing and silently shortens the list.
-                    TabView::Leaf(l) => match t.document {
-                        Some(id) => TabRef::document(id, t.home_workspace()),
-                        None => match View::document_root(l) {
-                            Some(id) => TabRef::Node(id),
-                            None => TabRef::Welcome,
-                        },
-                    },
-                };
-                Some((which, t.view.scroll()))
-            })
-            .collect();
+        let (pinned, pinned_tab) = self.saved_pins(self.panes.focused().tabs());
+        settings.pinned_tabs = pinned;
+        settings.pinned_tab = pinned_tab;
+        settings.tabs = self.saved_main_tabs(self.panes.focused().tabs());
         settings.tab = self.panes.focused().tabs().main_active();
         settings.recents = self.recents.clone();
         // Only this workspace's row is touched: writing the field would
@@ -338,6 +226,7 @@ impl MainView {
                     TabView::Tasks(t) => View::capture(t, settings),
                     TabView::Reminders(r) => View::capture(r, settings),
                     TabView::Settings(s) => View::capture(s, settings),
+                    TabView::Home(_) => {}
                     TabView::AiChat(_) => {}
                     TabView::Socials(_) => {}
                     TabView::Session(_) => {}
@@ -416,6 +305,10 @@ impl MainView {
                         None => continue,
                     }
                 }
+                TabRef::SyncSettings => match Tab::sync_settings() {
+                    Some(tab) => tab,
+                    None => continue,
+                },
                 TabRef::Node(id) => {
                     if ws.read(*id).is_err() {
                         continue;
@@ -442,6 +335,10 @@ impl MainView {
                     }
                     self.restored_session_tab(*session, profile.clone(), recovery.clone())
                 }
+                TabRef::Chat(chat) => match restored_chat_tab(*chat) {
+                    Some(tab) => tab,
+                    None => continue,
+                },
                 TabRef::Document {
                     id,
                     workspace: home,
@@ -494,27 +391,11 @@ impl MainView {
             tabs.push(tab);
         }
         if self.panes.focused().tabs().pinned_count() == 0 {
-            let mut pins = Vec::new();
-            for pin in &settings.pinned_tabs {
-                let Some(doc) = workspace.document(pin.document) else {
-                    continue;
-                };
-                let Some(root) = koru_workspace::document_root(doc) else {
-                    continue;
-                };
-                let name = koru_workspace::name_of(doc, root);
-                let Some(view) = self.restored_document_view(workspace, doc, root, pin.document)
-                else {
-                    continue;
-                };
-                let mut tab =
-                    Tab::document_at(view, &name, Some(pin.document), Some(pin.workspace));
-                tab.pinned = Some(pin.workspace);
-                tab.show_title = pin.show_title;
-                tab.view.set_scroll(pin.scroll);
-                tab.invalidate_size();
-                pins.push(tab);
-            }
+            let pins: Vec<Tab> = settings
+                .pinned_tabs
+                .iter()
+                .filter_map(|pin| self.pin_from_ref(workspace, settings, pin))
+                .collect();
             if !pins.is_empty() {
                 self.panes
                     .focused_mut()
@@ -586,7 +467,7 @@ impl MainView {
                     }
                     let pin_tabs: Vec<Tab> = pinned
                         .iter()
-                        .filter_map(|pin| view.pin_from_ref(workspace, pin))
+                        .filter_map(|pin| view.pin_from_ref(workspace, settings, pin))
                         .collect();
                     let active_main = match active {
                         GroupActiveState::Main(i) => *i,
@@ -680,6 +561,7 @@ impl MainView {
                 let notes = crate::whatsnew::notes_beside_the_exe();
                 Tab::whats_new(version, notes.as_deref())?
             }
+            TabRef::SyncSettings => Tab::sync_settings()?,
             TabRef::Node(id) => {
                 if ws.read(*id).is_err() {
                     return None;
@@ -706,6 +588,7 @@ impl MainView {
                 }
                 self.restored_session_tab(*session, profile.clone(), recovery.clone())
             }
+            TabRef::Chat(chat) => restored_chat_tab(*chat)?,
             TabRef::Document {
                 id,
                 workspace: home,
@@ -723,100 +606,169 @@ impl MainView {
         Some(tab)
     }
 
-    fn pin_from_ref(&self, workspace: &Workspace, pin: &PinnedTabRef) -> Option<Tab> {
-        let doc = workspace.document(pin.document)?;
-        let root = koru_workspace::document_root(doc)?;
-        let name = koru_workspace::name_of(doc, root);
-        let mut tab = Tab::document_at(
-            self.restored_document_view(workspace, doc, root, pin.document)?,
-            &name,
-            Some(pin.document),
-            Some(pin.workspace),
-        );
+    /// A saved pin, reopened **through the same door a main tab is**
+    /// ([`tab_from_ref`](Self::tab_from_ref)) and then pinned again: a pin is
+    /// a place in the strip, not a second way of opening a tab.
+    fn pin_from_ref(
+        &mut self,
+        workspace: &Workspace,
+        settings: &Settings,
+        pin: &PinnedTabRef,
+    ) -> Option<Tab> {
+        let mut tab = self.tab_from_ref(workspace, settings, &pin.tab(), pin.scroll)?;
+        // What `TabStrip::pin` stamps, put back.
+        tab.home = Some(pin.workspace);
         tab.pinned = Some(pin.workspace);
         tab.show_title = pin.show_title;
-        tab.view.set_scroll(pin.scroll);
-        tab.invalidate_size();
         Some(tab)
+    }
+
+    /// **The token a tab is saved as**, or `None` for a tab that has no saved
+    /// form: Settings, Feedback, Home, a version comparison, Socials, a run's
+    /// pages, a chat not sent yet and a session not yet named. The one
+    /// mapping the flat `tabs` line, every pane group's main tabs and every
+    /// pin are written from — it was written out twice, and a pin had a
+    /// third, shorter vocabulary that could say only *document* or *chat*.
+    fn saved_tab_ref(&self, t: &Tab) -> Option<TabRef> {
+        // A draft names nothing in this document, so it comes back as an
+        // empty draft rather than as a node that will not parse. What it
+        // *was* is a blank page, and a blank page restores perfectly.
+        Some(match &t.view {
+            _ if t.draft.is_some() => TabRef::Draft,
+            // **Before the `Leaf` arm, and that ordering is the whole
+            // of it.** A notes tab *is* a `Leaf`, so the arm below
+            // matches it perfectly well and would write
+            // `View::document_root` — a `NodeId` in a private in-memory
+            // workspace that no future launch can resolve. It degrades
+            // rather than breaks (the entry is skipped and the strip
+            // silently shortens), which is exactly why the compiler
+            // will not tell you.
+            _ if t.whats_new.is_some() => private_page_ref(t)?,
+            TabView::Welcome(_) => TabRef::Welcome,
+            TabView::Manage(_) => TabRef::Manage,
+            TabView::Trash(_) => TabRef::Trash,
+            TabView::Tasks(t) => TabRef::Tasks(tasks_tab_ref(t.target())),
+            // A Reminders page comes back as a Reminders page: one
+            // target, one spelling, restored through `Tab::tasks` like
+            // every other rail target.
+            TabView::Reminders(_) => TabRef::Tasks(koru_workspace_host::TasksTabRef::Reminders),
+            // **No `TabRef` for these.** A flag is not one (until SP-7
+            // Settings *was* a `WelcomeView` with a flag set), and recording
+            // them properly is a new `TabRef` variant in the session file.
+            // As a main tab they come back as Welcome (`saved_main_tabs`);
+            // pinned, they are not written.
+            TabView::Settings(_) | TabView::Feedback(_) | TabView::Home(_) => return None,
+            // A diff is a working artifact over two fetched snapshots;
+            // restoring it would need a re-fetch that can fail at startup,
+            // so it is deliberately not part of the session. Nor is Socials.
+            TabView::Diff(_) | TabView::Socials(_) => return None,
+            // **A chat tab by its chat** (ADR-483-chattabrestore). A
+            // new chat not sent yet has no id the service knows — the
+            // `?` — and skips itself: there is nothing to reopen.
+            TabView::AiChat(a) => chat_tab_ref(a)?,
+            // **The saved record is `{session_id, profile_key}`**
+            // (TERMINATAB), in tab order with the rest of the strip.
+            // A tab whose launch has not come back named yet has no
+            // session id to save and skips itself (the `?`s) — a
+            // window killed inside that heartbeat loses one tab that
+            // never held a session, never a session. Capturing
+            // terminates nothing; it is a read.
+            TabView::Session(s) => TabRef::Session {
+                session: s.session?,
+                profile: s.profile_key.clone()?,
+                recovery: self.session_recovery(s),
+            },
+            // **A run view is not reopened.** It is a live reading of
+            // a run through the gateway, and a tab strip that brought
+            // one back would be asking a worker about a run before
+            // anybody had asked to look at it. The run itself is
+            // durable and is reopened from wherever it was reached,
+            // and so is a result: it is reopened from its run.
+            TabView::Run(_) | TabView::Result(_) => return None,
+            // **A canvas persists as a document**, like a page: the
+            // settings format does not change, and the kind is read
+            // again from the manifest when it comes back.
+            TabView::Canvas(c) => {
+                TabRef::document(t.document.unwrap_or(c.document()), t.home_workspace())
+            }
+            // **What the tab is over, by preference.** `Tab.document`
+            // is the manifest's id and survives the round trip; the
+            // `NodeId` under it is a node in *that document's* tree,
+            // which the next launch will not have opened and cannot
+            // resolve. The node spelling stays for a workspace with no
+            // manifest — every workspace in the editor's own suite.
+            //
+            // A leaf with neither is nothing this build can reopen, so
+            // it comes back as a welcome tab rather than as a slot that
+            // parses to nothing and silently shortens the list.
+            TabView::Leaf(l) => match t.document {
+                Some(id) => TabRef::document(id, t.home_workspace()),
+                None => match View::document_root(l) {
+                    Some(id) => TabRef::Node(id),
+                    None => TabRef::Welcome,
+                },
+            },
+        })
+    }
+
+    /// A main tab's saved token. **A tab with no saved form comes back as a
+    /// Welcome tab** where it always has (Settings, Feedback, Home — until
+    /// SP-7 Settings *was* a `WelcomeView` with a flag set); a diff, Socials
+    /// and a run's pages are not part of the session at all.
+    fn saved_main_tabs(&self, tabs: &koru_app_shell::TabStrip<Tab>) -> Vec<(TabRef, f32)> {
+        tabs.iter()
+            .filter(|t| !t.is_pinned())
+            .filter_map(|t| {
+                let which = self.saved_tab_ref(t).or_else(|| {
+                    matches!(
+                        t.view,
+                        TabView::Settings(_) | TabView::Feedback(_) | TabView::Home(_)
+                    )
+                    .then_some(TabRef::Welcome)
+                })?;
+                Some((which, t.view.scroll()))
+            })
+            .collect()
+    }
+
+    /// The pins, and which of them is showing **by its place in the saved
+    /// list**. A pin with no saved form stays pinned for the session and is
+    /// not written, so the showing index is counted over the pins that are.
+    fn saved_pins(
+        &self,
+        tabs: &koru_app_shell::TabStrip<Tab>,
+    ) -> (Vec<PinnedTabRef>, Option<usize>) {
+        let showing = tabs.pinned_showing();
+        let mut saved_showing = None;
+        let mut pins = Vec::new();
+        for (i, t) in tabs.iter().filter(|t| t.is_pinned()).enumerate() {
+            let Some(pin) = self.pinned_tab_ref(t) else {
+                continue;
+            };
+            if showing == Some(i) {
+                saved_showing = Some(pins.len());
+            }
+            pins.push(pin);
+        }
+        (pins, saved_showing)
+    }
+
+    /// What a pinned tab saves: the token it would be saved as unpinned, and
+    /// the workspace it was pinned in.
+    fn pinned_tab_ref(&self, tab: &Tab) -> Option<PinnedTabRef> {
+        Some(PinnedTabRef {
+            target: self.saved_tab_ref(tab)?,
+            workspace: tab.pinned?,
+            scroll: tab.view.scroll(),
+            show_title: tab.show_title,
+        })
     }
 
     fn pane_tree_state(&self) -> PaneTreeState {
         fn group_state(view: &MainView, group: &TabGroup) -> PaneNodeState {
-            let main: Vec<(TabRef, f32)> = group
-                .tabs()
-                .iter()
-                .filter(|t| {
-                    !t.is_pinned()
-                        && !matches!(
-                            t.view,
-                            TabView::Diff(_) | TabView::AiChat(_) | TabView::Socials(_)
-                        )
-                })
-                .filter_map(|t| {
-                    let which = match &t.view {
-                        _ if t.draft.is_some() => TabRef::Draft,
-                        _ if t.whats_new.is_some() => TabRef::WhatsNew,
-                        TabView::Welcome(_) => TabRef::Welcome,
-                        TabView::Manage(_) => TabRef::Manage,
-                        TabView::Trash(_) => TabRef::Trash,
-                        TabView::Tasks(t) => TabRef::Tasks(tasks_tab_ref(t.target())),
-                        TabView::Reminders(_) => {
-                            TabRef::Tasks(koru_workspace_host::TasksTabRef::Reminders)
-                        }
-                        // **A Settings tab comes back as a Welcome tab**, which
-                        // is what it already did: until SP-7 it *was* a
-                        // `WelcomeView` with a flag set, and a flag is not a
-                        // `TabRef`. Feedback degrades the same way — there is
-                        // no `TabRef` for it either.
-                        TabView::Settings(_) | TabView::Feedback(_) => TabRef::Welcome,
-                        // Filtered out above; spelled for exhaustiveness. Were
-                        // the filter ever lost, degrading to a welcome tab is
-                        // the same tolerance a leaf over nothing already gets.
-                        TabView::Diff(_) => TabRef::Welcome,
-                        TabView::AiChat(_) => TabRef::Welcome,
-                        TabView::Socials(_) => TabRef::Welcome,
-                        // **The saved record is `{session_id, profile_key}`**
-                        // (TERMINATAB), in tab order with the rest of the
-                        // strip. A tab whose launch has not come back named
-                        // yet has no session id to save and skips itself (the
-                        // `?`s). Capturing terminates nothing; it is a read.
-                        TabView::Session(s) => TabRef::Session {
-                            session: s.session?,
-                            profile: s.profile_key.clone()?,
-                            recovery: view.session_recovery(s),
-                        },
-                        // See the sibling arm above: a run view is a live
-                        // reading and a result is read from its run, not a
-                        // place in the library.
-                        TabView::Run(_) | TabView::Result(_) => return None,
-                        TabView::Canvas(c) => {
-                            TabRef::document(t.document.unwrap_or(c.document()), t.home_workspace())
-                        }
-                        TabView::Leaf(l) => match t.document {
-                            Some(id) => TabRef::document(id, t.home_workspace()),
-                            None => match View::document_root(l) {
-                                Some(id) => TabRef::Node(id),
-                                None => TabRef::Welcome,
-                            },
-                        },
-                    };
-                    Some((which, t.view.scroll()))
-                })
-                .collect();
-            let pinned: Vec<PinnedTabRef> = group
-                .tabs()
-                .iter()
-                .filter(|t| t.is_pinned())
-                .filter_map(|t| {
-                    Some(PinnedTabRef {
-                        document: t.document?,
-                        workspace: t.pinned?,
-                        scroll: t.view.scroll(),
-                        show_title: t.show_title,
-                    })
-                })
-                .collect();
-            let active = match group.tabs().pinned_showing() {
+            let main = view.saved_main_tabs(group.tabs());
+            let (pinned, pinned_showing) = view.saved_pins(group.tabs());
+            let active = match pinned_showing {
                 Some(i) => GroupActiveState::Pinned(i),
                 None => GroupActiveState::Main(group.tabs().main_active()),
             };
@@ -894,5 +846,38 @@ fn tasks_tab_ref(target: RailTarget) -> koru_workspace_host::TasksTabRef {
             Bucket::Later => "later",
             Bucket::Completed => "completed",
         }),
+    }
+}
+
+/// The saved word for a chat tab: the chat it is over, or `None` for a new
+/// chat whose first message has not been sent — the service holds nothing
+/// to reopen — which the caller then skips (ADR-483-chattabrestore). A tab
+/// still opening a chat by link names that chat, so a restore quit before
+/// the chat has loaded loses nothing.
+fn chat_tab_ref(view: &crate::ai_chat_view::AiChatView) -> Option<TabRef> {
+    view.chat_id().map(|chat| TabRef::Chat(chat.as_uuid()))
+}
+
+/// A saved chat tab, opened back onto its chat (ADR-483-chattabrestore).
+///
+/// **Nothing here waits on the AI service**: the tab starts its surface's
+/// reader thread and asks for the chat, and the answer lands on a later pass.
+/// A chat deleted since is answered as missing, and the tab becomes a new
+/// chat (`koru_ai_ui`'s boot). `None` in a build that hides Koru AI, which
+/// drops the tab as a hidden surface's tab is dropped.
+fn restored_chat_tab(chat: uuid::Uuid) -> Option<Tab> {
+    koru_features::ai().then(|| Tab::ai_chat_existing(koru_ai_ui::ChatId::from_uuid(chat)))
+}
+
+/// Which token a tab over a private workspace writes: the release notes or
+/// the Sync settings page. **None for the sample document**, which is not
+/// saved: it is a view of the Settings tab, and that comes back as Welcome —
+/// a sample with no Settings beside it would be a page nobody asked for.
+fn private_page_ref(tab: &Tab) -> Option<TabRef> {
+    use super::tab::PrivatePage;
+    match tab.whats_new.as_ref().map(|n| n.page) {
+        Some(PrivatePage::SyncSettings) => Some(TabRef::SyncSettings),
+        Some(PrivatePage::SampleDocument) => None,
+        _ => Some(TabRef::WhatsNew),
     }
 }

@@ -45,9 +45,17 @@ crates/koru-account-core/src/email/tests.rs email * # address-validation test sa
 crates/koru-account-runtime/src/account/tests.rs email user@accounts.google.com # provider identifier shape in a test
 crates/koru-core/src/profile/tests.rs email sam@acme.com # synthetic test address
 crates/koru-docstore/src/**.rs email sam@acme.com # synthetic profile address in docs and tests
-crates/koru-draw/src/*.rs email a@b.com # link-detection test sample
+crates/koru-draw/src/**.rs email a@b.com # link-detection test sample
 crates/koru-editor/src/trigger.rs email b@c.com # trigger test sample
+apps/koru/src/panes/explore/popover_baseline.rs email * # synthetic over-long address, for truncation
 
 # A non-Latin user name, testing that paths survive Unicode.
 apps/koru-relay/src/cli/tests.rs home-path * # Unicode user-name path sample
 apps/koru-store-server/src/cli/tests.rs home-path * # Unicode user-name path sample
+
+# Dotted numbers that are not addresses: vector path data and version samples.
+crates/koru-draw/src/icon_pack_data.rs ipv4 * # SVG path numbers in the icon pack's data
+crates/koru-release/src/mobile/tests.rs ipv4 0.1.5.1 # a malformed-version test sample
+
+# Sample paths in a comment, not anybody's machine.
+crates/koru-ai-ui/src/tool_output/picture.rs home-path /home/a.png # file-URL sample in a doc comment

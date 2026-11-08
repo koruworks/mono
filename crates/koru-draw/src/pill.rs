@@ -35,13 +35,21 @@ pub enum PillKind {
     Schedule,
     /// The same durable schedule while future firings are paused.
     SchedulePaused,
+    /// A passage of an AI reply quoted into the chat's composer (koru-ai
+    /// D88): the quote glyph and the passage's start in quotation marks,
+    /// in the document pill's neutral ink. Only the composer writes one.
+    Quote,
+    /// A skill of the chat's agent picked under `$` in the composer (koru-ai
+    /// D121): the wrench glyph and the skill's name, in the document pill's
+    /// neutral ink. Only the composer writes one.
+    Skill,
 }
 
 impl PillKind {
     pub fn palette(self) -> &'static crate::theme::PillPalette {
         let p = crate::theme::p();
         match self {
-            Self::Document | Self::File => &p.document,
+            Self::Document | Self::File | Self::Quote | Self::Skill => &p.document,
             Self::Contact => &p.contact,
             Self::Date => &p.date,
             Self::Link => &p.link,
@@ -356,7 +364,9 @@ pub fn draw_icon(
         | PillKind::File
         | PillKind::Run
         | PillKind::Schedule
-        | PillKind::SchedulePaused => {
+        | PillKind::SchedulePaused
+        | PillKind::Quote
+        | PillKind::Skill => {
             let inset = width * 0.08;
             stroke(
                 scene,

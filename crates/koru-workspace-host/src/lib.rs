@@ -41,6 +41,7 @@ pub mod environment;
 pub mod events_host;
 pub mod export;
 pub mod formats;
+mod image_import;
 pub mod images;
 mod inspector;
 /// What the window actually received, on demand — `KORU_INPUT_DEBUG=1`.
@@ -216,6 +217,40 @@ pub struct PasteTarget {
     pub anchor: NodeId,
     pub replacing: Vec<NodeId>,
 }
+
+/// One image attachment the shell is preparing off the event loop — a paste, a
+/// drop or an `/image` pick — from the gesture until its node lands or it
+/// fails. Process-local: it names a placeholder a view is drawing, never
+/// anything in a document.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ImageTicket(pub u64);
+
+/// Where an image being prepared off the event loop will land.
+///
+/// Carried by the shell from the gesture to the insertion, and **mapped again
+/// at the insertion** against the document as it is then: reading, decoding
+/// and storing a large picture takes long enough for the person to keep
+/// typing, delete the anchor, or replace the selection the paste was meant
+/// for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ImagePlace {
+    /// A paste at the block target the editor recorded, or appended at the end
+    /// of the document when it is `None`.
+    Paste(Option<PasteTarget>),
+    /// A file dropped on the window: a brand-new row at the end of the body.
+    Append,
+    /// `/image`: this node — the line the command was typed on — becomes the
+    /// picture.
+    Convert(NodeId),
+}
+
+/// How large a view would draw a freshly inserted image of `(width, height)`
+/// pixels, as the larger axis in **device** pixels — the `wanted` its draw
+/// asks the image cache for. The shell builds that mip on the worker that
+/// decoded the image, so the first frame is a lookup instead of a resample
+/// on the event loop. A closure, because the rule (content column, display
+/// scale) is the view's and the worker cannot call back into a view.
+pub type ImageMipSide = std::sync::Arc<dyn Fn(u32, u32) -> u32 + Send + Sync>;
 
 /// A paragraph of text plus the block-level structure it arrived with — a list
 /// style, a heading level — so a paste from Word or Google Docs keeps its shape
@@ -676,6 +711,13 @@ pub trait View {
         None
     }
 
+    /// What the view's active tab is called, for the window's title — the
+    /// workspace's name, then this (the review's note). `None` from a view with
+    /// no tabs, whose window is titled by the workspace alone.
+    fn active_tab_title(&self) -> Option<String> {
+        None
+    }
+
     /// **The answer to [`PaneRequest::ChooseDelegateFolder`]** (ADR-365).
     ///
     /// Called only when somebody actually chose a folder; cancelling says
@@ -857,6 +899,15 @@ pub trait View {
     /// agent to start is their choice; nothing here picks one. Default no-op:
     /// only a container with a `+` menu implements it.
     fn open_new_session_chooser(&mut self) -> bool {
+        false
+    }
+
+    /// Open a chat as a tab — focusing a tab that already shows it — at
+    /// `block` when there is one ([`PaneRequest::OpenChatLink`]). `chat` and
+    /// `block` are uuids as the wire spells them; a view refuses ones it
+    /// cannot read. Default `false`: only a container with chat tabs
+    /// implements it.
+    fn open_chat_tab(&mut self, _chat: &str, _block: Option<&str>) -> bool {
         false
     }
 
@@ -1505,7 +1556,20 @@ pub trait View {
     /// container knows which tab is over which document, so carrying the pair
     /// would be one of them stating the other's fact. Default `None`: only a
     /// document surface ever raises one.
+    /// The document's page menu asked for the global settings — its
+    /// *Global settings* link. The container opens its Settings tab on the
+    /// Editor page; a host without one never sees the link asked for (the
+    /// menu draws it only where there is somewhere to go). Default: no.
+    fn take_wants_global_settings(&mut self) -> bool {
+        false
+    }
+
     fn take_wants_task_view(&mut self) -> Option<koru_core::NodeId> {
+        None
+    }
+
+    /// A list's page asked for — a document title's list chip. Default: no.
+    fn take_wants_task_list(&mut self) -> Option<koru_core::ids::ListId> {
         None
     }
 
@@ -1607,10 +1671,9 @@ pub trait View {
     }
 
     /// A non-text clipboard the user pasted (Ctrl+V). Holds the captured block
-    /// target. Cleared by the shell, which reads the clipboard, decodes, stores
-    /// the bytes, and calls [`paste_images`].
-    ///
-    /// [`paste_images`]: Self::paste_images
+    /// target. Cleared by the shell, which reads the clipboard, decodes and
+    /// stores the bytes off the event loop, and calls
+    /// [`finish_image_import`](Self::finish_image_import).
     fn take_wants_paste_image(&mut self) -> Option<PasteTarget> {
         None
     }
@@ -1680,6 +1743,75 @@ pub trait View {
         _target: Option<PasteTarget>,
         _blocks: &[RichBlock],
     ) {
+    }
+
+    /// **An image is on its way to `place`**: the shell has started reading,
+    /// decoding and storing it off the event loop, and asks the view to show
+    /// where it will land. The document is not touched — see
+    /// [`finish_image_import`](Self::finish_image_import) for why the node
+    /// waits. Default: nothing, which is what a view that draws no
+    /// placeholder (a canvas, the task outline) wants; the insertion still
+    /// arrives.
+    fn begin_image_import(
+        &mut self,
+        _ws: &WorkspaceDoc,
+        _ticket: ImageTicket,
+        _place: &ImagePlace,
+    ) {
+    }
+
+    /// The pixel sizes of the images `ticket` is preparing, read from their
+    /// headers before the slow decode, so a placeholder can take the picture's
+    /// final shape and the page does not jump when it lands.
+    fn size_image_import(&mut self, _ticket: ImageTicket, _sizes: &[(u32, u32)]) {}
+
+    /// **The images are stored**: insert them at `place`, which the shell has
+    /// already re-mapped onto the document as it stands now.
+    ///
+    /// The node is created only here, on the thread that owns the document,
+    /// once the blob has an address: a node made earlier would sync a picture
+    /// with no bytes to every other device and leave a broken one behind on a
+    /// failure. Default: the synchronous calls this used to be.
+    fn finish_image_import(
+        &mut self,
+        ws: &mut WorkspaceDoc,
+        _ticket: ImageTicket,
+        place: ImagePlace,
+        images: &[PastedImage],
+    ) {
+        match place {
+            ImagePlace::Paste(target) => self.paste_images(ws, target, images),
+            ImagePlace::Append => {
+                for image in images {
+                    self.append_image(ws, &image.hash, &image.mime, image.width, image.height);
+                }
+            }
+            ImagePlace::Convert(node) => {
+                if let Some(image) = images.first() {
+                    self.insert_image(
+                        ws,
+                        node,
+                        &image.hash,
+                        &image.mime,
+                        image.width,
+                        image.height,
+                    );
+                }
+            }
+        }
+    }
+
+    /// Drop `ticket`'s placeholder: its images landed, or failed. Sent to
+    /// every pane, because the tab that drew it may not be the one in front.
+    /// Answers whether anything was drawn for it, so the shell can redraw.
+    fn end_image_import(&mut self, _ticket: ImageTicket) -> bool {
+        false
+    }
+
+    /// How this view would size a fresh image, for the mip the shell builds
+    /// ahead of the first draw. `None` when it draws no images.
+    fn image_mip_side(&self) -> Option<ImageMipSide> {
+        None
     }
 
     /// Adopt what the last run remembered, and hand back what this one should.
@@ -1931,6 +2063,25 @@ pub trait View {
         false
     }
 
+    /// **Whether this press landed on the listening surface's Cancel** — the
+    /// ✕ of a chat composer's recording row (koru-ai D103). It throws the
+    /// dictation away and is spent there, reaching no view. In window
+    /// coordinates, like [`dictation_hit`](Self::dictation_hit).
+    fn dictation_cancel_hit(&self, _x: f32, _y: f32) -> bool {
+        false
+    }
+
+    /// **Whether the live dictation is a recording that stops rather than
+    /// discards** — a chat composer's (koru-ai D103), which shows its own
+    /// Stop and Cancel. Then Escape and every other key stop it and keep its
+    /// words, the key spent on the stop in the window that records, and a
+    /// press anywhere but the surface stops it too and still lands: only
+    /// Cancel throws the words away. A document's dictation answers `false`
+    /// and keeps the rule that an ordinary local event discards.
+    fn dictation_records(&self) -> bool {
+        false
+    }
+
     /// **Say why a dictation will not run**, once.
     ///
     /// A [`koru_dictation::Refusal`] is a code and a flag, never a sentence:
@@ -1938,6 +2089,24 @@ pub trait View {
     /// code up in `koru-i18n` and says it wherever it says everything else
     /// that has already happened. Answers whether it was shown.
     fn dictation_refused(&mut self, _refusal: koru_dictation::Refusal) -> bool {
+        false
+    }
+
+    /// **Whether a microphone picker in this window is open and showing an
+    /// input level** — a chat composer's microphone panel (koru-ai D103).
+    ///
+    /// The shell asks every window on every pass and holds the voice
+    /// worker's level meter open on the person's chosen microphone while any
+    /// answers `true` and no dictation runs; it closes the meter the pass
+    /// none does. So it must be free: a `bool` read, never a walk.
+    fn voice_meter_wanted(&self) -> bool {
+        false
+    }
+
+    /// **The level the meter heard**, `0..=8`, pushed while
+    /// [`voice_meter_wanted`](Self::voice_meter_wanted) holds and whenever it
+    /// moves. Answers whether anything drawn changed.
+    fn voice_meter_level(&mut self, _level: u8) -> bool {
         false
     }
 
@@ -2192,11 +2361,23 @@ pub enum PaneRequest {
     /// Open or reveal the singleton support window — the Help row, the
     /// tray, the floating icon and the reply notice all send this one.
     OpenSupport,
-    /// Ask the embedding host's Agent link to open one exact AI chat block.
-    /// Strings keep this generic shell independent of the AI domain model.
+    /// Open a chat as a tab in the container window, at `block` when there
+    /// is one — a chat hit in search, or a `koru://chat/…` link or overlay hit
+    /// the Agent routed here ([`View::open_chat_tab`]). Strings keep this
+    /// generic shell independent of the AI domain model.
     OpenChatLink {
         chat: String,
-        block: String,
+        block: Option<String>,
+    },
+    /// **Open a chat of another profile in a window of that profile** (AI
+    /// schema 13): a surface here was asked to show it and would not. The
+    /// shell hands it to the Agent ([`Host::open_chat_elsewhere`]), which
+    /// picks the profile's most recent window or opens one. Strings, as on
+    /// [`Self::OpenChatLink`].
+    OpenChatElsewhere {
+        chat: String,
+        block: Option<String>,
+        profile: String,
     },
     /// Navigate to stable content. Every document target is resolved through
     /// Store here; views never decide which profile/workspace currently owns it.
@@ -2247,6 +2428,13 @@ pub enum PaneRequest {
     /// whatever is open, which is a different thing that happens to look the
     /// same in the sidebar until you reopen.
     CreateDocument(String),
+    /// Create a document **inside** `parent` — as its last child — and open
+    /// it: a sidebar row's `+` (the review's note). The same round trip as
+    /// [`CreateDocument`](Self::CreateDocument), placed under the row.
+    CreateDocumentIn {
+        parent: koru_core::DocumentId,
+        title: String,
+    },
     /// Create a **canvas** in the open workspace, and open it.
     ///
     /// [`CreateDocument`](Self::CreateDocument)'s twin, and a request for the
@@ -2623,6 +2811,7 @@ impl PaneRequest {
             Self::OpenHelp => "request.open_help",
             Self::OpenSupport => "request.open_support",
             Self::OpenChatLink { .. } => "request.open_chat_link",
+            Self::OpenChatElsewhere { .. } => "request.open_chat_elsewhere",
             Self::Navigate { .. } => "request.navigate",
             Self::ActivateDocument { .. } => "request.activate_document",
             Self::OpenBackground { .. } => "request.open_background",
@@ -2635,6 +2824,7 @@ impl PaneRequest {
             Self::NewWorkspace { .. } => "request.new_workspace",
             Self::NewWorkspaceIn(..) => "request.new_workspace_in",
             Self::CreateDocument { .. } => "request.create_document",
+            Self::CreateDocumentIn { .. } => "request.create_document_in",
             Self::CreateCanvas(..) => "request.create_canvas",
             Self::CopyDocument { .. } => "request.copy_document",
             Self::CloseDocument(..) => "request.close_document",
@@ -3189,14 +3379,6 @@ pub trait Host {
         None
     }
 
-    /// A correlated failure returned by the host's Agent connection.
-    ///
-    /// The blocking work and pipe read have already happened on worker
-    /// threads; the shell only places this report into the active view.
-    fn take_agent_notice(&self) -> Option<ErrorReport> {
-        None
-    }
-
     /// A taskbar activation (a Jump List *Search* / *New document* / Recent
     /// click) landed and the window should come forward.
     ///
@@ -3220,19 +3402,9 @@ pub trait Host {
         false
     }
 
-    /// A Jump List *AI Chat* click: open or focus the agent-owned standalone
-    /// chat window. As with Search, the host owns the Agent connection and
-    /// performs the request when the shell drains this hook.
-    fn take_ai_chat_activation(&self) -> bool {
-        false
-    }
-
     /// Open one fixed application-owned URI through the desktop's registered
     /// handler. HTTPS goes to the browser; `mailto:` goes to the mail app.
     fn open_uri(&self, _uri: &str) {}
-
-    /// Route an exact AI chat block through the host-owned Agent connection.
-    fn open_chat_link(&self, _chat: String, _block: String) {}
 
     /// Route one URL delivered by the platform application delegate. The Koru
     /// desktop host validates and forwards `koru://` through its Agent link;
@@ -3240,6 +3412,11 @@ pub trait Host {
     fn open_external_url(&self, _url: String) -> Result<(), String> {
         Ok(())
     }
+
+    /// Hand a chat of another profile to the Agent, which opens it in a
+    /// window of `profile` ([`PaneRequest::OpenChatElsewhere`]). Ids as the
+    /// wire spells them. A host with no Agent opens nothing.
+    fn open_chat_elsewhere(&self, _chat: String, _block: Option<String>, _profile: String) {}
 
     fn take_unpinned_documents(&self) -> Vec<koru_core::DocumentId> {
         Vec::new()

@@ -128,6 +128,17 @@ id_type!(
     ToolInvocationId,
     "tool"
 );
+id_type!(
+    /// One picture or file stored with a chat, minted by the client that
+    /// adds it so a repeated upload names the same attachment.
+    ChatAttachmentId,
+    "attachment"
+);
+id_type!(
+    /// One status line a local agent said beside its reply (koru-ai D69).
+    AgentNoticeId,
+    "notice"
+);
 
 #[cfg(test)]
 mod tests {
@@ -143,6 +154,8 @@ mod tests {
             FeedbackEventId::new().as_uuid(),
             DocumentExportId::new().as_uuid(),
             ToolInvocationId::new().as_uuid(),
+            ChatAttachmentId::new().as_uuid(),
+            AgentNoticeId::new().as_uuid(),
         ] {
             assert_eq!(id.get_version(), Some(uuid::Version::Random));
         }

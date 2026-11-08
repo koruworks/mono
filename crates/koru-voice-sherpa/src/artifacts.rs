@@ -111,12 +111,13 @@ impl NativeArtifact {
     }
 }
 
-/// **The three targets `koru-release` ships**, and nothing else.
+/// **The three targets that link the voice runtime**, and nothing else.
 ///
-/// Windows on ARM is out by construction rather than by choice — the release
-/// index knows exactly `windows-x86_64`, `macos-aarch64` and `macos-x86_64` —
-/// and Linux is not a Koru target at all, so an archive for one has no business
-/// in a table that says what this product provisions.
+/// Windows on ARM is out by construction rather than by choice: no release
+/// builds it. `macos-x86_64` is pinned so a build from source on an Intel Mac
+/// has its archive, though official macOS releases are Apple silicon only.
+/// Linux has been a supported target since 0.1.4, but it ships without voice
+/// input, so it has no archive in this table yet.
 ///
 /// **Upstream's TTS-free archives, every one.** Upstream's ordinary static
 /// archive includes sherpa-onnx's text-to-speech, which links eSpeak NG and ucd

@@ -356,16 +356,6 @@ impl Screen {
 /// A window showing a document of `texts`, with a client attached and the first
 /// whole tree published, and the caret in the first body paragraph.
 fn reading(texts: &[&str]) -> Screen {
-    reading_prepared(texts, |_, _| {})
-}
-
-/// [`reading`], with a chance to change the document after its paragraphs
-/// exist and before the tab opens — for content no keystroke makes, such as
-/// what an older build left behind.
-fn reading_prepared(
-    texts: &[&str],
-    prepare: impl FnOnce(&mut WorkspaceDoc, &[KoruNodeId]),
-) -> Screen {
     // Built before the tab is opened, so the body is exactly these paragraphs:
     // `koru_workspace::document` leaves an empty one behind, and a fixture
     // with a paragraph nobody asked for is a fixture every count is wrong by.
@@ -373,14 +363,10 @@ fn reading_prepared(
     let doc =
         w.ws.insert(Parent::Root, CoreNode::document("Notes").unwrap())
             .expect("the document node");
-    let mut paragraphs = Vec::new();
     for text in texts {
-        paragraphs.push(
-            w.ws.insert(Parent::Node(doc), CoreNode::paragraph(*text).unwrap())
-                .expect("a paragraph"),
-        );
+        w.ws.insert(Parent::Node(doc), CoreNode::paragraph(*text).unwrap())
+            .expect("a paragraph");
     }
-    prepare(&mut w.ws, &paragraphs);
     w.ws.enable_undo();
     v.seat_accessibility(WINDOW);
     v.open_node(&w.ws, doc);
@@ -498,60 +484,6 @@ fn every_child_a_parent_names_was_actually_published() {
                 );
             }
         }
-    }
-}
-
-/// **One attribute id on two blocks is two pills.** Pasting used to copy a
-/// pill's attribute id unchanged, so documents exist with the same id in two
-/// paragraphs; a pill named by that id alone was one node with two parents,
-/// and AccessKit answers that with a panic. Named by its paragraph as well,
-/// each is its own control and nothing has to be repaired.
-#[test]
-fn one_attribute_id_on_two_blocks_is_two_pills() {
-    let attr = koru_core::node::Attr::new(
-        "due",
-        koru_core::node::AttrValue::Text("Friday".to_string()),
-    );
-    let mut screen = reading_prepared(&["Call on", "And again on"], |ws, rows| {
-        for row in rows {
-            let at = ws
-                .read(*row)
-                .expect("the row")
-                .content
-                .as_text()
-                .map_or(0, str::len);
-            ws.insert_pill(*row, at, &attr).expect("the pill");
-        }
-    });
-    let rows = body_rows(&screen.v);
-    assert_eq!(rows.len(), 2);
-
-    // A keystroke, so a difference goes out as well as the whole tree.
-    screen.press(
-        Key::Character("x".into()),
-        Some("x"),
-        ModifiersState::empty(),
-    );
-    screen.service();
-
-    let counters = screen.pane.counters();
-    assert_eq!(counters.repairs, 0, "the tree needed repairing");
-    assert_eq!(counters.duplicate_ids, 0);
-    let attr = attr.id.as_uuid().simple();
-    for row in &rows {
-        let locator = format!("koru:w1/v1/n:{}.{attr}#pill", row.as_uuid().simple());
-        let pill = screen
-            .client
-            .by_locator(&locator)
-            .unwrap_or_else(|| panic!("pill {locator} is not in the tree"));
-        assert!(
-            screen
-                .client
-                .node(screen.paragraph(*row))
-                .children()
-                .contains(&pill),
-            "the pill is not under its own paragraph"
-        );
     }
 }
 
@@ -1914,4 +1846,48 @@ fn a_host_answer_renames_the_block_moves_the_revision_and_says_nothing() {
         screen.client.announcing().is_empty(),
         "a remote change of a diagram was spoken"
     );
+}
+
+/// **An image still loading is in the reading order where it is drawn**, as
+/// a busy image named *Loading image* — and it leaves the tree, with nothing
+/// dangling, when its picture lands or fails.
+#[test]
+fn a_loading_image_is_a_busy_image_between_its_paragraphs() {
+    use koru_workspace_host::{ImagePlace, ImageTicket, PasteTarget};
+    let mut screen = reading(&["One.", "Two."]);
+    let rows = body_rows(&screen.v);
+    let place = ImagePlace::Paste(Some(PasteTarget {
+        anchor: rows[0],
+        replacing: Vec::new(),
+    }));
+    View::begin_image_import(&mut screen.v, &screen.w.ws, ImageTicket(1), &place);
+    super::leaf_mut(&mut screen.v).expect("a document").reflow();
+    screen.service();
+
+    let body = screen
+        .client
+        .by_locator("koru:w1/v1/s:body#root")
+        .expect("the body");
+    let children = screen.client.node(body).children().to_vec();
+    let one = children
+        .iter()
+        .position(|id| *id == screen.paragraph(rows[0]))
+        .expect("the first paragraph");
+    let loading = children[one + 1];
+    let node = screen.client.node(loading);
+    assert_eq!(node.role(), Role::Image);
+    assert_eq!(node.label(), Some("Loading image"));
+    assert!(node.is_busy());
+    assert_eq!(children[one + 2], screen.paragraph(rows[1]));
+    let _ = screen.client.reachable();
+
+    assert!(View::end_image_import(&mut screen.v, ImageTicket(1)));
+    super::leaf_mut(&mut screen.v).expect("a document").reflow();
+    screen.service();
+    let children = screen.client.node(body).children().to_vec();
+    assert!(
+        !children.contains(&loading),
+        "the placeholder left the tree"
+    );
+    let _ = screen.client.reachable();
 }

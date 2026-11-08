@@ -103,14 +103,17 @@ impl Fixture {
 
 // -------------------------------------------------------------------- routes
 
-/// The switcher's *Manage workspaces…* names the Profile it was listing, and
-/// Manage opens on that Profile's page.
+/// A workspace row's gear on the who/where popover opens Manage on the open
+/// Profile's page, where its workspaces are.
 #[test]
-fn manage_workspaces_opens_manage_on_the_listed_profiles_page() {
+fn a_workspaces_gear_opens_manage_on_the_open_profiles_page() {
     let mut f = fixture();
-    let work = f.work.id;
-    assert!(f.v.apply(&f.w.ws, crate::panes::Outcome::ManageWorkspaces(Some(work))));
-    assert_eq!(f.manage_view().page(), Some(Page::Profile(work)));
+    let personal = f.personal.id;
+    assert!(f.v.apply(
+        &f.w.ws,
+        crate::panes::Outcome::ManageWorkspace(koru_core::WorkspaceId::new())
+    ));
+    assert_eq!(f.manage_view().page(), Some(Page::Profile(personal)));
 }
 
 /// Port of *Ctrl+Shift+O opens the manager once and brings it forward*: it

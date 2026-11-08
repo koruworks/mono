@@ -176,8 +176,10 @@ impl RendererRow {
 /// compose and no way to give them a rect. Rather than reimplement them here
 /// (which would move where an AI provider is configured, and this packet
 /// changes no behavior beyond the re-homing), the section is a slot: the host
-/// supplies the sentence and the way in, and the surface raises
-/// [`Request::OpenAiSetup`](crate::Request::OpenAiSetup) when it is pressed.
+/// supplies the sentence and the way in.
+///
+/// **Not drawn for now.** The Koru AI card is off the System page; a host may
+/// still fill the slot, and the surface keeps it for when the card returns.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct AiSlot {
     /// What the host wants to say about the configured provider.
@@ -187,6 +189,7 @@ pub struct AiSlot {
 }
 
 impl AiSlot {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn is_empty(&self) -> bool {
         self.note.is_empty() && self.action.is_none()
     }
@@ -203,6 +206,213 @@ pub struct DictionaryRow {
     pub line: String,
     /// *Download* or *Try again*; `None` while a download runs.
     pub action: Option<String>,
+}
+
+/// **One coding agent on *Agent providers***, as the host read it: which
+/// agent, whether its CLI is ready, where its setup guide is, and whether it
+/// is on. The host owns every part of it — the agent list, the probe, the
+/// stored switch — and this crate only draws it and says what was pressed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentProviderRow {
+    /// The agent's key — `claude`, `codex`, … — which names its brand mark
+    /// and what its switch turns off.
+    pub key: String,
+    /// Its brand name, the same in every language.
+    pub name: String,
+    pub status: AgentProviderStatus,
+    /// Its install or setup page, opened by *Setup guide ↗*.
+    pub guide: Option<&'static str>,
+    pub on: bool,
+    /// Whether the row offers *Install*: the host knows the vendor's install
+    /// command for what `status` says is missing, and runs it in a terminal
+    /// tab when pressed ([`Request::InstallAgent`](crate::Request::InstallAgent)).
+    pub install: bool,
+}
+
+/// **Where a new chat starts**, as the host's settings hold it: the
+/// *Default permission for new chats* card. The host owns the stored values;
+/// a press here moves the control at once and asks the host to store it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AgentDefaults {
+    /// What a new chat with a supported agent (one with an auto mode)
+    /// starts in.
+    pub permission: koru_settings::AgentPermission,
+    /// What a new chat with any other agent starts in: *Manual* or *Yolo*.
+    pub permission_other: koru_settings::AgentPermission,
+    /// The agent a new chat starts with, by key; `None` is *Auto*.
+    pub agent: Option<String>,
+    /// Why the chosen agent is not what a new chat gets — it is turned off,
+    /// or not installed — in the host's words; `None` while it is.
+    pub agent_note: Option<String>,
+}
+
+/// Whether an agent's CLI is ready, in the words the row says it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AgentProviderStatus {
+    /// Not read yet, or being read again.
+    Checking,
+    Ready,
+    /// Its program is not on `PATH`; the row names it.
+    NotInstalled {
+        program: String,
+    },
+    /// Installed, and something Koru already knows stands in the way.
+    NeedsAttention(AgentAttention),
+}
+
+/// Why an installed agent needs attention — only what Koru's existing
+/// checks already know.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AgentAttention {
+    /// A version Koru's managed route does not accept yet. `found` is the
+    /// version the agent printed and `needed` what the route accepts, when
+    /// the session host said (one that predates them says neither, and the
+    /// row keeps its old sentence). `update` is the command that updates
+    /// it, named on the row when the agent has one, and `desktop_app` the
+    /// agent's desktop app, whose own copy updates with the app — said
+    /// after the command.
+    UnsupportedVersion {
+        found: Option<String>,
+        needed: Option<NeededVersion>,
+        update: Option<String>,
+        desktop_app: Option<String>,
+    },
+    /// Signed out; `sign_in` is the command that signs it in, when known.
+    SignedOut { sign_in: Option<String> },
+    /// The check itself failed.
+    CheckFailed,
+    /// The agent's program did not start: `program --version` exited with
+    /// an error or printed nothing — Kimi's CLI under a Node.js too old for
+    /// it. Not a version Koru refused, so the row says to run the command
+    /// and see why, and not to update.
+    WontStart { program: String },
+    /// The agent is installed but the program a chat runs it through is
+    /// not — Claude's `claude-agent-acp`, Antigravity's `agy_acp_server`.
+    AdapterMissing { program: String },
+}
+
+/// **What a managed route accepts of an agent's version**, as the row says
+/// it. The host decides which applies; the page only words it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum NeededVersion {
+    /// This release or a newer one: updating fixes it.
+    AtLeast(String),
+    /// Only reviewed releases, of which this is the newest.
+    Reviewed(String),
+    /// Only reviewed releases, and the version found is newer than every
+    /// one of them: this is as far as Koru has checked, and updating
+    /// cannot help.
+    CheckedUpTo(String),
+}
+
+impl AgentProviderStatus {
+    /// The row's sentence: the status, and for one that is not ready, why.
+    pub fn words(&self, lang: koru_i18n::Lang) -> String {
+        use koru_i18n::{Key, fill, t};
+        let detail = |status: Key, why: String| {
+            fill(
+                t(lang, Key::SettingsAgentStatusDetail),
+                &[t(lang, status), &why],
+            )
+        };
+        let not_on_path = |program: &str| fill(t(lang, Key::SettingsAgentNotOnPath), &[program]);
+        match self {
+            Self::Checking => t(lang, Key::TerminalChecking).to_owned(),
+            Self::Ready => t(lang, Key::SettingsAgentReady).to_owned(),
+            Self::NotInstalled { program } => {
+                detail(Key::TerminalNotInstalled, not_on_path(program))
+            }
+            Self::NeedsAttention(why) => detail(
+                Key::SettingsAgentNeedsAttention,
+                match why {
+                    AgentAttention::UnsupportedVersion {
+                        found,
+                        needed: Some(needed),
+                        update,
+                        desktop_app,
+                    } => version_words(lang, found.as_deref(), needed, update, desktop_app),
+                    AgentAttention::UnsupportedVersion { update: None, .. } => {
+                        t(lang, Key::SettingsAgentUnsupportedVersion).to_owned()
+                    }
+                    AgentAttention::UnsupportedVersion {
+                        update: Some(command),
+                        desktop_app: None,
+                        ..
+                    } => fill(
+                        t(lang, Key::SettingsAgentUnsupportedVersionUpdate),
+                        &[command],
+                    ),
+                    AgentAttention::UnsupportedVersion {
+                        update: Some(command),
+                        desktop_app: Some(app),
+                        ..
+                    } => fill(
+                        t(lang, Key::SettingsAgentUnsupportedVersionUpdateDesktopApp),
+                        &[command, app],
+                    ),
+                    AgentAttention::SignedOut { sign_in: None } => {
+                        t(lang, Key::SettingsAgentSignedOut).to_owned()
+                    }
+                    AgentAttention::SignedOut {
+                        sign_in: Some(command),
+                    } => fill(t(lang, Key::SettingsAgentSignedOutRun), &[command]),
+                    AgentAttention::CheckFailed => {
+                        t(lang, Key::SettingsAgentCheckFailed).to_owned()
+                    }
+                    AgentAttention::WontStart { program } => {
+                        fill(t(lang, Key::SettingsAgentWontStart), &[program])
+                    }
+                    AgentAttention::AdapterMissing { program } => not_on_path(program),
+                },
+            ),
+        }
+    }
+}
+
+/// **A refused version, said plainly**: what was found and what Koru needs,
+/// then — where updating is the fix — the update command and the desktop
+/// app's note. A version newer than everything Koru has checked gets no
+/// update command: updating cannot reach a release that is not out yet.
+fn version_words(
+    lang: koru_i18n::Lang,
+    found: Option<&str>,
+    needed: &NeededVersion,
+    update: &Option<String>,
+    desktop_app: &Option<String>,
+) -> String {
+    use koru_i18n::{Key, fill, t};
+    let mut words = match (needed, found) {
+        (NeededVersion::AtLeast(needed), Some(found)) => fill(
+            t(lang, Key::SettingsAgentVersionFoundNeedsAtLeast),
+            &[found, needed],
+        ),
+        (NeededVersion::AtLeast(needed), None) => {
+            fill(t(lang, Key::SettingsAgentVersionNeedsAtLeast), &[needed])
+        }
+        (NeededVersion::CheckedUpTo(newest), Some(found)) => {
+            return fill(
+                t(lang, Key::SettingsAgentVersionFoundNewerThanChecked),
+                &[found, newest],
+            );
+        }
+        (NeededVersion::Reviewed(newest), Some(found)) => fill(
+            t(lang, Key::SettingsAgentVersionFoundUnchecked),
+            &[found, newest],
+        ),
+        (NeededVersion::Reviewed(newest) | NeededVersion::CheckedUpTo(newest), None) => {
+            fill(t(lang, Key::SettingsAgentVersionNewestSupported), &[newest])
+        }
+    };
+    let mut then = |sentence: String| {
+        words = fill(t(lang, Key::SettingsAgentSentences), &[&words, &sentence]);
+    };
+    if let Some(command) = update {
+        then(fill(t(lang, Key::SettingsAgentRunToUpdate), &[command]));
+        if let Some(app) = desktop_app {
+            then(fill(t(lang, Key::SettingsAgentDesktopAppUpdates), &[app]));
+        }
+    }
+    words
 }
 
 #[cfg(test)]

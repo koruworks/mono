@@ -1,0 +1,20 @@
+// SPDX-License-Identifier: MPL-2.0
+//
+// Koru Nightly: the iOS twin of Android's `-PkoruNightly=true`. A separate
+// app that installs beside Koru, with its own bundle ids and its own App
+// Group, so a nightly never reads or writes the stable app's data.
+//
+//   xcodebuild ... -xcconfig Config/Nightly.xcconfig
+//   ./koru.sh run --nightly
+//   ./koru.sh testflight --version <v> --build <yyyymmddHHMM>
+//
+// The project's defaults (KORU_APP_ID = do.koru.app, Koru) are the stable
+// app's; this file only overrides them. The share extension follows as
+// $(KORU_APP_ID).share, the App Group as group.$(KORU_APP_ID), and both
+// entitlements files and Info.plist key KoruAppGroup read KORU_APP_GROUP.
+// Every identifier here is registered for team S9AYD7YJ9F: the App IDs
+// do.koru.app.nightly and do.koru.app.nightly.share and the App Group
+// group.do.koru.app.nightly.
+
+KORU_APP_ID = do.koru.app.nightly
+KORU_APP_DISPLAY_NAME = Koru Nightly

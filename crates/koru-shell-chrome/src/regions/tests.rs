@@ -13,7 +13,18 @@ fn widths(n: usize) -> Vec<f32> {
 }
 
 fn at(r: &Regions, n: usize, x: f32, y: f32) -> Hit {
-    hit(r, &widths(n), 0.0, false, true, false, false, false, x, y)
+    hit(
+        r,
+        &widths(n),
+        0.0,
+        false,
+        true,
+        lane::Leading::NONE,
+        false,
+        false,
+        x,
+        y,
+    )
 }
 
 fn at_wb(r: &Regions, n: usize, window_buttons: bool, context: bool, x: f32, y: f32) -> Hit {
@@ -23,7 +34,7 @@ fn at_wb(r: &Regions, n: usize, window_buttons: bool, context: bool, x: f32, y: 
         0.0,
         window_buttons,
         context,
-        false,
+        lane::Leading::NONE,
         false,
         false,
         x,
@@ -31,21 +42,157 @@ fn at_wb(r: &Regions, n: usize, window_buttons: bool, context: bool, x: f32, y: 
     )
 }
 
-#[test]
-fn search_owns_its_reserved_caption_button_with_scrollable_tabs() {
-    let r = shut();
-    let button = caption::search_button(r.caption, true, true);
-    let (x, y) = button.centre();
-    let tab_widths = widths(20);
+/// The workspace window's lane controls, with the pane open (unfolded).
+fn all_leading() -> lane::Leading {
+    lane::Leading {
+        mark: lane::Mark::Mark,
+        search: true,
+        new: true,
+        folded: false,
+    }
+}
 
+/// The same controls with the pane shut: folded into the caption.
+fn all_folded() -> lane::Leading {
+    lane::Leading {
+        folded: true,
+        ..all_leading()
+    }
+}
+
+fn at_leading(r: &Regions, n: usize, leading: lane::Leading, x: f32, y: f32) -> Hit {
+    hit(r, &widths(n), 0.0, true, true, leading, false, false, x, y)
+}
+
+/// **The lane, with the pane open.** Its squares answer for themselves, its
+/// empty part and its mark drag the window, and the pane below it is still
+/// the pane.
+#[test]
+fn the_lane_owns_its_squares_and_drags_by_the_rest() {
+    let r = open();
+    assert_eq!(r.lane, Rect::new(0.0, 0.0, r.sidebar.w, r.caption.h));
+    let l = lane::solve(r.lane, all_leading());
+    let (x, y) = l.toggle.centre();
+    assert_eq!(at_leading(&r, 3, all_leading(), x, y), Hit::ToggleSidebar);
+    let (x, y) = l.search.centre();
+    assert_eq!(at_leading(&r, 3, all_leading(), x, y), Hit::Search);
+    let (x, y) = l.new.centre();
+    assert_eq!(at_leading(&r, 3, all_leading(), x, y), Hit::New);
+    let (x, y) = l.leading.centre();
     assert_eq!(
-        hit(&r, &tab_widths, 120.0, true, true, true, false, true, x, y,),
-        Hit::Search,
+        at_leading(&r, 3, all_leading(), x, y),
+        Hit::Caption,
+        "the mark drags"
     );
-    assert_ne!(
-        hit(&r, &tab_widths, 120.0, true, true, false, false, true, x, y,),
-        Hit::Search,
+    let gap = (l.leading.x + l.leading.w + l.search.x) * 0.5;
+    assert_eq!(
+        at_leading(&r, 3, all_leading(), gap, y),
+        Hit::Caption,
+        "the gap drags"
     );
+    assert_eq!(
+        at_leading(&r, 3, all_leading(), 4.0, r.caption.h + 4.0),
+        Hit::Sidebar,
+        "below the lane is the pane"
+    );
+}
+
+/// **The chain, with the pane shut.** The same controls fold into the
+/// caption's left end in the canvas's order, and the tabs begin after the
+/// divider.
+#[test]
+fn the_shut_caption_folds_the_lane_into_its_leading_chain() {
+    let r = shut();
+    assert_eq!(r.lane.w, 0.0, "a shut pane has no lane");
+    let chain = caption::leading_chain(r.caption, all_folded());
+    assert_eq!(chain.leading.x, r.caption.x);
+    assert_eq!(chain.toggle.x, chain.leading.x + chain.leading.w);
+    assert_eq!(chain.search.x, chain.toggle.x + chain.toggle.w);
+    assert_eq!(chain.new.x, chain.search.x + chain.search.w);
+    assert_eq!(chain.divider.x, chain.new.x + chain.new.w);
+    assert_eq!(chain.end, chain.divider.x + chain.divider.w);
+    let (x, y) = chain.toggle.centre();
+    assert_eq!(at_leading(&r, 3, all_folded(), x, y), Hit::ToggleSidebar);
+    let (x, y) = chain.search.centre();
+    assert_eq!(at_leading(&r, 3, all_folded(), x, y), Hit::Search);
+    let (x, y) = chain.new.centre();
+    assert_eq!(at_leading(&r, 3, all_folded(), x, y), Hit::New);
+    let (x, y) = chain.leading.centre();
+    assert_eq!(
+        at_leading(&r, 3, all_folded(), x, y),
+        Hit::Caption,
+        "the mark drags"
+    );
+    let strip = caption::tab_strip_with_leading(r.caption, true, true, false, all_folded());
+    assert_eq!(strip.x, chain.end, "the tabs begin after the divider");
+    let first = tabs::layout(strip, &widths(3), 0.0)[0].body;
+    assert_eq!(
+        at_leading(&r, 3, all_folded(), first.x + 4.0, first.centre().1),
+        Hit::Tab(0)
+    );
+}
+
+/// **The open caption's left end is bare.** With the pane open the lane holds
+/// the controls, the chain is empty, and the tabs begin at the caption's
+/// edge; the pane's lane answers for the controls instead.
+#[test]
+fn an_open_pane_leaves_the_captions_left_end_bare() {
+    let r = open();
+    let chain = caption::leading_chain(r.caption, all_leading());
+    for rect in [
+        chain.leading,
+        chain.toggle,
+        chain.search,
+        chain.new,
+        chain.divider,
+    ] {
+        assert_eq!(rect.w, 0.0);
+        assert_eq!(rect.x, r.caption.x);
+    }
+    assert_eq!(chain.end, r.caption.x);
+    let strip = caption::tab_strip_with_leading(r.caption, true, true, false, all_leading());
+    assert_eq!(strip.x, r.caption.x, "the tabs begin at the caption's edge");
+    assert_eq!(
+        at_leading(
+            &r,
+            3,
+            all_leading(),
+            r.caption.x + 4.0,
+            r.caption.centre().1
+        ),
+        Hit::Tab(0),
+        "no toggle at the caption's left when the pane is open"
+    );
+}
+
+/// With nothing folded, the chain is the toggle alone and the strip is where
+/// it always was — the regression every other test in this file relies on.
+#[test]
+fn no_leading_leaves_the_caption_where_it_was() {
+    for r in [open(), shut()] {
+        let chain = caption::leading_chain(r.caption, lane::Leading::NONE);
+        assert_eq!(chain.toggle, caption::sidebar_toggle(r.caption));
+        assert_eq!(chain.leading.w, 0.0);
+        assert_eq!(chain.search.w, 0.0);
+        assert_eq!(chain.new.w, 0.0);
+        assert_eq!(chain.divider.w, 0.0);
+        assert_eq!(chain.end, chain.toggle.x + chain.toggle.w);
+        assert_eq!(
+            caption::tab_strip_with_leading(r.caption, true, false, false, lane::Leading::NONE),
+            caption::tab_strip_with_host_action(r.caption, true, false, false)
+        );
+    }
+}
+
+/// The lane and the caption share one band, so the row reads as one whether
+/// the pane is open or shut.
+#[test]
+fn the_lane_and_the_caption_are_one_band() {
+    let r = open();
+    assert_eq!(r.lane.y, r.caption.y);
+    assert_eq!(r.lane.h, r.caption.h);
+    assert_eq!(r.lane.x + r.lane.w, r.caption.x);
+    assert_eq!(r.lane.w, r.sidebar.w);
 }
 
 #[test]
@@ -56,11 +203,33 @@ fn host_action_owns_the_slot_immediately_before_overflow() {
     let tab_widths = widths(20);
 
     assert_eq!(
-        hit(&r, &tab_widths, 120.0, true, true, false, true, true, x, y,),
+        hit(
+            &r,
+            &tab_widths,
+            120.0,
+            true,
+            true,
+            lane::Leading::NONE,
+            true,
+            true,
+            x,
+            y,
+        ),
         Hit::HostAction,
     );
     assert_ne!(
-        hit(&r, &tab_widths, 120.0, true, true, false, false, true, x, y,),
+        hit(
+            &r,
+            &tab_widths,
+            120.0,
+            true,
+            true,
+            lane::Leading::NONE,
+            false,
+            true,
+            x,
+            y,
+        ),
         Hit::HostAction,
     );
 }
@@ -111,14 +280,24 @@ fn the_pane_owns_the_full_height_and_the_caption_starts_after_it() {
     );
 }
 
-/// With the pane open the top-left belongs to the pane; with it shut, to the
-/// logo. Both have to be true, and the second is the one an ordering mistake
-/// breaks silently — a zero-width sidebar tested first would swallow `x == 0`
-/// down the whole window.
+/// With the pane open the top-left belongs to the lane — the window's own
+/// band, which drags where it has no button — and the pane begins under it;
+/// with it shut, to the toggle. Both have to be true, and the second is the
+/// one an ordering mistake breaks silently — a zero-width sidebar or lane
+/// tested first would swallow `x == 0` down the whole window.
 #[test]
 fn the_top_left_corner_is_the_pane_when_it_is_open_and_its_toggle_when_it_is_not() {
     let r = open();
-    assert_eq!(at_wb(&r, 3, true, true, 4.0, 4.0), Hit::Sidebar);
+    assert_eq!(
+        at_wb(&r, 3, true, true, 4.0, 4.0),
+        Hit::Caption,
+        "the lane drags"
+    );
+    assert_eq!(
+        at_wb(&r, 3, true, true, 4.0, r.lane.h + 4.0),
+        Hit::Sidebar,
+        "and the pane is under it"
+    );
 
     let r = shut();
     assert_eq!(at_wb(&r, 3, true, true, 4.0, 4.0), Hit::ToggleSidebar);
@@ -458,19 +637,7 @@ fn banner_slots(label_w: f32) -> banner::Slots {
 }
 
 fn at_banner(r: &Regions, n: usize, slots: banner::Slots, x: f32, y: f32) -> Hit {
-    hit_with_banner(
-        r,
-        &widths(n),
-        0.0,
-        true,
-        false,
-        false,
-        false,
-        false,
-        slots,
-        x,
-        y,
-    )
+    hit_with_banner(r, &widths(n), 0.0, true, false, false, false, slots, x, y)
 }
 
 /// **The regression.** With no banner offered, `hit_with_banner` and `hit`
@@ -492,7 +659,18 @@ fn a_window_with_no_banner_hits_exactly_as_it_did_before() {
             for x in xs {
                 assert_eq!(
                     at_banner(&r, n, banner::Slots::NONE, x, ys),
-                    hit(&r, &widths(n), 0.0, true, false, false, false, false, x, ys),
+                    hit(
+                        &r,
+                        &widths(n),
+                        0.0,
+                        true,
+                        false,
+                        lane::Leading::NONE,
+                        false,
+                        false,
+                        x,
+                        ys
+                    ),
                     "x={x} n={n}"
                 );
             }
@@ -570,19 +748,7 @@ fn a_window_offering_settings_and_a_context_column_hits_both() {
         "the banner does not claim the context toggle"
     );
     assert_eq!(
-        hit_with_banner(
-            &r,
-            &widths(4),
-            0.0,
-            true,
-            true,
-            false,
-            false,
-            false,
-            slots,
-            tx,
-            ty
-        ),
+        hit_with_banner(&r, &widths(4), 0.0, true, true, false, false, slots, tx, ty),
         Hit::ToggleContext
     );
 }
@@ -601,4 +767,61 @@ fn a_hidden_context_toggle_beside_settings_gives_its_room_to_the_tabs() {
         banner::settings_slot(r.caption, true, slots).x,
         "and the lane still stops at Settings"
     );
+}
+
+/// **The ground's lanes come off the content and the foot** and the caption
+/// keeps its width: a context column keeps `CONTEXT_W` and shifts left; every
+/// column stops at the foot. The lanes sit where the columns end, and the
+/// columns and the lanes still add up to the window.
+#[test]
+fn the_edge_lane_comes_off_the_right() {
+    let plain = solve(1200.0, 800.0, 300.0, 0.0);
+    assert_eq!(plain.edge.w, 0.0, "nothing carved until asked");
+    assert_eq!(plain.foot.h, 0.0);
+    let r = plain.with_ground(8.0);
+    assert_eq!(r.edge, Rect::new(1192.0, r.content.y, 8.0, r.content.h));
+    assert_eq!(r.content.x + r.content.w, r.edge.x);
+    assert_eq!(r.caption.x + r.caption.w, 1200.0, "the caption is not cut");
+    assert_eq!(r.sidebar.w + r.content.w + r.context.w + r.edge.w, 1200.0);
+    assert_eq!(r.foot, Rect::new(0.0, 792.0, 1200.0, 8.0));
+    assert_eq!(r.content.y + r.content.h, r.foot.y);
+    assert_eq!(
+        r.sidebar.y + r.sidebar.h,
+        r.foot.y,
+        "the sidebar stops at the foot"
+    );
+    assert_eq!(r.edge.y + r.edge.h, r.foot.y, "so does the edge lane");
+
+    let r = solve(1200.0, 800.0, 300.0, 268.0).with_ground(8.0);
+    assert_eq!(
+        r.content.w,
+        1200.0 - 300.0 - 268.0 - 8.0,
+        "the content gave it up"
+    );
+    assert_eq!(r.context.w, 268.0, "the context column keeps its width");
+    assert_eq!(r.context.x + r.context.w, r.edge.x);
+    assert_eq!(r.content.x + r.content.w, r.context.x);
+    assert_eq!(r.context.y + r.context.h, r.foot.y);
+}
+
+/// **A shut pane leaves a lane on the left too** (the review's note, E71): the
+/// content card then has the same air off the window on both sides, and
+/// the same corners. With the pane open its card is the window's left and
+/// the left lane is zero-width — the content still begins at the pane.
+#[test]
+fn a_shut_pane_leaves_a_lane_on_the_left() {
+    let r = solve(1200.0, 800.0, 0.0, 0.0).with_ground(8.0);
+    assert_eq!(r.left_edge, Rect::new(0.0, r.content.y, 8.0, r.content.h));
+    assert_eq!(r.content.x, 8.0, "the content gives up the left lane");
+    assert_eq!(r.content.x + r.content.w, r.edge.x);
+    assert_eq!(r.content.w, 1200.0 - 16.0);
+    assert_eq!(r.caption.x, 0.0, "the caption is not cut");
+    assert_eq!(r.left_edge.y + r.left_edge.h, r.foot.y);
+    assert_eq!(r.foot.x, 0.0, "the foot runs under the lane");
+
+    let r = solve(1200.0, 800.0, 300.0, 0.0).with_ground(8.0);
+    assert_eq!(r.left_edge.w, 0.0, "the pane is the window's left");
+    assert_eq!(r.content.x, 300.0);
+    let plain = solve(1200.0, 800.0, 0.0, 0.0);
+    assert_eq!(plain.left_edge.w, 0.0, "nothing carved until asked");
 }

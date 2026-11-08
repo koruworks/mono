@@ -43,6 +43,26 @@ registered bridge is always this checkout's latest. A Claude Code session that
 is already open keeps the bridge it started; open a new session, or ask it to
 reconnect with `/mcp`, to get the rebuilt one.
 
+## Serve fewer tools
+
+The bridge serves every Koru tool by default, which costs an agent about
+5,400 tokens of its context at the start of every session. If it only needs
+some of them, add `--toolsets` with the groups it needs after `serve --stdio`:
+
+```bat
+claude mcp add --scope user koru -- <repo>\target\debug\koru-mcp.exe serve --stdio --toolsets docs,tasks
+```
+
+The toolsets are `docs` (documents: find, read, create, edit, images,
+extraction), `files`, `versions` (saved versions), `tasks` (list tasks, and
+complete, reopen, re-date or re-prioritise one — on its own, without `docs`)
+and `chat`; the documentation and the workspace list are always on. A tool from a group that
+is left out is not listed, and if the agent calls it anyway the call comes
+back as an error result the agent reads, naming the group and the
+`--toolsets` value that would serve it. `koru.bat mcp-add` registers every toolset; the table of
+sizes and the rules are under *Toolsets* in
+[MCP.md](../../crates/koru-mcp-server/MCP.md#toolsets).
+
 ## Configure Claude
 
 Open `%APPDATA%\Claude\claude_desktop_config.json` and merge this entry into
@@ -83,9 +103,10 @@ Before asking Claude to edit, ask:
 > `{"uri":"koru://docs/essentials"}`. Summarise the node model and the supported
 > `edit_document` operations before making any changes.
 
-`koru://docs/essentials` is the short form, and `koru://docs/model` the whole
-contract, which the same tool also answers one section at a time
-(`{"uri":"koru://docs/model","section":"tasks"}`). Both are exposed as
+`koru://docs/essentials` is the short form, and what the tool answers with no
+arguments. `koru://docs/model` is the contract's table of contents, never the
+whole contract; the same tool answers one section at a time
+(`{"section":"tasks"}`), as does the resource `koru://docs/model/tasks`. Both are exposed as
 standard MCP resources. Some bridges, including versions of remote-device
 proxies, do not forward `resources/list` or `resources/read`;
 `get_documentation` returns the same text as a normal tool call and is the

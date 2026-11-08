@@ -2,7 +2,7 @@
 
 //! A local coding agent as a Koru AI chat provider.
 //!
-//! Codex, Claude Code, OpenCode, Kimi, Grok and Antigravity run as **managed
+//! Codex, Claude Code, OpenCode, Kimi, Grok, Antigravity and Devin run as **managed
 //! sessions** the desktop's session host owns (`koru-agent.exe --worker
 //! sessions`), speaking their own protocols behind one neutral
 //! `AgentEvent`. This crate is the AI worker's side of that wire: an
@@ -47,9 +47,10 @@ use koru_session_protocol::{
 };
 
 mod control;
+mod joined;
 mod turn;
 
-pub use control::{AgentSessions, EndOutcome, EnsuredSession};
+pub use control::{AgentCatalog, AgentSessions, EndOutcome, EnsuredSession};
 
 /// The product name this crate's connections announce to the host.
 pub const PRODUCT: &str = "koru-ai-agent";
@@ -84,9 +85,23 @@ pub fn agent_provider_kinds() -> Vec<AgentProviderKind> {
 
 /// The name a person knows the agent by — the profile's brand name, which
 /// is the same in every language.
+///
+/// **Codex reads "Codex"** in a chat. Its managed route is the app-server
+/// behind the `codex` profile, which a terminal calls *Codex (Embedded)* to
+/// tell it from the plain CLI row; a chat has only this one Codex, so the
+/// parenthesis would explain nothing (the user, 2026-11-02: Codex is back in
+/// the picker).
 pub fn brand_label(kind: &AgentProviderKind) -> String {
     koru_session_profiles::resolve(&kind.profile)
-        .map(|profile| koru_session_profiles::display_name(&profile, "", "").to_owned())
+        .map(|profile| match profile.label {
+            koru_session_profiles::ProfileLabel::CodexEmbedded => {
+                koru_session_profiles::ProfileLabel::CodexCli
+                    .brand_name()
+                    .unwrap_or("Codex")
+                    .to_owned()
+            }
+            _ => koru_session_profiles::display_name(&profile, "", "").to_owned(),
+        })
         .unwrap_or_else(|_| kind.kind.as_str().to_owned())
 }
 
@@ -95,6 +110,18 @@ pub fn agent_kind_of(provider: &AiProviderId) -> Option<AgentProviderKind> {
     agent_provider_kinds()
         .into_iter()
         .find(|kind| &kind.id == provider)
+}
+
+/// **Whether the agent's own program is on this computer**: the one its
+/// terminal profile runs, found as the Settings page's presence probe finds
+/// it. A chat may run a different program — Claude's runs `claude-agent-acp`
+/// — so the host can report the chat's route missing while this is true;
+/// the chat then says what Settings says, that the adapter is missing, not
+/// the agent. Searches `PATH` and the known install locations, so it is for
+/// an admin thread, not a frame.
+pub fn agent_program_present(kind: &AgentProviderKind) -> bool {
+    koru_session_profiles::resolve(&kind.profile)
+        .is_ok_and(|profile| koru_session_profiles::resolve_launch_argv(&profile.argv).is_some())
 }
 
 /// Whether a provider id names a local agent.
@@ -125,17 +152,117 @@ pub(crate) struct ApprovalAnswer {
     pub(crate) choice: Option<ApprovalChoiceId>,
 }
 
+/// What the person said to a waiting row: a permission's answer, or an
+/// agent's questions answered (`Some`) or skipped (`None`, koru-ai D108).
+#[derive(Clone, Debug)]
+pub(crate) enum TurnAnswer {
+    Approval(ApprovalAnswer),
+    Questions {
+        request: koru_session_protocol::QuestionRequestId,
+        answers: Option<Vec<koru_session_protocol::QuestionAnswer>>,
+    },
+}
+
+/// A question set waiting for the person: the host's id for it and the
+/// questions, which an answer is checked against before it is sent.
+pub(crate) struct PendingQuestions {
+    pub(crate) request: koru_session_protocol::QuestionRequestId,
+    pub(crate) questions: Vec<koru_session_protocol::AgentQuestion>,
+}
+
 pub(crate) struct PendingApproval {
     pub(crate) approval: ApprovalId,
     pub(crate) choices: Vec<(ApprovalChoiceId, ApprovalDecision)>,
+}
+
+/// **A set answered by the person's next message** (koru-ai D108): one the
+/// agent asked in its reply and moved on from. It outlives the turn that
+/// asked, so it is kept apart from the live turns, with the session that
+/// asked it — a set is answerable only in that session — until it is
+/// answered, skipped, passed over or its session ends.
+#[derive(Clone)]
+pub(crate) struct NextMessageSet {
+    pub(crate) chat: ChatId,
+    pub(crate) session: koru_session_protocol::SessionId,
+    pub(crate) request: koru_session_protocol::QuestionRequestId,
+    pub(crate) questions: Vec<koru_session_protocol::AgentQuestion>,
 }
 
 /// One running agent turn, as the dispatcher sees it: which chat, and the
 /// permission requests still waiting for an answer.
 pub(crate) struct LiveTurn {
     pub(crate) chat: ChatId,
-    answers: SyncSender<ApprovalAnswer>,
+    answers: SyncSender<TurnAnswer>,
+    steers: SyncSender<SteerInput>,
     pub(crate) pending: HashMap<ToolInvocationId, PendingApproval>,
+    pub(crate) questions: HashMap<ToolInvocationId, PendingQuestions>,
+}
+
+/// **Text the person sends into the running turn** (a steer), dropped into
+/// the turn's channel by the dispatcher and sent by the turn's own thread on
+/// its own lease — as `SendPendingInput`, which the session runtime hands to
+/// the agent's `AgentControl::steer` while a turn runs.
+pub(crate) struct SteerInput {
+    pub(crate) text: String,
+    /// The same operation steered twice is sent once: the session runtime
+    /// answers a repeated key without sending it again.
+    pub(crate) key: koru_session_protocol::IdempotencyKey,
+    pub(crate) reply: SteerReply,
+}
+
+/// What a steer came to, called once from the turn's thread.
+pub type SteerDone = Box<dyn FnOnce(Result<(), SteerError>) + Send>;
+
+/// The answer owed to a steer's caller. A steer dropped unanswered — its
+/// turn ended with it still in the channel — answers `Closed`, so nobody
+/// waits on a reply that will never come.
+pub(crate) struct SteerReply(Option<SteerDone>);
+
+impl SteerReply {
+    pub(crate) fn send(mut self, outcome: Result<(), SteerError>) {
+        if let Some(done) = self.0.take() {
+            done(outcome);
+        }
+    }
+
+    /// Never answer: the caller has been told some other way.
+    fn disarm(&mut self) -> Option<SteerDone> {
+        self.0.take()
+    }
+}
+
+impl Drop for SteerReply {
+    fn drop(&mut self) {
+        if let Some(done) = self.0.take() {
+            done(Err(SteerError::Closed));
+        }
+    }
+}
+
+/// Why a steer did not reach the running turn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SteerError {
+    /// No agent turn is live for this attempt.
+    NotLive,
+    /// The turn has more steers waiting than it takes at once.
+    Busy,
+    /// The agent took no text just then — it has no mid-turn input, or its
+    /// turn had already settled (Claude's `promptRequired`).
+    Refused,
+    /// The session would not carry it: the connection or the host failed.
+    Failed,
+    /// The turn ended before the steer was sent.
+    Closed,
+}
+
+/// **Whether an agent kind takes text into a running turn** — the fixed fact
+/// a client labels its Steer by. Codex does, through the app-server's
+/// `turn/steer`; Claude does, through its wrapper's `_session/steering`, when
+/// the wrapper advertised it at initialize — which the pinned 0.76.0 does,
+/// and which the adapter checks again at the moment. Every other agent is
+/// steered by stopping the reply and sending.
+pub fn steers_natively(kind: &AgentProviderKind) -> bool {
+    matches!(kind.kind.as_str(), "codex" | "claude")
 }
 
 /// Why an approval could not be answered.
@@ -160,6 +287,8 @@ pub enum AnswerError {
 #[derive(Default)]
 pub struct LiveTurns {
     turns: Mutex<HashMap<InferenceAttemptId, LiveTurn>>,
+    /// Sets answered by the next message, by their row (D108).
+    next_message: Mutex<HashMap<ToolInvocationId, NextMessageSet>>,
 }
 
 impl LiveTurns {
@@ -167,16 +296,54 @@ impl LiveTurns {
         &self,
         attempt: InferenceAttemptId,
         chat: ChatId,
-        answers: SyncSender<ApprovalAnswer>,
+        answers: SyncSender<TurnAnswer>,
+        steers: SyncSender<SteerInput>,
     ) {
         self.lock().insert(
             attempt,
             LiveTurn {
                 chat,
                 answers,
+                steers,
                 pending: HashMap::new(),
+                questions: HashMap::new(),
             },
         );
+    }
+
+    /// **Steer the running turn**: hand `text` to the turn's thread, which
+    /// sends it on its lease and calls `done` with what came of it. The
+    /// dispatcher never waits; `Err` is answered here, before anything was
+    /// handed over, and `done` is then not called. `operation` is the
+    /// caller's operation id, a v4 UUID, which becomes the input's
+    /// idempotency key.
+    pub fn steer(
+        &self,
+        attempt: InferenceAttemptId,
+        operation: &str,
+        text: String,
+        done: SteerDone,
+    ) -> Result<(), SteerError> {
+        let turns = self.lock();
+        let turn = turns.get(&attempt).ok_or(SteerError::NotLive)?;
+        let key = koru_session_protocol::IdempotencyKey::from_str(operation)
+            .unwrap_or_else(|_| koru_session_protocol::IdempotencyKey::mint());
+        let input = SteerInput {
+            text,
+            key,
+            reply: SteerReply(Some(done)),
+        };
+        match turn.steers.try_send(input) {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Full(mut input)) => {
+                input.reply.disarm();
+                Err(SteerError::Busy)
+            }
+            Err(TrySendError::Disconnected(mut input)) => {
+                input.reply.disarm();
+                Err(SteerError::Closed)
+            }
+        }
     }
 
     pub(crate) fn unregister(&self, attempt: InferenceAttemptId) {
@@ -192,6 +359,136 @@ impl LiveTurns {
         if let Some(turn) = self.lock().get_mut(&attempt) {
             turn.pending.insert(invocation, pending);
         }
+    }
+
+    pub(crate) fn offer_questions(
+        &self,
+        attempt: InferenceAttemptId,
+        invocation: ToolInvocationId,
+        pending: PendingQuestions,
+    ) {
+        if let Some(turn) = self.lock().get_mut(&attempt) {
+            turn.questions.insert(invocation, pending);
+        }
+    }
+
+    pub(crate) fn settle_questions(
+        &self,
+        attempt: InferenceAttemptId,
+        request: koru_session_protocol::QuestionRequestId,
+    ) {
+        if let Some(turn) = self.lock().get_mut(&attempt) {
+            turn.questions
+                .retain(|_, pending| pending.request != request);
+        }
+    }
+
+    /// **Answer an agent's questions, or skip them** (`None`, koru-ai
+    /// D108). The answers are checked against the set here, so a bad one is
+    /// refused at once; the turn's thread sends the rest. The row stays
+    /// waiting until the agent's own resolution moves it.
+    pub fn answer_questions(
+        &self,
+        attempt: InferenceAttemptId,
+        invocation: ToolInvocationId,
+        answers: Option<Vec<koru_ai_core::AgentAnswer>>,
+    ) -> Result<(), AnswerError> {
+        let mut turns = self.lock();
+        let turn = turns.get_mut(&attempt).ok_or(AnswerError::NotLive)?;
+        let pending = turn
+            .questions
+            .get(&invocation)
+            .ok_or(AnswerError::NoSuchApproval)?;
+        let answers = match answers {
+            Some(answers) => Some(
+                koru_session_protocol::validate_answers(
+                    &pending.questions,
+                    answers.into_iter().map(protocol_answer).collect(),
+                )
+                .map_err(|_| AnswerError::UnknownChoice)?,
+            ),
+            None => None,
+        };
+        let answer = TurnAnswer::Questions {
+            request: pending.request,
+            answers,
+        };
+        match turn.answers.try_send(answer) {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_)) => {
+                Err(AnswerError::Closed)
+            }
+        }
+    }
+
+    /// Keep a set answered by the next message, past its turn (D108).
+    pub(crate) fn keep_next_message(&self, invocation: ToolInvocationId, set: NextMessageSet) {
+        self.sets().insert(invocation, set);
+    }
+
+    /// The set answered by the next message that `invocation` is, if it is
+    /// still answerable.
+    pub(crate) fn next_message_set(&self, invocation: ToolInvocationId) -> Option<NextMessageSet> {
+        self.sets().get(&invocation).cloned()
+    }
+
+    /// **Check a set's answers before they are sent as the next message**
+    /// (D108): the row is a set of `chat`'s still answerable, and the
+    /// answers fit it — at least one, each an option it offers or words.
+    /// `NotLive` when the set is no longer answerable: answered, passed
+    /// over, or its session gone.
+    pub fn check_next_message_answers(
+        &self,
+        chat: ChatId,
+        invocation: ToolInvocationId,
+        answers: &[koru_ai_core::AgentAnswer],
+    ) -> Result<(), AnswerError> {
+        let set = self
+            .next_message_set(invocation)
+            .filter(|set| set.chat == chat)
+            .ok_or(AnswerError::NotLive)?;
+        let valid = koru_session_protocol::validate_answers(
+            &set.questions,
+            answers.iter().cloned().map(protocol_answer).collect(),
+        )
+        .map_err(|_| AnswerError::UnknownChoice)?;
+        if valid.is_empty() {
+            return Err(AnswerError::ChoiceRequired);
+        }
+        Ok(())
+    }
+
+    /// Whether a set answered by the next message is still answerable.
+    pub fn next_message_answerable(&self, invocation: ToolInvocationId) -> bool {
+        self.sets().contains_key(&invocation)
+    }
+
+    /// Forget a set answered by the next message: it was answered, skipped
+    /// or closed.
+    pub fn forget_next_message(&self, invocation: ToolInvocationId) {
+        self.sets().remove(&invocation);
+    }
+
+    /// **Pass over a chat's sets answered by the next message**: the person
+    /// sent another message, or the chat's sessions ended. The rows they
+    /// were, for the caller to close.
+    pub fn pass_over_next_message(&self, chat: ChatId) -> Vec<ToolInvocationId> {
+        let mut sets = self.sets();
+        let passed: Vec<ToolInvocationId> = sets
+            .iter()
+            .filter(|(_, set)| set.chat == chat)
+            .map(|(invocation, _)| *invocation)
+            .collect();
+        for invocation in &passed {
+            sets.remove(invocation);
+        }
+        passed
+    }
+
+    fn sets(&self) -> std::sync::MutexGuard<'_, HashMap<ToolInvocationId, NextMessageSet>> {
+        self.next_message
+            .lock()
+            .unwrap_or_else(|held| held.into_inner())
     }
 
     pub(crate) fn settle(&self, attempt: InferenceAttemptId, approval: ApprovalId) {
@@ -249,11 +546,11 @@ impl LiveTurns {
             }
             (decision, Some(id))
         };
-        let answer = ApprovalAnswer {
+        let answer = TurnAnswer::Approval(ApprovalAnswer {
             approval: pending.approval,
             decision,
             choice: chosen,
-        };
+        });
         match turn.answers.try_send(answer) {
             Ok(()) => Ok(()),
             Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_)) => {
@@ -264,6 +561,22 @@ impl LiveTurns {
 
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<InferenceAttemptId, LiveTurn>> {
         self.turns.lock().unwrap_or_else(|held| held.into_inner())
+    }
+}
+
+/// A chat's answer in the session protocol's terms.
+pub(crate) fn protocol_answer(
+    answer: koru_ai_core::AgentAnswer,
+) -> koru_session_protocol::QuestionAnswer {
+    use koru_ai_core::AgentAnswerValue;
+    use koru_session_protocol::QuestionAnswerValue;
+    koru_session_protocol::QuestionAnswer {
+        question_id: answer.question_id,
+        value: match answer.value {
+            AgentAnswerValue::Option { label } => QuestionAnswerValue::Option { label },
+            AgentAnswerValue::Text { text } => QuestionAnswerValue::Text { text },
+            AgentAnswerValue::Withheld => QuestionAnswerValue::Withheld,
+        },
     }
 }
 
@@ -324,9 +637,174 @@ mod tests {
             capability::PROVIDER_MODELS,
             capability::SESSION_ORIGIN,
             capability::LAUNCH_SELECTION,
+            capability::MANAGED_QUESTIONS,
+            capability::AGENT_COMMANDS,
         ] {
             assert!(offer.capabilities.supports(name), "{name} is not offered");
         }
+    }
+
+    /// **An agent's questions are answered through the live turn** (koru-ai
+    /// D108): answers that fit the set go into the turn's channel in the
+    /// session protocol's terms, a skip goes as `None`, and an answer that
+    /// does not fit is refused at once; a settled set takes no answer.
+    #[test]
+    fn question_answers_fit_their_set_or_are_refused() {
+        use koru_ai_core::{AgentAnswer, AgentAnswerValue};
+        use koru_session_protocol::{
+            AgentQuestion, QuestionAnswerValue, QuestionOption, QuestionRequestId,
+        };
+        let live = LiveTurns::default();
+        let attempt = InferenceAttemptId::new();
+        let invocation = ToolInvocationId::new();
+        let (answers, received) = std::sync::mpsc::sync_channel(4);
+        let (steers, _steered) = std::sync::mpsc::sync_channel(4);
+        live.register(attempt, ChatId::new(), answers, steers);
+        assert_eq!(
+            live.answer_questions(attempt, invocation, None),
+            Err(AnswerError::NoSuchApproval)
+        );
+        let request = QuestionRequestId::mint();
+        live.offer_questions(
+            attempt,
+            invocation,
+            PendingQuestions {
+                request,
+                questions: vec![AgentQuestion {
+                    id: "pick".into(),
+                    header: String::new(),
+                    question: "Which?".into(),
+                    options: vec![QuestionOption {
+                        label: "First".into(),
+                        description: String::new(),
+                    }],
+                    allow_other: false,
+                    secret: false,
+                }],
+            },
+        );
+        let answer = |label: &str| {
+            Some(vec![AgentAnswer {
+                question_id: "pick".into(),
+                value: AgentAnswerValue::Option {
+                    label: label.into(),
+                },
+            }])
+        };
+        assert_eq!(
+            live.answer_questions(attempt, invocation, answer("Second")),
+            Err(AnswerError::UnknownChoice)
+        );
+        assert!(received.try_recv().is_err(), "nothing sent");
+        live.answer_questions(attempt, invocation, answer("First"))
+            .unwrap();
+        let TurnAnswer::Questions {
+            request: sent,
+            answers: Some(sent_answers),
+        } = received.try_recv().unwrap()
+        else {
+            panic!("answers");
+        };
+        assert_eq!(sent, request);
+        assert_eq!(
+            sent_answers[0].value,
+            QuestionAnswerValue::Option {
+                label: "First".into()
+            }
+        );
+        live.answer_questions(attempt, invocation, None).unwrap();
+        assert!(matches!(
+            received.try_recv().unwrap(),
+            TurnAnswer::Questions { answers: None, .. }
+        ));
+        live.settle_questions(attempt, request);
+        assert_eq!(
+            live.answer_questions(attempt, invocation, None),
+            Err(AnswerError::NoSuchApproval)
+        );
+    }
+
+    /// **A set answered by the next message outlives its turn** (koru-ai
+    /// D108): kept apart from the live turns, its answers are checked
+    /// against it — at least one, each fitting — only for its own chat; a
+    /// new message in that chat passes it over, and then it is closed.
+    #[test]
+    fn a_set_answered_by_the_next_message_outlives_its_turn_until_passed_over() {
+        use koru_ai_core::{AgentAnswer, AgentAnswerValue};
+        use koru_session_protocol::{AgentQuestion, QuestionOption, QuestionRequestId, SessionId};
+        let live = LiveTurns::default();
+        let chat = ChatId::new();
+        let invocation = ToolInvocationId::new();
+        live.keep_next_message(
+            invocation,
+            NextMessageSet {
+                chat,
+                session: SessionId::mint(),
+                request: QuestionRequestId::mint(),
+                questions: vec![AgentQuestion {
+                    id: "[\"request_user_input_async\",\"call\",0]".into(),
+                    header: String::new(),
+                    question: "Which?".into(),
+                    options: vec![QuestionOption {
+                        label: "First".into(),
+                        description: String::new(),
+                    }],
+                    allow_other: true,
+                    secret: false,
+                }],
+            },
+        );
+        let answer = |value: AgentAnswerValue| {
+            vec![AgentAnswer {
+                question_id: "[\"request_user_input_async\",\"call\",0]".into(),
+                value,
+            }]
+        };
+        let first = answer(AgentAnswerValue::Option {
+            label: "First".into(),
+        });
+        assert!(live.next_message_answerable(invocation));
+        assert_eq!(
+            live.check_next_message_answers(chat, invocation, &first),
+            Ok(())
+        );
+        assert_eq!(
+            live.check_next_message_answers(
+                chat,
+                invocation,
+                &answer(AgentAnswerValue::Text {
+                    text: "my own words".into()
+                })
+            ),
+            Ok(()),
+            "the person's words are always taken"
+        );
+        assert_eq!(
+            live.check_next_message_answers(
+                chat,
+                invocation,
+                &answer(AgentAnswerValue::Option {
+                    label: "Second".into()
+                })
+            ),
+            Err(AnswerError::UnknownChoice)
+        );
+        assert_eq!(
+            live.check_next_message_answers(chat, invocation, &[]),
+            Err(AnswerError::ChoiceRequired)
+        );
+        assert_eq!(
+            live.check_next_message_answers(ChatId::new(), invocation, &first),
+            Err(AnswerError::NotLive),
+            "another chat's set"
+        );
+        assert!(live.pass_over_next_message(ChatId::new()).is_empty());
+        assert_eq!(live.pass_over_next_message(chat), vec![invocation]);
+        assert!(!live.next_message_answerable(invocation));
+        assert_eq!(
+            live.check_next_message_answers(chat, invocation, &first),
+            Err(AnswerError::NotLive)
+        );
     }
 
     use super::*;
@@ -344,6 +822,25 @@ mod tests {
         assert!(!is_agent_provider(
             &AiProviderId::parse("agent-nobody").unwrap()
         ));
+    }
+
+    /// **Codex is offered again, as "Codex"** (the user, 2026-11-02): every
+    /// managed agent is a chat provider, and Codex's app-server route reads
+    /// as the plain brand rather than the terminal's *Codex (Embedded)*.
+    #[test]
+    fn codex_is_offered_and_named_plainly() {
+        let kinds = agent_provider_kinds();
+        let codex = kinds
+            .iter()
+            .find(|kind| kind.kind.as_str() == "codex")
+            .expect("Codex is a chat provider");
+        assert_eq!(codex.id.as_str(), "agent-codex");
+        assert_eq!(brand_label(codex), "Codex");
+        let labels: Vec<String> = kinds.iter().map(brand_label).collect();
+        assert!(
+            labels.iter().all(|label| !label.contains("Embedded")),
+            "{labels:?}"
+        );
     }
 
     #[test]
@@ -366,7 +863,8 @@ mod tests {
             live.answer(attempt, invocation, None, true),
             Err(AnswerError::NotLive)
         );
-        live.register(attempt, ChatId::new(), answers);
+        let (steers, _steered) = std::sync::mpsc::sync_channel(4);
+        live.register(attempt, ChatId::new(), answers, steers);
         assert_eq!(
             live.answer(attempt, invocation, None, true),
             Err(AnswerError::NoSuchApproval)
@@ -403,7 +901,9 @@ mod tests {
         );
         live.answer(attempt, invocation, Some(&allow_twice.to_string()), true)
             .unwrap();
-        let sent = received.try_recv().unwrap();
+        let TurnAnswer::Approval(sent) = received.try_recv().unwrap() else {
+            panic!("an approval");
+        };
         assert_eq!(sent.approval, approval);
         assert_eq!(sent.decision, ApprovalDecision::Approve);
         assert_eq!(sent.choice, Some(allow_twice));
@@ -422,7 +922,8 @@ mod tests {
         let attempt = InferenceAttemptId::new();
         let invocation = ToolInvocationId::new();
         let (answers, received) = std::sync::mpsc::sync_channel(4);
-        live.register(attempt, ChatId::new(), answers);
+        let (steers, _steered) = std::sync::mpsc::sync_channel(4);
+        live.register(attempt, ChatId::new(), answers, steers);
         let approval = ApprovalId::mint();
         live.offer(
             attempt,
@@ -433,8 +934,70 @@ mod tests {
             },
         );
         live.answer(attempt, invocation, None, false).unwrap();
-        let sent = received.try_recv().unwrap();
+        let TurnAnswer::Approval(sent) = received.try_recv().unwrap() else {
+            panic!("an approval");
+        };
         assert_eq!(sent.decision, ApprovalDecision::Reject);
         assert_eq!(sent.choice, None);
+    }
+
+    /// **A steer goes into the live turn's channel**, keyed by its
+    /// operation, and its caller always hears back: from the turn's thread,
+    /// or `Closed` when the turn ends with it unsent. A turn that is not
+    /// live, or has its steers full, refuses it at once without calling.
+    #[test]
+    fn a_steer_reaches_the_live_turn_and_always_answers() {
+        use std::sync::mpsc::sync_channel;
+        let live = LiveTurns::default();
+        let attempt = InferenceAttemptId::new();
+        let (answered, outcomes) = sync_channel(8);
+        let done = |answered: &std::sync::mpsc::SyncSender<Result<(), SteerError>>| -> SteerDone {
+            let answered = answered.clone();
+            Box::new(move |outcome| {
+                let _ = answered.send(outcome);
+            })
+        };
+        let operation = "6f1c6b0e-2a7b-4c1e-9d3a-4b2f8e1a7c55";
+        assert_eq!(
+            live.steer(attempt, operation, "x".into(), done(&answered)),
+            Err(SteerError::NotLive)
+        );
+        assert!(outcomes.try_recv().is_err(), "refused here, not called");
+
+        let (answers, _answers) = sync_channel(1);
+        let (steers, steered) = sync_channel(1);
+        live.register(attempt, ChatId::new(), answers, steers);
+        live.steer(attempt, operation, "also this".into(), done(&answered))
+            .unwrap();
+        assert_eq!(
+            live.steer(attempt, operation, "again".into(), done(&answered)),
+            Err(SteerError::Busy)
+        );
+        let input = steered.try_recv().unwrap();
+        assert_eq!(input.text, "also this");
+        assert_eq!(input.key.to_string(), operation, "the operation is the key");
+        input.reply.send(Ok(()));
+        assert_eq!(outcomes.try_recv().unwrap(), Ok(()));
+
+        // A steer still waiting when its turn ends answers Closed.
+        live.steer(attempt, operation, "late".into(), done(&answered))
+            .unwrap();
+        live.unregister(attempt);
+        drop(steered);
+        assert_eq!(outcomes.try_recv().unwrap(), Err(SteerError::Closed));
+    }
+
+    /// Codex and Claude take text mid-turn; every other agent is steered by
+    /// stopping the reply.
+    #[test]
+    fn only_codex_and_claude_steer_natively() {
+        for kind in agent_provider_kinds() {
+            assert_eq!(
+                steers_natively(&kind),
+                matches!(kind.kind.as_str(), "codex" | "claude"),
+                "{}",
+                kind.kind
+            );
+        }
     }
 }

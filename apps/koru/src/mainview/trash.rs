@@ -57,7 +57,7 @@ pub(super) enum ConfirmSubject {
     /// paragraph stays — but the confirm machinery is one machinery, and a
     /// second dialog type beside it would be a second set of answers to *what
     /// does Escape mean*.
-    RemoveFromTasks(super::tasks::PendingTaskEdit),
+    RemoveFromTasks(Vec<super::tasks::PendingTaskEdit>),
     /// V-6: deleting a list from the tasks rail.
     ///
     /// **The second one in this enum that bins nothing.** The list's registry
@@ -99,11 +99,11 @@ pub(super) enum ConfirmSubject {
     /// session, since the person may have switched tabs while the dialog stood
     /// open. Distinct from closing a tab (detach) and a process ending itself.
     TerminateSession(koru_session_protocol::SessionId),
-    /// **A chat in the Chats navigator** (AGENTUX I5). A yes hands the delete
-    /// to the Chats view, which sends it and keeps the row, with a sentence
-    /// under it, if the service refuses — a chat whose agent could not be
-    /// stopped is not gone (UC13).
-    DeleteChat(koru_ai_ui::ChatId),
+    /// **Chats in the Chats navigator** (AGENTUX I5) — one, or the pick. A
+    /// yes hands each delete to the Chats view, which sends it and keeps the
+    /// row, with a sentence under it, if the service refuses — a chat whose
+    /// agent could not be stopped is not gone (UC13).
+    DeleteChats(Vec<koru_ai_ui::ChatId>),
 }
 
 /// More nested documents than this and the deletion is confirmed first.
@@ -729,7 +729,9 @@ impl MainView {
             // row leaves the page and the numbers now, and the store confirms
             // it a moment later.
             ConfirmSubject::RemoveFromTasks(pending) => {
-                self.queue_task_command(pending.command, true)
+                for edit in pending {
+                    self.queue_task_command(edit.command, true);
+                }
             }
             // Queued on *yes* and nowhere else, for that same reason — and
             // through `apply_tasks_rail`, so a list's deletion travels the one
@@ -789,7 +791,11 @@ impl MainView {
                     koru_workspace_host::spelling::SpellEdit::ClearPersonal,
                 );
             }
-            ConfirmSubject::DeleteChat(chat) => self.explore.chats_mut().delete(chat),
+            ConfirmSubject::DeleteChats(chats) => {
+                for chat in chats {
+                    self.explore.chats_mut().delete(chat);
+                }
+            }
         }
         true
     }
@@ -832,6 +838,9 @@ impl MainView {
         // …and a canvas's Run, Stop and open-a-page, for the same reason.
         acted |= self.drain_canvas_asks();
         acted |= self.drain_trash_request();
+        // …and the page menu's *Global settings*, which a click raises and
+        // nothing else would drain until a document next arrived.
+        acted |= self.drain_global_settings_request();
         acted |= self.drain_trash(ws);
         // Work through a dragged set, stopping the moment one of them puts a
         // question up — the rest wait behind it rather than going off while

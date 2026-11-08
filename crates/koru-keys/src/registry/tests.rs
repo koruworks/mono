@@ -297,6 +297,36 @@ fn no_layer_above_the_editor_binds_enter() {
 
 /// The generated table and `reference/SHORTCUTS.md` say the same thing.
 ///
+/// **The rail's digits are its slots** (the user, 2026-11-03): slot *n*,
+/// counted from zero, is `Alt+(n+1)` under the view modifier, eight of them,
+/// and nothing past the eighth. `Alt+0` and `Alt+9` stay nobody's.
+#[test]
+fn the_rail_slots_are_the_view_digits_in_order() {
+    for (index, id) in RAIL_SLOTS.into_iter().enumerate() {
+        assert_eq!(rail_slot(index), Some(id));
+        let entry = get(id);
+        assert_eq!(entry.layer, Layer::Container, "{id:?}");
+        let digit = char::from_digit(index as u32 + 1, 10).unwrap();
+        assert_eq!(
+            entry.chord,
+            Chord::new(On::Letter(digit), crate::VIEW),
+            "{id:?}"
+        );
+    }
+    assert_eq!(
+        rail_slot(RAIL_SLOTS.len()),
+        None,
+        "the ninth view has no digit"
+    );
+    for free in ['0', '9'] {
+        let chord = Chord::new(On::Letter(free), crate::VIEW);
+        assert!(
+            !REGISTRY.iter().any(|entry| entry.chord == chord),
+            "{free} under the view modifier is nobody's"
+        );
+    }
+}
+
 /// **The user guide could previously claim any chord it liked** — 118 mentions
 /// that nothing verified. This is the same guarantee `every_documented_flag_parses`
 /// gives the CLI, and the same snapshot shape: it fails loudly and tells you how

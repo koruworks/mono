@@ -85,9 +85,11 @@ impl Leaf {
         }
     }
 
-    /// The trailing Context action beside the document title, expressed in the
-    /// leaf's viewport. Sits inside the title's block-selection chip so Narrow
-    /// stays on the sheet and the icon cannot drift past the highlight.
+    /// The trailing action slot beside the document title, expressed in the
+    /// leaf's viewport: Koru AI's ✦ (the context toggle that stood here moved
+    /// to the caption, beside the pane it opens). Sits inside the title's
+    /// block-selection chip so Narrow stays on the sheet and the icon cannot
+    /// drift past the highlight.
     pub fn title_action_rect(&self) -> Option<Rect> {
         let Self::Document(d) = self;
         let view = &d.editor.view;
@@ -117,22 +119,16 @@ impl Leaf {
         Some(slot)
     }
 
-    /// The Koru AI action immediately left of the context action. Both are
-    /// anchored to row 0 and therefore scroll with the title instead of being
-    /// clamped into the viewport beside unrelated paragraphs.
+    /// The Koru AI action, in the title's trailing slot. Anchored to row 0
+    /// and therefore scrolling with the title instead of being clamped into
+    /// the viewport beside unrelated paragraphs.
     pub fn title_ai_action_rect(&self) -> Option<Rect> {
         // No ✦ button in a build that hides Koru AI (koru-features): no rect
         // means no draw, no hit, no tooltip and no accessibility node.
         if !koru_features::ai() {
             return None;
         }
-        let context = self.title_action_rect()?;
-        Some(Rect::new(
-            context.x - context.w - 4.0,
-            context.y,
-            context.w,
-            context.h,
-        ))
+        self.title_action_rect()
     }
 
     /// The find panel's rect, when this leaf has one open.
@@ -162,6 +158,17 @@ impl Leaf {
     pub fn set_images_offline(&mut self, offline: bool) {
         let Self::Document(d) = self;
         d.editor.view_mut().images_offline = offline;
+    }
+
+    /// Whether this tab is drawing the placeholder for `ticket` — so the
+    /// container can hand the finished image to the tab that asked for it.
+    pub fn holds_image_import(&self, ticket: koru_workspace_host::ImageTicket) -> bool {
+        let Self::Document(d) = self;
+        d.editor
+            .view
+            .pending_images
+            .iter()
+            .any(|pending| pending.ticket == ticket.0)
     }
 
     /// Make this a page that can be read and not written.
@@ -346,6 +353,24 @@ impl Leaf {
     pub fn set_viewer_lift(&mut self, lift: Option<koru_document::ViewerLift>) {
         match self {
             Self::Document(d) => d.set_viewer_lift(lift),
+        }
+    }
+
+    /// The document's viewer as a screen reader hears it, in the window's
+    /// coordinates (a lifted viewer is laid out in them).
+    pub fn viewer_semantics(
+        &self,
+        lang: koru_i18n::Lang,
+    ) -> Option<koru_ui::media_viewer::ViewerSemantics> {
+        match self {
+            Self::Document(d) => d.diagram_viewer().map(|viewer| viewer.semantics(lang)),
+        }
+    }
+
+    /// A screen reader pressed one of the viewer's controls.
+    pub fn viewer_act(&mut self, action: koru_ui::media_viewer::Action) -> bool {
+        match self {
+            Self::Document(d) => d.viewer_act(action),
         }
     }
 
@@ -581,6 +606,16 @@ impl Leaf {
         Editing::take_wants_entity_open(self)
     }
 
+    /// The chat a `koru://chat/…` link in the document asked to open.
+    pub fn take_wants_chat_open(&mut self) -> Option<(koru_editor::ChatTarget, OpenWhere)> {
+        Editing::take_wants_chat_open(self)
+    }
+
+    /// The reference an Alt+click asked the place chooser about.
+    pub fn take_wants_place_chooser(&mut self) -> Option<koru_editor::Reference> {
+        Editing::take_wants_place_chooser(self)
+    }
+
     /// The delegated run a click or an Enter on a run pill asked to open.
     pub fn take_wants_run_open(&mut self) -> Option<(koru_core::DocumentId, OpenWhere)> {
         Editing::take_wants_run_open(self)
@@ -693,6 +728,18 @@ impl View for Leaf {
     fn take_wants_task_view(&mut self) -> Option<NodeId> {
         match self {
             Self::Document(d) => View::take_wants_task_view(d),
+        }
+    }
+
+    fn take_wants_task_list(&mut self) -> Option<koru_core::ids::ListId> {
+        match self {
+            Self::Document(d) => View::take_wants_task_list(d),
+        }
+    }
+
+    fn take_wants_global_settings(&mut self) -> bool {
+        match self {
+            Self::Document(d) => View::take_wants_global_settings(d),
         }
     }
 
@@ -962,6 +1009,51 @@ impl View for Leaf {
         }
     }
 
+    fn begin_image_import(
+        &mut self,
+        ws: &WorkspaceDoc,
+        ticket: koru_workspace_host::ImageTicket,
+        place: &koru_workspace_host::ImagePlace,
+    ) {
+        match self {
+            Self::Document(d) => View::begin_image_import(d, ws, ticket, place),
+        }
+    }
+
+    fn size_image_import(
+        &mut self,
+        ticket: koru_workspace_host::ImageTicket,
+        sizes: &[(u32, u32)],
+    ) {
+        match self {
+            Self::Document(d) => View::size_image_import(d, ticket, sizes),
+        }
+    }
+
+    fn finish_image_import(
+        &mut self,
+        ws: &mut WorkspaceDoc,
+        ticket: koru_workspace_host::ImageTicket,
+        place: koru_workspace_host::ImagePlace,
+        images: &[koru_workspace_host::PastedImage],
+    ) {
+        match self {
+            Self::Document(d) => View::finish_image_import(d, ws, ticket, place, images),
+        }
+    }
+
+    fn end_image_import(&mut self, ticket: koru_workspace_host::ImageTicket) -> bool {
+        match self {
+            Self::Document(d) => View::end_image_import(d, ticket),
+        }
+    }
+
+    fn image_mip_side(&self) -> Option<koru_workspace_host::ImageMipSide> {
+        match self {
+            Self::Document(d) => View::image_mip_side(d),
+        }
+    }
+
     fn paste_rich(
         &mut self,
         ws: &mut WorkspaceDoc,
@@ -1115,8 +1207,8 @@ pub(crate) mod tests {
             slot.x < page_edge_x,
             "not the old page-edge placement: {slot:?} vs {page_edge_x}"
         );
-        let ai = leaf.title_ai_action_rect().expect("AI beside Context");
-        assert_eq!(ai.x + ai.w + 4.0, slot.x);
+        let ai = leaf.title_ai_action_rect().expect("AI in the slot");
+        assert_eq!(ai, slot, "the AI action takes the trailing slot");
     }
 
     #[test]

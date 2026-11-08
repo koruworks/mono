@@ -487,6 +487,10 @@ impl View for DocumentPane {
         View::take_wants_task_view(&mut self.doc)
     }
 
+    fn take_wants_task_list(&mut self) -> Option<koru_core::ids::ListId> {
+        View::take_wants_task_list(&mut self.doc)
+    }
+
     fn task_command_failed(
         &mut self,
         command: &koru_workspace_host::tasks::TaskCommand,
@@ -569,6 +573,41 @@ impl View for DocumentPane {
 
     fn paste_text(&mut self, ws: &mut WorkspaceDoc, text: &str) {
         View::paste_text(&mut self.doc, ws, text);
+    }
+
+    fn begin_image_import(
+        &mut self,
+        ws: &WorkspaceDoc,
+        ticket: koru_workspace_host::ImageTicket,
+        place: &koru_workspace_host::ImagePlace,
+    ) {
+        View::begin_image_import(&mut self.doc, ws, ticket, place);
+    }
+
+    fn size_image_import(
+        &mut self,
+        ticket: koru_workspace_host::ImageTicket,
+        sizes: &[(u32, u32)],
+    ) {
+        View::size_image_import(&mut self.doc, ticket, sizes);
+    }
+
+    fn finish_image_import(
+        &mut self,
+        ws: &mut WorkspaceDoc,
+        ticket: koru_workspace_host::ImageTicket,
+        place: koru_workspace_host::ImagePlace,
+        images: &[koru_workspace_host::PastedImage],
+    ) {
+        View::finish_image_import(&mut self.doc, ws, ticket, place, images);
+    }
+
+    fn end_image_import(&mut self, ticket: koru_workspace_host::ImageTicket) -> bool {
+        View::end_image_import(&mut self.doc, ticket)
+    }
+
+    fn image_mip_side(&self) -> Option<koru_workspace_host::ImageMipSide> {
+        View::image_mip_side(&self.doc)
     }
 
     fn paste_rich(
@@ -1586,6 +1625,13 @@ impl View for ManagerView {
         }
     }
 
+    fn active_tab_title(&self) -> Option<String> {
+        match self {
+            Self::Container(v) => v.active_tab_title(),
+            Self::Document(v) => v.active_tab_title(),
+        }
+    }
+
     fn tab_presence(&self, document: koru_core::DocumentId) -> koru_workspace_host::TabPresence {
         match self {
             Self::Container(v) => v.tab_presence(document),
@@ -1714,6 +1760,13 @@ impl View for ManagerView {
         }
     }
 
+    fn open_chat_tab(&mut self, chat: &str, block: Option<&str>) -> bool {
+        match self {
+            Self::Container(v) => v.open_chat_tab(chat, block),
+            Self::Document(_) => false,
+        }
+    }
+
     fn take_wants_restore_tab(&mut self) -> Option<NodeId> {
         match self {
             Self::Container(v) => v.take_wants_restore_tab(),
@@ -1815,6 +1868,20 @@ impl View for ManagerView {
         }
     }
 
+    fn dictation_cancel_hit(&self, x: f32, y: f32) -> bool {
+        match self {
+            Self::Container(v) => v.dictation_cancel_hit(x, y),
+            Self::Document(v) => v.dictation_cancel_hit(x, y),
+        }
+    }
+
+    fn dictation_records(&self) -> bool {
+        match self {
+            Self::Container(v) => v.dictation_records(),
+            Self::Document(v) => v.dictation_records(),
+        }
+    }
+
     fn dictation_refused(&mut self, refusal: koru_dictation::Refusal) -> bool {
         match self {
             Self::Container(v) => v.dictation_refused(refusal),
@@ -1826,6 +1893,20 @@ impl View for ManagerView {
         match self {
             Self::Container(v) => v.voice_models_changed(),
             Self::Document(v) => v.voice_models_changed(),
+        }
+    }
+
+    fn voice_meter_wanted(&self) -> bool {
+        match self {
+            Self::Container(v) => v.voice_meter_wanted(),
+            Self::Document(v) => v.voice_meter_wanted(),
+        }
+    }
+
+    fn voice_meter_level(&mut self, level: u8) -> bool {
+        match self {
+            Self::Container(v) => v.voice_meter_level(level),
+            Self::Document(v) => v.voice_meter_level(level),
         }
     }
 
@@ -1970,6 +2051,13 @@ impl View for ManagerView {
         match self {
             Self::Container(v) => v.take_wants_task_view(),
             Self::Document(v) => v.take_wants_task_view(),
+        }
+    }
+
+    fn take_wants_task_list(&mut self) -> Option<koru_core::ids::ListId> {
+        match self {
+            Self::Container(v) => v.take_wants_task_list(),
+            Self::Document(v) => v.take_wants_task_list(),
         }
     }
 

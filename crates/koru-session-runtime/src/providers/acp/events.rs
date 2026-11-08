@@ -1,7 +1,31 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::*;
+use crate::providers::tool_output::bound_tool_output;
 use koru_session_protocol::{ToolFailure, bound_tool_content, bound_tool_detail};
+
+/// The `_meta` key an agent marks a message chunk with when the text is a
+/// status line for the person rather than part of its reply (Devin's).
+const DISPLAY_MESSAGE_META: &str = "cognition.ai/displayMessage";
+
+/// How many notices said before any turn are kept for the next one.
+const UNSAID_NOTICES: usize = 8;
+
+/// The text of an `agent_message_chunk` marked as a status line, on the
+/// update or on its content; `None` for reply text.
+fn display_message(update: &Value) -> Option<&str> {
+    let marked = |meta: &Value| {
+        meta.get(DISPLAY_MESSAGE_META)
+            .is_some_and(|value| !value.is_null() && *value != Value::Bool(false))
+    };
+    if !(marked(&update["_meta"]) || marked(&update["content"]["_meta"])) {
+        return None;
+    }
+    if update["content"]["type"].as_str() != Some("text") {
+        return None;
+    }
+    update["content"]["text"].as_str()
+}
 
 impl AcpControl {
     pub(super) fn handle_frame(&mut self, frame: Value) -> Result<(), ProviderFailure> {
@@ -16,6 +40,9 @@ impl AcpControl {
                 if method == "session/request_permission" {
                     return self.permission(id.clone(), &frame["params"]);
                 }
+                if method == super::elicitation::CREATE && self.config.questions {
+                    return self.elicitation(id.clone(), &frame["params"]);
+                }
                 self.mark_unknown();
                 return self.transport()?.send(&json!({"jsonrpc":"2.0","id":id,
                     "error":{"code":-32601,"message":"Method not found"}}));
@@ -26,6 +53,9 @@ impl AcpControl {
             }
             if method == "session/update" {
                 return self.update(&frame["params"]);
+            }
+            if method == super::elicitation::CANCEL_REQUEST {
+                return self.cancel_request(&frame["params"]);
             }
             self.mark_unknown();
             return Ok(());
@@ -62,11 +92,40 @@ impl AcpControl {
             self.mark_unknown();
             return Ok(());
         }
+        let update = &params["update"];
+        // The agent's mode moves with or without a turn: Claude leaving plan
+        // mode once its plan is approved, or answering a set (koru-ai D7).
+        match update["sessionUpdate"].as_str() {
+            Some("current_mode_update") => {
+                let reported = update["currentModeId"]
+                    .as_str()
+                    .and_then(|id| id.parse().ok());
+                let moved = self.follow_mode(reported);
+                return self.report_mode(moved);
+            }
+            Some("config_option_update") => {
+                // Claude's SDK may turn Fast mode off itself (D11).
+                if update.get("configOptions").is_some() {
+                    self.fast = super::models::fast_option(update);
+                    // And the level it is at (D70).
+                    self.thought_level = super::models::thought_level(update);
+                }
+                let moved = self.follow_mode(super::modes::current(update));
+                return self.report_mode(moved);
+            }
+            // A status line, not reply text (koru-ai D69), with or without
+            // a turn: Devin says a failed hook as the session starts.
+            Some("agent_message_chunk") if display_message(update).is_some() => {
+                decode::<acp::SessionNotification>(params)?;
+                let text = display_message(update).unwrap_or_default().to_owned();
+                return self.notice(&text);
+            }
+            _ => {}
+        }
         let Some(turn_id) = self.active else {
             self.mark_unknown();
             return Ok(());
         };
-        let update = &params["update"];
         let kind = update["sessionUpdate"].as_str().ok_or_else(malformed)?;
         if !matches!(
             kind,
@@ -100,43 +159,64 @@ impl AcpControl {
         }
     }
 
+    /// **An agent's notice** (koru-ai D69): said on the running turn, or
+    /// kept for the next one when none runs — Devin says a failed hook while
+    /// the session starts, before any prompt. A few are kept; more are
+    /// counted and dropped. One that comes while a turn is being stopped is
+    /// dropped like the turn's late text.
+    fn notice(&mut self, text: &str) -> Result<(), ProviderFailure> {
+        let Some(text) = koru_session_protocol::bound_agent_notice(text) else {
+            return Ok(());
+        };
+        match self.active {
+            Some(turn_id) if self.turns[&turn_id].cancelling.is_none() => {
+                self.queue(AgentEvent::Notice { turn_id, text })
+            }
+            Some(_) => {
+                self.mark_unknown();
+                Ok(())
+            }
+            None if self.unsaid_notices.len() < UNSAID_NOTICES => {
+                self.unsaid_notices.push(text);
+                Ok(())
+            }
+            None => {
+                self.mark_unknown();
+                Ok(())
+            }
+        }
+    }
+
+    /// A `tool_call` or `tool_call_update`. **What a call does often comes
+    /// after the call**: Claude announces a tool as soon as the model starts
+    /// writing its input — titled *Terminal*, *Read File* or *Edit*, with
+    /// `rawInput: {}` — and sends the command, the path and the real title
+    /// in an update once the input is complete. The start is held until an
+    /// update says what the call does (any update carrying `rawInput`, a
+    /// non-empty input, or a status past *pending*), or until anything else
+    /// has to be queued, so the row is written once with what it did.
     fn tool(&mut self, turn_id: AgentTurnId, update: &Value) -> Result<(), ProviderFailure> {
-        /// A title is a line, not a transcript.
-        const TOOL_LABEL_CHARS: usize = 160;
         let native_id = update["toolCallId"]
             .as_str()
             .filter(|value| valid_native_id(value))
             .ok_or_else(malformed)?;
-        let kind = match update["kind"].as_str() {
-            Some("execute") => ToolKind::CommandExecution,
-            Some("edit" | "delete" | "move") => ToolKind::FileChange,
-            _ => ToolKind::Other,
-        };
+        let kind = tool_kind(update);
         if !self.tools.contains_key(native_id) {
-            let id = ToolCallId::mint();
             self.tools.insert(
                 native_id.to_owned(),
                 Tool {
-                    id,
+                    id: ToolCallId::mint(),
                     kind,
                     completed: false,
-                    output: None,
+                    ready: false,
+                    title: None,
+                    input: None,
+                    diff: None,
+                    text: None,
+                    raw_output: None,
                 },
             );
-            // The agent's own title for the call (*Read README.md*, *Bash git
-            // status*), bounded, and the kind's token when it gave none — a
-            // label is what a person reads on the row while the turn is live.
-            let title = update["title"]
-                .as_str()
-                .map(str::trim)
-                .filter(|title| !title.is_empty())
-                .map(|title| title.chars().take(TOOL_LABEL_CHARS).collect::<String>());
-            self.queue(AgentEvent::ToolStarted {
-                turn_id,
-                tool_call_id: id,
-                label: title.unwrap_or_else(|| kind.as_str().to_owned()),
-                input: tool_input(update),
-            })?;
+            self.unstarted.push(native_id.to_owned());
         }
         let tool = self.tools.get_mut(native_id).unwrap();
         if tool.completed {
@@ -145,16 +225,31 @@ impl AcpControl {
         if update.get("kind").is_some() {
             tool.kind = kind;
         }
-        if let Some(output) = tool_output(update) {
-            tool.output = Some(output);
-        }
+        refine_tool(tool, update);
         let status = update["status"].as_str();
+        // An update that carries an input says what the call does, even an
+        // empty one (a tool that takes no arguments); so does a status past
+        // pending. The very first `tool_call` says it only with a real input.
+        let says_what = match update.get("rawInput") {
+            Some(Value::Null) | None => false,
+            Some(input) => update["sessionUpdate"] == "tool_call_update" || !empty_input(input),
+        } || matches!(status, Some("in_progress" | "completed" | "failed"));
+        tool.ready |= says_what;
+        // Ready calls start once every call announced before them has, so
+        // the rows keep the order the agent made them in.
+        let ready = self
+            .unstarted
+            .iter()
+            .take_while(|id| self.tools.get(*id).is_some_and(|tool| tool.ready))
+            .count();
+        self.flush_starts(ready)?;
+        let tool = self.tools.get_mut(native_id).unwrap();
         if matches!(status, Some("completed" | "failed")) {
             tool.completed = true;
             let id = tool.id;
             let kind = tool.kind;
             let failed = status == Some("failed");
-            let output = tool.output.take();
+            let output = tool_output(tool);
             self.queue(AgentEvent::ToolCompleted {
                 turn_id,
                 tool_call_id: id,
@@ -250,6 +345,14 @@ impl AcpControl {
             // fact, and cancelling owns its response and reserved event slot.
             return self.cancel_active(turn_id, true);
         }
+        // The request names the call it is for, with its title and input:
+        // a call still held back starts with them, just before the request.
+        if let Some(tool) = params["toolCall"]["toolCallId"]
+            .as_str()
+            .and_then(|native_id| self.tools.get_mut(native_id))
+        {
+            refine_tool(tool, &params["toolCall"]);
+        }
         self.queue(AgentEvent::ApprovalRequired {
             turn_id,
             approval_id,
@@ -320,37 +423,185 @@ fn failure_detail(update: &Value) -> Option<String> {
     from_content.or_else(from_raw).and_then(bound_tool_detail)
 }
 
-/// What the agent asked the tool to do (UC17): the call's `rawInput`, the
-/// string itself when it is one, compact JSON when it is an object.
-/// Bounded by the protocol's `TOOL_CONTENT_CHARS`.
-fn tool_input(update: &Value) -> Option<String> {
-    bound_tool_content(&value_text(update.get("rawInput")?)?)
+/// The kind Koru files a call under, from ACP's `kind`: a command, a change
+/// to files, a reach to the web; everything else is read from the title
+/// later (`AgentToolKind::refined`).
+fn tool_kind(update: &Value) -> ToolKind {
+    match update["kind"].as_str() {
+        Some("execute") => ToolKind::CommandExecution,
+        Some("edit" | "delete" | "move") => ToolKind::FileChange,
+        Some("fetch") => ToolKind::WebSearch,
+        _ => ToolKind::Other,
+    }
 }
 
-/// What the tool produced (UC17), from the update's content blocks — a
-/// text block as it is, a diff as its path over its new text — else the
-/// `rawOutput`. Bounded by the protocol's `TOOL_CONTENT_CHARS`.
-fn tool_output(update: &Value) -> Option<String> {
-    let mut text = String::new();
-    for block in update["content"].as_array().into_iter().flatten() {
-        let piece = match block["type"].as_str() {
-            Some("content") => block["content"]["text"].as_str().map(str::to_owned),
-            Some("diff") => block["newText"].as_str().map(|new_text| {
-                format!("{}\n{new_text}", block["path"].as_str().unwrap_or_default())
-            }),
-            _ => None,
-        };
-        if let Some(piece) = piece {
-            if !text.is_empty() {
-                text.push('\n');
-            }
-            text.push_str(&piece);
+/// Whether a `rawInput` says nothing: `{}`, `[]`, `""`.
+fn empty_input(input: &Value) -> bool {
+    match input {
+        Value::Null => true,
+        Value::Object(map) => map.is_empty(),
+        Value::Array(items) => items.is_empty(),
+        Value::String(text) => text.trim().is_empty(),
+        _ => false,
+    }
+}
+
+/// Take what a `tool_call`, a `tool_call_update` or a permission request's
+/// `toolCall` says about the call: its latest title and input (UC17), and
+/// what it produced so far.
+///
+/// **Content that comes with an input describes the call, not its result**:
+/// Claude's update carrying a command also carries the command's
+/// description as text, and an edit's carries the edit as a diff. So text
+/// is taken only from updates without an input (a result, a hook's report),
+/// and diffs from any update, the latest winning. `rawOutput` is kept apart:
+/// it is the result as the model saw it, and an edit's says only *The file
+/// was updated*, which must not replace the diff.
+fn refine_tool(tool: &mut Tool, update: &Value) {
+    /// A title is a line, not a transcript.
+    const TOOL_LABEL_CHARS: usize = 160;
+    if let Some(title) = update["title"]
+        .as_str()
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+    {
+        tool.title = Some(title.chars().take(TOOL_LABEL_CHARS).collect());
+    }
+    if let Some(input) = update.get("rawInput").filter(|input| !empty_input(input))
+        && let Some(text) = value_text(input).and_then(|text| bound_tool_content(&text))
+    {
+        tool.input = Some(text);
+    }
+    if let Some(blocks) = update["content"].as_array() {
+        if let Some(diff) = diff_text(blocks, update["locations"].as_array()) {
+            tool.diff = Some(diff);
+        }
+        if update.get("rawInput").is_none()
+            && let Some(text) = content_text(blocks)
+        {
+            tool.text = Some(text);
         }
     }
-    if text.is_empty() {
-        text = value_text(update.get("rawOutput")?)?;
+    if let Some(raw) = update.get("rawOutput").and_then(value_text) {
+        tool.raw_output = Some(raw);
     }
-    bound_tool_content(&text)
+}
+
+/// What the tool produced (UC17): its diffs and its result text, else its
+/// `rawOutput`. Bounded by the protocol's `TOOL_CONTENT_CHARS`; a JSON result
+/// too long for it is summarized ([`bound_tool_output`]).
+fn tool_output(tool: &mut Tool) -> Option<String> {
+    let produced = [tool.diff.take(), tool.text.take()]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join("\n");
+    let text = if produced.trim().is_empty() {
+        tool.raw_output.take()?
+    } else {
+        produced
+    };
+    bound_tool_output(&text)
+}
+
+/// A content array's text blocks, joined; `None` when it has none.
+fn content_text(blocks: &[Value]) -> Option<String> {
+    let text = blocks
+        .iter()
+        .filter(|block| block["type"] == "content")
+        .filter_map(|block| block["content"]["text"].as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    (!text.trim().is_empty()).then_some(text)
+}
+
+/// A content array's diff blocks, as one unified diff. Claude's edit
+/// arrives twice: first built from the call's input (`old_string`,
+/// `new_string`), then — from the hook that ran after the edit — once per
+/// hunk, with the hunk's first line in the update's `locations`, in the
+/// same order. A hunk whose first line is not known has a bare `@@` header
+/// and no line numbers.
+fn diff_text(blocks: &[Value], locations: Option<&Vec<Value>>) -> Option<String> {
+    let diffs = blocks
+        .iter()
+        .filter(|block| block["type"] == "diff")
+        .collect::<Vec<_>>();
+    let lines = locations
+        .filter(|locations| locations.len() == diffs.len())
+        .map(|locations| {
+            locations
+                .iter()
+                .map(|location| location["line"].as_u64())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_else(|| vec![None; diffs.len()]);
+    let mut text = String::new();
+    let mut path = None;
+    for (block, first_line) in diffs.into_iter().zip(lines) {
+        let Some(new_text) = block["newText"].as_str() else {
+            continue;
+        };
+        let block_path = block["path"].as_str().unwrap_or_default();
+        let old_text = block["oldText"].as_str();
+        // The hunks of one file share its header.
+        if path != Some(block_path) {
+            let from = if old_text.is_some() {
+                block_path
+            } else {
+                "/dev/null"
+            };
+            text.push_str(&format!("--- {from}\n+++ {block_path}\n"));
+            path = Some(block_path);
+        }
+        unified_hunks(
+            old_text.unwrap_or_default(),
+            new_text,
+            first_line,
+            &mut text,
+        );
+    }
+    (!text.is_empty()).then_some(text)
+}
+
+/// The hunks between `old` and `new`, with three lines of context, as a
+/// unified diff's body. `first_line` is where `old` and `new` start in the
+/// file, when known.
+fn unified_hunks(old: &str, new: &str, first_line: Option<u64>, text: &mut String) {
+    use similar::{ChangeTag, TextDiff};
+    let diff = TextDiff::from_lines(old, new);
+    for group in diff.grouped_ops(3) {
+        let (Some(first), Some(last)) = (group.first(), group.last()) else {
+            continue;
+        };
+        match first_line {
+            Some(line) => {
+                let offset = line.saturating_sub(1) as usize;
+                let range = |start: usize, end: usize| {
+                    let count = end - start;
+                    // An empty side is numbered by the line before it.
+                    let start = if count == 0 { start } else { start + 1 } + offset;
+                    format!("{start},{count}")
+                };
+                text.push_str(&format!(
+                    "@@ -{} +{} @@\n",
+                    range(first.old_range().start, last.old_range().end),
+                    range(first.new_range().start, last.new_range().end),
+                ));
+            }
+            None => text.push_str("@@\n"),
+        }
+        for op in &group {
+            for change in diff.iter_changes(op) {
+                text.push(match change.tag() {
+                    ChangeTag::Equal => ' ',
+                    ChangeTag::Delete => '-',
+                    ChangeTag::Insert => '+',
+                });
+                text.push_str(change.value().trim_end_matches(['\n', '\r']));
+                text.push('\n');
+            }
+        }
+    }
 }
 
 /// A string as it is; anything else as compact JSON; nothing for null.

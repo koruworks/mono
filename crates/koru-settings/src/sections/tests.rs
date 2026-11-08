@@ -75,7 +75,7 @@ fn every_global_default_is_the_one_the_current_reader_produces() {
     assert_eq!(settings.caret_height, CaretHeightChoice::Medium);
     assert_eq!(settings.density, DensityChoice::Normal);
     assert_eq!(settings.zoom.get(), 1.0);
-    assert_eq!(settings.default_view_mode, ViewModeChoice::Full);
+    assert_eq!(settings.default_view_mode, ViewModeChoice::Narrow);
     assert_eq!(settings.default_canvas_background, CanvasBackground::Auto);
     assert!(!settings.pinned_show_title);
     assert_eq!(settings.popout_close, PopoutCloseChoice::Ask);
@@ -100,9 +100,57 @@ fn every_global_default_is_the_one_the_current_reader_produces() {
         settings.body_font,
         settings.headings_font,
         settings.code_font,
+        settings.chat_font,
     ] {
         assert_eq!(role, FontSetting::FollowDefault);
     }
+}
+
+/// **A section with no Chat font reads as following the app font**
+/// (koru-ai D79): every section a build before it answers, and every
+/// settings file written before it, lacks the field — and the chat then
+/// looks exactly as it did.
+#[test]
+fn a_global_section_without_a_chat_font_follows_the_app_font() {
+    let mut older = serde_json::to_value(GlobalSettings {
+        ui_font: FontSetting::Chosen(FontFamily::Lora),
+        ..GlobalSettings::default()
+    })
+    .unwrap();
+    assert!(
+        older.as_object_mut().unwrap().remove("chat_font").is_some(),
+        "the section carries it now"
+    );
+    let read: GlobalSettings = serde_json::from_value(older).unwrap();
+    assert_eq!(read.chat_font, FontSetting::FollowDefault);
+    assert_eq!(read.ui_font, FontSetting::Chosen(FontFamily::Lora));
+}
+
+/// A chosen Chat font travels through a patch and back out of the section,
+/// and *follow* takes it back.
+#[test]
+fn a_chosen_chat_font_round_trips_and_follow_takes_it_back() {
+    let patch: GlobalPatch =
+        serde_json::from_str(r#"{"chat_font":{"chosen":"sourceserif4"}}"#).unwrap();
+    assert!(patch.touches_roaming() && !patch.touches_device());
+    patch.validate().unwrap();
+    let mut settings = GlobalSettings::default();
+    patch.apply(&mut settings);
+    assert_eq!(
+        settings.chat_font,
+        FontSetting::Chosen(FontFamily::SourceSerif4)
+    );
+    assert_eq!(settings.ui_font, FontSetting::FollowDefault, "untouched");
+    let wire = serde_json::to_string(&settings).unwrap();
+    let back: GlobalSettings = serde_json::from_str(&wire).unwrap();
+    assert_eq!(back.chat_font, settings.chat_font);
+
+    GlobalPatch {
+        chat_font: Some(FontSetting::FollowDefault),
+        ..GlobalPatch::default()
+    }
+    .apply(&mut settings);
+    assert_eq!(settings.chat_font, FontSetting::FollowDefault);
 }
 
 #[test]
@@ -262,4 +310,218 @@ fn a_terminal_patch_refuses_a_proportional_font() {
         .is_ok(),
         "follow-the-app is always allowed: the app's default is monospaced"
     );
+}
+
+/// **The off list is written whole, kept sorted, and bounded**: a switch
+/// sends the whole list, an empty one is *Restore defaults*, and a key that
+/// is not an agent key's shape is refused before anything is staged.
+#[test]
+fn the_disabled_agents_patch_is_whole_sorted_and_validated() {
+    let mut section = GlobalSettings::default();
+    let patch = GlobalPatch {
+        disabled_agents: Some(vec!["muse".into(), "grok".into(), "grok".into()]),
+        ..GlobalPatch::default()
+    };
+    assert!(patch.touches_device());
+    assert!(!patch.touches_roaming());
+    assert!(patch.validate().is_ok());
+    patch.apply(&mut section);
+    assert_eq!(section.disabled_agents, ["grok", "muse"]);
+    GlobalPatch {
+        disabled_agents: Some(Vec::new()),
+        ..GlobalPatch::default()
+    }
+    .apply(&mut section);
+    assert!(section.disabled_agents.is_empty(), "restore defaults");
+    for bad in ["", "Grok", "grok cli", &"a".repeat(33)] {
+        let patch = GlobalPatch {
+            disabled_agents: Some(vec![bad.to_owned()]),
+            ..GlobalPatch::default()
+        };
+        assert!(patch.validate().is_err(), "{bad:?}");
+    }
+    let too_many = GlobalPatch {
+        disabled_agents: Some((0..65).map(|n| format!("a{n}")).collect()),
+        ..GlobalPatch::default()
+    };
+    assert!(too_many.validate().is_err());
+}
+
+/// **The default permissions are this machine's**, and an agent with no auto
+/// mode is never told to start in *Auto*.
+#[test]
+fn the_default_permissions_patch_is_device_local_and_other_has_no_auto() {
+    let mut section = GlobalSettings::default();
+    assert_eq!(section.default_permission, AgentPermission::Manual);
+    assert_eq!(section.default_permission_other, AgentPermission::Manual);
+    let patch = GlobalPatch {
+        default_permission: Some(AgentPermission::Yolo),
+        default_permission_other: Some(AgentPermission::Yolo),
+        ..GlobalPatch::default()
+    };
+    assert!(patch.touches_device() && !patch.touches_roaming());
+    assert!(patch.validate().is_ok());
+    patch.apply(&mut section);
+    assert_eq!(section.default_permission, AgentPermission::Yolo);
+    assert_eq!(section.default_permission_other, AgentPermission::Yolo);
+    let auto_other = GlobalPatch {
+        default_permission_other: Some(AgentPermission::Auto),
+        ..GlobalPatch::default()
+    };
+    assert!(auto_other.validate().is_err());
+    let body: GlobalPatch =
+        serde_json::from_str(r#"{"default_permission":"auto"}"#).expect("a token");
+    assert_eq!(body.default_permission, Some(AgentPermission::Auto));
+}
+
+/// **The order is written whole**: each key once at its first place, an
+/// empty list is the built-in order, and a key that is not an agent key's
+/// shape is refused.
+#[test]
+fn the_agent_order_patch_is_whole_deduplicated_and_validated() {
+    let mut section = GlobalSettings::default();
+    let patch = GlobalPatch {
+        agent_order: Some(vec!["codex".into(), "claude".into(), "codex".into()]),
+        ..GlobalPatch::default()
+    };
+    assert!(patch.touches_device() && !patch.touches_roaming());
+    assert!(patch.validate().is_ok());
+    patch.apply(&mut section);
+    assert_eq!(section.agent_order, ["codex", "claude"]);
+    GlobalPatch {
+        agent_order: Some(Vec::new()),
+        ..GlobalPatch::default()
+    }
+    .apply(&mut section);
+    assert!(section.agent_order.is_empty(), "restore defaults");
+    let bad = GlobalPatch {
+        agent_order: Some(vec!["Claude Code".into()]),
+        ..GlobalPatch::default()
+    };
+    assert!(bad.validate().is_err());
+}
+
+/// **The favorites are written whole and roam**: each pair once at its first
+/// place, an empty list clears them, and an entry that is not an agent key
+/// and a model name is refused before anything is staged.
+#[test]
+fn the_favorite_models_patch_is_whole_roaming_and_validated() {
+    let mut section = GlobalSettings::default();
+    let patch: GlobalPatch = serde_json::from_str(
+        r#"{"favorite_models":[{"agent":"claude","model":"opus"},
+            {"agent":"codex","model":"gpt-5"},{"agent":"claude","model":"opus"}]}"#,
+    )
+    .unwrap();
+    assert!(patch.touches_roaming() && !patch.touches_device());
+    assert!(patch.validate().is_ok());
+    patch.apply(&mut section);
+    assert_eq!(
+        section.favorite_models,
+        [
+            crate::FavoriteModel::new("claude", "opus"),
+            crate::FavoriteModel::new("codex", "gpt-5"),
+        ]
+    );
+    GlobalPatch {
+        favorite_models: Some(Vec::new()),
+        ..GlobalPatch::default()
+    }
+    .apply(&mut section);
+    assert!(section.favorite_models.is_empty(), "cleared");
+    for (agent, model) in [("Claude", "opus"), ("claude", ""), ("claude", "a\nb")] {
+        let bad = GlobalPatch {
+            favorite_models: Some(vec![crate::FavoriteModel::new(agent, model)]),
+            ..GlobalPatch::default()
+        };
+        assert!(bad.validate().is_err(), "{agent:?} {model:?}");
+    }
+    let too_many = GlobalPatch {
+        favorite_models: Some(
+            (0..257)
+                .map(|n| crate::FavoriteModel::new("claude", format!("m{n}")))
+                .collect(),
+        ),
+        ..GlobalPatch::default()
+    };
+    assert!(too_many.validate().is_err());
+}
+
+/// **The default agent is set by key and cleared to Auto with `null`**; a
+/// value that is not an agent key is refused before anything is staged.
+#[test]
+fn the_default_agent_patch_sets_clears_and_validates() {
+    let mut section = GlobalSettings::default();
+    let patch: GlobalPatch = serde_json::from_str(r#"{"default_agent":"claude"}"#).unwrap();
+    assert!(patch.touches_device() && !patch.touches_roaming());
+    assert!(patch.validate().is_ok());
+    patch.apply(&mut section);
+    assert_eq!(section.default_agent.as_deref(), Some("claude"));
+    let auto: GlobalPatch = serde_json::from_str(r#"{"default_agent":null}"#).unwrap();
+    assert!(auto.touches_device());
+    auto.apply(&mut section);
+    assert_eq!(section.default_agent, None);
+    for bad in ["", "Claude", "claude code"] {
+        let patch = GlobalPatch {
+            default_agent: Field::Set(bad.to_owned()),
+            ..GlobalPatch::default()
+        };
+        assert!(patch.validate().is_err(), "{bad:?}");
+    }
+}
+
+/// **A section is read tolerantly** (the user's call, 2026-11-03): a Global
+/// section from a newer service, carrying a field this build has never
+/// heard of, still reads — every known value kept, the stranger ignored —
+/// instead of failing and leaving the window on defaults.
+#[test]
+fn a_global_section_with_an_unknown_field_reads_and_keeps_what_it_knows() {
+    let mut newer = serde_json::to_value(GlobalSettings {
+        theme: ThemeChoice::Dark,
+        density: DensityChoice::Comfortable,
+        favorite_models: vec![FavoriteModel::new("claude", "opus")],
+        ..GlobalSettings::default()
+    })
+    .unwrap();
+    let object = newer.as_object_mut().unwrap();
+    object.insert("a_later_font".into(), serde_json::json!("follow"));
+    object.insert(
+        "a_later_setting".into(),
+        serde_json::json!({ "nested": [1, 2] }),
+    );
+    let read: GlobalSettings = serde_json::from_value(newer).unwrap();
+    assert_eq!(read.theme, ThemeChoice::Dark);
+    assert_eq!(read.density, DensityChoice::Comfortable);
+    assert_eq!(read.favorite_models, [FavoriteModel::new("claude", "opus")]);
+}
+
+/// The other two sections read the same way, the AI section's provider
+/// parts included.
+#[test]
+fn the_terminal_and_ai_sections_ignore_an_unknown_field_too() {
+    let mut terminal = serde_json::to_value(TerminalSettings {
+        composer_default: false,
+        ..TerminalSettings::default()
+    })
+    .unwrap();
+    terminal["a_later_setting"] = serde_json::json!(true);
+    let terminal: TerminalSettings = serde_json::from_value(terminal).unwrap();
+    assert!(!terminal.composer_default);
+
+    let mut ai = serde_json::to_value(AiSettings::default()).unwrap();
+    ai["a_later_setting"] = serde_json::json!(1);
+    ai["openai"]["a_later_setting"] = serde_json::json!(1);
+    ai["ollama"]["a_later_setting"] = serde_json::json!(1);
+    let ai: AiSettings = serde_json::from_value(ai).unwrap();
+    assert_eq!(ai, AiSettings::default());
+}
+
+/// **A write is still strict.** What a client sends is a patch, and every
+/// patch still refuses a field it does not know — so the service answers a
+/// typo, or a field from a newer client it cannot store, with a 400 rather
+/// than a write that silently did nothing.
+#[test]
+fn every_patch_still_refuses_an_unknown_field() {
+    assert!(serde_json::from_str::<GlobalPatch>(r#"{"chat_fnt":"follow_default"}"#).is_err());
+    assert!(serde_json::from_str::<TerminalPatch>(r#"{"fontt":"mono"}"#).is_err());
+    assert!(serde_json::from_str::<AiPatch>(r#"{"openai_modle":"x"}"#).is_err());
 }

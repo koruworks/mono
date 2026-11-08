@@ -31,11 +31,7 @@ use koru_core::{NodeId, ProfileId, WorkspaceId};
 use koru_window::WindowRequest;
 use koru_workspace_host::{PaneRequest, SearchTargetDisposition, View};
 
-pub(crate) use koru_search_ui::SURFACE_RADIUS;
-
-/// The radius the app's own chrome rounds the overlay to. Named here so
-/// `mainview` does not reach across a crate boundary for a number that is the
-/// surface's own idea of its shape.
+/// Host adapter for the shared search surface.
 pub(crate) struct SearchSurface(koru_search_ui::SearchSurface);
 
 impl SearchSurface {
@@ -83,6 +79,28 @@ impl SearchSurface {
 
     pub(crate) fn resume(&mut self) {
         self.0.resume();
+    }
+
+    /// In-app search offers result navigation, with its keyboard hints below.
+    pub(crate) fn configure_modal(&mut self, chips: Vec<koru_search_ui::FooterChip>) {
+        self.0.set_footer_chips(chips);
+    }
+
+    pub(crate) fn draw_modal(
+        &mut self,
+        scene: &mut vello::Scene,
+        root: vello::kurbo::Affine,
+        viewport: (f32, f32),
+        caret_on: bool,
+        pointer: (f32, f32),
+    ) {
+        koru_search_ui::SearchModal::new(viewport).draw(
+            &mut self.0,
+            scene,
+            root,
+            caret_on,
+            pointer,
+        );
     }
 
     pub(crate) fn resume_in_workspace(
@@ -146,7 +164,7 @@ pub(crate) fn pane_request(target: koru_search_ui::Target) -> Option<PaneRequest
         koru_search_ui::Target::Chat { chat, block, .. } => {
             return Some(PaneRequest::OpenChatLink {
                 chat: chat.to_string(),
-                block: block.to_string(),
+                block: Some(block.to_string()),
             });
         }
     };

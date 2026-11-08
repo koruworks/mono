@@ -413,6 +413,64 @@ fn a_message_joins_paragraphs_with_one_newline_and_keeps_typed_markdown() {
     );
 }
 
+/// Quote chips (koru-ai D88) go out as blockquotes, each before the comment
+/// written under it, in the order they sit: `> ` on every line of the
+/// passage, a blank line around it, and the empty line beside a quote not
+/// sent twice.
+#[test]
+fn quote_chips_are_blockquotes_before_their_comments_in_order() {
+    let (mut ws, root) = with_doc("");
+    let quote = |passage: &str| {
+        Attr::new(
+            koru_core::attributes::ROLE_QUOTE,
+            AttrValue::Text(passage.to_owned()),
+        )
+    };
+    let row = |ws: &mut WorkspaceDoc, text: &str| {
+        ws.insert(Parent::Node(root), Node::paragraph(text).unwrap())
+            .unwrap()
+    };
+    let first = row(&mut ws, "");
+    ws.insert_pill(first, 0, &quote("g work, so\n\"workspaces\" stay"))
+        .unwrap();
+    row(&mut ws, "something here");
+    row(&mut ws, "");
+    let second = row(&mut ws, "");
+    ws.insert_pill(second, 0, &quote("one line")).unwrap();
+    row(&mut ws, "Another one");
+    row(&mut ws, "and a second line");
+
+    assert_eq!(
+        message_text(&ws, root).unwrap(),
+        "> g work, so\n> \"workspaces\" stay\n\nsomething here\n\n> one line\n\nAnother one\nand a second line"
+    );
+    assert_eq!(blockquote("a\n\nb\r\nc\n"), "> a\n>\n> b\n> c");
+}
+
+/// A skill chip (koru-ai D121) goes out as `$name`, exactly — a name with
+/// `_` or `:` is never escaped, whatever the chip shows.
+#[test]
+fn skill_chips_are_their_names_after_a_dollar() {
+    let (mut ws, root) = with_doc("");
+    let row = ws
+        .insert(Parent::Node(root), Node::paragraph("Use  now").unwrap())
+        .unwrap();
+    ws.insert_pill(
+        row,
+        4,
+        &Attr::labelled(
+            koru_core::attributes::ROLE_SKILL,
+            AttrValue::Text("my_skill:review".to_owned()),
+            "Review",
+        ),
+    )
+    .unwrap();
+    let anchor = koru_core::ANCHOR.len_utf8();
+    let end = ws.read(row).unwrap().content.as_text().unwrap().len();
+    assert_eq!(end, "Use  now".len() + anchor);
+    assert_eq!(message_text(&ws, root).unwrap(), "Use $my_skill:review now");
+}
+
 /// Mixed right-to-left and left-to-right text is bytes to the exporter: a
 /// message in Arabic with a Latin word round-trips exactly.
 #[test]

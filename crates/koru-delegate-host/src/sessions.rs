@@ -368,9 +368,14 @@ impl Sessions for HostSessions {
                 session,
                 controller.lease,
                 PendingInput {
+                    model: None,
                     idempotency_key: IdempotencyKey::mint(),
                     text,
                     attachment_ids: Vec::new(),
+                    mode: None,
+                    fast: None,
+                    reasoning: None,
+                    skills: Vec::new(),
                 },
             )
             .map_err(|error| session_error("submit", error))?;

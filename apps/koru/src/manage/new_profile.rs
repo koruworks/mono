@@ -16,14 +16,18 @@
 //! the controller closes it and the tab moves to that Profile's page
 //! (`ManageView::settle_page`).
 
+use super::profile_page::{Control, Look, Placed};
 use super::*;
 use koru_draw::geometry::Rect;
+use koru_ui::button;
 
 pub(super) const TITLE: &str = "New profile";
 const LEAD: &str = "Start a profile on this computer, or bring one in from your Koru account.";
 /// The lead without the account half, in a build that hides Koru Cloud
 /// (koru-features): the embedded form then starts on the local Profile step.
 const LEAD_LOCAL: &str = "Start a profile on this computer.";
+/// Between the title and the X at its right end.
+const CLOSE_GAP: f32 = 12.0;
 
 impl ManageView {
     /// The page's head, at the column's top — laid with the rest of the
@@ -35,11 +39,38 @@ impl ManageView {
         } else {
             LEAD_LOCAL
         };
-        let head = self.lay_head(column, 0.0, 0.0, TITLE, lead);
+        // The X at the title line's right end (the review's note), the place
+        // Linked devices keeps its own head button.
+        let head = self.lay_head(column, 0.0, button::H + CLOSE_GAP, TITLE, lead);
+        let line = theme::role::title().metrics.line_height;
+        let close = Placed {
+            control: Control::CloseCreation,
+            rect: Rect::new(
+                column.x + column.w - button::H,
+                column.y + ((line - button::H) * 0.5).max(0.0),
+                button::H,
+                button::H,
+            ),
+            label: "Close".into(),
+            look: Look::Close,
+        };
         profile_page::Laid {
             head: Some(head),
+            controls: vec![close],
             ..Default::default()
         }
+    }
+
+    /// The page's X (the review's note): the form is put away, and the tab
+    /// lands on the first Profile in the nav. What was typed goes with the
+    /// form, as closing a creator anywhere does.
+    pub(super) fn close_creation(&mut self) -> bool {
+        self.c.cancel_profile_creation();
+        match self.c.profiles().first().map(|row| row.id) {
+            Some(first) => self.show(Page::Profile(first)),
+            None => self.sync(),
+        }
+        true
     }
 
     /// Where the form goes: under the head, in the head's column, so the
@@ -85,6 +116,9 @@ impl ManageView {
         );
         if let Some(head) = self.laid.head.clone() {
             self.paint_head(canvas, root, &head);
+        }
+        if let Some(close) = self.laid.placed(Control::CloseCreation).cloned() {
+            self.paint_control(canvas, root, &close);
         }
         let form = self.form_rect();
         let at = root * Affine::translate((form.x as f64, form.y as f64));

@@ -46,6 +46,9 @@ pub(super) enum Purpose {
     Workspace,
     /// The taskbar's ask: create and open a document under this title.
     Document,
+    /// A sidebar row's `+`: create and open a document **inside** this one,
+    /// as its last child (the review's note).
+    ChildDocument(NodeId),
     /// The Agents tree's `+`: create a project (client-minted id, scoped to
     /// the window's workspace — both the container's business).
     NewAgentProject,
@@ -67,6 +70,11 @@ impl NewDocument {
 
     pub(super) fn new(engine: &mut TextEngine) -> Self {
         Self::with_purpose(engine, Purpose::Document, "")
+    }
+
+    /// The same prompt, for a document inside `parent`.
+    pub(super) fn child(engine: &mut TextEngine, parent: NodeId) -> Self {
+        Self::with_purpose(engine, Purpose::ChildDocument(parent), "")
     }
 
     pub(super) fn workspace(engine: &mut TextEngine) -> Self {
@@ -225,6 +233,7 @@ impl NewDocument {
                 koru_draw::inspect::current(|r| {
                     let purpose = match self.purpose {
                         Purpose::Document => "document",
+                        Purpose::ChildDocument(_) => "child document",
                         Purpose::Workspace => "workspace",
                         Purpose::NewAgentProject => "new project",
                         Purpose::RenameAgentProject(_) => "rename project",
@@ -257,7 +266,7 @@ impl NewDocument {
                 // already owns; nothing new lands in i18n.
                 let lang = crate::format::lang();
                 let (title, placeholder, hint_text) = match self.purpose {
-                    Purpose::Document => (
+                    Purpose::Document | Purpose::ChildDocument(_) => (
                         "New document",
                         "Document name",
                         "Enter to create · Esc to cancel",

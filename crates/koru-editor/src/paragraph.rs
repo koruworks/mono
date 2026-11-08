@@ -24,7 +24,9 @@ use koru_core::schema::WorkspaceDoc;
 use koru_core::text::{ANCHOR, ANCHOR_LEN, TextRun};
 use koru_core::{Mark, MarkSet, Script, TextStyle};
 
+#[cfg(test)]
 use koru_draw::geometry::text_x;
+use koru_draw::geometry::text_x_in;
 use koru_draw::pill::PillInfo;
 use koru_draw::theme::{self, Brush, FontChoice};
 
@@ -184,6 +186,12 @@ pub struct Paragraph {
     pub space_above: f32,
     /// Set when the cached text or runs no longer match the document.
     pub dirty: bool,
+    /// The measurements of the text scale this row is laid out at. Its body
+    /// hands them over before each reflow ([`Body::sync_metrics`]), and a row
+    /// whose scale moved is reshaped.
+    ///
+    /// [`Body::sync_metrics`]: crate::body::Body::sync_metrics
+    pub metrics: theme::DocMetrics,
     /// Which [`rowlayout::build_row`](crate::rowlayout::build_row) call last
     /// laid this row out, or `0` for a row that has never been shaped.
     ///
@@ -317,6 +325,7 @@ impl Paragraph {
             height: 0.0,
             space_above: 0.0,
             dirty: true,
+            metrics: theme::DocMetrics::BASE,
             shaped: 0,
             is_title: false,
             composition: None,
@@ -351,17 +360,19 @@ impl Paragraph {
     /// Every row of a callout box takes the box's inset, so the text inside
     /// a box is one column and the icon has its room beside the first row.
     pub fn text_x(&self) -> f32 {
-        text_x(self.depth, self.is_task() || self.list_style.is_some())
-            + if self.kind == Kind::Quote {
-                QUOTE_INSET_X
-            } else {
-                0.0
-            }
-            + if self.callout.is_some() {
-                CALLOUT_INSET_X
-            } else {
-                0.0
-            }
+        text_x_in(
+            &self.metrics,
+            self.depth,
+            self.is_task() || self.list_style.is_some(),
+        ) + if self.kind == Kind::Quote {
+            QUOTE_INSET_X
+        } else {
+            0.0
+        } + if self.callout.is_some() {
+            CALLOUT_INSET_X
+        } else {
+            0.0
+        }
     }
 
     /// This row's step on the type scale.
@@ -370,17 +381,21 @@ impl Paragraph {
     /// rather than by `Heading`; this and [`weight`](Self::weight) are the only
     /// places that convert.
     pub fn type_step(&self) -> theme::TypeStep {
-        theme::type_step(self.level())
+        self.metrics.step(self.level())
     }
 
     /// The family this row is set in, decided by its kind/level and the three
     /// document font roles: a code block uses the code font, a heading the
     /// headings font, and everything else the body font. Read live from the
     /// globals, so a role change re-shapes every row once the body is
-    /// invalidated.
+    /// invalidated. An editor set in the chat's face
+    /// ([`theme::TextFace::Chat`], the chat composer) uses the chat font —
+    /// the app font until chosen — for all but code.
     pub fn font_choice(&self) -> FontChoice {
         if self.kind == Kind::Code {
             theme::code_font()
+        } else if self.metrics.face == theme::TextFace::Chat {
+            theme::chat_font()
         } else if self.level().is_some() {
             theme::headings_font()
         } else {
@@ -467,6 +482,33 @@ impl Paragraph {
     /// Adopt fresh content, keeping the layout when nothing that affects it
     /// changed. Without this every keystroke would re-shape every row in the
     /// outline, since a rebuild reads the whole document.
+    /// The chips this row wears for `node`: the attribute chips, and — on the
+    /// document's title — the list the document's task is in.
+    fn chips_for(&self, node: &Node) -> Vec<crate::chips::ChipSpec> {
+        let mut chips = crate::chips::attribute_chips(node);
+        if self.is_title
+            && let Some(list) = list_of(node)
+        {
+            chips.insert(0, crate::chips::ChipSpec::List(list));
+        }
+        chips
+    }
+
+    /// **The title wears its list** — called once the row is known to be the
+    /// title, which is decided by the body after the row is built. Ahead of
+    /// the due chip, in the Tasks page's order: where the task is filed, then
+    /// when it is due.
+    pub(crate) fn wear_title_chips(&mut self) {
+        let Some(list) = self.list else {
+            return;
+        };
+        let chip = crate::chips::ChipSpec::List(list);
+        if self.is_title && !self.chips.contains(&chip) {
+            self.chips.insert(0, chip);
+            self.dirty = true;
+        }
+    }
+
     pub(crate) fn adopt(
         &mut self,
         node: &Node,
@@ -502,7 +544,7 @@ impl Paragraph {
         let language = node.meta.language.clone();
         let table_layout = node.meta.table_layout.unwrap_or_default();
         let image = image_of(&node.content, &node.meta);
-        let chips = crate::chips::attribute_chips(node);
+        let chips = self.chips_for(node);
         // A row's font is no longer stored — it is read live from the body /
         // headings / code globals in `font_choice`, so `adopt` has no font field
         // to track. A role change re-shapes rows through `Body::invalidate`,
@@ -1052,7 +1094,15 @@ impl Paragraph {
         if !range.is_empty() {
             let _ = ws.delete_text(id, range);
         }
-        let _ = ws.insert_text(id, at, s);
+        // **A refused edit says so, and the caret stays.** The text a row
+        // shows is the document's; when the document will not take the edit,
+        // advancing the caret anyway is what made typing look accepted while
+        // nothing changed (the "I can't type, Backspace only moves" report).
+        if let Err(error) = ws.insert_text(id, at, s) {
+            refused(id, "insert", &error);
+            self.refresh(ws);
+            return;
+        }
 
         // Marks expand rightwards, so text typed after a bold word arrives bold
         // on its own. An armed set is applied on top — including turning marks
@@ -1102,7 +1152,11 @@ impl Paragraph {
             // Word boundaries and cluster boundaries both come from parley, so
             // a pill anchor is one unit either way — never a partial anchor.
             let prev = self.before(caret, by_word);
-            let _ = ws.delete_text(id, prev..caret);
+            if let Err(error) = ws.delete_text(id, prev..caret) {
+                refused(id, "delete", &error);
+                self.refresh(ws);
+                return true;
+            }
             self.refresh(ws);
             self.pending_caret = Some(prev);
         } else {
@@ -1110,7 +1164,11 @@ impl Paragraph {
                 return false;
             }
             let next = self.after(caret, by_word);
-            let _ = ws.delete_text(id, caret..next);
+            if let Err(error) = ws.delete_text(id, caret..next) {
+                refused(id, "delete", &error);
+                self.refresh(ws);
+                return true;
+            }
             self.refresh(ws);
             self.pending_caret = Some(caret);
         }
@@ -1752,4 +1810,31 @@ fn snap_grapheme_on_boundary(text: &str, at: usize) -> usize {
         }
     }
     at
+}
+
+/// Say that the document refused an edit to `id`, once per row and error, so
+/// a run of keystrokes is one line in the log rather than one per key.
+///
+/// The error is the evidence: a node the document does not hold means the
+/// row was built against another document than the one being edited; a Loro
+/// error means the document itself would not take the write.
+fn refused(id: NodeId, what: &'static str, error: &koru_core::schema::StoreError) {
+    use std::sync::Mutex;
+    static LAST: Mutex<Option<(NodeId, String)>> = Mutex::new(None);
+    let text = error.to_string();
+    let mut last = LAST.lock().unwrap_or_else(|held| held.into_inner());
+    if last
+        .as_ref()
+        .is_some_and(|(node, seen)| *node == id && *seen == text)
+    {
+        return;
+    }
+    *last = Some((id, text.clone()));
+    tracing::warn!(
+        target: "koru::editor",
+        node = %id.to_storage(),
+        what,
+        error = %text,
+        "the document refused an edit; the row is left as it was"
+    );
 }

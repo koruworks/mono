@@ -72,9 +72,12 @@ use crate::panes::explore::accessibility::Context as ExploreContext;
 mod chrome;
 mod commands;
 pub(crate) mod document;
+mod launcher;
 mod menus;
 pub(crate) mod persistence;
+mod place_chooser;
 pub(crate) mod reminders;
+mod viewer;
 
 #[cfg(test)]
 mod tests;
@@ -94,6 +97,8 @@ const SHELL: &str = "shell";
 const TAB: &str = "tab";
 /// One opening of one menu. See `ContextMenu::instance`.
 const MENU: &str = "menu";
+/// The installed-font picker, over the window (`font_picker`).
+pub(super) const FONT_PICKER: &str = "font-picker";
 
 /// The parts of the shell that are not tabs, rows or menu items.
 pub(crate) mod parts {
@@ -109,11 +114,13 @@ pub(crate) mod parts {
     /// magnifier. Minimise, maximise and close belong to the *window* and are
     /// the host's — see `koru_workspace_host::accessibility::window_commands`.
     ///
-    /// The caption's magnifier is **not** here: this build reserves no slot for
-    /// one (`MainView::hit_at` passes `search: false`), and the search route is
-    /// the explore column's own button, which that module publishes.
+    /// The lane's Search is here too: it is window chrome, in the lane while
+    /// the pane is open and in the caption's chain while it is shut.
     pub const WINDOW_MENU: ControlPart = ControlPart::new("window-menu");
     pub const TOGGLE_EXPLORE: ControlPart = ControlPart::new("toggle-explore");
+    pub const SEARCH: ControlPart = ControlPart::new("search");
+    /// The lane's New, beside Search: the active app's primary create.
+    pub const NEW: ControlPart = ControlPart::new("new");
     /// The region the active tab draws into.
     pub const CONTENT: ControlPart = ControlPart::new("content");
     /// The Koru AI column. Named, and empty: its contents are `koru-ai-ui`'s
@@ -183,7 +190,16 @@ impl MainView {
         let cx = self.shell(view);
         let chrome = self.chrome_revision();
         let whole = scope == Scope::Whole || !self.bodies.borrow().holds_chrome(chrome);
+        let blockers = self.blockers();
         if !whole {
+            // A blocker removed the body and its parent from the client's
+            // tree. A later publish with unchanged chrome must keep it absent:
+            // publishing a loose body here would graft it onto no parent and
+            // panic in AccessKit. Closing the blocker changes chrome and
+            // restores the complete body through ordinary_semantics below.
+            if blockers.is_blocking() {
+                return Vec::new();
+            }
             // The chrome is exactly what the client already holds, so this
             // publish is the document's difference and nothing else. The
             // paragraphs go up as loose nodes and keep the parent the client
@@ -193,7 +209,6 @@ impl MainView {
         }
         // **The blocker first, and alone.** Same table, same order, same
         // answer the keyboard gets.
-        let blockers = self.blockers();
         let children = if blockers.is_blocking() {
             self.bodies.borrow_mut().body_withheld(&cx);
             self.blocking_semantics(&cx, blockers)
@@ -285,7 +300,8 @@ impl MainView {
         ExploreContext {
             window: cx.window,
             view: cx.view,
-            area: self.regions.sidebar,
+            area: self.explore_area(),
+            rail: self.rail_area(),
             viewport: cx.viewport,
             lang: cx.lang,
         }
@@ -316,6 +332,32 @@ impl MainView {
             && let Some(occurrence) = self.reminder_focus(&cx)
         {
             return Some(occurrence);
+        }
+        // A sidebar chrome stop `F6` has landed on (`chrome_focus.rs`): the
+        // lane's controls are the window's nodes, the apps row and the floor
+        // the explore column's.
+        if let Some(stop) = self.chrome_focus {
+            use crate::mainview::chrome_focus::{ChromeStop, LaneControl};
+            match stop {
+                ChromeStop::Lane(LaneControl::Toggle) => {
+                    return Some(cx.surface(SHELL, parts::TOGGLE_EXPLORE));
+                }
+                ChromeStop::Lane(LaneControl::Search) => {
+                    return Some(cx.surface(SHELL, parts::SEARCH));
+                }
+                ChromeStop::Lane(LaneControl::New) => {
+                    return Some(cx.surface(SHELL, parts::NEW));
+                }
+                _ => {
+                    if let Some(focus) = self.explore_chrome_focus()
+                        && let Some(occurrence) = self
+                            .explore
+                            .chrome_focus_occurrence(&self.explore_context(&cx), focus)
+                    {
+                        return Some(occurrence);
+                    }
+                }
+            }
         }
         // The AI composer, which sits below every chord and above the tab —
         // the same place `MainView::key` routes it and the same pair
@@ -410,6 +452,12 @@ impl MainView {
         // keyword rather than `Debug`, because this runs on the loop and a
         // formatted string per pass is an allocation nothing needs.
         rev.str(menus::blocker_keyword(self.blockers()));
+        // The media viewer's zoom is spoken, so a zoom is news; its toolbar
+        // moves with the window, which is folded in below.
+        if let Some(viewer) = self.lifted_viewer_semantics(koru_i18n::Lang::En) {
+            rev.str(viewer.zoom.value.as_deref().unwrap_or_default());
+            rev.u64(viewer.buttons.len() as u64);
+        }
         for menu in [self.menu.as_ref()]
             .into_iter()
             .chain([self.submenu.as_ref().map(|(_, m)| m)])
@@ -424,6 +472,26 @@ impl MainView {
                 None => {
                     rev.byte(0);
                 }
+            }
+        }
+        // The place chooser: a new opening, or its highlight moving, is news.
+        match self.place_chooser.as_ref().map(|ask| &ask.chooser) {
+            Some(chooser) => {
+                rev.u64(chooser.instance());
+                rev.u64(chooser.place_instance(chooser.highlight()));
+            }
+            None => {
+                rev.byte(0);
+            }
+        }
+        // The launcher, the same: a new opening, or its highlight moving.
+        match self.launcher.as_ref().map(|ask| &ask.launcher) {
+            Some(launcher) => {
+                rev.u64(launcher.instance());
+                rev.u64(launcher.tile_instance(launcher.highlight()));
+            }
+            None => {
+                rev.byte(0);
             }
         }
         // The Tasks page, when it is the tab in front of the person. It is part
@@ -460,7 +528,16 @@ impl MainView {
         if blocking && !menus::is_blocker_target(self, target) {
             return false;
         }
+        if self.media_viewer_action(target, action) {
+            return true;
+        }
         if menus::action(self, target, action) {
+            return true;
+        }
+        if place_chooser::action(self, ws, target, action) {
+            return true;
+        }
+        if launcher::action(self, target, action) {
             return true;
         }
         if persistence::action(self, target, action) {
@@ -695,7 +772,7 @@ impl MainView {
         if !self.sidebar.is_open() {
             return false;
         }
-        let area = self.regions.sidebar;
+        let area = self.explore_area();
         let viewport = self.viewport;
         let Some(outcome) = self
             .explore

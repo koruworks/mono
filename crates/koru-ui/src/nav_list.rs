@@ -38,6 +38,9 @@ pub enum NavLeading<'a> {
     /// The dashed square with a plus that a *New…* row wears. Its name is
     /// drawn muted, because the row is an action rather than a place.
     Add,
+    /// An icon glyph in the tile's slot — a computer, a cloud — for a row
+    /// that is a place but has no tile of its own (the review's note).
+    Glyph(char),
 }
 
 /// One destination.
@@ -76,6 +79,11 @@ impl<'a> NavItem<'a> {
         self
     }
 
+    pub const fn with_glyph(mut self, glyph: char) -> Self {
+        self.leading = Some(NavLeading::Glyph(glyph));
+        self
+    }
+
     pub const fn with_trailing(mut self, trailing: &'a str) -> Self {
         self.trailing = Some(trailing);
         self
@@ -102,6 +110,9 @@ impl NavList {
     pub const TILE: f32 = 18.0;
     /// The rule down the row's left edge, and the label's distance from it.
     const RULE_W: f32 = 2.0;
+    /// Air between the rule and the focus ring, so the two do not touch
+    /// (the review's note).
+    const RULE_GAP: f32 = 4.0;
     const LABEL_X: f32 = 12.0;
     /// The trailing marks' distance from the row's right end, and the focus
     /// ring's corner radius.
@@ -224,7 +235,8 @@ impl NavList {
             &scene::rect(row.x, row.y, Self::RULE_W, row.h),
         );
         if state.focused {
-            let (x, w) = (row.x + Self::RULE_W, row.w - Self::RULE_W);
+            let x = row.x + Self::RULE_W + Self::RULE_GAP;
+            let w = (row.w - Self::RULE_W - Self::RULE_GAP).max(0.0);
             scene::stroke(
                 canvas,
                 root,
@@ -249,6 +261,17 @@ impl NavList {
                     face.draw(canvas, root, engine, tile);
                 }
                 NavLeading::Add => Self::draw_add(canvas, root, engine, tile),
+                NavLeading::Glyph(glyph) => {
+                    let p = theme::p();
+                    let icon = engine.icon_layout(glyph, tile.w * 0.9);
+                    let (x, y) = scene::centre_in(&icon, tile);
+                    let color = if state.here || state.hovered {
+                        p.text
+                    } else {
+                        p.text_dim
+                    };
+                    scene::draw_layout(canvas, root, &icon, x, y, Some(color));
+                }
             }
             label_x = tile.x + tile.w + Self::GAP;
         }

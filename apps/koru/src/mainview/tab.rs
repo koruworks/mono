@@ -34,6 +34,8 @@ use crate::welcome::WelcomeView;
 #[allow(clippy::large_enum_variant)]
 pub enum TabView {
     Welcome(WelcomeView),
+    /// Home's Today page (workspace foundation, rung 5); a singleton.
+    Home(crate::panes::home::HomePage),
     /// The Trash. A fourth arm rather than something inside [`Leaf`], for the
     /// reason the module docs give: it has no rows, so `Editing::parts` would
     /// have to be `unreachable!()`.
@@ -121,7 +123,7 @@ impl TabView {
             // sort of thing a typed seam should be able to say without a panic.
             Self::Welcome(_)
             | Self::Settings(_)
-            | Self::Tasks(_)
+            | Self::Home(_)
             | Self::Reminders(_)
             | Self::Trash(_)
             | Self::AiChat(_)
@@ -132,6 +134,9 @@ impl TabView {
             // follows the pointer out of the band exactly as it does in the
             // library's own pages (ADR-372).
             Self::Result(r) => r.is_dragging(),
+            // A row held on a Tasks page follows the pointer out of the page:
+            // it can be dropped on a list in the sidebar.
+            Self::Tasks(t) => t.holding_rows(),
             Self::Socials(view) => view.is_dragging(),
             Self::Manage(view) => view.is_dragging(),
             Self::Diff(d) => d.is_dragging(),
@@ -147,11 +152,6 @@ impl TabView {
                     || v.image_resize.is_some()
             }
         }
-    }
-
-    /// Whether this tab can be pinned even though it names no document.
-    pub fn is_pinnable(&self) -> bool {
-        matches!(self, Self::AiChat(_))
     }
 
     /// Whether this tab can leave the window for one of its own — a document
@@ -202,7 +202,7 @@ impl TabView {
             // nothing under it can have changed.
             Self::Reminders(_) => {}
             // Settings names no document, so nothing under it can have changed.
-            Self::Settings(_) | Self::Feedback(_) => {}
+            Self::Settings(_) | Self::Feedback(_) | Self::Home(_) => {}
             // A diff is over two retained snapshots; the live document
             // changing does not change what was compared.
             Self::Diff(_) => {}
@@ -260,6 +260,7 @@ impl TabView {
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Diff(_)
             | Self::AiChat(_)
             | Self::Socials(_)
@@ -304,6 +305,7 @@ impl TabView {
             Self::Tasks(t) => koru_workspace_host::View::reseat(t, ws),
             Self::Reminders(r) => koru_workspace_host::View::reseat(r, ws),
             Self::Settings(s) => koru_workspace_host::View::reseat(s, ws),
+            Self::Home(h) => koru_workspace_host::View::reseat(h, ws),
             Self::Feedback(f) => koru_workspace_host::View::reseat(f, ws),
             Self::Diff(d) => koru_workspace_host::View::reseat(d, ws),
             Self::AiChat(a) => koru_workspace_host::View::reseat(a, ws),
@@ -324,11 +326,19 @@ impl TabView {
     pub fn icon(&self) -> Option<char> {
         match self {
             Self::Trash(_) => Some(koru_draw::icons::TRASH),
+            Self::Home(_) => Some(koru_draw::icons::HOUSE),
             Self::Tasks(_) => Some(koru_draw::icons::LIST_CHECKS),
             Self::Reminders(_) => Some(koru_draw::icons::BELL),
             Self::Feedback(_) => Some(koru_draw::icons::USER_SOUND),
             Self::Diff(_) => Some(crate::diff::tab_icon()),
-            Self::AiChat(_) => Some(koru_draw::icons::SPARKLE),
+            // A chat tab wears its agent once the chat has started (D22),
+            // the way a session tab wears its program: a vector brand mark
+            // through [`brand`], a glyph mark here, and the chats glyph for a
+            // new chat and for Koru's own providers.
+            Self::AiChat(a) => Some(match a.mark() {
+                Some(koru_draw::brand::ProfileMark::Glyph(glyph)) => glyph,
+                _ => koru_draw::icons::CHATS_CIRCLE,
+            }),
             Self::Socials(_) => Some(koru_draw::icons::MEGAPHONE),
             // **A canvas wears its kind**, the way a note tab wears the file
             // glyph: the label names it, and the glyph says it is not a page.
@@ -349,7 +359,8 @@ impl TabView {
     }
 
     /// The vector product mark a session tab wears when its launch profile is
-    /// a branded product — Claude, Codex, PowerShell and the rest. Beside
+    /// a branded product — Claude, Codex, PowerShell and the rest — and an AI
+    /// chat tab once its chat has started with an agent (D22). Beside
     /// [`icon`](Self::icon) rather than inside it because a brand mark is
     /// path data the strip draws through `TabIcon::Brand`, not a `char` the
     /// icon font can shape. The strip asks for this first and falls back to
@@ -360,6 +371,20 @@ impl TabView {
                 Some(koru_draw::brand::ProfileMark::Brand(brand)) => Some(brand),
                 _ => None,
             },
+            Self::AiChat(a) => match a.mark() {
+                Some(koru_draw::brand::ProfileMark::Brand(brand)) => Some(brand),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// What a chat tab's mark says about its chat (koru-ai D83): a ring in
+    /// place of the mark while it works, a dot on it when it needs the
+    /// person or holds something unseen. `None` on every other tab.
+    pub fn status_mark(&self) -> Option<koru_shell_chrome::status_mark::StatusMark> {
+        match self {
+            Self::AiChat(a) => a.status_mark(),
             _ => None,
         }
     }
@@ -369,6 +394,7 @@ impl TabView {
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Trash(_)
             | Self::Tasks(_)
             | Self::Reminders(_)
@@ -396,6 +422,7 @@ impl TabView {
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Trash(_)
             | Self::Tasks(_)
             | Self::Reminders(_)
@@ -418,6 +445,7 @@ impl TabView {
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Trash(_)
             | Self::Tasks(_)
             | Self::Reminders(_)
@@ -439,6 +467,7 @@ impl TabView {
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Trash(_)
             | Self::Tasks(_)
             | Self::Reminders(_)
@@ -461,6 +490,7 @@ impl TabView {
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Trash(_)
             | Self::Tasks(_)
             | Self::Reminders(_)
@@ -483,6 +513,7 @@ impl TabView {
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Trash(_)
             | Self::Tasks(_)
             | Self::Reminders(_)
@@ -513,6 +544,7 @@ impl TabView {
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Trash(_)
             | Self::Tasks(_)
             | Self::Reminders(_)
@@ -544,6 +576,7 @@ impl TabView {
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Trash(_)
             | Self::Tasks(_)
             | Self::Reminders(_)
@@ -571,6 +604,7 @@ impl TabView {
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Trash(_)
             | Self::Tasks(_)
             | Self::Reminders(_)
@@ -594,6 +628,7 @@ impl TabView {
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Trash(_)
             | Self::Tasks(_)
             | Self::Reminders(_)
@@ -628,6 +663,7 @@ impl TabView {
             // channel: their asks go out as their own `Request` types.
             Self::Manage(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Trash(_)
             | Self::Diff(_)
             | Self::Tasks(_)
@@ -649,6 +685,7 @@ impl TabView {
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Trash(_)
             | Self::Tasks(_)
             | Self::Reminders(_)
@@ -692,6 +729,7 @@ impl TabView {
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Trash(_)
             | Self::Tasks(_)
             | Self::Reminders(_)
@@ -718,6 +756,8 @@ impl TabView {
             // deadline of its own — an idle run costs no wake.
             | Self::Run(_)
             | Self::Result(_)
+            // Home's panel is driven by the frame, as the Tasks page's is.
+            | Self::Home(_)
             | Self::Tasks(_) => None,
             // **Only while a transport-mode write it started is unanswered.**
             // This view sat in the group above until B10 gave it background
@@ -749,6 +789,7 @@ impl TabView {
             | Self::Diff(_)
             | Self::Run(_)
             | Self::Result(_)
+            | Self::Home(_)
             | Self::Tasks(_) => false,
             // The other half of the deadline above: without this the answer
             // is put on the wire and its reply never collected.
@@ -823,6 +864,25 @@ pub struct WhatsNewTab {
     /// Not the window's workspace. Never saved, never synced, thrown away whole
     /// when the tab is closed.
     pub workspace: Workspace,
+    /// Which private page this is. The release notes were the only one; the
+    /// Sync settings placeholder is built the same way (a read-only page
+    /// over a private workspace), and the session file spells each.
+    pub page: PrivatePage,
+}
+
+/// The pages a tab can host over a private workspace.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum PrivatePage {
+    /// This build's release notes.
+    WhatsNew,
+    /// The who/where popover's sync control: a page that says only its name
+    /// for now (QUESTIONS.md E31).
+    SyncSettings,
+    /// The sample *Preview in sample document* opens beside Settings: one of
+    /// each thing the document fonts draw, so a font, size or theme change is
+    /// seen on a page as it is made. Never saved into the session — it is a
+    /// view of Settings, and Settings itself comes back as a Welcome tab.
+    SampleDocument,
 }
 
 /// One tab: what it shows, whether it can be closed, and whether it has been
@@ -953,6 +1013,16 @@ impl Tab {
         let mut tab = Self::welcome();
         tab.view = TabView::Settings(crate::settings_view::SettingsView::new());
         tab.label = "Settings".to_string();
+        tab
+    }
+
+    /// The Home tab: Today. A singleton, like Settings; `open_home_tab`
+    /// reuses the one that is open.
+    pub fn home() -> Self {
+        let mut tab = Self::welcome();
+        tab.view = TabView::Home(crate::panes::home::HomePage::new());
+        tab.label =
+            koru_i18n::t(crate::format::lang(), koru_i18n::Key::A11yTaskBucketToday).to_owned();
         tab
     }
 
@@ -1088,26 +1158,43 @@ impl Tab {
     }
 
     /// A Koru AI tab opened on its provider setup.
+    ///
+    /// Dormant: nothing opens the setup for now, and *Open Koru AI setup…*
+    /// opens [`Self::ai_chat`] instead. Kept so turning it back on is one line.
+    #[allow(dead_code)]
     pub fn ai_setup() -> Self {
         Self::ai_chat_view(AiChatView::setup())
     }
 
-    /// A Koru AI chat tab seated on an existing conversation.
-    pub fn ai_chat_existing(id: koru_ai_ui::ChatId) -> Self {
-        Self::ai_chat_view(AiChatView::existing(id))
+    /// A Koru AI chat tab on a fresh chat that starts with `document` as a
+    /// chip in its composer — the page's `…` → *Open in chat*.
+    pub fn ai_chat_on_document(document: koru_store_core::DocumentId, title: String) -> Self {
+        Self::ai_chat_view(AiChatView::on_document(document, title))
     }
 
-    fn ai_chat_view(view: AiChatView) -> Self {
-        let (icon, label) = view
-            .title()
-            .map(tab_title)
-            .unwrap_or_else(|| (None, "AI Chat".to_string()));
+    /// A Koru AI chat tab seated on an existing conversation.
+    pub fn ai_chat_existing(id: koru_ai_ui::ChatId) -> Self {
+        Self::ai_chat_existing_at(id, None)
+    }
+
+    /// A Koru AI chat tab on an existing conversation, scrolled to `block`
+    /// when there is one — a chat link or a search hit.
+    pub fn ai_chat_existing_at(
+        id: koru_ai_ui::ChatId,
+        block: Option<koru_ai_ui::MessageBlockId>,
+    ) -> Self {
+        Self::ai_chat_view(AiChatView::existing(id, block))
+    }
+
+    fn ai_chat_view(mut view: AiChatView) -> Self {
+        view.refresh_face();
+        let label = ai_chat_label(crate::format::lang(), view.started_title());
         Self {
             id: mint_tab_id(),
             view: TabView::AiChat(view),
             document: None,
             label,
-            icon,
+            icon: None,
             sized: None,
             draft: None,
             whats_new: None,
@@ -1115,6 +1202,24 @@ impl Tab {
             pinned: None,
             show_title: false,
         }
+    }
+
+    /// **An AI chat tab's label follows its chat** (D22): it starts, takes
+    /// its automatic title, is renamed, or the tab is reseated onto another
+    /// chat. `true` when the label or the mark moved and the strip is owed a
+    /// remeasure. A comparison and nothing more while nothing has.
+    ///
+    /// The mark is read from the view each draw ([`TabView::brand`]); only
+    /// the label is cached here, as every tab's is.
+    pub fn refresh_ai_chat_face(&mut self) -> bool {
+        let TabView::AiChat(view) = &mut self.view else {
+            return false;
+        };
+        if !view.refresh_face() {
+            return false;
+        }
+        self.label = ai_chat_label(crate::format::lang(), view.started_title());
+        true
     }
 
     /// A session tab: a shell or agent running as an ordinary tab. `label` is
@@ -1262,22 +1367,102 @@ impl Tab {
     /// failed halfway would be a mystery.
     pub fn whats_new(version: &str, notes: Option<&str>) -> Option<Self> {
         let title = format!("What's new in Koru {version}");
-        let doc = WorkspaceDoc::create(WorkspaceId::new(), &title).ok()?;
+        Self::private_page(
+            PrivatePage::WhatsNew,
+            &title,
+            &crate::whatsnew::blocks(version, notes),
+        )
+    }
+
+    /// The Sync settings tab: its name as the title and nothing under it yet
+    /// (the review's artboard; QUESTIONS.md E31). A singleton, like Settings.
+    pub fn sync_settings() -> Option<Self> {
+        let title = koru_i18n::t(crate::format::lang(), koru_i18n::Key::SyncSettingsTab);
+        Self::private_page(PrivatePage::SyncSettings, title, &[])
+    }
+
+    /// The sample document. See [`PrivatePage::SampleDocument`].
+    ///
+    /// **Built by the Markdown importer, not pasted.** The paste path spells a
+    /// task's tick as `[x] ` text, where the importer restores it as a ticked
+    /// box — and the sample has to show what a ticked task looks like. The
+    /// page is a localized constant a few hundred bytes long, so building it
+    /// here is no work the window would notice.
+    ///
+    /// `None` only if Loro will not make a document at all, the
+    /// [`private_page`](Self::private_page) answer.
+    pub fn sample_document() -> Option<Self> {
+        Self::sample_document_in(crate::format::lang())
+    }
+
+    /// [`Self::sample_document`] in a named language, so every language's
+    /// page can be checked without moving the process's.
+    pub(super) fn sample_document_in(lang: koru_i18n::Lang) -> Option<Self> {
+        let title = koru_i18n::t(lang, koru_i18n::Key::SampleDocumentTitle);
+        let markdown = koru_i18n::t(lang, koru_i18n::Key::SampleDocumentBody);
+        let snapshot =
+            koru_import_markdown::document_snapshot(WorkspaceId::new(), title, markdown).ok()?;
+        let doc = WorkspaceDoc::from_snapshot(&snapshot).ok()?;
+        let root = doc
+            .children(koru_core::schema::Parent::Root)
+            .ok()?
+            .into_iter()
+            .find(|&id| {
+                doc.read(id)
+                    .is_ok_and(|node| node.kind == koru_core::Kind::Document)
+            })?;
+        let mut leaf = Leaf::document(&doc, root);
+        leaf.set_read_only(true);
+        Some(Self {
+            id: mint_tab_id(),
+            view: TabView::Leaf(leaf),
+            // Not a document in the person's workspace: nothing in the
+            // explore column or the tab-reuse check may match it.
+            document: None,
+            label: title.to_owned(),
+            icon: None,
+            sized: None,
+            draft: None,
+            whats_new: Some(WhatsNewTab {
+                workspace: Workspace::new(doc),
+                page: PrivatePage::SampleDocument,
+            }),
+            home: None,
+            pinned: None,
+            show_title: false,
+        })
+    }
+
+    /// Whether this tab is the sample document.
+    pub fn is_sample_document(&self) -> bool {
+        self.whats_new
+            .as_ref()
+            .is_some_and(|page| page.page == PrivatePage::SampleDocument)
+    }
+
+    /// A read-only page over a workspace of its own, titled and filled.
+    ///
+    /// `None` only if Loro will not make a document at all. The caller opens
+    /// nothing in that case: a missing notice is invisible, where a tab that
+    /// failed halfway would be a mystery.
+    fn private_page(
+        page: PrivatePage,
+        title: &str,
+        blocks: &[koru_workspace_host::RichBlock],
+    ) -> Option<Self> {
+        let doc = WorkspaceDoc::create(WorkspaceId::new(), title).ok()?;
         let mut workspace = Workspace::new(doc);
         // The title goes in row 0 the way every document's does, so the page has
         // a real heading and the tab has a real name, with no second mechanism.
-        let root = koru_workspace::create_document(&mut workspace.ws, &title)?;
+        let root = koru_workspace::create_document(&mut workspace.ws, title)?;
         let mut leaf = Leaf::document(&workspace.ws, root);
         // **Filled before it is made read-only.** The guard refuses writes from
         // the key map, and `paste_rich` is not one — but ordering it this way
         // means the flag is true for the whole of the tab's visible life, rather
         // than for all of it except the frame nobody sees.
-        View::paste_rich(
-            &mut leaf,
-            &mut workspace.ws,
-            None,
-            &crate::whatsnew::blocks(version, notes),
-        );
+        if !blocks.is_empty() {
+            View::paste_rich(&mut leaf, &mut workspace.ws, None, blocks);
+        }
         // **Drop the empty paragraph `create_document` seeds.** Every new
         // document gets one so there is a line to type into; this page is never
         // typed into, and the blocks are *appended* after it — so left alone it
@@ -1309,11 +1494,11 @@ impl Tab {
             // Not a document in the person's workspace, so nothing in the
             // explore column or the tab-reuse check may match it.
             document: None,
-            label: title,
+            label: title.to_owned(),
             icon: None,
             sized: None,
             draft: None,
-            whats_new: Some(WhatsNewTab { workspace }),
+            whats_new: Some(WhatsNewTab { workspace, page }),
             home: None,
             pinned: None,
             show_title: false,
@@ -1470,6 +1655,7 @@ impl Tab {
             TabView::Reminders(v) => v.set_viewport(w, h),
             TabView::Diff(v) => View::set_viewport(v, w, h),
             TabView::Settings(v) => View::set_viewport(v, w, h),
+            TabView::Home(v) => View::set_viewport(v, w, h),
             TabView::AiChat(a) => View::set_viewport(a, w, h),
             TabView::Socials(a) => View::set_viewport(a, w, h),
             TabView::Session(s) => View::set_viewport(s, w, h),
@@ -1486,6 +1672,36 @@ impl Tab {
     pub fn invalidate_size(&mut self) {
         self.sized = None;
     }
+}
+
+/// The longest an AI chat tab's title runs, in grapheme clusters, before it
+/// is cut with an ellipsis (D22, the user's twenty).
+pub(crate) const AI_CHAT_TITLE_MAX: usize = 20;
+
+/// What an AI chat tab is called: *AI Chat* before its chat has started (and
+/// for the moment before its automatic title lands), the chat's title once it
+/// has one — cut at [`AI_CHAT_TITLE_MAX`] graphemes — and the Chats view's
+/// *Untitled chat* for a title that is blank.
+pub(crate) fn ai_chat_label(lang: koru_i18n::Lang, started: Option<&str>) -> String {
+    let Some(title) = started else {
+        return koru_i18n::t(lang, koru_i18n::Key::ChatsTabNew).to_owned();
+    };
+    match title.trim() {
+        "" => koru_i18n::t(lang, koru_i18n::Key::ChatsUntitled).to_owned(),
+        title => cap_graphemes(title, AI_CHAT_TITLE_MAX),
+    }
+}
+
+/// `text` kept to `max` grapheme clusters — never bytes, never half a flag
+/// or a family emoji — with a trailing `…` in place of what was cut. The
+/// ellipsis is counted in `max`, so the result is never wider than asked.
+pub(crate) fn cap_graphemes(text: &str, max: usize) -> String {
+    use unicode_segmentation::UnicodeSegmentation as _;
+    if text.graphemes(true).nth(max).is_none() {
+        return text.to_owned();
+    }
+    let keep: String = text.graphemes(true).take(max.saturating_sub(1)).collect();
+    format!("{}\u{2026}", keep.trim_end())
 }
 
 /// The mark for a session tab's launch profile: the shared
@@ -1508,6 +1724,21 @@ fn session_mark(view: &crate::session_tab::SessionView) -> Option<koru_draw::bra
 mod tests {
     use super::*;
 
+    /// **A tab stays small.** Every [`TabView`] is as large as its largest
+    /// arm, and tabs are moved by value through restore and the pane tree on
+    /// the window thread, whose stack is 1 MB on Windows. With the AI chat
+    /// surface (~41 KB) unboxed, a saved chat tab overflowed that stack at
+    /// startup (2026-11-02); a view that big is boxed inside its arm.
+    #[test]
+    fn a_tab_stays_small_enough_to_move_on_the_window_thread() {
+        assert!(std::mem::size_of::<AiChatView>() <= 256);
+        assert!(
+            std::mem::size_of::<Tab>() <= 32 * 1024,
+            "a Tab is {} bytes: box the arm that grew",
+            std::mem::size_of::<Tab>()
+        );
+    }
+
     #[test]
     fn tab_title_peels_a_leading_emoji() {
         let (icon, label) = tab_title("🚀 Ship");
@@ -1520,6 +1751,61 @@ mod tests {
         let (icon, label) = tab_title("Notes");
         assert_eq!(icon, None);
         assert_eq!(label, "Notes");
+    }
+
+    /// D22: twenty graphemes stand as they are; one more is cut to nineteen
+    /// and an ellipsis — counted in graphemes, so a flag or a family emoji is
+    /// one and is never split.
+    #[test]
+    fn a_chat_title_is_capped_at_twenty_graphemes() {
+        let twenty = "Plan the launch week";
+        assert_eq!(twenty.chars().count(), 20);
+        assert_eq!(cap_graphemes(twenty, 20), twenty);
+        assert_eq!(
+            cap_graphemes("Plan the launch weeks", 20),
+            "Plan the launch wee\u{2026}"
+        );
+        // Nineteen letters, then a family emoji of seven scalars: twenty
+        // graphemes, and far more bytes than twenty.
+        let family =
+            "abcdefghijklmnopqrs\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}";
+        assert_eq!(cap_graphemes(family, 20), family, "one grapheme, kept");
+        let flags = "\u{1F1EF}\u{1F1F5}".repeat(25);
+        let cut = cap_graphemes(&flags, 20);
+        assert_eq!(cut, format!("{}\u{2026}", "\u{1F1EF}\u{1F1F5}".repeat(19)));
+        // A space before the cut is not left hanging before the ellipsis.
+        assert_eq!(
+            cap_graphemes("Eighteen letters a b c", 20),
+            "Eighteen letters a\u{2026}"
+        );
+    }
+
+    /// D22: *AI Chat* before the chat starts; its title once it has, capped;
+    /// *Untitled chat* for a started chat with none.
+    #[test]
+    fn a_chat_tab_is_named_ai_chat_until_its_chat_starts() {
+        let lang = koru_i18n::Lang::En;
+        assert_eq!(ai_chat_label(lang, None), "AI Chat");
+        assert_eq!(
+            ai_chat_label(koru_i18n::Lang::De, None),
+            "KI-Chat",
+            "localized"
+        );
+        assert_eq!(ai_chat_label(lang, Some("Launch plan")), "Launch plan");
+        assert_eq!(
+            ai_chat_label(lang, Some("A title well past twenty characters")),
+            "A title well past t\u{2026}"
+        );
+        assert_eq!(ai_chat_label(lang, Some("  ")), "Untitled chat");
+    }
+
+    /// A chat tab that has not started wears the chats glyph and no brand,
+    /// whatever its agent will be.
+    #[test]
+    fn a_new_chat_tab_wears_the_chats_glyph() {
+        let tab = Tab::ai_chat();
+        assert_eq!(tab.view.icon(), Some(koru_draw::icons::CHATS_CIRCLE));
+        assert!(tab.view.brand().is_none());
     }
 
     #[test]

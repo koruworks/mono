@@ -325,7 +325,7 @@ fn a_pinned_canvas_survives_a_restart() {
         settings
             .pinned_tabs
             .iter()
-            .any(|pin: &PinnedTabRef| pin.document == canvas)
+            .any(|pin: &PinnedTabRef| pin.document() == Some(canvas))
     );
 
     let back = reopen(&settings, copy_of(&canvas_ws), canvas, true);
@@ -522,7 +522,7 @@ fn primary_wheel_over_a_canvas_is_the_canvases() {
     // Over the tab lane — chrome, not the canvas.
     assert!(!View::zoom_wheel(&mut v, pinch, x, rect.y - 4.0));
     // Under a menu.
-    v.open_new_tab_menu();
+    v.open_import_menu();
     assert!(v.menu.is_some());
     assert!(!View::zoom_wheel(&mut v, pinch, x, y));
 }

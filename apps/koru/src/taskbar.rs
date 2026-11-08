@@ -21,10 +21,10 @@
 //!
 //! ## Two categories
 //!
-//! **Tasks** is fixed — *Search*, *AI Chat* and *New document*, in that order.
+//! **Tasks** is fixed — *Search* and *New document*, in that order.
 //! *Search* carries the chord the agent actually registered as part of its
 //! title, so the taskbar and the tray can never disagree about which
-//! combination works. *AI Chat* carries its fixed `Ctrl+Shift+I` chord.
+//! combination works.
 //! **Recent** is the last ten documents you opened, rebuilt whenever that list
 //! changes, so the taskbar offers the same thing the welcome tab does.
 //!
@@ -46,7 +46,7 @@ mod windows_impl {
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
     use std::path::{Path, PathBuf};
     use std::sync::Mutex;
-    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     use windows::Win32::Foundation::{
         CloseHandle, ERROR_PIPE_CONNECTED, ERROR_UNABLE_TO_REMOVE_REPLACED, HANDLE, PROPERTYKEY,
@@ -77,9 +77,6 @@ mod windows_impl {
     /// A taskbar *Search* entry was chosen, waiting for the loop to ask the
     /// agent to open its overlay.
     static SEARCH: AtomicBool = AtomicBool::new(false);
-    /// A taskbar *AI Chat* entry was chosen, waiting for the loop to ask the
-    /// agent to open or focus the standalone chat window.
-    static AI_CHAT: AtomicBool = AtomicBool::new(false);
     /// A taskbar activation asked this window to come forward. Consumed by the
     /// shell, which focuses its own window — the listener only signals.
     static FOREGROUND: AtomicBool = AtomicBool::new(false);
@@ -105,11 +102,6 @@ mod windows_impl {
     /// The shortcut is part of the key: a chord arriving is itself a change the
     /// list has to be rebuilt for.
     static INSTALLED: Mutex<Option<JumpList>> = Mutex::new(None);
-    /// How many lists have been asked for; each rebuild carries its number.
-    static ASKED: AtomicU64 = AtomicU64::new(0);
-    /// The number of the list Explorer holds now. Held across a registration,
-    /// which is what makes them one at a time. See [`install`].
-    static REGISTERED: Mutex<u64> = Mutex::new(0);
     /// A proxy into the winit loop, so the listener thread can *wake* it after
     /// setting a flag — `SetForegroundWindow`'s focus side effect is not a
     /// wake, and a loop asleep would leave the flag sitting until the next
@@ -248,10 +240,6 @@ mod windows_impl {
         SEARCH.swap(false, Ordering::AcqRel)
     }
 
-    pub(super) fn take_ai_chat() -> bool {
-        AI_CHAT.swap(false, Ordering::AcqRel)
-    }
-
     pub(super) fn take_foreground() -> bool {
         FOREGROUND.swap(false, Ordering::AcqRel)
     }
@@ -308,14 +296,13 @@ mod windows_impl {
     }
 
     /// Rebuild the Jump List on its own thread, if the shape changed. The one
-    /// path the initial list, `set_recents`, `set_pinned` and `set_shortcut`
-    /// all meet in.
+    /// path both `set_recents` and `set_shortcut` meet in.
     fn install(
         recents: Vec<(String, koru_core::DocumentId)>,
         pinned: Vec<(String, koru_core::DocumentId)>,
         shortcut: Option<String>,
     ) {
-        let generation = {
+        {
             let mut installed = match INSTALLED.lock() {
                 Ok(i) => i,
                 Err(_) => return,
@@ -329,10 +316,7 @@ mod windows_impl {
                 return;
             }
             *installed = Some(now);
-            // Numbered under the same lock that decided the shape, so the
-            // numbers are in the order the shapes were decided.
-            ASKED.fetch_add(1, Ordering::Relaxed) + 1
-        };
+        }
         tracing::info!(
             target: "koru::taskbar",
             recents = recents.len(),
@@ -343,19 +327,6 @@ mod windows_impl {
         let _ = std::thread::Builder::new()
             .name("koru-jump-list".into())
             .spawn(move || {
-                // **One registration at a time, and never an older list over a
-                // newer one.** Each rebuild is its own thread, and two are
-                // routinely in flight together — the startup list and the
-                // shortcut's, or `set_recents` and `set_pinned`, which are
-                // called back to back. Unordered, whichever thread finished last
-                // won, and the list Explorer kept could be the stale one, with
-                // the dedup above then refusing to correct it.
-                let Ok(mut registered) = REGISTERED.lock() else {
-                    return;
-                };
-                if *registered > generation {
-                    return;
-                }
                 match unsafe { register_jump_list(&recents, &pinned, shortcut.as_deref()) } {
                     Ok(()) => tracing::info!(target: "koru::taskbar", "Jump List registered"),
                     Err(error) => tracing::error!(
@@ -363,17 +334,18 @@ mod windows_impl {
                         "could not update the taskbar list: {error}"
                     ),
                 }
-                *registered = generation;
             });
     }
 
-    /// The tasks, before anything else is known. **On its own thread like
-    /// every other rebuild**: this is about 90 ms of COM and shell links, and it
-    /// used to be paid on the main thread before the window or the GPU had
-    /// started, a quarter of a cold launch. Nothing on the way to the first
-    /// frame reads the list.
     pub(super) fn install_jump_list() {
-        install(Vec::new(), Vec::new(), None);
+        tracing::info!(target: "koru::taskbar", "installing the initial Jump List");
+        match unsafe { register_jump_list(&[], &[], None) } {
+            Ok(()) => tracing::info!(target: "koru::taskbar", "initial Jump List registered"),
+            Err(error) => tracing::error!(
+                target: "koru::taskbar",
+                "could not register the taskbar action: {error}"
+            ),
+        }
     }
 
     fn first_pipe() -> Result<HANDLE> {
@@ -475,9 +447,9 @@ mod windows_impl {
             if received && let Ok(line) = std::str::from_utf8(&buffer[..read as usize]) {
                 tracing::info!(target: "koru::taskbar", line, "activation received");
                 let mut acted = false;
-                // **`search` and `ai-chat` never foreground Koru.** Their
-                // windows are agent-owned and come forward on their own; Koru's
-                // window stays wherever it was. `new` and `open` bring Koru forward.
+                // **`search` never foregrounds Koru.** Its window is
+                // agent-owned and comes forward on its own; Koru's window
+                // stays wherever it was. `new` and `open` bring Koru forward.
                 let mut foreground_owed = false;
                 if line == "new" {
                     NEW_DOCUMENT.store(true, Ordering::Release);
@@ -485,9 +457,6 @@ mod windows_impl {
                     foreground_owed = true;
                 } else if line == "search" {
                     SEARCH.store(true, Ordering::Release);
-                    acted = true;
-                } else if line == "ai-chat" {
-                    AI_CHAT.store(true, Ordering::Release);
                     acted = true;
                 } else if let Some(id) = line.strip_prefix("open-document ") {
                     *OPEN_DOCUMENT.lock().expect("taskbar open-document request") =
@@ -659,21 +628,6 @@ mod windows_impl {
             search_properties.Commit()?;
         }
 
-        let ai_chat: IShellLinkW =
-            unsafe { CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)? };
-        unsafe {
-            ai_chat.SetPath(&executable)?;
-            ai_chat.SetArguments(w!("--ai-chat"))?;
-            ai_chat.SetDescription(w!("Open Koru AI Chat"))?;
-            ai_chat.SetIconLocation(&executable, 0)?;
-        }
-        let ai_chat_properties: IPropertyStore = ai_chat.cast()?;
-        unsafe {
-            ai_chat_properties
-                .SetValue(&PKEY_TITLE, &PROPVARIANT::from("AI Chat (Ctrl+Shift+I)"))?;
-            ai_chat_properties.Commit()?;
-        }
-
         let link: IShellLinkW =
             unsafe { CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)? };
         unsafe {
@@ -694,10 +648,6 @@ mod windows_impl {
             unsafe { CoCreateInstance(&EnumerableObjectCollection, None, CLSCTX_INPROC_SERVER)? };
         unsafe {
             collection.AddObject(&search)?;
-            // No *AI Chat* task in a build that hides Koru AI (koru-features).
-            if koru_features::ai() {
-                collection.AddObject(&ai_chat)?;
-            }
             collection.AddObject(&link)?;
         }
         let tasks: IObjectArray = collection.cast()?;
@@ -897,8 +847,6 @@ fn search_task_title(shortcut: Option<&str>) -> String {
 #[cfg_attr(not(windows), allow(dead_code))]
 pub enum Activation {
     NewDocument,
-    /// Open or focus the machine-wide standalone AI chat window.
-    AiChat,
     /// A stable document id, resolved through the store (the Jump List's Recent
     /// and pinned entries). Not [`Open`], which is the legacy node-id spelling
     /// older pinned entries still carry.
@@ -918,7 +866,6 @@ impl Activation {
     fn line(&self) -> String {
         match self {
             Self::NewDocument => "new".to_string(),
-            Self::AiChat => "ai-chat".to_string(),
             Self::OpenDocument(id) => format!("open-document {}", id.to_storage()),
             Self::Open(id) => format!("open {}", id.to_storage()),
             Self::Search => "search".to_string(),
@@ -1077,18 +1024,6 @@ pub fn take_search() -> bool {
     }
 }
 
-/// Consume one *AI Chat* activation.
-pub fn take_ai_chat() -> bool {
-    #[cfg(windows)]
-    {
-        windows_impl::take_ai_chat()
-    }
-    #[cfg(not(windows))]
-    {
-        false
-    }
-}
-
 /// Consume one "come forward" request, so the shell can focus its own window.
 pub fn take_foreground() -> bool {
     #[cfg(windows)]
@@ -1149,7 +1084,6 @@ mod tests {
     #[test]
     fn the_search_activation_writes_its_own_line() {
         assert_eq!(Activation::Search.line(), "search");
-        assert_eq!(Activation::AiChat.line(), "ai-chat");
         assert_eq!(Activation::NewDocument.line(), "new");
     }
 }

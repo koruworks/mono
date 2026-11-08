@@ -21,18 +21,25 @@ packager copies it to the installed path (`RELEASE_DOCUMENT_SOURCES` in
 `crates/koru-release/src/package.rs`), and
 `every_runtime_document_is_explicit_and_present` fails if they disagree.
 
-The running server publishes this exact file as the standard MCP resource
-`koru://docs/model`, and its [Essentials](#essentials) section alone as
+The running server serves this file **one section at a time, never whole**:
+it is past 80 KB, and an agent that was handed it in one answer could not
+read it back (Claude Code stops a read at 25k tokens). Its
+[Essentials](#essentials) section alone is the standard MCP resource
 `koru://docs/essentials` — the short form an agent reads before its first
 mutation, served from this file so it cannot drift from the long one.
-Clients without MCP resource support retrieve the same text with
-`get_documentation({"uri":"koru://docs/essentials"})` or
-`{"uri":"koru://docs/model"}`, which also answers one section at a time:
-`{"uri":"koru://docs/model","section":"creating-a-complete-document"}`, the
-section named by its heading's slug, with its `###` children; an unknown
-section lists the sections it could have named. The tool answers the
-markdown itself as its text block and `{uri, mime_type, section?, text}` as
-structured content. Some desktop bridges and remote-device proxies forward
+`koru://docs/model` is the **table of contents**: each `##` section's slug,
+title, one-line summary (the section's first sentence) and approximate size
+in tokens, with the slugs of its `###` children. `koru://docs/model/<slug>`
+is one section, with its `###` children; a `###` slug answers that
+subsection alone. Clients without MCP resource support retrieve the same
+text with `get_documentation`: no arguments answer the essentials,
+`{"uri":"koru://docs/model"}` the contents, and `{"section":"creating-a-complete-document"}`
+(or the same with `"uri":"koru://docs/model"`) one section, named by its
+heading's slug; an unknown section lists the sections it could have named.
+The tool answers the markdown itself as its text block and `{uri,
+mime_type, section?, text}` as structured content, plus `sections` — the
+contents as `{slug, title, summary, tokens, subsections}` — for the table of
+contents. Some desktop bridges and remote-device proxies forward
 tools but omit `resources/list` and `resources/read`; an empty resource list
 therefore does not mean this contract is absent. `get_documentation` is the
 portable discovery path and must remain available even while the standard
@@ -41,18 +48,22 @@ resources exist.
 ## Essentials
 
 The short form of this contract — enough to find, read, create and edit
-correctly. It is served on its own as `koru://docs/essentials`. Every
-heading named below is a section of this file, and
-`get_documentation({"uri":"koru://docs/model","section":"<slug>"})` answers
-one section: the slug is the heading in lower case with spaces as `-`, so
-*Creating a complete document* is `creating-a-complete-document`.
+correctly. It is served on its own as `koru://docs/essentials`, and is what
+`get_documentation` answers with no arguments. Every heading named below is
+a section of this file; `koru://docs/model` lists them all with a summary and
+a size, and `get_documentation({"section":"<slug>"})` answers one: the slug
+is the heading in lower case with spaces as `-`, so *Creating a complete
+document* is `creating-a-complete-document`. The whole file is never one
+answer.
 
 **Finding things.** `list_workspaces` first; every other call names a
 `workspace_id`. `list_documents` is a workspace's document tree (`id`,
 `parent`, `title`, `kind`); `search_documents` finds **nodes** by words, tags
 and attributes, in one workspace or in all of them; `list_tasks` lists what is
-outstanding. Ids are UUIDs: a workspace id, a document id and a node id are
-different things even when they look alike, and a client mints the new ones.
+outstanding, and `update_task` completes, reopens, re-dates or re-prioritises
+one by the ids its row carries, with no document read. Ids are UUIDs: a workspace id, a document id and a node id are
+different things even when they look alike. You never invent one: a new
+node's id is left out, or given a local name, and the server mints it.
 
 **Reading.** `read_document` returns the whole document as `nodes` in
 preorder — each with `node_id`, `parent_id`, `kind`, its `content` (`text`,
@@ -64,16 +75,22 @@ edit is addressed with; numeric positions are never accepted.
 
 ```jsonc
 {"workspace_id": "…", "title": "Dad jokes",
- "idempotency_key": "<fresh UUID>",        // a retry replays, for seven days
- "root_node_id": "<fresh UUID>",           // the title node; required with a seed
- "initial_operations": [
-   {"op": "insert", "node_id": "<fresh UUID A>", "parent_id": "<root_node_id>",
+ "idempotency_key": "<a UUID>",            // optional: a retry replays, for seven days
+ "initial_operations": [                   // root_node_id left out: the title node is "root"
+   {"op": "insert", "node_id": "q", "parent_id": "root",
     "after_node_id": null, "kind": "paragraph", "text": "Why did the scarecrow win an award?"},
-   {"op": "insert", "node_id": "<fresh UUID B>", "parent_id": "<root_node_id>",
-    "after_node_id": "<A>", "kind": "paragraph", "text": "He was outstanding in his field."},
-   {"op": "set_mark", "node_id": "<B>", "expected": "He was outstanding in his field.",
+   {"op": "insert", "node_id": "a", "parent_id": "root",
+    "after_node_id": "q", "kind": "paragraph", "text": "He was outstanding in his field."},
+   {"op": "set_mark", "node_id": "a", "expected": "He was outstanding in his field.",
     "start_utf8": 7, "end_utf8": 18, "mark": "bold", "on": true}]}
 ```
+
+`"q"` and `"a"` are **local names**: any string that is not a UUID names a
+new node for the rest of the request, and the server mints its UUID. Leave
+`node_id` out when nothing later names the node. The answer carries
+`created`, each name (or the index of an operation whose id was left out)
+mapped to its minted UUID: `{"root": "…", "q": "…", "a": "…"}`. A UUID you
+send is used as given. [New node ids](#new-node-ids) has the rules.
 
 Every `parent_id` is the root or an earlier insert; `after_node_id` is `null`
 for first or an earlier sibling; a seed takes `insert`, `insert_inline`,
@@ -93,9 +110,9 @@ text as `expected`:
 {"workspace_id": "…", "document_id": "…", "base_revision": "<from the read>",
  "operations": [
    {"op": "replace_text", "node_id": "…", "expected": "Buy milk", "text": "Buy oat milk"},
-   {"op": "insert", "node_id": "<fresh UUID>", "parent_id": "<root_node_id>",
+   {"op": "insert", "node_id": "plumber", "parent_id": "<root_node_id>",
     "after_node_id": "…", "kind": "task", "text": "Call the plumber"},
-   {"op": "set_done", "node_id": "…", "expected": "Call the plumber", "done": true},
+   {"op": "set_done", "node_id": "plumber", "expected": "Call the plumber", "done": true},
    {"op": "set_mark", "node_id": "…", "expected": "Buy oat milk",
     "start_utf8": 4, "end_utf8": 12, "mark": "italic", "on": true},
    {"op": "set_heading", "node_id": "…", "expected": "Thursday morning", "heading": 2},
@@ -110,7 +127,9 @@ text as `expected`:
    {"op": "add_tag", "node_id": "…", "expected": "Call the plumber", "tag": "home/errands"}]}
 ```
 
-The batch applies in order and atomically, or not at all. `remove` takes the
+The batch applies in order and atomically, or not at all. A new node's
+`node_id` is a local name (`"plumber"`) or left out, as in a seed, and the
+answer's `created` maps it to the minted UUID. `remove` takes the
 whole subtree, and works on an image block: a block with no text has nothing
 for `expected` to compare, so for an image `remove`, `move`, `set_align`,
 `set_done`, `set_attribute` and `clear_attribute` ignore it (send an empty
@@ -171,12 +190,16 @@ The current tool surface is:
 - `get_documentation`, `list_workspaces`, `list_documents`, `search_documents`,
   `list_tasks`, `read_document`, `list_files`, `search_files`, `get_file`, and
   `read_file` for discovery and reads;
-- `create_document`, `edit_document`, `add_image`, `ensure_file_note`, and
-  `extract_to_document` for durable semantic mutations; and
+- `create_document`, `edit_document`, `update_task`, `add_image`,
+  `ensure_file_note`, and `extract_to_document` for durable semantic
+  mutations; and
 - `save_document_version`, `list_document_versions`,
   `compare_document_versions`, and `restore_document_version` for history; and
 - `list_chats`, `search_chats`, and `read_chat` for bounded, read-only access to
   Koru AI chats.
+
+A bridge serves every one of them unless it was started with `--toolsets`,
+which narrows it to named groups — see [Toolsets](#toolsets).
 
 A **delegated run** reaches a different server — six artifact tools at
 `/v1/runs/<RunId>/mcp`, never the bridge above — described under
@@ -209,7 +232,7 @@ This file is the long form; the reply points here.
   each publish one object whose tag (`op` or `type`) is an `enum`, whose
   properties are the union of the variants', with `additionalProperties:
   false`, and whose description is generated from the variants — for example
-  `insert(node_id, parent_id, kind, text, after_node_id?)`. Which fields a
+  `insert(parent_id, kind, text, node_id?, after_node_id?)`. Which fields a
   given op takes is enforced by the server, which rejects an unknown or
   misplaced field with an error rather than ignoring it.
 - **Kept:** every property name, type, enum value and `required`, `minimum` and
@@ -219,14 +242,74 @@ This file is the long form; the reply points here.
 
 The reply was 57,071 bytes before this and 17,137 bytes after it; `set_mark`
 in both operation unions took it to 17,973, `add_image`, a 22nd tool, to
-19,005, and `set_heading` with `set_highlight` to 19,428, under a 19,500-byte
-budget
+19,005, `set_heading` with `set_highlight` to 19,428, and `set_callout_look`
+to 20,375, under one budget last set at 20,500 bytes
 ([ADR-471](../../docs/decisions/ADR-471-mcpessentials.md),
-[ADR-473](../../docs/decisions/ADR-473-addimage.md)). It cannot get
+[ADR-473](../../docs/decisions/ADR-473-addimage.md)). It was 20,491 bytes
+when that budget was split into one per [toolset](#toolsets), and
+`update_task`, a 23rd tool, took it to 21,908. Trimming `edit_document`'s
+and `create_document`'s descriptions to what forms a valid call — the rest
+is in the sections they name — brought it back to 21,451. It cannot get
 under 8 KiB with 21 typed tools: the names, titles, safety hints and typed
 parameters alone come to about 9.6 KB before a word of description. That
 matters for Grok CLI 1.0.34, which can lose an 8,192-byte chunk of any longer
 line it reads from a stdio server — see the ADR for what was measured.
+
+### Toolsets
+
+Every agent reads the whole reply into its context when a session starts,
+about 5,400 tokens, whether it then touches one document or none. So the
+tools are grouped into **toolsets**, and a bridge started with
+`--toolsets docs,tasks` lists only those and `core`
+(`crates/koru-mcp-server/src/toolsets.rs`). **Without the flag every toolset
+is on**; the flag only narrows. It is one server either way, not one per
+group (maintainers, 2026-11-02).
+
+| Toolset | Tools | Bytes | ~Tokens | Budget |
+| --- | --- | ---: | ---: | ---: |
+| `core` — always on | `get_documentation`, `list_workspaces` | 697 | 175 | 770 |
+| `docs` | `list_documents`, `search_documents`, `read_document`, `create_document`, `edit_document`, `add_image`, `extract_to_document` | 11,939 | 2,985 | 13,130 |
+| `files` | `list_files`, `search_files`, `get_file`, `read_file`, `ensure_file_note` | 2,266 | 567 | 2,500 |
+| `versions` | `save_document_version`, `list_document_versions`, `compare_document_versions`, `restore_document_version` | 2,036 | 509 | 2,250 |
+| `tasks` | `list_tasks`, `update_task` | 3,099 | 775 | 3,410 |
+| `chat` | `list_chats`, `search_chats`, `read_chat` | 1,369 | 343 | 1,510 |
+| every toolset on | the whole reply, envelope included | 21,451 | 5,363 | 23,670 |
+
+A toolset's bytes are its tools as published, one separator each; the reply
+adds about 45 bytes of envelope. Tokens are bytes over four. Measured
+2026-11-02; each budget is that size plus about 10%, held by
+`each_toolset_is_within_its_budget`, and the total by
+`the_published_tool_list_is_compact_and_within_its_budget`. Raising one is a
+decision recorded here.
+
+- **Every tool is in exactly one toolset**, and `core` is in every bridge:
+  nothing else can be called without the documentation and a workspace id.
+- **A tool whose toolset is off is not listed, and a call to it is refused**
+  with a tool result marked `isError: true` — not a JSON-RPC error, because
+  an agent acts on a tool result as the answer to its call, where a protocol
+  error is more often shown as a failure of the bridge. The result is the
+  ordinary failure shape, `{code: "toolset_disabled", message, details}`: the
+  message names the tool, its toolset, the toolsets that are on and the
+  `--toolsets` value that would serve it, and `details` carries `tool`,
+  `toolset`, `enabled_toolsets` and that value as `toolsets_flag`. A name that
+  is no tool at all is still the router's own "tool not found" error.
+- **The bridge says which toolsets are on** when some are off: the server
+  instructions and the table of contents (`koru://docs/model`, and
+  `get_documentation` with that uri) end with one sentence naming them. A
+  section about a tool that is off is still served; the sentence says those
+  tools are not. With every toolset on, neither changes.
+- **The toolsets do not depend on each other.** `tasks` alone lists a task
+  and changes it — `update_task` completes, reopens, re-dates and
+  re-prioritises by the ids a row carries, with no document read
+  ([Changing a task](#changing-a-task)). The one gap a narrower bridge opens
+  deliberately is a file's note, which is read and edited through `docs`.
+- `--toolsets` takes comma-separated names, spaces around them allowed;
+  `core` may be named and changes nothing. An unknown or empty name stops the
+  bridge with the list of names, rather than starting it without the tools
+  someone asked for.
+- **Koru AI's own providers** read `workspace_tool_catalog` and always see
+  every tool, as they do with paging. A chat's bridge, which the session host
+  starts for the chat's agent, is started without `--toolsets` today.
 
 ### Pages, off by default
 
@@ -265,7 +348,7 @@ and as a test held them against real values. A failure is
 
 | Tool | Result |
 | --- | --- |
-| `get_documentation` | `{ uri, mime_type, section?, text }`; the text block is the markdown itself |
+| `get_documentation` | `{ uri, mime_type, section?, text }`, plus `sections: [{ slug, title, summary, tokens, subsections }]` for `koru://docs/model`'s table of contents; the text block is the markdown itself |
 | `list_workspaces` | `{ workspaces: [{ id, owner, name, created_at, last_opened_at?, icon?, color?, pinned, archived, deleted_at?, position }] }` |
 | `list_documents` | `{ documents: [{ id, parent?, ordinal, title, kind, trashed_at?, trashed_by? }] }` |
 | `search_documents` | `{ hits: [{ workspace, workspace_name, document, node?, document_kind, mime?, kind, field, title, breadcrumb, breadcrumb_spans, snippet, spans, lifecycle, trashed_at?, trashed_by?, score, observed_modified_at_ms?, workspace_last_used_at_ms? }], next_offset?, updating_workspaces, corrected_query? }`; a span is `{ start, end }` |
@@ -273,10 +356,11 @@ and as a test held them against real values. A failure is
 | `list_files`, `search_files` | `{ files: [file] }`, a file being `{ file_id, name, mime, size?, hash, root_node_id, note_id? }` |
 | `get_file` | a file |
 | `read_file` | `{ file, offset, length, total_bytes, eof, base64 }` |
-| `read_document`, `create_document` | `{ document_id, root_node_id, revision, schema_version, nodes }` — `nodes` in preorder, each with identity, parent, ordinal, depth, kind, typed metadata and typed content; a `code` node whose language is `mermaid` also carries `diagram` ([Diagrams](#diagrams)) |
-| `add_image` | the edit's `{ revision, history }` plus `{ node_id, hash, mime, width, height, size }` |
+| `read_document`, `create_document` | `{ document_id, root_node_id, revision, schema_version, nodes }` — `nodes` in preorder, each with identity, parent, ordinal, depth, kind, typed metadata and typed content; a `code` node whose language is `mermaid` also carries `diagram` ([Diagrams](#diagrams)). `create_document` adds `created?` ([New node ids](#new-node-ids)) |
+| `add_image` | the edit's `{ revision, history }` plus `{ node_id, created?, hash, mime, width, height, size }` |
 | `ensure_file_note` | `{ note_id, created }` |
-| `edit_document`, `restore_document_version` | `{ revision, history: entry }`, an entry being `{ id, document, version, reason, recorded_at, label?, message?, boundary?, pinned }` |
+| `edit_document`, `restore_document_version` | `{ revision, history: entry }`, and `created?` from `edit_document`, an entry being `{ id, document, version, reason, recorded_at, label?, message?, boundary?, pinned }` |
+| `update_task` | the edit's `{ revision, history }` plus `task: { workspace_id, document_id, node_id, title, lifecycle, due?, priority?, list? }`, read from the document after the edit ([Changing a task](#changing-a-task)) |
 | `extract_to_document` | `{ document_id, document_revision, source_revision, source_link_node_id, history: { document: entry, source: entry } }` |
 | `save_document_version` | an entry |
 | `list_document_versions` | `{ entries: [entry], next_before_at?, next_before_id? }` |
@@ -287,16 +371,16 @@ and as a test held them against real values. A failure is
 
 ## The boundary
 
+MCP exposes **Koru semantics**, never CRDT mechanics. A client asks to insert a
+paragraph, create a document reference, extract a block, compare versions, or
+restore one. The server translates that intent through `WorkspaceDoc` and
+publishes the resulting Loro operations through the normal durable Store path.
+
 **A chat's local agent reaches this bridge without any hand configuration**
 (AGENTUX, [ADR-430](../../docs/decisions/ADR-430-chatagentbridge.md)): the session
 host attaches `koru-mcp serve --stdio` to every session a chat creates, so
 Codex, Claude, OpenCode, Kimi, Grok and Antigravity in a chat call the same tools a
 hand-configured ChatGPT does, under the same local principal and policies.
-
-MCP exposes **Koru semantics**, never CRDT mechanics. A client asks to insert a
-paragraph, create a document reference, extract a block, compare versions, or
-restore one. The server translates that intent through `WorkspaceDoc` and
-publishes the resulting Loro operations through the normal durable Store path.
 
 Raw Loro updates, op ids, `TreeID`s, container keys, anchor characters, mark
 keys, snapshot bytes, and version-vector arithmetic are not MCP input. Standard
@@ -365,9 +449,13 @@ MCP bridge remains available for its other tools.
 
 ## Identities and document shape
 
+Every id Koru stores or answers is a UUID of one distinct type, and one Store
+document is one tree under its title node.
+
 - `ProfileId`, `WorkspaceId`, Store `DocumentId`, `NodeId`, and `AttrId` are
-  distinct client-minted UUID types. Their strings may look alike; their
-  meanings are not interchangeable.
+  distinct UUID types. Their strings may look alike; their meanings are not
+  interchangeable. A new node's id is minted by the server unless the client
+  sends one ([New node ids](#new-node-ids)).
 - `TreeID` is Loro-local and must never cross the MCP boundary.
 - One Store document owns one Loro document. Its single root
   `Kind::Document` node is row 0 and its text is the document title.
@@ -394,6 +482,37 @@ Every operation that targets existing text carries its exact `expected` value,
 including `move`, `remove`, and `set_done`. This matters when the old UUID still
 exists after a concurrent split but now names the other half: Koru returns
 `precondition_failed` rather than applying the operation to the wrong content.
+
+### New node ids
+
+A new node's id — an `insert`'s `node_id` in `edit_document` or in
+`create_document`'s seed, `create_document`'s `root_node_id`, and
+`add_image`'s `node_id` — is one of three things:
+
+- **a UUID**, used exactly as given, as it always was;
+- **left out**, and the server mints one; or
+- **a local name**: any other string, such as `"intro"`. The server mints a
+  UUID for it, and a later operation in the **same request** names the node
+  by it, in `node_id`, `parent_id` or `after_node_id`.
+
+`create_document`'s `root_node_id` left out with a seed is the local name
+`root`, so the seed's inserts can say `"parent_id": "root"`.
+
+Every answer that minted something carries `created`: each local name, and
+each id left out under its operation's index (`"0"`, `"3"`), mapped to the
+UUID minted for it — `{"created": {"root": "…", "q": "…", "1": "…"}}`. It
+is absent when the request sent UUIDs only, which is exactly the request it
+always was. A name lives for one request: it is rewritten to its UUID before
+anything runs, nothing stores it, and the next request names the node by
+the UUID in `created` or in a read. **Stored node ids are UUIDs either way**,
+so this changes no stored format.
+
+A name is usable only after the insert that defines it, is defined once, and
+is never all digits (it would read as an index in `created`). A name used
+first, one nothing defines, one defined twice, and a string that looks like a
+UUID but is not one are each refused as `invalid_request`, naming the field
+(`operations[2].parent_id`) and the name, and nothing is written. The last
+rule keeps a mistyped UUID from silently becoming a new node.
 
 ## Typed blocks, text, and ordering
 
@@ -520,12 +639,16 @@ hash, metadata, root node, and manifest entry are committed consistently.
 
 When `initial_operations` is present:
 
-- it must be non-empty and `root_node_id` must be a fresh client-minted UUID;
+- it must be non-empty;
+- `root_node_id`, the title node's id, is a fresh UUID, a local name, or left
+  out, when the title node is the local name `root`
+  ([New node ids](#new-node-ids));
 - Koru does not add the default paragraph;
-- the caller supplies every body `node_id`;
+- each insert's `node_id` is a fresh UUID, a local name, or left out, and the
+  server mints a UUID for each of the last two;
 - only `insert`, `insert_inline`, `set_done`, `set_language`, `set_mark` and
   `set_callout_look` are legal;
-- `parent_id` names the supplied root or an earlier inserted node;
+- `parent_id` names the root or an earlier inserted node;
 - `after_node_id` is `null` for first or names an earlier inserted sibling; and
 - inline, completion, language, mark and callout-look operations can target only a
   node inserted earlier in the same array.
@@ -563,7 +686,9 @@ original document id and original success projection, even if the live document
 has since changed. Reusing the key for different input returns
 `idempotency_conflict`; after expiry the key may name a new request. Omitting
 the key is convenient for interactive use but a caller retry after an unknown
-transport outcome can create a duplicate.
+transport outcome can create a duplicate. The retry identity is the request as
+sent, so a request that left its ids out replays as itself, and the replay's
+`created` names the ids the first call stored, not new ones.
 
 ## Adding an image
 
@@ -571,9 +696,13 @@ transport outcome can create a duplicate.
 
 ```jsonc
 {"workspace_id": "…", "document_id": "…", "base_revision": "<from the read>",
- "node_id": "<fresh UUID>", "parent_id": "<root_node_id>", "after_node_id": null,
+ "parent_id": "<root_node_id>", "after_node_id": null,
  "data_base64": "<the file's bytes, standard base64>", "name": "library.jpg"}
 ```
+
+`node_id` is optional: left out, the server mints it and the answer's
+`node_id` is it. A UUID sent there is used as given; a local name is minted
+too and reported in `created` ([New node ids](#new-node-ids)).
 
 - **The bytes are checked, not trusted.** The format and the size come from the
   file's header: PNG, JPEG, GIF or WebP, at most 8 MiB decoded. Anything else —
@@ -592,8 +721,10 @@ transport outcome can create a duplicate.
   `mcp_before` and `mcp_after` history markers, and answers the edit's
   `revision` and `history` with `node_id`, `hash`, `mime`, `width`, `height` and
   `size`. A stale revision is `stale_node` as for any edit.
-- **Not idempotent.** `node_id` names the block, so repeating a call that
-  succeeded is refused as a duplicate id rather than adding a second image.
+- **Not idempotent.** A `node_id` you sent names the block, so repeating a
+  call that succeeded is refused as a duplicate id rather than adding a second
+  image. One the server minted is new on every call, so send your own UUID
+  when a retry must not add the image twice.
 - **What it does not do yet.** It does not add an image inside a seed
   (`create_document`), take a URL or a file path, or add a *file* to the
   workspace's file list; `list_files` and `read_file` are unchanged.
@@ -794,11 +925,12 @@ each tag exactly once (ADR-190, amended).
 
 A **task** is an ordinary node that carries the task marker, or one that
 carries a deadline: a due date *is* a task, so there is no separate object to
-create and no `create_task` here. This surface therefore names no new
-operation. Four of the ones it already has mean something more when the node
-they point at is a task, and each reaches exactly the same outcome the desktop
-reaches from the same gesture — the same lifecycle, the same cascade, the same
-reopening. Only the attribution differs. The third is `move`: moving
+create and no `create_task` here. This surface therefore names no new edit
+operation — `update_task` ([below](#changing-a-task)) is these same
+operations, addressed by a `list_tasks` row. Four of the ones it has mean
+something more when the node they point at is a task, and each reaches
+exactly the same outcome the desktop reaches from the same gesture — the same
+lifecycle, the same cascade, the same reopening. Only the attribution differs. The third is `move`: moving
 unfinished structural work under a completed task reopens that task (reason
 `unfinished_child_added`), exactly as dragging it there in the app would, and
 moving a structural child out of a task records its departure.
@@ -961,9 +1093,60 @@ moment ago may not be a row yet. An empty list means every workspace in scope
 has reached the read model. There is no separate `indexing` flag here because
 it would be that same list said twice.
 
-To change what a list reports, use `edit_document`: `set_done` for the
-lifecycle, `set_attribute` of `koru.due` for the deadline, `koru.priority` for
-the priority.
+To change what a list reports, use `update_task` (below), or `edit_document`:
+`set_done` for the lifecycle, `set_attribute` of `koru.due` for the deadline,
+`koru.priority` for the priority.
+
+### Changing a task
+
+`update_task` changes one task by the identity a `list_tasks` row carries, so a
+bridge serving the `tasks` toolset alone can complete what it lists:
+
+```jsonc
+{"workspace_id": "…", "document_id": "…", "node_id": "…",   // the row's ids
+ "expected": "Ship the report",                              // the row's title
+ "done": true,                                               // or false: reopen
+ "due": {"type": "date", "value": "2026-09-11"},             // null: no deadline
+ "priority": "high",                                         // null: none
+ "list": "0193…000a"}                                        // null: no list
+```
+
+- **It is `edit_document`, not a second door.** The changes become the
+  operations described above — `set_attribute` or `clear_attribute` of
+  `koru.due`, `koru.priority` and `koru.list`, then `set_done` — and run as one
+  atomic batch through the same validation, task commands, cascade, history
+  markers (`mcp_before`, `mcp_after`), durability wait and activity
+  attribution. `done` is therefore the lifecycle, with its cascade, and
+  clearing `due` keeps the task.
+- **Each change is absent, `null` or a value**: absent leaves it, `null`
+  clears it (`due`, `priority` and `list`; `done` is `true` or `false`), a
+  value sets it. At least one is required. `due` takes the two shapes a
+  deadline has — `date` `{value}` or `datetime_zoned` `{instant_ms, timezone}`
+  — exactly as a row reports it; `priority` is `low`, `medium`, `high` or
+  `urgent`; `list` is a `koru.list` id. A value that does not fit is the
+  model's own `attribute_rejected`, as in an edit.
+- **No `base_revision`; `expected` is the precondition.** `list_tasks` reads
+  the store's read model and opens no document, so it has no revision to hand
+  back, and asking for one would send a tasks-only agent to a tool its bridge
+  does not serve. `expected` is the row's `title` — compared with the node's
+  text by the read model's own rule, trimmed, so the title a row reports is
+  the title that matches — or the node's exact text from `read_document`. The
+  server reads the document, checks `expected`, and edits at the revision it
+  read. An image or a file has no text, so `expected` is ignored there, as in
+  an edit.
+- **Refusals name `list_tasks` as the retry**, in `details.retry`. A task
+  whose text changed since it was listed is `precondition_failed`; a `node_id`
+  the document no longer holds is `stale_node`; a node that is not a task is
+  `invalid_request` — `update_task` changes tasks and never makes one, which
+  `edit_document`'s `koru.due` does. The read model trails an edit, so a list
+  taken a moment after a change can still report the old title;
+  `updating_workspaces` names a workspace that is behind. Every refusal writes
+  nothing.
+- **It answers what changed**: the edit's `revision` and `history`, and
+  `task` — `workspace_id`, `document_id`, `node_id`, `title`, `lifecycle`,
+  `due`, `priority` and `list` in a row's names and shapes, read from the
+  document after the edit, since the read model has not caught up yet.
+- It requires `edit_documents`, like every mutation here.
 
 ### Two limits on tasks through this surface
 
@@ -1099,6 +1282,10 @@ is clearer from a program; both work, and they combine.
 
 ## Files
 
+Workspace files are reached through their own tools — `list_files`,
+`search_files`, `get_file`, `read_file` and `ensure_file_note` — never through
+`list_documents`.
+
 `list_documents` returns page entries only. `list_files` returns first-class
 workspace file metadata: `file_id`, `name`, `mime`, `size`, `hash`,
 `root_node_id`, and `note_id`. `search_files` applies a case-insensitive
@@ -1167,6 +1354,14 @@ Branching snapshots the source chat's privacy setting. Message-block context
 uses the same rule, so a request cannot smuggle a block from another private
 chat into a provider prompt.
 
+A chat of a Profile removed from this computer is hidden from all three tools,
+and from every other surface, from the moment of removal: it is not listed or
+found, and `read_chat` answers `chat_not_found`, as for a missing chat. It
+stays on the device, untouched, and is back as soon as the Profile is
+restored; if the Profile is not restored within 30 days, the chat is deleted.
+If the AI service cannot ask the Store which Profiles are removed, the tools
+answer a retryable `ai_storage` error rather than show anything.
+
 `list_chats` is ordered by most recent update and accepts an optional decimal
 offset `cursor` plus `page_size` (default 50, maximum 200). It returns chat id,
 title, terminal-message count, timestamps, and `next_cursor`.
@@ -1188,6 +1383,9 @@ UTF-8 boundary and reports `truncated: true` when shortened; the result also
 reports the complete terminal-message count.
 
 ## Preconditions, history, and durability
+
+Every mutation is checked against what was read, applied atomically, durable
+before it answers, and bracketed in history.
 
 - Read immediately before writing and send its opaque base revision.
 - Operations whose placement or replacement depends on text also send the
@@ -1219,6 +1417,35 @@ four across five.
 Conflicts fail explicitly. The client reads again and replans; the bridge never
 guesses which concurrent content to overwrite.
 
+### A refused call writes nothing; a partial one says what landed
+
+**Every check runs before the first write**: readability, `base_revision`,
+`expected`, and the whole batch on a fork. A call refused by any of them has
+written nothing, not even the workspace and document ids a document that lacks
+them is given — those ride in the document's next real write.
+
+A mutation then makes its writes, its **effects**, in a fixed order, and stops
+at the first that does not land:
+
+| Tool | Effects, in order |
+| --- | --- |
+| `edit_document` | `system` (the tags the batch creates, when it creates any), `document` |
+| `create_document` | `document`, `manifest` (its entry in the workspace's list) |
+| `extract_to_document`, new destination | `destination_seed`, `manifest`, `destination`, `source` |
+| `extract_to_document`, existing destination | `destination`, `source` |
+
+When the first effect is refused, the answer is the refusal's own error and
+nothing was saved. When a later one is, the answer is `partially_saved`: its
+`message` says what to do next, and `details` carry `operation_id` and
+`effects: [{ effect, document_id, state }]`, every planned effect with its
+`state` (`saved`, `not_saved`), plus the tool's recovery fields — for
+`extract_to_document`, `created_document_id`, `target_document_id`,
+`source_document_id`, `source_unchanged: true` and `recovery_required: true`.
+A rollback is never claimed. `save_status_unknown`, with the same `details` and
+an `unknown` state, means a write was sent and never confirmed: read the
+documents listed before retrying. The hosted server's answers are the same
+([hosted-tools-v1](../../contracts/hosted-tools-v1.md)).
+
 The read-before-write rule applies to changing an existing document. Bulk
 creation has no prior revision to read: its strict, ordered seed batch and
 idempotency key provide the corresponding safety boundary.
@@ -1232,9 +1459,10 @@ Loro tree moves cannot cross Loro documents. A cross-document "move" is:
 3. delete or replace the source in its own document.
 
 Destination-first ordering prevents data loss. If the destination becomes
-durable and the source step fails, return a structured error containing the new
-document id and state that the source is unchanged. Duplication is recoverable;
-lost content is not. High-level tools such as `extract_to_document` own this
+durable and the source step fails, the answer is `partially_saved`, with the
+new document's id and `source_unchanged: true`
+([above](#a-refused-call-writes-nothing-a-partial-one-says-what-landed)).
+Duplication is recoverable; lost content is not. High-level tools such as `extract_to_document` own this
 coordination rather than asking an LLM to assemble several low-level calls.
 
 `extract_to_document` covers every form of the move: several subtrees at once
@@ -1294,8 +1522,11 @@ For a new mutation or object, use this sequence:
    `destructiveHint` and `idempotentHint` on a tool that writes), and no
    `outputSchema`. A new tool adds a sample of each new operation to
    `every_operation_fits_the_published_input_schema` when it adds a tagged
-   union, and keeps `the_published_tool_list_is_compact_and_within_its_budget`
-   green — raising that budget is a decision to record, not a number to bump.
+   union, joins exactly one [toolset](#toolsets) (`toolsets.rs`), and keeps
+   `each_toolset_is_within_its_budget` and
+   `the_published_tool_list_is_compact_and_within_its_budget` green — raising
+   a toolset's budget is a decision to record in that table, not a number to
+   bump.
 6. **Authorize, then resolve routes in the adapter.** The shared executor maps
    each tool to its required Koru scope and workspace target before Store is
    touched. `InlineContext` turns public references
@@ -1321,7 +1552,10 @@ For a new mutation or object, use this sequence:
     capability when an adapter depends on new Store support.
 
 This file is itself the runtime `koru://docs/model` resource (installed as
-`docs/mcp/README.md`). Development servers read this source from disk on
+`docs/mcp/README.md`), served as its table of contents and one section at a
+time. Keep each `##` section's first sentence a summary of the section — the
+contents list it — and each section under about 6k tokens: a test holds every
+answer to that. Development servers read this source from disk on
 every request, so this file is the
 quickest way to teach a restarted model a new contract without embedding prose
 in the binary.
@@ -1435,3 +1669,11 @@ Store is the persistent service; the stdio bridge is not a separately managed
 daemon. A future Koru Cloud host will supply remote transport, tenant,
 authenticated principal, and scopes through the existing backend context. Tool
 schemas and document semantics remain the same.
+
+A hosted call through an app connection differs in three places
+([hosted-tools-v1](../../contracts/hosted-tools-v1.md)): its answers carry no
+`history` (history is a device's), `create_document` always answers its
+`idempotency_key`, and every change it makes carries an `actor/1` commit
+message naming the connection
+([connector-attribution-v1](../../contracts/connector-attribution-v1.md)). Local
+changes carry no message.

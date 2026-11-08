@@ -38,9 +38,10 @@ use koru_core::ids::TagId;
 use koru_core::node::Node;
 use koru_core::tasks::{Bucket, TaskFields, is_task};
 use koru_core::time::Temporal;
-use koru_draw::chip::{self, CHIP_GAP, CHIP_H, ChipKind};
+use koru_draw::chip::{CHIP_GAP, CHIP_H, ChipKind};
 use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
+use koru_ui::label_chip::{LabelChip, Lead, State, Trail};
 
 use crate::paragraph::Paragraph;
 use crate::utils::dates;
@@ -81,6 +82,12 @@ pub enum ChipSpec {
     Priority(Priority),
     /// The node's `koru.color`, as its stable storage token.
     Color(String),
+    /// **The list the task is in, by name** — worn by a document's **title**
+    /// alone ([`Paragraph::wear_title_chips`](crate::paragraph::Paragraph::wear_title_chips)).
+    /// Every other task line says its list only through the due chip's
+    /// colour; the title is the one line that names the whole document's
+    /// task, so it names the list too, and pressing it opens the list's page.
+    List(ListId),
 }
 
 /// The chips `node`'s attributes earn, in display order: tags first (attr
@@ -265,6 +272,14 @@ impl ListLookup {
         &self.listed
     }
 
+    /// This list's name, while the table has it.
+    pub fn name(&self, id: ListId) -> Option<&str> {
+        self.listed
+            .iter()
+            .find(|(list, name, _)| *list == id && !name.is_empty())
+            .map(|(_, name, _)| name.as_str())
+    }
+
     /// This list's accent token, or `None` for a list with no colour **and**
     /// for one the table has forgotten.
     ///
@@ -365,10 +380,17 @@ fn face_of<'a>(
         ChipSpec::Priority(p) => (
             ChipKind::Priority,
             priority_label(*p).to_owned(),
-            None,
+            Some(priority_accent(*p).to_owned()),
             None,
         ),
         ChipSpec::Color(token) => (ChipKind::Swatch, String::new(), Some(token.clone()), None),
+        // The list's name in the list's colour — the Tasks page's list chip.
+        ChipSpec::List(id) => (
+            ChipKind::Tag,
+            lists.name(*id).unwrap_or("List").to_owned(),
+            lists.resolve(*id).map(str::to_owned),
+            None,
+        ),
     }
 }
 
@@ -495,6 +517,23 @@ fn row_bucket(row: &Paragraph, today: NaiveDate) -> Option<Bucket> {
     ))
 }
 
+/// **The level's colour**, as an accent token: hot to cool, so the level
+/// reads at a glance — Urgent red, High orange, Medium yellow, Low blue. The
+/// one place it is decided; the chip, the Tasks page's chip and both
+/// priority pickers ask here. From the shared accent set, so *red* on a
+/// priority is the *red* a line's colour dot is, in every theme.
+///
+/// Priority was neutral by rule once (invariant 13: colour is presentation,
+/// a priority is importance); the owner chose colour for it on 2026-11-05.
+pub fn priority_accent(p: Priority) -> &'static str {
+    match p {
+        Priority::Urgent => "red",
+        Priority::High => "orange",
+        Priority::Medium => "yellow",
+        Priority::Low => "blue",
+    }
+}
+
 /// The level's display name — the chip's whole text. The `P1`-style
 /// abbreviation is a tracked-view concern (R2), not this chip's.
 pub fn priority_label(p: Priority) -> &'static str {
@@ -554,6 +593,39 @@ pub struct ChipBox {
     /// the chip would paint short of where it is pressable. `None` on every kind
     /// but [`ChipKind::Due`], and on an open dateless one.
     pub lead: Option<char>,
+    /// The label is struck — a completed task's due.
+    pub struck: bool,
+}
+
+impl ChipBox {
+    /// This chip as **the one chip component** (`koru_ui::label_chip`): the
+    /// attribute chip its kind earns, its lead and strike, and the remove
+    /// lane — a chip in a document is the control that takes its attribute
+    /// off. Measuring, hit-testing and painting all ask this, so the three
+    /// cannot disagree about what the chip is.
+    pub fn face(&self) -> LabelChip<'_> {
+        face(
+            self.kind,
+            &self.label,
+            self.accent.as_deref(),
+            self.lead,
+            self.struck,
+        )
+    }
+}
+
+/// The chip component for one attribute chip — see [`ChipBox::face`].
+fn face<'a>(
+    kind: ChipKind,
+    label: &'a str,
+    accent: Option<&'a str>,
+    lead: Option<char>,
+    struck: bool,
+) -> LabelChip<'a> {
+    LabelChip::attribute(kind, label, accent)
+        .lead(lead.map_or(Lead::None, Lead::Glyph))
+        .struck(struck)
+        .trail(Trail::Remove)
 }
 
 /// Where a row's chips sit, in document coordinates — **the** geometry
@@ -616,11 +688,12 @@ pub fn chip_boxes_on(
         // true.
         let struck = lead == Some(bucket_glyph(Bucket::Completed));
         // The measured label (or, for a swatch, its dot), plus the remove lane
-        // every kind reserves beyond it — and the lead's lane, which is inside
-        // the lozenge and therefore inside the measurement.
-        let w = engine.measure_attr_chip(kind, &label, accent.as_deref(), lead, struck)
-            + chip::extra_w(kind);
+        // every chip here carries beyond it — and the lead's lane, which is
+        // inside the lozenge and therefore inside the measurement.
+        let chip = face(kind, &label, accent.as_deref(), lead, struck);
+        let w = chip.width(engine);
         let rect = Rect::new(x, y, w, CHIP_H);
+        let close = chip.trail_rect(rect);
         out.push(ChipBox {
             rect,
             // **Every chip offers its lane, the dateless task included.**
@@ -632,11 +705,12 @@ pub fn chip_boxes_on(
             // dateless task has as much of as a dated one — so the lane is
             // always there, and the one chip that used to hide it is the one
             // that most needs it.
-            close: chip::close_rect(kind, rect),
+            close,
             kind,
             label,
             accent,
             lead,
+            struck,
         });
         x += w + CHIP_GAP;
     }
@@ -711,26 +785,21 @@ pub fn draw_row_chips(
     hovered: Option<usize>,
 ) {
     for (i, placed) in chip_boxes(row, engine, tags, lists).into_iter().enumerate() {
-        // **The lead is in the key**, so this asks for the entry `chip_boxes`
-        // measured. Asking with `None` would answer a narrower visual than the
-        // rectangle underneath it — the chip would paint short of where it is
-        // pressable.
-        let Some(visual) = engine.attr_chips.get(
-            placed.kind,
-            &placed.label,
-            placed.accent.as_deref(),
-            placed.lead,
-        ) else {
-            continue;
-        };
-        chip::draw(
-            scene,
-            root,
-            visual,
-            placed.accent.as_deref(),
+        let rect = Rect::new(
             placed.rect.x,
             oy + (placed.rect.y - row.y),
-            placed.close.is_some() && hovered == Some(i),
+            placed.rect.w,
+            placed.rect.h,
+        );
+        placed.face().draw(
+            scene,
+            root,
+            engine,
+            rect,
+            State {
+                hovered: false,
+                reveal: placed.close.is_some() && hovered == Some(i),
+            },
         );
     }
 }

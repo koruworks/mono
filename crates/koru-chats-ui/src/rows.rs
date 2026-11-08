@@ -16,17 +16,29 @@ use koru_draw::theme;
 
 use crate::{ChatsSurface, Focus, Load};
 
-/// A chat row: the title on one line, who answered and when on the next.
-pub(crate) const CHAT_H: f32 = 40.0;
+/// A chat row: its title on one line, the library row's height, so the list
+/// reads at the Documents list's pitch (the review's note). Who answered and
+/// when left the row; the accessible name still says it.
+pub(crate) const CHAT_H: f32 = theme::NAV_ROW_H;
 /// A sentence under a row — *Deleting…*, or why a delete was refused.
 const NOTE_H: f32 = 17.0;
-/// Air between *New chat* and the first chat.
-const NEW_GAP: f32 = 4.0;
-/// The leading lane: *New chat*'s plus, a private chat's mark, and nothing
-/// for the rest — reserved on every row, so every label starts on one line.
-const LEAD_W: f32 = 16.0;
+/// Air above a notice.
+const NOTICE_GAP: f32 = 4.0;
+/// A private chat's mark, left of its title in the slot a page icon takes —
+/// only on a private row, so every other title starts at the pad, as a
+/// Documents label starts after its icon (the review's note).
+const LEAD_W: f32 = koru_shell_chrome::PAGE_ICON_SLOT;
+const LEAD_GAP: f32 = 4.0;
+/// The status mark's slot at a row's end (D83), an icon's width.
+pub(crate) const END_W: f32 = 20.0;
+/// Air between a title and the mark after it.
+const END_GAP: f32 = 4.0;
 /// Air under the last row, so the list does not end flush against the edge.
 pub(crate) const FOOTER_PAD: f32 = 8.0;
+/// The *Pinned* heading's line.
+const HEADING_H: f32 = 24.0;
+/// Air between the pinned chats and the rest.
+const GROUP_GAP: f32 = 8.0;
 
 /// Which state the list is in, when it is in one rather than showing rows.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -42,9 +54,11 @@ pub enum Notice {
 /// held by id on the surface.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Row {
-    /// *New chat*, at the head of the list.
-    New,
     Notice(Notice),
+    /// *Pinned*, over the pinned chats (koru-ai D85). Only when one is.
+    PinnedHeading,
+    /// Air between the pinned chats and the rest.
+    GroupGap,
     Chat(usize),
     /// The line under a chat whose delete is being sent or was refused.
     Note(usize),
@@ -53,21 +67,22 @@ pub enum Row {
 impl Row {
     /// Whether the keyboard and the pointer can choose this row.
     pub fn pressable(&self) -> bool {
-        matches!(self, Self::New | Self::Chat(_))
+        matches!(self, Self::Chat(_))
     }
 
     fn height(&self) -> f32 {
         match self {
-            Self::New => theme::NAV_ROW_H,
             Self::Chat(_) => CHAT_H,
             Self::Note(_) => NOTE_H,
             Self::Notice(_) => NOTE_H * 2.0,
+            Self::PinnedHeading => HEADING_H,
+            Self::GroupGap => GROUP_GAP,
         }
     }
 
     fn gap_above(&self) -> f32 {
         match self {
-            Self::Chat(0) | Self::Notice(_) => NEW_GAP,
+            Self::Notice(_) => NOTICE_GAP,
             _ => 0.0,
         }
     }
@@ -76,12 +91,29 @@ impl Row {
 /// Every rect inside a row. See [`ChatsSurface::row_parts`].
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub struct RowParts {
-    /// The leading lane. Reserved always.
+    /// A private chat's mark. Zero-width on every other row.
     pub lead: Rect,
-    /// The title — *New chat*'s label, a chat's title, a note's sentence.
+    /// The title — a chat's title, a note's sentence.
     pub title: Rect,
-    /// Who answered and when. Zero-height on every row but a chat.
-    pub meta: Rect,
+    /// The status mark's slot at the row's end (D83). Zero-width on a row
+    /// with nothing to show there, so a title keeps the whole width.
+    pub end: Rect,
+    /// The pin (D86): on the row under the pointer only (D91) — not the
+    /// open or picked row, not the keyboard's, and not a pinned row at rest,
+    /// which its *Pinned* heading already names. Zero-width where it is not
+    /// shown.
+    pub pin: Rect,
+    /// **⋯**, which opens the row's menu (D86): on the row under the
+    /// pointer only, where it takes the status mark's slot (D91). Zero-width
+    /// elsewhere; the keyboard reaches the same menu with the menu key.
+    pub more: Rect,
+}
+
+/// A button at a row's end (D86).
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum RowButton {
+    Pin,
+    More,
 }
 
 impl ChatsSurface {
@@ -110,7 +142,7 @@ impl ChatsSurface {
 
     /// The rows, with nothing said about where they are.
     fn plan(&self) -> Vec<Row> {
-        let mut plan = vec![Row::New];
+        let mut plan = Vec::new();
         match self.load {
             Load::Cold | Load::Loading if self.chats.is_empty() => {
                 plan.push(Row::Notice(Notice::Loading));
@@ -125,7 +157,21 @@ impl ChatsSurface {
             }
             return plan;
         }
+        // **Pinned first, under its heading** (D85) — the chats are already
+        // in that order (`sort_for_list`); the heading and the air after the
+        // group are only drawn when a chat is pinned.
+        let pinned = self
+            .chats
+            .iter()
+            .take_while(|chat| chat.pinned_at.is_some())
+            .count();
+        if pinned > 0 {
+            plan.push(Row::PinnedHeading);
+        }
         for (index, chat) in self.chats.iter().enumerate() {
+            if pinned > 0 && index == pinned {
+                plan.push(Row::GroupGap);
+            }
             plan.push(Row::Chat(index));
             if self.deleting.contains_key(&chat.id) {
                 plan.push(Row::Note(index));
@@ -154,47 +200,114 @@ impl ChatsSurface {
             .collect()
     }
 
-    /// Every rect inside a row, from the row's own rect alone.
+    /// Every rect inside a row: the full width inside the pad, the way a
+    /// Documents row is laid, with the private mark's slot taken only on a
+    /// private row.
     pub fn row_parts(&self, row: Row, r: Rect) -> RowParts {
         let inner_x = r.x + theme::NAV_PAD;
         let inner_w = (r.w - theme::NAV_PAD * 2.0).max(0.0);
-        let lead = Rect::new(inner_x, r.y, LEAD_W.min(inner_w), theme::NAV_ROW_H);
-        let text_x = inner_x + LEAD_W + 6.0;
-        let text_w = (inner_x + inner_w - text_x).max(0.0);
+        let private = match row {
+            Row::Chat(index) => self.chats.get(index).is_some_and(|chat| chat.private),
+            _ => false,
+        };
+        // The row's end, right to left: slot 1 at the edge, slot 2 before it
+        // (D86). The row under the pointer shows ⋯ in slot 1 — over the
+        // status mark — and the pin in slot 2; every other row shows only
+        // its mark, in slot 1 (D91: the buttons are the pointer's alone).
+        // A row being renamed keeps nothing at its end (D89): the field
+        // runs to the pad, and there is no button under it to press.
+        let (buttons, marked) = match row {
+            Row::Chat(index) => self
+                .chats
+                .get(index)
+                .filter(|chat| self.renaming != Some(chat.id))
+                .map_or((false, false), |chat| {
+                    (
+                        self.shows_row_buttons(row),
+                        self.status(chat.id) != crate::ChatStatus::Idle,
+                    )
+                }),
+            _ => (false, false),
+        };
+        let right = inner_x + inner_w;
+        let slot = |n: f32| {
+            let w = END_W.min(inner_w / n);
+            Rect::new(right - w * n, r.y, w, r.h)
+        };
+        let none = Rect::new(right, r.y, 0.0, r.h);
+        let (end, pin, more) = if buttons {
+            (none, slot(2.0), slot(1.0))
+        } else if marked {
+            (slot(1.0), none, none)
+        } else {
+            (none, none, none)
+        };
+        let taken = [end, pin, more]
+            .iter()
+            .filter(|part| part.w > 0.0)
+            .map(|part| part.x)
+            .fold(right, f32::min);
+        let lead_w = if private { LEAD_W.min(inner_w) } else { 0.0 };
+        let lead = Rect::new(inner_x, r.y, lead_w, r.h);
+        let text_x = if private {
+            inner_x + lead_w + LEAD_GAP
+        } else {
+            inner_x
+        };
+        let text_end = if taken < right {
+            taken - END_GAP
+        } else {
+            right
+        };
+        let text_w = (text_end - text_x).max(0.0);
+        RowParts {
+            lead,
+            title: Rect::new(text_x, r.y, text_w, r.h),
+            end,
+            pin,
+            more,
+        }
+    }
+
+    /// Whether a row shows its ⋯ and pin: **only under the pointer** (the
+    /// user, 2026-11-03, D91) — the pointer over the row or over the
+    /// buttons themselves, which are inside it. Not for the open or picked
+    /// row and not for the keyboard's: those reach the same actions through
+    /// the menu key, `F2` and Delete.
+    pub(crate) fn shows_row_buttons(&self, row: Row) -> bool {
+        matches!(row, Row::Chat(_)) && !self.is_renaming(row) && self.hover == Some(row)
+    }
+
+    /// Whether this is the row the host is renaming (D89).
+    pub(crate) fn is_renaming(&self, row: Row) -> bool {
         match row {
-            Row::Chat(_) => {
-                let title_h = theme::NAV_ROW_H - 2.0;
-                let title = Rect::new(text_x, r.y + 2.0, text_w, title_h);
-                let meta = Rect::new(
-                    text_x,
-                    title.y + title.h,
-                    text_w,
-                    (r.h - title_h - 4.0).max(0.0),
-                );
-                RowParts {
-                    lead: Rect::new(lead.x, title.y, lead.w, title.h),
-                    title,
-                    meta,
-                }
-            }
-            _ => RowParts {
-                lead: Rect::new(lead.x, r.y, lead.w, r.h),
-                title: Rect::new(text_x, r.y, text_w, r.h),
-                meta: Rect::new(text_x, r.y + r.h, text_w, 0.0),
-            },
+            Row::Chat(index) => self
+                .chats
+                .get(index)
+                .is_some_and(|chat| self.renaming == Some(chat.id)),
+            _ => false,
+        }
+    }
+
+    /// Which of a row's buttons is under a point, if one is shown there.
+    pub(crate) fn button_at(&self, row: Row, r: Rect, x: f32, y: f32) -> Option<RowButton> {
+        let parts = self.row_parts(row, r);
+        if parts.more.w > 0.0 && parts.more.contains(x, y) {
+            Some(RowButton::More)
+        } else if parts.pin.w > 0.0 && parts.pin.contains(x, y) {
+            Some(RowButton::Pin)
+        } else {
+            None
         }
     }
 
     /// The row the keyboard is on, if it is on one that exists.
     pub(crate) fn focus_row(&self) -> Option<Row> {
-        match self.focus? {
-            Focus::New => Some(Row::New),
-            Focus::Chat(id) => self
-                .chats
-                .iter()
-                .position(|chat| chat.id == id)
-                .map(Row::Chat),
-        }
+        let Focus::Chat(id) = self.focus?;
+        self.chats
+            .iter()
+            .position(|chat| chat.id == id)
+            .map(Row::Chat)
     }
 
     /// How tall the list is at this width, unscrolled.
@@ -246,11 +359,46 @@ impl ChatsSurface {
             .find(|(_, r)| y >= r.y && y < r.y + r.h)
     }
 
-    /// Where *New chat* sits, unculled — for the accessibility projection.
-    pub fn new_chat_rect(&self, area: Rect, top: f32) -> Option<Rect> {
-        self.layout(area, top)
+    /// **Where a host's rename field goes** (D89): the row's whole text
+    /// area — from where the title starts to the row's end pad, because
+    /// the row drops its status mark, pin and ⋯ while it is renamed — the
+    /// row's full height, and widened left by `text_inset`, the field's own
+    /// padding before its text, so the typed text starts exactly where the
+    /// title did — short of a private chat's mark, which stays beside the
+    /// field. A host centres its box in this, which keeps the baseline
+    /// on the row's middle, where the title's sat.
+    ///
+    /// The same answer whether or not [`set_renaming`](Self::set_renaming)
+    /// has been said yet, so the box a press is measured against and the
+    /// one drawn agree on the first frame. `None` when the list does not
+    /// hold the chat or its row is out of the band.
+    pub fn rename_rect(
+        &self,
+        area: Rect,
+        top: f32,
+        chat: crate::ChatId,
+        text_inset: f32,
+    ) -> Option<Rect> {
+        let index = self
+            .chats
+            .iter()
+            .position(|candidate| candidate.id == chat)?;
+        let band = self.band(area, top);
+        let (row, rect) = self
+            .layout(area, top)
             .into_iter()
-            .find_map(|(row, rect)| (row == Row::New).then_some(rect))
+            .find(|(row, _)| *row == Row::Chat(index))?;
+        if rect.y + rect.h <= band.y || rect.y >= band.y + band.h {
+            return None;
+        }
+        let parts = self.row_parts(row, rect);
+        let right = rect.x + theme::NAV_PAD + (rect.w - theme::NAV_PAD * 2.0).max(0.0);
+        // Never over a private chat's mark, which stays beside the field.
+        let mut x = parts.title.x - text_inset;
+        if parts.lead.w > 0.0 {
+            x = x.max(parts.lead.x + parts.lead.w);
+        }
+        Some(Rect::new(x, rect.y, (right - x).max(0.0), rect.h))
     }
 
     /// Every chat and where its row sits, unculled and in order — what a

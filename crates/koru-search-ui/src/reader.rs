@@ -46,6 +46,8 @@ pub(super) enum SearchReadKind {
         append: bool,
         include_ai: bool,
         cursor: Option<String>,
+        /// Only this profile's chats among the AI hits (AI schema 13).
+        profile: Option<koru_store_core::ids::ProfileId>,
     },
 }
 
@@ -182,6 +184,7 @@ impl SearchReader {
                             append,
                             include_ai,
                             cursor,
+                            profile,
                         } => {
                             let body = FederatedSearchRequest {
                                 query,
@@ -189,6 +192,7 @@ impl SearchReader {
                                 recent_queries: (!append).then_some(8),
                                 include_ai,
                                 cursor,
+                                profile,
                             };
                             SearchReadResult::FederatedPage {
                                 append,

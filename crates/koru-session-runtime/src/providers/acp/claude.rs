@@ -24,7 +24,7 @@ pub(super) fn validate_handshake(initialized: &Value) -> Result<(), ProviderFail
     if initialized
         .pointer("/agentInfo/version")
         .and_then(Value::as_str)
-        != Some("0.76.0")
+        != Some(koru_session_profiles::CLAUDE_ADAPTER_VERSION)
         || !initialized
             .pointer("/agentCapabilities/_meta/authStatus")
             .is_some_and(Value::is_object)
@@ -80,6 +80,61 @@ impl AcpControl {
             }
         }
     }
+}
+
+/// How the wrapper spells a model's 1M-context sibling: `opus[1m]` beside
+/// `opus`. The spelling stays in this module; above it a model carries its
+/// longer window as a context choice.
+const ONE_MILLION_SUFFIX: &str = "[1m]";
+const ONE_MILLION_TOKENS: u32 = 1_000_000;
+
+/// **One model with a context choice, not two models** (koru-ai D10). The
+/// wrapper lists a model and its 1M-context sibling side by side (`opus`,
+/// `opus[1m]`, the latter named *Opus (1M context)*). The sibling is folded
+/// into its base, in the same group, as that model's 1M context: the base
+/// keeps its own name and description and takes the earlier of the two
+/// places, and the levels of whichever the session described when the base
+/// has none. A sibling whose base is not listed stays a model of its own.
+pub(super) fn fold_context_siblings(
+    models: Vec<koru_session_protocol::ProviderModel>,
+) -> Vec<koru_session_protocol::ProviderModel> {
+    // Each sibling's base, by index: the model it names, in its group.
+    let bases: Vec<Option<usize>> = models
+        .iter()
+        .map(|model| {
+            let id = model.id.as_str();
+            let end = id.len().checked_sub(ONE_MILLION_SUFFIX.len())?;
+            let base = id
+                .get(end..)
+                .filter(|suffix| suffix.eq_ignore_ascii_case(ONE_MILLION_SUFFIX))
+                .and(id.get(..end))
+                .filter(|base| !base.is_empty())?;
+            models.iter().position(|candidate| {
+                candidate.id.as_str() == base && candidate.group == model.group
+            })
+        })
+        .collect();
+    let mut out: Vec<koru_session_protocol::ProviderModel> = Vec::with_capacity(models.len());
+    // Where each kept model went in `out`, by its index in `models`.
+    let mut placed = BTreeMap::new();
+    for (index, model) in models.iter().enumerate() {
+        let kept = bases[index].unwrap_or(index);
+        let position = *placed.entry(kept).or_insert_with(|| {
+            out.push(models[kept].clone());
+            out.len() - 1
+        });
+        if bases[index].is_some() {
+            let base = &mut out[position];
+            base.context = Some(koru_session_protocol::ModelContext {
+                id: model.id.clone(),
+                tokens: ONE_MILLION_TOKENS,
+            });
+            if base.reasoning.is_none() {
+                base.reasoning = model.reasoning.clone();
+            }
+        }
+    }
+    out
 }
 
 /// Extend, never replace, caller restrictions. Invalid metadata cannot discard

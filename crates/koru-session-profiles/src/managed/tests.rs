@@ -30,7 +30,8 @@ fn registry_keeps_codex_launch_and_raw_profiles_unchanged() {
             OPENCODE_REGISTRATION,
             KIMI_REGISTRATION,
             GROK_REGISTRATION,
-            ANTIGRAVITY_REGISTRATION
+            ANTIGRAVITY_REGISTRATION,
+            DEVIN_REGISTRATION
         ]
     );
     assert_eq!(CODEX_REGISTRATION.arguments, ["app-server", "--stdio"]);
@@ -49,16 +50,34 @@ fn registry_keeps_codex_launch_and_raw_profiles_unchanged() {
     }
 }
 
+/// The crate stays a leaf: the protocol everywhere, and on Windows only the
+/// registry binding the search path reads the current `Path` through.
 #[test]
 fn profiles_has_only_the_protocol_dependency() {
     let manifest = include_str!("../../Cargo.toml");
-    let dependencies = manifest.split_once("[dependencies]").unwrap().1;
-    let entries: Vec<_> = dependencies
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .collect();
-    assert_eq!(entries.len(), 1);
-    assert!(entries[0].starts_with("koru-session-protocol ="));
+    let table = |header: &str| -> Vec<&str> {
+        let Some((_, rest)) = manifest.split_once(header) else {
+            return Vec::new();
+        };
+        rest.lines()
+            .skip(1)
+            .take_while(|line| !line.starts_with('['))
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .filter(|line| line.contains('=') && !line.starts_with('"'))
+            .collect()
+    };
+    let everywhere = table("[dependencies]");
+    assert_eq!(everywhere.len(), 1, "{everywhere:?}");
+    assert!(everywhere[0].starts_with("koru-session-protocol ="));
+    let windows = table("[target.'cfg(windows)'.dependencies]");
+    assert_eq!(windows.len(), 1, "{windows:?}");
+    assert!(windows[0].starts_with("windows-sys ="));
+    assert_eq!(
+        manifest.matches("dependencies]").count(),
+        2,
+        "no other dependency table"
+    );
 }
 
 #[test]
@@ -108,6 +127,39 @@ fn antigravity_server_registration_does_not_replace_the_raw_agy_profile() {
     );
 }
 
+/// **A Devin tab stays the raw CLI**; a chat runs the same program as
+/// `devin acp`, and an ordinary launch never prefers it.
+#[test]
+fn devin_registration_runs_the_raw_programs_acp_subcommand() {
+    assert_eq!(DEVIN_REGISTRATION.kind, "devin");
+    assert_eq!(DEVIN_REGISTRATION.executable, "devin");
+    assert_eq!(DEVIN_REGISTRATION.arguments, ["acp"]);
+    assert_eq!(DEVIN_REGISTRATION.launch_policy, ManagedLaunchPolicy::Raw);
+    let raw = crate::built_in_profiles()
+        .into_iter()
+        .find(|p| {
+            p.provider
+                .as_ref()
+                .is_some_and(|kind| kind.as_str() == "devin")
+        })
+        .unwrap();
+    assert_eq!(raw.label, crate::ProfileLabel::Devin);
+    assert_eq!(raw.argv, vec!["devin".to_owned()]);
+    assert_eq!(
+        crate::resume_arguments(raw.label),
+        Some(&["--continue"][..])
+    );
+    assert_eq!(
+        managed_launch_mode(
+            &raw,
+            LaunchIntent::Ordinary,
+            MANAGED_PROVIDER_REGISTRATIONS,
+            None
+        ),
+        Ok(SessionMode::RawPty)
+    );
+}
+
 fn fixture_profile() -> crate::LaunchProfile {
     let mut profile = crate::built_in_profiles()
         .into_iter()
@@ -124,6 +176,9 @@ fn fixture_registration() -> ManagedProviderRegistration {
         arguments: &[],
         launch_policy: ManagedLaunchPolicy::Raw,
         minimum_host_capability: capability::MANAGED_SESSIONS,
+        update_command: None,
+        sign_in_command: None,
+        desktop_app: None,
     }
 }
 
@@ -195,9 +250,7 @@ fn raw_only_profiles_never_become_managed_and_unavailable_host_answers_refuse_ex
         ExecutableAvailability::Failed {
             code: ErrorCode::ProviderFailed,
         },
-        ExecutableAvailability::Incompatible {
-            code: ErrorCode::ProviderIncompatible,
-        },
+        ExecutableAvailability::incompatible(ErrorCode::ProviderIncompatible),
     ] {
         let row = ProviderReadiness {
             availability,

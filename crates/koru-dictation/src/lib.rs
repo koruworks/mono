@@ -425,6 +425,10 @@ pub struct Dictation {
     /// process without the host putting it there. The host sets it at startup
     /// and again whenever the consent step answers.
     consent: Option<koru_voice_consent::Granted>,
+    /// **The level meter**: the microphone it is open on, while it is. What
+    /// a picker shows so somebody can see that the device hears them; it
+    /// recognises nothing — see [`Dictation::meter`].
+    metering: Option<InputChoice>,
 }
 
 impl Dictation {
@@ -461,6 +465,7 @@ impl Dictation {
             // so forgetting to wire the record up is a feature that does not
             // work rather than a gate that is not there.
             consent: None,
+            metering: None,
         }
     }
 
@@ -558,6 +563,10 @@ impl Dictation {
             Stage::Live | Stage::Finalising => return None,
             Stage::Idle => {}
         }
+        // **A dictation wins the microphone.** The meter's stop leaves on the
+        // client's one queue ahead of the `Begin`, so the worker closes the
+        // meter before it opens the device for the dictation.
+        self.close_meter();
         // **The microphone half of the consent gate**, and the enforcement
         // rather than the offer: a host that meets this refusal opens the
         // consent step, and a host that has none — a bench, a phone, a future
@@ -780,6 +789,61 @@ impl Dictation {
         self.stats
     }
 
+    // -------------------------------------------------------- the level meter
+
+    /// **Keep a level meter open on `input`, or on nothing.**
+    ///
+    /// A host calls this with what its surfaces want — a microphone picker
+    /// that is open — on every pass of its loop, and the controller dials
+    /// only when that changes: opening, moving to another device, closing.
+    /// Every dial is enqueued on the client's transport worker, so nothing
+    /// here blocks. Answers whether the meter changed.
+    ///
+    /// **The meter recognises nothing and loads no model**, so it works
+    /// before anything is downloaded. It still opens a microphone, so it
+    /// keeps the two rules every microphone here keeps, and both refuse in
+    /// silence — the bar simply stays empty:
+    ///
+    /// - **consent**: opening a microphone is half of what the record is
+    ///   for, so a controller nobody has agreed with opens no meter either;
+    /// - **a dictation wins**: none opens while one runs, and
+    ///   [`press`](Self::press) closes a running meter before it begins.
+    pub fn meter(&mut self, input: Option<InputChoice>) -> bool {
+        let wanted = input.filter(|_| self.stage == Stage::Idle && self.consent.is_some());
+        if wanted == self.metering {
+            return false;
+        }
+        match &wanted {
+            Some(input) => self.dial_meter(input.clone()),
+            None => self.dial_meter_stop(),
+        }
+        self.metering = wanted;
+        true
+    }
+
+    /// The microphone the meter is open on, while it is.
+    pub fn metering(&self) -> Option<&InputChoice> {
+        self.metering.as_ref()
+    }
+
+    /// **The meter's latest level**, while one is open: silent until the
+    /// worker says otherwise, and silent for good when the worker is too old
+    /// to have a meter. `None` when no meter is open.
+    pub fn meter_level(&self) -> Option<LevelBucket> {
+        self.metering.as_ref()?;
+        if ENGINE_OFF {
+            return Some(LevelBucket::SILENT);
+        }
+        Some(self.client.meter_level().unwrap_or(LevelBucket::SILENT))
+    }
+
+    /// Close the meter, if one is open.
+    fn close_meter(&mut self) {
+        if self.metering.take().is_some() {
+            self.dial_meter_stop();
+        }
+    }
+
     // -------------------------------------------------------------- internals
 
     /// Stop capturing and wait for the matching `Final`.
@@ -960,7 +1024,8 @@ impl Dictation {
 
     // ---------------------------------------------------- the one transport
 
-    /// **The three places this crate touches a worker, and the only three.**
+    /// **The places this crate touches a worker, and the only ones**: these
+    /// three for a dictation, and the meter's two below.
     ///
     /// Each begins with the same guard, so a reviewer can see at a glance that
     /// a test cannot dial anything. Under [`ENGINE_OFF`] `open_session` still
@@ -995,6 +1060,22 @@ impl Dictation {
             return;
         }
         let _ = self.client.cancel();
+    }
+
+    /// The meter's two dials: as guarded as the three above, so a suite
+    /// opens no microphone.
+    fn dial_meter(&self, input: InputChoice) {
+        if ENGINE_OFF {
+            return;
+        }
+        let _ = self.client.meter(input);
+    }
+
+    fn dial_meter_stop(&self) {
+        if ENGINE_OFF {
+            return;
+        }
+        let _ = self.client.stop_meter();
     }
 
     fn drain_client(&self) -> Vec<Event> {

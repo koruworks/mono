@@ -86,6 +86,8 @@ fn every_discovery_state_preserves_independent_raw_presence() {
             )),
             ManagedAvailability::Incompatible {
                 code: ErrorCode::ProviderIncompatible,
+                found: None,
+                needed: None,
             },
         ),
         (
@@ -247,4 +249,83 @@ fn probe_terminates_descendants_holding_output_pipes_on_exit_and_timeout() {
             );
         }
     }
+}
+
+/// **A `--version` run that fails or prints nothing is the program not
+/// starting**, never a refused version: Kimi's CLI under a too-old Node.js
+/// exits 1 with nothing on stdout, and readiness must call that *Failed*.
+/// A print that is there is the route's to read.
+#[test]
+fn a_version_command_that_fails_or_prints_nothing_did_not_start() {
+    for (success, stdout) in [
+        (false, &b""[..]),
+        (false, b"1.0.0\n"),
+        (true, b""),
+        (true, b" \r\n"),
+    ] {
+        let failure = version_print(success, stdout).unwrap_err();
+        assert_eq!(failure.code, ErrorCode::ProviderFailed);
+        assert_eq!(failure.stage, ProviderStage::Version);
+        assert_eq!(failure.diagnostic, ProviderDiagnostic::UnexpectedExit);
+        assert_eq!(
+            classify_failure(failure),
+            ManagedAvailability::Failed {
+                code: ErrorCode::ProviderFailed,
+                stage: ProviderStage::Version,
+                diagnostic: ProviderDiagnostic::UnexpectedExit,
+            }
+        );
+    }
+    assert_eq!(
+        version_print(true, b"1.18.25\n").unwrap(),
+        Some("1.18.25\n")
+    );
+    assert_eq!(version_print(true, &[0xff, 0xfe]).unwrap(), None);
+}
+
+/// **A refused version reaches the wire with both facts**: discovery keeps
+/// what the version gate found and needed, and readiness serializes them.
+#[test]
+fn a_refused_version_carries_found_and_needed_to_readiness() {
+    use koru_session_protocol::{ExecutableAvailability, VersionNeed};
+    use std::str::FromStr;
+    let refusal = ProviderFailure::new(
+        ErrorCode::ProviderIncompatible,
+        ProviderStage::Version,
+        ProviderDiagnostic::VersionRejected,
+    )
+    .refusing(
+        Some(ProviderVersion::from_str("1.18.25").unwrap()),
+        Some(VersionNeed::AtLeast("1.18.27".into())),
+    );
+    let discovered = discover(true, Err(refusal));
+    assert_eq!(
+        discovered.managed,
+        ManagedAvailability::Incompatible {
+            code: ErrorCode::ProviderIncompatible,
+            found: Some(ProviderVersion::from_str("1.18.25").unwrap()),
+            needed: Some(VersionNeed::AtLeast("1.18.27".into())),
+        }
+    );
+    let row = discovered.managed.readiness("opencode".parse().unwrap());
+    assert_eq!(
+        row.availability,
+        ExecutableAvailability::Incompatible {
+            code: ErrorCode::ProviderIncompatible,
+            found: Some("1.18.25".into()),
+            needed: Some(VersionNeed::AtLeast("1.18.27".into())),
+        }
+    );
+    assert_eq!(row.failure, None);
+    // The refused version stays out of a failure's `Debug`, as it was.
+    let logged = format!(
+        "{:?}",
+        ProviderFailure::new(
+            ErrorCode::ProviderIncompatible,
+            ProviderStage::Version,
+            ProviderDiagnostic::VersionRejected,
+        )
+        .refusing(Some(ProviderVersion::from_str("1.18.25").unwrap()), None)
+    );
+    assert!(!logged.contains("1.18.25"), "{logged}");
 }

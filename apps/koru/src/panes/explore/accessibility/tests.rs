@@ -26,6 +26,7 @@ fn cx(lang: Lang) -> Context {
         window: WINDOW,
         view: VIEW,
         area: Rect::new(0.0, 0.0, 260.0, 700.0),
+        rail: ExploreView::new().rail_of(Rect::new(0.0, 0.0, 260.0, 700.0)),
         viewport: (1200.0, 700.0),
         lang,
     }
@@ -236,7 +237,7 @@ fn the_projection_buttons_are_named_and_one_is_selected() {
         .iter()
         .filter(|node| node.role == Role::Tab)
         .collect();
-    assert_eq!(modes.len(), NavigatorMode::ALL.len());
+    assert_eq!(modes.len(), NavigatorMode::visible().len());
     assert_eq!(
         modes
             .iter()
@@ -247,7 +248,7 @@ fn the_projection_buttons_are_named_and_one_is_selected() {
     );
     // The identity is the stored token, which is neither translated nor a
     // position.
-    for mode in NavigatorMode::ALL {
+    for mode in NavigatorMode::visible() {
         assert!(
             published
                 .iter()
@@ -255,12 +256,51 @@ fn the_projection_buttons_are_named_and_one_is_selected() {
             "no button for {mode:?}"
         );
     }
+    // Home is hidden for now (`koru_features::HOME_SHOWN`): no button.
+    assert!(
+        !published
+            .iter()
+            .any(|node| node.occurrence.part.name() == NavigatorMode::Home.token()),
+        "a hidden mode is not announced"
+    );
+}
+
+/// **The projection buttons are published in the rail's order**, the one the
+/// person dragged: what a screen reader walks is what the eye sees, top to
+/// bottom, each saying its place.
+#[test]
+fn the_projection_buttons_follow_the_order_the_rail_is_in() {
+    let (mut view, _) = pane(&["Brief"]);
+    view.restore_rail_order("chats,files,documents");
+    let published = nodes(&view, &cx(Lang::En));
+    let tabs: Vec<&SemanticNode> = published
+        .iter()
+        .filter(|node| node.role == Role::Tab)
+        .collect();
+    let tokens: Vec<String> = tabs
+        .iter()
+        .map(|node| node.occurrence.part.name().to_string())
+        .collect();
+    let want: Vec<String> = view
+        .rail_modes()
+        .iter()
+        .map(|mode| mode.token().to_string())
+        .collect();
+    assert_eq!(tokens, want);
+    assert_eq!(&tokens[..3], &["chats", "files", "documents"]);
+    for (i, node) in tabs.iter().enumerate() {
+        assert_eq!(node.position, Some(i), "{} says the wrong place", tokens[i]);
+    }
 }
 
 #[test]
 fn narrow_heading_publishes_only_controls_with_pointer_geometry() {
     let (view, _) = pane(&["Brief"]);
-    for width in [180., 232., 280.] {
+    // The modes left the heading band for the apps row and Search left it
+    // for the lane, so at every width the column can take the band is the
+    // app's name and the `…`, each with its room (the review's note: the band
+    // names the app).
+    for width in [256., 300., 400.] {
         let mut context = cx(Lang::En);
         context.area.w = width;
         let heading = view.heading_semantics(&context);
@@ -269,13 +309,15 @@ fn narrow_heading_publishes_only_controls_with_pointer_geometry() {
                 .iter()
                 .all(|node| node.bounds.is_some_and(|r| r.w > 0. && r.h > 0.))
         );
-        assert_eq!(heading.len(), if width >= 232. { 2 } else { 0 });
+        assert_eq!(heading.len(), 2);
+        assert_eq!(heading[0].role, accesskit::Role::Heading);
+        assert_eq!(heading[0].label.as_deref(), Some("Documents"));
     }
-    // Sized from the shown modes (QUESTIONS #5): with only Documents and
-    // Files, the narrowest column still has room for both lanes.
+    // With only Documents and Files shown the answer is the same: the name
+    // and the `…`, with their room.
     koru_features::testing::with(koru_features::Features::ALL_OFF, || {
         let (view, _) = pane(&["Brief"]);
-        for width in [180., 232., 280.] {
+        for width in [256., 300., 400.] {
             let mut context = cx(Lang::En);
             context.area.w = width;
             let heading = view.heading_semantics(&context);

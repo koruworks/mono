@@ -2,16 +2,16 @@
 
 //! **The dependency list is the point.**
 //!
-//! One component, two hosts: the workspace window's navigator and the
-//! standalone chat window. It may name neither — `koru-ai-ui` hosts it in the
-//! standalone window, so depending on it would be a cycle, and a workspace
-//! crate would make it un-hostable in a window that has no workspace.
+//! One component, shown by the workspace window's navigator. It may name
+//! neither host nor chat — `koru-ai-ui` depends on it for the list's
+//! vocabulary, so depending back would be a cycle, and a workspace crate would
+//! tie a list of chats to a workspace document it has no use for.
 
 use std::collections::BTreeSet;
 
 /// Crates this surface must never link, and why.
 const FORBIDDEN: &[&str] = &[
-    // The chat surface that hosts this one in the standalone window.
+    // The chat surface, which depends on this one.
     "koru-ai-ui",
     // The workspace document and the shell that owns one.
     "koru-core",

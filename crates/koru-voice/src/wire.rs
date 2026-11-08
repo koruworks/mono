@@ -8,9 +8,10 @@
 //! worker -> WorkerGreeting::Welcome { worker_version, protocol_version }
 //!         | WorkerGreeting::Refused { what, ours, theirs, message } -> client closes
 //! ...then, until the socket closes:
-//! client -> Request::Begin | Finish | Cancel | Devices
+//! client -> Request::Begin | Finish | Cancel | Devices | Meter | MeterStop
 //! worker -> Event::State | Partial | Final | Language | Level | Ended | Refused
 //!         | Event::Devices                       <- the answer to Devices
+//!         | Event::Level                         <- while a Meter runs
 //! ```
 //!
 //! ## A message is a value before it is bytes
@@ -75,7 +76,13 @@ use serde::{Deserialize, Serialize};
 /// turn into a sentence.
 ///
 /// **3 carries the person's quality tier on every `Begin`.**
-pub const PROTOCOL_VERSION: u32 = 3;
+///
+/// **4 adds a level meter that recognises nothing.** `Request::Meter` /
+/// `Request::MeterStop`, answered by `Event::Level` under the meter's own
+/// correlation pair. New variants again, so a version-3 worker would close
+/// the connection on the first one rather than answer; the handshake turns
+/// that into a refusal, and a client then simply has no meter.
+pub const PROTOCOL_VERSION: u32 = 4;
 
 /// The frame version this stream stamps, handed to `koru_ipc::frame`.
 ///
@@ -202,6 +209,33 @@ pub enum Request {
     /// client mints them the same way it mints a dictation's and never arms a
     /// session on them — see `koru-voice-client`'s `devices`.
     Devices { session: SessionId, generation: u64 },
+    /// **Open this microphone for a level meter, and nothing else.** Answered
+    /// with [`Event::Level`] under this request's own `session` and
+    /// `generation` for as long as the meter runs: no model is resolved or
+    /// loaded, no engine is touched, no session is armed and no audio is kept
+    /// — the samples are reduced to a [`LevelBucket`] and dropped. So it works
+    /// on an installation with no model at all.
+    ///
+    /// **One meter per worker, and a dictation wins.** A second `Meter`, from
+    /// this client or another, replaces the first, which is how a picker
+    /// switches devices. A `Meter` while a dictation runs is refused with
+    /// [`ErrorCode::Busy`], and a `Begin` the worker accepts stops the meter
+    /// before it opens the device. A device that will not open is
+    /// [`Event::Refused`] with the capture's own code.
+    ///
+    /// Like [`Request::Devices`], `session` and `generation` are a correlation
+    /// id, never a dictation.
+    Meter {
+        session: SessionId,
+        generation: u64,
+        /// Which microphone, resolved exactly as a dictation's is.
+        #[serde(default)]
+        input: InputChoice,
+    },
+    /// Close the meter this `session` opened. Stopping a meter that has
+    /// already stopped — replaced, pre-empted by a dictation, or never
+    /// opened — answers nothing and changes nothing.
+    MeterStop { session: SessionId, generation: u64 },
 }
 
 /// What the worker says back.
@@ -244,7 +278,9 @@ pub enum Event {
         generation: u64,
         language: VoiceLanguage,
     },
-    /// A coarse input level, for a meter. Sent only while listening.
+    /// A coarse input level, for a meter. Sent while a dictation is
+    /// listening, and while a [`Request::Meter`] runs — then under the
+    /// meter's own correlation pair, and only when the bucket moves.
     Level {
         session: SessionId,
         generation: u64,

@@ -402,6 +402,44 @@ impl LinkDevice {
         }
     }
 
+    /// What the panel is showing, for the inspector.
+    fn showing(&self) -> &'static str {
+        if self.identity_problem.is_some() {
+            "identity problem"
+        } else if self.linked {
+            "device linked"
+        } else {
+            match self.tab {
+                Tab::New => "new device",
+                Tab::Enter => "enter link code",
+            }
+        }
+    }
+
+    /// The band between the tabs (or the header) and the action buttons.
+    fn body_rect(panel: Rect, top: f32) -> Rect {
+        let bottom = Self::action_rect(panel, true).y;
+        Rect::new(panel.x, top, panel.w, (bottom - top).max(0.0))
+    }
+
+    /// The row the action buttons sit on.
+    fn actions_rect(panel: Rect) -> Rect {
+        let row = Self::action_rect(panel, true);
+        Rect::new(panel.x, row.y, panel.w, row.h)
+    }
+
+    /// Open a named part of the panel over `rect`.
+    #[track_caller]
+    fn part(name: &'static str, root: Affine, rect: Rect) -> koru_draw::inspect::Scope {
+        koru_draw::inspect::scope(
+            name,
+            "part",
+            root,
+            scene::rect(rect.x, rect.y, rect.w, rect.h),
+            |_| {},
+        )
+    }
+
     pub(super) fn draw(
         &mut self,
         canvas: &mut Scene,
@@ -410,13 +448,48 @@ impl LinkDevice {
         viewport: (f32, f32),
     ) {
         let p = theme::p();
-        scene::fill(
-            canvas,
-            root,
-            p.scrim,
-            &scene::rect(0.0, 0.0, viewport.0, viewport.1),
-        );
+        {
+            let _scrim = koru_draw::inspect::scope(
+                "Scrim",
+                "part",
+                root,
+                scene::rect(0.0, 0.0, viewport.0, viewport.1),
+                |r| {
+                    r.property(
+                        "color",
+                        koru_draw::inspect::color(p.scrim),
+                        "theme::p().scrim",
+                    )
+                },
+            );
+            scene::fill(
+                canvas,
+                root,
+                p.scrim,
+                &scene::rect(0.0, 0.0, viewport.0, viewport.1),
+            );
+        }
         let panel = Self::panel(viewport);
+        // **The panel is one component** in the inspector, every primitive it
+        // paints inside it — the panel's body, the header, the tabs, the QR
+        // code, the buttons — so a review sees `QRFloatingPanel` and its parts
+        // rather than a `FloatingPanel` with loose text and fills beside it.
+        let _component = koru_draw::inspect::scope(
+            "QRFloatingPanel",
+            "component",
+            root,
+            scene::rect(panel.x, panel.y, panel.w, panel.h),
+            |r| {
+                r.property(
+                    "implementation",
+                    "apps/koru mainview::link_device::LinkDevice",
+                    "Link another device",
+                );
+                r.property("showing", self.showing(), "view state");
+                r.property("radius", 10.0, "scene::Panel::popover");
+                r.property("pad", PAD, "link_device::PAD");
+            },
+        );
         scene::floating_panel(
             canvas,
             root,
@@ -426,46 +499,67 @@ impl LinkDevice {
             panel.h,
             &scene::Panel::popover(10.0),
         );
-        draw_text(
-            canvas,
-            root,
-            engine,
-            "Link another device",
-            panel.x + PAD,
-            panel.y + 22.0,
-            theme::role::row().with_weight(theme::FontWeight::SemiBold),
-            p.text,
-        );
-        draw_text(
-            canvas,
-            root,
-            engine,
-            "Link another computer or phone to keep a complete, synchronized copy of your Koru data.",
-            panel.x + PAD,
-            panel.y + 48.0,
-            theme::role::meta(),
-            p.text_dim,
-        );
+        {
+            let _header = Self::part(
+                "QRPanelHeader",
+                root,
+                Rect::new(panel.x, panel.y, panel.w, 70.0),
+            );
+            draw_text(
+                canvas,
+                root,
+                engine,
+                "Link another device",
+                panel.x + PAD,
+                panel.y + 22.0,
+                theme::role::row().with_weight(theme::FontWeight::SemiBold),
+                p.text,
+            );
+            draw_text(
+                canvas,
+                root,
+                engine,
+                "Link another computer or phone to keep a complete, synchronized copy of your Koru data.",
+                panel.x + PAD,
+                panel.y + 48.0,
+                theme::role::meta(),
+                p.text_dim,
+            );
+        }
 
         if self.identity_problem.is_some() {
             self.draw_identity_problem(canvas, root, engine, panel);
         } else if self.linked {
             self.draw_linked(canvas, root, engine, panel);
         } else {
-            for (tab, rect) in Self::tabs(panel) {
-                if self.tab == tab {
-                    scene::fill(
-                        canvas,
-                        root,
-                        p.row_selected,
-                        &scene::rrect(rect.x + 2.0, rect.y + 2.0, rect.w - 4.0, rect.h - 4.0, 6.0),
-                    );
+            {
+                let [(_, first), (_, last)] = Self::tabs(panel);
+                let _tabs = Self::part(
+                    "QRPanelTabs",
+                    root,
+                    Rect::new(first.x, first.y, last.x + last.w - first.x, first.h),
+                );
+                for (tab, rect) in Self::tabs(panel) {
+                    if self.tab == tab {
+                        scene::fill(
+                            canvas,
+                            root,
+                            p.row_selected,
+                            &scene::rrect(
+                                rect.x + 2.0,
+                                rect.y + 2.0,
+                                rect.w - 4.0,
+                                rect.h - 4.0,
+                                6.0,
+                            ),
+                        );
+                    }
+                    let label = match tab {
+                        Tab::New => "New device",
+                        Tab::Enter => "Enter link code",
+                    };
+                    draw_centered(canvas, root, engine, label, rect, p.text);
                 }
-                let label = match tab {
-                    Tab::New => "New device",
-                    Tab::Enter => "Enter link code",
-                };
-                draw_centered(canvas, root, engine, label, rect, p.text);
             }
             match self.tab {
                 Tab::New => self.draw_new(canvas, root, engine, panel),
@@ -473,6 +567,11 @@ impl LinkDevice {
             }
         }
 
+        let _footer = Self::part(
+            "QRPanelFooter",
+            root,
+            Rect::new(panel.x, panel.y + panel.h - 76.0, panel.w, 76.0),
+        );
         draw_text(
             canvas,
             root,
@@ -514,6 +613,7 @@ impl LinkDevice {
         let p = theme::p();
         let lang = crate::format::lang();
         let width = panel.w - PAD * 2.0;
+        let part = Self::part("QRPanelBody", root, Self::body_rect(panel, panel.y + 70.0));
         let (title, body) = if self.start_over == StartOver::Confirming {
             (
                 koru_i18n::t(lang, Key::LinkStartOverAsNewDevice),
@@ -556,6 +656,8 @@ impl LinkDevice {
                 Some(p.close_hover),
             );
         }
+        drop(part);
+        let _actions = Self::part("QRPanelActions", root, Self::actions_rect(panel));
         match self.start_over {
             StartOver::Confirming => {
                 koru_ui::draw_button(
@@ -599,6 +701,7 @@ impl LinkDevice {
     /// the person to the page that lists it.
     fn draw_linked(&self, canvas: &mut Scene, root: Affine, engine: &mut TextEngine, panel: Rect) {
         let p = theme::p();
+        let _body = Self::part("QRPanelBody", root, Self::body_rect(panel, panel.y + 70.0));
         draw_text(
             canvas,
             root,
@@ -628,6 +731,11 @@ impl LinkDevice {
 
     fn draw_new(&self, canvas: &mut Scene, root: Affine, engine: &mut TextEngine, panel: Rect) {
         let p = theme::p();
+        let body = Self::part(
+            "QRPanelBody",
+            root,
+            Self::body_rect(panel, panel.y + 70.0 + TAB_H),
+        );
         draw_text(
             canvas,
             root,
@@ -644,6 +752,16 @@ impl LinkDevice {
                 panel.y + 156.0,
                 QR_SIZE,
                 QR_SIZE,
+            );
+            let _code = koru_draw::inspect::scope(
+                "QRCode",
+                "part",
+                root,
+                scene::rect(area.x, area.y, area.w, area.h),
+                |r| {
+                    r.property("modules", *width, "qrcode::QrCode::width");
+                    r.property("quiet zone", QR_QUIET_MODULES, "modules each side");
+                },
             );
             scene::fill(
                 canvas,
@@ -694,6 +812,8 @@ impl LinkDevice {
             theme::role::hint(),
             p.text_dim,
         );
+        drop(body);
+        let _actions = Self::part("QRPanelActions", root, Self::actions_rect(panel));
         let copy = Self::action_rect(panel, true);
         let generate = Self::action_rect(panel, false);
         koru_ui::draw_button(
@@ -726,6 +846,11 @@ impl LinkDevice {
         panel: Rect,
     ) {
         let p = theme::p();
+        let body = Self::part(
+            "QRPanelBody",
+            root,
+            Self::body_rect(panel, panel.y + 70.0 + TAB_H),
+        );
         draw_text(
             canvas,
             root,
@@ -774,6 +899,8 @@ impl LinkDevice {
                 );
             }
         }
+        drop(body);
+        let _actions = Self::part("QRPanelActions", root, Self::actions_rect(panel));
         let accept = Self::action_rect(panel, false);
         koru_ui::draw_button(
             canvas,

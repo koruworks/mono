@@ -20,14 +20,13 @@
 //! none of the new keys still opens. The worst case is one clean first run,
 //! never a failure to start.
 
+use koru_settings::FontSetting;
 use std::fs;
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 
 use koru_core::{DocumentId, NodeId, WorkspaceId};
-use koru_draw::theme::{
-    CaretColor, CaretHeight, CaretWidth, Density, FontChoice, ThemePreference, ViewMode,
-};
+use koru_draw::theme::{CaretColor, CaretHeight, CaretWidth, Density, ThemePreference, ViewMode};
 use koru_session_protocol::{
     BuiltInProfileKey, ProjectId, SessionId, SessionProfileId, SessionProfileKey,
 };
@@ -112,6 +111,9 @@ pub enum TabRef {
     /// tab is "what this build changed", and after an update this build is a
     /// different one.
     WhatsNew,
+    /// The Sync settings page. Spelled `sync-settings`; an **older reader**
+    /// knows no such word and drops the entry, keeping every other tab.
+    SyncSettings,
     /// A running shell or agent session, hosted as an ordinary tab
     /// (TERMINATAB W4).
     ///
@@ -140,6 +142,16 @@ pub enum TabRef {
         profile: SessionProfileKey,
         recovery: Option<SessionRecovery>,
     },
+    /// An AI chat tab, by the chat it is over (ADR-483-chattabrestore).
+    ///
+    /// The id is the AI service's `ChatId`, held as its uuid because this
+    /// crate does not depend on the AI crates. Only a chat the service holds
+    /// is ever written — a new chat not sent yet has nothing to reopen.
+    ///
+    /// Written as `chat:<uuid>`. An **older reader** matches none of its
+    /// words, prefixes or a bare node id (`chat:<uuid>` is not a uuid), so it
+    /// drops this one entry and keeps every other tab.
+    Chat(uuid::Uuid),
 }
 
 /// One agent's terminal look: each half is `None` when that half follows the
@@ -349,6 +361,7 @@ impl TabRef {
             Self::Trash => "trash".to_string(),
             Self::Tasks(target) => target.to_storage(),
             Self::WhatsNew => "whatsnew".to_string(),
+            Self::SyncSettings => "sync-settings".to_string(),
             Self::Draft => "draft".to_string(),
             Self::Node(id) => id.to_storage(),
             Self::Document {
@@ -383,6 +396,8 @@ impl TabRef {
                     }
                 }
             }
+            // Hyphenated, so its last segment can never read as the scroll.
+            Self::Chat(chat) => format!("chat:{}", chat.hyphenated()),
         }
     }
 
@@ -394,10 +409,14 @@ impl TabRef {
             "manage" => Some(Self::Manage),
             "trash" => Some(Self::Trash),
             "whatsnew" => Some(Self::WhatsNew),
+            "sync-settings" => Some(Self::SyncSettings),
             "draft" => Some(Self::Draft),
             other if other.starts_with("tasks:") => {
                 TasksTabRef::parse(&other["tasks:".len()..]).map(Self::Tasks)
             }
+            other if other.starts_with("chat:") => uuid::Uuid::try_parse(&other["chat:".len()..])
+                .ok()
+                .map(Self::Chat),
             other => match other.strip_prefix("session:") {
                 Some(rest) => Self::parse_session(rest),
                 None => match other.strip_prefix("doc:") {
@@ -452,20 +471,68 @@ impl TabRef {
     }
 }
 
-/// A pinned document tab, window-scoped and independent of the current workspace.
-#[derive(Copy, Clone, Debug, PartialEq)]
+/// A pinned tab, window-scoped and independent of the current workspace.
+///
+/// **Any tab a main tab can be saved as**, by the same [`TabRef`]: a pin is
+/// a place in the strip, not a kind of tab, so it carries no second
+/// vocabulary for what it is over. It was a document or a chat until every
+/// tab became pinnable; a pinned task list is `tasks:list:<uuid>` here
+/// exactly as it is in `tabs`.
+///
+/// Written `<tab>@<workspace>:<scroll>:<title|icon>`. A document is written
+/// `doc:<id>` with its home left to `@<workspace>`, which keeps a document
+/// pin byte-for-byte what every older build wrote and reads. **An older
+/// reader** requires `doc:` (or, since ADR-483, `chat:`) before the `@`, so
+/// it drops a pin of any other kind and keeps every other pin.
+#[derive(Clone, Debug, PartialEq)]
 pub struct PinnedTabRef {
-    pub document: DocumentId,
+    pub target: TabRef,
+    /// The workspace it was pinned in, and a document's home.
     pub workspace: WorkspaceId,
     pub scroll: f32,
     pub show_title: bool,
 }
 
 impl PinnedTabRef {
-    fn to_storage(self) -> String {
+    /// A pinned document tab.
+    pub fn document_pin(
+        document: DocumentId,
+        workspace: WorkspaceId,
+        scroll: f32,
+        show_title: bool,
+    ) -> Self {
+        Self {
+            target: TabRef::document(document, None),
+            workspace,
+            scroll,
+            show_title,
+        }
+    }
+
+    /// The document this pin is over; `None` for any other tab.
+    pub fn document(&self) -> Option<DocumentId> {
+        self.target.document_id()
+    }
+
+    /// What the pin reopens: its tab, with a document's home filled in from
+    /// the pin's workspace — the one place a pin keeps it.
+    pub fn tab(&self) -> TabRef {
+        match &self.target {
+            TabRef::Document { id, .. } => TabRef::document(*id, Some(self.workspace)),
+            other => other.clone(),
+        }
+    }
+
+    fn to_storage(&self) -> String {
+        // The home rides on `@<workspace>`; written twice it would be an
+        // `@` an older reader reads as part of the workspace, and the pin
+        // that build could read would be lost to it.
+        let target = match &self.target {
+            TabRef::Document { id, .. } => TabRef::document(*id, None).to_storage(),
+            other => other.to_storage(),
+        };
         format!(
-            "doc:{}@{}:{:.0}:{}",
-            self.document.to_storage(),
+            "{target}@{}:{:.0}:{}",
             self.workspace.to_storage(),
             self.scroll,
             if self.show_title { "title" } else { "icon" }
@@ -485,11 +552,16 @@ impl PinnedTabRef {
             },
             None => (rest, 0.0),
         };
-        let (doc, workspace) = rest.split_once('@')?;
-        let document = doc.strip_prefix("doc:").and_then(DocumentId::parse)?;
+        // The **last** `@`: a session's token holds one of its own
+        // (`session:<id>@<profile>`), and a workspace id never does.
+        let (target, workspace) = rest.rsplit_once('@')?;
+        let target = match TabRef::parse(target)? {
+            TabRef::Document { id, .. } => TabRef::document(id, None),
+            other => other,
+        };
         let workspace = WorkspaceId::parse(workspace)?;
         Some(Self {
-            document,
+            target,
             workspace,
             scroll,
             show_title: title,
@@ -856,19 +928,35 @@ pub struct Settings {
     pub theme: ThemePreference,
     /// Editor caret colour (named swatch). Chrome only — not stored in documents.
     pub caret_color: CaretColor,
+    /// The chosen icon pack, or `None` to follow the build's default.
+    pub icon_pack: Option<koru_draw::icons::IconPack>,
     /// Editor caret stroke width (Thin…8×). Chrome only — not stored in documents.
     pub caret_width: CaretWidth,
     /// Editor caret height (Short / Medium / Tall). Chrome only.
     pub caret_height: CaretHeight,
-    /// The typeface the **chrome** is set in — tabs, the tree, pills, panels,
-    /// the status bar. Not what a document row is set in; that is the row's own.
-    pub font: FontChoice,
+    /// What the **chrome**'s typeface is set to — tabs, the tree, pills,
+    /// panels, the status bar. A setting rather than a face: a role that
+    /// follows the default, or names an installed family missing on this
+    /// computer, saves as what it is and draws its default (`theme::resolve_font`).
+    pub font: FontSetting,
     /// The typeface a document's **prose** rows are set in.
-    pub body_font: FontChoice,
+    pub body_font: FontSetting,
     /// The typeface a document's **headings** (H1–H6) are set in.
-    pub headings_font: FontChoice,
+    pub headings_font: FontSetting,
     /// The typeface **code blocks and inline code** are set in.
-    pub code_font: FontChoice,
+    pub code_font: FontSetting,
+    /// The typeface the **AI chat**'s messages and composer are set in.
+    /// Following the default means following [`font`](Self::font), the
+    /// app font, live.
+    pub chat_font: FontSetting,
+    /// The document body size the person chose, in px, or `None` while it
+    /// follows the default. Documents only; the app's own text has density.
+    pub doc_text_size: Option<u8>,
+    /// The window's base color — the frame around the panes — chosen for the
+    /// light theme, as `0xRRGGBB`, or `None` while it follows the theme.
+    pub base_color_light: Option<u32>,
+    /// The same for the dark theme.
+    pub base_color_dark: Option<u32>,
     /// Display density — Compact, Normal or Comfortable. Shifts the UI and
     /// document-body type roles.
     pub density: Density,
@@ -933,8 +1021,9 @@ pub struct Settings {
     pub pinned: bool,
 
     // ------------------------------------------------------------- container
-    /// The explore column. Shut by default: an empty tree beside an empty
-    /// workspace is worse than no tree.
+    /// The explore column. **Open by default** (the review's note): a new
+    /// window after Welcome starts with the rail and the pane showing, since
+    /// they are the way around. A file that never said otherwise opens too.
     pub sidebar_open: bool,
     /// Which projection the explore column is showing — `"documents"`,
     /// `"files"` or `"tasks"`. The projection is window state, not workspace
@@ -1066,6 +1155,26 @@ pub struct Settings {
     /// Follows the user in `preferences.conf`. Absent until the first successful
     /// export; cancel does not write it.
     pub last_export_dir: Option<PathBuf>,
+    /// **What the person has seen of each AI chat, on this device** (koru-ai
+    /// D83): the `chat_seen=` line, opaque here — `koru_chats_ui::SeenBook`
+    /// reads and writes it. Device-local by the person's choice, so it lives
+    /// in this session file beside the tabs rather than in a synced setting.
+    ///
+    /// **An older build ignores the line** (`from_text`'s `_ => {}`) and drops
+    /// it on its next save — every chat then reads as seen, which is the safe
+    /// way to be wrong. Empty writes no line.
+    pub chat_seen: String,
+    /// **The order of the views down the rail, on this device**: the
+    /// `rail_order=` line, a comma list of view tokens, opaque here —
+    /// `apps/koru`'s `panes::sidebar::rail_order` reads and writes it, and
+    /// merges it with the views that build knows. Device-local, like
+    /// [`chat_seen`](Self::chat_seen): how one machine's rail is arranged is
+    /// that machine's furniture.
+    ///
+    /// **An older build ignores the line** (`from_text`'s `_ => {}`), draws
+    /// its default order, and drops the line on its next save. Empty — the
+    /// default order — writes no line.
+    pub rail_order: String,
 }
 
 /// Settings loaded before the Store has supplied a real Profile identity.
@@ -1087,12 +1196,17 @@ pub(crate) struct PreIdentitySettings {
 pub(crate) struct PreIdentityPreferences {
     pub(crate) theme: ThemePreference,
     pub(crate) caret_color: CaretColor,
+    pub(crate) icon_pack: Option<koru_draw::icons::IconPack>,
     pub(crate) caret_width: CaretWidth,
     pub(crate) caret_height: CaretHeight,
-    pub(crate) font: FontChoice,
-    pub(crate) body_font: FontChoice,
-    pub(crate) headings_font: FontChoice,
-    pub(crate) code_font: FontChoice,
+    pub(crate) font: FontSetting,
+    pub(crate) body_font: FontSetting,
+    pub(crate) headings_font: FontSetting,
+    pub(crate) code_font: FontSetting,
+    pub(crate) chat_font: FontSetting,
+    pub(crate) doc_text_size: Option<u8>,
+    pub(crate) base_color_light: Option<u32>,
+    pub(crate) base_color_dark: Option<u32>,
     pub(crate) density: Density,
     pub(crate) dictation_toggle: bool,
     pub(crate) dictation_language: Requested,
@@ -1129,12 +1243,17 @@ impl PreIdentitySettings {
         PreIdentityPreferences {
             theme: self.values.theme,
             caret_color: self.values.caret_color,
+            icon_pack: self.values.icon_pack,
             caret_width: self.values.caret_width,
             caret_height: self.values.caret_height,
-            font: self.values.font,
-            body_font: self.values.body_font,
-            headings_font: self.values.headings_font,
-            code_font: self.values.code_font,
+            font: self.values.font.clone(),
+            body_font: self.values.body_font.clone(),
+            headings_font: self.values.headings_font.clone(),
+            code_font: self.values.code_font.clone(),
+            chat_font: self.values.chat_font.clone(),
+            doc_text_size: self.values.doc_text_size,
+            base_color_light: self.values.base_color_light,
+            base_color_dark: self.values.base_color_dark,
             density: self.values.density,
             dictation_toggle: self.values.dictation_toggle,
             dictation_language: self.values.dictation_language,
@@ -1300,15 +1419,21 @@ impl Default for Settings {
             maximized: false,
             theme: ThemePreference::System,
             caret_color: CaretColor::Default,
+            icon_pack: None,
             caret_width: CaretWidth::Medium,
             caret_height: CaretHeight::Medium,
             // The theme owns the per-role defaults — these and the theme's
             // startup atomics are two homes of one answer, held together by
             // `theme::tests::defaults_and_indices_agree`.
-            font: koru_draw::theme::default_ui_font(),
-            body_font: koru_draw::theme::default_body_font(),
-            headings_font: koru_draw::theme::default_headings_font(),
-            code_font: koru_draw::theme::default_code_font(),
+            font: FontSetting::FollowDefault,
+            body_font: FontSetting::FollowDefault,
+            headings_font: FontSetting::FollowDefault,
+            code_font: FontSetting::FollowDefault,
+            // The app font, whatever it is.
+            chat_font: FontSetting::FollowDefault,
+            doc_text_size: None,
+            base_color_light: None,
+            base_color_dark: None,
             density: Density::default(),
             dictation_toggle: false,
             dictation_language: Requested::Auto,
@@ -1319,7 +1444,7 @@ impl Default for Settings {
             zoom: 1.0,
             hide_completed: false,
             pinned: false,
-            sidebar_open: false,
+            sidebar_open: true,
             navigator_mode: String::new(),
             context_open: false,
             ai_open: false,
@@ -1338,7 +1463,9 @@ impl Default for Settings {
             show_archived: false,
             sidebar_w: Vec::new(),
             opened: Vec::new(),
-            view_mode: ViewMode::default(),
+            // Narrow, the registry's default (`ViewModeChoice`), not the
+            // draw enum's Full, which is the outline's only mode.
+            view_mode: ViewMode::Narrow,
             canvas_bg: None,
             doc_view_prefs: Vec::new(),
             popout_close: PopoutClose::default(),
@@ -1351,6 +1478,8 @@ impl Default for Settings {
             emoji_skin_tone: String::new(),
             close_behavior: koru_window::CloseBehavior::default(),
             last_export_dir: None,
+            chat_seen: String::new(),
+            rail_order: String::new(),
         }
     }
 }
@@ -1829,20 +1958,70 @@ impl Settings {
     /// No-op: switching workspace must not replace the open strip.
     pub fn adopt_tabs_of(&mut self, _workspace: WorkspaceId) {}
 
-    /// Every document still open in this window (Main + pinned), for parking
-    /// rooms across a workspace switch.
+    /// Every document still open in this window (Main + pinned, in every
+    /// column), for parking rooms across a workspace switch.
     pub fn open_document_ids(&self) -> Vec<DocumentId> {
-        let mut ids: Vec<DocumentId> = self
-            .tabs
-            .iter()
-            .filter_map(|(which, _)| which.document_id())
-            .collect();
-        for pin in &self.pinned_tabs {
-            if !ids.contains(&pin.document) {
-                ids.push(pin.document);
+        self.remembered_documents()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect()
+    }
+
+    /// Every document a remembered tab is over, once each, with the workspace
+    /// it lives in when the entry names one.
+    ///
+    /// **Every group of [`pane_tree`](Self::pane_tree), not only `tabs`.**
+    /// `tabs` and `pinned_tabs` are the *focused* group's copy, kept for older
+    /// builds; a second column's documents are in the tree and nowhere else.
+    /// Reading only the flat lists meant a document in the column that did not
+    /// have focus was never opened before restore, so `restore_session` found
+    /// nothing to rebuild it from and the column came back as Welcome.
+    pub fn remembered_documents(&self) -> Vec<(DocumentId, Option<WorkspaceId>)> {
+        fn group_documents(node: &PaneNodeState, out: &mut Vec<(DocumentId, Option<WorkspaceId>)>) {
+            match node {
+                PaneNodeState::Group { main, pinned, .. } => {
+                    // A chat entry, pinned or not, is the AI service's to
+                    // reopen: nothing here asks the store for it.
+                    for pin in pinned {
+                        if let Some(id) = pin.document() {
+                            out.push((id, Some(pin.workspace)));
+                        }
+                    }
+                    for (which, _) in main {
+                        if let TabRef::Document { id, workspace } = which {
+                            out.push((*id, *workspace));
+                        }
+                    }
+                }
+                PaneNodeState::Split { left, right, .. } => {
+                    group_documents(left, out);
+                    group_documents(right, out);
+                }
             }
         }
-        ids
+        let mut all = Vec::new();
+        for (which, _) in &self.tabs {
+            if let TabRef::Document { id, workspace } = which {
+                all.push((*id, *workspace));
+            }
+        }
+        for pin in &self.pinned_tabs {
+            if let Some(id) = pin.document() {
+                all.push((id, Some(pin.workspace)));
+            }
+        }
+        if let Some(tree) = &self.pane_tree {
+            group_documents(&tree.root, &mut all);
+        }
+        let mut out: Vec<(DocumentId, Option<WorkspaceId>)> = Vec::new();
+        for (id, home) in all {
+            match out.iter_mut().find(|(seen, _)| *seen == id) {
+                // A later entry may know the home an earlier legacy one lacked.
+                Some(slot) => slot.1 = slot.1.or(home),
+                None => out.push((id, home)),
+            }
+        }
+        out
     }
 
     /// Forget every workspace not in `live`.
@@ -2182,6 +2361,10 @@ impl Settings {
                 "last_export_dir" => {
                     s.last_export_dir = (!value.is_empty()).then(|| PathBuf::from(value));
                 }
+                // Read whole and untouched: its reader is the Chats list's.
+                "chat_seen" => s.chat_seen = value.to_owned(),
+                // Read whole and untouched too: its reader is the rail's.
+                "rail_order" => s.rail_order = value.to_owned(),
                 _ => {}
             }
         }
@@ -2381,6 +2564,12 @@ impl Settings {
         if let Some(directory) = &self.last_export_dir {
             out.push_str(&format!("last_export_dir={}\n", directory.display()));
         }
+        if !self.chat_seen.is_empty() {
+            out.push_str(&format!("chat_seen={}\n", self.chat_seen));
+        }
+        if !self.rail_order.is_empty() {
+            out.push_str(&format!("rail_order={}\n", self.rail_order));
+        }
         // One line per workspace, and none at all for a workspace with nothing
         // shut — so the file does not grow a row for every workspace you have
         // ever glanced at.
@@ -2462,6 +2651,19 @@ mod tests {
             tabs.into_iter().map(|(which, _)| which).collect::<Vec<_>>(),
             vec![TabRef::Manage, TabRef::Workspaces, TabRef::ManageProfiles]
         );
+    }
+
+    /// The Sync settings page has its own word; an older reader drops it
+    /// and keeps its neighbours, as it does for every word it does not know.
+    #[test]
+    fn the_sync_settings_tab_round_trips_and_an_older_reader_skips_it() {
+        assert_eq!(TabRef::SyncSettings.to_storage(), "sync-settings");
+        let tabs = parse_tabs("welcome:0,sync-settings:0,manage:0");
+        assert_eq!(
+            tabs.into_iter().map(|(which, _)| which).collect::<Vec<_>>(),
+            vec![TabRef::Welcome, TabRef::SyncSettings, TabRef::Manage]
+        );
+        assert_eq!(TabRef::parse("sync-settings"), Some(TabRef::SyncSettings));
     }
 
     /// The Reminders page is one `tasks:` spelling like any other — and an
@@ -2865,12 +3067,7 @@ mod tests {
                 ratio: 0.333,
                 left: Box::new(PaneNodeState::Group {
                     main: vec![(TabRef::Welcome, 0.0), (TabRef::Node(a), 12.0)],
-                    pinned: vec![PinnedTabRef {
-                        document: doc,
-                        workspace: ws,
-                        scroll: 7.0,
-                        show_title: true,
-                    }],
+                    pinned: vec![PinnedTabRef::document_pin(doc, ws, 7.0, true)],
                     active: GroupActiveState::Pinned(0),
                 }),
                 right: Box::new(PaneNodeState::Group {
@@ -2889,6 +3086,285 @@ mod tests {
         before.remember_tabs_of(ws);
         let after = Settings::from_text(&before.profile_body());
         assert_eq!(after.pane_tree, before.pane_tree);
+    }
+
+    /// Two columns, a document in the left and a new chat (which is not saved
+    /// until it is sent into) in the right, with the right focused: `tabs=` is the focused group's copy
+    /// and is empty, so the document is only in the tree. It must still be one
+    /// the shell reopens before restore — or the column comes back as Welcome,
+    /// which is what a restart did.
+    #[test]
+    fn a_document_in_the_unfocused_column_is_remembered() {
+        let ws = WorkspaceId::new();
+        let (left, pinned) = (DocumentId::new(), DocumentId::new());
+        let text = format!(
+            "workspace={ws}\ntabs=\ntab=0\n\
+             pane_tree=split(v;0.500;group(doc:{left}@{ws}:0;doc:{pinned}@{ws}:0:icon;m0);group(;;m0))|1\n\
+             pane_focused=1\n",
+            ws = ws.to_storage(),
+            left = left.to_storage(),
+            pinned = pinned.to_storage(),
+        );
+        let s = Settings::from_text(&text);
+        assert!(s.tabs.is_empty(), "the focused column held no document");
+        assert_eq!(
+            s.remembered_documents(),
+            vec![(pinned, Some(ws)), (left, Some(ws))]
+        );
+        assert_eq!(s.open_document_ids(), vec![pinned, left]);
+    }
+
+    /// The focused group's documents are in both `tabs` and the tree; each is
+    /// reopened once, and a legacy entry with no home takes the tree's.
+    #[test]
+    fn a_document_in_both_the_flat_list_and_the_tree_is_remembered_once() {
+        let ws = WorkspaceId::new();
+        let doc = DocumentId::new();
+        let s = Settings {
+            tabs: vec![(TabRef::document(doc, None), 0.0)],
+            pane_tree: Some(PaneTreeState {
+                root: PaneNodeState::Group {
+                    main: vec![(TabRef::document(doc, Some(ws)), 0.0)],
+                    pinned: vec![],
+                    active: GroupActiveState::Main(0),
+                },
+                focused: vec![],
+            }),
+            ..Settings::default()
+        };
+        assert_eq!(s.remembered_documents(), vec![(doc, Some(ws))]);
+    }
+
+    /// **A chat tab is a word of the file** (ADR-483-chattabrestore):
+    /// `chat:<uuid>` in `tabs=`, in a group of `pane_tree=` and, pinned, in
+    /// `pinned_tabs=`, each back as it went out — and beside a document whose
+    /// scroll and home survive with it.
+    #[test]
+    fn a_chat_tab_round_trips_in_every_place_a_tab_is_written() {
+        let ws = WorkspaceId::new();
+        let doc = DocumentId::new();
+        let (chat, pinned_chat, column_chat) = (
+            uuid::Uuid::new_v4(),
+            uuid::Uuid::new_v4(),
+            uuid::Uuid::new_v4(),
+        );
+        let chat_pin = PinnedTabRef {
+            target: TabRef::Chat(pinned_chat),
+            workspace: ws,
+            scroll: 0.0,
+            show_title: true,
+        };
+        let before = Settings {
+            workspace: Some(ws),
+            tabs: vec![
+                (TabRef::document(doc, Some(ws)), 40.0),
+                (TabRef::Chat(chat), 0.0),
+            ],
+            tab: 1,
+            pinned_tabs: vec![
+                chat_pin.clone(),
+                PinnedTabRef::document_pin(doc, ws, 0.0, false),
+            ],
+            pane_tree: Some(PaneTreeState {
+                root: PaneNodeState::Split {
+                    axis: SplitAxisState::Vertical,
+                    ratio: 0.5,
+                    left: Box::new(PaneNodeState::Group {
+                        main: vec![
+                            (TabRef::document(doc, Some(ws)), 40.0),
+                            (TabRef::Chat(chat), 0.0),
+                        ],
+                        pinned: vec![chat_pin],
+                        active: GroupActiveState::Main(1),
+                    }),
+                    right: Box::new(PaneNodeState::Group {
+                        main: vec![(TabRef::Chat(column_chat), 0.0)],
+                        pinned: vec![],
+                        active: GroupActiveState::Main(0),
+                    }),
+                },
+                focused: vec![0],
+            }),
+            ..Settings::default()
+        };
+        let body = before.profile_body();
+        assert!(
+            body.contains(&format!("chat:{chat}")),
+            "spelled chat:<uuid>: {body}"
+        );
+        let after = Settings::from_text(&body);
+        assert_eq!(after.tabs, before.tabs);
+        assert_eq!(after.tab, 1);
+        assert_eq!(after.pinned_tabs, before.pinned_tabs);
+        assert_eq!(after.pane_tree, before.pane_tree);
+    }
+
+    /// `remembered_documents` is what the shell opens from the store before
+    /// restore. A chat is the AI service's, never the store's: no chat entry —
+    /// in `tabs`, pinned, or in a column of the tree — names a document.
+    #[test]
+    fn remembered_documents_ignores_chat_tabs() {
+        let ws = WorkspaceId::new();
+        let doc = DocumentId::new();
+        let chat = uuid::Uuid::new_v4();
+        let s = Settings {
+            tabs: vec![(TabRef::Chat(chat), 0.0)],
+            pinned_tabs: vec![PinnedTabRef {
+                target: TabRef::Chat(chat),
+                workspace: ws,
+                scroll: 0.0,
+                show_title: false,
+            }],
+            pane_tree: Some(PaneTreeState {
+                root: PaneNodeState::Group {
+                    main: vec![
+                        (TabRef::Chat(chat), 0.0),
+                        (TabRef::document(doc, Some(ws)), 0.0),
+                    ],
+                    pinned: vec![PinnedTabRef {
+                        target: TabRef::Chat(uuid::Uuid::new_v4()),
+                        workspace: ws,
+                        scroll: 0.0,
+                        show_title: false,
+                    }],
+                    active: GroupActiveState::Main(0),
+                },
+                focused: vec![],
+            }),
+            ..Settings::default()
+        };
+        assert_eq!(s.remembered_documents(), vec![(doc, Some(ws))]);
+    }
+
+    /// A chat entry that is not a uuid is not a chat: dropped on its own,
+    /// like any entry that will not parse.
+    #[test]
+    fn a_chat_entry_that_is_not_a_uuid_is_dropped_alone() {
+        let parsed = parse_tabs("welcome:0,chat:not-a-chat:0,trash:0");
+        assert_eq!(parsed, vec![(TabRef::Welcome, 0.0), (TabRef::Trash, 0.0)]);
+        assert_eq!(PinnedTabRef::parse("chat:nope@x:0:icon"), None);
+    }
+
+    /// **What a chat entry means to a build that has never heard of one.**
+    /// The grammar before `chat:` — keywords, `tasks:`, `session:`, `doc:`,
+    /// then a bare node id — and the pinned grammar that requires `doc:` are
+    /// replicated below, reduced to *what kind of tab came back*. A `chat:`
+    /// entry falls through all of it, so an older reader drops that one entry
+    /// and keeps every neighbour (ADR-483-chattabrestore).
+    #[test]
+    fn an_older_reader_skips_a_chat_entry_and_keeps_the_other_tabs() {
+        fn old_parse(s: &str) -> Option<&'static str> {
+            match s {
+                "welcome" | "workspaces" | "profiles" | "manage" | "trash" | "whatsnew"
+                | "sync-settings" | "draft" => Some("keyword"),
+                other if other.starts_with("tasks:") => Some("tasks"),
+                other if other.starts_with("session:") => Some("session"),
+                other => match other.strip_prefix("doc:") {
+                    Some(rest) => {
+                        let id = rest.split_once('@').map_or(rest, |(id, _)| id);
+                        koru_core::DocumentId::parse(id).map(|_| "document")
+                    }
+                    None => NodeId::parse(other).map(|_| "node"),
+                },
+            }
+        }
+        /// `PinnedTabRef::parse` before pinned chats, reduced the same way.
+        fn old_pin(s: &str) -> Option<&'static str> {
+            let rest = s.rsplit_once(':').map_or(s, |(rest, _)| rest);
+            let rest = rest.rsplit_once(':').map_or(rest, |(rest, _)| rest);
+            let (doc, ws) = rest.split_once('@')?;
+            DocumentId::parse(doc.strip_prefix("doc:")?)?;
+            WorkspaceId::parse(ws)?;
+            Some("pin")
+        }
+        let ws = WorkspaceId::new();
+        let line = write_tabs(&[
+            (TabRef::Welcome, 0.0),
+            (TabRef::Chat(uuid::Uuid::new_v4()), 0.0),
+            (TabRef::document(DocumentId::new(), Some(ws)), 40.0),
+            (TabRef::Node(NodeId::new()), 8.0),
+        ]);
+        // The old entry loop, verbatim: split on commas, peel a numeric scroll
+        // from the last colon, hand the rest to the old parser.
+        let survivors: Vec<&str> = line
+            .split(',')
+            .filter_map(|entry| {
+                let which = match entry.rsplit_once(':') {
+                    Some((w, sc)) if sc.parse::<f32>().is_ok() => w,
+                    _ => entry,
+                };
+                old_parse(which)
+            })
+            .collect();
+        assert_eq!(survivors, ["keyword", "document", "node"]);
+
+        let pins = write_pinned_tabs(&[
+            PinnedTabRef {
+                target: TabRef::Chat(uuid::Uuid::new_v4()),
+                workspace: ws,
+                scroll: 0.0,
+                show_title: true,
+            },
+            PinnedTabRef::document_pin(DocumentId::new(), ws, 0.0, false),
+        ]);
+        let pinned: Vec<&str> = pins.split(',').filter_map(old_pin).collect();
+        assert_eq!(
+            pinned,
+            ["pin"],
+            "the pinned chat dropped, the document kept"
+        );
+    }
+
+    /// **Any tab may be pinned, so any tab's token may be a pin's target.**
+    /// Every kind round-trips through the pinned line — a session's own `@`
+    /// included, which is why the workspace is split off the *last* one — and
+    /// a document pin is still written exactly as an older build wrote it.
+    #[test]
+    fn a_pin_of_any_tab_round_trips_and_a_document_pin_is_unchanged() {
+        let ws = WorkspaceId::new();
+        let doc = DocumentId::new();
+        let pin = |target: TabRef| PinnedTabRef {
+            target,
+            workspace: ws,
+            scroll: 12.0,
+            show_title: true,
+        };
+        let pins = vec![
+            PinnedTabRef::document_pin(doc, ws, 0.0, false),
+            pin(TabRef::Tasks(TasksTabRef::List(
+                koru_core::ids::ListId::new(),
+            ))),
+            pin(TabRef::Tasks(TasksTabRef::Bucket("today"))),
+            pin(TabRef::Tasks(TasksTabRef::Reminders)),
+            pin(TabRef::Trash),
+            pin(TabRef::Manage),
+            pin(TabRef::Welcome),
+            pin(TabRef::Draft),
+            pin(TabRef::WhatsNew),
+            pin(TabRef::Chat(uuid::Uuid::new_v4())),
+            pin(TabRef::Session {
+                session: SessionId::mint(),
+                profile: SessionProfileKey::Custom(SessionProfileId::mint()),
+                recovery: Some(SessionRecovery {
+                    working_directory: Some(r"C:\work@home, again".into()),
+                    project: None,
+                    raw: true,
+                }),
+            }),
+        ];
+        let line = write_pinned_tabs(&pins);
+        let back: Vec<PinnedTabRef> = line.split(',').filter_map(PinnedTabRef::parse).collect();
+        assert_eq!(back, pins, "{line}");
+        assert_eq!(
+            line.split(',').next(),
+            Some(format!("doc:{}@{}:0:icon", doc.to_storage(), ws.to_storage()).as_str()),
+            "a document pin keeps the spelling every older build reads"
+        );
+        assert_eq!(
+            back[0].tab(),
+            TabRef::document(doc, Some(ws)),
+            "a pinned document reopens in the workspace it was pinned in"
+        );
     }
 
     /// A ratio that is not a number is a corrupt row, not a geometry: NaN
@@ -3329,7 +3805,7 @@ mod tests {
             pos: Some((10, 20)),
             size: (1200.0, 800.0),
             maximized: true,
-            font: FontChoice::IbmPlexSans,
+            font: FontSetting::Chosen(koru_settings::FontFamily::IbmPlexSans),
             zoom: 1.25,
             pinned: true,
             popout_close: PopoutClose::RestoreTab,
@@ -3387,6 +3863,60 @@ mod tests {
         let empty = Settings::default().profile_body();
         assert!(!empty.contains("emoji_recents="), "{empty}");
         assert!(!empty.contains("last_export_dir="), "{empty}");
+    }
+
+    /// **The AI chats' seen marks** (koru-ai D83) ride the session file as
+    /// one opaque line, beside the tabs, and none is written while there are
+    /// none. A file carrying it still opens every other key as before — the
+    /// tolerance an older build's `from_text` gives a key it does not know.
+    #[test]
+    fn the_chat_seen_line_round_trips_and_is_absent_when_empty() {
+        let line = "8b0c4d1e-0000-4000-8000-000000000001:12:-:u";
+        let s = Settings {
+            chat_seen: line.into(),
+            ai_w: 420.0,
+            ..Settings::default()
+        };
+        let body = s.profile_body();
+        assert!(body.contains(&format!("chat_seen={line}\n")), "{body}");
+        let back = Settings::from_text(&body);
+        assert_eq!(back.chat_seen, line);
+        assert_eq!(back.ai_w, 420.0);
+        assert!(!Settings::default().profile_body().contains("chat_seen="));
+    }
+
+    /// **The rail's order** rides the session file the same way: one opaque
+    /// line beside the tabs, none while the rail is in its default order.
+    ///
+    /// And what an older build makes of it, shown with a key *this* build does
+    /// not know: `from_text` passes over it, every other key still reads, and
+    /// the next save drops it. That is all a build from before `rail_order=`
+    /// does with the line — its rail draws the default order.
+    #[test]
+    fn the_rail_order_line_round_trips_and_a_build_that_does_not_know_it_ignores_it() {
+        let line = "chats,documents,files";
+        let s = Settings {
+            rail_order: line.into(),
+            ai_w: 420.0,
+            ..Settings::default()
+        };
+        let body = s.profile_body();
+        assert!(body.contains(&format!("rail_order={line}\n")), "{body}");
+        let back = Settings::from_text(&body);
+        assert_eq!(back.rail_order, line);
+        assert_eq!(back.ai_w, 420.0);
+        assert!(!Settings::default().profile_body().contains("rail_order="));
+
+        let newer = body.replace("rail_order=", "rail_order_from_a_newer_build=");
+        let older = Settings::from_text(&newer);
+        assert_eq!(older.ai_w, 420.0, "every other key still reads");
+        assert_eq!(older.rail_order, "", "the unknown line is passed over");
+        assert!(
+            !older
+                .profile_body()
+                .contains("rail_order_from_a_newer_build="),
+            "and dropped by the next save"
+        );
     }
 
     /// A ranking longer than the picker keeps is trimmed on the way in, so a
@@ -3491,7 +4021,8 @@ mod tests {
         let s = Settings::from_text("x=1\ny=2\nw=940\nh=620\ndark=1\npinned=0\n");
         assert_eq!(s.pos, Some((1, 2)));
         assert!(s.tabs.is_empty(), "no tabs recorded");
-        assert!(!s.sidebar_open, "columns default shut");
+        assert!(s.sidebar_open, "the explore column defaults open");
+        assert!(!s.context_open, "the context column defaults shut");
         assert!(!s.maximized);
         assert_eq!(s.tab, 0);
     }

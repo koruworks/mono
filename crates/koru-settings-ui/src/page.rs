@@ -21,7 +21,7 @@ use koru_draw::text::TextEngine;
 use koru_draw::theme;
 use koru_i18n::{Key, Lang};
 use koru_ui::{
-    ActionButton, Card, CardRow, Dropdown, DropdownOption, PageShell, PreviewTile, Segmented,
+    ActionButton, Card, CardRow, Chip, Dropdown, DropdownOption, PageShell, PreviewTile, Segmented,
     Stepper, Toggle,
 };
 use vello::peniko::Color;
@@ -36,16 +36,46 @@ pub enum PageId {
     Reminders,
     Terminal,
     System,
+    /// *Coding → Agent providers*: which coding agents Koru shows, and
+    /// whether their CLIs are ready. The host fills its rows.
+    AgentProviders,
+}
+
+/// A heading in the sidebar over the pages that belong together. A page
+/// with none sits in the ungrouped run at the top.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PageGroup {
+    Coding,
+}
+
+impl PageGroup {
+    pub fn label(self, lang: Lang) -> &'static str {
+        match self {
+            Self::Coding => koru_i18n::t(lang, Key::SettingsCoding),
+        }
+    }
 }
 
 impl PageId {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Appearance,
         Self::Editor,
         Self::Reminders,
         Self::Terminal,
         Self::System,
+        Self::AgentProviders,
     ];
+
+    /// The sidebar heading this page sits under, if any. A group's pages
+    /// follow the ungrouped ones in [`ALL`](Self::ALL).
+    pub fn group(self) -> Option<PageGroup> {
+        match self {
+            Self::AgentProviders => Some(PageGroup::Coding),
+            Self::Appearance | Self::Editor | Self::Reminders | Self::Terminal | Self::System => {
+                None
+            }
+        }
+    }
 
     pub fn label(self, lang: Lang) -> &'static str {
         match self {
@@ -54,6 +84,7 @@ impl PageId {
             Self::Reminders => koru_i18n::t(lang, Key::ReminderTitle),
             Self::Terminal => koru_i18n::t(lang, Key::SettingsTerminal),
             Self::System => koru_i18n::t(lang, Key::SettingsSystem),
+            Self::AgentProviders => koru_i18n::t(lang, Key::SettingsAgentProviders),
         }
     }
 
@@ -64,6 +95,7 @@ impl PageId {
             Self::Reminders => koru_i18n::t(lang, Key::SettingsRemindersDescription),
             Self::Terminal => koru_i18n::t(lang, Key::SettingsTerminalDescription),
             Self::System => koru_i18n::t(lang, Key::SettingsSystemDescription),
+            Self::AgentProviders => koru_i18n::t(lang, Key::SettingsAgentProvidersDescription),
         }
     }
 
@@ -72,7 +104,7 @@ impl PageId {
     pub(crate) fn keywords(self) -> &'static str {
         match self {
             Self::Appearance => {
-                "theme dark light system font fonts typeface density pinned tabs caret color cursor typography"
+                "theme dark light system font fonts typeface density pinned tabs caret color cursor typography icon icons phosphor tabler lucide remix sample preview"
             }
             Self::Editor => {
                 "page width layout background canvas spelling spell check language dictionary voice dictation microphone speech model quality shortcut consent"
@@ -82,7 +114,10 @@ impl PageId {
             }
             Self::Terminal => "shell cursor zoom font theme input blink composer",
             Self::System => {
-                "login startup start quit background close window app menu launcher dock desktop entry renderer graphics vulkan directx opengl ai provider model privacy telemetry usage data analytics diagnostics"
+                "login startup start quit background close window app menu launcher dock desktop entry renderer graphics vulkan directx opengl advanced privacy telemetry usage data analytics diagnostics"
+            }
+            Self::AgentProviders => {
+                "coding agents agent providers cli claude codex opencode grok kimi antigravity copilot qwen muse install path enable disable hide"
             }
         }
     }
@@ -91,6 +126,7 @@ impl PageId {
         let keys: &[Key] = match self {
             Self::Appearance => &[
                 Key::SettingsTheme,
+                Key::SettingsIconStyle,
                 Key::SettingsDensity,
                 Key::SettingsPinnedTabs,
                 Key::SettingsAppFont,
@@ -139,12 +175,17 @@ impl PageId {
             Self::System => &[
                 Key::SettingsStartupAndWindows,
                 Key::SettingsWhenTheLastWindowCloses,
-                Key::SettingsProvidersAndModels,
                 Key::SettingsAdvanced,
                 Key::SettingsStartOnLogin,
-                Key::SettingsKoruAi,
                 Key::SettingsPrivacy,
                 Key::SettingsShareUsageData,
+            ],
+            Self::AgentProviders => &[
+                Key::SettingsCoding,
+                Key::SettingsEnabledAgents,
+                Key::SettingsRestoreDefaults,
+                Key::SettingsRefreshAgentStatus,
+                Key::SettingsAgentSetupGuide,
             ],
         };
         keys.iter()
@@ -212,6 +253,13 @@ pub(crate) enum Target {
     Action(Action),
     /// Open dropdown `n` of the page's [`Laid::dropdowns`].
     Dropdown(usize),
+    /// The move handle of draggable row `n` ([`Laid::drag_rows`]): a press
+    /// takes the row's focus and starts a drag.
+    Grip(usize),
+    /// The rest of draggable row `n`: a press takes its focus, which the
+    /// move chords then act on. Pushed after the row's controls, so a
+    /// switch or a link still wins.
+    Row(usize),
 }
 
 /// A dropdown's list, kept beside the layout so a press can open it.
@@ -261,7 +309,26 @@ pub(crate) enum Widget {
         more: Option<usize>,
     },
     Pair(Box<Widget>, Box<Widget>),
+    /// A wrapping row of choice chips across the whole row — *Default
+    /// agent*'s *Auto* and one per agent. The row has no name of its own.
+    Chips(Vec<ChipLaid>),
 }
+
+/// One chip of a [`Widget::Chips`] row.
+pub(crate) struct ChipLaid {
+    pub(crate) rect: Rect,
+    pub(crate) label: String,
+    /// A brand mark, by profile key, in the chip's leading slot.
+    pub(crate) mark: Option<String>,
+    pub(crate) selected: bool,
+    pub(crate) hit: usize,
+}
+
+/// The leading slot a chip with a brand mark reserves: the mark and the air
+/// after it.
+pub(crate) const CHIP_MARK_SLOT: f32 = 20.0;
+/// The mark's own square inside it.
+pub(crate) const CHIP_MARK_SIZE: f32 = 14.0;
 
 pub(crate) struct RowLaid {
     pub(crate) rect: Rect,
@@ -271,17 +338,42 @@ pub(crate) struct RowLaid {
     pub(crate) link: Option<(String, usize)>,
     /// A key chip beside the name.
     pub(crate) chip: Option<String>,
+    /// A brand mark before the name, by profile key — an agent's row on
+    /// *Agent providers*. The text then starts [`MARK_SLOT`] further in.
+    pub(crate) mark: Option<String>,
+    /// A row that can be dragged to a new place: its index among the
+    /// page's draggable rows, and its move handle, in the card's left inset.
+    pub(crate) drag: Option<(usize, Rect)>,
     pub(crate) text_w: f32,
     pub(crate) widget: Widget,
 }
+
+impl RowLaid {
+    /// Where the row's text is laid: the row, less a leading mark's slot.
+    pub(crate) fn text_rect(&self) -> Rect {
+        let indent = if self.mark.is_some() { MARK_SLOT } else { 0.0 };
+        Rect::new(
+            self.rect.x + indent,
+            self.rect.y,
+            self.rect.w - indent,
+            self.rect.h,
+        )
+    }
+}
+
+/// The move handle's slot in a draggable row: in the card's left inset, the
+/// editor's grip size, a little in from the card's edge.
+pub(crate) const GRIP_INSET: f32 = 3.0;
+
+/// The room a row's leading brand mark takes: the mark and the air after it.
+pub(crate) const MARK_SLOT: f32 = 28.0;
+/// The mark's own square.
+pub(crate) const MARK_SIZE: f32 = 18.0;
 
 pub(crate) struct CardLaid {
     pub(crate) rect: Rect,
     pub(crate) title: Option<String>,
     pub(crate) aside: Option<String>,
-    /// The caption line ends with the document fonts, shown rather than
-    /// named — *Preview: body · Heading · code*.
-    pub(crate) font_preview: bool,
     pub(crate) rows: Vec<RowLaid>,
 }
 
@@ -301,6 +393,9 @@ pub(crate) enum Block {
         y: f32,
         w: f32,
         title_h: f32,
+        /// A page-wide action at the title's right end — *Restore
+        /// defaults* — and its index in [`Laid::hits`].
+        button: Option<(String, Rect, usize)>,
     },
     /// A sentence standing on its own between cards — the read-only reason,
     /// a notice, a blocked section.
@@ -316,7 +411,7 @@ pub(crate) enum Block {
     },
     Card(CardLaid),
     /// A card's caption standing alone, with a link at its right end — the
-    /// *Show* / *Hide* of a card that can be folded away.
+    /// *Preview in sample document* above the document fonts.
     Caption {
         title: String,
         x: f32,
@@ -337,13 +432,15 @@ pub(crate) struct Laid {
     pub(crate) anchors: Vec<(Anchor, f32)>,
     pub(crate) host: Option<Rect>,
     pub(crate) bottom: f32,
+    /// Every draggable row's rect, by its index — where a drag lands and
+    /// where the drop line is drawn.
+    pub(crate) drag_rows: Vec<Rect>,
 }
 
 /// The card being filled.
 struct OpenCard {
     title: Option<String>,
     aside: Option<String>,
-    font_preview: bool,
     top: f32,
     rows: Vec<RowLaid>,
 }
@@ -360,6 +457,11 @@ pub(crate) struct Builder<'a> {
     /// [`next_row_chip`](Self::next_row_chip); taken by the next row.
     pending_link: Option<(String, Action)>,
     pending_chip: Option<String>,
+    /// Set by [`next_row_mark`](Self::next_row_mark); taken by the next row.
+    pending_mark: Option<String>,
+    /// Set by [`next_row_draggable`](Self::next_row_draggable); taken by
+    /// the next row.
+    pending_drag: Option<usize>,
 }
 
 /// What a row asks for before it knows where it is.
@@ -390,7 +492,20 @@ impl<'a> Builder<'a> {
             card: None,
             pending_link: None,
             pending_chip: None,
+            pending_mark: None,
+            pending_drag: None,
         }
+    }
+
+    /// Make the next row draggable — index `n` among the page's draggable
+    /// rows — with a move handle in its left inset.
+    pub(crate) fn next_row_draggable(&mut self, n: usize) {
+        self.pending_drag = Some(n);
+    }
+
+    /// Put a brand mark — the profile `key`'s — before the next row's name.
+    pub(crate) fn next_row_mark(&mut self, key: &str) {
+        self.pending_mark = Some(key.to_owned());
     }
 
     /// End the next row's hint with a link that does `action` — *apply to
@@ -412,23 +527,53 @@ impl<'a> Builder<'a> {
 
     // ----------------------------------------------------------- page level
 
-    pub(crate) fn title(&mut self, title: &str, description: &str) {
+    /// The page's title and its sentence, with an optional page-wide action
+    /// at its right end — the shared secondary button, level with the
+    /// title's first line. The title and its sentence wrap short of it.
+    pub(crate) fn title_with_button(
+        &mut self,
+        title: &str,
+        description: &str,
+        button: Option<(&str, Action)>,
+    ) {
         let title_style = crate::title_style();
+        let button = button.map(|(label, action)| {
+            let w = ActionButton {
+                label,
+                style: koru_ui::ActionStyle::Secondary,
+                trailing_icon: None,
+            }
+            .width(self.engine);
+            let line = title_style.metrics.line_height;
+            let at = Rect::new(
+                self.x + self.w - w,
+                self.y + (line - ActionButton::H).max(0.0) * 0.5,
+                w,
+                ActionButton::H,
+            );
+            let hit = self.push_hit(at, Target::Action(action));
+            (label.to_owned(), at, hit)
+        });
+        let text_w = match &button {
+            Some((_, at, _)) => (self.w - at.w - CardRow::GAP).max(40.0),
+            None => self.w,
+        };
         let title_h = self
             .engine
-            .simple_layout_wrapped(title, title_style, self.w)
+            .simple_layout_wrapped(title, title_style, text_w)
             .height();
         let desc_h = self
             .engine
-            .simple_layout_wrapped(description, theme::role::ui(), self.w)
+            .simple_layout_wrapped(description, theme::role::ui(), text_w)
             .height();
         self.laid.blocks.push(Block::Title {
             title: title.to_owned(),
             description: description.to_owned(),
             x: self.x,
             y: self.y,
-            w: self.w,
+            w: text_w,
             title_h,
+            button,
         });
         self.y += title_h + TITLE_GAP + desc_h + DESC_GAP;
     }
@@ -504,25 +649,16 @@ impl<'a> Builder<'a> {
         self.card = Some(OpenCard {
             title: title.map(str::to_owned),
             aside: aside.map(str::to_owned),
-            font_preview: false,
             top: self.y,
             rows: Vec::new(),
         });
         self.y += header;
     }
 
-    /// A card whose caption line ends with the document fonts set in their
-    /// own faces.
-    pub(crate) fn card_with_font_preview(&mut self, title: &str) {
-        self.card(Some(title));
-        if let Some(card) = self.card.as_mut() {
-            card.font_preview = true;
-        }
-    }
-
     /// A caption with a link at its right end, and no card of its own: what
-    /// follows is either the card it folds (`b.card(None)` and its rows) or,
-    /// folded, the one line that says what is in it (`b.note`).
+    /// follows is the untitled card it heads (`b.card(None)` and its rows),
+    /// which then reads exactly like a titled card with a link beside its
+    /// title.
     pub(crate) fn caption_with_link(&mut self, title: &str, link: &str, action: Action) {
         self.end_card();
         let style = theme::role::meta();
@@ -552,7 +688,6 @@ impl<'a> Builder<'a> {
             rect,
             title: card.title,
             aside: card.aside,
-            font_preview: card.font_preview,
             rows: card.rows,
         }));
         self.y += Card::GAP;
@@ -623,6 +758,33 @@ impl<'a> Builder<'a> {
         self.row(label, hint, Spec::Toggle(on, press));
     }
 
+    /// A switch with a secondary button before it — an agent's *Install*
+    /// beside the switch that shows it. The two controls are the existing
+    /// [`Spec::Pair`], the same composition as a caret's width and height, so
+    /// no control is new: the button is the one [`row_button`](Self::row_button)
+    /// draws, the switch the one [`row_toggle`](Self::row_toggle) does.
+    pub(crate) fn row_button_toggle(
+        &mut self,
+        label: &str,
+        hint: Option<&str>,
+        (button, action): (&str, Action),
+        on: bool,
+        press: Action,
+    ) {
+        self.row(
+            label,
+            hint,
+            Spec::Pair(
+                Box::new(Spec::Button(
+                    action,
+                    button.to_owned(),
+                    koru_ui::ActionStyle::Secondary,
+                )),
+                Box::new(Spec::Toggle(on, press)),
+            ),
+        );
+    }
+
     pub(crate) fn row_swatches(
         &mut self,
         label: &str,
@@ -662,6 +824,61 @@ impl<'a> Builder<'a> {
         );
     }
 
+    /// **A row of choice chips**, wrapping across the card's width — the
+    /// shared [`Chip`], each optionally led by a brand mark (by profile key).
+    /// The row has no name; the card's title says what the chips choose.
+    pub(crate) fn row_chips(&mut self, items: Vec<(Action, String, Option<String>, bool)>) {
+        if self.card.is_none() {
+            self.card(None);
+        }
+        let left = self.x + CardRow::PAD_X;
+        let right = self.x + self.w - CardRow::PAD_X;
+        let top = self.y + CardRow::PAD_Y;
+        let (mut x, mut y) = (left, top);
+        let mut chips = Vec::with_capacity(items.len());
+        for (action, label, mark, selected) in items {
+            let slot = if mark.is_some() { CHIP_MARK_SLOT } else { 0.0 };
+            let w = Chip::new(&label, selected)
+                .leading(slot)
+                .width(self.engine)
+                .max(koru_ui::chip::MIN_W);
+            if x > left && x + w > right {
+                x = left;
+                y += Chip::H + koru_ui::chip::GAP;
+            }
+            let rect = Rect::new(x, y, w, Chip::H);
+            let hit = self.push_hit(rect, Target::Action(action));
+            chips.push(ChipLaid {
+                rect,
+                label,
+                mark,
+                selected,
+                hit,
+            });
+            x += w + koru_ui::chip::GAP;
+        }
+        let bottom = chips
+            .iter()
+            .map(|chip| chip.rect.y + chip.rect.h)
+            .fold(top, f32::max);
+        let h = (bottom + CardRow::PAD_Y - self.y).max(CardRow::MIN_H);
+        let rect = Rect::new(self.x, self.y, self.w, h);
+        if let Some(card) = self.card.as_mut() {
+            card.rows.push(RowLaid {
+                rect,
+                label: String::new(),
+                hint: None,
+                link: None,
+                chip: None,
+                mark: None,
+                drag: None,
+                text_w: 0.0,
+                widget: Widget::Chips(chips),
+            });
+        }
+        self.y += h;
+    }
+
     pub(crate) fn row_stepper(
         &mut self,
         label: &str,
@@ -688,7 +905,9 @@ impl<'a> Builder<'a> {
             self.card(None);
         }
         let (control_w, control_h) = self.measure(&spec);
-        let text_w = CardRow::text_w(self.w, control_w);
+        let mark = self.pending_mark.take();
+        let indent = if mark.is_some() { MARK_SLOT } else { 0.0 };
+        let text_w = CardRow::text_w(self.w - indent, control_w);
         let pending_link = self.pending_link.take();
         let chip = self.pending_chip.take();
         let row = CardRow {
@@ -701,7 +920,29 @@ impl<'a> Builder<'a> {
             .height(self.engine, text_w, control_h)
             .max(CardRow::MIN_H);
         let rect = Rect::new(self.x, self.y, self.w, h);
-        let at = row.link_rect(self.engine, rect, text_w);
+        // The handle's press covers the whole inset, the row's full height,
+        // so it is not a 12-pixel target.
+        let drag = self.pending_drag.take().map(|n| {
+            let grip = Rect::new(
+                rect.x + GRIP_INSET,
+                rect.y + (rect.h - koru_draw::theme::GRIP_H) * 0.5,
+                koru_draw::theme::GRIP_W,
+                koru_draw::theme::GRIP_H,
+            );
+            self.push_hit(
+                Rect::new(rect.x, rect.y, CardRow::PAD_X, rect.h),
+                Target::Grip(n),
+            );
+            if self.laid.drag_rows.len() <= n {
+                self.laid
+                    .drag_rows
+                    .resize(n + 1, Rect::new(0.0, 0.0, 0.0, 0.0));
+            }
+            self.laid.drag_rows[n] = rect;
+            (n, grip)
+        });
+        let text_rect = Rect::new(rect.x + indent, rect.y, rect.w - indent, rect.h);
+        let at = row.link_rect(self.engine, text_rect, text_w);
         let link = match (pending_link, at) {
             (Some((text, action)), Some(at)) => {
                 Some((text, self.push_hit(at, Target::Action(action))))
@@ -710,6 +951,9 @@ impl<'a> Builder<'a> {
         };
         let slot = CardRow::control_slot(rect, control_w, control_h);
         let widget = self.place(spec, slot);
+        if let Some((n, _)) = drag {
+            self.push_hit(rect, Target::Row(n));
+        }
         if let Some(card) = self.card.as_mut() {
             card.rows.push(RowLaid {
                 rect,
@@ -717,6 +961,8 @@ impl<'a> Builder<'a> {
                 hint: hint.map(str::to_owned),
                 link,
                 chip,
+                mark,
+                drag,
                 text_w,
                 widget,
             });

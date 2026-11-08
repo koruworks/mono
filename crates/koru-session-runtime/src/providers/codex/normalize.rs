@@ -9,6 +9,28 @@ pub(super) struct CodexModel {
     pub model: String,
     pub image: bool,
     pub is_default: bool,
+    /// What the app-server calls it for a person (`displayName`), and its
+    /// `description`, within `ModelLabel`'s bounds.
+    pub display_name: Option<koru_session_protocol::ModelLabel>,
+    pub description: Option<koru_session_protocol::ModelLabel>,
+    /// Its `supportedReasoningEfforts` and `defaultReasoningEffort`, in
+    /// Koru's vocabulary: the catalog's levels, and the ones a chosen effort
+    /// is checked against.
+    pub reasoning: Option<koru_session_protocol::ModelReasoning>,
+    /// Codex names a newer model to move to (`upgrade` is set): its own mark
+    /// for an older one (D11).
+    pub legacy: bool,
+    /// The model's *Fast* service tier (koru-ai D11), when it lists one.
+    pub fast: Option<FastTier>,
+}
+
+/// **Codex's Fast mode**: the service tier its catalog names *Fast* (seen as
+/// `priority` on 0.166.0), and whether the model runs in it by default
+/// (`defaultServiceTier`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct FastTier {
+    pub id: String,
+    pub on_by_default: bool,
 }
 
 pub(super) struct ModelPage {
@@ -49,16 +71,57 @@ fn text_model(model: &Value, is_default: bool) -> Option<CodexModel> {
     {
         return None;
     }
+    let label = |key: &str| model.get(key).and_then(Value::as_str);
+    let display_name = label("displayName").and_then(koru_session_protocol::ModelLabel::name);
+    let description = label("description").and_then(koru_session_protocol::ModelLabel::description);
+    let efforts = model
+        .get("supportedReasoningEfforts")
+        .and_then(Value::as_array)
+        .map(|efforts| {
+            efforts
+                .iter()
+                .filter_map(|effort| effort.get("reasoningEffort").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let (reasoning, _) = koru_session_protocol::ModelReasoning::from_agent_tokens(
+        efforts,
+        label("defaultReasoningEffort"),
+    );
+    let legacy = model
+        .get("upgrade")
+        .is_some_and(|upgrade| !upgrade.is_null());
+    let fast = model
+        .get("serviceTiers")
+        .and_then(Value::as_array)
+        .and_then(|tiers| {
+            tiers.iter().find(|tier| {
+                tier.get("name")
+                    .and_then(Value::as_str)
+                    .is_some_and(|name| name.trim().eq_ignore_ascii_case("fast"))
+            })
+        })
+        .and_then(|tier| tier.get("id")?.as_str())
+        .filter(|id| valid_token(id, 64))
+        .map(|id| FastTier {
+            id: id.to_owned(),
+            on_by_default: label("defaultServiceTier") == Some(id),
+        });
     let model = model.get("model")?.as_str()?;
     if !valid_token(model, 128) {
         return None;
     }
     Some(CodexModel {
+        reasoning,
+        legacy,
+        fast,
         model: model.to_owned(),
         image: modalities
             .iter()
             .any(|value| value.as_str() == Some("image")),
         is_default,
+        display_name,
+        description,
     })
 }
 
@@ -185,6 +248,11 @@ pub(super) fn item_input(item: &Value) -> Option<String> {
                 .unwrap_or_default();
             format!("{server}: {tool} {arguments}")
         }
+        // The query a web search ran, so its row says what it looked for.
+        "webSearch" => item.get("query")?.as_str()?.to_owned(),
+        // The picture the agent looked at, as a read's input names its file,
+        // so the chat can show it (koru-ai D38).
+        "imageView" => serde_json::json!({ "path": item.get("path")?.as_str()? }).to_string(),
         _ => return None,
     };
     koru_session_protocol::bound_tool_content(&text)
@@ -192,15 +260,38 @@ pub(super) fn item_input(item: &Value) -> Option<String> {
 
 /// What the item produced (UC17), by its kind: a command's aggregated
 /// output, a file change's diffs, an MCP call's result. Bounded by the
-/// protocol.
+/// protocol; a JSON result too long for it is summarized
+/// ([`bound_tool_output`](crate::providers::tool_output::bound_tool_output)).
 pub(super) fn item_output(item: &Value) -> Option<String> {
     let text = match item.get("type").and_then(Value::as_str)? {
-        "commandExecution" => item.get("aggregatedOutput")?.as_str()?.to_owned(),
+        // A command that exited non-zero says so first, as Claude's do:
+        // the chat reads `Exit code N` off the output's first line.
+        "commandExecution" => {
+            let output = item.get("aggregatedOutput").and_then(Value::as_str);
+            match item
+                .get("exitCode")
+                .and_then(Value::as_i64)
+                .filter(|code| *code != 0)
+            {
+                Some(code) => format!("Exit code {code}\n{}", output.unwrap_or_default()),
+                None => output?.to_owned(),
+            }
+        }
+        // Each file's diff under its path, so the chat can tell the files
+        // of one change apart (D17).
         "fileChange" => item
             .get("changes")?
             .as_array()?
             .iter()
-            .filter_map(|change| change.get("diff").and_then(Value::as_str))
+            .filter_map(|change| {
+                let diff = change.get("diff").and_then(Value::as_str)?;
+                Some(match change.get("path").and_then(Value::as_str) {
+                    Some(path) if !diff.starts_with("--- ") && !diff.starts_with("diff --git") => {
+                        format!("--- {path}\n+++ {path}\n{diff}")
+                    }
+                    _ => diff.to_owned(),
+                })
+            })
             .collect::<Vec<_>>()
             .join("\n"),
         "mcpToolCall" => match item.get("result")? {
@@ -210,7 +301,7 @@ pub(super) fn item_output(item: &Value) -> Option<String> {
         },
         _ => return None,
     };
-    koru_session_protocol::bound_tool_content(&text)
+    crate::providers::tool_output::bound_tool_output(&text)
 }
 
 /// A thread's cumulative token counts as the app-server reports them under

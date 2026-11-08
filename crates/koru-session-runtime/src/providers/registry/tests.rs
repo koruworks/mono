@@ -37,6 +37,7 @@ fn request(kind: &str) -> ManagedProviderRequest {
         delegation: None,
         selection: None,
         mcp_servers: Vec::new(),
+        questions: false,
     }
 }
 

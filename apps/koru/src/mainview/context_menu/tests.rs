@@ -266,7 +266,7 @@ fn the_action_labels_are_the_ones_the_menu_offers() {
 fn a_document_tab_adds_rename_and_trash_without_changing_other_tabs() {
     assert_eq!(tab_items(false, false, false, false), TAB_ITEMS);
     assert_eq!(
-        tab_items(true, false, false, false),
+        tab_items(true, true, false, false),
         vec![
             MenuAction::PinTab,
             MenuAction::Divider,
@@ -304,24 +304,6 @@ fn a_document_tab_adds_rename_and_trash_without_changing_other_tabs() {
 #[test]
 fn the_new_tab_menu_leads_to_content_importers_through_a_submenu() {
     set_plus_snapshots(vec![], vec![], vec![], vec![]);
-    // One *Welcome* row, always: *Get started* was a second way to open the
-    // same page and went when every Welcome became the checklist.
-    assert_eq!(
-        new_tab_items(),
-        vec![
-            MenuAction::OpenWelcome,
-            MenuAction::Documents,
-            MenuAction::Canvases,
-            MenuAction::NewShell,
-            MenuAction::NewAgent,
-            MenuAction::NewAiChat,
-            MenuAction::Delegate,
-            MenuAction::Chats,
-            MenuAction::Socials,
-            MenuAction::Divider,
-            MenuAction::ImportAs,
-        ]
-    );
     assert_eq!(
         MenuAction::NewShell.icon(),
         Some(koru_draw::icons::TERMINAL)
@@ -330,14 +312,15 @@ fn the_new_tab_menu_leads_to_content_importers_through_a_submenu() {
     assert_eq!(MenuAction::NewAgent.label(), "Agents");
     assert_eq!(MenuAction::NewAgent.icon(), Some(koru_draw::icons::SPARKLE));
     assert_eq!(MenuAction::Chats.label(), "Chats");
-    assert_eq!(
-        MenuAction::OpenWelcome.icon(),
-        Some(koru_draw::icons::HOUSE)
-    );
     assert_eq!(MenuAction::NewAiChat.label(), "New");
+    // Two bubbles, the review's pick for everything that leads to a chat.
     assert_eq!(
         MenuAction::NewAiChat.icon(),
-        Some(koru_draw::icons::SPARKLE)
+        Some(koru_draw::icons::CHATS_CIRCLE)
+    );
+    assert_eq!(
+        MenuAction::Chats.icon(),
+        Some(koru_draw::icons::CHATS_CIRCLE)
     );
     assert_eq!(MenuAction::Documents.label(), "Documents");
     assert_eq!(MenuAction::NewDocument.label(), "New");
@@ -364,7 +347,10 @@ fn the_new_tab_menu_leads_to_content_importers_through_a_submenu() {
         agents.iter().all(|a| a.label() != "Codex (Embedded)"),
         "the Agents launch flyout offers the raw Codex CLI row only, not Codex (Embedded)"
     );
-    assert_eq!(submenu(MenuAction::NewAgent), Some(agents));
+    // The profiles, then — after a rule — *Manage…* (Agent providers).
+    let mut flyout = agents;
+    flyout.extend([MenuAction::Divider, MenuAction::ManageAgents]);
+    assert_eq!(submenu(MenuAction::NewAgent), Some(flyout));
     assert_eq!(
         submenu(MenuAction::Documents),
         Some(vec![MenuAction::NewDocument])
@@ -374,7 +360,12 @@ fn the_new_tab_menu_leads_to_content_importers_through_a_submenu() {
         Some(vec![MenuAction::NewAiChat])
     );
     assert_eq!(MenuAction::ImportAs.label(), "Import\u{2026}");
-    assert_eq!(submenu(MenuAction::ImportAs), Some(import_items()));
+    // Files first, a rule, then the formats — the one Import list.
+    assert_eq!(submenu(MenuAction::ImportAs), Some(import_menu_items()));
+    assert_eq!(
+        &import_menu_items()[..2],
+        [MenuAction::ImportFiles, MenuAction::Divider]
+    );
     // The submenu is a projection of the shell's format registry, in
     // registration order — never a list maintained here.
     let ids: Vec<&'static str> = import_items()
@@ -866,6 +857,48 @@ fn a_file_menu_opens_or_copies_the_opaque_file() {
     assert_eq!(MenuAction::SaveFileAs.label(), "Save as\u{2026}");
     assert_eq!(file_items(3, None)[3].label(), "Move 3 to trash");
     assert_eq!(file_items(1, None)[4].label(), "Move to trash");
+}
+
+/// *Rename…* speaks the window's language — the chat row's, the file's and
+/// the workspace's are one row, and one key with a schedule's.
+#[test]
+fn rename_is_localized_like_a_schedules() {
+    for lang in koru_i18n::Lang::ALL {
+        koru_i18n::with_current(lang, || {
+            let word = koru_i18n::t(lang, koru_i18n::Key::ScheduleRename);
+            assert_eq!(MenuAction::Rename.label(), word, "{lang:?}");
+            assert_eq!(ai_chat_items(1, false)[0].label(), word, "{lang:?}");
+        });
+    }
+    koru_i18n::with_current(koru_i18n::Lang::De, || {
+        assert_eq!(MenuAction::Rename.label(), "Umbenennen\u{2026}");
+    });
+}
+
+/// **A chat row's menu** (koru-ai D86) — its right-click and its ⋯: *Rename…*,
+/// *Pin* or *Unpin* as the chat is, a divider, then the red delete row, and
+/// no chord on any of them for now. A pick of several is the delete row.
+#[test]
+fn a_chat_rows_menu_is_rename_pin_divider_delete_without_chords() {
+    assert_eq!(
+        ai_chat_items(1, false),
+        [
+            MenuAction::RenameAiChat,
+            MenuAction::PinAiChat,
+            MenuAction::Divider,
+            MenuAction::DeleteAiChat
+        ]
+    );
+    assert_eq!(ai_chat_items(1, true)[1], MenuAction::UnpinAiChat);
+    assert_eq!(ai_chat_items(4, true), [MenuAction::DeleteAiChat]);
+    for action in ai_chat_items(1, false) {
+        assert_eq!(koru_ui::MenuItem::shortcut(&action), None, "{action:?}");
+    }
+    assert!(MenuAction::DeleteAiChat.destructive());
+    koru_i18n::with_current(koru_i18n::Lang::En, || {
+        assert_eq!(MenuAction::PinAiChat.label(), "Pin");
+        assert_eq!(MenuAction::UnpinAiChat.label(), "Unpin");
+    });
 }
 
 /// *Add note* when the file has none, *Open note* when it does — one row,

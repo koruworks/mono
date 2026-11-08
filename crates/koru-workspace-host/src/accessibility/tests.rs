@@ -442,6 +442,34 @@ fn focus_falls_back_to_the_window_when_it_names_something_that_is_gone() {
     assert_eq!(projection.update.focus, close.node_id());
 }
 
+/// **A difference that retires the focused control does not name it.** The
+/// client held it before this update and will not after; AccessKit panics on
+/// a focus outside its tree, which is how switching profile once closed the
+/// window. A control the client holds and this update leaves alone is still
+/// published as itself.
+#[test]
+fn a_delta_never_focuses_a_control_it_retires() {
+    let window = WindowSlot::from_raw(1);
+    let view = ViewSlot::from_raw(1);
+    let row = Occurrence::model(window, view, doc(), ControlPart::ROOT);
+    let known = std::collections::HashMap::from([(row.node_id(), row)]);
+
+    let mut delta = semantics(window, "Notes", Vec::new()).as_delta(vec![row]);
+    delta.focus = Some(row);
+    let projection = super::projection::build(&delta, &known);
+    assert!(projection.unresolved_focus);
+    assert_eq!(
+        projection.update.focus,
+        Occurrence::window_root(window).node_id()
+    );
+
+    let mut delta = semantics(window, "Notes", Vec::new()).as_delta(Vec::new());
+    delta.focus = Some(row);
+    let projection = super::projection::build(&delta, &known);
+    assert!(!projection.unresolved_focus);
+    assert_eq!(projection.update.focus, row.node_id());
+}
+
 // --------------------------------------------------- the one creation site
 
 /// **The reveal audit, kept true by a test rather than by a memory.**

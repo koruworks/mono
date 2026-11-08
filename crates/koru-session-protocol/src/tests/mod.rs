@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
 
+mod agent_commands;
 mod attachment;
 mod delegation;
 mod dependency;
 mod ids;
 mod negotiation;
 mod project;
+mod questions;
 mod render;
 mod schema;
 mod state;

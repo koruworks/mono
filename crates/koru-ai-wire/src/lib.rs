@@ -11,17 +11,48 @@ use koru_ai_core::{
     AiError, AiEvent, AiProviderId, AiSearchPage, AiSurface, AiUsage, AttemptStatus, Chat, ChatId,
     ChatToolPolicy, ContextRef, DocumentDestination, DocumentExport, DocumentExportId,
     FeedbackEvent, FeedbackEventId, FeedbackValue, InferenceAttempt, InferenceAttemptId, Message,
-    MessageBlock, MessageId, ModelDescriptor, ModelSelection, PinnedDocument, ReasoningChoice,
-    SourceLink, Timestamp, ToolActivity, ToolMode, UsageReport, WebSearchPhase, WorkspaceId,
+    MessageBlock, MessageId, ModelDescriptor, ModelSelection, PinnedDocument, ProfileId,
+    ReasoningChoice, SourceLink, Timestamp, ToolActivity, ToolMode, UsageReport, WebSearchPhase,
+    WorkspaceId,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 pub use koru_ai_core::{
-    ListChatsToolRequest, ListChatsToolResponse, ReadChatToolRequest, ReadChatToolResponse,
-    SearchChatsToolRequest, SearchChatsToolResponse,
+    AttachmentKind, AttachmentSource, ChatAttachment, ChatAttachmentId, ListChatsToolRequest,
+    ListChatsToolResponse, ReadChatToolRequest, ReadChatToolResponse, SearchChatsToolRequest,
+    SearchChatsToolResponse, WorkspaceFileOrigin,
 };
+
+/// The stable failure codes of the attachment routes and of a send that
+/// names attachments. Product UI renders localized copy by code.
+pub mod attachment_codes {
+    /// One file over `MAX_ATTACHMENT_BYTES`.
+    pub const TOO_LARGE: &str = "attachment_too_large";
+    /// More files, or more bytes, than one message may carry.
+    pub const LIMIT: &str = "attachment_limit";
+    /// A type off the allowlist, or content that is not what the name says.
+    pub const TYPE_NOT_ALLOWED: &str = "attachment_type_not_allowed";
+    /// No such attachment in this chat (never stored, removed or swept).
+    pub const NOT_FOUND: &str = "attachment_not_found";
+    /// The row is there but its stored file is gone from this computer.
+    pub const MISSING: &str = "attachment_missing";
+    /// It was sent with a message, which keeps it.
+    pub const SENT: &str = "attachment_sent";
+    /// The id was already used for different content.
+    pub const CONFLICT: &str = "attachment_conflict";
+    /// The chat's provider takes no attachments (only local agents do).
+    pub const UNSUPPORTED: &str = "attachments_unsupported";
+    /// The bytes could not be stored: the disk is full or not writable.
+    pub const STORAGE: &str = "attachment_storage";
+    /// The attachment has no preview (it is not a picture).
+    pub const NO_PREVIEW: &str = "attachment_no_preview";
+    /// An `@` file's workspace is not, or is no longer, one the chat may use.
+    pub const WORKSPACE_NOT_GRANTED: &str = "workspace_not_granted";
+    /// An `@` file is trashed, not a file, or its blob is offline.
+    pub const WORKSPACE_FILE_UNAVAILABLE: &str = "workspace_file_unavailable";
+}
 
 pub const AI_WIRE_VERSION: u32 = 1;
 pub const AI_STREAM_VERSION: u32 = 1;
@@ -33,6 +64,12 @@ pub struct CreateChatRequest {
     pub chat_id: ChatId,
     pub title: String,
     pub model: ModelSelection,
+    /// **The profile the chat belongs to** (AI schema 13): the profile of
+    /// the window it is started in. An older client sends none, and the
+    /// service places the chat as it places one written before profiles —
+    /// with nothing read yet, in the first profile.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<ProfileId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -48,6 +85,20 @@ pub struct RenameChatRequest {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct RenameChatResponse {
+    pub chat: Chat,
+}
+
+/// Pin a chat, or unpin it (AI schema 12). Pinning a chat already pinned
+/// keeps its pin time; like a rename it is not activity, so the chat keeps
+/// its place among the others.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PinChatRequest {
+    pub pinned: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PinChatResponse {
     pub chat: Chat,
 }
 
@@ -90,6 +141,29 @@ pub struct UpdateChatFolderResponse {
     pub chat: Chat,
 }
 
+/// A local agent chat's settings for its next message (koru-ai D7). A field
+/// left out keeps what the chat has. Accepted on an `agent-*` chat at any
+/// time: a reply already running keeps the mode it was sent in.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateChatAgentSettingsRequest {
+    /// The approval mode, the agent's own id: one it lists in
+    /// [`AgentModelsResponse::modes`]. An agent refuses one it does not
+    /// offer when the message is sent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    /// Fast mode on or off for the chat's model (koru-ai D11), where the
+    /// model offers it ([`AgentModelView::fast`]). Applied from the next
+    /// message, like the mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fast: Option<bool>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct UpdateChatAgentSettingsResponse {
+    pub chat: Chat,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ListChatsResponse {
     pub chats: Vec<Chat>,
@@ -113,6 +187,10 @@ pub struct ChatTranscript {
     pub tool_policy: ChatToolPolicy,
     #[serde(default)]
     pub tool_activities: Vec<ToolActivity>,
+    /// A local agent's status lines beside its replies, in the order they
+    /// came (koru-ai D69).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notices: Vec<koru_ai_core::AgentNotice>,
     pub messages: Vec<Message>,
     pub blocks: Vec<MessageBlock>,
     pub pinned_documents: Vec<PinnedDocument>,
@@ -126,6 +204,23 @@ pub struct ChatTranscript {
     /// chip can read and set it; `None` where the model advertises none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_control: Option<koru_ai_core::ReasoningControl>,
+    /// Every attachment of the chat: those sent with a message, in message
+    /// and ordinal order, then the staged ones not yet sent.
+    #[serde(default)]
+    pub attachments: Vec<ChatAttachment>,
+}
+
+/// One attachment stored, or found already stored under the same id with
+/// the same content.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ChatAttachmentResponse {
+    pub attachment: ChatAttachment,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct RemoveAttachmentResponse {
+    /// Whether a staged attachment existed and was removed.
+    pub removed: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -144,11 +239,19 @@ pub struct ChatToolPolicyResponse {
 /// choices for a permission request; the chosen one's id comes back here.
 /// A workspace tool offers none and takes no body. An agent's row with no
 /// choice is refused, so two same-intent choices can never collapse.
+///
+/// **An agent's questions are answered by approving their row with
+/// `answers`** (koru-ai D108), one per question by its id: an offered
+/// option by label, or the person's own words where the question takes
+/// them. Denying the row skips the set. A question row approved without
+/// answers is refused.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ToolDecisionRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub choice: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answers: Option<Vec<koru_ai_core::AgentAnswer>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -248,6 +351,10 @@ pub struct AiSearchRequest {
     pub cursor: Option<String>,
     #[serde(default)]
     pub request_seq: u64,
+    /// Only this profile's chats (AI schema 13). Absent searches every
+    /// profile's; each hit names its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<ProfileId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -289,6 +396,29 @@ pub struct SendTurnRequest {
     /// where the current document should replace prior context.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub replace_pinned_documents: bool,
+    /// Attachments already stored for this chat and not yet sent, in the
+    /// order they go with the message. Only an agent chat takes any.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachment_ids: Vec<ChatAttachmentId>,
+    /// **A local agent's questions answered by this message** (koru-ai
+    /// D108): a set the agent asked in its reply and moved on from, whose
+    /// answers go to it as the person's next message. The message is the
+    /// answers alone — `markdown`, `explicit_refs` and `attachment_ids`
+    /// empty — and is recorded as no message of the person's: the answers
+    /// are read on the set's card, and the agent's reply follows the one
+    /// that asked. `user_message_id` in the answer is the message the
+    /// asking reply answered. A set that can no longer be answered is
+    /// refused (`questions_closed`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answers: Option<koru_ai_core::NextMessageAnswers>,
+    /// **The skills the person picked** (koru-ai D121), by the name a
+    /// local agent lists each under (`POST /v1/ai/providers/{provider}/
+    /// commands`), in the order they appear; `markdown` says `$name` where
+    /// each was. The agent is told each by name beside the text; one it no
+    /// longer lists is left out, and the text goes as typed. Only an agent
+    /// chat takes any. Not stored: the message keeps its `$name` text.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skills: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -308,6 +438,27 @@ pub struct AttemptResponse {
 pub struct CancelAttemptResponse {
     pub attempt_id: InferenceAttemptId,
     pub status: AttemptStatus,
+}
+
+/// **Steer a running agent reply**: text the person sends into the turn
+/// that is running, instead of waiting for it to end. Only a local agent
+/// that takes text mid-turn accepts it (`AgentProviderView::steers`); the
+/// message is recorded as the person's, after the running reply.
+/// `operation_id` makes a retry an idempotent read of the first answer.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SteerAttemptRequest {
+    pub operation_id: Uuid,
+    pub markdown: String,
+}
+
+/// The steer reached the running turn: the person's message as recorded.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SteerAttemptResponse {
+    pub attempt_id: InferenceAttemptId,
+    pub user_message_id: MessageId,
+    /// The same `operation_id` was answered before; nothing was sent again.
+    pub replayed: bool,
 }
 
 /// One normalized event on the public SSE stream.
@@ -354,6 +505,12 @@ pub enum PublicAiEvent {
         attempt_id: InferenceAttemptId,
         activity: ToolActivity,
     },
+    /// A local agent's status line beside its reply, as the chat keeps it
+    /// (koru-ai D69): not part of the reply's text.
+    AgentNotice {
+        attempt_id: InferenceAttemptId,
+        notice: koru_ai_core::AgentNotice,
+    },
     /// A one-line fact about the attempt the surface shows and nothing
     /// stores: a local agent could not be reattached and a replacement was
     /// started with the conversation so far.
@@ -398,6 +555,7 @@ impl PublicAiEvent {
             | Self::ReasoningDelta { attempt_id, .. }
             | Self::Usage { attempt_id, .. }
             | Self::ToolActivity { attempt_id, .. }
+            | Self::AgentNotice { attempt_id, .. }
             | Self::WebSearch { attempt_id, .. }
             | Self::Citation { attempt_id, .. }
             | Self::Completed { attempt_id, .. }
@@ -460,6 +618,7 @@ impl TryFrom<AiEvent> for PublicAiEvent {
                 attempt_id,
                 activity,
             },
+            AiEvent::AgentNotice { attempt_id, notice } => Self::AgentNotice { attempt_id, notice },
             AiEvent::WebSearch {
                 attempt_id,
                 call_id,
@@ -549,6 +708,13 @@ pub struct ProviderSettingsResponse {
 pub struct AgentProviderView {
     pub id: AiProviderId,
     pub label: String,
+    /// The agent takes text into a running turn, so a client offers a native
+    /// *Steer* (`POST /v1/ai/attempts/{attempt}/steer`); without it a client
+    /// steers by stopping the reply and sending. A fixed fact of the agent's
+    /// kind; the agent itself still decides at the moment, and a steer it
+    /// cannot take is answered `steer_unavailable`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub steers: bool,
 }
 
 /// The models one local agent lists, in the agent's own ids. Empty when the
@@ -557,6 +723,99 @@ pub struct AgentProviderView {
 pub struct AgentModelsResponse {
     pub provider: AiProviderId,
     pub models: Vec<AgentModelView>,
+    /// The agent's approval modes (koru-ai D7), in its order, with its own
+    /// ids. Empty when it offers none: a client then shows no mode control.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub modes: Vec<AgentModeView>,
+    /// The mode the agent reports it starts in — the one a chat that chose
+    /// none runs in. Absent when the agent does not say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_mode: Option<String>,
+    /// A begun chat's level can change, applied from its next message
+    /// (koru-ai D70): the agent's session host takes a level with each
+    /// message. `false` — the level stays the one the chat started at —
+    /// against an older host, and from an older service.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub levels_per_turn: bool,
+    /// A begun chat's model can move to another of the agent's models,
+    /// applied from its next message: the agent's session host takes a
+    /// model with each message (session protocol v22). `false` — the model
+    /// stays the one the chat started on — against an older host, and from
+    /// an older service.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub models_per_turn: bool,
+}
+
+/// One approval mode an agent offers: its own id, and what it says of it.
+/// A client words the ids it knows and shows these for the rest.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AgentModeView {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+/// **What a local agent can be told to do by name** (koru-ai D121): Codex's
+/// skills for the chat's folder, in a picker's order — the folder's, the
+/// person's, the agent's own, an administrator's, then by name — enabled
+/// ones only, each name once. Empty for an agent with none: a client then
+/// offers nothing under `$`. Where each lives stays with the agent.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AgentCommandsResponse {
+    pub provider: AiProviderId,
+    pub commands: Vec<AgentCommandView>,
+}
+
+/// One entry an agent offers: the name its message says (`$name`), one
+/// line about it, and the agent's own name to show when it gives one.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AgentCommandView {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    pub kind: AgentCommandKindView,
+}
+
+/// Where an entry comes from, in the order a picker lists them.
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentCommandKindView {
+    /// A skill of the folder the agent works in.
+    RepoSkill,
+    /// A skill of the person's own.
+    UserSkill,
+    /// A skill the agent ships with.
+    SystemSkill,
+    /// A skill an administrator installed.
+    AdminSkill,
+}
+
+/// The commands route's body: the folder the chat's agent works in, the
+/// person's home folder when absent — where an agent works until a folder
+/// is chosen.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DiscoverAgentCommandsRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
+}
+
+/// The models route's optional body. With `refresh`, the agent's list is
+/// rebuilt before it is answered: the session host re-probes the agent and
+/// lists it again, as it does after a CLI update. A request already
+/// rebuilding the same agent's list is joined, not repeated. With no body,
+/// the list already known is answered.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DiscoverAgentModelsRequest {
+    #[serde(default)]
+    pub refresh: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -565,6 +824,50 @@ pub struct AgentModelView {
     pub id: String,
     /// The agent's grouping of it — OpenCode's provider, Codex's one group.
     pub group: String,
+    /// The agent's own name for the model, e.g. `Claude Opus 4.7`. Absent
+    /// when the agent sends none; a client then formats the id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// The agent's own description of the model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// The agent's own name for the group, e.g. `DeepSeek`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_name: Option<String>,
+    /// The agent marks the model as older. Koru never infers it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub legacy: bool,
+    /// The reasoning levels the model offers, in Koru's words, and the
+    /// agent's stated default when it states one. Absent for a model with
+    /// none: a client shows it no level control.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<koru_ai_core::ReasoningControl>,
+    /// A longer context window the model runs with under an id of its own
+    /// (koru-ai D10). A chat chooses it by taking that id as its model.
+    /// Absent for a model with no such choice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<AgentModelContext>,
+    /// The model offers the agent's Fast mode (koru-ai D11), and whether it
+    /// runs in it by default. Absent for a model without one: a client
+    /// shows no Fast control.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fast: Option<AgentModelFast>,
+}
+
+/// A model's Fast mode: whether the agent runs the model in it when a chat
+/// has not chosen.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AgentModelFast {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub on_by_default: bool,
+}
+
+/// A model's longer context window: the id that runs the model with it,
+/// and its size in tokens.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AgentModelContext {
+    pub id: String,
+    pub tokens: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -676,6 +979,10 @@ mod tests {
                 },
                 branched_from: None,
                 agent_working_folder: None,
+                agent_mode: None,
+                agent_fast: None,
+                pinned_at: None,
+                profile_id: None,
                 created_at: Timestamp::from_millis(1),
                 updated_at: Timestamp::from_millis(1),
             },
@@ -685,6 +992,7 @@ mod tests {
                 workspace_ids: Vec::new(),
             },
             tool_activities: Vec::new(),
+            notices: Vec::new(),
             messages: Vec::new(),
             blocks: Vec::new(),
             pinned_documents: Vec::new(),
@@ -692,6 +1000,67 @@ mod tests {
             usage: Vec::new(),
             sources: Vec::new(),
             reasoning_control: None,
+            attachments: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn attachments_are_additive_on_the_send_and_the_transcript() {
+        let mut response = serde_json::to_value(transcript()).unwrap();
+        response.as_object_mut().unwrap().remove("attachments");
+        assert!(
+            serde_json::from_value::<ChatTranscript>(response)
+                .unwrap()
+                .attachments
+                .is_empty()
+        );
+
+        let base = serde_json::json!({
+            "operation_id": Uuid::new_v4(),
+            "chat_id": ChatId::new(),
+            "surface": "standalone",
+            "markdown": "Question"
+        });
+        let decoded = serde_json::from_value::<SendTurnRequest>(base.clone()).unwrap();
+        assert!(decoded.attachment_ids.is_empty());
+        assert!(
+            serde_json::to_value(&decoded)
+                .unwrap()
+                .get("attachment_ids")
+                .is_none(),
+            "a client that sends no attachment is byte-for-byte what it was"
+        );
+        let mut with_empty = base;
+        with_empty["attachment_ids"] = serde_json::json!([]);
+        assert!(serde_json::from_value::<SendTurnRequest>(with_empty).is_ok());
+    }
+
+    #[test]
+    fn no_public_attachment_schema_carries_a_path() {
+        fn has_property(value: &serde_json::Value, name: &str) -> bool {
+            match value {
+                serde_json::Value::Object(object) => {
+                    object
+                        .get("properties")
+                        .and_then(serde_json::Value::as_object)
+                        .is_some_and(|properties| properties.contains_key(name))
+                        || object.values().any(|value| has_property(value, name))
+                }
+                serde_json::Value::Array(values) => {
+                    values.iter().any(|value| has_property(value, name))
+                }
+                _ => false,
+            }
+        }
+        for schema in [
+            serde_json::to_value(schemars::schema_for!(ChatTranscript)).unwrap(),
+            serde_json::to_value(schemars::schema_for!(ChatAttachmentResponse)).unwrap(),
+            serde_json::to_value(schemars::schema_for!(SendTurnRequest)).unwrap(),
+            serde_json::to_value(schemars::schema_for!(StreamEvent)).unwrap(),
+        ] {
+            for private in ["path", "native", "content_blake3"] {
+                assert!(!has_property(&schema, private), "{private}");
+            }
         }
     }
 
@@ -744,6 +1113,7 @@ mod tests {
 
         let armed = SendTurnRequest {
             web_search: true,
+            skills: Vec::new(),
             ..decoded
         };
         assert_eq!(serde_json::to_value(armed).unwrap()["web_search"], true);

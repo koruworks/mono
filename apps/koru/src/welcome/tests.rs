@@ -68,9 +68,9 @@ fn key(view: &mut WelcomeView, named: NamedKey, mods: ModifiersState) -> bool {
 
 // --------------------------------------------------------- what is counted
 
-/// *Your first five minutes* counts six rows, and Linux's app-menu row too.
+/// *Your first five minutes* counts five rows, and Linux's app-menu row too.
 fn first_minutes() -> usize {
-    6 + usize::from(koru_autostart::app_menu::SUPPORTED)
+    5 + usize::from(koru_autostart::app_menu::SUPPORTED)
 }
 
 /// **Linux's app-menu row**: on the page only where there is an app menu to
@@ -97,9 +97,14 @@ fn only_rows_with_an_action_tick_and_only_checklist_rows_count() {
     let view = page();
     assert_eq!(
         view.progress_of(Section::FirstMinutes),
-        (0, first_minutes())
+        (0, first_minutes()),
+        "Learn your way around is off the page, so not counted"
     );
-    assert_eq!(view.progress_of(Section::Further), (0, 3));
+    assert_eq!(
+        view.progress_of(Section::Further),
+        (0, 2),
+        "Set up your AI is off the page, so not counted"
+    );
     assert_eq!(
         view.progress_of(Section::Devices),
         (0, 0),
@@ -139,51 +144,63 @@ fn inert_rows_are_drawn_without_a_tick_circle() {
     }
 }
 
+/// **A finished card stays open**: its header says *m of m done* and every
+/// row is still there, with no *Show* or *Hide* to press.
 #[test]
-fn the_header_counts_and_a_finished_checklist_folds_until_shown() {
+fn the_header_counts_and_a_finished_card_stays_open() {
     let mut view = page();
     let first = |view: &mut WelcomeView| {
         let section = &laid(view).sections[0];
         (
             section.progress.as_ref().map(|(text, _)| text.clone()),
-            section.toggle.map(|(label, _)| label),
-            section.folded.is_some(),
+            section.rows.len(),
         )
     };
-    let of = first_minutes();
-    let done = |n: usize| Some(format!("{n} of {of} done"));
-    assert_eq!(first(&mut view), (done(0), None, false));
+    let count = first_minutes();
+    let done = |n| Some(format!("{n} of {count} done"));
+    assert_eq!(first(&mut view), (done(0), count));
     assert!(
         laid(&mut view).sections[1].progress.is_none(),
         "Connect your devices has no count"
     );
 
+    // A tick stored for a row that is off the page counts for nothing.
     view.set_done(["first-document", "documents", "files", "learn"]);
-    assert_eq!(first(&mut view), (done(4), None, false));
+    assert_eq!(first(&mut view), (done(3), count));
 
     view.set_done(["reminder", "feedback", "app-menu"]);
     assert_eq!(
         first(&mut view),
-        (done(of), Some(SHOW), true),
-        "all counted rows done: one line and a Show link"
-    );
-    assert_eq!(Section::FirstMinutes.done_line(), FIRST_MINUTES_DONE);
-
-    let toggle = rect_of(&mut view, Target::Toggle(Section::FirstMinutes));
-    assert!(press(&mut view, toggle));
-    assert_eq!(first(&mut view), (done(of), Some(HIDE), false));
-    let toggle = rect_of(&mut view, Target::Toggle(Section::FirstMinutes));
-    assert!(press(&mut view, toggle));
-    assert!(first(&mut view).2, "Hide folds it again");
-    assert!(
-        view.take_wants().is_empty(),
-        "showing and hiding asks for nothing"
+        (done(count), count),
+        "all counted rows done: the card keeps its rows"
     );
 
-    view.set_done(["ai", "mcp", "terminal-agent"]);
+    view.set_done(["mcp", "terminal-agent"]);
     let further = &laid(&mut view).sections[2];
-    assert!(further.folded.is_some());
-    assert_eq!(Section::Further.done_line(), FURTHER_DONE);
+    assert_eq!(
+        further.progress.as_ref().map(|(text, _)| text.as_str()),
+        Some("2 of 2 done")
+    );
+    assert_eq!(further.rows.len(), 2, "still open");
+    let card = further.card;
+    let last = further.rows.last().expect("a row").rect;
+    assert!(
+        (card.y + card.h - (last.y + last.h)).abs() < 0.5,
+        "the card is as tall as its rows"
+    );
+    // The section headers carry nothing to press.
+    let laid = laid(&mut view);
+    for section in &laid.sections {
+        let (top, bottom) = (section.label_y, section.label_y + layout::LABEL_H);
+        assert!(
+            !laid
+                .hits
+                .iter()
+                .any(|(_, rect)| rect.y < bottom && rect.y + rect.h > top),
+            "{:?} has a control in its header",
+            section.section
+        );
+    }
 }
 
 // ------------------------------------------------------------ the actions
@@ -191,7 +208,7 @@ fn the_header_counts_and_a_finished_checklist_folds_until_shown() {
 #[test]
 fn every_action_raises_its_existing_command_and_ticks_its_row() {
     let _hints = guide();
-    let cases: [(Target, Option<WelcomeWant>, Option<RowId>); 14] = [
+    let cases: [(Target, Option<WelcomeWant>, Option<RowId>); 12] = [
         (Target::Customize, Some(WelcomeWant::Settings), None),
         (
             Target::Row(RowId::FirstDocument),
@@ -209,7 +226,6 @@ fn every_action_raises_its_existing_command_and_ticks_its_row() {
             Some(WelcomeWant::ImportFiles),
             Some(RowId::Files),
         ),
-        (Target::Row(RowId::Learn), None, Some(RowId::Learn)),
         (
             Target::Row(RowId::Reminder),
             Some(WelcomeWant::Reminders),
@@ -232,13 +248,8 @@ fn every_action_raises_its_existing_command_and_ticks_its_row() {
         ),
         (Target::PairQr, Some(WelcomeWant::LinkDevice), None),
         (
-            Target::Row(RowId::Ai),
-            Some(WelcomeWant::AiSetup),
-            Some(RowId::Ai),
-        ),
-        (
             Target::CopyMcp,
-            Some(WelcomeWant::CopyMcpCommand),
+            Some(WelcomeWant::CopyMcpCommand(mcp::Agent::ClaudeCode)),
             Some(RowId::Mcp),
         ),
         (
@@ -299,7 +310,6 @@ fn every_import_chip_names_its_registered_format() {
 fn rows_with_nothing_behind_them_do_nothing() {
     let mut view = page();
     for row in [
-        RowId::TaskList,
         // These rows act only through their links, chips and buttons.
         RowId::Documents,
         RowId::Files,
@@ -319,8 +329,10 @@ fn rows_with_nothing_behind_them_do_nothing() {
     assert!(view.take_newly_done().is_empty());
 }
 
-/// *Phone*, *Watch* and *Write your own apps* are hidden for now, and the
-/// feedback sentence offers the form and email only.
+/// *Phone*, *Watch*, *Write your own apps*, *Learn your way around*, *Turn
+/// one document into a task list* and *Set up your AI* are hidden for now,
+/// *Run an agent in a terminal* opens *Further* in the AI row's place, and
+/// the feedback sentence offers the form and email only.
 #[test]
 fn the_hidden_rows_and_chat_are_not_on_the_page() {
     let mut view = page();
@@ -329,10 +341,39 @@ fn the_hidden_rows_and_chat_are_not_on_the_page() {
         .iter()
         .flat_map(|s| s.rows.iter().map(|r| r.id))
         .collect();
-    for hidden in [RowId::Phone, RowId::Watch, RowId::OwnApps] {
+    for hidden in [
+        RowId::Phone,
+        RowId::Watch,
+        RowId::OwnApps,
+        RowId::Learn,
+        RowId::TaskList,
+        RowId::Ai,
+    ] {
         assert!(!drawn.contains(&hidden), "{hidden:?} is drawn");
+        assert!(
+            !laid(&mut view)
+                .hits
+                .iter()
+                .any(|(t, _)| *t == Target::Row(hidden)),
+            "{hidden:?} can be pressed"
+        );
     }
+    assert_eq!(
+        Section::FirstMinutes.rows(),
+        [
+            RowId::FirstDocument,
+            RowId::Documents,
+            RowId::Files,
+            RowId::Reminder,
+            RowId::Feedback
+        ]
+    );
     assert_eq!(Section::Devices.rows(), [RowId::Computer]);
+    assert_eq!(
+        Section::Further.rows(),
+        [RowId::TerminalAgent, RowId::Mcp],
+        "the agent row first, where Set up your AI was"
+    );
     let feedback: String = laid(&mut view)
         .sections
         .iter()
@@ -361,7 +402,7 @@ fn the_mcp_row_shows_the_command_and_copies_it() {
         .and_then(|r| r.code.clone())
         .expect("the command is drawn");
     assert!(shown.ends_with("serve --stdio"), "{shown}");
-    assert_eq!(view.mcp_command, mcp::command());
+    assert_eq!(view.mcp_command, mcp::command(mcp::Agent::ClaudeCode));
     let copy_targets = laid(&mut view)
         .hits
         .iter()
@@ -386,6 +427,129 @@ fn the_mcp_command_quotes_paths_with_spaces_and_carries_the_root() {
     );
 }
 
+/// **Each agent's own `mcp add`.** The bridge goes after `--` where the
+/// agent's parser wants it and without one where it refuses it, and the agents
+/// that default to the current folder are told `--scope user`.
+#[test]
+fn each_agent_gets_its_own_registration_command() {
+    use std::path::Path;
+    let bridge = Path::new(r"C:\Program Files\Koru\koru-mcp.exe");
+    let tail = r#""C:\Program Files\Koru\koru-mcp.exe" serve --stdio"#;
+    for (agent, prefix) in [
+        (
+            mcp::Agent::ClaudeCode,
+            "claude mcp add --scope user koru -- ",
+        ),
+        (mcp::Agent::Codex, "codex mcp add koru -- "),
+        (mcp::Agent::Gemini, "gemini mcp add --scope user koru "),
+        (mcp::Agent::Copilot, "copilot mcp add koru -- "),
+        (mcp::Agent::Qwen, "qwen mcp add --scope user koru "),
+        (mcp::Agent::Grok, "grok mcp add koru -- "),
+        (mcp::Agent::Antigravity, "agy mcp add koru -- "),
+        (mcp::Agent::Other, ""),
+    ] {
+        assert_eq!(
+            mcp::agent_line(agent, bridge, None),
+            format!("{prefix}{tail}"),
+            "{agent:?}"
+        );
+    }
+    assert!(
+        mcp::agent_line(mcp::Agent::Gemini, bridge, Some(Path::new(r"D:\data")))
+            .ends_with(r"serve --stdio --root D:\data")
+    );
+}
+
+/// **One name for the bridge everywhere** (D55). The welcome page's
+/// registrations and the launchers' `mcp` default use the name a chat's own
+/// bridge goes by (`koru-session-host`'s `chat_bridge`), because agents that
+/// import other tools' MCP configuration (Devin) key servers by name: the
+/// same name means the chat's bridge replaces the person's, another means
+/// every Koru tool twice.
+#[test]
+fn every_registration_uses_the_chat_bridges_name() {
+    use std::path::Path;
+    let name = koru_session_profiles::MCP_SERVER_NAME;
+    assert_eq!(name, "koru");
+    let bridge = Path::new("koru-mcp");
+    for agent in mcp::Agent::ALL {
+        if agent == mcp::Agent::Other {
+            continue;
+        }
+        let line = mcp::agent_line(agent, bridge, None);
+        assert!(line.contains(" mcp add "), "{agent:?}: {line}");
+        let registered = line
+            .split(" mcp add ")
+            .nth(1)
+            .and_then(|rest| {
+                rest.split_whitespace()
+                    .find(|word| !word.starts_with("--") && *word != "user")
+            })
+            .unwrap_or_default();
+        assert_eq!(registered, name, "{agent:?}: {line}");
+    }
+    let bat = include_str!("../../../../koru.bat");
+    assert!(
+        bat.contains(&format!("set \"MCP_NAME={name}\"")),
+        "koru.bat mcp registers under another default name"
+    );
+    let sh = include_str!("../../../../koru.sh");
+    assert!(
+        sh.contains(&format!("MCP_NAME=\"${{1:-{name}}}\"")),
+        "koru.sh mcp registers under another default name"
+    );
+}
+
+/// **The row asks which agent.** One chip per agent, Claude Code chosen
+/// first; picking another changes the command shown and the one *Copy* puts
+/// on the clipboard.
+#[test]
+fn picking_an_agent_changes_the_command_the_row_copies() {
+    let mut view = page();
+    let row_agents = |view: &mut WelcomeView| {
+        laid(view)
+            .sections
+            .iter()
+            .flat_map(|s| s.rows.iter())
+            .find(|r| r.id == RowId::Mcp)
+            .map(|r| r.agents.clone())
+            .expect("the MCP row")
+    };
+    let agents = row_agents(&mut view);
+    assert_eq!(agents.len(), mcp::Agent::ALL.len());
+    assert_eq!(
+        agents
+            .iter()
+            .filter(|(_, _, chosen)| *chosen)
+            .map(|(a, _, _)| *a)
+            .collect::<Vec<_>>(),
+        vec![mcp::Agent::ClaudeCode]
+    );
+    assert!(
+        view.mcp_command.starts_with("claude mcp add"),
+        "{}",
+        view.mcp_command
+    );
+
+    view.activate(Target::McpAgent(mcp::Agent::Gemini));
+    assert!(
+        view.mcp_command.starts_with("gemini mcp add"),
+        "{}",
+        view.mcp_command
+    );
+    assert!(
+        row_agents(&mut view)
+            .iter()
+            .any(|(a, _, chosen)| *a == mcp::Agent::Gemini && *chosen)
+    );
+    view.take_wants();
+    view.activate(Target::CopyMcp);
+    assert_eq!(
+        view.take_wants(),
+        vec![WelcomeWant::CopyMcpCommand(mcp::Agent::Gemini)]
+    );
+}
+
 #[test]
 fn a_long_command_is_shortened_in_the_middle_to_fit() {
     let mut engine = TextEngine::new();
@@ -393,9 +557,9 @@ fn a_long_command_is_shortened_in_the_middle_to_fit() {
         "{}koru-mcp.exe serve --stdio",
         r"C:\Users\someone\AppData\Local\Programs\Koru\".repeat(4)
     );
-    let max = layout::key_w(&mut engine, "koru-mcp.exe serve --stdio") + 120.0;
+    let max = layout::field_w(&mut engine, "koru-mcp.exe serve --stdio") + 120.0;
     let shown = layout::elide_middle(&mut engine, &long, max);
-    assert!(layout::key_w(&mut engine, &shown) <= max);
+    assert!(layout::field_w(&mut engine, &shown) <= max);
     assert!(
         shown.contains('\u{2026}') && shown.ends_with("--stdio"),
         "{shown}"
@@ -407,42 +571,116 @@ fn a_long_command_is_shortened_in_the_middle_to_fit() {
     );
 }
 
+/// **The MCP row is two lines under its text**: every agent chip on one
+/// line, then the command with *Copy* at its right.
 #[test]
-fn learn_your_way_around_opens_the_shortcuts_inline_and_ticks_once() {
-    let _hints = guide();
+fn the_mcp_row_puts_the_agents_on_one_line_and_copy_beside_the_command() {
     let mut view = page();
-    let learn = |view: &mut WelcomeView| {
-        let row = laid(view)
+    let row = laid(&mut view)
+        .sections
+        .iter()
+        .flat_map(|s| s.rows.iter())
+        .find(|r| r.id == RowId::Mcp)
+        .expect("the MCP row");
+    let strip = row.agents_strip.expect("the agents' line");
+    let first_y = row.agents[0].1.y;
+    assert!(
+        row.agents
+            .iter()
+            .all(|(_, rect, _)| (rect.y - first_y).abs() < 0.01),
+        "one line, never wrapped"
+    );
+    let (_, code) = row.code.clone().expect("the command");
+    let layout::Trailing::Button(label, Target::CopyMcp, copy) = row.trailing else {
+        panic!("Copy is the MCP row's button")
+    };
+    assert_eq!(label, MCP_COPY);
+    assert!(code.y >= strip.window.y + strip.window.h, "under the chips");
+    assert!(
+        (code.centre().1 - copy.centre().1).abs() < 0.5,
+        "Copy is on the command's line"
+    );
+    assert!(copy.x >= code.x + code.w, "Copy is at the command's right");
+    assert!(
+        (copy.x + copy.w - (strip.window.x + strip.window.w)).abs() < 0.5,
+        "and ends where the text does"
+    );
+}
+
+/// **A line wider than the row scrolls sideways** rather than wrapping: a
+/// chip out of view cannot be pressed but keeps its place in the Tab order,
+/// focus brings it into view, and the wheel over the line moves it before
+/// the page.
+#[test]
+fn a_line_of_agents_wider_than_the_row_scrolls_sideways() {
+    let strip_of = |view: &mut WelcomeView| {
+        laid(view)
             .sections
             .iter()
             .flat_map(|s| s.rows.iter())
-            .find(|r| r.id == RowId::Learn)
-            .expect("drawn");
-        (
-            row.hints.len(),
-            matches!(row.trailing, layout::Trailing::Caret(true, _)),
-            row.rect.h,
-        )
+            .find_map(|r| r.agents_strip)
+            .expect("the agents' line")
     };
-    let (lines, open, closed_h) = learn(&mut view);
-    assert_eq!((lines, open), (0, false));
-
-    let rect = rect_of(&mut view, Target::Row(RowId::Learn));
-    assert!(press(&mut view, rect));
-    let (lines, open, open_h) = learn(&mut view);
-    assert_eq!(lines, hints::hint_lines().len(), "the registry's lines");
-    assert!(lines >= 4, "the Getting around hints");
-    assert!(open && open_h > closed_h);
-    assert_eq!(view.take_newly_done(), ["learn"]);
-
-    let rect = rect_of(&mut view, Target::Row(RowId::Learn));
-    assert!(press(&mut view, rect));
-    assert_eq!(learn(&mut view).0, 0, "a second press folds it");
-    assert!(view.take_newly_done().is_empty(), "already ticked");
+    let mut view = page();
+    view.set_viewport(420.0, 4000.0);
+    let strip = strip_of(&mut view);
+    assert!(strip.overflow > 0.0, "eight agents do not fit 420 px");
+    assert_eq!(strip.scroll, 0.0);
+    let other = rect_of(&mut view, Target::McpAgent(mcp::Agent::Other));
+    assert_eq!(other.w, 0.0, "Other is out of view");
     assert!(
-        view.take_wants().is_empty(),
-        "there is no shortcuts page to open"
+        view.focus_order()
+            .contains(&Target::McpAgent(mcp::Agent::Other)),
+        "and still reached by Tab"
     );
+
+    // Focus brings it whole into the window.
+    view.focus = Some(Target::McpAgent(mcp::Agent::Other));
+    view.reveal_focus();
+    let strip = strip_of(&mut view);
+    assert!(strip.scroll > 0.0);
+    let other = rect_of(&mut view, Target::McpAgent(mcp::Agent::Other));
+    assert!(other.w > 0.0);
+    assert!(other.x + other.w <= strip.window.x + strip.window.w + 0.5);
+    assert!(press(&mut view, other));
+    assert_eq!(view.mcp_agent, mcp::Agent::Other);
+
+    // The wheel over the line scrolls it back, and the page stays put.
+    let (x, y) = strip.window.centre();
+    let page_scroll = view.scroll;
+    View::mouse_move(&mut view, x, y - page_scroll);
+    View::scroll_by(&mut view, MouseScrollDelta::LineDelta(0.0, 1.0));
+    assert!(strip_of(&mut view).scroll < strip.scroll, "the line moved");
+    assert_eq!(view.scroll, page_scroll, "the page did not");
+}
+
+/// **The pairing square is a pointer, not the code**: no taller than the
+/// row beside it, so the card is one row tall, and pressed it opens *Link
+/// another device* as before.
+#[test]
+fn the_pairing_square_fits_its_row_and_opens_link_device() {
+    let mut view = page();
+    let devices = laid(&mut view)
+        .sections
+        .iter()
+        .find(|s| s.section == Section::Devices)
+        .expect("Connect your devices");
+    let square = devices.qr.expect("the pairing square");
+    let [row] = devices.rows.as_slice() else {
+        panic!("one device row")
+    };
+    let row = row.rect;
+    assert!((devices.card.h - row.h).abs() < 0.5, "one row tall");
+    assert!(square.h <= row.h && square.h <= layout::QR);
+    assert!((square.w - square.h).abs() < 0.01, "square");
+    assert!(square.y >= row.y && square.y + square.h <= row.y + row.h);
+    assert!(
+        (square.centre().1 - row.centre().1).abs() < 0.5,
+        "centred on the row"
+    );
+    assert_eq!(rect_of(&mut view, Target::PairQr), square);
+    assert!(press(&mut view, square));
+    assert_eq!(view.take_wants(), [WelcomeWant::LinkDevice]);
 }
 
 // ------------------------------------------------------------- the ticks
@@ -458,12 +696,15 @@ fn ticks_are_stable_ids_taken_once_and_merged_from_the_store() {
         view.take_newly_done().is_empty(),
         "a row the Store already has is not written again"
     );
-    let rect = rect_of(&mut view, Target::Row(RowId::Ai));
+    let rect = rect_of(&mut view, Target::Row(RowId::TerminalAgent));
     assert!(press(&mut view, rect));
-    assert_eq!(view.take_newly_done(), ["ai"]);
+    assert_eq!(view.take_newly_done(), ["terminal-agent"]);
     assert!(view.take_newly_done().is_empty());
     view.set_done([]);
-    assert!(view.is_done(RowId::Ai), "a tick is never taken back");
+    assert!(
+        view.is_done(RowId::TerminalAgent),
+        "a tick is never taken back"
+    );
 }
 
 // ----------------------------------------------------- keyboard and scroll
@@ -517,10 +758,10 @@ fn the_page_scrolls_to_its_last_section_and_keeps_its_hits_while_scrolled() {
         "the last section is on screen at the end of the scroll"
     );
 
-    // The last section's AI row, pressed where it is shown.
-    let ai = rect_of(&mut view, Target::Row(RowId::Ai));
-    assert!(press(&mut view, ai));
-    assert_eq!(view.take_wants(), [WelcomeWant::AiSetup]);
+    // The last section's agent row, pressed where it is shown.
+    let agent = rect_of(&mut view, Target::Row(RowId::TerminalAgent));
+    assert!(press(&mut view, agent));
+    assert_eq!(view.take_wants(), [WelcomeWant::Agents]);
 }
 
 /// **Three lines a notch**, the step the document editor already uses.
@@ -612,10 +853,16 @@ fn the_inspector_shows_one_named_tree_with_no_loose_primitives() {
     assert_eq!(count("KoruTextTitle"), 0, "no header, so no greeting");
     assert_eq!(
         count("Welcome row"),
-        11,
-        "every row of all three sections but the three hidden for now"
+        8,
+        "every row of all three sections but the six hidden for now"
     );
     assert_eq!(count("Welcome command"), 1, "the MCP command");
+    assert_eq!(count("Welcome agents"), 1, "the MCP row's line of agents");
+    assert_eq!(
+        count("Welcome shortcuts"),
+        0,
+        "Learn your way around is off"
+    );
     // Every row sits inside a section, and every section inside the page.
     for (i, record) in snapshot.records.iter().enumerate() {
         if record.name == "Welcome row" {
@@ -761,6 +1008,6 @@ fn hidden_surfaces_rows_leave_the_page() {
         assert!(Section::Further.counts());
         assert!(Section::FirstMinutes.counts());
     });
-    assert!(Section::Further.rows().contains(&RowId::Ai));
+    assert!(Section::Further.rows().contains(&RowId::TerminalAgent));
     assert!(Section::Further.counts());
 }

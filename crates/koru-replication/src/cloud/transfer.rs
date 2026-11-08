@@ -4,10 +4,12 @@
 //! composition must check current mode/authority at admission and durable handoff.
 //! No listener, database, peer identity or alternative Loro engine lives here.
 
+mod claim;
 mod codec;
 mod fragments;
 pub mod metadata;
 mod state;
+pub use claim::{ClaimReferences, UploadContext};
 pub use codec::{
     Control, Decision, Record, Start, Unit, decode_control, decode_record, encode_record,
     payload_length,
@@ -40,6 +42,19 @@ pub enum Error {
     PolicyChanged,
     TooLarge,
     Unavailable,
+    /// `sync_unit_exists` (cloud-sync-admission, the app connection
+    /// amendment; DS-D44): an app connection uploaded a creation, a blob
+    /// rooted at the empty document, for a unit Cloud already holds. The
+    /// worker refuses it before `reserve`, so the unit's head did not move.
+    /// Only a connection's session ever produces or receives it.
+    UnitExists,
+    /// `sync_document_claimed` (cloud-sync-admission, the app connection
+    /// amendment; DS-D45): another holder has a live claim on the document,
+    /// or this upload's claim reference is not the claim's. The worker
+    /// refuses it before `reserve`, or rolls back its publish transaction, so
+    /// the unit's head did not move. Only a connection's session ever
+    /// produces or receives it.
+    DocumentClaimed,
     Authority(Refusal),
 }
 impl Error {
@@ -51,6 +66,8 @@ impl Error {
             Self::PolicyChanged => "sync_policy_changed",
             Self::TooLarge => "sync_update_too_large",
             Self::Unavailable => "sync_unavailable",
+            Self::UnitExists => "sync_unit_exists",
+            Self::DocumentClaimed => "sync_document_claimed",
             Self::Authority(e) => e.code(),
         }
     }

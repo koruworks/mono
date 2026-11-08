@@ -7,6 +7,7 @@
 //! no HTTP, SQLite, OS credential API, provider SDK, window, or worker host.
 
 pub mod agent;
+pub mod attachments;
 pub mod blocks;
 pub mod chat_tools;
 pub mod conversion;
@@ -14,15 +15,22 @@ pub mod ids;
 pub mod inference;
 pub mod model;
 pub mod ports;
+pub mod profiles;
 pub mod provider;
+pub mod questions;
+pub mod reading_order;
 
 pub use agent::*;
-pub use blocks::finalize_markdown;
+pub use attachments::{
+    AttachmentInput, AttachmentKind, AttachmentRecord, AttachmentSource, ChatAttachment,
+    WorkspaceFileOrigin,
+};
+pub use blocks::{BlockCut, cut_markdown, finalize_markdown};
 pub use chat_tools::*;
 pub use conversion::{ConvertedChat, ConvertedMessage};
 pub use ids::{
-    ChatId, DocumentExportId, FeedbackEventId, InferenceAttemptId, MessageBlockId, MessageId,
-    ToolInvocationId,
+    AgentNoticeId, ChatAttachmentId, ChatId, DocumentExportId, FeedbackEventId, InferenceAttemptId,
+    MessageBlockId, MessageId, ToolInvocationId,
 };
 pub use inference::{
     AiError, AiErrorClass, AiEvent, AiRequest, AiRequestMessage, AiRequestOptions, AiToolCall,
@@ -33,7 +41,13 @@ pub use model::*;
 pub use ports::{
     AiPersistence, AiProvider, AiToolExecutionContext, AiToolExecutor, StoreContextPort,
 };
+pub use profiles::{ChatPlacementEvidence, ChatRead, ProfileCatalog, place_chat};
 pub use provider::*;
+pub use questions::{
+    AgentAnswer, AgentAnswerValue, AgentQuestion, AgentQuestionOption, AnswersRecord,
+    NextMessageAnswers, QuestionsRecord,
+};
+pub use reading_order::{read_through, reading_order};
 
 pub use koru_store_core::ids::{DocumentId, ProfileId, WorkspaceId};
 pub use koru_store_core::model::Timestamp;

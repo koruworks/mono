@@ -12,6 +12,7 @@ pub enum Method {
     Get,
     Post,
     Put,
+    Patch,
 }
 
 impl Method {
@@ -21,6 +22,7 @@ impl Method {
             Self::Get => "GET",
             Self::Post => "POST",
             Self::Put => "PUT",
+            Self::Patch => "PATCH",
         }
     }
 }
@@ -103,6 +105,11 @@ pub enum RouteId {
     AppleWebCallback,
     AppleNativeStart,
     AppleNativeCallback,
+    OAuthConsentRead,
+    OAuthConsentDecide,
+    ListAppConnections,
+    UpdateAppConnection,
+    RevokeAppConnection,
 }
 
 impl RouteId {
@@ -163,6 +170,11 @@ impl RouteId {
             Self::AppleWebCallback => "account.apple_web_callback",
             Self::AppleNativeStart => "account.apple_native_start",
             Self::AppleNativeCallback => "account.apple_native_callback",
+            Self::OAuthConsentRead => "account.oauth_consent_read",
+            Self::OAuthConsentDecide => "account.oauth_consent_decide",
+            Self::ListAppConnections => "account.app_connections_list",
+            Self::UpdateAppConnection => "account.app_connection_update",
+            Self::RevokeAppConnection => "account.app_connection_revoke",
         }
     }
 }
@@ -875,7 +887,89 @@ pub const ROUTES: &[Route] = &[
         Form,
         "Consume Apple's native form_post callback"
     ),
+    // App connections (Cloud MCP §9): the consent page's two calls and the
+    // connections list with its edits. The OAuth protocol routes themselves
+    // are `app_connections::OAUTH_ROUTES`, outside this account catalog.
+    route!(
+        OAuthConsentRead,
+        Get,
+        "/v1/oauth/consent",
+        WebSession,
+        oauth_consent_query,
+        oauth_consent_view,
+        Query,
+        "Read what the consent page shows for a pending authorization request"
+    ),
+    route!(
+        OAuthConsentDecide,
+        Post,
+        "/v1/oauth/consent",
+        WebSession,
+        oauth_consent_decision_request,
+        oauth_consent_decision_response,
+        Body,
+        "Approve or deny a pending authorization request"
+    ),
+    route!(
+        ListAppConnections,
+        Get,
+        "/v1/account/connections",
+        AccountSession,
+        empty_request,
+        app_connection_list,
+        None,
+        "List the account's connected assistants, live and revoked"
+    ),
+    route!(
+        UpdateAppConnection,
+        Patch,
+        "/v1/account/connections/{connection_id}",
+        AccountSession,
+        update_app_connection_request,
+        app_connection_summary,
+        Body,
+        "Rename a connection or change its Profiles, later-Profiles flag or access"
+    ),
+    route!(
+        RevokeAppConnection,
+        Delete,
+        "/v1/account/connections/{connection_id}",
+        AccountSession,
+        empty_request,
+        app_connection_summary,
+        None,
+        "Revoke a connection"
+    ),
 ];
+
+schema_fn!(
+    oauth_consent_query,
+    crate::app_connections::OAuthConsentQueryV1
+);
+schema_fn!(
+    oauth_consent_view,
+    crate::app_connections::OAuthConsentViewV1
+);
+schema_fn!(
+    oauth_consent_decision_request,
+    crate::app_connections::OAuthConsentDecisionRequestV1
+);
+schema_fn!(
+    oauth_consent_decision_response,
+    crate::app_connections::OAuthConsentDecisionResponseV1
+);
+schema_fn!(
+    app_connection_list,
+    crate::app_connections::AppConnectionListResponseV1
+);
+schema_fn!(
+    app_connection_summary,
+    crate::app_connections::AppConnectionSummaryV1
+);
+schema_fn!(
+    update_app_connection_request,
+    crate::app_connections::UpdateAppConnectionRequestV1
+);
 
 schema_fn!(sync_token_request, SyncTokenRequestV1);
 schema_fn!(sync_token_response, SyncTokenResponseV1);

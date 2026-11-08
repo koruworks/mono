@@ -65,6 +65,14 @@ pub const KEY_COLOR: &str = "koru.color";
 pub const KEY_DUE: &str = "koru.due";
 /// How important this is: one of [`Priority`]'s four tokens, unset as absence.
 pub const KEY_PRIORITY: &str = "koru.priority";
+/// **Where the task sits in the order somebody dragged it into**: an integer,
+/// smaller first. One order per task, read by every page ordered by hand — a
+/// list, and Today, Next, Upcoming or Later set to *Manual* — so a task moved
+/// up on one is moved up among the same tasks on the others. Absent on a task
+/// nobody has dragged, which such a page orders after the ranked ones by its
+/// due. Presentation of an order, never meaning, and never drawn as a chip —
+/// the order *is* how it is shown.
+pub const KEY_RANK: &str = "koru.rank";
 /// The pre-registry bare role older documents wrote a due under, before
 /// [`KEY_DUE`] existed. Read everywhere a due is read ([`crate::node::Node::due`]),
 /// which is what makes a legacy due-dated row a task with no migration.
@@ -98,6 +106,29 @@ pub const ROLE_RUN: &str = "koru.run";
 /// person can add from the properties surface. Older builds preserve the
 /// record and draw its stored label without needing a content-schema bump.
 pub const ROLE_SCHEDULE: &str = "koru.schedule";
+
+/// The role of a **quote chip in the AI chat's composer** (koru-ai D88): a
+/// passage of a reply, held whole as text, drawn as one chip and sent as a
+/// Markdown blockquote (`koru_export_markdown::message_text`).
+///
+/// The composer is a private in-memory document that is never stored, so
+/// this name is not written anywhere a later build reads it back. It is an
+/// open role like [`ROLE_RUN`] — a [`Text`](crate::node::AttrValue::Text)
+/// record, no new value type and no content-schema bump — and it is named
+/// here only so the editor that draws the chip and the export that sends it
+/// spell it the same.
+pub const ROLE_QUOTE: &str = "koru.quote";
+
+/// The role of a **skill chip in the AI chat's composer** (koru-ai D121): a
+/// skill of the chat's agent picked under `$`, held as its name — a
+/// [`Text`](crate::node::AttrValue::Text) record whose label is what the
+/// chip shows — and sent as `$name` (`koru_export_markdown::message_text`).
+///
+/// Like [`ROLE_QUOTE`] it lives only in the composer's private in-memory
+/// document, so nothing stores it; it is named here so the editor that draws
+/// the chip, the export that writes it and the chat that sends its name
+/// spell it the same.
+pub const ROLE_SKILL: &str = "koru.skill";
 
 /// The roles whose `"ref"` record means **a reference to a document**, and
 /// which are therefore read back as [`AttrValue::Document`] rather than as a
@@ -610,6 +641,17 @@ pub fn system_definitions() -> Vec<AttributeDefinition> {
                 .map(|p| p.as_str().to_owned())
                 .collect(),
             (true, true, true),
+        ),
+        // **Sortable and nothing else**: a rank is an order, and a filter or a
+        // group over one would be a question nobody asks.
+        AttributeDefinition::system(
+            KEY_RANK,
+            "Rank",
+            ValueType::Number,
+            Cardinality::One,
+            AttributeScope::Shared,
+            Vec::new(),
+            (false, true, false),
         ),
         // Neither task key is **sortable**: a creation reason and a two-state
         // lifecycle have no order, and a sort control offering one would be a

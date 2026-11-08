@@ -345,6 +345,12 @@ pub const MOBILE_UNAVAILABLE_OPERATIONS: &[MobileUnavailableOperation] = &[
         reason: "Local agents run on the desktop that installed them",
     },
     MobileUnavailableOperation {
+        id: "ai.discover_agent_commands",
+        client: "client.ai().discover_agent_commands",
+        http: "POST /v1/ai/providers/{provider}/commands",
+        reason: "Local agents run on the desktop that installed them",
+    },
+    MobileUnavailableOperation {
         id: "ai.pull_ollama_model",
         client: "client.ai().pull_ollama_model",
         http: "POST /v1/ai/providers/ollama/pulls",
@@ -381,6 +387,12 @@ pub const MOBILE_UNAVAILABLE_OPERATIONS: &[MobileUnavailableOperation] = &[
         reason: "Phase 1 ships desktop chat before a mobile chat host",
     },
     MobileUnavailableOperation {
+        id: "ai.pin_chat",
+        client: "client.ai().pin_chat",
+        http: "PATCH /v1/ai/chats/{chat}/pin",
+        reason: "Phase 1 ships desktop chat before a mobile chat host",
+    },
+    MobileUnavailableOperation {
         id: "ai.update_chat_model",
         client: "client.ai().update_chat_model",
         http: "PATCH /v1/ai/chats/{chat}/model",
@@ -396,6 +408,12 @@ pub const MOBILE_UNAVAILABLE_OPERATIONS: &[MobileUnavailableOperation] = &[
         id: "ai.update_chat_folder",
         client: "client.ai().update_chat_folder",
         http: "PATCH /v1/ai/chats/{chat}/folder",
+        reason: "Local agents run on the desktop that installed them",
+    },
+    MobileUnavailableOperation {
+        id: "ai.update_chat_agent_settings",
+        client: "client.ai().update_chat_agent_settings",
+        http: "PATCH /v1/ai/chats/{chat}/agent-settings",
         reason: "Local agents run on the desktop that installed them",
     },
     MobileUnavailableOperation {
@@ -483,6 +501,12 @@ pub const MOBILE_UNAVAILABLE_OPERATIONS: &[MobileUnavailableOperation] = &[
         reason: "Phase 1 ships desktop chat before a mobile chat host",
     },
     MobileUnavailableOperation {
+        id: "ai.steer_attempt",
+        client: "client.ai().steer_attempt",
+        http: "POST /v1/ai/attempts/{attempt}/steer",
+        reason: "Phase 1 ships desktop chat before a mobile chat host",
+    },
+    MobileUnavailableOperation {
         id: "ai.approve_tool_call",
         client: "client.ai().approve_tool_call",
         http: "POST /v1/ai/tool-calls/{tool}/approve",
@@ -505,6 +529,30 @@ pub const MOBILE_UNAVAILABLE_OPERATIONS: &[MobileUnavailableOperation] = &[
         client: "client.ai().clear_history",
         http: "DELETE /v1/ai/chats",
         reason: "Phase 1 ships desktop history management before a mobile chat host",
+    },
+    MobileUnavailableOperation {
+        id: "ai.put_attachment",
+        client: "client.ai().put_attachment",
+        http: "PUT /v1/ai/chats/{chat}/attachments/{attachment}",
+        reason: "Attachments go to local agents, which run on the desktop that installed them",
+    },
+    MobileUnavailableOperation {
+        id: "ai.remove_attachment",
+        client: "client.ai().remove_attachment",
+        http: "DELETE /v1/ai/chats/{chat}/attachments/{attachment}",
+        reason: "Attachments go to local agents, which run on the desktop that installed them",
+    },
+    MobileUnavailableOperation {
+        id: "ai.read_attachment",
+        client: "client.ai().attachment_bytes",
+        http: "GET /v1/ai/chats/{chat}/attachments/{attachment}",
+        reason: "Attachments go to local agents, which run on the desktop that installed them",
+    },
+    MobileUnavailableOperation {
+        id: "ai.read_attachment_thumbnail",
+        client: "client.ai().attachment_thumbnail",
+        http: "GET /v1/ai/chats/{chat}/attachments/{attachment}/thumbnail",
+        reason: "Attachments go to local agents, which run on the desktop that installed them",
     },
     MobileUnavailableOperation {
         id: "ai.usage",
@@ -1708,6 +1756,7 @@ async fn federated_search(
     let ai_principal = principal.clone();
     let ai_text = request.query.text.clone();
     let ai_cursor = cursor.ai_cursor.clone();
+    let ai_profile = request.profile;
     let include_ai = request.include_ai;
     let request_seq = request.query.request_seq;
     let ai_future = async move {
@@ -1724,6 +1773,7 @@ async fn federated_search(
                     limit: u16::try_from(page_size).expect("Store page limit fits u16"),
                     cursor: ai_cursor,
                     request_seq,
+                    profile: ai_profile,
                 },
             ),
         )
@@ -3293,6 +3343,103 @@ mod tests {
         assert!(report.report.groups.is_empty());
     }
 
+    /// The models route's optional body (agent-models D13): no body and
+    /// `{ "refresh": true }` both reach the AI service — which, with no
+    /// session host here, says local agents are not available — while a
+    /// body that is not the request is refused before it gets there.
+    #[tokio::test]
+    async fn the_agent_models_route_takes_an_optional_refresh_body() {
+        let (_root, state) = state_with_production_ai();
+        let (token, _) = state.sessions.mint(
+            "provider-manager",
+            &["ai.manage_providers".into()],
+            now_millis(),
+        );
+        let code = |status: StatusCode, bytes: &[u8]| {
+            let failure: koru_ai_wire::Failure = serde_json::from_slice(bytes).unwrap();
+            (status, failure.code)
+        };
+        let mut answers = Vec::new();
+        for body in [
+            "",
+            r#"{"refresh":true}"#,
+            r#"{"refresh":"yes"}"#,
+            r#"{"refresh":true,"other":1}"#,
+        ] {
+            let response = router(Arc::clone(&state))
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/v1/ai/providers/agent-opencode/models")
+                        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let status = response.status();
+            let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+                .await
+                .unwrap();
+            answers.push(code(status, &bytes));
+        }
+        assert_eq!(answers[0].1, "agent_service_unavailable");
+        assert_eq!(answers[1], answers[0], "a refresh reaches the same service");
+        for refused in &answers[2..] {
+            assert_eq!(
+                refused,
+                &(StatusCode::BAD_REQUEST, "invalid_request".to_owned())
+            );
+        }
+    }
+
+    /// **The commands route** (koru-ai D121): a chat's token reaches the AI
+    /// service with no body or a folder — which, with no session host here,
+    /// says local agents are not available — while a body that is not the
+    /// request is refused before it gets there.
+    #[tokio::test]
+    async fn the_agent_commands_route_takes_an_optional_folder() {
+        let (_root, state) = state_with_production_ai();
+        let (token, _) = state
+            .sessions
+            .mint("chat-client", &["ai.chat".into()], now_millis());
+        let mut answers = Vec::new();
+        for body in [
+            "",
+            r#"{"folder":"C:\\work"}"#,
+            r#"{"folder":7}"#,
+            r#"{"folder":"x","other":1}"#,
+        ] {
+            let response = router(Arc::clone(&state))
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/v1/ai/providers/agent-codex/commands")
+                        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let status = response.status();
+            let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+                .await
+                .unwrap();
+            let failure: koru_ai_wire::Failure = serde_json::from_slice(&bytes).unwrap();
+            answers.push((status, failure.code));
+        }
+        assert_eq!(answers[0].1, "agent_service_unavailable");
+        assert_eq!(answers[1], answers[0], "a folder reaches the same service");
+        for refused in &answers[2..] {
+            assert_eq!(
+                refused,
+                &(StatusCode::BAD_REQUEST, "invalid_request".to_owned())
+            );
+        }
+    }
+
     #[tokio::test]
     async fn provider_settings_cross_the_public_gateway_without_secrets() {
         let (_root, state) = state_with_production_ai();
@@ -4276,8 +4423,8 @@ mod tests {
     /// - *requested* — a token that named `workspace.destroy` and was not
     ///   vouched for. Identical to ordinary on every destructive route, which
     ///   is the property that makes asking useless on its own.
-    /// - *vouched* — the Agent confirmed at admission that it launched the
-    ///   caller. The only one that removes a workspace.
+    /// - *vouched* — the Agent confirmed at admission that the caller is the
+    ///   Koru app beside it. The only one that removes a workspace.
     ///
     /// Archiving is here twice, because it hides inside the appearance route: a
     /// colour change is management, and the same PATCH flipping `archived` is

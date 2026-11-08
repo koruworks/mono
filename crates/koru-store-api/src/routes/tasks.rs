@@ -76,31 +76,10 @@ pub trait TaskService: Send + Sync + 'static {
 pub async fn query(
     State(state): State<Arc<AppState>>,
     Extension(caller): Extension<Caller>,
-    Json(mut body): Json<TaskQuery>,
+    Json(body): Json<TaskQuery>,
 ) -> ApiResult<Json<TaskQueryResponse>> {
     caller.require(Scope::ReadDocuments)?;
-
-    // **Clamped, not refused.** A page is built in memory before it is written,
-    // so the ceiling protects the store; a caller asking for ten thousand rows
-    // is being hopeful rather than wrong.
-    body.limit = body.limit.clamp(1, MAX_LIMIT);
-
-    let Some(service) = state.task_service() else {
-        return Ok(Json(TaskQueryResponse {
-            rows: Vec::new(),
-            definitions: Vec::new(),
-            tags: Vec::new(),
-            groups: Vec::new(),
-            projected: false,
-            updating_workspaces: body.workspaces.clone(),
-            limit: 0,
-            next_after: None,
-            restarted: false,
-            covered: None,
-        }));
-    };
-
-    match tokio::task::spawn_blocking(move || service.query(&body)).await {
+    match tokio::task::spawn_blocking(move || answer(&state, body)).await {
         Ok(Ok(response)) => Ok(Json(response)),
         Ok(Err(TaskServiceError::Invalid(why))) => Err(ApiError::new(Code::InvalidRequest, why)),
         Ok(Err(TaskServiceError::Failed(why))) => Err(ApiError::new(Code::StorageFailed, why)),
@@ -108,6 +87,50 @@ pub async fn query(
             Code::Internal,
             format!("the tasks thread did not finish: {join}"),
         )),
+    }
+}
+
+/// The tasks query's answer, from whatever task service `state` holds.
+///
+/// **The one answer**, for the route above and for an in-process caller — the
+/// Store worker's typed queue, which the shared tool layer reaches through
+/// `EmbeddedStore::query_tasks` — so an embedded host gets the same page, the
+/// same clamp and the same honest empty answer as HTTP, never a second
+/// interpretation of a task. Blocking: the service sweeps and reads SQLite.
+///
+/// **Clamped, not refused.** A page is built in memory before it is written,
+/// so the ceiling protects the store; a caller asking for ten thousand rows
+/// is being hopeful rather than wrong.
+pub fn answer(
+    state: &AppState,
+    mut query: TaskQuery,
+) -> Result<TaskQueryResponse, TaskServiceError> {
+    query.limit = query.limit.clamp(1, MAX_LIMIT);
+    let Some(service) = state.task_service() else {
+        return Ok(TaskQueryResponse {
+            rows: Vec::new(),
+            definitions: Vec::new(),
+            tags: Vec::new(),
+            groups: Vec::new(),
+            projected: false,
+            updating_workspaces: query.workspaces.clone(),
+            limit: 0,
+            next_after: None,
+            restarted: false,
+            covered: None,
+        });
+    };
+    service.query(&query)
+}
+
+impl TaskServiceError {
+    /// The Store error an in-process caller reports: a malformed query is the
+    /// caller's mistake, a broken read model is storage — the route's split.
+    pub fn into_error(self) -> koru_store_core::errors::Error {
+        match self {
+            Self::Invalid(why) => koru_store_core::errors::Error::new(Code::InvalidRequest, why),
+            Self::Failed(why) => koru_store_core::errors::Error::new(Code::StorageFailed, why),
+        }
     }
 }
 

@@ -568,9 +568,9 @@ dependencies = [
 
 [[package]]
 name = "async-executor"
-version = "1.14.0"
+version = "1.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c96bf972d85afc50bf5ab8fe2d54d1586b4e0b46c97c50a0c9e71e2f7bcd812a"
+checksum = "f426a31126c735126297bc5ea7a521263c9faff4f63ca415267ee625651c4f37"
 dependencies = [
  "async-task",
  "concurrent-queue",
@@ -4800,6 +4800,7 @@ dependencies = [
  "koru-canvas-ui",
  "koru-channel",
  "koru-chats-ui",
+ "koru-cli-updates",
  "koru-clipboard",
  "koru-core",
  "koru-delegate-api",
@@ -4854,6 +4855,7 @@ dependencies = [
  "reqwest 0.12.28",
  "tempfile",
  "tracing",
+ "unicode-segmentation",
  "uuid",
  "vello",
  "windows 0.62.2",
@@ -5112,41 +5114,9 @@ dependencies = [
 name = "koru-ai-api"
 version = "0.0.3"
 dependencies = [
+ "bytes",
  "koru-ai-core",
  "koru-ai-wire",
-]
-
-[[package]]
-name = "koru-ai-chat"
-version = "0.0.3"
-dependencies = [
- "image",
- "koru-agent-wire",
- "koru-ai-core",
- "koru-ai-provider",
- "koru-ai-ui",
- "koru-api-client",
- "koru-channel",
- "koru-core",
- "koru-dictation",
- "koru-draw",
- "koru-i18n",
- "koru-ipc",
- "koru-keys",
- "koru-link",
- "koru-log",
- "koru-settings",
- "koru-settings-ui",
- "koru-ui",
- "koru-update",
- "koru-voice-consent",
- "koru-window",
- "koru-winres",
- "rfd",
- "tracing",
- "uuid",
- "vello",
- "winit",
 ]
 
 [[package]]
@@ -5253,6 +5223,8 @@ name = "koru-ai-server"
 version = "0.0.3"
 dependencies = [
  "blake3",
+ "bytes",
+ "image",
  "koru-ai-api",
  "koru-ai-client",
  "koru-ai-core",
@@ -5273,12 +5245,14 @@ dependencies = [
  "koru-store-core",
  "koru-store-server",
  "koru-store-wire",
+ "loro",
  "serde",
  "serde_json",
  "tempfile",
  "tracing",
  "url",
  "uuid",
+ "zip",
 ]
 
 [[package]]
@@ -5308,17 +5282,20 @@ dependencies = [
 name = "koru-ai-ui"
 version = "0.0.3"
 dependencies = [
+ "bytes",
  "image",
  "koru-ai-core",
  "koru-ai-wire",
  "koru-api-client",
  "koru-channel",
  "koru-chats-ui",
+ "koru-clipboard",
  "koru-core",
  "koru-draw",
  "koru-editor",
  "koru-env",
  "koru-export-markdown",
+ "koru-features",
  "koru-i18n",
  "koru-keys",
  "koru-link",
@@ -5991,6 +5968,8 @@ dependencies = [
  "image",
  "koru-channel",
  "koru-diagram",
+ "koru-i18n",
+ "koru-settings",
  "koru-title",
  "kurbo",
  "parley",
@@ -5999,6 +5978,7 @@ dependencies = [
  "serde",
  "serde_json",
  "skrifa 0.43.2",
+ "tracing",
  "vello",
 ]
 
@@ -6018,6 +5998,7 @@ dependencies = [
  "koru-features",
  "koru-i18n",
  "koru-keys",
+ "koru-link",
  "koru-markdown",
  "koru-time-zone",
  "koru-ui",
@@ -6361,6 +6342,7 @@ dependencies = [
  "koru-history",
  "koru-store-core",
  "koru-store-wire",
+ "koru-title",
  "koru-workspace",
  "loro",
  "rmcp",
@@ -6442,7 +6424,9 @@ dependencies = [
  "koru-account-session",
  "koru-contract",
  "koru-mobile-host",
+ "koru-update",
  "prost",
+ "serde_json",
  "zeroize",
 ]
 
@@ -6573,6 +6557,7 @@ version = "0.0.3"
 dependencies = [
  "chrono",
  "koru-core",
+ "koru-sqlite",
  "koru-store-core",
  "koru-store-wire",
  "koru-time-zone",
@@ -6727,6 +6712,7 @@ name = "koru-search"
 version = "0.0.3"
 dependencies = [
  "koru-projection",
+ "koru-sqlite",
  "koru-store-core",
  "koru-store-wire",
  "koru-tagname",
@@ -6864,6 +6850,7 @@ name = "koru-session-profiles"
 version = "0.0.3"
 dependencies = [
  "koru-session-protocol",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6894,6 +6881,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "similar",
  "tempfile",
  "tracing",
  "windows-sys 0.59.0",
@@ -7218,6 +7206,7 @@ dependencies = [
  "koru-projection",
  "koru-replication",
  "koru-search",
+ "koru-sqlite",
  "koru-store-api",
  "koru-store-client",
  "koru-store-core",
@@ -7234,6 +7223,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
  "tokio",
  "tower",
@@ -7343,12 +7333,16 @@ name = "koru-ui"
 version = "0.0.3"
 dependencies = [
  "chrono",
+ "image",
  "koru-clipboard",
+ "koru-diagram",
  "koru-draw",
  "koru-env",
+ "koru-i18n",
  "koru-keys",
  "koru-when",
  "parley",
+ "tracing",
  "vello",
  "winit",
 ]
@@ -7631,7 +7625,6 @@ name = "koru-workspace-host"
 version = "0.0.3"
 dependencies = [
  "accesskit",
- "accesskit_consumer 0.35.0",
  "base64 0.22.1",
  "chrono",
  "directories",
@@ -10491,9 +10484,9 @@ dependencies = [
 
 [[package]]
 name = "pulldown-cmark"
-version = "0.13.5"
+version = "0.13.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "278e9268c93b9e498a2da46c34d90ba93a3255eb99009646398f34bc73ab36eb"
+checksum = "3db2be46835f013dd3f4fa7f5f7402c537787b54ebb6fe2b94bbdd7e2669bb7b"
 dependencies = [
  "bitflags 2.13.1",
  "getopts",

@@ -354,6 +354,44 @@ fn artwork_and_rtl_text_keep_separate_provenance_with_transforms_and_clipping() 
     }
 }
 
+/// **A label past the menu's ceiling ends in an ellipsis inside its row** —
+/// a chat named after a long first message — and never runs past the panel.
+#[test]
+fn a_label_wider_than_the_menu_stays_inside_its_row() {
+    struct Long;
+    impl MenuItem for Long {
+        fn label(&self) -> Cow<'_, str> {
+            "[[koru://doc/a86024f5-970a-45d9-b54a-06a0e3b887d4]] summarise this for me".into()
+        }
+    }
+    let mut engine = TextEngine::new();
+    let menu = Menu::new(&mut engine, (100.0, 100.0), vec![Long]);
+    let frame = inspect::Frame::begin(1, Affine::IDENTITY, scene::rect(0.0, 0.0, 900.0, 650.0));
+    menu.draw(
+        &mut Scene::new(),
+        Affine::IDENTITY,
+        &mut engine,
+        VIEWPORT,
+        &[true],
+    );
+    let snapshot = frame.finish();
+    let find = |name: &str| {
+        snapshot
+            .records
+            .iter()
+            .find(|r| r.name == name)
+            .unwrap()
+            .rect()
+    };
+    let (row, label) = (find("KoruMenuItem"), find("Menu label"));
+    assert!(
+        label.x1 <= row.x1,
+        "the label ends at {} inside a row ending at {}",
+        label.x1,
+        row.x1
+    );
+}
+
 #[test]
 fn capture_does_not_change_paint_encoding_for_any_fixture_state() {
     let mut engine = TextEngine::new();

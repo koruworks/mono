@@ -93,6 +93,39 @@ fn a_removed_profiles_page_falls_back_to_the_open_one() {
     assert_eq!(view.page(), Some(Page::Profile(personal.id)));
 }
 
+/// A removed Profile's page settling on the open one is not somebody choosing
+/// it, so the notice saying what happened is still there when it lands — and a
+/// click on another Profile in the nav takes it away, rather than leaving it
+/// under a Profile it is not about.
+#[test]
+fn the_removal_notice_survives_the_fallback_and_not_the_next_click() {
+    let mut view = ManageView::new();
+    let (gone, first, open) = (profile("Gone"), profile("First"), profile("Open"));
+    view.delegate(|c| {
+        c.take_request();
+        c.set_profiles(
+            vec![gone.clone(), first.clone(), open.clone()],
+            open.id,
+            &[],
+        )
+    });
+    View::set_viewport(&mut view, 1000.0, 700.0);
+    view.show(Page::Profile(gone.id));
+
+    view.delegate(|c| c.local_profile_removed(gone.id));
+    view.delegate(|c| c.set_profiles(vec![first.clone(), open.clone()], open.id, &[]));
+    let removed = koru_i18n::t(
+        crate::format::lang(),
+        koru_i18n::Key::ProfilesRemovedFromDevice,
+    );
+    assert_eq!(view.page(), Some(Page::Profile(open.id)));
+    assert_eq!(view.controller().notice(), Some(removed));
+
+    assert!(click(&mut view, nav::Entry::Profile(first.id)));
+    assert_eq!(view.page(), Some(Page::Profile(first.id)));
+    assert_eq!(view.controller().notice(), None);
+}
+
 // ------------------------------------------------------------- the nav
 
 #[test]
@@ -390,6 +423,40 @@ fn the_create_form_is_hosted_beside_the_nav_and_finishing_lands_on_the_profile()
     view.delegate(|c| c.connection_ready(scope, work.id));
     assert!(!view.controller().creating());
     assert_eq!(view.page(), Some(Page::Profile(work.id)));
+}
+
+/// **The page's X puts the form away and lands on the first Profile** (the
+/// review's note). It sits at the title line's right end, outside the form,
+/// where Linked devices keeps its own head button.
+#[test]
+fn the_new_profile_pages_x_closes_the_form_onto_the_first_profile() {
+    let (mut view, personal, _) = manage();
+    view.show(Page::NewProfile);
+    assert!(view.controller().creating());
+    let close = view
+        .laid()
+        .placed(profile_page::Control::CloseCreation)
+        .cloned()
+        .expect("the X");
+    let head = view.laid().head.clone().expect("the head");
+    let column = view.column();
+    assert!(
+        (close.rect.x + close.rect.w - (column.x + column.w)).abs() < 0.5,
+        "at the column's right edge: {:?} vs {column:?}",
+        close.rect
+    );
+    assert!(close.rect.y < head.lead.y, "on the title line");
+    assert!(
+        head.title.x + head.title.w <= close.rect.x,
+        "the title leaves it room"
+    );
+    assert!(press(&mut view, close.rect));
+    assert!(!view.controller().creating(), "the form is put away");
+    assert_eq!(
+        view.page(),
+        Some(Page::Profile(personal.id)),
+        "the first Profile"
+    );
 }
 
 // ------------------------------------------------------------- inspection

@@ -342,6 +342,15 @@ pub trait WindowApp {
     fn scroll_by(&mut self, _delta: f32, _mods: ModifiersState) -> bool {
         false
     }
+    /// The mouse's Back (`-1`) or Forward (`+1`) thumb button was pressed —
+    /// what every browser and file manager walks its history with. An app
+    /// with somewhere to go back to answers it; the default has nowhere.
+    /// The keyboard's chord for the same thing (`HistoryBack`/
+    /// `HistoryForward` in `koru-keys`) reaches [`key`](Self::key) as any
+    /// key does, so an app matches it there.
+    fn navigate_history(&mut self, _delta: i32) -> bool {
+        false
+    }
     fn key(
         &mut self,
         engine: &mut TextEngine,

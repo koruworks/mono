@@ -5,10 +5,10 @@ Koru shows documents, files and terminal/shell session tabs — plus Welcome,
 Settings, Manage, Trash, Feedback, Search, Updates, What's New, Linked devices
 and Voice. Eight larger surfaces are built and tested behind flags — the
 first five from 2026-10-08, canvases and Socials from 2026-10-10, agent views
-from 2026-10-16. **Agent sessions ship on by default** (maintainers,
-2026-10-15), so the `+` menu offers agent runtimes beside shells; the other
-seven, including Explore's Agents and Artifacts views, are **hidden** until
-they are switched on. Nothing was deleted, and the flags are **UI only**:
+from 2026-10-16. **Cloud sync, agent sessions, Tasks and Koru AI ship on by
+default**. Cloud sync defaults on in every build (maintainers, 2026-11-07).
+Explore's Agents and Artifacts views, reminders, canvases and Socials are
+**hidden** until switched on. Nothing was deleted, and the flags are **UI only**:
 every background worker (reminders, sync, the delegate runner, the session
 host) starts exactly as it does with the flag on. **The one exception is the
 Socials publisher**, which Koru Agent starts only while `ENABLE_SOCIALS` is on
@@ -17,11 +17,11 @@ decision record is ADR-450.
 
 | Flag (Rust) | Env var | Default | Shows |
 | --- | --- | --- | --- |
-| `ENABLE_CLOUD_SYNC` | `KORU_ENABLE_CLOUD_SYNC` | off | Koru Cloud: account sign-in (email, Google, Apple), the Cloud page, every Cloud pointer |
+| `ENABLE_CLOUD_SYNC` | `KORU_ENABLE_CLOUD_SYNC` | **on** | Koru Cloud: account sign-in (email, Google, Apple), the Cloud page, every Cloud pointer |
 | `ENABLE_AGENTS` | `KORU_ENABLE_AGENTS` | **on** | Agent sessions as tabs: the `+` menu's *Agents ▸*, agent tabs and their restore, the tray's Agents submenu. **Shell sessions are always shown** |
-| `ENABLE_AGENT_VIEWS` | `KORU_ENABLE_AGENT_VIEWS` | off | Explore's *Agents* and *Artifacts* views and every way into them. Needs `ENABLE_AGENTS` on as well |
-| `ENABLE_TASKS` | `KORU_ENABLE_TASKS` | off | The Tasks view and every way into it. **`/due` stays** and still creates a task |
-| `ENABLE_AI` | `KORU_ENABLE_AI` | off | Koru AI chat **and Delegate** (runs, results, schedules) — grouped by the maintainers |
+| `ENABLE_AGENT_VIEWS` | `KORU_ENABLE_AGENT_VIEWS` | off | Explore's *Agents* and *Artifacts* views and every way into them — **and every way to start Delegate** (with `ENABLE_AI` on). Needs `ENABLE_AGENTS` on as well |
+| `ENABLE_TASKS` | `KORU_ENABLE_TASKS` | **on** | The Tasks view and every way into it. **`/due` stays** and still creates a task |
+| `ENABLE_AI` | `KORU_ENABLE_AI` | **on** | Koru AI chat **and Delegate** (runs, results, schedules) — grouped by the maintainers. *Starting* a delegation also needs `ENABLE_AGENT_VIEWS` |
 | `ENABLE_REMINDERS` | `KORU_ENABLE_REMINDERS` | off | The reminders UI. The reminder worker still runs, so an existing reminder can still notify |
 | `ENABLE_CANVAS` | `KORU_ENABLE_CANVAS` | off | Canvases: the Canvases view, its `+` flyout, canvas tabs, canvas search results and canvases in the Manage tab's document counts. With agents off as well, a shown canvas is cards and images only |
 | `ENABLE_SOCIALS` | `KORU_ENABLE_SOCIALS` | off | Socials: the Socials view, its `+` row, *New social post* and the Socials tab — **and the publisher in Koru Agent**, which starts only with the flag on; off, a scheduled post waits |
@@ -30,14 +30,16 @@ decision record is ADR-450.
 
 All of it is in one leaf crate, [`crates/koru-features`](../../crates/koru-features/src/lib.rs):
 `koru_features::features()` (a `&'static Features` latched in a `OnceLock`) and
-one accessor per flag — `cloud_sync()`, `agents()`, `tasks()`, `ai()`,
-`reminders()`, `canvas()`, `socials()`.
+one accessor per flag — `cloud_sync()`, `agents()`, `agent_views()`,
+`tasks()`, `ai()`, `reminders()`, `canvas()`, `socials()`. Two answer for
+more than one flag: `agent_views()` is `agents && agent_views`, and
+`delegate()` — whether Delegate can be *started* — is `ai() && agent_views()`.
 
 1. **Baked in.** Each `ENABLE_*` constant is `option_env!("KORU_ENABLE_*")`
    read through koru-env's truthiness rule when `koru-features` is compiled.
-   Unset is **off** for every surface except agents, which are **on** when
-   unset, so a release built with nothing set ships documents, files, shells
-   and agents.
+   Cloud sync, agents, Tasks and Koru AI are **on** when unset; the other four
+   flags are **off**. This applies to development and release builds on every
+   platform.
 2. **Overridden at run time.** A `KORU_ENABLE_*` variable that is **set** in the
    process environment wins in both directions: `KORU_ENABLE_AI=1` shows Koru
    AI in a build that baked it off; `KORU_ENABLE_AI=0` hides it in one that
@@ -49,6 +51,11 @@ one accessor per flag — `cloud_sync()`, `agents()`, `tasks()`, `ai()`,
 that spells it is compiled — the trap `koru-release::package::run_cargo`
 documents for `KORU_RELEASE_CHANNEL` — so a second crate reading the same name
 could be compiled under a different environment and disagree.
+
+Cloud sync's default exposes its account and sync controls. Connecting still
+requires configured Cloud endpoints, a signed-in account with the required
+subscription, and the Profile's sync settings. The flag does not change those
+settings or automatically enable sync for every Profile or workspace.
 
 ## Baking a surface into a release
 
@@ -133,8 +140,29 @@ ship, the views over their runs and results do not.
 - **Ways in**: revealing a run or a schedule in the Agents view does nothing,
   the Agents tree's *Delete project* row is not offered, and a result opens
   from Delegate only (with `ENABLE_AI`), not from the Artifacts column.
+- **Delegate cannot be started**, with Koru AI on or off — see the next
+  section. Runs already made still show.
 - The `+` menu's *Agents ▸*, agent tabs and the tray are `ENABLE_AGENTS` and
   unaffected.
+
+### `ENABLE_AGENT_VIEWS` off with `ENABLE_AI` on (starting Delegate)
+
+The default. Starting a delegation is hidden with the agent views (the user,
+2026-11-03), so it follows `KORU_ENABLE_AGENT_VIEWS` with agents and Koru AI
+on: `koru_features::delegate()` is `ai() && agent_views()`. Koru AI chat is
+unaffected.
+
+- No `/delegate` (`koru-editor` `command_menu::product_shows`), no `+`
+  *Delegate*, no document-selection *Delegate…* (`apps/koru-document`
+  `context_menu`), no Tasks-view *Delegate…* (`MenuAction::TaskDelegate`).
+- No *Re-run* on a finished run's Overview, and no note about it: the host
+  answers `koru_runs_ui::RunsSurface::set_can_re_run`.
+- The modal's `Ctrl+Enter` (*Delegate the work*) is not advertised.
+- `begin_delegation` — the one door into the modal — refuses every origin.
+- **Runs already made show as they do today**: their pills open the Run tab,
+  results open, and the run and schedule menus (*Delete run*, a schedule's
+  *Rename*, *Edit…*, *Pause*, *Resume*, *Delete*) are unchanged — those stay
+  on `ENABLE_AI` alone. Background workers, as with every flag, still run.
 
 ### `ENABLE_TASKS` off
 
@@ -163,17 +191,16 @@ ship, the views over their runs and results do not.
   a restored session never reopens the pane.
 - No AI chat tab: no *New AI chat* or *Chats ▸* in `+`, no Explore *Chats*
   mode (`Alt+4`); the pane surface is not booted when `+` opens.
-- Koru Agent: no tray *Koru AI Chat*, the global `Ctrl+Shift+I` is not
-  registered at all, and `--ai-chat` / a chat link opens nothing — from inside a
-document, and from another app (LaunchServices on a Mac, `koru-agent
-koru://chat/…` on Windows), because the Agent itself answers `OpenChatLink`
-and `OpenAiChat` with a silent `Ok` when Koru AI is hidden. The Windows
-  jump list has no *AI Chat* task.
+- A chat link opens nothing — from inside a document, from the search
+  overlay, and from another app (LaunchServices on a Mac, `koru-agent
+  koru://chat/…` on Windows), because the Agent itself answers `OpenChatLink`
+  with a silent `Ok` and pushes no window a chat when Koru AI is hidden.
 - Settings › System has no Koru AI providers card; Welcome has no Koru AI row.
 - **Delegate**: no `/delegate`, no `+` *Delegate*, no document-menu *Delegate*,
   no tasks-view *Delegate…*; `begin_delegation` — the one door into the modal —
   refuses. No Run tab and no Result tab can open (a Result tab still can with
-  agents on, for the Artifacts column).
+  agents on, for the Artifacts column). With `ENABLE_AI` on, starting Delegate
+  still needs `ENABLE_AGENT_VIEWS` (above).
 - **Run and schedule pills already inside a document still draw** — they are
   document content — but pressing or right-clicking one opens nothing.
 
@@ -252,6 +279,22 @@ agents hidden a canvas is **cards and images**
   publishes from a build that hides Socials. A post already scheduled on this
   device waits in the publisher's journal and goes out when a build that shows
   Socials runs again.
+
+## Hidden for now: constants, not flags
+
+A part of a surface that is shown can be hidden *for now* by a constant in
+`koru-features`, beside the flags. It is not baked by a release nor turned on
+by a variable: it is one line to flip back to `true`, and every way into the
+part comes back with it. The code behind it stays built.
+
+| Constant | Hides | Since |
+| --- | --- | --- |
+| `HOME_SHOWN` | Home: the house at the top of the left rail, its nav (Inbox, Today, Upcoming, Recent), the Home tab and `Alt+H`. The rail starts at Documents, `Alt+H` resolves to nothing and no hint teaches it (the other views keep their `Alt+digit`), a window that last showed Home reopens on Documents. The recent documents Home listed stay under **+ → Documents** and the Windows Jump List | 2026-11-03 |
+| `PRIVATE_CHAT_BUTTON_SHOWN` | The Koru AI composer's private-chat button — the detective mask at the left of its footer. No chat is made private from the composer (the button has no shortcut); a chat already private stays private and keeps its mark in the Chats list. The globe and the workspace chip start where the mask did | 2026-11-03 |
+| `CONTEXT_TASKS_SHOWN` | The context column's *Tasks* section — the checklist tab beside a document, listing that document's tasks. The column opens on History; with Reminders and Cloud sync off too, History is its only section and no tab row is drawn. `Ctrl+Alt+J` steps past it; no shortcut opens it on its own. The Tasks view (its rail square, page and chord) is unchanged, under `KORU_ENABLE_TASKS` | 2026-11-03 |
+
+Unlike a flag, a constant is off in the test suites too, so a test that
+assumed the part is updated rather than run under an override.
 
 ## Not gated, deliberately
 

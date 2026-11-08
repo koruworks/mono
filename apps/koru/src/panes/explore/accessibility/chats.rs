@@ -3,10 +3,13 @@
 //! **The Chats view, as a screen reader sees it** — the Tasks rail's model
 //! (`rail/accessibility.rs`) for a list whose rows are chats.
 //!
-//! One list node, *New chat* as its first child, then one node per chat,
-//! named by its title, who answered and when (and *private* when it is). Each
+//! One list node, one node per chat, named by its title, who answered and
+//! when (and *private* when it is); *New chat* is the heading's button, in
+//! the pane's own tree (the review's note). Each
 //! chat row offers **Open** (its click) and carries a **Delete chat** button as
-//! its child — the contract's two row actions (`docs/features/koruui/CONTRIBUTING.md`).
+//! its child — the contract's two row actions (`docs/features/koruui/CONTRIBUTING.md`) —
+//! and the row's own two buttons (koru-ai D86): **More**, which opens the
+//! row's menu, and **Pin chat** / **Unpin chat**.
 //! Geometry is never re-derived: every rect is the surface's own
 //! [`layout`](koru_chats_ui::ChatsSurface::layout), unculled, so a row
 //! scrolled out of the band is still published where it would be.
@@ -29,15 +32,12 @@ use crate::panes::Outcome;
 
 /// The list, and the rows of it that are not a chat.
 const CHATS: &str = "explore-chats";
-/// *New chat* — a keyword, never the label, so its identity is the same in
-/// every language.
-const NEW: ControlPart = ControlPart::new("new-chat");
 /// The Delete button under a chat's row node.
 const DELETE: ControlPart = ControlPart::new("delete");
-
-fn new_occurrence(cx: &Context) -> Occurrence {
-    Occurrence::surface(cx.window, cx.view, CHATS, NEW)
-}
+/// The row's ⋯ (D86).
+const MORE: ControlPart = ControlPart::new("more");
+/// The row's pin (D86).
+const PIN: ControlPart = ControlPart::new("pin");
 
 fn chat_occurrence(cx: &Context, chat: koru_chats_ui::ChatId, part: ControlPart) -> Occurrence {
     Occurrence::model(cx.window, cx.view, chat.as_uuid(), part)
@@ -47,20 +47,25 @@ fn chat_occurrence(cx: &Context, chat: koru_chats_ui::ChatId, part: ControlPart)
 pub(super) fn semantics(chats: &ChatsSurface, cx: &Context, top: f32) -> SemanticNode {
     let focus = chats.focus();
     let mut children = Vec::new();
-    if let Some(rect) = chats.new_chat_rect(cx.area, top) {
-        children.push(
-            SemanticNode::new(new_occurrence(cx), Role::Button)
-                .with_label(t(cx.lang, Key::ChatsNew))
-                .with_bounds(rect)
-                .with_actions([Action::Focus, Action::Click]),
-        );
-    }
     let rows = chats.chat_rects(cx.area, top);
     let total = rows.len();
     for (index, (chat, rect)) in rows.into_iter().enumerate() {
         let name = chats.accessible_name(chat).unwrap_or_default();
         let delete = SemanticNode::new(chat_occurrence(cx, chat, DELETE), Role::Button)
             .with_label(t(cx.lang, Key::ChatsDelete))
+            .with_bounds(rect)
+            .with_action(Action::Click);
+        let more = SemanticNode::new(chat_occurrence(cx, chat, MORE), Role::Button)
+            .with_label(t(cx.lang, Key::ChatsMore))
+            .with_bounds(rect)
+            .with_action(Action::Click);
+        let pin_label = if chats.is_pinned(chat) {
+            Key::ChatsUnpinChat
+        } else {
+            Key::ChatsPinChat
+        };
+        let pin = SemanticNode::new(chat_occurrence(cx, chat, PIN), Role::Button)
+            .with_label(t(cx.lang, pin_label))
             .with_bounds(rect)
             .with_action(Action::Click);
         children.push(
@@ -71,7 +76,7 @@ pub(super) fn semantics(chats: &ChatsSurface, cx: &Context, top: f32) -> Semanti
                 .with_position(index)
                 .with_size_of_set(total)
                 .with_actions([Action::Focus, Action::Click, Action::ScrollIntoView])
-                .with_children(vec![delete]),
+                .with_children(vec![more, pin, delete]),
         );
     }
     SemanticNode::new(
@@ -87,10 +92,8 @@ pub(super) fn semantics(chats: &ChatsSurface, cx: &Context, top: f32) -> Semanti
 /// Where the keyboard is, said as an occurrence — read off the same focus the
 /// ring is drawn from.
 pub(super) fn focus_occurrence(chats: &ChatsSurface, cx: &Context) -> Option<Occurrence> {
-    match chats.focus()? {
-        Focus::New => Some(new_occurrence(cx)),
-        Focus::Chat(chat) => Some(chat_occurrence(cx, chat, ControlPart::ROOT)),
-    }
+    let Focus::Chat(chat) = chats.focus()?;
+    Some(chat_occurrence(cx, chat, ControlPart::ROOT))
 }
 
 /// Everything the published tree is built from. The relative times are not
@@ -99,7 +102,6 @@ pub(super) fn focus_occurrence(chats: &ChatsSurface, cx: &Context) -> Option<Occ
 pub(super) fn revise(chats: &ChatsSurface, rev: &mut Revision) {
     rev.byte(chats.load() as u8);
     match chats.focus() {
-        Some(Focus::New) => rev.byte(1),
         Some(Focus::Chat(chat)) => rev.byte(2).uuid(chat.as_uuid()),
         None => rev.byte(0),
     };
@@ -110,7 +112,9 @@ pub(super) fn revise(chats: &ChatsSurface, rev: &mut Revision) {
             .bool(chat.private)
             .str(chat.current_model.provider.as_str())
             .str(&chat.current_model.requested_model)
-            .bool(chats.deleting(chat.id).is_some());
+            .bool(chats.deleting(chat.id).is_some())
+            .bool(chat.pinned_at.is_some())
+            .byte(chats.status(chat.id) as u8);
     }
     rev.u64(chats.agents().len() as u64);
 }
@@ -128,29 +132,43 @@ pub(super) fn action(
         return None;
     }
     match target.object {
-        ObjectKey::Surface(CHATS) if target.part == NEW => match action {
-            Action::Focus => {
-                chats.set_focus(Focus::New, area, top);
-                Some(Outcome::Consumed)
-            }
-            Action::Click => {
-                chats.ask_new();
-                chats.take_wants_new().then_some(Outcome::NewAiChat)
-            }
-            _ => None,
-        },
         ObjectKey::Model(id) => {
             let chat = chats
                 .chats()
                 .iter()
                 .map(|chat| chat.id)
                 .find(|chat| chat.as_uuid() == id)?;
+            if target.part == PIN {
+                if action != Action::Click {
+                    return None;
+                }
+                chats.ask_pin(chat, !chats.is_pinned(chat));
+                return chats
+                    .take_wants_pin()
+                    .map(|(chat, pinned)| Outcome::PinAiChat(chat, pinned));
+            }
+            if target.part == MORE {
+                if action != Action::Click {
+                    return None;
+                }
+                // Under the row's end, where the ⋯ is drawn.
+                let rect = chats
+                    .chat_rects(area, top)
+                    .into_iter()
+                    .find(|(id, _)| *id == chat)
+                    .map(|(_, rect)| rect)?;
+                chats.ask_menu(chat, (rect.x + rect.w - 24.0, rect.y + rect.h));
+                return chats
+                    .take_wants_menu()
+                    .map(|(chats, at)| Outcome::AiChatMenu { chats, at });
+            }
             if target.part == DELETE {
                 if action != Action::Click {
                     return None;
                 }
                 chats.ask_delete(chat);
-                return chats.take_wants_delete().map(Outcome::DeleteAiChat);
+                let asked = chats.take_wants_delete();
+                return (!asked.is_empty()).then_some(Outcome::DeleteAiChats(asked));
             }
             match action {
                 // The press sets the focus; the release opens — the pair

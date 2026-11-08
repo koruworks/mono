@@ -2,6 +2,7 @@
 
 use super::*;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use koru_account_session::cloud::SyncCredentialClaimsV1;
 use koru_device::DeviceSigningKey;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -23,7 +24,7 @@ struct Provider {
 impl Authority for Provider {
     fn current(
         &self,
-        _: &SyncCredentialClaimsV1,
+        _: &SessionClaims,
         _: CloudReplicaPrincipalV1,
     ) -> Result<CurrentAuthority, Refusal> {
         if self.calls.fetch_add(1, Ordering::SeqCst) + 1 > self.refuse_after {
@@ -152,6 +153,8 @@ fn exact_transcripts_frames_and_four_messages_for_both_datasets() {
             prepared.principal.update_origin(),
             provider.facts.dataset.update_origin()
         );
+        // A device's session carries no claim reference either way.
+        assert_eq!(prepared.claim_references, transfer::ClaimReferences::None);
         assert_eq!(prepared.admit_transfer(), Err(Refusal::SyncUnavailable));
         assert_eq!(provider.calls.load(Ordering::SeqCst), 3);
     }
@@ -445,13 +448,9 @@ fn client_signs_the_two_nonce_transcript_and_pins_the_credential_expiry() {
                 .as_bytes(),
         )
         .unwrap();
-        assert_eq!(
-            receipt
-                .accepted(accepted, 1_800_000_000_000, 0)
-                .unwrap()
-                .principal,
-            facts.dataset
-        );
+        let prepared = receipt.accepted(accepted, 1_800_000_000_000, 0).unwrap();
+        assert_eq!(prepared.principal, facts.dataset);
+        assert_eq!(prepared.claim_references, transfer::ClaimReferences::None);
         // A challenge whose nonce was tampered with signs different bytes; the
         // worker's own transcript check is what rejects it. The client no longer
         // has a proof to reject, so it must not invent one.
@@ -632,3 +631,5 @@ fn recognized_refusals_survive_both_client_receipt_points() {
     }
     assert_eq!(Refusal::from_code("future_denial"), Refusal::Malformed);
 }
+
+mod app_connection;

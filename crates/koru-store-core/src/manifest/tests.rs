@@ -780,3 +780,69 @@ fn removing_a_file_returns_its_note_in_the_removed_subtree() {
     );
     assert!(m.entries().is_empty());
 }
+
+/// Every change's commit message in `m`, oldest first, `None` for a change
+/// that has none.
+fn commit_messages(m: &Manifest) -> Vec<Option<String>> {
+    let mut messages = Vec::new();
+    let frontiers = m.doc.oplog_frontiers();
+    let ids: Vec<loro::ID> = frontiers.iter().collect();
+    m.doc
+        .travel_change_ancestors(&ids, &mut |change| {
+            messages.push((change.lamport, change.message.as_deref().map(str::to_owned)));
+            std::ops::ControlFlow::Continue(())
+        })
+        .unwrap();
+    messages.sort_by_key(|(lamport, _)| *lamport);
+    messages.into_iter().map(|(_, message)| message).collect()
+}
+
+/// **The Store's commits on behalf of an app connection carry its message,
+/// and only those** (Cloud MCP Plan 2.1; `contracts/connector-attribution-v1.md`).
+/// A manifest makes no message of its own; one labelled while the
+/// subscription lives keeps it in an exported update, and a write refused
+/// before it made an operation leaves nothing behind to label the next
+/// commit somebody else makes.
+#[test]
+fn an_attributed_commit_carries_its_message_and_nothing_else_does() {
+    let mut m = fresh();
+    m.add_document(DocumentId::new(), "Before", "page", None)
+        .unwrap();
+    assert!(
+        commit_messages(&m).iter().all(Option::is_none),
+        "a manifest writes no commit message of its own"
+    );
+
+    let existing = DocumentId::new();
+    m.add_document(existing, "Existing", "page", None).unwrap();
+    {
+        let _attributed = m.attribute_commits("refused");
+        m.add_document(existing, "Again", "page", None)
+            .expect_err("already in this manifest");
+    }
+    let before = m.version();
+    let mut follower = Manifest::from_snapshot(&m.export_snapshot().unwrap()).unwrap();
+    {
+        let _attributed = m.attribute_commits(r#"{"koru":"actor/1"}"#);
+        m.add_document(DocumentId::new(), "Made for an assistant", "page", None)
+            .unwrap();
+    }
+    m.add_document(DocumentId::new(), "After", "page", None)
+        .unwrap();
+
+    let messages = commit_messages(&m);
+    assert_eq!(
+        messages.iter().flatten().collect::<Vec<_>>(),
+        [r#"{"koru":"actor/1"}"#],
+        "exactly the attributed commit is labelled: {messages:?}"
+    );
+
+    // The message travels with the operations, in a snapshot and in the
+    // update a subscriber is sent.
+    let replica = Manifest::from_snapshot(&m.export_snapshot().unwrap()).unwrap();
+    assert_eq!(commit_messages(&replica), messages);
+    follower
+        .import(&m.export_updates_since(&before).unwrap())
+        .unwrap();
+    assert_eq!(commit_messages(&follower), messages);
+}

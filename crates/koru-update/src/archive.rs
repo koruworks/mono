@@ -290,7 +290,14 @@ pub fn extract_zip(
                 String::from_utf8_lossy(entry.name_raw())
             )
         })?;
-        strict_relative_path(&enclosed.to_string_lossy())?;
+        // **The name as the archive stores it**, which is `/`-separated, not
+        // `enclosed`: zip rebuilds that one with `PathBuf::push`, so on
+        // Windows `assets/fonts/a.ttf` comes back as `assets\fonts\a.ttf`,
+        // and the string rule refuses a backslash. Checking that string
+        // refused every Windows update with a file in a folder once zip 9
+        // landed (2026-10-16 to 2026-11-05).
+        let name = entry.name().map_err(|e| e.to_string())?;
+        strict_relative_path(&name)?;
         if !names.insert(enclosed) {
             return Err("archive contains duplicate paths".into());
         }
@@ -456,25 +463,39 @@ pub fn strict_relative_path(value: &str) -> Result<PathBuf, String> {
         return Err(format!("invalid release path: {value}"));
     }
     let path = Path::new(value);
-    if path.as_os_str().is_empty()
-        || path.is_absolute()
-        || path.components().any(|part| {
+    if !stays_inside(path) {
+        return Err(format!("invalid release path: {value}"));
+    }
+    Ok(path.to_path_buf())
+}
+
+/// A non-empty relative path with nothing that climbs out or roots it.
+///
+/// **On components, never on a string.** A `Path` the program built itself
+/// carries the platform's separator, so on Windows its string has the
+/// backslashes [`strict_relative_path`] refuses in a *name* — the rule that
+/// keeps a package's or a journal's text in one spelling. A `Path` is checked
+/// here; a name is checked there, and then here.
+fn stays_inside(path: &Path) -> bool {
+    !path.as_os_str().is_empty()
+        && !path.is_absolute()
+        && !path.components().any(|part| {
             matches!(
                 part,
                 Component::ParentDir | Component::RootDir | Component::Prefix(_)
             )
         })
-    {
-        return Err(format!("invalid release path: {value}"));
-    }
-    Ok(path.to_path_buf())
 }
 
 fn ensure_within(root: &Path, candidate: &Path) -> Result<(), String> {
     let relative = candidate
         .strip_prefix(root)
         .map_err(|_| "archive path escaped staging")?;
-    strict_relative_path(&relative.to_string_lossy()).map(|_| ())
+    if stays_inside(relative) {
+        Ok(())
+    } else {
+        Err(format!("invalid release path: {}", relative.display()))
+    }
 }
 
 fn is_symlink(mode: Option<u32>) -> bool {
@@ -639,6 +660,7 @@ mod tests {
             crate::exe::GATEWAY,
             crate::exe::SESSION_HOST,
             crate::exe::TERMINAL,
+            crate::exe::AI_CHAT,
             crate::exe::LEGACY_STORE,
             crate::exe::LEGACY_STORE_SERVER,
             crate::exe::LEGACY_VOICE,
@@ -901,6 +923,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     fn dir(name: &str) -> Raw<'_> {
         Raw {
             name: name.as_bytes(),
@@ -1073,6 +1096,83 @@ mod tests {
             },
         );
         assert!(result.unwrap_err().contains("too many"));
+    }
+
+    /// A zip written the way the Windows package is: `/`-separated names,
+    /// stored, folders implied by their files or listed with a trailing `/`.
+    fn zip_archive(entries: &[(&str, &[u8])]) -> tempfile::NamedTempFile {
+        use std::io::Write;
+        let out = tempfile::NamedTempFile::new().unwrap();
+        let mut writer = zip::ZipWriter::new(out.reopen().unwrap());
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        for (name, data) in entries {
+            if name.ends_with('/') {
+                writer.add_directory(*name, options).unwrap();
+            } else {
+                writer.start_file(*name, options).unwrap();
+                writer.write_all(data).unwrap();
+            }
+        }
+        writer.finish().unwrap();
+        out
+    }
+
+    fn extract_zip_entries(
+        entries: &[(&str, &[u8])],
+    ) -> (tempfile::TempDir, PathBuf, Result<(), String>) {
+        let archive = zip_archive(entries);
+        let root = tempfile::tempdir().unwrap();
+        let staging = root.path().join("staging");
+        let result = extract_zip(archive.path(), &staging, ArchiveLimits::default());
+        (root, staging, result)
+    }
+
+    /// **The Windows package unpacks, files in folders included.** Not
+    /// `#[cfg(unix)]` on purpose: this is the platform that broke. zip 9
+    /// hands `enclosed_name` back with the platform's separator, and checking
+    /// that as a string refused `assets\fonts\…` on every Windows update
+    /// (2026-11-05: "invalid release path: assets\fonts\IBMPlexSans-Italic.ttf").
+    #[test]
+    fn a_zip_with_files_in_folders_extracts() {
+        let (_root, staging, result) = extract_zip_entries(&[
+            ("koru.exe", b"exe"),
+            ("assets/", b""),
+            ("assets/fonts/IBMPlexSans-Italic.ttf", b"font"),
+            ("docs/guide/index.md", b"# Guide"),
+            ("VERSION", b"build_number=2\n"),
+        ]);
+        result.unwrap();
+        assert_eq!(fs::read(staging.join("koru.exe")).unwrap(), b"exe");
+        assert_eq!(
+            fs::read(
+                staging
+                    .join("assets")
+                    .join("fonts")
+                    .join("IBMPlexSans-Italic.ttf")
+            )
+            .unwrap(),
+            b"font"
+        );
+        assert_eq!(
+            fs::read(staging.join("docs").join("guide").join("index.md")).unwrap(),
+            b"# Guide"
+        );
+    }
+
+    /// The name rule still holds for what a zip *stores*: a backslash or a
+    /// climb out of staging is refused, and nothing is written.
+    #[test]
+    fn a_zip_name_with_a_backslash_or_a_climb_is_refused() {
+        for name in [
+            "assets\\fonts\\a.ttf",
+            "../escape.txt",
+            "assets/../../escape.txt",
+        ] {
+            let (_root, staging, result) = extract_zip_entries(&[(name, b"x")]);
+            assert!(result.is_err(), "{name} was accepted");
+            assert!(!staging.exists(), "{name}: something was written");
+        }
     }
 
     #[test]

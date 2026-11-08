@@ -77,7 +77,7 @@ impl AcpControl {
             }
             let bytes = self
                 .image_reader
-                .read(&path, self.config.maximum_frame_bytes / 4 * 3)?;
+                .read(&path, self.config.maximum_prompt_frame_bytes / 4 * 3)?;
             prompt.push(json!({"type":"image","mimeType":attachment.media_type,
                 "data":base64::engine::general_purpose::STANDARD.encode(bytes)}));
         }
@@ -86,7 +86,7 @@ impl AcpControl {
         let frame = json!({"jsonrpc":"2.0","id":self.next_request_id,"method":"session/prompt",
             "params":{"sessionId":self.native_session,"prompt":prompt}});
         let length = serde_json::to_vec(&frame).map_err(|_| malformed())?.len() + 1;
-        if length > self.config.maximum_frame_bytes {
+        if length > self.config.maximum_prompt_frame_bytes {
             return Err(failure(
                 ErrorCode::InputTooLarge,
                 ProviderStage::Submit,
@@ -110,6 +110,12 @@ pub(super) fn fingerprint(input: &AgentInput) -> blake3::Hash {
         }]);
         hash.update(&(attachment.media_type.len() as u64).to_le_bytes());
         hash.update(attachment.media_type.as_bytes());
+    }
+    // A model chosen after the start is part of what the turn asks.
+    if let Some(model) = &input.model {
+        hash.update(b"model\0");
+        hash.update(&(model.as_str().len() as u64).to_le_bytes());
+        hash.update(model.as_str().as_bytes());
     }
     hash.finalize()
 }

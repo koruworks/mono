@@ -12,7 +12,8 @@ use koru_editor::draw::{Frame, frame};
 use koru_editor::{Editing, OpenWhere, PasteBatch, PasteReplacement};
 use koru_workspace_host::settings::DocViewPrefs;
 use koru_workspace_host::{
-    PasteTarget, PastedImage, RichBlock, RichTextBlock, RichTextKind, Settings, View,
+    ImageMipSide, ImagePlace, ImageTicket, PasteTarget, PastedImage, RichBlock, RichTextBlock,
+    RichTextKind, Settings, View,
 };
 use vello::Scene;
 use vello::kurbo::Affine;
@@ -239,6 +240,14 @@ impl View for BuiltInDocument {
         self.editor.view.wants_task_view.take()
     }
 
+    fn take_wants_task_list(&mut self) -> Option<koru_core::ids::ListId> {
+        self.editor.view.wants_task_list.take()
+    }
+
+    fn take_wants_global_settings(&mut self) -> bool {
+        std::mem::take(&mut self.wants_global_settings)
+    }
+
     fn context_menu(&mut self, ws: &mut WorkspaceDoc, x: f32, y: f32) -> bool {
         if self.search.is_open() {
             self.search.close(ws, &mut self.editor, true);
@@ -323,7 +332,7 @@ impl View for BuiltInDocument {
     /// `Ctrl`+wheel's, through `zoom_wheel`.
     fn scroll_by(&mut self, delta: MouseScrollDelta) {
         if let Some(viewer) = &mut self.viewer {
-            let axis = crate::diagram_viewer::WheelAxis::from_mods(self.editor.view.mods);
+            let axis = koru_ui::media_viewer::WheelAxis::from_mods(self.editor.view.mods);
             viewer.pan_wheel(delta, axis);
             return;
         }
@@ -346,7 +355,13 @@ impl View for BuiltInDocument {
         let Some(viewer) = &mut self.viewer else {
             return false;
         };
-        viewer.zoom_key(intent);
+        viewer.zoom_key(match intent {
+            koru_workspace_host::ZoomIntent::In => koru_ui::media_viewer::ZoomKey::In,
+            koru_workspace_host::ZoomIntent::Out => koru_ui::media_viewer::ZoomKey::Out,
+            koru_workspace_host::ZoomIntent::ActualSize => {
+                koru_ui::media_viewer::ZoomKey::ActualSize
+            }
+        });
         true
     }
 
@@ -377,6 +392,10 @@ impl View for BuiltInDocument {
         }
         let now = Instant::now();
         Editing::is_scroll_animating(self)
+            || koru_editor::pending_image::animating(
+                &self.editor.view.pending_images,
+                self.editor.view.reduced_motion,
+            )
             || self.editor.tooltip_animating()
             || self.editor.table_controls_animating(now)
             || self.editor.copy_affordance_animating(now)
@@ -755,89 +774,108 @@ impl View for BuiltInDocument {
         }
     }
 
-    /// Pasted images become new blocks at the target the editor recorded, one
-    /// each, in the order the clipboard reported them.
-    /// The whole paste is one undo group, and one `rebuild` + `reflow` — N
-    /// images must not cost N layouts. Each landed node threads in as the
-    /// anchor for the next, so the sequence keeps its order and stays flat.
+    /// Pasted images, landing at once and taking the caret. See
+    /// [`paste_images_at`](BuiltInDocument::paste_images_at).
     fn paste_images(
         &mut self,
         ws: &mut WorkspaceDoc,
         target: Option<PasteTarget>,
         images: &[PastedImage],
     ) {
-        if images.is_empty() {
-            return;
-        }
-        let document = self
-            .editor
-            .body
-            .root
-            .map(Parent::Node)
-            .unwrap_or(Parent::Root);
-        let Some(mut cursor) = PasteCursor::new(ws, document, target.as_ref()) else {
-            return;
+        self.paste_images_at(ws, target, images, true);
+    }
+
+    /// Show where an image being prepared off the event loop will land. The
+    /// document is untouched: the placeholder is this view's alone
+    /// (`koru_editor::pending_image` says why it is not a node).
+    fn begin_image_import(&mut self, ws: &WorkspaceDoc, ticket: ImageTicket, place: &ImagePlace) {
+        use koru_editor::pending_image::Place;
+        let place = match place {
+            // A replacement takes the selection's slot, so it opens above it.
+            ImagePlace::Paste(Some(target)) if !target.replacing.is_empty() => {
+                Place::Before(target.anchor)
+            }
+            ImagePlace::Paste(Some(target)) => Place::After(target.anchor),
+            ImagePlace::Convert(node) => Place::After(*node),
+            ImagePlace::Paste(None) | ImagePlace::Append => Place::End,
         };
-        let Some(replaced) = capture_paste_replacements(ws, target.as_ref()) else {
-            return;
-        };
-        // Close any open typing group first so this paste is its own Loro step
-        // (guide/contributing/PRINCIPLES.md — use UndoManager, do not invent a second stack).
-        ws.checkpoint();
-        let grouped = ws.begin_group();
-        let mut inserted: Vec<NodeId> = Vec::new();
-        for img in images {
-            let Ok(node) =
-                Node::image(BlobHash(img.hash.clone()), &img.mime, img.width, img.height)
-            else {
-                continue;
-            };
-            let Some(id) = cursor.insert(ws, node) else {
-                continue;
-            };
-            inserted.push(id);
-            if let Some(name) = &img.name {
-                let _ = ws.set_name(id, Some(name));
+        // Asked when something animated begins rather than once at open, so
+        // a change in System Settings is honoured by the next paste.
+        self.editor.view.reduced_motion =
+            koru_workspace_host::environment::reduced_motion().unwrap_or(false);
+        let active = self.editor.view.active;
+        koru_editor::pending_image::begin(
+            &mut self.editor.view.pending_images,
+            ws,
+            &self.editor.body,
+            active,
+            ticket.0,
+            place,
+            Instant::now(),
+        );
+    }
+
+    fn size_image_import(&mut self, ticket: ImageTicket, sizes: &[(u32, u32)]) {
+        koru_editor::pending_image::size(&mut self.editor.view.pending_images, ticket.0, sizes);
+    }
+
+    /// Land the images, taking the caret only if it is where it was when the
+    /// gesture was made: somebody who went on typing while the picture loaded
+    /// keeps their line, their caret and their selection.
+    fn finish_image_import(
+        &mut self,
+        ws: &mut WorkspaceDoc,
+        ticket: ImageTicket,
+        place: ImagePlace,
+        images: &[PastedImage],
+    ) {
+        let pending =
+            koru_editor::pending_image::end(&mut self.editor.view.pending_images, ticket.0);
+        let caret_kept = pending.is_none_or(|pending| {
+            pending.caret
+                == koru_editor::pending_image::CaretMark::of(
+                    &self.editor.body,
+                    self.editor.view.active,
+                )
+        });
+        match place {
+            ImagePlace::Paste(target) => self.paste_images_at(ws, target, images, caret_kept),
+            ImagePlace::Append => {
+                for image in images {
+                    View::append_image(
+                        self,
+                        ws,
+                        &image.hash,
+                        &image.mime,
+                        image.width,
+                        image.height,
+                    );
+                }
+            }
+            ImagePlace::Convert(node) => {
+                if let Some(image) = images.first() {
+                    View::insert_image(
+                        self,
+                        ws,
+                        node,
+                        &image.hash,
+                        &image.mime,
+                        image.width,
+                        image.height,
+                    );
+                }
             }
         }
-        if !inserted.is_empty()
-            && let Some(target) = &target
-        {
-            for &id in &target.replacing {
-                let _ = ws.delete(id);
-            }
-        }
-        ws.checkpoint();
-        if !inserted.is_empty() {
-            self.editor.view.last_image_redos.clear();
-            self.editor.view.paste_redo_exhausted = false;
-            self.editor.view.last_image_pastes.push(PasteBatch {
-                inserted: inserted.clone(),
-                replaced,
-            });
-        }
-        koru_editor::clipboard::undo_dbg(format!(
-            "paste_images inserted={} grouped={grouped} in_group={} can_undo={} can_redo={} active={} paste_stack={}",
-            inserted.len(),
-            ws.in_group(),
-            ws.can_undo(),
-            ws.can_redo(),
-            self.editor.view.active,
-            self.editor.view.last_image_pastes.len()
-        ));
-        self.editor.body.clear_selection();
-        self.editor.body.rebuild(ws);
-        if let Some(last) = cursor.after {
-            self.editor.body.focus_on(last);
-        }
-        self.editor.view.active = true;
-        self.editor.settle();
-        if let Some(last) = cursor.after
-            && let Some(i) = self.editor.body.index_of(last)
-        {
-            self.editor.scroll_row_into_view(i);
-            self.editor.scroll_to_caret();
-        }
+    }
+
+    fn end_image_import(&mut self, ticket: ImageTicket) -> bool {
+        koru_editor::pending_image::end(&mut self.editor.view.pending_images, ticket.0).is_some()
+    }
+
+    fn image_mip_side(&self) -> Option<ImageMipSide> {
+        Some(std::sync::Arc::new(koru_editor::pending_image::mip_side(
+            &self.editor.view,
+        )))
     }
 
     /// The plain-text fallback for a rich paste that carried no pictures: hand
@@ -847,14 +885,14 @@ impl View for BuiltInDocument {
     }
 
     /// A mixed text/image paste, interleaved in document order at `target` (or
-    /// appended when it is `None`). Adapts [`paste_images`]: each block
+    /// appended when it is `None`). Adapts [`paste_images_at`]: each block
     /// threads in after the last, so the whole paste keeps its order, costs one
     /// `rebuild` + `reflow`, and is a single undo step. HTML list metadata is
     /// rebuilt as `ListBlock` containers rather than discarded or painted into
     /// the text. URLs in text blocks become link pills, the way they do in an
     /// ordinary text paste.
     ///
-    /// [`paste_images`]: Self::paste_images
+    /// [`paste_images_at`]: BuiltInDocument::paste_images_at
     fn paste_rich(
         &mut self,
         ws: &mut WorkspaceDoc,
@@ -1220,6 +1258,102 @@ impl View for BuiltInDocument {
 }
 
 impl BuiltInDocument {
+    /// Pasted images become new blocks at the target the editor recorded, one
+    /// each, in the order the clipboard reported them. The whole paste is one
+    /// undo group, and one `rebuild` + `reflow` — N images must not cost N
+    /// layouts. Each landed node threads in as the anchor for the next, so the
+    /// sequence keeps its order and stays flat.
+    ///
+    /// `take_caret` is whether the caret moves onto the last image, as it does
+    /// for a paste that lands at once. An image that loaded off the loop takes
+    /// it only if nobody moved it meanwhile.
+    fn paste_images_at(
+        &mut self,
+        ws: &mut WorkspaceDoc,
+        target: Option<PasteTarget>,
+        images: &[PastedImage],
+        take_caret: bool,
+    ) {
+        if images.is_empty() {
+            return;
+        }
+        let document = self
+            .editor
+            .body
+            .root
+            .map(Parent::Node)
+            .unwrap_or(Parent::Root);
+        let Some(mut cursor) = PasteCursor::new(ws, document, target.as_ref()) else {
+            return;
+        };
+        let Some(replaced) = capture_paste_replacements(ws, target.as_ref()) else {
+            return;
+        };
+        // Close any open typing group first so this paste is its own Loro step
+        // (guide/contributing/PRINCIPLES.md — use UndoManager, do not invent a second stack).
+        ws.checkpoint();
+        let grouped = ws.begin_group();
+        let mut inserted: Vec<NodeId> = Vec::new();
+        for img in images {
+            let Ok(node) =
+                Node::image(BlobHash(img.hash.clone()), &img.mime, img.width, img.height)
+            else {
+                continue;
+            };
+            let Some(id) = cursor.insert(ws, node) else {
+                continue;
+            };
+            inserted.push(id);
+            if let Some(name) = &img.name {
+                let _ = ws.set_name(id, Some(name));
+            }
+        }
+        if !inserted.is_empty()
+            && let Some(target) = &target
+        {
+            for &id in &target.replacing {
+                let _ = ws.delete(id);
+            }
+        }
+        ws.checkpoint();
+        if !inserted.is_empty() {
+            self.editor.view.last_image_redos.clear();
+            self.editor.view.paste_redo_exhausted = false;
+            self.editor.view.last_image_pastes.push(PasteBatch {
+                inserted: inserted.clone(),
+                replaced,
+            });
+        }
+        koru_editor::clipboard::undo_dbg(format!(
+            "paste_images inserted={} grouped={grouped} in_group={} can_undo={} can_redo={} active={} paste_stack={}",
+            inserted.len(),
+            ws.in_group(),
+            ws.can_undo(),
+            ws.can_redo(),
+            self.editor.view.active,
+            self.editor.view.last_image_pastes.len()
+        ));
+        if !take_caret {
+            // Typed on while it loaded: the rows are new, the caret is theirs.
+            self.editor.body.rebuild(ws);
+            self.editor.settle();
+            return;
+        }
+        self.editor.body.clear_selection();
+        self.editor.body.rebuild(ws);
+        if let Some(last) = cursor.after {
+            self.editor.body.focus_on(last);
+        }
+        self.editor.view.active = true;
+        self.editor.settle();
+        if let Some(last) = cursor.after
+            && let Some(i) = self.editor.body.index_of(last)
+        {
+            self.editor.scroll_row_into_view(i);
+            self.editor.scroll_to_caret();
+        }
+    }
+
     /// The open request *with* its disposition, for a host that owns tabs.
     ///
     /// The `View` impl above hands the shell the node alone, because a window

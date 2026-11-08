@@ -44,9 +44,13 @@ use std::time::Duration;
 pub mod blob_sync;
 pub mod cloud_driver;
 pub mod cloud_sync;
+mod dispatch;
+#[cfg(any(test, feature = "test-support"))]
+pub mod fake_cloud;
+pub mod memory;
 mod session_io;
 mod store_jobs;
-pub use store_jobs::StoreReply;
+pub use store_jobs::{StoreJobs, StoreReply};
 
 use crate::tray;
 use koru_store_api::AppState;
@@ -391,10 +395,19 @@ enum WorkerCommand {
             std::result::Result<koru_store_wire::search::SearchResponse, Error>,
         >,
     },
+    Tasks {
+        query: Box<koru_store_wire::tasks::TaskQuery>,
+        reply: std::sync::mpsc::SyncSender<
+            std::result::Result<koru_store_wire::tasks::TaskQueryResponse, Error>,
+        >,
+    },
     CreateDocument {
         workspace: koru_store_core::ids::WorkspaceId,
         title: String,
         kind: String,
+        /// The app connection's `actor/1` message for the manifest commit, or
+        /// `None` for every caller on a device.
+        attribution: Option<String>,
         at: Timestamp,
         reply: std::sync::mpsc::SyncSender<
             std::result::Result<koru_store_core::ids::DocumentId, Error>,
@@ -417,6 +430,8 @@ enum WorkerCommand {
         idempotency_key: String,
         request_hash: String,
         initial_update: Vec<u8>,
+        /// As `CreateDocument`'s: the manifest entry's label.
+        attribution: Option<String>,
         at: Timestamp,
         reply: std::sync::mpsc::SyncSender<
             std::result::Result<koru_store_core::service::SeededCreation, Error>,
@@ -622,11 +637,16 @@ impl StoreWorkerClient {
             idempotency_key,
             request_hash,
             initial_update,
+            None,
             at,
         )
         .map(|result| result.map(|creation| creation.document))
     }
 
+    /// [`seed_document`](Self::seed_document), answering the whole creation,
+    /// with the manifest entry's commit labelled `attribution` when one is
+    /// given: an app connection's `actor/1` message
+    /// (`contracts/connector-attribution-v1.md`).
     #[allow(clippy::too_many_arguments)]
     pub fn seed_document_full(
         &self,
@@ -639,6 +659,7 @@ impl StoreWorkerClient {
         idempotency_key: String,
         request_hash: String,
         initial_update: Vec<u8>,
+        attribution: Option<String>,
         at: Timestamp,
     ) -> std::result::Result<
         std::result::Result<koru_store_core::service::SeededCreation, Error>,
@@ -656,6 +677,7 @@ impl StoreWorkerClient {
                 idempotency_key,
                 request_hash,
                 initial_update,
+                attribution,
                 at,
                 reply,
             })
@@ -681,11 +703,50 @@ impl StoreWorkerClient {
             .map_err(map_response_error)
     }
 
+    /// The tasks query, answered by the composition's task port exactly as
+    /// `POST /v1/tasks/query` answers it — the same clamp, and the same honest
+    /// empty page from a Store whose read model did not open.
+    pub fn query_tasks(
+        &self,
+        query: koru_store_wire::tasks::TaskQuery,
+    ) -> std::result::Result<
+        std::result::Result<koru_store_wire::tasks::TaskQueryResponse, Error>,
+        WorkerError,
+    > {
+        let (reply, response) = std::sync::mpsc::sync_channel(1);
+        self.requests
+            .try_send(WorkerCommand::Tasks {
+                query: Box::new(query),
+                reply,
+            })
+            .map_err(map_admission_error)?;
+        response
+            .recv_timeout(Duration::from_secs(30))
+            .map_err(map_response_error)
+    }
+
     pub fn create_document(
         &self,
         workspace: koru_store_core::ids::WorkspaceId,
         title: String,
         kind: String,
+        at: Timestamp,
+    ) -> std::result::Result<
+        std::result::Result<koru_store_core::ids::DocumentId, Error>,
+        WorkerError,
+    > {
+        self.create_document_attributed(workspace, title, kind, None, at)
+    }
+
+    /// [`create_document`](Self::create_document), with the manifest commit
+    /// labelled `attribution` when one is given: an app connection's
+    /// `actor/1` message (`contracts/connector-attribution-v1.md`).
+    pub fn create_document_attributed(
+        &self,
+        workspace: koru_store_core::ids::WorkspaceId,
+        title: String,
+        kind: String,
+        attribution: Option<String>,
         at: Timestamp,
     ) -> std::result::Result<
         std::result::Result<koru_store_core::ids::DocumentId, Error>,
@@ -697,6 +758,7 @@ impl StoreWorkerClient {
                 workspace,
                 title,
                 kind,
+                attribution,
                 at,
                 reply,
             })
@@ -958,9 +1020,10 @@ async fn run(
     let catalog = SqliteCatalog::open(&root.join(CATALOG_FILE))?;
     let mut store = Store::open(catalog, SqliteBackend::new(&root))?;
     tracing::info!("store startup: catalog and store opened");
-    const RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1_000;
     let purged = store.purge_deleted(Timestamp::from_millis(
-        Timestamp::now().millis().saturating_sub(RETENTION_MS),
+        Timestamp::now()
+            .millis()
+            .saturating_sub(koru_store_core::TRASH_RETENTION_MS),
     ))?;
     if purged > 0 {
         tracing::info!(workspaces = purged, "purged expired deleted workspaces");
@@ -1112,183 +1175,8 @@ async fn run(
     tracing::info!("store startup: replication ready");
     let shutdown = state.shutdown.clone();
 
-    let dispatcher_state = Arc::clone(&state);
-    let trusted_router = koru_store_api::router_for_trusted_requests(Arc::clone(&state));
-    let dispatcher = Some(requests).map(|mut requests| {
-        tokio::spawn(async move {
-            use tower::ServiceExt as _;
-            while let Some(command) = requests.recv().await {
-                match command {
-                    WorkerCommand::Noop(reply) => {
-                        let _ = reply.send(());
-                    }
-                    WorkerCommand::Status(reply) => {
-                        let _ = reply.send(StoreWorkerInfo {
-                            api_version: dispatcher_state.api_version(),
-                            capabilities: dispatcher_state
-                                .capabilities()
-                                .iter()
-                                .map(|capability| (*capability).to_owned())
-                                .collect(),
-                            channel: dispatcher_state.channel.clone(),
-                            started_at: dispatcher_state.started_at,
-                        });
-                    }
-                    WorkerCommand::Http {
-                        mut request,
-                        caller,
-                        reply,
-                    } => {
-                        request.extensions_mut().insert(caller);
-                        let router = trusted_router.clone();
-                        tokio::spawn(async move {
-                            let response = router
-                                .oneshot(request)
-                                .await
-                                .expect("infallible Store router");
-                            let _ = reply.send(response);
-                        });
-                    }
-                    WorkerCommand::Store(task) => {
-                        static POISON_REPORTED: std::sync::Once = std::sync::Once::new();
-                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            match dispatcher_state.store.lock() {
-                                Ok(mut store) => task(Ok(&mut store)),
-                                Err(_) => {
-                                    POISON_REPORTED.call_once(|| {
-                                        tracing::error!("Store worker state is poisoned");
-                                    });
-                                    task(Err(WorkerError::Poisoned));
-                                }
-                            }
-                        }));
-                        if result.is_err() {
-                            POISON_REPORTED.call_once(|| {
-                                tracing::error!(
-                                    "Store worker task panicked and poisoned Store state"
-                                );
-                            });
-                        }
-                    }
-                    WorkerCommand::WatchCloud { dataset, reply } => {
-                        let _ = reply.send(dispatcher_state.cloud_changes.subscribe(dataset));
-                    }
-                    WorkerCommand::Search { request, reply } => {
-                        // Embedded callers arrive with their explicit grant
-                        // set already written into the query. Keep that set as
-                        // an authorization scope too, so an index cannot widen
-                        // an AI search if query filtering changes later.
-                        let scope = if request.query.workspaces.is_empty() {
-                            koru_store_api::routes::search::WorkspaceSearchScope::AllLocal
-                        } else {
-                            koru_store_api::routes::search::WorkspaceSearchScope::Allowed(
-                                request.query.workspaces.iter().copied().collect(),
-                            )
-                        };
-                        let result = dispatcher_state
-                            .search_service()
-                            .ok_or_else(|| {
-                                Error::new(Code::SearchUnavailable, "search is unavailable")
-                            })
-                            .and_then(|search| search.search(&scope, &request));
-                        let _ = reply.send(result);
-                    }
-                    WorkerCommand::CreateDocument {
-                        workspace,
-                        title,
-                        kind,
-                        at,
-                        reply,
-                    } => {
-                        let result = match dispatcher_state.store.lock() {
-                            Ok(mut store) => store
-                                .create_document(workspace, &title, &kind, None, None, at)
-                                .map(|(document, delta)| (document, delta)),
-                            Err(_) => {
-                                Err(Error::new(Code::Internal, "Store worker state is poisoned"))
-                            }
-                        };
-                        let result = result.map(|(document, delta)| {
-                            dispatcher_state.broadcast_manifest(workspace, delta);
-                            dispatcher_state.notify_replication();
-                            document
-                        });
-                        let _ = reply.send(result);
-                    }
-                    WorkerCommand::ApplyDocumentUpdate {
-                        workspace,
-                        document,
-                        update,
-                        at,
-                        reply,
-                    } => {
-                        let result = match dispatcher_state.store.lock() {
-                            Ok(mut store) => store
-                                .apply_update(
-                                    workspace,
-                                    document,
-                                    update.clone(),
-                                    at,
-                                    koru_store_core::ports::UpdateOrigin::Store,
-                                )
-                                .and_then(|()| store.flush(workspace, document, at)),
-                            Err(_) => {
-                                Err(Error::new(Code::Internal, "Store worker state is poisoned"))
-                            }
-                        };
-                        let result = result.map(|committed| {
-                            if committed.is_some() {
-                                dispatcher_state.broadcast_document(document, update);
-                                dispatcher_state.notify_replication();
-                            }
-                        });
-                        let _ = reply.send(result);
-                    }
-                    WorkerCommand::SeedDocument {
-                        workspace,
-                        title,
-                        kind,
-                        parent,
-                        index,
-                        scope,
-                        idempotency_key,
-                        request_hash,
-                        initial_update,
-                        at,
-                        reply,
-                    } => {
-                        let result = match dispatcher_state.store.lock() {
-                            Ok(mut store) => store.create_seeded_document(
-                                workspace,
-                                &title,
-                                &kind,
-                                parent,
-                                index,
-                                &scope,
-                                &idempotency_key,
-                                &request_hash,
-                                None,
-                                initial_update,
-                                at,
-                            ),
-                            Err(_) => {
-                                Err(Error::new(Code::Internal, "Store worker state is poisoned"))
-                            }
-                        };
-                        let result = result.map(|creation| {
-                            if let Some(delta) = creation.manifest_delta.as_ref() {
-                                let delta = delta.clone();
-                                dispatcher_state.broadcast_manifest(workspace, delta);
-                                dispatcher_state.notify_replication();
-                            }
-                            creation
-                        });
-                        let _ = reply.send(result);
-                    }
-                }
-            }
-        })
-    });
+    let dispatcher =
+        Some(requests).map(|requests| tokio::spawn(dispatch::serve(requests, Arc::clone(&state))));
 
     // The read model, on its own thread. **After the store opens and before
     // anything can be served**, so a document committed by the first request
@@ -1301,7 +1189,11 @@ async fn run(
     // will not open is a store whose search is stale, not one that has lost
     // anything.
     tracing::info!("store startup: preparing search");
-    let (prepared, mut consumers) = match crate::search::prepare(&root) {
+    // A device's derived state lives under its root; its threads run for the
+    // life of the process, so nothing ever sets this.
+    let derived = crate::derived::Derived::root(&root);
+    let runs_forever = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (prepared, mut consumers) = match crate::search::prepare(&derived) {
         Some((feed, prepared)) => (Some(prepared), vec![feed]),
         None => (None, Vec::new()),
     };
@@ -1321,10 +1213,15 @@ async fn run(
         blob_changes.clone(),
     ));
     tracing::info!("store startup: spawning projection");
-    let projection = crate::projection::spawn(Arc::clone(&state), &root, consumers);
+    let projection = crate::projection::spawn(
+        Arc::clone(&state),
+        &derived,
+        consumers,
+        Arc::clone(&runs_forever),
+    );
     if let Some((_, sweeps)) = projection.as_ref() {
         if let Some((usage, outline, reminders)) =
-            crate::projection::read_ports(&root, sweeps.clone())
+            crate::projection::read_ports(&derived, sweeps.clone())
         {
             let _ = state.set_workspace_usage_service(usage);
             let _ = state.set_document_outline_service(outline);
@@ -1334,13 +1231,13 @@ async fn run(
         // read of the projection, plus the workspace system documents for
         // definitions and tags — which is why it also holds a weak handle to
         // the store.
-        if let Some(port) = crate::attributes::attribute_port(&root, sweeps.clone(), &state) {
+        if let Some(port) = crate::attributes::attribute_port(&derived, sweeps.clone(), &state) {
             let _ = state.set_attribute_service(port);
         }
         // The tasks query port, beside the attribute one: the same read model
         // asked a second question, so the same sweep handle, the same weak
         // store handle for the system documents, and its own connection.
-        if let Some(port) = crate::tasks::task_port(&root, sweeps.clone(), &state) {
+        if let Some(port) = crate::tasks::task_port(&derived, sweeps.clone(), &state) {
             let _ = state.set_task_service(port);
         }
     }
@@ -1381,9 +1278,12 @@ async fn run(
         }
     }
     let _search = match (prepared, projection.as_ref()) {
-        (Some(prepared), Some((_, sweeps))) => {
-            crate::search::spawn(prepared, Arc::clone(&state), sweeps.clone())
-        }
+        (Some(prepared), Some((_, sweeps))) => crate::search::spawn(
+            prepared,
+            Arc::clone(&state),
+            sweeps.clone(),
+            Arc::clone(&runs_forever),
+        ),
         _ => None,
     };
     tracing::info!("store startup: search spawned");

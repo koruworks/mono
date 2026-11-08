@@ -493,19 +493,31 @@ impl Table {
     }
 
     /// The `…` that opens a row's menu.
-    pub fn paint_trailing_dots(&self, scene: &mut Scene, root: Affine, r: Rect, hot: bool) {
-        let p = theme::p();
-        if hot {
-            scene::fill(
-                scene,
-                root,
-                p.hover_tint,
-                &scene::rrect(r.x, r.y, r.w, r.h, 5.0),
-            );
-        }
-        // The same glyph the workspace switcher's row draws, so the two `…`
-        // buttons in the app cannot come to look different.
-        scene::dots_three(scene, root, r, p.text_dim);
+    /// A row's `…`: **the icon button every other `…` in the app is** — the
+    /// caption's, a document title's, Explore's — with `DOTS_THREE`, lit while
+    /// the pointer is on it. It was three dots painted by hand, which looked
+    /// like the icon only until either changed.
+    pub fn paint_trailing_dots(
+        &self,
+        scene: &mut Scene,
+        root: Affine,
+        engine: &mut TextEngine,
+        r: Rect,
+        hot: bool,
+    ) {
+        crate::icon_button::draw_with(
+            scene,
+            root,
+            engine,
+            r,
+            koru_draw::icons::DOTS_THREE,
+            crate::icon_button::State {
+                hovered: hot,
+                active: false,
+                disabled: false,
+            },
+            crate::icon_button::Metrics::INLINE,
+        );
     }
 }
 

@@ -276,6 +276,9 @@ fn a_registered_nondefault_provider_is_a_candidate_but_delegation_requires_its_o
         arguments: &[],
         launch_policy: koru_session_profiles::ManagedLaunchPolicy::Raw,
         minimum_host_capability: koru_session_protocol::capability::MANAGED_SESSIONS,
+        update_command: None,
+        sign_in_command: None,
+        desktop_app: None,
     };
     let rows = agents_for(
         &[profile.clone()],
@@ -762,20 +765,14 @@ fn the_scope_list_is_the_session_projects_plus_a_temporary_folder() {
 mod through_the_container {
     use super::super::DelegationOrigin;
     use super::Hit;
-    use crate::mainview::context_menu::{self, MenuAction, MenuSubject};
     use crate::mainview::harness::container;
 
     #[test]
-    fn the_plus_menu_row_opens_the_surface_and_escape_takes_it_down() {
+    fn the_empty_modal_opens_and_escape_takes_it_down() {
         let (mut view, _workspace) = container();
         assert!(!view.delegation_open());
 
-        // The `+` menu offers it, and choosing it opens the surface.
-        assert!(
-            context_menu::new_tab_items().contains(&MenuAction::Delegate),
-            "the `+` menu carries the entry"
-        );
-        assert!(view.run_menu_action(MenuSubject::NewTab, MenuAction::Delegate));
+        assert!(view.begin_delegation(super::super::DelegationOrigin::Blank));
         assert!(view.delegation_open(), "one gesture, one surface");
 
         // Escape takes it down again, whichever gesture opened it.
@@ -801,7 +798,7 @@ mod through_the_container {
         let node = koru_core::NodeId::new();
 
         let cases: Vec<(DelegationOrigin, &str, usize)> = vec![
-            (DelegationOrigin::PlusMenu, "", 0),
+            (DelegationOrigin::Blank, "", 0),
             (
                 DelegationOrigin::SlashCommand {
                     document,
@@ -1041,7 +1038,7 @@ fn each_gesture_says_where_its_pill_goes() {
     // **The `+` menu leaves none.** It names no document, and a durable mark
     // in whatever happened to be on screen would land in a document nobody
     // pointed at. ADR-357 records the choice.
-    assert_eq!(DelegationOrigin::PlusMenu.pill_anchor(), None);
+    assert_eq!(DelegationOrigin::Blank.pill_anchor(), None);
     // A gesture that knew a document but no row is the `+` menu's case again.
     assert_eq!(
         DelegationOrigin::SlashCommand {
@@ -1581,7 +1578,7 @@ fn a_folder_chosen_in_the_picker_reaches_the_container_through_the_shells_view()
     use koru_workspace_host::{DelegateFolder, View};
 
     let (mut view, _workspace) = crate::mainview::harness::container();
-    assert!(view.begin_delegation(super::DelegationOrigin::PlusMenu));
+    assert!(view.begin_delegation(super::DelegationOrigin::Blank));
     let mut pane = crate::manager_view::ManagerView::Container(view);
 
     let chosen = std::path::PathBuf::from("D:/work/koru-runs");
@@ -2150,10 +2147,10 @@ fn repeat_keeps_live_context_model_and_its_schedule_crumb_anchor() {
     let mut modal = open(&mut engine, world);
     modal.models.offered = true;
     modal.models.catalog = Some(
-        vec![koru_session_protocol::ProviderModel {
-            id: "openai/gpt-5".parse().unwrap(),
-            group: "openai".parse().unwrap(),
-        }]
+        vec![koru_session_protocol::ProviderModel::new(
+            "openai/gpt-5".parse().unwrap(),
+            "openai".parse().unwrap(),
+        )]
         .try_into()
         .unwrap(),
     );
@@ -2610,7 +2607,7 @@ fn closing_run_a_and_attempting_b_keeps_a_receiver_and_delivers_its_global_side_
     assert!(view.settle_delegation(Outcome::Close));
     assert!(!view.delegation_open());
 
-    assert!(view.begin_delegation(super::DelegationOrigin::PlusMenu));
+    assert!(view.begin_delegation(super::DelegationOrigin::Blank));
     assert!(!view.delegation_open(), "B is not opened over hidden A");
     assert_eq!(
         view.delegate_job.as_ref().map(|job| job.correlation),
@@ -2655,7 +2652,7 @@ fn closing_schedule_a_and_attempting_b_keeps_a_success_or_refusal_receiver() {
     for succeeds in [true, false] {
         let (mut view, _workspace) = crate::mainview::harness::container();
         seed_managed_readiness(&mut view);
-        assert!(view.begin_delegation(super::DelegationOrigin::PlusMenu));
+        assert!(view.begin_delegation(super::DelegationOrigin::Blank));
         let modal = view.delegation.as_mut().expect("A is open");
         modal
             .objective
@@ -2680,7 +2677,7 @@ fn closing_schedule_a_and_attempting_b_keeps_a_success_or_refusal_receiver() {
         });
         assert!(view.settle_delegation(Outcome::Close));
 
-        assert!(view.begin_delegation(super::DelegationOrigin::PlusMenu));
+        assert!(view.begin_delegation(super::DelegationOrigin::Blank));
         assert!(!view.delegation_open(), "B is not opened over hidden A");
         assert_eq!(
             view.delegate_job.as_ref().map(|job| job.correlation),
@@ -2710,7 +2707,7 @@ fn closing_schedule_a_and_attempting_b_keeps_a_success_or_refusal_receiver() {
 #[test]
 fn clicking_the_scrim_closes_a_create_or_edit_draft() {
     let (mut view, _workspace) = crate::mainview::harness::container();
-    assert!(view.begin_delegation(super::DelegationOrigin::PlusMenu));
+    assert!(view.begin_delegation(super::DelegationOrigin::Blank));
     assert!(view.delegation_open());
 
     assert!(view.delegation_mouse_down(0.0, 0.0));

@@ -583,6 +583,7 @@ fn a_provisional_canvas_is_listed_as_a_canvas_at_the_root() {
         id: fresh,
         title: String::new(),
         after: None,
+        parent: None,
         kind: koru_core::explore::KIND_CANVAS.into(),
     });
     let entries = w.entries();

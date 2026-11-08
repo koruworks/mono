@@ -30,11 +30,9 @@ use crate::components::draw::draw_overlay;
 use crate::editor::Editing;
 use crate::paragraph::Paragraph;
 use crate::rowlayout;
-use crate::view_state::{
-    Hover, LinkChip, LinkChipHit, SearchHighlight, SpellingUnderline, ViewState,
-};
+use crate::view_state::{Hover, LinkChip, SearchHighlight, SpellingUnderline, ViewState};
 use koru_core::NodeId;
-use koru_draw::geometry::{checkbox_x, marker_right_x};
+use koru_draw::geometry::{checkbox_x, marker_right_x_in};
 use koru_draw::pill::{PillCache, draw as draw_pill_component};
 use koru_draw::scene::draw_status_bar;
 use koru_draw::scene::{draw_decorations, draw_glyph_run, draw_layout, fill, rect, rrect, stroke};
@@ -139,6 +137,7 @@ pub fn draw_document(
     vh: f32,
     active: bool,
     insert_button: bool,
+    drag_grip: bool,
     table_source: Option<NodeId>,
     table_scroll: &HashMap<NodeId, f32>,
     table_cell: Option<(NodeId, usize, usize)>,
@@ -181,7 +180,9 @@ pub fn draw_document(
             draw_image_row(scene, root, row, images, engine, vw, oy, selected, dragging);
             if selected || on_row {
                 let grip_active = matches!(hover, Some(Hover::Grip(h)) if h == i);
-                draw_grip(scene, root, row, oy, grip_active);
+                if drag_grip {
+                    draw_grip(scene, root, row, oy, grip_active);
+                }
                 if insert_button {
                     let plus_hovered = matches!(hover, Some(Hover::Plus(h)) if h == i);
                     draw_plus(scene, root, row, oy, plus_hovered);
@@ -202,7 +203,9 @@ pub fn draw_document(
             draw_divider(scene, root, row, vw, oy);
             if selected || on_row {
                 let grip_active = matches!(hover, Some(Hover::Grip(h)) if h == i);
-                draw_grip(scene, root, row, oy, grip_active);
+                if drag_grip {
+                    draw_grip(scene, root, row, oy, grip_active);
+                }
                 if insert_button {
                     let plus_hovered = matches!(hover, Some(Hover::Plus(h)) if h == i);
                     draw_plus(scene, root, row, oy, plus_hovered);
@@ -243,7 +246,7 @@ pub fn draw_document(
                 search_highlights,
                 spelling,
             );
-            if focused || on_row {
+            if drag_grip && (focused || on_row) {
                 draw_grip(
                     scene,
                     root,
@@ -287,7 +290,7 @@ pub fn draw_document(
                     },
                     copy_glyph: copy_icon.glyph(),
                     copy_active: copy_icon.confirming(),
-                    grip: (selected || on_row)
+                    grip: (drag_grip && (selected || on_row))
                         .then_some(matches!(hover, Some(Hover::Grip(h)) if h == i)),
                     plus: (insert_button && (selected || on_row))
                         .then_some(matches!(hover, Some(Hover::Plus(h)) if h == i)),
@@ -354,7 +357,9 @@ pub fn draw_document(
         let on_row = hover.and_then(Hover::row) == Some(i);
         if on_row && !row.is_title {
             let active = matches!(hover, Some(Hover::Grip(h)) if h == i);
-            draw_grip(scene, root, row, oy, active);
+            if drag_grip {
+                draw_grip(scene, root, row, oy, active);
+            }
             if insert_button {
                 draw_plus(
                     scene,
@@ -911,6 +916,20 @@ pub fn missing_image_detail(
     }
 }
 
+/// The larger device-pixel axis of an image drawn `dw × dh` logical units
+/// under a transform of `scale` — what [`draw_image_row`] asks the image cache
+/// for, and what a worker pre-builds the mip of
+/// (`crate::pending_image::mip_side`). One rule, so the two cannot miss.
+pub fn mip_wanted(dw: f32, dh: f32, scale: f64) -> u32 {
+    ((dw.max(dh)) as f64 * scale).ceil().max(1.0) as u32
+}
+
+/// The uniform scale a transform applies: display scale times zoom.
+pub fn root_scale(root: Affine) -> f64 {
+    let [a, b, c, d, _, _] = root.as_coeffs();
+    a.hypot(b).max(c.hypot(d))
+}
+
 /// Paint an image row: the decoded picture scaled to its display size, or a
 /// muted placeholder when its bytes have not been decoded here yet — a remote
 /// image whose bytes are still arriving, or one that failed to decode.
@@ -963,9 +982,7 @@ pub fn draw_image_row(
     // mipmaps, so a full-resolution picture drawn into a small box is sampled
     // pointwise every frame; `scaled` builds the mip on the CPU instead, and
     // caches it by size.
-    let [a, b, c, d, _, _] = root.as_coeffs();
-    let scale = a.hypot(b).max(c.hypot(d));
-    let wanted = ((dw.max(dh)) as f64 * scale).ceil().max(1.0) as u32;
+    let wanted = mip_wanted(dw, dh, root_scale(root));
 
     let Some(brush) = images.scaled(&img.hash.0, wanted) else {
         koru_draw::inspect::current(|record| {
@@ -1866,6 +1883,9 @@ pub fn frame(
     }
 
     let (body, view) = editor.parts();
+    // Remembered for the shell's image worker, which builds a new picture's
+    // display mip at the scale it will be drawn at.
+    view.drawn_scale = root_scale(root);
     let content_root = root * Affine::translate((content_x as f64, 0.0));
     // Clip the content to the content area in Page mode (so the sheet and rows
     // never paint over the toolbar or status bar), and to the column otherwise
@@ -1940,6 +1960,7 @@ pub fn frame(
         vh,
         view.active,
         view.insert_button,
+        view.drag_grip,
         view.table_source,
         &view.table_scroll,
         view.table_cell,
@@ -1950,6 +1971,18 @@ pub fn frame(
         reminder_chips,
     );
     draw_drag_feedback(scene, content_root, body, view);
+    // Images still loading, in the room the rows were positioned around.
+    crate::pending_image::draw(
+        scene,
+        content_root,
+        body,
+        &view.pending_images,
+        &mut view.engine,
+        view.scroll,
+        vh,
+        now,
+        view.reduced_motion,
+    );
 
     // Both hints are set exactly the way the row they stand in for is set —
     // the row's family, its step on the ramp, its weight, and the same strut
@@ -2255,48 +2288,183 @@ const LINK_CHIP_BTN: f32 = 22.0;
 const LINK_CHIP_ICON: f32 = 14.0;
 const LINK_CHIP_GAP: f32 = 2.0;
 
-fn link_chip_geom(
-    url_w: f32,
-    url_h: f32,
-    anchor: koru_draw::geometry::Rect,
-    viewport: (f32, f32),
-    status_h: f32,
-    url: &str,
-    row: usize,
-    attr: koru_core::AttrId,
-) -> LinkChip {
+/// **The link card's second button.** A document's card edits the link (the
+/// pencil); a surface that shows links it cannot change — a chat reply —
+/// opens it instead. The copy button and everything else about the card are
+/// the same on both.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum LinkCardAction {
+    #[default]
+    Edit,
+    Open,
+}
+
+impl LinkCardAction {
+    pub fn glyph(self) -> char {
+        match self {
+            Self::Edit => icons::PENCIL,
+            Self::Open => icons::POP_OUT,
+        }
+    }
+}
+
+/// Where a link card is, and its copy and action buttons in it.
+#[derive(Copy, Clone, PartialEq, Debug)]
+pub struct LinkCardGeom {
+    pub rect: koru_draw::geometry::Rect,
+    pub copy: koru_draw::geometry::Rect,
+    pub action: koru_draw::geometry::Rect,
+}
+
+/// What on a link card is under a point.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum LinkCardHit {
+    None,
+    Body,
+    Copy,
+    Action,
+}
+
+impl LinkCardGeom {
+    /// The two buttons at the right end of a card at `rect`.
+    pub fn in_rect(rect: koru_draw::geometry::Rect) -> Self {
+        let btn_y = rect.y + (rect.h - LINK_CHIP_BTN) * 0.5;
+        let copy = koru_draw::geometry::Rect::new(
+            rect.x + rect.w - LINK_CHIP_PAD - LINK_CHIP_BTN * 2.0 - LINK_CHIP_GAP,
+            btn_y,
+            LINK_CHIP_BTN,
+            LINK_CHIP_BTN,
+        );
+        let action = koru_draw::geometry::Rect::new(
+            copy.x + LINK_CHIP_BTN + LINK_CHIP_GAP,
+            btn_y,
+            LINK_CHIP_BTN,
+            LINK_CHIP_BTN,
+        );
+        Self { rect, copy, action }
+    }
+
+    pub fn hit(&self, x: f32, y: f32) -> LinkCardHit {
+        if self.copy.contains(x, y) {
+            LinkCardHit::Copy
+        } else if self.action.contains(x, y) {
+            LinkCardHit::Action
+        } else if self.rect.contains(x, y) {
+            LinkCardHit::Body
+        } else {
+            LinkCardHit::None
+        }
+    }
+}
+
+/// **The most a link card's text runs, in graphemes.** A longer address keeps
+/// its start and its end around a `…` (user, 2026-11-03: a full tracking URL
+/// stretched the card across the page); copy still copies the whole address.
+pub const LINK_CARD_LABEL_MAX: usize = 30;
+
+/// `text` cut to [`LINK_CARD_LABEL_MAX`] graphemes with the ellipsis in the
+/// middle, or unchanged when it fits.
+pub fn elide_link_label(text: &str) -> std::borrow::Cow<'_, str> {
+    use unicode_segmentation::UnicodeSegmentation;
+    let graphemes: Vec<&str> = text.graphemes(true).collect();
+    if graphemes.len() <= LINK_CARD_LABEL_MAX {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let kept = LINK_CARD_LABEL_MAX - 1;
+    let head = kept.div_ceil(2);
+    let tail = kept - head;
+    let mut out = graphemes[..head].concat();
+    out.push('…');
+    out.push_str(&graphemes[graphemes.len() - tail..].concat());
+    std::borrow::Cow::Owned(out)
+}
+
+/// The card's text, elided in the middle to [`LINK_CARD_LABEL_MAX`] and
+/// wrapped to what a surface `bounds_w` wide leaves beside the buttons.
+pub fn link_card_label(
+    engine: &mut TextEngine,
+    text: &str,
+    bounds_w: f32,
+) -> parley::Layout<theme::Brush> {
     let buttons_w = LINK_CHIP_BTN * 2.0 + LINK_CHIP_GAP;
-    let w = (url_w + buttons_w + LINK_CHIP_PAD * 3.0).max(120.0);
-    let h = url_h.max(LINK_CHIP_BTN) + LINK_CHIP_PAD * 2.0;
-    let (vw, vh) = viewport;
-    let x = (anchor.x + anchor.w * 0.5 - w * 0.5).clamp(8.0, (vw - w - 8.0).max(8.0));
-    // Overlap the pill so the pointer never falls in a gap that dismisses the chip.
+    let max_w = (bounds_w - 24.0 - buttons_w - LINK_CHIP_PAD).max(80.0);
+    engine.simple_layout_wrapped(&elide_link_label(text), theme::role::hint(), max_w)
+}
+
+/// A card for a `label_w`×`label_h` label, centred under `anchor` and
+/// flipped above it when `bounds` has no room below.
+pub fn link_card_geom(
+    label_w: f32,
+    label_h: f32,
+    anchor: koru_draw::geometry::Rect,
+    bounds: koru_draw::geometry::Rect,
+) -> LinkCardGeom {
+    let buttons_w = LINK_CHIP_BTN * 2.0 + LINK_CHIP_GAP;
+    let w = (label_w + buttons_w + LINK_CHIP_PAD * 3.0).max(120.0);
+    let h = label_h.max(LINK_CHIP_BTN) + LINK_CHIP_PAD * 2.0;
+    let (left, right) = (bounds.x + 8.0, bounds.x + bounds.w - w - 8.0);
+    let x = (anchor.x + anchor.w * 0.5 - w * 0.5).clamp(left, right.max(left));
+    // Overlap the link so the pointer never falls in a gap that dismisses the card.
     let below = anchor.y + anchor.h - 4.0;
-    let y = if below + h > vh - status_h {
-        (anchor.y - h + 4.0).max(8.0)
+    let y = if below + h > bounds.y + bounds.h {
+        (anchor.y - h + 4.0).max(bounds.y + 8.0)
     } else {
         below
     };
-    let btn_y = y + (h - LINK_CHIP_BTN) * 0.5;
-    let copy = koru_draw::geometry::Rect::new(
-        x + w - LINK_CHIP_PAD - LINK_CHIP_BTN * 2.0 - LINK_CHIP_GAP,
-        btn_y,
-        LINK_CHIP_BTN,
-        LINK_CHIP_BTN,
+    LinkCardGeom::in_rect(koru_draw::geometry::Rect::new(x, y, w, h))
+}
+
+/// Draw a link card: its panel, its label, and copy and `action`, the one
+/// under `pointer` lit.
+pub fn draw_link_card(
+    scene: &mut Scene,
+    root: Affine,
+    engine: &mut TextEngine,
+    card: &LinkCardGeom,
+    label: &parley::Layout<theme::Brush>,
+    action: LinkCardAction,
+    pointer: (f32, f32),
+) {
+    let hit = card.hit(pointer.0, pointer.1);
+    let pal = theme::p();
+    let mut panel = koru_draw::scene::Panel::tooltip(6.0);
+    panel.elevation = koru_draw::scene::Elevation::Raised;
+    koru_draw::scene::floating_panel(
+        scene,
+        root,
+        card.rect.x,
+        card.rect.y,
+        card.rect.w,
+        card.rect.h,
+        &panel,
     );
-    let edit = koru_draw::geometry::Rect::new(
-        copy.x + LINK_CHIP_BTN + LINK_CHIP_GAP,
-        btn_y,
-        LINK_CHIP_BTN,
-        LINK_CHIP_BTN,
+
+    let text_y = card.rect.y + (card.rect.h - label.height()) * 0.5;
+    draw_layout(
+        scene,
+        root,
+        label,
+        card.rect.x + LINK_CHIP_PAD,
+        text_y,
+        Some(pal.bubble_fg),
     );
-    LinkChip {
-        rect: koru_draw::geometry::Rect::new(x, y, w, h),
-        copy,
-        edit,
-        url: url.to_owned(),
-        row,
-        attr,
+
+    for (rect, glyph, active) in [
+        (card.copy, icons::COPY, hit == LinkCardHit::Copy),
+        (card.action, action.glyph(), hit == LinkCardHit::Action),
+    ] {
+        if active {
+            fill(
+                scene,
+                root,
+                pal.bubble_hover,
+                &rrect(rect.x, rect.y, rect.w, rect.h, 4.0),
+            );
+        }
+        let icon = engine.icon_layout(glyph, LINK_CHIP_ICON);
+        let ix = rect.x + (rect.w - icon.width()) * 0.5;
+        let iy = rect.y + (rect.h - icon.height()) * 0.5;
+        draw_layout(scene, root, &icon, ix, iy, Some(pal.bubble_fg));
     }
 }
 
@@ -2311,90 +2479,44 @@ pub fn draw_link_tooltip(
     anchor: Option<koru_draw::geometry::Rect>,
     pointer: (f32, f32),
 ) {
-    let buttons_w = LINK_CHIP_BTN * 2.0 + LINK_CHIP_GAP;
-    let max_w = (view.viewport.0 - 24.0 - buttons_w - LINK_CHIP_PAD).max(80.0);
-    let label = view
-        .engine
-        .simple_layout_wrapped(url, theme::role::hint(), max_w);
+    let label = link_card_label(&mut view.engine, url, view.viewport.0);
     let reuse = view
         .link_chip
         .as_ref()
-        .is_some_and(|chip| chip.row == row && chip.attr == attr && chip.url == url);
-    let chip = if reuse {
-        let mut chip = view.link_chip.clone().unwrap();
-        let btn_y = chip.rect.y + (chip.rect.h - LINK_CHIP_BTN) * 0.5;
-        chip.copy = koru_draw::geometry::Rect::new(
-            chip.rect.x + chip.rect.w - LINK_CHIP_PAD - LINK_CHIP_BTN * 2.0 - LINK_CHIP_GAP,
-            btn_y,
-            LINK_CHIP_BTN,
-            LINK_CHIP_BTN,
-        );
-        chip.edit = koru_draw::geometry::Rect::new(
-            chip.copy.x + LINK_CHIP_BTN + LINK_CHIP_GAP,
-            btn_y,
-            LINK_CHIP_BTN,
-            LINK_CHIP_BTN,
-        );
-        chip
-    } else {
-        let anchor = anchor.unwrap_or(koru_draw::geometry::Rect::new(
-            pointer.0, pointer.1, 1.0, 1.0,
-        ));
-        link_chip_geom(
-            label.width(),
-            label.height(),
-            anchor,
-            view.viewport,
-            view.status_h,
-            url,
-            row,
-            attr,
-        )
-    };
-    let hit = chip.hit(pointer.0, pointer.1);
-
-    let pal = theme::p();
-    let mut panel = koru_draw::scene::Panel::tooltip(6.0);
-    panel.elevation = koru_draw::scene::Elevation::Raised;
-    koru_draw::scene::floating_panel(
-        scene,
-        root,
-        chip.rect.x,
-        chip.rect.y,
-        chip.rect.w,
-        chip.rect.h,
-        &panel,
-    );
-
-    let text_y = chip.rect.y + (chip.rect.h - label.height()) * 0.5;
-    draw_layout(
-        scene,
-        root,
-        &label,
-        chip.rect.x + LINK_CHIP_PAD,
-        text_y,
-        Some(pal.bubble_fg),
-    );
-
-    for (rect, glyph, active) in [
-        (chip.copy, icons::COPY, hit == LinkChipHit::Copy),
-        (chip.edit, icons::PENCIL, hit == LinkChipHit::Edit),
-    ] {
-        if active {
-            fill(
-                scene,
-                root,
-                pal.bubble_hover,
-                &rrect(rect.x, rect.y, rect.w, rect.h, 4.0),
-            );
+        .filter(|chip| chip.row == row && chip.attr == attr && chip.url == url)
+        .map(|chip| chip.rect);
+    let card = match reuse {
+        Some(rect) => LinkCardGeom::in_rect(rect),
+        None => {
+            let anchor = anchor.unwrap_or(koru_draw::geometry::Rect::new(
+                pointer.0, pointer.1, 1.0, 1.0,
+            ));
+            let (vw, vh) = view.viewport;
+            link_card_geom(
+                label.width(),
+                label.height(),
+                anchor,
+                koru_draw::geometry::Rect::new(0.0, 0.0, vw, vh - view.status_h),
+            )
         }
-        let icon = view.engine.icon_layout(glyph, LINK_CHIP_ICON);
-        let ix = rect.x + (rect.w - icon.width()) * 0.5;
-        let iy = rect.y + (rect.h - icon.height()) * 0.5;
-        draw_layout(scene, root, &icon, ix, iy, Some(pal.bubble_fg));
-    }
-
-    view.link_chip = Some(chip);
+    };
+    draw_link_card(
+        scene,
+        root,
+        &mut view.engine,
+        &card,
+        &label,
+        LinkCardAction::Edit,
+        pointer,
+    );
+    view.link_chip = Some(LinkChip {
+        rect: card.rect,
+        copy: card.copy,
+        edit: card.action,
+        url: url.to_owned(),
+        row,
+        attr,
+    });
 }
 
 pub fn draw_checkbox(
@@ -2406,8 +2528,9 @@ pub fn draw_checkbox(
     reminder_attention: bool,
 ) {
     let x = checkbox_x(row.depth);
-    let y = rowlayout::center_on_first_line(row, oy, theme::CHECKBOX_SIZE);
-    let size = theme::CHECKBOX_SIZE;
+    // The same size the hit area is built from (`rowlayout::checkbox_rect`).
+    let size = row.metrics.checkbox;
+    let y = rowlayout::center_on_first_line(row, oy, size);
     let box_rect = koru_draw::geometry::Rect::new(x, y, size, size);
 
     if hovered {
@@ -2454,17 +2577,17 @@ pub fn draw_list_marker(
 ) {
     let Some(style) = row.list_style else { return };
     let mid = rowlayout::first_line_mid_y(row, oy);
-    let right_x = marker_right_x(row.depth);
+    let right_x = marker_right_x_in(&row.metrics, row.depth);
 
     match style {
         koru_core::ListStyle::Bullet => {
             // Centred in the right half of the gutter, level with the text ink.
-            let cx = (right_x - theme::GUTTER * 0.25) as f64;
+            let cx = (right_x - row.metrics.gutter * 0.25) as f64;
             fill(
                 scene,
                 root,
                 theme::p().text,
-                &Circle::new((cx, mid as f64), theme::BULLET_R as f64),
+                &Circle::new((cx, mid as f64), row.metrics.bullet_r as f64),
             );
         }
         // Checkbox-style lists draw a checkbox, not a marker — handled by the
@@ -2546,13 +2669,7 @@ pub fn draw_grip(scene: &mut Scene, root: Affine, row: &Paragraph, oy: f32, acti
     } else {
         theme::p().grip
     };
-    for row in 0..3 {
-        for col in 0..2 {
-            let cx = (grip.x + 3.0 + col as f32 * 5.0) as f64;
-            let cy = (grip.y + 3.0 + row as f32 * 4.5) as f64;
-            fill(scene, root, color, &Circle::new((cx, cy), 1.4));
-        }
-    }
+    koru_draw::scene::grip_dots(scene, root, grip, color);
 }
 
 /// What a margin icon drawn from geometry leaves in the inspector: one
@@ -2583,6 +2700,92 @@ mod tests {
     use super::*;
 
     use koru_i18n::Lang;
+
+    /// **A long address is cut in the middle to 30 graphemes**, keeping its
+    /// start and its end; a short one, or one exactly 30 long, is unchanged.
+    #[test]
+    fn a_long_link_label_keeps_its_ends_around_an_ellipsis() {
+        let long = "https://www.jetbrains.com/help/rider/Navigate_editor_tabs_and_tool_windows.html?utm_source=chatgpt.com";
+        let cut = elide_link_label(long);
+        assert_eq!(cut, "https://www.jet…ce=chatgpt.com");
+        assert_eq!(cut.chars().count(), LINK_CARD_LABEL_MAX);
+        assert_eq!(
+            elide_link_label("https://example.com/a"),
+            "https://example.com/a"
+        );
+        let exact = "a".repeat(LINK_CARD_LABEL_MAX);
+        assert_eq!(elide_link_label(&exact), exact.as_str());
+        let accents = "é".repeat(40);
+        assert_eq!(
+            elide_link_label(&accents).chars().count(),
+            LINK_CARD_LABEL_MAX
+        );
+    }
+
+    /// **The document's link card is the one it always was** — under the
+    /// pill, overlapping it, flipped above it near the status bar, copy then
+    /// the pencil — now that a chat reply draws the same card with *open* in
+    /// the pencil's place.
+    #[test]
+    fn the_document_link_card_keeps_its_place_and_its_pencil() {
+        use koru_draw::geometry::Rect as Box;
+        let mut view = ViewState::default();
+        view.viewport = (800.0, 600.0);
+        view.status_h = 24.0;
+        let attr = AttrId::new();
+        let url = "https://example.com/a";
+        let label = link_card_label(&mut view.engine, url, 800.0);
+        let (w, h) = (
+            (label.width() + 46.0 + 21.0).max(120.0),
+            label.height().max(22.0) + 14.0,
+        );
+        let mut scene = Scene::new();
+        let pill = Box::new(300.0, 100.0, 60.0, 20.0);
+        draw_link_tooltip(
+            &mut scene,
+            Affine::IDENTITY,
+            &mut view,
+            url,
+            0,
+            attr,
+            Some(pill),
+            (310.0, 110.0),
+        );
+        let chip = view.link_chip.clone().expect("the card is kept");
+        assert_eq!(chip.rect, Box::new(330.0 - w * 0.5, 116.0, w, h));
+        assert_eq!(chip.edit.x, chip.copy.x + 22.0 + 2.0);
+        assert_eq!(chip.url, url);
+        assert_eq!(LinkCardAction::default(), LinkCardAction::Edit);
+        assert_eq!(LinkCardAction::Edit.glyph(), icons::PENCIL);
+        assert_eq!(LinkCardAction::Open.glyph(), icons::POP_OUT);
+
+        // Near the floor the card goes above the pill instead.
+        view.link_chip = None;
+        let low = Box::new(300.0, 560.0, 60.0, 20.0);
+        draw_link_tooltip(
+            &mut scene,
+            Affine::IDENTITY,
+            &mut view,
+            url,
+            0,
+            attr,
+            Some(low),
+            (310.0, 570.0),
+        );
+        let chip = view.link_chip.clone().unwrap();
+        assert_eq!(chip.rect.y, 560.0 - h + 4.0);
+        // The hit areas are the document's own, in its order.
+        let card = LinkCardGeom::in_rect(chip.rect);
+        assert_eq!((card.copy, card.action), (chip.copy, chip.edit));
+        assert_eq!(
+            chip.hit(chip.copy.x + 1.0, chip.copy.y + 1.0),
+            crate::view_state::LinkChipHit::Copy
+        );
+        assert_eq!(
+            card.hit(chip.edit.x + 1.0, chip.edit.y + 1.0),
+            LinkCardHit::Action
+        );
+    }
 
     #[test]
     fn the_placeholder_stays_generic_until_a_device_is_named() {

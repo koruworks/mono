@@ -473,7 +473,9 @@ pub enum LifecycleFilter {
 ///
 /// `Due` is the default because a task list is asked *what should I do next*.
 /// `Due` and `Priority` sort set values first and unset last; `Modified` is the
-/// source document's stamp.
+/// source document's stamp. `Manual` is the order somebody dragged the tasks
+/// into (`koru.rank`, smaller first); a task never ranked follows the ranked
+/// ones by its due, and an undated one of those comes last.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskSort {
@@ -481,6 +483,7 @@ pub enum TaskSort {
     Due,
     Priority,
     Modified,
+    Manual,
 }
 
 /// What the query answers with.

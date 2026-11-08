@@ -316,7 +316,9 @@ pub fn compile(name: &str, fixture: &Fixture) -> Result<Case, &'static str> {
                     &task_state,
                     Condition::Name("Task: open".into()),
                 ),
-                registered("open-tasks", &subject, ShortcutId::ShowTasks),
+                // Tasks is the rail's third slot in a fresh window's default
+                // order; the digit is the slot's, not the view's.
+                registered("open-tasks", &subject, ShortcutId::ShowRailView3),
                 input(
                     "open-later-queue",
                     &locator("koru:w*/v*/s:tasks-queue#later"),

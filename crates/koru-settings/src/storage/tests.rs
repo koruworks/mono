@@ -11,6 +11,47 @@
 use super::*;
 use crate::sections::GlobalSettings;
 
+#[test]
+fn icon_pack_round_trips_without_changing_other_preferences() {
+    for choice in crate::IconPackChoice::ALL {
+        let mut settings = GlobalSettings::default();
+        let patch = crate::GlobalPatch {
+            icon_pack: Some(*choice),
+            ..Default::default()
+        };
+        assert!(patch.touches_roaming());
+        patch.apply(&mut settings);
+        let written = render_preferences(&settings, &PreferencesFile::default());
+        let mut loaded = GlobalSettings::default();
+        apply_preferences(&written, &mut loaded);
+        assert_eq!(loaded, settings);
+    }
+    let mut old = GlobalSettings::default();
+    apply_preferences("version=2\nicon_pack=future-pack\n", &mut old);
+    assert_eq!(old.icon_pack, None, "an unknown pack follows the default");
+    let mut json = serde_json::to_value(GlobalSettings::default()).unwrap();
+    json.as_object_mut().unwrap().remove("icon_pack");
+    let old: GlobalSettings = serde_json::from_value(json).unwrap();
+    assert_eq!(old.icon_pack, None);
+}
+
+/// Nobody chose a pack: nothing is written, so a later default reaches them.
+/// A chosen pack is written even when it is today's default.
+#[test]
+fn an_unchosen_icon_pack_writes_no_key_and_a_chosen_one_always_does() {
+    let settings = GlobalSettings::default();
+    let written = render_preferences(&settings, &PreferencesFile::default());
+    assert!(!written.contains("icon_pack="), "{written}");
+    for choice in crate::IconPackChoice::ALL {
+        let settings = GlobalSettings {
+            icon_pack: Some(*choice),
+            ..GlobalSettings::default()
+        };
+        let written = render_preferences(&settings, &PreferencesFile::default());
+        assert!(written.contains(&format!("icon_pack={}\n", choice.token())));
+    }
+}
+
 /// A v2 file, as `preferences_body` writes one today.
 const V2_FIXTURE: &str = "\
 # Koru preferences. These follow you, not a folder and not a machine.
@@ -104,6 +145,31 @@ fn absent_font_keys_mean_follow_the_app_and_stay_absent() {
     assert!(!written.contains("headings_font="));
     assert!(!written.contains("code_font="));
     assert!(written.contains("body_font=lora"));
+    // The Chat font too: a file from before it existed follows the app font,
+    // and writes no key for it.
+    assert_eq!(settings.chat_font, FontSetting::FollowDefault);
+    assert!(!written.contains("chat_font="));
+}
+
+/// **A chosen Chat font survives the file**, a bundled family and an
+/// installed one alike, and following the app font writes no key.
+#[test]
+fn a_chosen_chat_font_round_trips_through_the_file() {
+    for chosen in [
+        FontSetting::Chosen(FontFamily::Lora),
+        FontSetting::Installed(crate::FamilyName::new("Georgia").unwrap()),
+    ] {
+        let settings = GlobalSettings {
+            chat_font: chosen.clone(),
+            ..GlobalSettings::default()
+        };
+        let written = render_preferences(&settings, &PreferencesFile::default());
+        assert!(written.contains("chat_font="), "{written}");
+        let mut back = GlobalSettings::default();
+        apply_preferences(&written, &mut back);
+        assert_eq!(back.chat_font, chosen);
+        assert_eq!(back.ui_font, FontSetting::FollowDefault, "untouched");
+    }
 }
 
 #[test]
@@ -176,6 +242,16 @@ fn a_written_file_carries_every_key_the_authority_owns() {
         body_font: FontSetting::Chosen(FontFamily::Lora),
         headings_font: FontSetting::Chosen(FontFamily::Nunito),
         code_font: FontSetting::Chosen(FontFamily::Mono),
+        chat_font: FontSetting::Chosen(FontFamily::SourceSerif4),
+        // A pack that follows the default is absent on purpose, like a font.
+        icon_pack: Some(crate::IconPackChoice::Lucide),
+        // So is a document size that follows the default.
+        document_text_size: crate::DocTextSizeSetting::Chosen(
+            crate::DocTextSize::new(18).expect("an offered size"),
+        ),
+        // And the base colors that follow the theme.
+        base_color_light: crate::RgbColor::new(0xDDE7F6),
+        base_color_dark: crate::RgbColor::new(0x293750),
         global_dictation_enabled: Some(false),
         // Both nullable device-local keys are given a value: an absent one is
         // absent from the file on purpose, and what this test is about is a
@@ -188,6 +264,17 @@ fn a_written_file_carries_every_key_the_authority_owns() {
             folder: Some("D:/videos".into()),
             ..crate::RecordingPrefs::default()
         },
+        // The off list is written only while an agent is off.
+        disabled_agents: vec!["grok".into()],
+        // The default permissions are written only when not Manual.
+        default_permission: AgentPermission::Auto,
+        default_permission_other: AgentPermission::Yolo,
+        // The default agent is written only when one is chosen.
+        default_agent: Some("codex".into()),
+        // The order is written only once moved.
+        agent_order: vec!["codex".into(), "claude".into()],
+        // Favorites are written only while there is one.
+        favorite_models: vec![crate::FavoriteModel::new("claude", "opus")],
         ..GlobalSettings::default()
     };
     let written = render_preferences(&settings, &PreferencesFile::default());
@@ -330,6 +417,176 @@ fn desktop_json_round_trips_and_carries_what_it_does_not_own() {
     let mut again = GlobalSettings::default();
     apply_desktop(&written, &mut again);
     assert_eq!(again, settings);
+}
+
+/// **The agents turned off on this machine** (Agent providers): read
+/// sorted and once each, absent while every agent is on, and a value that is
+/// not a list of keys reads as every agent on rather than failing the load.
+#[test]
+fn the_disabled_agents_round_trip_and_an_empty_list_writes_no_key() {
+    let mut settings = GlobalSettings::default();
+    apply_desktop(
+        br#"{"disabled_agents": ["muse", "grok", "muse"]}"#,
+        &mut settings,
+    );
+    assert_eq!(settings.disabled_agents, ["grok", "muse"]);
+    let written = render_desktop(&settings, &DesktopFile::default());
+    let value: serde_json::Value = serde_json::from_slice(&written).unwrap();
+    assert_eq!(
+        value["disabled_agents"],
+        serde_json::json!(["grok", "muse"])
+    );
+
+    let mut again = GlobalSettings::default();
+    apply_desktop(&written, &mut again);
+    assert_eq!(again.disabled_agents, settings.disabled_agents);
+
+    let none = render_desktop(&GlobalSettings::default(), &DesktopFile::default());
+    let value: serde_json::Value = serde_json::from_slice(&none).unwrap();
+    assert!(value.get("disabled_agents").is_none(), "every agent on");
+
+    let mut odd = GlobalSettings::default();
+    apply_desktop(br#"{"disabled_agents": "grok"}"#, &mut odd);
+    assert!(odd.disabled_agents.is_empty());
+}
+
+/// **The two default permissions** (D39): absent is *Manual*, a choice is
+/// written and read back, *Manual* writes no key, and an *Auto* for agents
+/// with no auto mode — a hand-edit — reads as *Manual*.
+#[test]
+fn the_default_permissions_round_trip_and_manual_writes_no_key() {
+    let none = render_desktop(&GlobalSettings::default(), &DesktopFile::default());
+    let value: serde_json::Value = serde_json::from_slice(&none).unwrap();
+    assert!(value.get("default_permission").is_none());
+    assert!(value.get("default_permission_other").is_none());
+
+    let mut settings = GlobalSettings::default();
+    apply_desktop(
+        br#"{"default_permission": "auto", "default_permission_other": "yolo"}"#,
+        &mut settings,
+    );
+    assert_eq!(settings.default_permission, AgentPermission::Auto);
+    assert_eq!(settings.default_permission_other, AgentPermission::Yolo);
+    let written = render_desktop(&settings, &DesktopFile::default());
+    let value: serde_json::Value = serde_json::from_slice(&written).unwrap();
+    assert_eq!(value["default_permission"], "auto");
+    assert_eq!(value["default_permission_other"], "yolo");
+    let mut again = GlobalSettings::default();
+    apply_desktop(&written, &mut again);
+    assert_eq!(again, settings);
+
+    let mut odd = GlobalSettings::default();
+    apply_desktop(
+        br#"{"default_permission": "sometimes", "default_permission_other": "auto"}"#,
+        &mut odd,
+    );
+    assert_eq!(odd.default_permission, AgentPermission::Manual);
+    assert_eq!(odd.default_permission_other, AgentPermission::Manual);
+}
+
+/// **The agents' order** (D41): absent is the built-in order and writes no
+/// key, an order is written and read back with each key once, and anything
+/// but a list of agent keys reads as the built-in order.
+#[test]
+fn the_agent_order_round_trips_and_the_built_in_order_writes_no_key() {
+    let none = render_desktop(&GlobalSettings::default(), &DesktopFile::default());
+    let value: serde_json::Value = serde_json::from_slice(&none).unwrap();
+    assert!(value.get("agent_order").is_none());
+
+    let mut settings = GlobalSettings::default();
+    apply_desktop(
+        br#"{"agent_order": ["codex", "claude", "codex", "grok"]}"#,
+        &mut settings,
+    );
+    assert_eq!(settings.agent_order, ["codex", "claude", "grok"]);
+    let written = render_desktop(&settings, &DesktopFile::default());
+    let value: serde_json::Value = serde_json::from_slice(&written).unwrap();
+    assert_eq!(
+        value["agent_order"],
+        serde_json::json!(["codex", "claude", "grok"])
+    );
+    let mut again = GlobalSettings::default();
+    apply_desktop(&written, &mut again);
+    assert_eq!(again.agent_order, settings.agent_order);
+
+    for odd in [
+        &br#"{"agent_order": "codex"}"#[..],
+        br#"{"agent_order": ["Codex"]}"#,
+    ] {
+        let mut read = GlobalSettings::default();
+        apply_desktop(odd, &mut read);
+        assert!(read.agent_order.is_empty());
+    }
+}
+
+/// **The picker's favorite models** (D46): roaming, so in `preferences.conf`;
+/// none writes no key, a list is written and read back with each pair once —
+/// a model id holding `/`, `:` or `,` intact — anything that is not a JSON
+/// list reads as none, and an entry that is not `agent:model` is skipped.
+#[test]
+fn the_favorite_models_round_trip_through_the_roaming_file() {
+    let none = render_preferences(&GlobalSettings::default(), &PreferencesFile::default());
+    assert!(!none.contains("favorite_models"));
+
+    let favorites = vec![
+        crate::FavoriteModel::new("claude", "opus"),
+        crate::FavoriteModel::new("opencode", "anthropic/claude-sonnet-4"),
+        crate::FavoriteModel::new("qwen", "qwen3:32b,fast"),
+    ];
+    let settings = GlobalSettings {
+        favorite_models: favorites.clone(),
+        ..GlobalSettings::default()
+    };
+    let written = render_preferences(&settings, &PreferencesFile::default());
+    assert!(written.contains(
+        r#"favorite_models=["claude:opus","opencode:anthropic/claude-sonnet-4","qwen:qwen3:32b,fast"]"#
+    ));
+    let mut again = GlobalSettings::default();
+    let file = apply_preferences(&written, &mut again);
+    assert_eq!(again.favorite_models, favorites);
+    assert!(file.carried.is_empty(), "the key is owned, not carried");
+
+    let mut twice = GlobalSettings::default();
+    apply_preferences(
+        "favorite_models=[\"claude:opus\",\"Claude:opus\",\"claude:opus\",\"nomodel\",\"codex:\"]\n",
+        &mut twice,
+    );
+    assert_eq!(
+        twice.favorite_models,
+        [crate::FavoriteModel::new("claude", "opus")]
+    );
+    for odd in ["favorite_models=claude:opus\n", "favorite_models={}\n"] {
+        let mut read = GlobalSettings::default();
+        apply_preferences(odd, &mut read);
+        assert!(read.favorite_models.is_empty(), "{odd:?}");
+    }
+}
+
+/// **The default agent** (D40): absent is *Auto* and writes no key, a key is
+/// written and read back, and anything that is not an agent key reads as
+/// *Auto*.
+#[test]
+fn the_default_agent_round_trips_and_auto_writes_no_key() {
+    let none = render_desktop(&GlobalSettings::default(), &DesktopFile::default());
+    let value: serde_json::Value = serde_json::from_slice(&none).unwrap();
+    assert!(value.get("default_agent").is_none());
+
+    let mut settings = GlobalSettings::default();
+    apply_desktop(br#"{"default_agent": "codex"}"#, &mut settings);
+    assert_eq!(settings.default_agent.as_deref(), Some("codex"));
+    let written = render_desktop(&settings, &DesktopFile::default());
+    let value: serde_json::Value = serde_json::from_slice(&written).unwrap();
+    assert_eq!(value["default_agent"], "codex");
+
+    for odd in [
+        &br#"{"default_agent": "Codex CLI"}"#[..],
+        br#"{"default_agent": 7}"#,
+        br#"{"default_agent": null}"#,
+    ] {
+        let mut read = GlobalSettings::default();
+        apply_desktop(odd, &mut read);
+        assert_eq!(read.default_agent, None);
+    }
 }
 
 #[test]
@@ -550,4 +807,281 @@ fn a_blank_stored_delegate_folder_reads_as_absent() {
     let mut read_back = GlobalSettings::default();
     apply_desktop(bytes, &mut read_back);
     assert_eq!(read_back.delegate_temporary_root, None);
+}
+
+/// A chosen size is written, even 16; following the default writes nothing.
+#[test]
+fn a_document_size_round_trips_and_only_a_choice_writes_a_key() {
+    use crate::{DocTextSize, DocTextSizeSetting};
+    let written = render_preferences(&GlobalSettings::default(), &PreferencesFile::default());
+    assert!(!written.contains("doc_text_size="), "{written}");
+    for px in DocTextSize::ALL {
+        let settings = GlobalSettings {
+            document_text_size: DocTextSizeSetting::Chosen(DocTextSize::new(px).unwrap()),
+            ..GlobalSettings::default()
+        };
+        let written = render_preferences(&settings, &PreferencesFile::default());
+        assert!(
+            written.contains(&format!("doc_text_size={px}\n")),
+            "{written}"
+        );
+        let mut loaded = GlobalSettings::default();
+        apply_preferences(&written, &mut loaded);
+        assert_eq!(loaded, settings);
+    }
+}
+
+/// A size this build does not offer, or no number at all, reads as following
+/// the default rather than snapping to a size nobody chose.
+#[test]
+fn a_size_not_offered_reads_as_following_the_default() {
+    for value in ["19", "big", "0", "", "-1", "16.5", "300"] {
+        let mut loaded = GlobalSettings::default();
+        apply_preferences(&format!("version=2\ndoc_text_size={value}\n"), &mut loaded);
+        assert_eq!(
+            loaded.document_text_size,
+            crate::DocTextSizeSetting::FollowDefault,
+            "{value:?}"
+        );
+    }
+}
+
+/// Each theme's base color round-trips as lowercase `#rrggbb`, any color and
+/// not only a swatch; following the theme writes no key, so a file that never
+/// chose one is exactly what it was.
+#[test]
+fn a_base_color_round_trips_per_theme_and_only_a_choice_writes_a_key() {
+    use crate::RgbColor;
+    let written = render_preferences(&GlobalSettings::default(), &PreferencesFile::default());
+    assert!(!written.contains("base_color_"), "{written}");
+    let mut loaded = GlobalSettings::default();
+    apply_preferences(&written, &mut loaded);
+    assert_eq!(
+        (loaded.base_color_light, loaded.base_color_dark),
+        (None, None)
+    );
+
+    for (light, dark) in [
+        (Some(0xDDE7F6), None),
+        (None, Some(0x293750)),
+        (Some(0x000000), Some(0xFFFFFF)),
+        (Some(0x12AB9F), Some(0x0A0B0C)),
+    ] {
+        let settings = GlobalSettings {
+            base_color_light: light.and_then(RgbColor::new),
+            base_color_dark: dark.and_then(RgbColor::new),
+            ..GlobalSettings::default()
+        };
+        let written = render_preferences(&settings, &PreferencesFile::default());
+        for (key, rgb) in [("base_color_light", light), ("base_color_dark", dark)] {
+            match rgb {
+                Some(rgb) => assert!(
+                    written.contains(&format!("{key}=#{rgb:06x}\n")),
+                    "{written}"
+                ),
+                None => assert!(!written.contains(&format!("{key}=")), "{written}"),
+            }
+        }
+        let mut loaded = GlobalSettings::default();
+        apply_preferences(&written, &mut loaded);
+        assert_eq!(loaded, settings);
+    }
+
+    // Read in either case, written in lowercase.
+    let mut loaded = GlobalSettings::default();
+    apply_preferences("version=2\nbase_color_dark=#2A3B4C\n", &mut loaded);
+    assert_eq!(loaded.base_color_dark, RgbColor::new(0x2A3B4C));
+    let written = render_preferences(&loaded, &PreferencesFile::default());
+    assert!(written.contains("base_color_dark=#2a3b4c\n"), "{written}");
+}
+
+/// A value that is not a color reads as following the theme, and costs
+/// nothing else in the file.
+#[test]
+fn a_base_color_that_is_not_a_color_reads_as_following_the_theme() {
+    for value in [
+        "",
+        "#",
+        "blue",
+        "dde7f6",
+        "#dde7f",
+        "#dde7f60",
+        "#ggg000",
+        "#+12345",
+        "# 12345",
+        "#dde7f6ff",
+    ] {
+        let mut loaded = GlobalSettings::default();
+        let file = apply_preferences(
+            &format!(
+                "version=2\ntheme=dark\nbase_color_light={value}\nbase_color_dark={value}\n\
+                 caret_color=blue\ndoc_text_size=18\nemoji_recents=x\n"
+            ),
+            &mut loaded,
+        );
+        assert_eq!(loaded.base_color_light, None, "{value:?}");
+        assert_eq!(loaded.base_color_dark, None, "{value:?}");
+        assert_eq!(loaded.theme, ThemeChoice::Dark, "{value:?}");
+        assert_eq!(loaded.caret_color, CaretColorChoice::parse("blue"));
+        assert_eq!(
+            loaded.document_text_size.chosen().map(|size| size.px()),
+            Some(18)
+        );
+        assert_eq!(
+            file.carried,
+            vec![("emoji_recents".to_owned(), "x".to_owned())],
+            "a bad color is ignored, not carried as somebody else's key"
+        );
+    }
+}
+
+/// A patch sets a base color, clears it back to the theme with `null`, and
+/// leaves it alone when it does not name it; the wire refuses what is not a
+/// color before anything is staged.
+#[test]
+fn a_base_color_patch_sets_clears_and_refuses_what_is_not_a_color() {
+    use crate::{Field, GlobalPatch, RgbColor};
+    let set: GlobalPatch = serde_json::from_str(r##"{"base_color_light":"#DDE7F6"}"##).unwrap();
+    assert_eq!(
+        set.base_color_light,
+        Field::Set(RgbColor::new(0xDDE7F6).unwrap())
+    );
+    assert!(set.base_color_dark.is_unchanged());
+    assert!(set.touches_roaming() && !set.touches_device());
+    let mut settings = GlobalSettings {
+        base_color_dark: RgbColor::new(0x293750),
+        ..GlobalSettings::default()
+    };
+    set.apply(&mut settings);
+    assert_eq!(settings.base_color_light, RgbColor::new(0xDDE7F6));
+    assert_eq!(
+        settings.base_color_dark,
+        RgbColor::new(0x293750),
+        "untouched"
+    );
+    assert_eq!(
+        serde_json::to_value(&settings).unwrap()["base_color_light"],
+        "#dde7f6"
+    );
+
+    let clear: GlobalPatch = serde_json::from_str(r#"{"base_color_dark":null}"#).unwrap();
+    assert_eq!(clear.base_color_dark, Field::Clear);
+    assert!(clear.touches_roaming());
+    clear.apply(&mut settings);
+    assert_eq!(settings.base_color_dark, None);
+    assert_eq!(settings.base_color_light, RgbColor::new(0xDDE7F6));
+
+    for bad in [
+        r#""blue""#,
+        r##""#12345""##,
+        r#""dde7f6""#,
+        "13",
+        r#"["1"]"#,
+    ] {
+        let json = format!(r#"{{"base_color_light":{bad}}}"#);
+        assert!(
+            serde_json::from_str::<GlobalPatch>(&json).is_err(),
+            "{bad} is refused"
+        );
+    }
+    // A section written before the keys existed still reads.
+    let mut json = serde_json::to_value(GlobalSettings::default()).unwrap();
+    let object = json.as_object_mut().unwrap();
+    object.remove("base_color_light");
+    object.remove("base_color_dark");
+    let old: GlobalSettings = serde_json::from_value(json).unwrap();
+    assert_eq!((old.base_color_light, old.base_color_dark), (None, None));
+}
+
+/// The wire takes the seven sizes and nothing else, and the generated schema
+/// names exactly those seven.
+#[test]
+fn the_wire_refuses_a_size_not_offered_and_the_schema_says_which() {
+    for px in crate::DocTextSize::ALL {
+        let patch: crate::GlobalPatch =
+            serde_json::from_str(&format!(r#"{{"document_text_size":{{"chosen":{px}}}}}"#))
+                .expect("an offered size is accepted");
+        assert!(patch.touches_roaming());
+    }
+    for bad in ["19", "0", "-1", "16.5", "300", "\"16\""] {
+        let json = format!(r#"{{"document_text_size":{{"chosen":{bad}}}}}"#);
+        assert!(
+            serde_json::from_str::<crate::GlobalPatch>(&json).is_err(),
+            "{bad} is refused before anything is staged"
+        );
+    }
+    let follow: crate::GlobalPatch =
+        serde_json::from_str(r#"{"document_text_size":"follow_default"}"#).unwrap();
+    assert_eq!(
+        follow.document_text_size,
+        Some(crate::DocTextSizeSetting::FollowDefault)
+    );
+    let schema = serde_json::to_value(schemars::schema_for!(crate::DocTextSize)).unwrap();
+    let offered: Vec<u64> = crate::DocTextSize::ALL
+        .iter()
+        .map(|&px| u64::from(px))
+        .collect();
+    assert_eq!(
+        schema["enum"]
+            .as_array()
+            .expect("an enum")
+            .iter()
+            .map(|v| v.as_u64().unwrap())
+            .collect::<Vec<_>>(),
+        offered
+    );
+}
+
+/// An installed family is written by name and read back by name; a name that
+/// could break the file or a font stack is not storable, in the file or on
+/// the wire, and the terminal section does not take one.
+#[test]
+fn an_installed_family_round_trips_by_name_and_a_bad_name_never_lands() {
+    use crate::{FamilyName, FontSetting};
+    let garamond = FontSetting::Installed(FamilyName::new("EB Garamond").unwrap());
+    let settings = GlobalSettings {
+        body_font: garamond.clone(),
+        ..GlobalSettings::default()
+    };
+    let written = render_preferences(&settings, &PreferencesFile::default());
+    assert!(
+        written.contains("body_font=family:EB Garamond\n"),
+        "{written}"
+    );
+    let mut loaded = GlobalSettings::default();
+    apply_preferences(&written, &mut loaded);
+    assert_eq!(loaded.body_font, garamond);
+
+    for bad in [
+        "",
+        "  ",
+        "a,b",
+        "a;b",
+        "a|b",
+        "a=b",
+        "a\"b",
+        "a'b",
+        "a\\b",
+        "@Vertical",
+    ] {
+        assert!(FamilyName::new(bad).is_none(), "{bad:?}");
+        let mut loaded = GlobalSettings::default();
+        apply_preferences(&format!("version=2\nbody_font=family:{bad}\n"), &mut loaded);
+        assert_eq!(loaded.body_font, FontSetting::FollowDefault, "{bad:?}");
+    }
+    assert!(FamilyName::new(&"x".repeat(65)).is_none());
+    assert!(
+        serde_json::from_str::<crate::GlobalPatch>(r#"{"body_font":{"installed":"a,b"}}"#).is_err()
+    );
+    let patch: crate::GlobalPatch =
+        serde_json::from_str(r#"{"body_font":{"installed":"EB Garamond"}}"#).unwrap();
+    assert_eq!(patch.body_font, Some(garamond.clone()));
+    let terminal = crate::TerminalPatch {
+        font: Some(garamond),
+        ..crate::TerminalPatch::default()
+    };
+    assert!(
+        terminal.validate().is_err(),
+        "the terminal section takes a bundled mono"
+    );
 }

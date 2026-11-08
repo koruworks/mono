@@ -71,16 +71,10 @@ fn every_section_has_a_bit_of_its_own() {
 #[test]
 fn a_hidden_surfaces_chord_is_not_advertised() {
     let hidden = [
-        ShortcutId::ShowTasks,
-        ShortcutId::ShowChats,
-        ShortcutId::ShowAgents,
-        ShortcutId::ShowArtifacts,
         ShortcutId::ToggleAiPane,
         ShortcutId::CopyCloudDetails,
         ShortcutId::Reminders,
         ShortcutId::Delegate,
-        ShortcutId::ShowCanvases,
-        ShortcutId::ShowSocials,
     ];
     koru_features::testing::with(koru_features::Features::ALL_OFF, || {
         for id in hidden {
@@ -90,10 +84,32 @@ fn a_hidden_surfaces_chord_is_not_advertised() {
             }
             let _ = registry::get(id);
         }
-        assert!(ShortcutId::ShowDocuments.shown_in_product());
-        assert!(ShortcutId::ShowFiles.shown_in_product());
+        // The rail's digits belong to its slots, not to its views: no switch
+        // hides one, because a hidden view takes no slot at all.
+        for id in registry::RAIL_SLOTS {
+            assert!(id.shown_in_product(), "{id:?}");
+        }
     });
     for id in hidden {
         assert!(id.shown_in_product(), "{id:?} with every surface on");
     }
+}
+
+/// **Delegate's chord goes with the agent views**, while Koru AI's own
+/// chords stay: the build that ships chat with the views off teaches no way
+/// to delegate.
+#[test]
+fn the_delegate_chord_is_hidden_with_the_agent_views_while_ai_is_on() {
+    let chat_ships = koru_features::Features {
+        agent_views: false,
+        ..koru_features::Features::ALL_ON
+    };
+    koru_features::testing::with(chat_ships, || {
+        assert!(!ShortcutId::Delegate.shown_in_product());
+        for section in [Section::Menu, Section::Tooltip, Section::Guide] {
+            assert_eq!(show_hint(ShortcutId::Delegate, section), None);
+        }
+        assert!(ShortcutId::ToggleAiPane.shown_in_product(), "chat stays");
+        let _ = registry::get(ShortcutId::Delegate);
+    });
 }

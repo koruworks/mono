@@ -12,7 +12,8 @@ use crate::tests::{
     GLOBALS, flip, goto, is_active, koru, labels, lines, page_lines, press, press_rect, rect_of,
     surface, swatches, switch_on,
 };
-use crate::{Availability, PageId, Request, Sections, VoiceFacts};
+use crate::{Availability, PageId, Request, Sections, SettingsSurface, VoiceFacts};
+use koru_draw::geometry::Rect;
 use koru_draw::theme;
 use koru_settings::{
     CloseBehaviorChoice, DictationGesture, DictationInput, DictationLanguage, DictationTier,
@@ -21,7 +22,8 @@ use koru_settings::{
 
 /// The names every setting is found under. If one disappears, a setting
 /// disappeared with it.
-const ROWS: [&str; 16] = [
+const ROWS: [&str; 17] = [
+    "Icon style",
     "Theme",
     "Density",
     "Pinned tabs",
@@ -141,42 +143,290 @@ fn the_density_row_moves_the_live_density() {
     let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
     let was = theme::density();
     let mut surface = koru();
-    assert!(press(&mut surface, "Comfortable"));
-    assert_eq!(theme::density(), theme::Density::Comfortable);
     assert!(press(&mut surface, "Compact"));
     assert_eq!(theme::density(), theme::Density::Compact);
+    assert!(press(&mut surface, "Normal"));
+    assert_eq!(theme::density(), theme::Density::Normal);
     theme::set_density(was);
 }
 
+/// **Two densities on offer, and a stored third still reads.** *Comfortable*
+/// is not offered any more, but the setting's format did not change: a
+/// person whose saved value is Comfortable keeps it until they pick another,
+/// and the row ticks neither rather than pretending.
+#[test]
+fn comfortable_is_not_offered_and_a_stored_one_ticks_neither() {
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let was = theme::density();
+    theme::set_density(theme::Density::Comfortable);
+    let mut surface = koru();
+    assert!(goto(&mut surface, "Compact"));
+    assert!(!labels(&surface).iter().any(|l| l == "Comfortable"));
+    assert!(!is_active(&surface, "Compact"));
+    assert!(!is_active(&surface, "Normal"));
+    assert_eq!(theme::density(), theme::Density::Comfortable);
+    theme::set_density(was);
+}
+
+#[test]
+fn icon_style_changes_live_and_survives_reopening_the_page() {
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let was = koru_draw::icons::active_pack();
+    let mut surface = koru();
+    for pack in koru_draw::icons::IconPack::ALL {
+        assert!(press(&mut surface, pack.label()));
+        assert_eq!(koru_draw::icons::active_pack(), pack);
+        let reopened = koru();
+        assert!(is_active(&reopened, pack.label()));
+    }
+    koru_draw::icons::set_icon_pack(was);
+}
+
+#[test]
+fn icon_style_dropdown_accepts_keyboard_selection_and_escape() {
+    use koru_draw::icons::{self, IconPack};
+    use winit::keyboard::{Key, ModifiersState, NamedKey};
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let was = icons::active_pack();
+    icons::set_icon_pack(IconPack::Phosphor);
+    let mut surface = koru();
+    let field = rect_of(&surface, "Phosphor").unwrap();
+    assert!(press_rect(&mut surface, field));
+    assert!(surface.key(
+        &Key::Named(NamedKey::ArrowDown),
+        None,
+        ModifiersState::empty()
+    ));
+    assert_eq!(
+        icons::active_pack(),
+        IconPack::Phosphor,
+        "preview must not persist"
+    );
+    assert_eq!(icons::rendered_pack(), IconPack::Tabler);
+    assert!(surface.key(&Key::Named(NamedKey::Enter), None, ModifiersState::empty()));
+    assert_eq!(icons::active_pack(), IconPack::Tabler);
+    assert!(press_rect(&mut surface, field));
+    assert!(surface.key(
+        &Key::Named(NamedKey::ArrowDown),
+        None,
+        ModifiersState::empty()
+    ));
+    assert!(surface.key(&Key::Named(NamedKey::Escape), None, ModifiersState::empty()));
+    assert_eq!(icons::active_pack(), IconPack::Tabler);
+    assert_eq!(
+        icons::rendered_pack(),
+        IconPack::Tabler,
+        "Escape cancels the preview"
+    );
+    icons::set_icon_pack(was);
+}
+
+#[test]
+fn hovering_icon_styles_previews_and_dismissal_restores_the_saved_choice() {
+    use koru_draw::icons::{self, IconPack};
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let was = icons::active_pack();
+    icons::set_icon_pack(IconPack::Tabler);
+    let mut surface = koru();
+    let field = rect_of(&surface, "Tabler").unwrap();
+    for dismissal in 0..4 {
+        assert!(press_rect(&mut surface, field));
+        let open = surface.open.as_ref().unwrap();
+        let index = open
+            .menu
+            .items()
+            .iter()
+            .position(|item| item.label == "Remix")
+            .unwrap();
+        let (x, y) = open.menu.item_rect(surface.viewport, index).centre();
+        surface.mouse_move(x, y);
+        assert_eq!(icons::rendered_pack(), IconPack::Remix);
+        assert_eq!(icons::active_pack(), IconPack::Tabler);
+        assert!(
+            is_active(&surface, "Tabler"),
+            "the checkmark remains on the saved choice"
+        );
+        match dismissal {
+            0 => {
+                surface.mouse_down(0.0, 0.0);
+            }
+            1 => surface.focus_search(),
+            2 => surface.dismiss_menu(),
+            _ => {
+                drop(surface);
+                surface = koru();
+            }
+        }
+        assert_eq!(icons::rendered_pack(), IconPack::Tabler);
+    }
+    icons::set_icon_pack(was);
+}
+
+#[test]
+fn an_older_menu_cannot_overwrite_or_clear_a_newer_preview() {
+    use koru_draw::icons::{self, IconPack, IconPreview};
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let was = icons::active_pack();
+    icons::set_icon_pack(IconPack::Phosphor);
+    let mut old = IconPreview::new(IconPack::Tabler);
+    let new = IconPreview::new(IconPack::Lucide);
+    old.set(IconPack::Phosphor);
+    drop(old);
+    assert_eq!(icons::rendered_pack(), IconPack::Lucide);
+    drop(new);
+    assert_eq!(icons::rendered_pack(), IconPack::Phosphor);
+    let preview = IconPreview::new(IconPack::Lucide);
+    icons::set_icon_pack(IconPack::Tabler);
+    drop(preview);
+    assert_eq!(icons::rendered_pack(), IconPack::Tabler);
+    icons::set_icon_pack(was);
+}
+
+/// The dropdown that sets `role`'s family.
+fn font_field(surface: &SettingsSurface, role: FontRole) -> Rect {
+    surface
+        .laid
+        .dropdowns
+        .iter()
+        .find(|dropdown| {
+            dropdown.options.iter().any(|(action, _)| {
+                matches!(action, crate::action::Action::Font(found, _) if *found == role)
+            })
+        })
+        .expect("each font role has its own dropdown")
+        .field
+}
+
+/// Press the option labelled `label` in `role`'s list.
+fn choose_in(surface: &mut SettingsSurface, role: FontRole, label: &str) {
+    surface.relayout();
+    assert!(press_rect(surface, font_field(surface, role)));
+    let open = surface.open.as_ref().expect("the list is open");
+    let item = open
+        .menu
+        .items()
+        .iter()
+        .position(|option| option.label == label)
+        .unwrap_or_else(|| panic!("{role:?} offers {label}"));
+    let (x, y) = open.menu.item_rect(surface.viewport, item).centre();
+    assert!(surface.mouse_down(x, y));
+}
+
 /// Each font role is its own dropdown; choosing in one moves that role only.
+/// Compared as settings: the chat's *face* follows the app font's until it
+/// is chosen, and that is not the chat's setting moving.
 #[test]
 fn every_font_picker_moves_its_own_role_and_no_other() {
     let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
-    let before: Vec<_> = FontRole::ALL.iter().map(|role| role.current()).collect();
+    let setting = |role: FontRole| theme::font_setting(role.slot());
+    let before: Vec<_> = FontRole::ALL.into_iter().map(setting).collect();
     let mut surface = koru();
     surface.show_page(PageId::Appearance);
     let wanted = theme::FontChoice::Lora;
     for (index, role) in FontRole::ALL.into_iter().enumerate() {
-        surface.relayout();
-        let field = surface.laid.dropdowns[index].field;
-        assert!(press_rect(&mut surface, field));
-        let open = surface.open.as_ref().expect("the list is open");
-        let item = open
-            .menu
-            .items()
-            .iter()
-            .position(|option| option.label == wanted.label())
-            .expect("every role offers every family");
-        let (x, y) = open.menu.item_rect(surface.viewport, item).centre();
-        assert!(surface.mouse_down(x, y));
+        choose_in(&mut surface, role, wanted.label());
         assert_eq!(role.current(), wanted, "{role:?}");
         for (other, was) in FontRole::ALL.into_iter().zip(&before).skip(index + 1) {
-            assert_eq!(other.current(), *was, "{other:?} moved with {role:?}");
+            assert_eq!(setting(other), *was, "{other:?} moved with {role:?}");
         }
     }
     for (role, was) in FontRole::ALL.into_iter().zip(before) {
-        role.set(was);
+        theme::set_font_setting(role.slot(), was);
     }
+}
+
+/// **The Chat font row** (koru-ai D79): beside the App font, *Follow app*
+/// first and ticked until a family is chosen; while it follows, the chat
+/// draws the app font and moves with it; a family chosen holds whatever the
+/// app font does; and *Follow app* takes it back.
+#[test]
+fn the_chat_font_follows_the_app_font_until_a_family_is_chosen() {
+    use koru_settings::FontSetting;
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let was = (
+        theme::font_setting(theme::FontSlot::Ui),
+        theme::font_setting(theme::FontSlot::Chat),
+    );
+    theme::set_font_setting(theme::FontSlot::Chat, FontSetting::FollowDefault);
+    theme::set_ui_font(theme::FontChoice::Inter);
+    let mut surface = koru();
+    surface.show_page(PageId::Appearance);
+    surface.relayout();
+
+    let drawn = lines(&surface);
+    let app = drawn
+        .iter()
+        .position(|line| line == "App font")
+        .expect("App font");
+    let chat = drawn
+        .iter()
+        .position(|line| line == "Chat font")
+        .expect("Chat font");
+    assert!(chat > app, "beside the app font, after it: {drawn:?}");
+    let chat_list = surface
+        .laid
+        .dropdowns
+        .iter()
+        .find(|dropdown| {
+            matches!(
+                dropdown.options.first(),
+                Some((
+                    crate::action::Action::FontSetting(FontRole::Chat, FontSetting::FollowDefault),
+                    _
+                ))
+            )
+        })
+        .expect("the chat's list opens with Follow app");
+    let ticked: Vec<_> = chat_list
+        .options
+        .iter()
+        .filter(|(_, option)| option.selected)
+        .map(|(_, option)| option.label.as_str())
+        .collect();
+    assert_eq!(ticked, ["Follow app"], "not the face it happens to draw");
+
+    choose_in(
+        &mut surface,
+        FontRole::App,
+        theme::FontChoice::Poppins.label(),
+    );
+    assert_eq!(theme::chat_font(), theme::FontChoice::Poppins, "it follows");
+    assert_eq!(
+        theme::font_setting(theme::FontSlot::Chat),
+        FontSetting::FollowDefault
+    );
+
+    choose_in(
+        &mut surface,
+        FontRole::Chat,
+        theme::FontChoice::Lora.label(),
+    );
+    assert_eq!(theme::chat_font(), theme::FontChoice::Lora);
+    assert_eq!(
+        theme::ui_font(),
+        theme::FontChoice::Poppins,
+        "the app keeps its own"
+    );
+    choose_in(
+        &mut surface,
+        FontRole::App,
+        theme::FontChoice::Nunito.label(),
+    );
+    assert_eq!(
+        theme::chat_font(),
+        theme::FontChoice::Lora,
+        "a choice holds"
+    );
+
+    choose_in(&mut surface, FontRole::Chat, "Follow app");
+    assert_eq!(
+        theme::font_setting(theme::FontSlot::Chat),
+        FontSetting::FollowDefault
+    );
+    assert_eq!(theme::chat_font(), theme::FontChoice::Nunito);
+
+    theme::set_font_setting(theme::FontSlot::Ui, was.0);
+    theme::set_font_setting(theme::FontSlot::Chat, was.1);
 }
 
 /// Font options are set in their own face — the point of a font picker.
@@ -186,7 +436,22 @@ fn every_font_option_is_set_in_its_own_face() {
     let mut surface = koru();
     surface.show_page(PageId::Appearance);
     surface.relayout();
-    for (_, option) in &surface.laid.dropdowns[0].options {
+    let app_font = surface
+        .laid
+        .dropdowns
+        .iter()
+        .find(|dropdown| {
+            matches!(
+                dropdown.options.first(),
+                Some((crate::action::Action::Font(FontRole::App, _), _))
+            )
+        })
+        .expect("the app font dropdown");
+    // The family rows; *More fonts…* opens a picker rather than naming one.
+    for (action, option) in &app_font.options {
+        if !matches!(action, crate::action::Action::Font(..)) {
+            continue;
+        }
         let family = theme::FontChoice::ALL
             .iter()
             .find(|f| f.label() == option.label)
@@ -556,24 +821,62 @@ fn the_voice_shortcut_wears_its_chord_as_a_key_chip() {
     assert!(chip.is_some_and(|chord: String| !chord.is_empty()));
 }
 
-/// Advanced is folded to one line saying what is in it; *Show* unfolds it and
-/// *Hide* folds it again.
+/// Advanced is always unfolded: a plain card title, the renderer row under
+/// it, and no *Show* / *Hide* link or summary line.
 #[test]
-fn advanced_folds_to_a_summary_and_unfolds_on_show() {
+fn advanced_is_always_shown() {
     let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
     let mut surface = koru();
     surface.show_page(PageId::System);
     surface.relayout();
-    assert!(page_lines(&surface).iter().any(
-        |l| l.starts_with("Graphics renderer (") && l.contains("Nothing here needs attention")
-    ));
-    assert!(press(&mut surface, "Show"));
-    surface.relayout();
+    let drawn = page_lines(&surface);
+    assert!(drawn.iter().any(|l| l == "Advanced"), "{drawn:?}");
+    assert!(
+        !drawn
+            .iter()
+            .any(|l| l.contains("Nothing here needs attention"))
+    );
     assert!(labels(&surface).iter().any(|l| l == "Vulkan"));
-    assert!(press(&mut surface, "Hide"));
+    assert!(!labels(&surface).iter().any(|l| l == "Show" || l == "Hide"));
+}
+
+/// *Document fonts* ends its title line with *Preview in sample document*,
+/// and pressing it asks the host for the sample — a request, because only a
+/// host with panes can put a page beside this one.
+#[test]
+fn document_fonts_links_to_the_sample_document() {
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let mut surface = koru();
+    surface.show_page(PageId::Appearance);
     surface.relayout();
-    assert!(!labels(&surface).iter().any(|l| l == "Vulkan"));
-    assert!(surface.take_requests().is_empty(), "folding writes nothing");
+    let link = "Preview in sample document";
+    let caption = surface.laid.blocks.iter().find_map(|block| match block {
+        Block::Caption {
+            title,
+            link: Some((text, _, _)),
+            ..
+        } => Some((title.clone(), text.clone())),
+        _ => None,
+    });
+    assert_eq!(
+        caption,
+        Some(("Document fonts".to_owned(), link.to_owned()))
+    );
+    assert!(press(&mut surface, link));
+    assert_eq!(surface.take_requests(), vec![Request::OpenSampleDocument]);
+}
+
+/// A host that cannot open a sample gets the plain title and no link that
+/// would do nothing.
+#[test]
+fn a_host_without_a_sample_document_draws_no_link() {
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let mut surface = koru();
+    surface.offer_sample_document(false);
+    surface.show_page(PageId::Appearance);
+    surface.relayout();
+    assert!(page_lines(&surface).iter().any(|l| l == "Document fonts"));
+    assert!(!goto(&mut surface, "Preview in sample document"));
 }
 
 // ---------------------------------------------------------------- privacy

@@ -21,14 +21,14 @@ use koru_ai_core::{
     AiError, AiErrorClass, AiEvent, AiIntent, AiPersistence, AiProviderId, AiRequest,
     AiRequestMessage, AiRequestOptions, AiSearchQuery, AiSettings, AiToolCall, AiToolDefinition,
     AiToolExecutionContext, AiToolExecutor, AiToolLoop, AiToolLoopLimits, AiToolResult, AiUsage,
-    AttemptStatus, BranchCopy, BranchOrigin, Cancellation, Chat, ChatAccessLens, ChatId, ChatRole,
-    ContextCommit, ContextItem, ContextRef, DocumentExport, DocumentExportId, DocumentId,
-    DocumentRelation, ExportStatus, FeedbackEvent, InferenceAttempt, InferenceAttemptId, Message,
-    MessageBlockContext, MessageBlockId, MessageBlockRef, MessageDocumentRef, MessageId,
-    MessageState, PendingRetry, PendingTurn, PinnedDocument, ReasoningChoice, ReasoningControl,
-    RecoveryCounts, RequestMeasurements, StoreContextPort, Timestamp, ToolActivity,
-    ToolActivityStatus, ToolApproval, ToolErrorCode, ToolInvocationId, ToolMode, UsageSource,
-    WorkspaceId, finalize_markdown,
+    AttachmentRecord, AttemptStatus, BranchCopy, BranchOrigin, Cancellation, Chat, ChatAccessLens,
+    ChatAttachmentId, ChatId, ChatRole, ContextCommit, ContextItem, ContextRef, DocumentExport,
+    DocumentExportId, DocumentId, DocumentRelation, ExportStatus, FeedbackEvent, InferenceAttempt,
+    InferenceAttemptId, Message, MessageBlockContext, MessageBlockId, MessageBlockRef,
+    MessageDocumentRef, MessageId, MessageState, PendingRetry, PendingTurn, PinnedDocument,
+    ReasoningChoice, ReasoningControl, RecoveryCounts, RequestMeasurements, StoreContextPort,
+    Timestamp, ToolActivity, ToolActivityStatus, ToolApproval, ToolErrorCode, ToolInvocationId,
+    ToolMode, UsageSource, WorkspaceId, finalize_markdown,
 };
 use koru_ai_provider::{
     CredentialStore, DeterministicMockProvider, KORU_MODEL, ProviderRegistry, ProviderRuntime,
@@ -60,8 +60,12 @@ pub const EXPORT_QUEUE_CAPACITY: usize = 8;
 pub const TOOL_QUEUE_CAPACITY: usize = 8;
 pub const STREAM_CAPACITY: usize = 32;
 mod agents;
+mod attachments;
+mod removed;
 
+use crate::attachments::{AttachmentStore, Cleanup, CleanupJob};
 use agents::{AttemptWork, Clearing, ClosingChat, agent_validation};
+use attachments::{BranchPlan, StageAnswer};
 use koru_ai_core::AgentToolKind;
 use koru_ai_provider_agent::{AgentSessions, EndOutcome, is_agent_provider};
 
@@ -259,6 +263,7 @@ impl AiWorker {
 
     pub fn spawn(self) -> Result<WorkerHandle, WorkerError> {
         let (sender, receiver) = sync_channel(WORKER_COMMAND_CAPACITY);
+        let attachments = AttachmentStore::new(&self.config.root);
         let (ready_tx, ready_rx) = sync_channel(1);
         let shutdown = Arc::new(AtomicBool::new(false));
         let thread_shutdown = Arc::clone(&shutdown);
@@ -299,6 +304,7 @@ impl AiWorker {
                 set_status(&status, WorkerStatus::Ready(info));
                 Ok(WorkerHandle {
                     sender,
+                    attachments,
                     shutdown,
                     status,
                     join: Some(join),
@@ -327,6 +333,7 @@ impl AiWorker {
 #[derive(Debug)]
 pub struct WorkerHandle {
     sender: SyncSender<Envelope>,
+    attachments: AttachmentStore,
     shutdown: Arc<AtomicBool>,
     status: Arc<Mutex<WorkerStatus>>,
     join: Option<JoinHandle<WorkerExit>>,
@@ -336,6 +343,7 @@ impl WorkerHandle {
     pub fn client(&self) -> AiWorkerClient {
         AiWorkerClient {
             sender: self.sender.clone(),
+            attachments: self.attachments.clone(),
         }
     }
 
@@ -388,6 +396,8 @@ impl Drop for WorkerHandle {
 #[derive(Clone)]
 pub struct AiWorkerClient {
     sender: SyncSender<Envelope>,
+    /// Where uploads are prepared and read, on the caller's own thread.
+    attachments: AttachmentStore,
 }
 
 impl AiWorkerClient {
@@ -465,11 +475,29 @@ impl AiServerPort for AiWorkerClient {
         &self,
         context: RequestContext,
         provider: AiProviderId,
+        request: koru_ai_wire::DiscoverAgentModelsRequest,
     ) -> ApiResult<koru_ai_wire::AgentModelsResponse> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::DiscoverAgentModels {
             context,
             provider,
+            refresh: request.refresh,
+            reply,
+        })?;
+        receive_api(response)
+    }
+
+    fn discover_agent_commands(
+        &self,
+        context: RequestContext,
+        provider: AiProviderId,
+        request: koru_ai_wire::DiscoverAgentCommandsRequest,
+    ) -> ApiResult<koru_ai_wire::AgentCommandsResponse> {
+        let (reply, response) = sync_channel(1);
+        self.send(WorkerCommand::DiscoverAgentCommands {
+            context,
+            provider,
+            folder: request.folder,
             reply,
         })?;
         receive_api(response)
@@ -509,9 +537,17 @@ impl AiServerPort for AiWorkerClient {
         receive_api(response)
     }
 
-    fn list_chats(&self, context: RequestContext) -> ApiResult<ListChatsResponse> {
+    fn list_chats(
+        &self,
+        context: RequestContext,
+        profile: Option<koru_ai_core::ProfileId>,
+    ) -> ApiResult<ListChatsResponse> {
         let (reply, response) = sync_channel(1);
-        self.send(WorkerCommand::ListChats { context, reply })?;
+        self.send(WorkerCommand::ListChats {
+            context,
+            profile,
+            reply,
+        })?;
         receive_api(response)
     }
 
@@ -533,6 +569,22 @@ impl AiServerPort for AiWorkerClient {
     ) -> ApiResult<RenameChatResponse> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::RenameChat {
+            context,
+            chat,
+            request,
+            reply,
+        })?;
+        receive_api(response)
+    }
+
+    fn pin_chat(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        request: koru_ai_wire::PinChatRequest,
+    ) -> ApiResult<koru_ai_wire::PinChatResponse> {
+        let (reply, response) = sync_channel(1);
+        self.send(WorkerCommand::PinChat {
             context,
             chat,
             request,
@@ -565,6 +617,22 @@ impl AiServerPort for AiWorkerClient {
     ) -> ApiResult<UpdateChatPrivacyResponse> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::UpdateChatPrivacy {
+            context,
+            chat,
+            request,
+            reply,
+        })?;
+        receive_api(response)
+    }
+
+    fn update_chat_agent_settings(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        request: koru_ai_wire::UpdateChatAgentSettingsRequest,
+    ) -> ApiResult<koru_ai_wire::UpdateChatAgentSettingsResponse> {
+        let (reply, response) = sync_channel(1);
+        self.send(WorkerCommand::UpdateChatAgentSettings {
             context,
             chat,
             request,
@@ -744,6 +812,7 @@ impl AiServerPort for AiWorkerClient {
         context: RequestContext,
         request: SendTurnRequest,
     ) -> ApiResult<AiResponseStream> {
+        attachments::check_files_for_send(self, context.clone(), &request)?;
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::SendTurn {
             context,
@@ -781,17 +850,33 @@ impl AiServerPort for AiWorkerClient {
         receive_api(response)
     }
 
+    fn steer_attempt(
+        &self,
+        context: RequestContext,
+        attempt: InferenceAttemptId,
+        request: koru_ai_wire::SteerAttemptRequest,
+    ) -> ApiResult<koru_ai_wire::SteerAttemptResponse> {
+        let (reply, response) = sync_channel(1);
+        self.send(WorkerCommand::SteerAttempt {
+            context,
+            attempt,
+            request,
+            reply,
+        })?;
+        receive_api(response)
+    }
+
     fn approve_tool_call(
         &self,
         context: RequestContext,
         tool: ToolInvocationId,
-        choice: Option<String>,
+        decision: koru_ai_wire::ToolDecisionRequest,
     ) -> ApiResult<ToolDecisionResponse> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::ApproveToolCall {
             context,
             tool,
-            choice,
+            decision,
             reply,
         })?;
         receive_api(response)
@@ -858,6 +943,43 @@ impl AiServerPort for AiWorkerClient {
         })?;
         receive_api(response)
     }
+
+    fn put_attachment(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        attachment: ChatAttachmentId,
+        upload: koru_ai_api::AttachmentUpload,
+    ) -> ApiResult<koru_ai_wire::ChatAttachmentResponse> {
+        attachments::put_attachment(self, context, chat, attachment, upload)
+    }
+
+    fn remove_attachment(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        attachment: ChatAttachmentId,
+    ) -> ApiResult<koru_ai_wire::RemoveAttachmentResponse> {
+        attachments::remove_attachment(self, context, chat, attachment)
+    }
+
+    fn read_attachment(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        attachment: ChatAttachmentId,
+    ) -> ApiResult<koru_ai_api::AttachmentContent> {
+        attachments::read_attachment(self, context, chat, attachment)
+    }
+
+    fn read_attachment_thumbnail(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        attachment: ChatAttachmentId,
+    ) -> ApiResult<Vec<u8>> {
+        attachments::read_thumbnail(self, context, chat, attachment)
+    }
 }
 
 enum Envelope {
@@ -870,10 +992,26 @@ enum Envelope {
     Tools(ToolResolution),
     PullFinished(Uuid),
     Export(ExportResolution),
+    /// An agent's models were listed: each one's effort control, for the
+    /// index the dispatcher answers `reasoning_control` from.
+    AgentControls {
+        provider: AiProviderId,
+        controls: Vec<(String, ReasoningControl)>,
+    },
     /// The session-control thread reported on a chat's sessions.
     ChatSessionsEnded {
         chat: ChatId,
         outcome: EndOutcome,
+    },
+    /// A running agent turn's thread sent (or could not send) a steer.
+    SteerDelivered(Box<agents::SteerDelivery>),
+    /// The cleanup thread copied (or could not copy) a branch's attachment
+    /// folders; the branch is committed or dropped on this.
+    BranchCopied {
+        context: RequestContext,
+        copy: Box<BranchCopy>,
+        copied: bool,
+        reply: SyncSender<ApiResult<BranchChatResponse>>,
     },
 }
 
@@ -907,7 +1045,16 @@ enum WorkerCommand {
     DiscoverAgentModels {
         context: RequestContext,
         provider: AiProviderId,
+        /// Rebuild the agent's list before answering (the manual refresh).
+        refresh: bool,
         reply: SyncSender<ApiResult<koru_ai_wire::AgentModelsResponse>>,
+    },
+    /// What a local agent can be told to do by name in a folder (D121).
+    DiscoverAgentCommands {
+        context: RequestContext,
+        provider: AiProviderId,
+        folder: Option<String>,
+        reply: SyncSender<ApiResult<koru_ai_wire::AgentCommandsResponse>>,
     },
     PullOllamaModel {
         context: RequestContext,
@@ -925,6 +1072,7 @@ enum WorkerCommand {
     },
     ListChats {
         context: RequestContext,
+        profile: Option<koru_ai_core::ProfileId>,
         reply: SyncSender<ApiResult<ListChatsResponse>>,
     },
     ReadChat {
@@ -937,6 +1085,12 @@ enum WorkerCommand {
         chat: ChatId,
         request: RenameChatRequest,
         reply: SyncSender<ApiResult<RenameChatResponse>>,
+    },
+    PinChat {
+        context: RequestContext,
+        chat: ChatId,
+        request: koru_ai_wire::PinChatRequest,
+        reply: SyncSender<ApiResult<koru_ai_wire::PinChatResponse>>,
     },
     UpdateChatModel {
         context: RequestContext,
@@ -955,6 +1109,12 @@ enum WorkerCommand {
         chat: ChatId,
         request: koru_ai_wire::UpdateChatFolderRequest,
         reply: SyncSender<ApiResult<koru_ai_wire::UpdateChatFolderResponse>>,
+    },
+    UpdateChatAgentSettings {
+        context: RequestContext,
+        chat: ChatId,
+        request: koru_ai_wire::UpdateChatAgentSettingsRequest,
+        reply: SyncSender<ApiResult<koru_ai_wire::UpdateChatAgentSettingsResponse>>,
     },
     ToolListChats {
         context: RequestContext,
@@ -1032,10 +1192,16 @@ enum WorkerCommand {
         attempt: InferenceAttemptId,
         reply: SyncSender<ApiResult<CancelAttemptResponse>>,
     },
+    SteerAttempt {
+        context: RequestContext,
+        attempt: InferenceAttemptId,
+        request: koru_ai_wire::SteerAttemptRequest,
+        reply: SyncSender<ApiResult<koru_ai_wire::SteerAttemptResponse>>,
+    },
     ApproveToolCall {
         context: RequestContext,
         tool: ToolInvocationId,
-        choice: Option<String>,
+        decision: koru_ai_wire::ToolDecisionRequest,
         reply: SyncSender<ApiResult<ToolDecisionResponse>>,
     },
     DenyToolCall {
@@ -1061,6 +1227,29 @@ enum WorkerCommand {
         export: DocumentExportId,
         reply: SyncSender<ApiResult<ExportChatResponse>>,
     },
+    AttachmentAdmission {
+        context: RequestContext,
+        chat: ChatId,
+        attachment: ChatAttachmentId,
+        reply: SyncSender<ApiResult<Option<AttachmentRecord>>>,
+    },
+    StageAttachment {
+        context: RequestContext,
+        record: Box<AttachmentRecord>,
+        reply: SyncSender<ApiResult<StageAnswer>>,
+    },
+    RemoveStagedAttachment {
+        context: RequestContext,
+        chat: ChatId,
+        attachment: ChatAttachmentId,
+        reply: SyncSender<ApiResult<koru_ai_sqlite::RemovedAttachment>>,
+    },
+    ResolveAttachments {
+        context: RequestContext,
+        chat: ChatId,
+        attachments: Vec<ChatAttachmentId>,
+        reply: SyncSender<ApiResult<Vec<AttachmentRecord>>>,
+    },
     #[cfg(test)]
     Hold {
         entered: SyncSender<()>,
@@ -1081,15 +1270,18 @@ impl WorkerCommand {
             Self::UpdateOllamaSettings { .. } => "update_ollama_settings",
             Self::ValidateProvider { .. } => "validate_provider",
             Self::DiscoverAgentModels { .. } => "discover_agent_models",
+            Self::DiscoverAgentCommands { .. } => "discover_agent_commands",
             Self::PullOllamaModel { .. } => "pull_ollama_model",
             Self::CancelOllamaPull { .. } => "cancel_ollama_pull",
             Self::CreateChat { .. } => "create_chat",
             Self::ListChats { .. } => "list_chats",
             Self::ReadChat { .. } => "read_chat",
             Self::RenameChat { .. } => "rename_chat",
+            Self::PinChat { .. } => "pin_chat",
             Self::UpdateChatModel { .. } => "update_chat_model",
             Self::UpdateChatPrivacy { .. } => "update_chat_privacy",
             Self::UpdateChatFolder { .. } => "update_chat_folder",
+            Self::UpdateChatAgentSettings { .. } => "update_chat_agent_settings",
             Self::ToolListChats { .. } => "tool_list_chats",
             Self::ToolSearchChats { .. } => "tool_search_chats",
             Self::ToolReadChat { .. } => "tool_read_chat",
@@ -1105,11 +1297,16 @@ impl WorkerCommand {
             Self::SendTurn { .. } => "send_turn",
             Self::ReadAttempt { .. } => "read_attempt",
             Self::CancelAttempt { .. } => "cancel_attempt",
+            Self::SteerAttempt { .. } => "steer_attempt",
             Self::ApproveToolCall { .. } => "approve_tool_call",
             Self::DenyToolCall { .. } => "deny_tool_call",
             Self::RetryTurn { .. } => "retry_turn",
             Self::ExportChat { .. } => "export_chat",
             Self::ReadExport { .. } => "read_export",
+            Self::AttachmentAdmission { .. } => "attachment_admission",
+            Self::StageAttachment { .. } => "stage_attachment",
+            Self::RemoveStagedAttachment { .. } => "remove_staged_attachment",
+            Self::ResolveAttachments { .. } => "resolve_attachments",
             #[cfg(test)]
             Self::Hold { .. } => "hold",
             #[cfg(test)]
@@ -1151,6 +1348,12 @@ struct WorkerState {
     /// An agent's live wording per open row, for the length of its turn.
     agent_live: HashMap<ToolInvocationId, koru_ai_core::AgentActivityLive>,
     agent_rows: HashMap<InferenceAttemptId, Vec<ToolInvocationId>>,
+    /// Sets answered by the next message still open, by row, with their
+    /// chat (koru-ai D108): they outlive their reply, and another message
+    /// in the chat passes them over.
+    next_message_rows: HashMap<ToolInvocationId, ChatId>,
+    /// Replies that carry a set's answers, with the set's row.
+    answer_attempts: HashMap<InferenceAttemptId, ToolInvocationId>,
     /// The dispatcher's own inbox, for reports that arrive from other threads.
     output: SyncSender<Envelope>,
     /// The agents this worker offers, as the settings view lists them.
@@ -1158,6 +1361,34 @@ struct WorkerState {
     /// Each Ollama model's reasoning control, as its last inspection told
     /// it; a model not inspected in this process shows the chip no slider.
     ollama_controls: HashMap<String, ReasoningControl>,
+    /// Each agent model's levels, from the last listing of its agent
+    /// (agent-models D14). Not a second list: nothing is listed from it,
+    /// and a model not listed in this process shows the chip no slider.
+    agent_controls: HashMap<(AiProviderId, String), ReasoningControl>,
+    /// Where chat attachments live; the dispatcher only computes paths.
+    attachments: AttachmentStore,
+    /// The thread that removes attachment folders and copies a branch's.
+    cleanup: Cleanup,
+    /// Branches whose attachment folders are being copied.
+    branching: HashSet<ChatId>,
+    /// The Store, for the profiles: placing a chat written before AI schema
+    /// 13 and holding a chat to its profile's workspaces. `None` in a
+    /// harness with no Store, where no chat is placed.
+    store: Option<Arc<dyn StoreContextPort>>,
+    /// Whether a chat may still be waiting for a profile: until a pass over
+    /// them places every one ([`WorkerState::place_unplaced_chats`]).
+    unplaced: bool,
+    /// Whether the chats of profiles whose deletion is final are still to
+    /// be retired: until the Store has answered once in this process
+    /// ([`WorkerState::retire_removed_profiles`]).
+    retiring: bool,
+    /// The profiles removed from this computer, restorable or not, as the
+    /// Store last answered: their chats are hidden everywhere. Asked again
+    /// before every command that lists, searches or names a chat
+    /// ([`WorkerState::hide_removed_profiles`]); never kept anywhere else.
+    removed: HashSet<koru_ai_core::ProfileId>,
+    /// Steers handed to a running turn and not answered yet, by operation.
+    steering: HashSet<Uuid>,
 }
 
 fn run_worker(
@@ -1192,6 +1423,23 @@ fn run_worker(
     if config.panic_after_open {
         panic!("requested AI worker startup panic");
     }
+    let attachments = AttachmentStore::new(&config.root);
+    let staged_removed = repository
+        .remove_staged_attachments_before(Timestamp::from_millis(
+            Timestamp::now()
+                .millis()
+                .saturating_sub(koru_ai_core::attachments::STAGED_ATTACHMENT_TTL_MS),
+        ))
+        .map_err(|error| error.public_message)?;
+    let known_attachments = repository
+        .attachment_dirs_known()
+        .map_err(|error| error.public_message)?;
+    let cleanup = Cleanup::spawn(attachments.clone())?;
+    cleanup.submit(CleanupJob::Sweep {
+        known: known_attachments,
+        started: std::time::SystemTime::now(),
+        staged_removed,
+    });
 
     let mut registry = config.providers;
     let mut agent_views = Vec::new();
@@ -1206,6 +1454,7 @@ fn run_worker(
                     .map(|kind| koru_ai_wire::AgentProviderView {
                         id: kind.id.clone(),
                         label: koru_ai_provider_agent::brand_label(kind),
+                        steers: koru_ai_provider_agent::steers_natively(kind),
                     })
                     .collect();
                 Some(agents)
@@ -1247,6 +1496,7 @@ fn run_worker(
         TOOL_THREADS,
     )?;
     let store_context = config.store_context;
+    let placement_store = store_context.clone();
     let context_pool = ContextPool::spawn(
         store_context.clone(),
         provider_output.clone(),
@@ -1315,10 +1565,30 @@ fn run_worker(
         clearing: None,
         agent_live: HashMap::new(),
         agent_rows: HashMap::new(),
+        next_message_rows: HashMap::new(),
+        answer_attempts: HashMap::new(),
         output: provider_output.clone(),
         agent_views,
         ollama_controls: HashMap::new(),
+        agent_controls: HashMap::new(),
+        attachments,
+        cleanup,
+        branching: HashSet::new(),
+        steering: HashSet::new(),
+        store: placement_store,
+        unplaced: true,
+        retiring: true,
+        removed: HashSet::new(),
     };
+    // **A deleted profile's chats go with it**, once its deletion is final,
+    // before any command is served; a Store that does not answer leaves
+    // them for the next pass, as placement does.
+    state.retire_removed_profiles();
+    // **The chats written before AI schema 13 are given their profile
+    // here**, before any command is served, with the Store this worker
+    // already reads documents through; a Store that does not answer leaves
+    // them for the next pass.
+    state.place_unplaced_chats();
     while !shutdown.load(Ordering::Acquire) {
         match receiver.recv_timeout(LOOP_INTERVAL) {
             Ok(Envelope::Command(command)) => {
@@ -1343,9 +1613,19 @@ fn run_worker(
             Ok(Envelope::Provider(event)) => state.handle_provider_event(event),
             Ok(Envelope::ProviderReturned(attempt)) => state.work_returned(attempt),
             Ok(Envelope::Tools(resolution)) => state.handle_tool_resolution(resolution),
+            Ok(Envelope::AgentControls { provider, controls }) => {
+                state.keep_agent_controls(provider, controls)
+            }
             Ok(Envelope::ChatSessionsEnded { chat, outcome }) => {
                 state.on_chat_sessions_ended(chat, outcome)
             }
+            Ok(Envelope::SteerDelivered(delivery)) => state.on_steer_delivered(*delivery),
+            Ok(Envelope::BranchCopied {
+                context,
+                copy,
+                copied,
+                reply,
+            }) => state.on_branch_copied(context, copy, copied, reply),
             Ok(Envelope::PullFinished(id)) => {
                 if state
                     .ollama_pull
@@ -1368,6 +1648,7 @@ fn run_worker(
     state.export_pool.stop();
     state.tool_pool.stop();
     state.provider_pool.stop();
+    state.cleanup.stop();
     tracing::info!("AI worker stopped");
     Ok(())
 }
@@ -1403,6 +1684,11 @@ fn transcript_usage(messages: &[Message], attempts: Vec<InferenceAttempt>) -> Ve
 
 impl WorkerState {
     fn handle_command(&mut self, command: WorkerCommand) {
+        // **A removed profile's chats are hidden**: a command that names
+        // one is answered here as a missing chat is, before it is served.
+        let Some(command) = self.hide_removed_profiles(command) else {
+            return;
+        };
         match command {
             WorkerCommand::Ping(reply) => {
                 let _ = reply.send(());
@@ -1442,8 +1728,15 @@ impl WorkerState {
             WorkerCommand::DiscoverAgentModels {
                 context,
                 provider,
+                refresh,
                 reply,
-            } => self.discover_agent_models(context, provider, reply),
+            } => self.discover_agent_models(context, provider, refresh, reply),
+            WorkerCommand::DiscoverAgentCommands {
+                context,
+                provider,
+                folder,
+                reply,
+            } => self.discover_agent_commands(context, provider, folder, reply),
             WorkerCommand::PullOllamaModel {
                 context,
                 request,
@@ -1461,8 +1754,12 @@ impl WorkerState {
             } => {
                 let _ = reply.send(self.create_chat(context, request));
             }
-            WorkerCommand::ListChats { context, reply } => {
-                let _ = reply.send(self.list_chats(context));
+            WorkerCommand::ListChats {
+                context,
+                profile,
+                reply,
+            } => {
+                let _ = reply.send(self.list_chats(context, profile));
             }
             WorkerCommand::ReadChat {
                 context,
@@ -1478,6 +1775,14 @@ impl WorkerState {
                 reply,
             } => {
                 let _ = reply.send(self.rename_chat(context, chat, request));
+            }
+            WorkerCommand::PinChat {
+                context,
+                chat,
+                request,
+                reply,
+            } => {
+                let _ = reply.send(self.pin_chat(context, chat, request));
             }
             WorkerCommand::UpdateChatModel {
                 context,
@@ -1502,6 +1807,14 @@ impl WorkerState {
                 reply,
             } => {
                 let _ = reply.send(self.update_chat_folder(context, chat, request));
+            }
+            WorkerCommand::UpdateChatAgentSettings {
+                context,
+                chat,
+                request,
+                reply,
+            } => {
+                let _ = reply.send(self.update_chat_agent_settings(context, chat, request));
             }
             WorkerCommand::ToolListChats {
                 context,
@@ -1577,9 +1890,7 @@ impl WorkerState {
                 chat,
                 request,
                 reply,
-            } => {
-                let _ = reply.send(self.branch_chat(context, chat, request));
-            }
+            } => self.begin_branch_chat(context, chat, request, reply),
             WorkerCommand::SendTurn {
                 context,
                 request,
@@ -1601,13 +1912,19 @@ impl WorkerState {
             } => {
                 let _ = reply.send(self.cancel_attempt(context, attempt));
             }
+            WorkerCommand::SteerAttempt {
+                context,
+                attempt,
+                request,
+                reply,
+            } => self.begin_steer_attempt(context, attempt, request, reply),
             WorkerCommand::ApproveToolCall {
                 context,
                 tool,
-                choice,
+                decision,
                 reply,
             } => {
-                let _ = reply.send(self.approve_tool_call(context, tool, choice));
+                let _ = reply.send(self.approve_tool_call(context, tool, decision));
             }
             WorkerCommand::DenyToolCall {
                 context,
@@ -1639,6 +1956,37 @@ impl WorkerState {
                 reply,
             } => {
                 let _ = reply.send(self.read_export(context, export));
+            }
+            WorkerCommand::AttachmentAdmission {
+                context,
+                chat,
+                attachment,
+                reply,
+            } => {
+                let _ = reply.send(self.attachment_admission(context, chat, attachment));
+            }
+            WorkerCommand::StageAttachment {
+                context,
+                record,
+                reply,
+            } => {
+                let _ = reply.send(self.stage_attachment(context, *record));
+            }
+            WorkerCommand::RemoveStagedAttachment {
+                context,
+                chat,
+                attachment,
+                reply,
+            } => {
+                let _ = reply.send(self.remove_staged_attachment(context, chat, attachment));
+            }
+            WorkerCommand::ResolveAttachments {
+                context,
+                chat,
+                attachments,
+                reply,
+            } => {
+                let _ = reply.send(self.resolve_attachments(context, chat, &attachments));
             }
             #[cfg(test)]
             WorkerCommand::Hold { entered, release } => {
@@ -1782,6 +2130,7 @@ impl WorkerState {
         &self,
         context: RequestContext,
         provider: AiProviderId,
+        refresh: bool,
         reply: SyncSender<ApiResult<koru_ai_wire::AgentModelsResponse>>,
     ) {
         if let Err(error) = authorize(&context, AiScope::ManageProviders) {
@@ -1796,13 +2145,55 @@ impl WorkerState {
             )));
             return;
         };
+        // The answer's levels come back to the dispatcher as well, for
+        // the chat's effort control; the listing never waits on it.
+        let output = self.output.clone();
         let spawned = std::thread::Builder::new()
             .name("koru-ai-agent-models".into())
             .spawn(move || {
-                let _ = reply.send(agents::agent_models(&agents, provider));
+                let answer = agents::agent_models(&agents, provider.clone(), refresh);
+                if let Ok(response) = &answer {
+                    let _ = output.try_send(Envelope::AgentControls {
+                        provider,
+                        controls: agents::agent_controls(response),
+                    });
+                }
+                let _ = reply.send(answer);
             });
         if spawned.is_err() {
             tracing::warn!("could not start the agent model listing thread");
+        }
+    }
+
+    /// **An agent's skills for a folder** (koru-ai D121), for the
+    /// composer's `$`. The agent lists them from a process of its own, so
+    /// this runs on a thread of its own and answers through the held reply.
+    fn discover_agent_commands(
+        &self,
+        context: RequestContext,
+        provider: AiProviderId,
+        folder: Option<String>,
+        reply: SyncSender<ApiResult<koru_ai_wire::AgentCommandsResponse>>,
+    ) {
+        if let Err(error) = authorize(&context, AiScope::Chat) {
+            let _ = reply.send(Err(error));
+            return;
+        }
+        let Some(agents) = self.agents.clone() else {
+            let _ = reply.send(Err(failure(
+                "agent_service_unavailable",
+                "Local agents are not available in this AI service.",
+                false,
+            )));
+            return;
+        };
+        let spawned = std::thread::Builder::new()
+            .name("koru-ai-agent-commands".into())
+            .spawn(move || {
+                let _ = reply.send(agents::agent_commands(&agents, provider, folder));
+            });
+        if spawned.is_err() {
+            tracing::warn!("could not start the agent command listing thread");
         }
     }
 
@@ -1928,11 +2319,18 @@ impl WorkerState {
             current_model: request.model,
             branched_from: None,
             agent_working_folder: None,
+            agent_mode: None,
+            agent_fast: None,
+            pinned_at: None,
+            profile_id: request.profile_id,
             created_at: now,
             updated_at: now,
         };
         if let Some(existing) = self.repository.chat(chat.id).map_err(ai_failure)? {
-            if existing.title == chat.title && existing.current_model == chat.current_model {
+            if existing.title == chat.title
+                && existing.current_model == chat.current_model
+                && (chat.profile_id.is_none() || existing.profile_id == chat.profile_id)
+            {
                 return Ok(CreateChatResponse { chat: existing });
             }
             return Err(failure(
@@ -1942,7 +2340,78 @@ impl WorkerState {
             ));
         }
         self.repository.create_chat(&chat).map_err(ai_failure)?;
+        if chat.profile_id.is_some() {
+            return Ok(CreateChatResponse { chat });
+        }
+        // **An older client names no profile**: the chat is placed by the
+        // rule an old chat is — with nothing read yet, the first profile.
+        self.unplaced = true;
+        self.place_unplaced_chats();
+        let chat = self
+            .repository
+            .chat(chat.id)
+            .map_err(ai_failure)?
+            .unwrap_or(chat);
         Ok(CreateChatResponse { chat })
+    }
+
+    /// **Give every chat with no profile its profile** (AI schema 13) by
+    /// [`koru_ai_core::place_chat`]: the profile owning the workspace it
+    /// last read, else the one it was last granted, else the first. Asks
+    /// the Store once for the profiles and once per document read; nothing
+    /// when every chat already has one. A Store that does not answer, or
+    /// has no profile yet, leaves the rest for the next pass — before a
+    /// list, a search or a new chat — and they are listed nowhere until it
+    /// does.
+    fn place_unplaced_chats(&mut self) {
+        if !self.unplaced {
+            return;
+        }
+        let Some(store) = self.store.clone() else {
+            return;
+        };
+        let evidence = match self.repository.unplaced_chats() {
+            Ok(evidence) => evidence,
+            Err(error) => {
+                tracing::warn!(class = ?error.class, "AI chats waiting for a profile could not be read");
+                return;
+            }
+        };
+        if evidence.is_empty() {
+            self.unplaced = false;
+            return;
+        }
+        let catalog = match store.profile_catalog() {
+            Ok(catalog) => catalog,
+            Err(error) => {
+                tracing::warn!(class = ?error.class, waiting = evidence.len(), "AI chats wait for a profile: the Store did not list them");
+                return;
+            }
+        };
+        let mut documents: HashMap<DocumentId, Option<WorkspaceId>> = HashMap::new();
+        let mut placed = 0usize;
+        for chat in &evidence {
+            let profile = koru_ai_core::place_chat(chat, &catalog, |document| {
+                *documents
+                    .entry(document)
+                    .or_insert_with(|| store.document_workspace(document).ok().flatten())
+            });
+            let Some(profile) = profile else {
+                break;
+            };
+            match self.repository.assign_chat_profile(chat.chat_id, profile) {
+                Ok(_) => placed += 1,
+                Err(error) => {
+                    tracing::warn!(chat = %chat.chat_id, class = ?error.class, "an AI chat could not be given its profile");
+                }
+            }
+        }
+        self.unplaced = placed < evidence.len();
+        tracing::info!(
+            placed,
+            waiting = evidence.len() - placed,
+            "AI chats placed in their profiles"
+        );
     }
 
     fn read_chat(&self, context: RequestContext, chat_id: ChatId) -> ApiResult<ChatTranscript> {
@@ -1989,6 +2458,7 @@ impl WorkerState {
                 self.decorate_live(&mut activities);
                 activities
             },
+            notices: self.repository.agent_notices(chat_id).map_err(ai_failure)?,
             messages,
             blocks: self.repository.blocks(chat_id).map_err(ai_failure)?,
             pinned_documents: self
@@ -1999,6 +2469,10 @@ impl WorkerState {
             usage,
             sources,
             reasoning_control,
+            attachments: self
+                .repository
+                .attachments_for_chat(chat_id)
+                .map_err(ai_failure)?,
         })
     }
 
@@ -2024,7 +2498,7 @@ impl WorkerState {
         }
         if !self
             .repository
-            .rename_chat(chat_id, title, Timestamp::now())
+            .rename_chat(chat_id, title)
             .map_err(ai_failure)?
         {
             return Err(not_found());
@@ -2037,6 +2511,33 @@ impl WorkerState {
         Ok(RenameChatResponse { chat })
     }
 
+    /// **Pin a chat, or unpin it** (AI schema 12). A chat pinned again
+    /// keeps the time it was first pinned, so the pinned group's order —
+    /// oldest pin first — does not move under a repeated request. Not
+    /// activity: the chat keeps its place among the others.
+    fn pin_chat(
+        &mut self,
+        context: RequestContext,
+        chat_id: ChatId,
+        request: koru_ai_wire::PinChatRequest,
+    ) -> ApiResult<koru_ai_wire::PinChatResponse> {
+        authorize(&context, AiScope::Chat)?;
+        let chat = self
+            .repository
+            .chat(chat_id)
+            .map_err(ai_failure)?
+            .ok_or_else(not_found)?;
+        if chat.pinned_at.is_some() == request.pinned {
+            return Ok(koru_ai_wire::PinChatResponse { chat });
+        }
+        let chat = self
+            .repository
+            .set_chat_pinned(chat_id, request.pinned.then(Timestamp::now))
+            .map_err(ai_failure)?
+            .ok_or_else(not_found)?;
+        Ok(koru_ai_wire::PinChatResponse { chat })
+    }
+
     fn update_chat_model(
         &mut self,
         context: RequestContext,
@@ -2045,8 +2546,21 @@ impl WorkerState {
     ) -> ApiResult<UpdateChatModelResponse> {
         authorize(&context, AiScope::Chat)?;
         self.admit_chat_work(Some(chat_id))?;
+        // A local agent's running reply took its model and level when it was
+        // sent, so a chat that keeps its agent may change either while it
+        // runs, from its next message (koru-ai D70). Anything else waits.
         if self.chat_has_active_attempt(chat_id)? {
-            return Err(active_history_conflict());
+            let keeps_agent = self
+                .repository
+                .chat(chat_id)
+                .map_err(ai_failure)?
+                .is_some_and(|chat| {
+                    is_agent_provider(&chat.current_model.provider)
+                        && chat.current_model.provider == request.model.provider
+                });
+            if !keeps_agent {
+                return Err(active_history_conflict());
+            }
         }
         let mut model = request.model;
         model.requested_model = model.requested_model.trim().to_owned();
@@ -2133,7 +2647,7 @@ impl WorkerState {
         }
         if !self
             .repository
-            .update_chat_model(chat_id, &model, Timestamp::now())
+            .update_chat_model(chat_id, &model)
             .map_err(ai_failure)?
         {
             return Err(not_found());
@@ -2159,16 +2673,16 @@ impl WorkerState {
         authorize(&context, AiScope::Chat)?;
         let chat = self
             .repository
-            .set_chat_private(chat_id, request.private, Timestamp::now())
+            .set_chat_private(chat_id, request.private)
             .map_err(ai_failure)?
             .ok_or_else(not_found)?;
         Ok(UpdateChatPrivacyResponse { chat })
     }
 
     /// What a chat's model offers as an effort control, from what the
-    /// service already holds: the static OpenAI and Koru tables, and the
-    /// Ollama control kept from the model's last inspection. A local agent
-    /// advertises none (I4: a launch-only route gets no slider).
+    /// service already holds: the static OpenAI and Koru tables, the Ollama
+    /// control kept from the model's last inspection, and an agent model's
+    /// levels kept from its agent's last listing (agent-models D14).
     fn reasoning_control(&self, model: &koru_ai_core::ModelSelection) -> Option<ReasoningControl> {
         match model.provider.as_str() {
             AiProviderId::OPENAI => {
@@ -2176,7 +2690,46 @@ impl WorkerState {
             }
             AiProviderId::KORU => Some(koru_model().capabilities.reasoning),
             AiProviderId::OLLAMA => self.ollama_controls.get(&model.requested_model).cloned(),
-            _ => None,
+            _ => self
+                .agent_controls
+                .get(&(model.provider.clone(), model.requested_model.clone()))
+                .cloned(),
+        }
+    }
+
+    /// **The level a local agent runs a message at** (koru-ai D70): the
+    /// chat's own, or for *Default* the level the model's listing names as
+    /// its default, so a chat moved back to *Default* after it began goes
+    /// back to the model's level rather than keeping the last one. `None`
+    /// for any other provider, and for *Default* on a model whose agent
+    /// names no default: the agent decides, and nothing is sent.
+    fn agent_turn_reasoning(
+        &self,
+        model: &koru_ai_core::ModelSelection,
+        reasoning: ReasoningChoice,
+    ) -> Option<ReasoningChoice> {
+        if !is_agent_provider(&model.provider) {
+            return None;
+        }
+        match reasoning {
+            ReasoningChoice::Default => self
+                .reasoning_control(model)
+                .and_then(|control| validate_reasoning(&control, reasoning).ok().flatten()),
+            chosen => Some(chosen),
+        }
+    }
+
+    /// An agent's listing landed: its models' controls replace the ones
+    /// kept from the last, so a model that lost its levels loses its slider.
+    fn keep_agent_controls(
+        &mut self,
+        provider: AiProviderId,
+        controls: Vec<(String, ReasoningControl)>,
+    ) {
+        self.agent_controls.retain(|(kept, _), _| kept != &provider);
+        for (model, control) in controls {
+            self.agent_controls
+                .insert((provider.clone(), model), control);
         }
     }
 
@@ -2231,10 +2784,58 @@ impl WorkerState {
         };
         let chat = self
             .repository
-            .set_chat_working_folder(chat_id, folder, Timestamp::now())
+            .set_chat_working_folder(chat_id, folder)
             .map_err(ai_failure)?
             .ok_or_else(not_found)?;
         Ok(koru_ai_wire::UpdateChatFolderResponse { chat })
+    }
+
+    /// A local agent chat's settings for its next message (koru-ai D7).
+    /// Accepted while a reply runs: that reply keeps the mode it was sent
+    /// in, and the chat's next message takes this one. Which modes exist is
+    /// the agent's to say; one it does not offer is refused when sent.
+    fn update_chat_agent_settings(
+        &mut self,
+        context: RequestContext,
+        chat_id: ChatId,
+        request: koru_ai_wire::UpdateChatAgentSettingsRequest,
+    ) -> ApiResult<koru_ai_wire::UpdateChatAgentSettingsResponse> {
+        authorize(&context, AiScope::Chat)?;
+        self.admit_chat_work(Some(chat_id))?;
+        let mut chat = self
+            .repository
+            .chat(chat_id)
+            .map_err(ai_failure)?
+            .ok_or_else(not_found)?;
+        if !is_agent_provider(&chat.current_model.provider) {
+            return Err(failure(
+                "invalid_request",
+                "Only a chat with a local agent has an approval mode.",
+                false,
+            ));
+        }
+        if let Some(mode) = request.mode.as_deref() {
+            if mode.parse::<koru_session_protocol::AgentModeId>().is_err() {
+                return Err(failure(
+                    "invalid_request",
+                    "That is not an approval mode an agent offers.",
+                    false,
+                ));
+            }
+            chat = self
+                .repository
+                .set_chat_agent_mode(chat_id, Some(mode))
+                .map_err(ai_failure)?
+                .ok_or_else(not_found)?;
+        }
+        if let Some(fast) = request.fast {
+            chat = self
+                .repository
+                .set_chat_agent_fast(chat_id, Some(fast))
+                .map_err(ai_failure)?
+                .ok_or_else(not_found)?;
+        }
+        Ok(koru_ai_wire::UpdateChatAgentSettingsResponse { chat })
     }
 
     fn tool_list_chats(
@@ -2247,6 +2848,7 @@ impl WorkerState {
             &self.repository,
             ChatAccessLens::ToolSurface { calling_chat: None },
             request,
+            &self.removed_profiles(),
         )
         .map_err(ai_failure)
     }
@@ -2261,6 +2863,7 @@ impl WorkerState {
             &self.repository,
             ChatAccessLens::ToolSurface { calling_chat: None },
             request,
+            &self.removed_profiles(),
         )
         .map_err(ai_failure)
     }
@@ -2361,11 +2964,15 @@ impl WorkerState {
     }
 
     fn search(
-        &self,
+        &mut self,
         context: RequestContext,
         request: AiSearchRequest,
     ) -> ApiResult<AiSearchResponse> {
         authorize(&context, AiScope::Chat)?;
+        if request.profile.is_some() {
+            self.retire_removed_profiles();
+            self.place_unplaced_chats();
+        }
         if request.text.len() > 4_096 || request.text.chars().any(char::is_control) {
             return Err(failure(
                 "invalid_request",
@@ -2398,6 +3005,8 @@ impl WorkerState {
                 limit: request.limit,
                 cursor: request.cursor,
                 visibility: ChatAccessLens::UserSurface,
+                profile: request.profile,
+                removed_profiles: self.removed_profiles(),
             })
             .map_err(ai_failure)?;
         Ok(AiSearchResponse {
@@ -2462,7 +3071,7 @@ impl WorkerState {
         context: RequestContext,
         source_chat: ChatId,
         request: BranchChatRequest,
-    ) -> ApiResult<BranchChatResponse> {
+    ) -> ApiResult<BranchPlan> {
         authorize(&context, AiScope::Chat)?;
         if request.title.trim().is_empty() {
             return Err(failure(
@@ -2490,7 +3099,7 @@ impl WorkerState {
             }
             return self
                 .read_chat(context, existing.id)
-                .map(|transcript| BranchChatResponse { transcript });
+                .map(|transcript| BranchPlan::Done(BranchChatResponse { transcript }));
         }
         let source = self
             .repository
@@ -2509,7 +3118,6 @@ impl WorkerState {
                 false,
             ));
         }
-        let through_ordinal = through.ordinal;
         let now = Timestamp::now();
         let chat = Chat {
             id: request.branch_chat_id,
@@ -2521,13 +3129,24 @@ impl WorkerState {
                 through_message_id: through.id,
             }),
             agent_working_folder: source.agent_working_folder.clone(),
+            // A branch is a new chat, and starts in the agent's defaults.
+            agent_mode: None,
+            agent_fast: None,
+            pinned_at: None,
+            // Its source's profile, whichever window asked (AI schema 13).
+            profile_id: source.profile_id,
             created_at: now,
             updated_at: now,
         };
-        let prefix: Vec<_> = source_messages
+        // Through the message as the chat reads (D99): a reply brings the
+        // messages steered into it, though they were written after it.
+        // Copied in stored order, so the branch reads the same way.
+        let mut prefix: Vec<Message> = koru_ai_core::read_through(&source_messages, through.id)
+            .unwrap_or_default()
             .into_iter()
-            .filter(|message| message.ordinal <= through_ordinal)
+            .cloned()
             .collect();
+        prefix.sort_by_key(|message| message.ordinal);
         let mut message_ids = HashMap::new();
         let messages: Vec<_> = prefix
             .into_iter()
@@ -2580,18 +3199,22 @@ impl WorkerState {
             .map_err(ai_failure)?
             .ok_or_else(not_found)?;
         tool_policy.chat_id = chat.id;
-        self.repository
-            .create_branch(&BranchCopy {
-                chat,
-                tool_policy,
-                messages,
-                blocks,
-                citations,
-                pinned_documents,
-            })
-            .map_err(ai_failure)?;
+        let (attachments, folders) = self.branch_attachments(source_chat, chat.id, &message_ids)?;
+        let copy = BranchCopy {
+            chat,
+            tool_policy,
+            messages,
+            blocks,
+            citations,
+            pinned_documents,
+            attachments,
+        };
+        if !folders.is_empty() {
+            return Ok(BranchPlan::Copy(Box::new(copy), folders));
+        }
+        self.repository.create_branch(&copy).map_err(ai_failure)?;
         self.read_chat(context, request.branch_chat_id)
-            .map(|transcript| BranchChatResponse { transcript })
+            .map(|transcript| BranchPlan::Done(BranchChatResponse { transcript }))
     }
 
     fn export_chat(
@@ -2613,6 +3236,18 @@ impl WorkerState {
             .chat(chat_id)
             .map_err(ai_failure)?
             .ok_or_else(not_found)?;
+        // A reply is kept as a document in its chat's own profile, as it
+        // reads only there (AI schema 13).
+        if chat
+            .profile_id
+            .is_some_and(|profile| profile != request.destination.profile_id)
+        {
+            return Err(failure(
+                "forbidden",
+                "A chat's reply is kept only in its own profile.",
+                false,
+            ));
+        }
         let messages = self.repository.messages(chat_id).map_err(ai_failure)?;
         let through = messages
             .iter()
@@ -2665,7 +3300,7 @@ impl WorkerState {
             ));
         }
         if stored.status == ExportStatus::Pending {
-            let markdown = export_markdown(&messages, through.ordinal, chat.id, first_block.id);
+            let markdown = export_markdown(&messages, through.id, chat.id, first_block.id);
             self.export_pool
                 .try_submit(ExportJob {
                     export: stored.clone(),
@@ -2724,11 +3359,26 @@ impl WorkerState {
         }
     }
 
-    fn list_chats(&self, context: RequestContext) -> ApiResult<ListChatsResponse> {
+    /// **One profile's chats** (AI schema 13), or every profile's for a
+    /// client that names none. A chat not yet placed is in no profile's
+    /// list, so a list for a profile first tries to place it. A removed
+    /// profile's chats are in neither.
+    fn list_chats(
+        &mut self,
+        context: RequestContext,
+        profile: Option<koru_ai_core::ProfileId>,
+    ) -> ApiResult<ListChatsResponse> {
         authorize(&context, AiScope::Chat)?;
-        Ok(ListChatsResponse {
-            chats: self.repository.chats().map_err(ai_failure)?,
-        })
+        if profile.is_some() {
+            self.retire_removed_profiles();
+            self.place_unplaced_chats();
+        }
+        let mut chats = self.repository.chats().map_err(ai_failure)?;
+        if let Some(profile) = profile {
+            chats.retain(|chat| chat.profile_id == Some(profile));
+        }
+        chats.retain(|chat| !self.is_hidden(chat.profile_id));
+        Ok(ListChatsResponse { chats })
     }
 
     fn send_turn(
@@ -2745,7 +3395,13 @@ impl WorkerState {
         {
             return replay_stream(&self.repository, existing);
         }
-        if request.markdown.trim().is_empty() {
+        // A set's answers sent as the next message (D108): a reply of its
+        // own with no message of the person's.
+        if let Some(next) = request.answers.clone() {
+            return self.send_answers_turn(request, next);
+        }
+        // A message may be attachments only (chat-attachments D3).
+        if request.markdown.trim().is_empty() && request.attachment_ids.is_empty() {
             return Err(failure("invalid_request", "A message is required.", false));
         }
         if request.explicit_refs.len() > MAX_CONTEXT_REFS {
@@ -2789,6 +3445,19 @@ impl WorkerState {
             .chat(request.chat_id)
             .map_err(ai_failure)?
             .ok_or_else(not_found)?;
+        let attachments = self.attachments_for_send(&chat, &request.attachment_ids)?;
+        // Skills are a local agent's (koru-ai D121): one token each, none
+        // twice, a handful at most.
+        if !request.skills.is_empty()
+            && (!is_agent_provider(&chat.current_model.provider)
+                || !koru_session_protocol::valid_input_skills(&request.skills))
+        {
+            return Err(failure(
+                "invalid_request",
+                "Skills are named only to a local agent, each once.",
+                false,
+            ));
+        }
         let existing_messages = self
             .repository
             .messages(request.chat_id)
@@ -2844,17 +3513,25 @@ impl WorkerState {
             created_at: now,
             completed_at: None,
         };
+        // Only an agent chat ever has attachments to carry.
+        let mut history_attachments = if is_agent_provider(&chat.current_model.provider) {
+            self.attachment_inputs_by_message(chat.id)?
+        } else {
+            HashMap::new()
+        };
         let mut provider_messages: Vec<AiRequestMessage> = existing_messages
             .iter()
             .filter(|message| message.state == MessageState::Complete)
             .map(|message| AiRequestMessage {
                 role: message.role,
                 markdown: message.markdown.clone(),
+                attachments: history_attachments.remove(&message.id).unwrap_or_default(),
             })
             .collect();
         provider_messages.push(AiRequestMessage {
             role: ChatRole::User,
             markdown: request.markdown,
+            attachments: self.attachment_inputs(&attachments),
         });
         let attempt = InferenceAttempt {
             id: attempt_id,
@@ -2893,6 +3570,7 @@ impl WorkerState {
                 user_message,
                 assistant_message,
                 attempt: attempt.clone(),
+                attachment_ids: request.attachment_ids,
             })
             .map_err(ai_failure)?;
 
@@ -2906,6 +3584,8 @@ impl WorkerState {
         );
         let cancellation = Cancellation::default();
         self.cancellations.insert(attempt_id, cancellation.clone());
+        // Another message passes over the chat's open sets (D108).
+        self.pass_over_questions(chat.id, attempt_id);
         let base_request = AiRequest {
             attempt_id,
             provider: attempt.provider.clone(),
@@ -2921,6 +3601,12 @@ impl WorkerState {
                 web_search: request.web_search,
                 chat_id: Some(chat.id),
                 working_folder: chat.agent_working_folder.clone(),
+                agent_mode: chat.agent_mode.clone(),
+                agent_fast: chat.agent_fast,
+                agent_turn_reasoning: self.agent_turn_reasoning(&chat.current_model, reasoning),
+                // The picked skills ride this message only (D121); a retry
+                // sends its `$name` text alone.
+                agent_skills: request.skills.clone(),
                 ..AiRequestOptions::default()
             },
         };
@@ -3043,12 +3729,18 @@ impl WorkerState {
             created_at: now,
             completed_at: None,
         };
+        let mut retried_attachments = if is_agent_provider(&chat.current_model.provider) {
+            self.attachment_inputs_by_message(chat_id)?
+        } else {
+            HashMap::new()
+        };
         let provider_messages: Vec<_> = messages
             .iter()
             .filter(|message| message.state == MessageState::Complete)
             .map(|message| AiRequestMessage {
                 role: message.role,
                 markdown: message.markdown.clone(),
+                attachments: retried_attachments.remove(&message.id).unwrap_or_default(),
             })
             .collect();
         let attempt = InferenceAttempt {
@@ -3114,6 +3806,9 @@ impl WorkerState {
                 web_search: request.web_search,
                 chat_id: Some(chat_id),
                 working_folder: chat.agent_working_folder.clone(),
+                agent_mode: chat.agent_mode.clone(),
+                agent_fast: chat.agent_fast,
+                agent_turn_reasoning: self.agent_turn_reasoning(&chat.current_model, reasoning),
                 ..AiRequestOptions::default()
             },
         };
@@ -3157,6 +3852,14 @@ impl WorkerState {
         started_at: Timestamp,
         cancellation: Cancellation,
     ) -> Result<ContextJob, AiError> {
+        // **What the chat may read is its stored profile's** (AI schema
+        // 13): pinned and `@` documents are resolved for it, and a block
+        // linked from another chat is context only from the same profile.
+        let profile = self
+            .repository
+            .chat(chat_id)?
+            .map(|chat| chat.profile_id)
+            .unwrap_or_default();
         let pinned = if replace_pinned_documents {
             Vec::new()
         } else {
@@ -3205,7 +3908,9 @@ impl WorkerState {
                                     false,
                                 )
                             })?;
-                        if block.chat_private && block.chat_id != chat_id {
+                        if block.chat_id != chat_id
+                            && (block.chat_private || block.chat_profile != profile)
+                        {
                             return Err(AiError::new(
                                 AiErrorClass::Storage,
                                 "The selected AI message block is not available.",
@@ -3228,6 +3933,7 @@ impl WorkerState {
             attempt_id,
             user_message_id,
             chat_id,
+            profile,
             request,
             refs,
             known_documents,
@@ -3369,16 +4075,22 @@ impl WorkerState {
         attempt_id: InferenceAttemptId,
     ) -> ApiResult<CancelAttemptResponse> {
         authorize(&context, AiScope::Chat)?;
+        Ok(CancelAttemptResponse {
+            attempt_id,
+            status: self.stop_attempt(attempt_id)?,
+        })
+    }
+
+    /// Stop an attempt as the person's Stop does: what it wrote is kept and
+    /// it ends cancelled. A finished attempt is left as it ended.
+    fn stop_attempt(&mut self, attempt_id: InferenceAttemptId) -> ApiResult<AttemptStatus> {
         let attempt = self
             .repository
             .attempt(attempt_id)
             .map_err(ai_failure)?
             .ok_or_else(not_found)?;
         if attempt.status.is_terminal() {
-            return Ok(CancelAttemptResponse {
-                attempt_id,
-                status: attempt.status,
-            });
+            return Ok(attempt.status);
         }
         if let Some(cancellation) = self.cancellations.get(&attempt_id) {
             cancellation.cancel();
@@ -3393,16 +4105,14 @@ impl WorkerState {
             .map_err(ai_failure)?;
         self.cancel_pending_tools(attempt_id);
         self.finish_agent_rows(attempt_id);
+        self.finish_answer_attempt(attempt_id);
         self.publish(event);
         self.cancellations.remove(&attempt_id);
         self.tool_loops.remove(&attempt_id);
         self.work_terminal(attempt_id);
         log_terminal_attempt(&updated);
         tracing::info!(attempt = %attempt_id, status = "cancelled", "AI attempt finished");
-        Ok(CancelAttemptResponse {
-            attempt_id,
-            status: updated.status,
-        })
+        Ok(updated.status)
     }
 
     fn handle_provider_event(&mut self, mut event: AiEvent) {
@@ -3497,6 +4207,7 @@ impl WorkerState {
                 if updated.status.is_terminal() {
                     self.cancel_pending_tools(attempt_id);
                     self.finish_agent_rows(attempt_id);
+                    self.finish_answer_attempt(attempt_id);
                 }
                 self.publish(event);
                 if updated.status.is_terminal() {
@@ -3575,6 +4286,12 @@ impl WorkerState {
             .repository
             .chat_tool_policy(chat_id)?
             .ok_or_else(tool_loop_missing)?;
+        // The stored chat's profile, never a request's (AI schema 13).
+        let profile_id = self
+            .repository
+            .chat(chat_id)?
+            .ok_or_else(tool_loop_missing)?
+            .profile_id;
         let cancellation = self
             .cancellations
             .get(&attempt_id)
@@ -3621,6 +4338,7 @@ impl WorkerState {
                 agent_summary: None,
                 agent_input: None,
                 agent_output: None,
+                text_offset: None,
                 display_target: None,
                 live: None,
             };
@@ -3653,6 +4371,7 @@ impl WorkerState {
                     attempt_id,
                     invocation_id,
                     workspace_ids: policy.workspace_ids.clone(),
+                    profile_id,
                 },
                 call: call.clone(),
                 cancellation: cancellation.clone(),
@@ -3756,6 +4475,13 @@ impl WorkerState {
         });
     }
 
+    fn publish_agent_notice(&mut self, notice: koru_ai_core::AgentNotice) {
+        self.publish(AiEvent::AgentNotice {
+            attempt_id: notice.attempt_id,
+            notice,
+        });
+    }
+
     fn cancel_pending_tools(&mut self, attempt_id: InferenceAttemptId) {
         let Some(mut batch) = self.tool_batches.remove(&attempt_id) else {
             return;
@@ -3782,7 +4508,7 @@ impl WorkerState {
         &mut self,
         context: RequestContext,
         invocation_id: ToolInvocationId,
-        choice: Option<String>,
+        decision: koru_ai_wire::ToolDecisionRequest,
     ) -> ApiResult<ToolDecisionResponse> {
         authorize(&context, AiScope::Chat)?;
         self.admit_chat_work(None)?;
@@ -3791,7 +4517,12 @@ impl WorkerState {
             .tool_activity(invocation_id)
             .map_err(ai_failure)?
             .ok_or_else(not_found)?;
+        let koru_ai_wire::ToolDecisionRequest { choice, answers } = decision;
         if AgentToolKind::is_agent_token(&activity.tool_name) {
+            // An agent's questions are answered, never approved bare (D108).
+            if self.is_question_row(&activity) || answers.is_some() {
+                return self.answer_agent_questions(&activity, answers, true);
+            }
             if activity.status != ToolActivityStatus::ApprovalRequired
                 || activity.approval != ToolApproval::Pending
             {
@@ -3854,6 +4585,12 @@ impl WorkerState {
                     .map_err(ai_failure)?
                     .ok_or_else(tool_not_resumable)?
                     .workspace_ids,
+                profile_id: self
+                    .repository
+                    .chat(activity.chat_id)
+                    .map_err(ai_failure)?
+                    .ok_or_else(tool_not_resumable)?
+                    .profile_id,
             },
             call: call.clone(),
             cancellation,
@@ -3886,6 +4623,10 @@ impl WorkerState {
             .map_err(ai_failure)?
             .ok_or_else(not_found)?;
         if AgentToolKind::is_agent_token(&activity.tool_name) {
+            // Denying an agent's questions skips them (D108).
+            if self.is_question_row(&activity) {
+                return self.answer_agent_questions(&activity, None, false);
+            }
             if activity.status != ToolActivityStatus::ApprovalRequired
                 || activity.approval != ToolApproval::Pending
             {
@@ -3960,6 +4701,7 @@ impl WorkerState {
         }
         self.streams.remove(&attempt_id);
         self.finish_agent_rows(attempt_id);
+        self.finish_answer_attempt(attempt_id);
         self.work_terminal(attempt_id);
     }
 
@@ -4508,6 +5250,8 @@ struct ContextJob {
     attempt_id: InferenceAttemptId,
     user_message_id: MessageId,
     chat_id: ChatId,
+    /// The chat's stored profile: whose documents it may read.
+    profile: Option<koru_ai_core::ProfileId>,
     request: AiRequest,
     refs: Vec<PreparedContextRef>,
     known_documents: HashMap<koru_ai_core::DocumentId, PinnedDocument>,
@@ -4728,7 +5472,7 @@ fn resolve_context_job(
                 PreparedContextRef::Document(document_id) => {
                     let document = store
                         .ok_or_else(context_port_unavailable)?
-                        .resolve_document(document_id)?;
+                        .resolve_document(document_id, job.profile)?;
                     add_context_bytes(&mut payload_bytes, document.markdown.len())?;
                     let now = Timestamp::now();
                     let first_used_at = job
@@ -5272,11 +6016,20 @@ impl ProviderPool {
 
 fn run_provider_job(
     providers: &ProviderRegistry,
-    job: ProviderJob,
+    mut job: ProviderJob,
     output: &SyncSender<Envelope>,
     shutdown: &AtomicBool,
 ) {
     let attempt_id = job.request.attempt_id;
+    // Which copy of a picture goes natively is a look at its folder: done
+    // here, on the provider thread, and never on the dispatcher.
+    for message in &mut job.request.messages {
+        for attachment in &mut message.attachments {
+            if attachment.kind == koru_ai_core::AttachmentKind::Image {
+                attachment.native = Some(crate::attachments::native_copy(&attachment.path));
+            }
+        }
+    }
     let mut diagnostic = ProviderTrace::new(&job);
     let payload_debug = koru_env::switch(koru_env::name::KORU_AI_PAYLOAD_DEBUG);
     let mut debug_response = payload_debug.then(String::new);
@@ -5726,17 +6479,16 @@ fn active_history_conflict() -> Failure {
     )
 }
 
+/// The chat through `through` as a document, in the order it reads (D99):
+/// a message steered into a reply under its question, before the reply.
 fn export_markdown(
     messages: &[Message],
-    through_ordinal: u32,
+    through: MessageId,
     chat: ChatId,
     block: MessageBlockId,
 ) -> String {
     let mut markdown = String::new();
-    for message in messages
-        .iter()
-        .filter(|message| message.ordinal <= through_ordinal)
-    {
+    for message in koru_ai_core::read_through(messages, through).unwrap_or_default() {
         markdown.push_str(match message.role {
             ChatRole::User => "## You\n\n",
             ChatRole::Assistant => "## Koru AI\n\n",
@@ -5806,6 +6558,7 @@ fn ai_event_name(event: &AiEvent) -> &'static str {
         AiEvent::ToolCalls { .. } => "tool_calls",
         AiEvent::ToolActivity { .. } => "tool_activity",
         AiEvent::AgentActivity { .. } => "agent_activity",
+        AiEvent::AgentNotice { .. } => "agent_notice",
         AiEvent::Notice { .. } => "notice",
         AiEvent::WebSearch { .. } => "web_search",
         AiEvent::Citation { .. } => "citation",

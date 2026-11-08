@@ -22,6 +22,19 @@ pub struct ManagedProviderRegistration {
     pub arguments: &'static [&'static str],
     pub launch_policy: ManagedLaunchPolicy,
     pub minimum_host_capability: &'static str,
+    /// The command a person runs to update the agent to a version Koru
+    /// supports, named on the *Agent providers* page when the installed one
+    /// is not; `None` where Koru knows no such command.
+    pub update_command: Option<&'static str>,
+    /// The command a person runs to sign the agent in, named on the page
+    /// when it reports itself signed out; `None` where Koru knows none.
+    pub sign_in_command: Option<&'static str>,
+    /// The agent's desktop app, by name, when that app installs a copy of
+    /// the agent's CLI of its own and keeps it up to date: beside
+    /// `update_command` the page then says that copy updates with the app,
+    /// so a person who has only the app is not sent to a command that
+    /// updates a different copy. `None` for an agent with no such app.
+    pub desktop_app: Option<&'static str>,
 }
 
 pub const CODEX_REGISTRATION: ManagedProviderRegistration = ManagedProviderRegistration {
@@ -30,6 +43,9 @@ pub const CODEX_REGISTRATION: ManagedProviderRegistration = ManagedProviderRegis
     arguments: &["app-server", "--stdio"],
     launch_policy: ManagedLaunchPolicy::PreferManaged,
     minimum_host_capability: capability::MANAGED_SESSIONS,
+    update_command: None,
+    sign_in_command: None,
+    desktop_app: None,
 };
 
 pub const CLAUDE_REGISTRATION: ManagedProviderRegistration = ManagedProviderRegistration {
@@ -38,7 +54,20 @@ pub const CLAUDE_REGISTRATION: ManagedProviderRegistration = ManagedProviderRegi
     arguments: &[],
     launch_policy: ManagedLaunchPolicy::Raw,
     minimum_host_capability: capability::MANAGED_SESSIONS,
+    update_command: None,
+    sign_in_command: None,
+    desktop_app: None,
 };
+
+/// The npm package that installs `claude-agent-acp`, the program Claude's
+/// managed route (a chat) runs.
+pub const CLAUDE_ADAPTER_PACKAGE: &str = "@agentclientprotocol/claude-agent-acp";
+
+/// **The one `claude-agent-acp` release Claude's managed route accepts** —
+/// what its handshake checks (`koru-session-runtime`'s ACP routes) and what
+/// *Agent providers*' *Install* installs, so the two cannot name different
+/// releases.
+pub const CLAUDE_ADAPTER_VERSION: &str = "0.76.0";
 
 pub const OPENCODE_REGISTRATION: ManagedProviderRegistration = ManagedProviderRegistration {
     kind: "opencode",
@@ -46,6 +75,9 @@ pub const OPENCODE_REGISTRATION: ManagedProviderRegistration = ManagedProviderRe
     arguments: &["acp"],
     launch_policy: ManagedLaunchPolicy::Raw,
     minimum_host_capability: capability::MANAGED_SESSIONS,
+    update_command: None,
+    sign_in_command: None,
+    desktop_app: None,
 };
 pub const KIMI_REGISTRATION: ManagedProviderRegistration = ManagedProviderRegistration {
     kind: "kimi",
@@ -53,6 +85,9 @@ pub const KIMI_REGISTRATION: ManagedProviderRegistration = ManagedProviderRegist
     arguments: &["acp"],
     launch_policy: ManagedLaunchPolicy::Raw,
     minimum_host_capability: capability::MANAGED_SESSIONS,
+    update_command: None,
+    sign_in_command: None,
+    desktop_app: None,
 };
 pub const GROK_REGISTRATION: ManagedProviderRegistration = ManagedProviderRegistration {
     kind: "grok",
@@ -60,6 +95,9 @@ pub const GROK_REGISTRATION: ManagedProviderRegistration = ManagedProviderRegist
     arguments: &["agent", "stdio"],
     launch_policy: ManagedLaunchPolicy::Raw,
     minimum_host_capability: capability::MANAGED_SESSIONS,
+    update_command: None,
+    sign_in_command: None,
+    desktop_app: None,
 };
 
 /// Google's official Antigravity ACP server (AGENTUX I9). It is a separate
@@ -72,6 +110,26 @@ pub const ANTIGRAVITY_REGISTRATION: ManagedProviderRegistration = ManagedProvide
     arguments: &[],
     launch_policy: ManagedLaunchPolicy::Raw,
     minimum_host_capability: capability::MANAGED_SESSIONS,
+    update_command: None,
+    sign_in_command: None,
+    desktop_app: None,
+};
+
+/// Cognition's Devin CLI as an ACP server over stdio (`devin acp`). The same
+/// program the raw tab runs, found on `PATH` or where its installers put it
+/// (`resolve_executable`'s known locations). Devin signs itself in; Koru
+/// never reads its credentials.
+pub const DEVIN_REGISTRATION: ManagedProviderRegistration = ManagedProviderRegistration {
+    kind: "devin",
+    executable: "devin",
+    arguments: &["acp"],
+    launch_policy: ManagedLaunchPolicy::Raw,
+    minimum_host_capability: capability::MANAGED_SESSIONS,
+    // Both as Devin's bundled docs give them.
+    update_command: Some("devin update"),
+    sign_in_command: Some("devin auth login"),
+    // Devin's desktop app carries its own `devin` and updates it itself.
+    desktop_app: Some("Devin"),
 };
 
 /// Registration grants neither managed readiness nor delegation's live verdict.
@@ -82,6 +140,7 @@ pub const MANAGED_PROVIDER_REGISTRATIONS: &[ManagedProviderRegistration] = &[
     KIMI_REGISTRATION,
     GROK_REGISTRATION,
     ANTIGRAVITY_REGISTRATION,
+    DEVIN_REGISTRATION,
 ];
 
 pub fn managed_provider(kind: &ProviderKind) -> Option<&'static ManagedProviderRegistration> {
@@ -147,7 +206,7 @@ pub fn managed_launch_mode(
         ExecutableAvailability::Checking => return Err(ErrorCode::ProviderUnavailable),
         ExecutableAvailability::Missing => return Err(ErrorCode::ProfileMissing),
         ExecutableAvailability::SignedOut { code }
-        | ExecutableAvailability::Incompatible { code }
+        | ExecutableAvailability::Incompatible { code, .. }
         | ExecutableAvailability::Failed { code } => return Err(code.clone()),
     }
     if intent == LaunchIntent::Delegation

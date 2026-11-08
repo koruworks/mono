@@ -13,12 +13,12 @@
 use serde::{Deserialize, Serialize};
 
 use crate::values::{
-    AiProvider, CanvasBackground, CaretColorChoice, CaretHeightChoice, CaretWidthChoice,
-    CloseBehaviorChoice, DensityChoice, DictationGesture, DictationInput, DictationLanguage,
-    DictationShortcut, DictationTier, Field, FontSetting, GlobalShortcut, LanguageChoice,
-    PopoutCloseChoice, ReasoningChoice, TerminalCursorBlink, TerminalCursorHeight,
-    TerminalCursorWidth, ThemeChoice, ViewModeChoice, Zoom, validate_endpoint, validate_model,
-    validate_skin_tone,
+    AgentPermission, AiProvider, CanvasBackground, CaretColorChoice, CaretHeightChoice,
+    CaretWidthChoice, CloseBehaviorChoice, DensityChoice, DictationGesture, DictationInput,
+    DictationLanguage, DictationShortcut, DictationTier, DocTextSizeSetting, Field, FontSetting,
+    GlobalShortcut, IconPackChoice, LanguageChoice, PopoutCloseChoice, ReasoningChoice, RgbColor,
+    TerminalCursorBlink, TerminalCursorHeight, TerminalCursorWidth, ThemeChoice, ViewModeChoice,
+    Zoom, validate_endpoint, validate_model, validate_skin_tone,
 };
 
 #[cfg(test)]
@@ -98,12 +98,50 @@ pub struct RecordingPrefs {
     pub folder: Option<String>,
 }
 
+/// **One favorite model** in the chat's model picker: an agent, by its key
+/// (`claude`, `codex`, …), and the model id that agent takes.
+///
+/// Keyed by the agent rather than by a provider id so that a favorite follows
+/// the person to a machine where the same agent is installed under the same
+/// key, which is what *roaming* is for.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct FavoriteModel {
+    /// The agent's key: lowercase ASCII letters, digits and `-`.
+    pub agent: String,
+    /// The model id the agent takes, as its model list names it.
+    pub model: String,
+}
+
+impl FavoriteModel {
+    pub fn new(agent: impl Into<String>, model: impl Into<String>) -> Self {
+        Self {
+            agent: agent.into(),
+            model: model.into(),
+        }
+    }
+}
+
 /// Everything that applies to Koru as a whole, whoever is consuming it.
+///
+/// **Read tolerantly; written strictly.** A section is what the settings
+/// authority *answers* — a client reads it — so it ignores a field it does
+/// not know: an older Koru reading the section from a newer service keeps
+/// every value it understands instead of failing the whole read and falling
+/// back to defaults. Nothing ever writes a section: a write is a
+/// [`GlobalPatch`], which still refuses an unknown field, so the service
+/// answers a typo with a 400 rather than storing nothing. A field added
+/// here is also `#[serde(default)]`, so a newer client reads an older
+/// service. (The user's call, 2026-11-03: this reader shipped before any new
+/// Global field did. koru-ai D79's `chat_font` was the first to wait, and
+/// landed once the user ruled, 2026-11-04, that an older Koru may ignore it.)
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct GlobalSettings {
     // Roaming — `preferences.conf`.
     pub theme: ThemeChoice,
+    /// `None` follows the build's default artwork, now and later; it is
+    /// persisted as no key, like a font role that follows the app.
+    #[serde(default)]
+    pub icon_pack: Option<IconPackChoice>,
     pub caret_color: CaretColorChoice,
     pub caret_width: CaretWidthChoice,
     pub caret_height: CaretHeightChoice,
@@ -111,6 +149,27 @@ pub struct GlobalSettings {
     pub body_font: FontSetting,
     pub headings_font: FontSetting,
     pub code_font: FontSetting,
+    /// **The typeface the AI chat is set in** — its messages and the box a
+    /// person types in. `follow_default` follows the **app font** (`ui_font`),
+    /// now and later, rather than a build default of its own: a person who
+    /// never chooses sees the chat exactly as before, and a later change to
+    /// the app font carries the chat with it. Persisted as no key while it
+    /// follows, like every font role. `#[serde(default)]` so a section from a
+    /// build without it reads as following the app font.
+    #[serde(default)]
+    pub chat_font: FontSetting,
+    /// The document body size. Follows the build's default until chosen.
+    #[serde(default)]
+    pub document_text_size: DocTextSizeSetting,
+    /// The window's base color — the frame around the panes — for the light
+    /// theme, as `#rrggbb`. `null` follows the theme, now and later, and is
+    /// persisted as no key, like a font role that follows the app.
+    #[serde(default)]
+    pub base_color_light: Option<RgbColor>,
+    /// The same for the dark theme. Each theme keeps its own; neither is
+    /// derived from the other.
+    #[serde(default)]
+    pub base_color_dark: Option<RgbColor>,
     pub density: DensityChoice,
     pub zoom: Zoom,
     pub default_view_mode: ViewModeChoice,
@@ -124,6 +183,14 @@ pub struct GlobalSettings {
     pub dictation_input: DictationInput,
     pub spellcheck_enabled: bool,
     pub spellcheck_language: LanguageChoice,
+    /// **The models starred in the chat's model picker**, by agent key and
+    /// model id, in the order they were starred; each pair once. Roaming,
+    /// like the rest of how Koru looks to this person: a favorite made on
+    /// one computer is a favorite on the next. An agent turned off on a
+    /// machine keeps its favorites; the picker hides them there.
+    /// `#[serde(default)]` so a section from a build without it still reads.
+    #[serde(default)]
+    pub favorite_models: Vec<FavoriteModel>,
     // Device-local — `desktop-v1.json`.
     pub close_behavior: CloseBehaviorChoice,
     pub global_shortcut: GlobalShortcut,
@@ -154,12 +221,51 @@ pub struct GlobalSettings {
     pub delegate_temporary_root: Option<String>,
     /// The internal session recorder's prefill. Device-local — see the type.
     pub recording: RecordingPrefs,
+    /// **The coding agents turned off on this machine**, by agent key
+    /// (`koru_session_profiles::ProfileLabel::agent_key`: `claude`, `codex`,
+    /// …), sorted and without repeats. An agent named here is hidden from
+    /// the chat's agent picker, the terminal's *Agents ›* menu and every new
+    /// session choice; its chats and sessions are kept and keep working.
+    ///
+    /// **The off list, not the on list**, so empty is the default — every
+    /// agent on — and an agent a later Koru adds is on until someone turns it
+    /// off. Device-local because the agents installed differ per machine.
+    /// `#[serde(default)]` so a section from a build without it still reads.
+    #[serde(default)]
+    pub disabled_agents: Vec<String>,
+    /// **The permission a new chat with a supported agent starts in** — an
+    /// agent that has an auto mode (Claude, Codex). *Manual* by default.
+    /// The chat's own mode is still the chat's: a change inside a chat
+    /// applies to that chat only, and this names only where the next new
+    /// chat starts. Device-local, beside `disabled_agents`.
+    #[serde(default)]
+    pub default_permission: AgentPermission,
+    /// The same for every other agent — one with no auto mode (OpenCode):
+    /// *Manual* or *Yolo*, never *Auto*. *Manual* by default.
+    #[serde(default)]
+    pub default_permission_other: AgentPermission,
+    /// **The agent a new chat starts with**, by agent key, or `None` for
+    /// *Auto* — the last agent used, which is what a chat did before this
+    /// existed. An agent that is turned off or not installed falls back to
+    /// *Auto* where a chat is made; the key is kept, so turning it back on
+    /// brings the choice back.
+    #[serde(default)]
+    pub default_agent: Option<String>,
+    /// **The order the coding agents are listed in**, by agent key, as the
+    /// person dragged them on *Agent providers*: the chat's agent rail, the
+    /// terminal's *Agents ›* menu, the *Default agent* chips and the
+    /// delegate dialog all follow it. Empty is the built-in order (Claude
+    /// first); an agent it does not name — one a later Koru adds — follows
+    /// the named ones in the built-in order. Each key once.
+    #[serde(default)]
+    pub agent_order: Vec<String>,
 }
 
 impl Default for GlobalSettings {
     fn default() -> Self {
         Self {
             theme: ThemeChoice::default(),
+            icon_pack: None,
             caret_color: CaretColorChoice::default(),
             caret_width: CaretWidthChoice::default(),
             caret_height: CaretHeightChoice::default(),
@@ -167,6 +273,11 @@ impl Default for GlobalSettings {
             body_font: FontSetting::FollowDefault,
             headings_font: FontSetting::FollowDefault,
             code_font: FontSetting::FollowDefault,
+            // The app font's, whatever it is.
+            chat_font: FontSetting::FollowDefault,
+            document_text_size: DocTextSizeSetting::FollowDefault,
+            base_color_light: None,
+            base_color_dark: None,
             density: DensityChoice::default(),
             zoom: Zoom::default(),
             default_view_mode: ViewModeChoice::default(),
@@ -183,6 +294,8 @@ impl Default for GlobalSettings {
             // degrades to quietly-off at the consumer rather than here.
             spellcheck_enabled: true,
             spellcheck_language: LanguageChoice::Automatic,
+            // No favorites until one is starred.
+            favorite_models: Vec::new(),
             close_behavior: CloseBehaviorChoice::default(),
             global_shortcut: GlobalShortcut::default(),
             global_dictation_enabled: None,
@@ -200,6 +313,15 @@ impl Default for GlobalSettings {
             // their own system when it moved.
             delegate_temporary_root: None,
             recording: RecordingPrefs::default(),
+            // Every agent on.
+            disabled_agents: Vec::new(),
+            // A new chat asks before it acts until a person says otherwise.
+            default_permission: AgentPermission::Manual,
+            default_permission_other: AgentPermission::Manual,
+            // *Auto*: the last agent used.
+            default_agent: None,
+            // The built-in order.
+            agent_order: Vec::new(),
         }
     }
 }
@@ -210,6 +332,8 @@ impl Default for GlobalSettings {
 pub struct GlobalPatch {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub theme: Option<ThemeChoice>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon_pack: Option<IconPackChoice>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub caret_color: Option<CaretColorChoice>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -224,6 +348,20 @@ pub struct GlobalPatch {
     pub headings_font: Option<FontSetting>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code_font: Option<FontSetting>,
+    /// `follow_default` puts the chat back on the app font.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chat_font: Option<FontSetting>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub document_text_size: Option<DocTextSizeSetting>,
+    /// `#rrggbb` sets the light theme's base color; `null` puts the theme's
+    /// own back. Settings offers that as its first swatch, so unlike the text
+    /// size this choice can be taken back — which is why this is a [`Field`]
+    /// and not an `Option`.
+    #[serde(skip_serializing_if = "Field::is_unchanged")]
+    pub base_color_light: Field<RgbColor>,
+    /// The same for the dark theme.
+    #[serde(skip_serializing_if = "Field::is_unchanged")]
+    pub base_color_dark: Field<RgbColor>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub density: Option<DensityChoice>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -250,6 +388,10 @@ pub struct GlobalPatch {
     pub spellcheck_enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub spellcheck_language: Option<LanguageChoice>,
+    /// The whole favorites list, written whole on every star: an empty list
+    /// clears them. Absent leaves the stored list alone.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub favorite_models: Option<Vec<FavoriteModel>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub close_behavior: Option<CloseBehaviorChoice>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -274,6 +416,24 @@ pub struct GlobalPatch {
     /// leaves the stored set alone.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recording: Option<RecordingPrefs>,
+    /// The whole off list, written whole on every switch: an empty list is
+    /// *Restore defaults*. Absent leaves the stored list alone.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub disabled_agents: Option<Vec<String>>,
+    /// The permission a new chat with a supported agent starts in.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_permission: Option<AgentPermission>,
+    /// The permission a new chat with any other agent starts in: *Manual*
+    /// or *Yolo* — an agent with no auto mode has no *Auto* to start in.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_permission_other: Option<AgentPermission>,
+    /// The agent a new chat starts with; `null` is *Auto*.
+    #[serde(skip_serializing_if = "Field::is_unchanged")]
+    pub default_agent: Field<String>,
+    /// The whole order, written whole on every move: an empty list is the
+    /// built-in order. Absent leaves the stored order alone.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_order: Option<Vec<String>>,
 }
 
 impl GlobalPatch {
@@ -284,6 +444,7 @@ impl GlobalPatch {
     /// `desktop-v1.json` and cannot fail on it.
     pub fn touches_roaming(&self) -> bool {
         self.theme.is_some()
+            || self.icon_pack.is_some()
             || self.caret_color.is_some()
             || self.caret_width.is_some()
             || self.caret_height.is_some()
@@ -291,6 +452,10 @@ impl GlobalPatch {
             || self.body_font.is_some()
             || self.headings_font.is_some()
             || self.code_font.is_some()
+            || self.chat_font.is_some()
+            || self.document_text_size.is_some()
+            || !self.base_color_light.is_unchanged()
+            || !self.base_color_dark.is_unchanged()
             || self.density.is_some()
             || self.zoom.is_some()
             || self.default_view_mode.is_some()
@@ -304,6 +469,7 @@ impl GlobalPatch {
             || self.dictation_input.is_some()
             || self.spellcheck_enabled.is_some()
             || self.spellcheck_language.is_some()
+            || self.favorite_models.is_some()
     }
 
     /// Whether this patch touches anything in `desktop-v1.json`.
@@ -317,6 +483,11 @@ impl GlobalPatch {
             || self.automatic_update_checks.is_some()
             || !self.delegate_temporary_root.is_unchanged()
             || self.recording.is_some()
+            || self.disabled_agents.is_some()
+            || self.default_permission.is_some()
+            || self.default_permission_other.is_some()
+            || !self.default_agent.is_unchanged()
+            || self.agent_order.is_some()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -328,6 +499,49 @@ impl GlobalPatch {
     /// Validation runs before a single byte is staged, so a rejected patch
     /// leaves the disk exactly as it was.
     pub fn validate(&self) -> Result<(), Invalid> {
+        // An agent key is a profile key's shape — short, lowercase, ASCII —
+        // and the list is bounded, so a hand-edit cannot grow the file.
+        if let Some(agents) = &self.disabled_agents {
+            if agents.len() > MAX_DISABLED_AGENTS || !agents.iter().all(|key| is_agent_key(key)) {
+                return Err(Invalid::new(
+                    "disabled_agents",
+                    "an agent is named by its lowercase key, and at most 64 are listed",
+                ));
+            }
+        }
+        if self.default_permission_other == Some(AgentPermission::Auto) {
+            return Err(Invalid::new(
+                "default_permission_other",
+                "an agent with no auto mode starts in manual or yolo",
+            ));
+        }
+        if let Some(order) = &self.agent_order
+            && (order.len() > MAX_DISABLED_AGENTS || !order.iter().all(|key| is_agent_key(key)))
+        {
+            return Err(Invalid::new(
+                "agent_order",
+                "an agent is named by its lowercase key, and at most 64 are listed",
+            ));
+        }
+        // A favorite is an agent key and a model name in the shape a model
+        // setting already takes; the list is bounded so a hand-edit cannot
+        // grow the roaming file without end.
+        if let Some(favorites) = &self.favorite_models
+            && (favorites.len() > MAX_FAVORITE_MODELS || !favorites.iter().all(is_valid_favorite))
+        {
+            return Err(Invalid::new(
+                "favorite_models",
+                "a favorite is an agent's lowercase key and a model name, and at most 256 are kept",
+            ));
+        }
+        if let Field::Set(key) = &self.default_agent
+            && !is_agent_key(key)
+        {
+            return Err(Invalid::new(
+                "default_agent",
+                "an agent is named by its lowercase key, or null for auto",
+            ));
+        }
         if let Some(zoom) = self.zoom
             && Zoom::new(zoom).is_none()
         {
@@ -418,6 +632,9 @@ impl GlobalPatch {
                 $( if let Some(value) = self.$field { current.$field = value; } )+
             };
         }
+        if let Some(pack) = self.icon_pack {
+            current.icon_pack = Some(pack);
+        }
         set!(
             theme,
             caret_color,
@@ -427,6 +644,8 @@ impl GlobalPatch {
             body_font,
             headings_font,
             code_font,
+            chat_font,
+            document_text_size,
             density,
             default_view_mode,
             default_canvas_background,
@@ -439,7 +658,11 @@ impl GlobalPatch {
             start_on_login,
             reminder_start_on_login_explained,
             automatic_update_checks,
+            default_permission,
+            default_permission_other,
         );
+        self.base_color_light.apply(&mut current.base_color_light);
+        self.base_color_dark.apply(&mut current.base_color_dark);
         if let Some(zoom) = self.zoom.and_then(Zoom::new) {
             current.zoom = zoom;
         }
@@ -469,7 +692,64 @@ impl GlobalPatch {
         if let Some(recording) = self.recording {
             current.recording = recording;
         }
+        if let Some(agents) = self.disabled_agents {
+            current.disabled_agents = normalized_agents(agents);
+        }
+        self.default_agent.apply(&mut current.default_agent);
+        if let Some(order) = self.agent_order {
+            current.agent_order = ordered_agents(order);
+        }
+        if let Some(favorites) = self.favorite_models {
+            current.favorite_models = ordered_favorites(favorites);
+        }
     }
+}
+
+/// Favorites as they are kept: each pair once, at its first place.
+pub(crate) fn ordered_favorites(favorites: Vec<FavoriteModel>) -> Vec<FavoriteModel> {
+    let mut seen = std::collections::HashSet::new();
+    favorites
+        .into_iter()
+        .filter(|favorite| seen.insert(favorite.clone()))
+        .collect()
+}
+
+/// Whether a favorite read from a file is one a patch could have written.
+pub(crate) fn is_valid_favorite(favorite: &FavoriteModel) -> bool {
+    is_agent_key(&favorite.agent) && validate_model(&favorite.model).is_ok()
+}
+
+/// The most favorites the list holds.
+const MAX_FAVORITE_MODELS: usize = 256;
+
+/// An order as it is kept: each key once, at its first place.
+pub(crate) fn ordered_agents(order: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    order
+        .into_iter()
+        .filter(|key| seen.insert(key.clone()))
+        .collect()
+}
+
+/// Whether `key` has an agent key's shape: short, lowercase ASCII letters,
+/// digits and `-` (`claude`, `codex`, `qwen`, …).
+pub(crate) fn is_agent_key(key: &str) -> bool {
+    !key.is_empty()
+        && key.len() <= MAX_AGENT_KEY
+        && key
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+}
+
+/// The most agents the off list holds, and the longest key it takes.
+const MAX_DISABLED_AGENTS: usize = 64;
+const MAX_AGENT_KEY: usize = 32;
+
+/// An off list as it is kept: sorted, each key once.
+pub(crate) fn normalized_agents(mut agents: Vec<String>) -> Vec<String> {
+    agents.sort();
+    agents.dedup();
+    agents
 }
 
 // -------------------------------------------------------------- Terminal
@@ -480,8 +760,10 @@ impl GlobalPatch {
 /// row, beside the geometry, purely because the terminal had one file. How a
 /// terminal looks is a preference about the person, not about the monitor it
 /// happened to be opened on.
+///
+/// Read tolerantly, as [`GlobalSettings`] is: an unknown field is ignored on
+/// the read; the [`TerminalPatch`] that writes it refuses one.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct TerminalSettings {
     pub theme: ThemeChoice,
     /// Mono-restricted, and deliberately **not** Global's `code_font`: a code
@@ -565,6 +847,14 @@ impl TerminalPatch {
         // proportional face in a grid renderer is a broken window, not a
         // preference, so it is rejected at the door instead of silently
         // becoming the default and leaving somebody wondering.
+        // An installed family is the per-agent picker's, not this section's:
+        // the Settings page offers the bundled monospaced faces.
+        if let Some(FontSetting::Installed(_)) = &self.font {
+            return Err(Invalid::new(
+                "font",
+                "the terminal section takes a bundled monospaced font",
+            ));
+        }
         if let Some(FontSetting::Chosen(family)) = self.font
             && !family.is_mono()
         {
@@ -608,8 +898,11 @@ impl TerminalPatch {
 ///
 /// **A secret never appears here, in either direction.** The only thing said
 /// about the OpenAI key is whether one is configured.
+///
+/// Read tolerantly, as [`GlobalSettings`] is — and so are its two provider
+/// parts: an unknown field is ignored on the read; the [`AiPatch`] that
+/// writes it refuses one.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct AiSettings {
     pub selected_provider: Option<AiProvider>,
     pub openai: OpenAiSection,
@@ -617,7 +910,6 @@ pub struct AiSettings {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct OpenAiSection {
     pub model: Option<String>,
     pub reasoning: ReasoningChoice,
@@ -626,7 +918,6 @@ pub struct OpenAiSection {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct OllamaSection {
     pub endpoint: String,
     pub model: Option<String>,

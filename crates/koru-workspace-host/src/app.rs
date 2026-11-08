@@ -46,9 +46,9 @@ use crate::settings::{
 
 use crate::startup;
 use crate::{
-    ErrorAction, ErrorReport, Host, MoveSelectionPayload, PaneRequest, PasteTarget, PastedImage,
-    ReminderStartupRequest, ReminderStartupRequestId, ReminderStartupResult, RichBlock,
-    SearchTargetDisposition, View, ZoomIntent,
+    ErrorAction, ErrorReport, Host, ImagePlace, ImageTicket, MoveSelectionPayload, PaneRequest,
+    PasteTarget, PastedImage, ReminderStartupRequest, ReminderStartupRequestId,
+    ReminderStartupResult, RichBlock, SearchTargetDisposition, View, ZoomIntent,
 };
 use crate::{SyncState, WorkspaceStat, export, reveal};
 use koru_core::node::BlobHash;
@@ -165,6 +165,25 @@ fn profiled_window_title(subject: &str, profile: Option<&str>, slot: &str) -> St
     parts.join(" — ")
 }
 
+/// A workspace window's title: the workspace's name, then the active tab's
+/// (the review's note — a second window is told apart by what it is showing,
+/// not by the app's name twice). A tab called the same as the workspace is
+/// not repeated; a named development replica stays visible as the last
+/// component, as in [`profiled_window_title`].
+fn workspace_window_title(workspace: &str, tab: Option<&str>, slot: &str) -> String {
+    let mut parts = vec![workspace.to_owned()];
+    if let Some(tab) = tab
+        .map(str::trim)
+        .filter(|tab| !tab.is_empty() && *tab != workspace)
+    {
+        parts.push(tab.to_owned());
+    }
+    if slot != session::DEFAULT_PEER {
+        parts.push(slot.to_owned());
+    }
+    parts.join(" — ")
+}
+
 fn trace_node(id: Option<NodeId>) -> String {
     id.map(|id| id.to_storage()).unwrap_or_else(|| "-".into())
 }
@@ -201,51 +220,33 @@ fn reopen_remembered_documents(workspace: &mut koru_workspace::Workspace, settin
     // and not necessarily one of these.
     let landed = workspace.active();
     let span = timing::Span::start("reopen documents");
-    let mut wanted = Vec::new();
     let showing_pin = settings
         .pinned_tab
-        .and_then(|i| settings.pinned_tabs.get(i).map(|p| p.document));
+        .and_then(|i| settings.pinned_tabs.get(i).and_then(|p| p.document()));
+    let last = showing_pin.or(showing);
     let current = settings.workspace;
-    for pin in &settings.pinned_tabs {
-        wanted.push(pin.document);
-        if Some(pin.document) != showing_pin {
-            let _ = workspace.open_document_in(pin.workspace, pin.document);
-        }
-    }
-    for (which, _) in &settings.tabs {
-        if let crate::TabRef::Document {
-            id,
-            workspace: home,
-        } = which
+    // **Every column's documents**, not just the focused one's: `tabs` is the
+    // focused group's copy, and a document open beside a chat came back as
+    // Welcome when the chat had focus. See `Settings::remembered_documents`.
+    let wanted = settings.remembered_documents();
+    for (id, home) in &wanted {
+        if Some(*id) != last
+            && let Some(home) = home.or(current)
         {
-            wanted.push(*id);
-            if Some(*id) != showing
-                && let Some(home) = home.or(current)
-            {
-                let _ = workspace.open_document_in(home, *id);
-            }
+            let _ = workspace.open_document_in(home, *id);
         }
     }
-    if let Some(id) = showing_pin {
-        if let Some(pin) = settings.pinned_tabs.iter().find(|p| p.document == id) {
-            let _ = workspace.open_document_in(pin.workspace, id);
-        }
-    } else if let Some(id) = showing {
-        let home = settings
-            .tabs
-            .get(settings.tab)
-            .and_then(|(w, _)| match w {
-                crate::TabRef::Document { workspace, .. } => *workspace,
-                _ => None,
-            })
-            .or(current);
-        if let Some(home) = home {
-            let _ = workspace.open_document_in(home, id);
-        }
+    if let Some(id) = last
+        && let Some(home) = wanted
+            .iter()
+            .find(|(doc, _)| *doc == id)
+            .and_then(|(_, home)| home.or(current))
+    {
+        let _ = workspace.open_document_in(home, id);
     }
     // A document nothing is showing does not stay open. It is only reachable
     // here — no tab will ever ask for it, so no `CloseDocument` would ever come.
-    if let Some(landed) = landed.filter(|id| !wanted.contains(id)) {
+    if let Some(landed) = landed.filter(|id| !wanted.iter().any(|(doc, _)| doc == id)) {
         workspace.close_document(landed);
     }
     span.stop();
@@ -280,15 +281,19 @@ fn effective_dark(pref: theme::ThemePreference) -> bool {
 /// The theme has to be set before the first layout is built, since brushes are
 /// baked into parley layouts.
 fn apply_settings(settings: &Settings) {
+    koru_draw::icons::set_icon_pack_setting(settings.icon_pack);
     theme::set_theme_preference(settings.theme);
     theme::set_dark(effective_dark(settings.theme));
     theme::set_caret_color(settings.caret_color);
     theme::set_caret_width(settings.caret_width);
     theme::set_caret_height(settings.caret_height);
-    theme::set_ui_font(settings.font);
-    theme::set_body_font(settings.body_font);
-    theme::set_headings_font(settings.headings_font);
-    theme::set_code_font(settings.code_font);
+    theme::set_font_setting(theme::FontSlot::Ui, settings.font.clone());
+    theme::set_font_setting(theme::FontSlot::Body, settings.body_font.clone());
+    theme::set_font_setting(theme::FontSlot::Headings, settings.headings_font.clone());
+    theme::set_font_setting(theme::FontSlot::Code, settings.code_font.clone());
+    theme::set_font_setting(theme::FontSlot::Chat, settings.chat_font.clone());
+    theme::set_doc_text_size(settings.doc_text_size);
+    apply_base_colors(settings.base_color_light, settings.base_color_dark);
     theme::set_density(settings.density);
     theme::set_zoom(clamp_zoom(settings.zoom));
     theme::set_default_view_mode(settings.view_mode);
@@ -306,16 +311,29 @@ fn apply_settings(settings: &Settings) {
     crate::spelling::set_preferred(settings.spellcheck_language);
 }
 
+/// The window's base color for each theme, `None` following the theme.
+///
+/// Split out of [`apply_settings`] so a test can prove it without moving
+/// every other global that function writes.
+fn apply_base_colors(light: Option<u32>, dark: Option<u32>) {
+    theme::set_base_color(false, light);
+    theme::set_base_color(true, dark);
+}
+
 fn apply_pre_identity_preferences(settings: &PreIdentityPreferences) {
+    koru_draw::icons::set_icon_pack_setting(settings.icon_pack);
     theme::set_theme_preference(settings.theme);
     theme::set_dark(effective_dark(settings.theme));
     theme::set_caret_color(settings.caret_color);
     theme::set_caret_width(settings.caret_width);
     theme::set_caret_height(settings.caret_height);
-    theme::set_ui_font(settings.font);
-    theme::set_body_font(settings.body_font);
-    theme::set_headings_font(settings.headings_font);
-    theme::set_code_font(settings.code_font);
+    theme::set_font_setting(theme::FontSlot::Ui, settings.font.clone());
+    theme::set_font_setting(theme::FontSlot::Body, settings.body_font.clone());
+    theme::set_font_setting(theme::FontSlot::Headings, settings.headings_font.clone());
+    theme::set_font_setting(theme::FontSlot::Code, settings.code_font.clone());
+    theme::set_font_setting(theme::FontSlot::Chat, settings.chat_font.clone());
+    theme::set_doc_text_size(settings.doc_text_size);
+    apply_base_colors(settings.base_color_light, settings.base_color_dark);
     theme::set_density(settings.density);
     theme::set_zoom(clamp_zoom(settings.zoom));
     theme::set_default_view_mode(settings.view_mode);
@@ -685,6 +703,39 @@ fn finishes_commanded_dictation(commanded: bool, key: &Key, mods: ModifiersState
     commanded && mods.is_empty() && matches!(key, Key::Named(NamedKey::Enter))
 }
 
+/// What a key press does to a running dictation.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+enum DictationKey {
+    /// Nothing: no dictation, or a modifier alone during a recording.
+    Ignore,
+    /// Stop the recording and keep its words; `spent` when the key was
+    /// pressed in the window that records and goes no further.
+    Stop { spent: bool },
+    /// Throw the dictation away and let the key land — an ordinary local
+    /// event, the rule for every dictation that is not a recording.
+    Discard,
+}
+
+/// **What a key does to a running dictation**, as a value, so the input loop
+/// and its test read one description.
+///
+/// A recording — a chat composer's dictation, with its own Stop and Cancel
+/// (koru-ai D103) — stops on Escape and on every other key and keeps its
+/// words. In the window that records, the key is spent on the stop: the
+/// composer cannot take a key mid-composition, and Escape must not reach the
+/// chat and arm the stop of a running reply. A modifier pressed on its own is
+/// not typing — it is the start of a chord, the dictation chord included — so
+/// it stops nothing. Every other dictation keeps the settled rule: the key
+/// discards it and lands.
+fn dictation_key_outcome(live: bool, records: bool, in_pane: bool, modifier: bool) -> DictationKey {
+    match (live, records) {
+        (false, _) => DictationKey::Ignore,
+        (true, true) if modifier => DictationKey::Ignore,
+        (true, true) => DictationKey::Stop { spent: in_pane },
+        (true, false) => DictationKey::Discard,
+    }
+}
+
 /// Snap a zoom factor to the 0.1 grid and clamp to the bounds. Snapping stops
 /// float drift accumulating across many in/out cycles, so the indicator keeps
 /// reading 120% rather than drifting to 119.99999%.
@@ -816,6 +867,20 @@ fn document_count(kinds: &std::collections::BTreeMap<String, u64>, canvas: bool)
         .sum()
 }
 
+/// The name of the workspace made for a document that had nowhere to go
+/// (`App::ensure_live_workspace`). Renamable like any other.
+const DEFAULT_WORKSPACE_NAME: &str = "Workspace";
+
+/// The refusal a creation reports when even a default workspace could not be
+/// made — shaped as the store's own error so it settles through the same
+/// door as every other failed creation.
+fn no_workspace_error(details: String) -> koru_store_core::errors::Error {
+    koru_store_core::errors::Error::new(
+        koru_store_core::errors::Code::InvalidRequest,
+        format!("there is no workspace to put it in: {details}"),
+    )
+}
+
 /// How often the periodic geometry capture runs. See its call site in
 /// `about_to_wait`.
 const PERSIST_EVERY: Duration = Duration::from_secs(1);
@@ -908,6 +973,10 @@ pub enum Wake {
     ProfileBindings,
     /// The shared clipboard worker normalized a bitmap or captured a file list.
     Clipboard,
+    /// The image-import worker read an image's size, or finished reading,
+    /// decoding and storing one (`crate::image_import`). The answer is on its
+    /// channel; the image service drains it and makes the document edit.
+    Image,
     /// The Koru Agent queued a restore or search target for this process.
     Agent,
     /// The taskbar activation listener set a verb flag (new / open / search)
@@ -1114,8 +1183,25 @@ enum ImportMessage {
 }
 
 struct ClipboardImageResult {
-    targets: Vec<(WindowId, PasteTarget)>,
+    targets: Vec<(WindowId, PasteTarget, ImageTicket)>,
     result: Result<koru_clipboard::ImagePayload, koru_clipboard::Error>,
+}
+
+/// One image attachment between its gesture and its insertion.
+///
+/// The images are inserted only while `document` is the one in front, because
+/// the document edit goes through the active `WorkspaceDoc`: a result that
+/// arrives after a tab switch waits here — its placeholder still drawn in the
+/// tab that asked — until that document is in front again.
+struct ImageImport {
+    window: WindowId,
+    document: Option<koru_core::DocumentId>,
+    recorded: crate::image_import::RecordedPlace,
+    /// The worker's answer, once it has given one.
+    done: Option<(
+        Vec<crate::image_import::Prepared>,
+        Vec<crate::image_import::Failure>,
+    )>,
 }
 
 /// One cross-workspace move handed to the single transfer worker.
@@ -1659,35 +1745,6 @@ fn snapshot_blob_hash(snapshot: &[u8]) -> Option<String> {
     }
 }
 
-/// One stable cache slot per file id. Prefixing the cleaned leaf avoids Windows
-/// device names while retaining the extension the OS uses to choose an app.
-fn temporary_open_path(id: koru_store_core::ids::DocumentId, name: &str) -> PathBuf {
-    let leaf = name
-        .rsplit(['/', '\\'])
-        .find(|part| !part.is_empty())
-        .unwrap_or("file");
-    let cleaned: String = leaf
-        .chars()
-        .map(|c| {
-            if c.is_control() || matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*') {
-                '_'
-            } else {
-                c
-            }
-        })
-        .take(180)
-        .collect();
-    let cleaned = if cleaned.trim_matches(['.', ' ']).is_empty() {
-        "file"
-    } else {
-        cleaned.trim_end_matches(['.', ' '])
-    };
-    std::env::temp_dir()
-        .join("koru-open")
-        .join(id.to_storage())
-        .join(format!("koru-{cleaned}"))
-}
-
 /// Open a workspace file's bytes: a shared link goes to the desktop URL
 /// handler; anything else is written to the temp cache and opened by type.
 fn open_file_bytes(
@@ -1703,15 +1760,16 @@ fn open_file_bytes(
         crate::url_file::OpenTarget::InvalidLink => {
             Err("This link has no URL to open.".to_string())
         }
-        crate::url_file::OpenTarget::File => {
-            let destination = temporary_open_path(id, name);
-            let parent = destination
-                .parent()
-                .ok_or_else(|| "the temporary file has no parent".to_string())?;
-            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-            std::fs::write(&destination, bytes).map_err(|e| e.to_string())?;
-            koru_window::open_uri(destination.to_string_lossy().as_ref()).map_err(|e| e.to_string())
-        }
+        // The temporary copy, shared with the chat's attachments
+        // (`koru_window::open_bytes`).
+        crate::url_file::OpenTarget::File => koru_window::open_bytes_as_file(
+            &id.to_storage(),
+            name,
+            bytes,
+            koru_window::OpenAs::AsIs,
+        )
+        .map(|_| ())
+        .map_err(|e| e.to_string()),
     }
 }
 
@@ -2296,6 +2354,10 @@ struct App<H: Host> {
     /// one finishes what `restore` could only do against the registry's
     /// defaults — see [`View::adopt_startup_preferences`].
     settings_heard: bool,
+    /// The process's first window, drawn but not yet shown, waiting for the
+    /// settings' first answer so its first visible frame is the person's
+    /// (`reveal_if_due`).
+    pending_reveal: Option<PendingReveal>,
     background_start: bool,
     /// Keys this Koru process has seen pressed and not yet released. They are
     /// copied into a destination pane before a search-result focus handoff.
@@ -2401,7 +2463,13 @@ struct App<H: Host> {
     clipboard_image_tx: mpsc::Sender<ClipboardImageResult>,
     clipboard_image_rx: mpsc::Receiver<ClipboardImageResult>,
     clipboard_image_busy: bool,
-    pending_clipboard_image_pastes: VecDeque<Vec<(WindowId, PasteTarget)>>,
+    pending_clipboard_image_pastes: VecDeque<Vec<(WindowId, PasteTarget, ImageTicket)>>,
+    /// Images being read, decoded and stored off the loop
+    /// (`crate::image_import`), and every attachment between its gesture and
+    /// its insertion, by ticket.
+    image_importer: crate::image_import::ImageImporter,
+    image_imports: std::collections::BTreeMap<ImageTicket, ImageImport>,
+    next_image_ticket: u64,
     import_busy: bool,
     import_source: Option<WindowId>,
     /// The running content import's format token, for the completion event —
@@ -4833,14 +4901,23 @@ impl<H: Host> App<H> {
         let explicit_store_profile = cli::store_profile_from_args();
         let remembered_store_profile =
             explicit_store_profile.or_else(startup::selected_store_profile);
-        // No document is opened here: the remembered tabs are, below, and the
-        // workspace's first document only if none of them resolves.
         let open_store = |selected: Option<koru_core::ProfileId>| {
-            koru_workspace::fromstore::open_for_launch(
-                koru_workspace::fromstore::segment(),
-                gateway_root.as_deref(),
-                selected,
-                wanted,
+            selected.map_or_else(
+                || {
+                    koru_workspace::fromstore::open_from_store_preferring_empty(
+                        koru_workspace::fromstore::segment(),
+                        gateway_root.as_deref(),
+                        wanted,
+                    )
+                },
+                |selected| {
+                    koru_workspace::fromstore::open_from_store_profile_preferring_empty(
+                        koru_workspace::fromstore::segment(),
+                        gateway_root.as_deref(),
+                        selected,
+                        wanted,
+                    )
+                },
             )
         };
         // An explicit profile is strict. A remembered profile is a preference:
@@ -4912,26 +4989,13 @@ impl<H: Host> App<H> {
             // `NeedsProfile`; skipping that state would preserve stale windows,
             // tabs, and the last-selected Profile forever.
             let live_profiles = live_profile_ids_for_settings(launch);
-            // An open already read the whole catalog; only an empty Store
-            // (onboarding) has to ask. This was a second, identical round trip
-            // on a new connection before every first frame.
-            let read = match launch {
-                koru_workspace::fromstore::StoreLaunch::Open(opened) => {
-                    Ok(opened.all_workspaces.clone())
-                }
-                koru_workspace::fromstore::StoreLaunch::NeedsProfile => {
-                    client_at(gateway_root.as_deref())
-                        .and_then(|client| client.workspaces_including_deleted())
-                        .map(|workspaces| {
-                            workspaces
-                                .into_iter()
-                                .map(|workspace| WorkspaceId::from_uuid(workspace.id.as_uuid()))
-                                .collect::<HashSet<_>>()
-                        })
-                }
-            };
-            let live_workspaces = match read {
-                Ok(workspaces) => workspaces,
+            let live_workspaces = match client_at(gateway_root.as_deref())
+                .and_then(|client| client.workspaces_including_deleted())
+            {
+                Ok(workspaces) => workspaces
+                    .into_iter()
+                    .map(|workspace| WorkspaceId::from_uuid(workspace.id.as_uuid()))
+                    .collect::<HashSet<_>>(),
                 Err(error) => {
                     startup::fatal(&format!(
                         "Koru could not reconcile Profile settings safely:\n\n{error}"
@@ -5134,16 +5198,6 @@ Nothing was written. The store starts on demand, so this usually means it could 
         // The `&mut` borrow above has ended, so the document is available — and
         // it has to be: reopening a tab means building a view of a node.
         reopen_remembered_documents(&mut workspace, &settings);
-        // The launch's open fetched no document (`open_for_launch`), so the
-        // window has one only if a remembered tab resolved. Otherwise it gets
-        // what every other open gives it: the workspace's first document.
-        if workspace.on_store()
-            && workspace.active().is_none()
-            && let Err(error) = workspace.open_first_document()
-        {
-            startup::fatal(&format!("Koru could not open a document:\n\n{error}"));
-            return None;
-        }
         let span = timing::Span::start("restore tabs");
         view.restore(&workspace, &settings);
         span.stop();
@@ -5280,6 +5334,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
             println!("[Koru][share] could not create the share inbox: {error}");
         }
         let image_loader = crate::images::ImageLoader::spawn(&wake_proxy);
+        let image_importer = crate::image_import::ImageImporter::spawn(&wake_proxy);
         crate::spelling::spawn(&wake_proxy, cli::root_from_args());
         crate::diagram::spawn(&wake_proxy);
         let (clipboard_image_tx, clipboard_image_rx) = mpsc::channel();
@@ -5443,6 +5498,9 @@ Nothing was written. The store starts on demand, so this usually means it could 
             clipboard_image_rx,
             clipboard_image_busy: false,
             pending_clipboard_image_pastes: VecDeque::new(),
+            image_importer,
+            image_imports: std::collections::BTreeMap::new(),
+            next_image_ticket: 0,
             import_busy: false,
             import_source: None,
             import_format: None,
@@ -5488,6 +5546,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
             )),
             settings_link,
             settings_heard: false,
+            pending_reveal: None,
             background_start: cli::background_from_args(),
             down_keys: HashSet::new(),
             dictation,
@@ -5764,43 +5823,185 @@ Nothing was written. The store starts on demand, so this usually means it could 
         }
     }
 
-    /// Read, decode, store and hand an image file to the view. `convert` is the
-    /// node a `/image` command should turn into a picture; `None` means a file
-    /// dropped on the window, which becomes a brand-new image row.
-    fn import_image(&mut self, id: WindowId, convert: Option<NodeId>, path: PathBuf) -> bool {
-        let Some(img) = self.store_image_file(&path) else {
-            return false;
+    /// Attach an image file: `convert` is the node a `/image` command should
+    /// turn into a picture; `None` means a file dropped on the window, which
+    /// becomes a brand-new image row. Returns at once — the read, decode and
+    /// store run on the import worker, and the view shows a placeholder until
+    /// [`apply_image_import`](Self::apply_image_import) lands the node.
+    fn import_image(&mut self, id: WindowId, convert: Option<NodeId>, path: PathBuf) {
+        let place = match convert {
+            Some(node) => ImagePlace::Convert(node),
+            None => ImagePlace::Append,
         };
-        let ws = &mut self.runtime.workspace.ws;
-        let before = ws.version();
-        if let Some(pane) = self.panes.get_mut(&id) {
-            match convert {
-                Some(node) => pane
-                    .view
-                    .insert_image(ws, node, &img.hash, &img.mime, img.width, img.height),
-                None => pane
-                    .view
-                    .append_image(ws, &img.hash, &img.mime, img.width, img.height),
-            }
-        }
-        let changed = ws.version() != before;
-        self.request_redraw(id);
-        changed
+        let ticket = self.begin_image_import(id, place);
+        self.submit_image_import(ticket, vec![crate::image_import::ImageSource::File(path)]);
     }
 
-    /// Read, decode and store one image file, returning the paste-ready block a
-    /// view builds a row from. `None` if the file is not a recognised image, or
-    /// there is no store (an in-memory workspace) to keep its bytes.
-    fn store_image_file(&mut self, path: &std::path::Path) -> Option<PastedImage> {
-        let bytes = std::fs::read(path).ok()?;
-        let mut img = self.store_image_bytes(&bytes)?;
-        // Name it after the file stem (e.g. "photo.png" → "photo") so the
-        // explore column shows a real name, not "Image 1".
-        img.name = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .map(|s| s.to_string());
-        Some(img)
+    /// Record an attachment and show its placeholder. Nothing is read here and
+    /// the document is not touched.
+    fn begin_image_import(&mut self, id: WindowId, place: ImagePlace) -> ImageTicket {
+        self.next_image_ticket += 1;
+        let ticket = ImageTicket(self.next_image_ticket);
+        let ws = &self.runtime.workspace.ws;
+        if let Some(pane) = self.panes.get_mut(&id) {
+            pane.view.begin_image_import(ws, ticket, &place);
+        }
+        self.image_imports.insert(
+            ticket,
+            ImageImport {
+                window: id,
+                document: self.runtime.workspace.active(),
+                recorded: crate::image_import::RecordedPlace::record(ws, place),
+                done: None,
+            },
+        );
+        self.request_redraw(id);
+        ticket
+    }
+
+    /// Hand an attachment's sources to the worker, with the store of the
+    /// document in front *now* — the one the gesture was made in.
+    fn submit_image_import(
+        &mut self,
+        ticket: ImageTicket,
+        sources: Vec<crate::image_import::ImageSource>,
+    ) {
+        let Some(window) = self.image_imports.get(&ticket).map(|import| import.window) else {
+            return;
+        };
+        let refuse = |this: &mut Self, why: &str| {
+            if let Some(import) = this.image_imports.get_mut(&ticket) {
+                import.done = Some((Vec::new(), vec![crate::image_import::Failure(why.into())]));
+            }
+        };
+        // Without a store there is nowhere to keep the bytes — an in-memory
+        // workspace, or a store that is not answering. Said, not swallowed:
+        // the person just watched a placeholder appear.
+        let Some(blobs) = self.runtime.workspace.active_blobs() else {
+            clip_dbg("image_import: the active document has no blob store");
+            refuse(self, "the document has no store to keep images in");
+            return;
+        };
+        let mip_side = self
+            .panes
+            .get(&window)
+            .and_then(|pane| pane.view.image_mip_side());
+        let job = crate::image_import::ImageJob {
+            ticket,
+            sources,
+            blobs: Box::new(blobs),
+            mip_side,
+        };
+        if self.image_importer.submit(job).is_err() {
+            refuse(self, "the image worker is not running");
+        }
+    }
+
+    /// Take the worker's answers, and land every attachment whose document is
+    /// in front. Returns whether a view has something new to draw.
+    fn drain_image_imports(&mut self) -> bool {
+        let mut redraw = false;
+        for event in self.image_importer.drain() {
+            match event {
+                crate::image_import::ImportEvent::Sized { ticket, sizes } => {
+                    let Some(window) = self.image_imports.get(&ticket).map(|i| i.window) else {
+                        continue;
+                    };
+                    if let Some(pane) = self.panes.get_mut(&window) {
+                        pane.view.size_image_import(ticket, &sizes);
+                        self.request_redraw(window);
+                        redraw = true;
+                    }
+                }
+                crate::image_import::ImportEvent::Done {
+                    ticket,
+                    images,
+                    failures,
+                } => {
+                    if let Some(import) = self.image_imports.get_mut(&ticket) {
+                        import.done = Some((images, failures));
+                    }
+                }
+            }
+        }
+        let active = self.runtime.workspace.active();
+        let ready: Vec<ImageTicket> = self
+            .image_imports
+            .iter()
+            .filter(|(_, import)| import.done.is_some() && import.document == active)
+            .map(|(ticket, _)| *ticket)
+            .collect();
+        for ticket in ready {
+            redraw |= self.apply_image_import(ticket);
+        }
+        redraw
+    }
+
+    /// Land one finished attachment: the pixels into the cache, the node into
+    /// the document at its re-mapped place, the placeholder away — and a
+    /// report for whatever could not be added. Always runs with the
+    /// attachment's own document in front.
+    fn apply_image_import(&mut self, ticket: ImageTicket) -> bool {
+        let Some(import) = self.image_imports.remove(&ticket) else {
+            return false;
+        };
+        let (prepared, failures) = import.done.unwrap_or_default();
+        let scope = self.image_scope_id();
+        let mut images = Vec::with_capacity(prepared.len());
+        for one in prepared {
+            self.images.insert(scope, &one.image.hash, one.brush);
+            if let Some((size, mip)) = one.mip {
+                self.images.insert_mip(&one.image.hash, size, mip);
+            }
+            images.push(one.image);
+        }
+        if !images.is_empty() {
+            // The brushes are in the cache already; what this is for is the
+            // node about to reference them, which a later scan has to see —
+            // the same reason `store_image_bytes` sets it.
+            self.images_dirty = true;
+            let place =
+                crate::image_import::map_place(&self.runtime.workspace.ws, &import.recorded);
+            let ws = &mut self.runtime.workspace.ws;
+            if let Some(pane) = self.panes.get_mut(&import.window) {
+                // One undo step of its own: whatever was typed while the image
+                // loaded closes before it, and the next keystroke opens after.
+                ws.checkpoint();
+                pane.view.finish_image_import(ws, ticket, place, &images);
+                ws.checkpoint();
+            } else {
+                clip_dbg("image_import: the window that asked has closed");
+            }
+        }
+        for pane in self.panes.values_mut() {
+            if pane.view.end_image_import(ticket) {
+                pane.needs_frame.set(true);
+                pane.window.request_redraw();
+            }
+        }
+        self.request_redraw(import.window);
+        if !failures.is_empty() {
+            self.report_image_failures(import.window, !images.is_empty(), &failures);
+        }
+        true
+    }
+
+    /// Say that a picture could not be added, in the window that asked.
+    fn report_image_failures(
+        &mut self,
+        window: WindowId,
+        some_landed: bool,
+        failures: &[crate::image_import::Failure],
+    ) {
+        let error =
+            crate::image_import::failure_report(koru_i18n::current(), some_landed, failures);
+        if let Some(pane) = self.panes.get_mut(&window)
+            && pane.view.report_error(error.clone())
+        {
+            pane.window.request_redraw();
+            return;
+        }
+        self.report(error);
     }
 
     /// Decode, store and cache one image's raw bytes: the shared work of
@@ -5852,13 +6053,16 @@ Nothing was written. The store starts on demand, so this usually means it could 
         })
     }
 
-    /// Turn a worker's typed clipboard acquisition into document image blocks.
-    /// Platform reads and RGBA→PNG normalization have already finished; only
-    /// document-owned blob insertion and rich-format interpretation happen here.
-    fn store_clipboard_images(
+    /// Turn a worker's typed clipboard acquisition into the images to attach.
+    /// Platform reads and RGBA→PNG normalization have already finished on the
+    /// clipboard worker; reading files, decoding and storing happen on the
+    /// image-import worker. Only the HTML fallback's clipboard read and parse
+    /// stay here, as they always have.
+    fn clipboard_image_sources(
         &mut self,
         acquired: Result<koru_clipboard::ImagePayload, koru_clipboard::Error>,
-    ) -> Vec<PastedImage> {
+    ) -> Vec<crate::image_import::ImageSource> {
+        use crate::image_import::ImageSource;
         let mut out = Vec::new();
         match acquired {
             Ok(koru_clipboard::ImagePayload::Files(paths)) => {
@@ -5866,27 +6070,29 @@ Nothing was written. The store starts on demand, so this usually means it could 
                     "read_clipboard_images: file_list_paths={}",
                     paths.len()
                 ));
-                for path in paths {
-                    if let Some(image) = self.store_image_file(&path) {
-                        out.push(image);
-                    }
-                }
-                if !out.is_empty() {
-                    clip_dbg(format!(
-                        "read_clipboard_images: {} from file list",
-                        out.len()
-                    ));
-                    return out;
-                }
+                // Only the ones named like pictures — the name is all that can
+                // be read here without touching the disk. A copied PDF is not
+                // an image that failed; it falls through to the other readings
+                // below, as it always did. A picture that will not decode is
+                // reported by the worker.
+                out.extend(
+                    paths
+                        .into_iter()
+                        .filter(|path| dropped_image(path))
+                        .map(ImageSource::File),
+                );
             }
             Ok(koru_clipboard::ImagePayload::Bitmap(bitmap)) => {
-                if let Some(image) = self.store_image_bytes(&bitmap.bytes) {
-                    clip_dbg(format!(
-                        "read_clipboard_images: bitmap={}x{}",
-                        bitmap.width, bitmap.height
-                    ));
-                    out.push(image);
-                }
+                clip_dbg(format!(
+                    "read_clipboard_images: bitmap={}x{}",
+                    bitmap.width, bitmap.height
+                ));
+                out.push(ImageSource::Bytes {
+                    bytes: bitmap.bytes,
+                    width: None,
+                    height: None,
+                    name: None,
+                });
             }
             Ok(koru_clipboard::ImagePayload::Empty) => {
                 clip_dbg("read_clipboard_images: no file list or bitmap")
@@ -5896,41 +6102,31 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 error.code
             )),
         }
-        // 3. CF_HTML data: images (Google Docs standalone image — no CF_DIB, only
+        // CF_HTML data: images (Google Docs standalone image — no CF_DIB, only
         // a data: URI in HTML Format). This is the `Nothing` path (image-only
         // clipboard), so only pictures are taken, not text.
-        if out.is_empty() {
-            if let Some(html) = crate::clipboard_html::html_bytes() {
+        if out.is_empty()
+            && let Some(html) = crate::clipboard_html::html_bytes()
+        {
+            clip_dbg(format!(
+                "read_clipboard_images: {} bytes of HTML Format (fallback)",
+                html.len()
+            ));
+            if let Ok(html) = std::str::from_utf8(&html)
+                && let Some(raw) = crate::clipboard_html::extract(html)
+            {
                 clip_dbg(format!(
-                    "read_clipboard_images: {} bytes of HTML Format (fallback)",
-                    html.len()
+                    "read_clipboard_images: CF_HTML fallback found {} block(s)",
+                    raw.len()
                 ));
-                if let Ok(html) = std::str::from_utf8(&html) {
-                    if let Some(raw) = crate::clipboard_html::extract(html) {
-                        clip_dbg(format!(
-                            "read_clipboard_images: CF_HTML fallback found {} block(s)",
-                            raw.len()
-                        ));
-                        for block in raw {
-                            if let crate::clipboard_rtf::RawBlock::Picture(p) = block {
-                                match self.store_image_bytes(&p.bytes) {
-                                    Some(mut img) => {
-                                        if let Some(w) = p.width {
-                                            img.width = Some(w);
-                                        }
-                                        if let Some(h) = p.height {
-                                            img.height = Some(h);
-                                        }
-                                        img.name = p.name.clone();
-                                        out.push(img);
-                                    }
-                                    None => clip_dbg(format!(
-                                        "read_clipboard_images: CF_HTML image decode failed ({} bytes)",
-                                        p.bytes.len()
-                                    )),
-                                }
-                            }
-                        }
+                for block in raw {
+                    if let crate::clipboard_rtf::RawBlock::Picture(p) = block {
+                        out.push(ImageSource::Bytes {
+                            bytes: p.bytes,
+                            width: p.width,
+                            height: p.height,
+                            name: p.name,
+                        });
                     }
                 }
             }
@@ -5947,6 +6143,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
         let Some(targets) = self.pending_clipboard_image_pastes.pop_front() else {
             return;
         };
+        let tickets: Vec<ImageTicket> = targets.iter().map(|(_, _, ticket)| *ticket).collect();
         let tx = self.clipboard_image_tx.clone();
         let proxy = self.wake_proxy.clone();
         self.clipboard_image_busy = true;
@@ -5962,51 +6159,61 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 "clipboard image worker could not start kind={:?}",
                 error.kind()
             ));
+            // The gesture's placeholders were already up; with no read coming
+            // there is nothing for them to wait for.
+            for ticket in tickets {
+                self.image_imports.remove(&ticket);
+                for pane in self.panes.values_mut() {
+                    pane.view.end_image_import(ticket);
+                }
+            }
         }
     }
 
-    /// Apply completed acquisitions on the event thread. The result contains no
-    /// borrowed OS storage and no raw RGBA, so this path never waits for PNG
-    /// encoding or the clipboard owner.
+    /// Hand completed acquisitions to the image-import worker. The result
+    /// contains no borrowed OS storage and no raw RGBA, and nothing here
+    /// decodes or stores: each gesture's placeholder has been up since the
+    /// paste, and stays until its images land.
     fn drain_clipboard_image_reads(&mut self) -> bool {
         let completed: Vec<_> = self.clipboard_image_rx.try_iter().collect();
         let mut pasted = false;
         for completed in completed {
             self.clipboard_image_busy = false;
-            let images = self.store_clipboard_images(completed.result);
-            for (id, target) in completed.targets {
+            let sources = self.clipboard_image_sources(completed.result);
+            for (id, target, ticket) in completed.targets {
                 clip_dbg(format!(
                     "image_paste: anchor={:?} replacing={}",
                     target.anchor,
                     target.replacing.len()
                 ));
-                if images.is_empty() {
-                    // Explicit Markdown and image-only HTML do not necessarily
-                    // publish a bitmap. Their interpretation remains document
-                    // policy and is the existing fallback.
-                    let blocks = self.read_rich_blocks("");
-                    if blocks.is_empty() {
-                        clip_dbg("non_text_paste: no images or rich text found");
-                        continue;
-                    }
-                    let ws = &mut self.runtime.workspace.ws;
-                    if let Some(pane) = self.panes.get_mut(&id) {
-                        pane.view.paste_rich(ws, Some(target), &blocks);
-                        clip_dbg(format!(
-                            "non_text_paste: paste_rich {} block(s)",
-                            blocks.len()
-                        ));
-                        pasted = true;
-                    }
+                if !sources.is_empty() {
+                    self.submit_image_import(ticket, sources.clone());
+                    clip_dbg(format!(
+                        "image_paste: {} image(s) to the worker",
+                        sources.len()
+                    ));
+                    continue;
+                }
+                // Nothing that is a picture: no placeholder to keep.
+                self.image_imports.remove(&ticket);
+                for pane in self.panes.values_mut() {
+                    pane.view.end_image_import(ticket);
+                }
+                // Explicit Markdown and image-only HTML do not necessarily
+                // publish a bitmap. Their interpretation remains document
+                // policy and is the existing fallback.
+                let blocks = self.read_rich_blocks("");
+                if blocks.is_empty() {
+                    clip_dbg("non_text_paste: no images or rich text found");
                     self.request_redraw(id);
                     continue;
                 }
                 let ws = &mut self.runtime.workspace.ws;
                 if let Some(pane) = self.panes.get_mut(&id) {
-                    pane.view.paste_images(ws, Some(target), &images);
+                    pane.view.paste_rich(ws, Some(target), &blocks);
                     clip_dbg(format!(
-                        "image_paste: paste_images {} image(s)",
-                        images.len()
+                        "non_text_paste: paste_rich {} block(s)",
+                        blocks.len()
                     ));
                     pasted = true;
                 }
@@ -6252,6 +6459,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
         // future image mutation cannot become local-only by omitting that call.
         let document_before = self.runtime.workspace.ws.version();
         let mut pasted = self.drain_clipboard_image_reads();
+        pasted |= self.drain_image_imports();
         // Attachment pill activations (open / reveal / save).
         let file_actions: Vec<(WindowId, koru_core::DocumentId, crate::FileAction)> = self
             .panes
@@ -6432,6 +6640,17 @@ Nothing was written. The store starts on demand, so this usually means it could 
             ));
         }
         if !pastes.is_empty() {
+            // The placeholder goes up now, before the clipboard is even read:
+            // that read is a worker's too, and for a large bitmap it is the
+            // first of the waits.
+            let pastes = pastes
+                .into_iter()
+                .map(|(id, target)| {
+                    let ticket =
+                        self.begin_image_import(id, ImagePlace::Paste(Some(target.clone())));
+                    (id, target, ticket)
+                })
+                .collect();
             self.pending_clipboard_image_pastes.push_back(pastes);
             self.start_clipboard_image_read();
         }
@@ -6799,8 +7018,14 @@ Nothing was written. The store starts on demand, so this usually means it could 
         // ways, and one attribute fixes all of them: no traffic lights, square
         // corners where every other app is rounded, no resize border (winit
         // does not implement `drag_resize_window` there — see `resize`), and no
-        // native drag. AppKit owns a ~28 px strip above our caption, which is
-        // exactly the bar a Mac user expects to find them in.
+        // native drag.
+        //
+        // **But the titlebar is transparent, with a full-size content view**,
+        // so the scene runs to the top edge and there is no 28 px strip of
+        // AppKit's above the caption. The lights sit in the lane instead, in
+        // the slot the Koru mark takes on Windows and Linux, and
+        // `traffic_lights::place` centres them there — after creation, and
+        // again after each event that follows an AppKit titlebar layout.
         //
         // The title is hidden rather than shown: the tab strip below already
         // says what is open, and a second copy centred above it is noise. The
@@ -6819,12 +7044,16 @@ Nothing was written. The store starts on demand, so this usually means it could 
         #[cfg(target_os = "macos")]
         {
             use winit::platform::macos::WindowAttributesExtMacOS;
-            attrs = attrs
-                .with_titlebar_transparent(false)
-                .with_title_hidden(true);
-            if global_search {
-                attrs = attrs.with_titlebar_buttons_hidden(true);
-            }
+            attrs = attrs.with_title_hidden(true);
+            attrs = if global_search {
+                attrs
+                    .with_titlebar_transparent(false)
+                    .with_titlebar_buttons_hidden(true)
+            } else {
+                attrs
+                    .with_titlebar_transparent(true)
+                    .with_fullsize_content_view(true)
+            };
         }
         #[cfg(not(target_os = "macos"))]
         {
@@ -6930,6 +7159,12 @@ Nothing was written. The store starts on demand, so this usually means it could 
         // follows maximised only so a snap keeps its drop shadow.
         let flush = hairline::edges(&window);
         frame::apply(&window, theme::p().panel_border, window.is_maximized());
+        koru_window::traffic_lights::place(&window, f64::from(theme::CAPTION_H));
+        // The tab strip now sits where AppKit's titlebar was; a tab drag must
+        // not also move the window (`traffic_lights::shell_owns_drag`).
+        if !global_search {
+            koru_window::traffic_lights::shell_owns_drag(&window);
+        }
         let size = window.inner_size();
 
         let span = timing::Span::start("gpu surface");
@@ -7083,12 +7318,6 @@ Nothing was written. The store starts on demand, so this usually means it could 
         // Everything a new window inherits from the app is applied here.
         self.sync_pinned(id);
         self.sync_viewport(id);
-        // **Including which workspace it is showing, before its first frame.**
-        // Left to the maintenance poll, a cold launch drew its first frames
-        // with no context — a placeholder "Workspace" in the switcher — and a
-        // taskbar *New document* had nothing to decide its prompt from.
-        // In-memory caches only; the poll's Store refresh is not asked for here.
-        self.sync_pane_context();
         id
     }
 
@@ -7322,23 +7551,30 @@ Nothing was written. The store starts on demand, so this usually means it could 
     /// process, so this runs after both sessions have been polled.
     fn sync_titles(&mut self) {
         let profile = self.runtime.profile.name();
-        let app_title = profiled_window_title(&self.name, profile.as_deref(), &self.instance.slot);
         let search_title = profiled_window_title(
             &format!("{} Search", self.name),
             profile.as_deref(),
             &self.instance.slot,
         );
+        // A workspace window is titled by its workspace and its active tab;
+        // the app's name only stands in while no workspace is open.
+        let workspace = self
+            .runtime
+            .workspace
+            .current()
+            .and_then(|id| self.runtime.profile.workspace(id))
+            .map(|entry| entry.name)
+            .filter(|name| !name.trim().is_empty());
+        let subject = workspace.as_deref().unwrap_or(&self.name);
         for pane in self.panes.values_mut() {
             let want = if pane.view.is_global_search() {
                 search_title.clone()
-            } else if let Some(root) = pane.view.document_root() {
-                profiled_window_title(
-                    &koru_workspace::name_of(&self.runtime.workspace.ws, root),
-                    profile.as_deref(),
+            } else {
+                workspace_window_title(
+                    subject,
+                    pane.view.active_tab_title().as_deref(),
                     &self.instance.slot,
                 )
-            } else {
-                app_title.clone()
             };
             if pane.title != want {
                 pane.window.set_title(&want);
@@ -8684,8 +8920,13 @@ Nothing was written. The store starts on demand, so this usually means it could 
             }
             PaneRequest::OpenSupport => self.open_support(event_loop),
             PaneRequest::OpenChatLink { chat, block } => {
-                self.host.open_chat_link(chat, block);
+                self.open_chat(&chat, block.as_deref());
             }
+            PaneRequest::OpenChatElsewhere {
+                chat,
+                block,
+                profile,
+            } => self.host.open_chat_elsewhere(chat, block, profile),
             PaneRequest::Navigate {
                 target,
                 match_text,
@@ -8707,6 +8948,9 @@ Nothing was written. The store starts on demand, so this usually means it could 
             }
             PaneRequest::NewWorkspace(name) => self.new_workspace(&name),
             PaneRequest::CreateDocument(title) => self.create_document(source, &title, false),
+            PaneRequest::CreateDocumentIn { parent, title } => {
+                self.create_child_document(source, parent, &title)
+            }
             PaneRequest::CreateCanvas(title) => self.create_document(source, &title, true),
             PaneRequest::NewWorkspaceIn(owner, name) => self.new_workspace_in(owner, &name),
             PaneRequest::CreateLinkedDocument(title) => self.create_linked_document(source, &title),
@@ -11375,12 +11619,42 @@ Nothing was written. The store starts on demand, so this usually means it could 
     /// listing is pushed before the document is announced, so the container
     /// already knows the new document is a canvas when it builds its tab.
     fn create_document(&mut self, source: WindowId, title: &str, canvas: bool) {
+        if let Err(e) = self.ensure_live_workspace() {
+            self.settle_created_document(source, Err(no_workspace_error(e)), canvas);
+            return;
+        }
         let created = if canvas {
             self.runtime.workspace.create_canvas(title)
         } else {
             let after = self.runtime.workspace.active();
             self.runtime.workspace.create_document_after(title, after)
         };
+        self.settle_created_document(source, created, canvas);
+    }
+
+    /// A document made inside another — a sidebar row's `+`
+    /// (`PaneRequest::CreateDocumentIn`): the same round trip as
+    /// [`create_document`](Self::create_document), placed as the row's last
+    /// child.
+    fn create_child_document(
+        &mut self,
+        source: WindowId,
+        parent: koru_core::DocumentId,
+        title: &str,
+    ) {
+        let created = self.runtime.workspace.create_document_in(title, parent);
+        self.settle_created_document(source, created, false);
+    }
+
+    /// What follows a creation, made or refused: the new document opens and
+    /// every pane hears the manifest changed, or the asking view and the
+    /// person are told nothing was changed.
+    fn settle_created_document(
+        &mut self,
+        source: WindowId,
+        created: Result<koru_core::DocumentId, koru_store_core::errors::Error>,
+        canvas: bool,
+    ) {
         match created {
             Ok(id) => {
                 if let Err(e) = self.runtime.workspace.open_document(id) {
@@ -11422,6 +11696,18 @@ Nothing was written. The store starts on demand, so this usually means it could 
     /// Create from the entity picker, replace its `@query` with the real routed
     /// pill in the source document, then finish on the newly created page.
     fn create_linked_document(&mut self, source: WindowId, title: &str) {
+        // A linked page is made from inside a document, so a workspace is
+        // normally open; the guard is for the one that is not.
+        if let Err(e) = self.ensure_live_workspace() {
+            self.report(
+                ErrorReport::new(
+                    "Couldn't create that document",
+                    "The @ text was left alone.",
+                )
+                .with_details(e),
+            );
+            return;
+        }
         let origin = self.runtime.workspace.active();
         let profile = self.runtime.profile.id();
         let workspace = self.runtime.current;
@@ -12473,11 +12759,6 @@ Nothing was written. The store starts on demand, so this usually means it could 
     }
 
     fn new_workspace(&mut self, name: &str) {
-        // **The store, not the profile folder.** `open::create_workspace`
-        // registers a workspace in a `ProfileDoc`, which since the cutover is a
-        // view rebuilt from the store every launch — so the workspace existed
-        // only in this window. It showed in the switcher and every later call
-        // naming it answered 404, because the store had never heard of it.
         let Some(owner) = self.runtime.profile.id() else {
             self.report(ErrorReport::new(
                 "Couldn't create a workspace",
@@ -12485,34 +12766,82 @@ Nothing was written. The store starts on demand, so this usually means it could 
             ));
             return;
         };
-        match koru_workspace::fromstore::create_workspace(
-            koru_workspace::fromstore::segment(),
-            self.gateway_root.as_deref(),
-            owner,
-            name,
-        )
-        .map_err(|e| e.to_string())
-        .and_then(|id| {
-            // Keep the view in step so the switcher lists it before the next
-            // launch rebuilds the view from the store.
-            self.runtime
-                .profile
-                .ensure_workspace(id, &name, koru_workspace::open::now_ms())
-                .map(|_| id)
-                .map_err(|e| e.to_string())
-        }) {
-            Ok(id) => {
-                crate::events_host::workspace_created(
-                    id.as_uuid(),
-                    crate::events_host::WorkspaceSource::Manual,
-                );
-                self.switch_workspace(id)
-            }
+        match self.create_workspace_in_open_profile(owner, name) {
+            Ok(id) => self.switch_workspace(id),
             Err(e) => startup::fatal(&format!(
                 "Koru could not create a workspace:
 
 {e}"
             )),
+        }
+    }
+
+    /// Register a workspace in the store under the open Profile, without
+    /// switching to it.
+    ///
+    /// **The store, not the profile folder.** `open::create_workspace`
+    /// registers a workspace in a `ProfileDoc`, which since the cutover is a
+    /// view rebuilt from the store every launch — so the workspace existed
+    /// only in this window. It showed in the switcher and every later call
+    /// naming it answered 404, because the store had never heard of it.
+    fn create_workspace_in_open_profile(
+        &mut self,
+        owner: koru_core::ProfileId,
+        name: &str,
+    ) -> Result<koru_core::WorkspaceId, String> {
+        let id = koru_workspace::fromstore::create_workspace(
+            koru_workspace::fromstore::segment(),
+            self.gateway_root.as_deref(),
+            owner,
+            name,
+        )
+        .map_err(|e| e.to_string())?;
+        // Keep the view in step so the switcher lists it before the next
+        // launch rebuilds the view from the store.
+        self.runtime
+            .profile
+            .ensure_workspace(id, name, koru_workspace::open::now_ms())
+            .map_err(|e| e.to_string())?;
+        crate::events_host::workspace_created(
+            id.as_uuid(),
+            crate::events_host::WorkspaceSource::Manual,
+        );
+        Ok(id)
+    }
+
+    /// Make sure a document has somewhere to go: when the open Profile has no
+    /// workspace on the store, create one named [`DEFAULT_WORKSPACE_NAME`] and
+    /// switch to it. True when a live workspace is open afterwards.
+    ///
+    /// **Why a document asks for a workspace and not the person.** A Profile
+    /// can open with no workspace at all — provisioned by an account before
+    /// any content existed, restored from one, or left by an onboarding that
+    /// stopped between the Profile and its first workspace — and onboarding
+    /// only runs when there is no Profile. The window then sits on an
+    /// in-memory placeholder that no document can be registered in, and
+    /// every way of making a page (a draft's first keystroke, the command
+    /// bar, the `@` picker, a canvas) failed with "this workspace is not open
+    /// on a store", once per keystroke for a draft. Someone who asked for a
+    /// document asked for a place to put it; naming that place can wait.
+    ///
+    /// The store calls are blocking and `switch_workspace` keeps draft tabs,
+    /// so the creation that follows in the same request lands in the new
+    /// workspace with nothing to wait for.
+    fn ensure_live_workspace(&mut self) -> Result<(), String> {
+        if self.runtime.live_workspace {
+            return Ok(());
+        }
+        let owner = self
+            .runtime
+            .profile
+            .id()
+            .ok_or_else(|| "This profile has no identity.".to_owned())?;
+        let id = self.create_workspace_in_open_profile(owner, DEFAULT_WORKSPACE_NAME)?;
+        self.switch_workspace(id);
+        if self.runtime.live_workspace {
+            Ok(())
+        } else {
+            Err("The new workspace could not be opened.".to_owned())
         }
     }
 
@@ -12915,7 +13244,6 @@ Nothing was written. The store starts on demand, so this usually means it could 
             mut workspace,
             current,
             has_workspace,
-            all_workspaces: _,
         } = opened;
         let Some(incoming_profile) = profile.id() else {
             self.report(ErrorReport::new(
@@ -13139,7 +13467,13 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 .runtime
                 .settings
                 .pinned_tab
-                .and_then(|i| self.runtime.settings.pinned_tabs.get(i).map(|p| p.document))
+                .and_then(|i| {
+                    self.runtime
+                        .settings
+                        .pinned_tabs
+                        .get(i)
+                        .and_then(|p| p.document())
+                })
                 .or_else(|| {
                     self.runtime
                         .settings
@@ -13153,7 +13487,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
                     .settings
                     .pinned_tabs
                     .iter()
-                    .find(|p| p.document == doc)
+                    .find(|p| p.document() == Some(doc))
                     .map(|p| p.workspace)
                     .or_else(|| {
                         self.runtime
@@ -13235,8 +13569,31 @@ Nothing was written. The store starts on demand, so this usually means it could 
         }
     }
 
-    /// The theme is process-global and baked into every layout, so a flip in one
-    /// window invalidates all of them.
+    /// Icon identities and slots do not change; repaint without document reflow.
+    fn repaint_icons(&self) {
+        for pane in self.panes.values() {
+            pane.needs_frame.set(true);
+            pane.window.request_redraw();
+        }
+    }
+
+    /// After an event that may have moved or ended a Settings preview: lay
+    /// out again when text moved, repaint when only the icons' artwork did.
+    /// Answers whether anything was done.
+    fn show_appearance_change(&mut self, before: &AppearanceShown) -> bool {
+        let now = AppearanceShown::now();
+        if now.typography_moved(before) {
+            self.invalidate_everywhere();
+            true
+        } else if now.icon_paint_moved(before) {
+            self.repaint_icons();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// The theme is baked into layouts, so a flip invalidates every window.
     fn invalidate_everywhere(&mut self) {
         for pane in self.panes.values_mut() {
             pane.view.invalidate();
@@ -13333,14 +13690,26 @@ Nothing was written. The store starts on demand, so this usually means it could 
     /// authority last had — the click moved the live value, then the next
     /// poll wrote the stored one back over it.
     fn capture_preferences(&mut self) {
+        // The choice, not the pack drawn: following the default stays `None`.
+        self.runtime.settings.icon_pack = koru_draw::icons::chosen_pack();
         self.runtime.settings.theme = theme::theme_preference();
         self.runtime.settings.caret_color = theme::caret_color();
         self.runtime.settings.caret_width = theme::caret_width();
         self.runtime.settings.caret_height = theme::caret_height();
-        self.runtime.settings.font = theme::ui_font();
-        self.runtime.settings.body_font = theme::body_font();
-        self.runtime.settings.headings_font = theme::headings_font();
-        self.runtime.settings.code_font = theme::code_font();
+        // The fonts chosen, not one Settings is previewing.
+        // What each role is set to — never read back from the face, which
+        // cannot tell following the default from choosing its family, nor
+        // keep the name of an installed family missing here.
+        self.runtime.settings.font = theme::font_setting(theme::FontSlot::Ui);
+        self.runtime.settings.body_font = theme::font_setting(theme::FontSlot::Body);
+        self.runtime.settings.headings_font = theme::font_setting(theme::FontSlot::Headings);
+        self.runtime.settings.code_font = theme::font_setting(theme::FontSlot::Code);
+        // Following the app font stays following: the setting, not the face.
+        self.runtime.settings.chat_font = theme::font_setting(theme::FontSlot::Chat);
+        // The size chosen, not one Settings is previewing; `None` follows.
+        self.runtime.settings.doc_text_size = theme::chosen_doc_text_size();
+        self.runtime.settings.base_color_light = theme::base_color(false);
+        self.runtime.settings.base_color_dark = theme::base_color(true);
         self.runtime.settings.density = theme::density();
         self.runtime.settings.view_mode = theme::default_view_mode();
         self.runtime.settings.canvas_bg = theme::default_canvas_bg();
@@ -13429,6 +13798,22 @@ Nothing was written. The store starts on demand, so this usually means it could 
             // remote edit that is stale.
             pane.window.request_redraw();
         }
+    }
+
+    /// **Open a chat as a tab in the container window** — a chat hit in a
+    /// search window, or a `koru://chat/…` link or overlay hit the Agent
+    /// routed to this process. The container is the window that holds chat
+    /// tabs; it comes forward with the chat.
+    fn open_chat(&mut self, chat: &str, block: Option<&str>) {
+        self.show_from_tray();
+        if let Some(id) = self.container_pane()
+            && let Some(pane) = self.panes.get_mut(&id)
+            && pane.view.open_chat_tab(chat, block)
+        {
+            pane.window.focus_window();
+            pane.window.request_redraw();
+        }
+        activate_app();
     }
 
     /// The pane an Agents ask lands in when no pane names a better one: the
@@ -13912,9 +14297,19 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 }
             }
         }
+        let icons = section
+            .icon_pack
+            .map(|pack| koru_draw::icons::IconPack::parse(pack.token()));
+        let icons_moved = self.runtime.settings.icon_pack != icons;
+        self.runtime.settings.icon_pack = icons;
         if !crate::preferences::adopt(&section, &mut self.runtime.settings) {
+            if icons_moved {
+                koru_draw::icons::set_icon_pack_setting(icons);
+                self.repaint_icons();
+            }
             return;
         }
+        let was_shown = AppearanceShown::now();
         // Zoom before the globals: `rezoom` compares against the live value and
         // is the one path that re-sizes every viewport.
         self.rezoom(self.runtime.settings.zoom);
@@ -13930,6 +14325,13 @@ Nothing was written. The store starts on demand, so this usually means it could 
             }
         }
         self.apply_theme_preference();
+        // **A font or size chosen in another workspace lays out here too.**
+        // `apply_theme_preference` invalidates only when light or dark paint
+        // moved, so typography that arrived from the authority was applied to
+        // the globals and then drawn from stale layouts until something else
+        // happened to invalidate them. A base color that arrived is paint
+        // only, so it repaints without a layout.
+        self.show_appearance_change(&was_shown);
     }
 
     /// Pin/unpin one window above other windows. Per-window: only the window
@@ -14737,6 +15139,36 @@ Nothing was written. The store starts on demand, so this usually means it could 
         }
     }
 
+    /// Show the first window when its settings have answered or the budget
+    /// has passed, exactly once.
+    fn reveal_if_due(&mut self, now: Instant) {
+        let Some(window) = reveal_due(self.pending_reveal.as_ref(), self.settings_heard, now)
+        else {
+            return;
+        };
+        self.pending_reveal = None;
+        let elapsed = timing::started_at().elapsed().as_millis();
+        if self.settings_heard {
+            tracing::info!(
+                target: "koru::startup",
+                "first window revealed after settings in {elapsed}ms"
+            );
+        } else {
+            tracing::info!(
+                target: "koru::startup",
+                "first window revealed at the budget ({elapsed}ms) with defaults"
+            );
+        }
+        self.reveal_and_focus(window);
+    }
+
+    fn reveal_and_focus(&mut self, id: WindowId) {
+        self.reveal_pane(id);
+        if let Some(pane) = self.panes.get(&id) {
+            pane.window.focus_window();
+        }
+    }
+
     /// Draw a pane's first frame into its still-hidden window, then show it —
     /// maximised first when the session says so.
     ///
@@ -14755,10 +15187,6 @@ Nothing was written. The store starts on demand, so this usually means it could 
         // window has been on screen, which is the boundary a later plan's
         // "was this ever visible" questions are asked against.
         pane.access.revealed();
-        // Showing a window activates it, and the first activation on a thread
-        // starts its text input services — work no other watch covered, in the
-        // gap between a launch's window appearing and it reading a keystroke.
-        let _reveal = timing::Watch::start("reveal_pane");
         if pane.maximize_on_reveal.replace(false) {
             // `set_maximized` shows the window on Windows; the explicit
             // `set_visible` after it keeps winit's visibility flag in step —
@@ -15496,6 +15924,16 @@ impl<H: Host> App<H> {
         }
     }
 
+    /// Whether the running dictation is a recording that stops rather than
+    /// discards — see [`View::dictation_records`].
+    fn dictation_records(&self) -> bool {
+        self.dictation.is_live()
+            && self
+                .dictation_pane
+                .and_then(|pane| self.panes.get(&pane))
+                .is_some_and(|pane| pane.view.dictation_records())
+    }
+
     /// Throw an open dictation away. Every interruption ends here — a click, a
     /// keystroke, Escape, focus lost, the window closing, the machine
     /// sleeping.
@@ -15588,6 +16026,48 @@ impl<H: Host> App<H> {
             self.request_redraw(id);
         }
         self.report_agent_dictation_state(false);
+    }
+
+    /// **Hold the voice worker's level meter open while a window's
+    /// microphone picker is**, on the person's chosen microphone, and hand
+    /// each such window the level it hears.
+    ///
+    /// Asked on every pass, and free when no picker is open: a `bool` per
+    /// pane and an `Option` compare in the controller, which dials — on its
+    /// transport worker, never here — only when the answer changes. That one
+    /// comparison is the whole lifecycle: Escape, a press elsewhere, a
+    /// recording taking the footer, a tab switched away, the window closing
+    /// or hiding in the notification area — every route by which a window
+    /// loses its panel ends with no pane answering `true`, and the meter
+    /// closes on that pass. A choice of device moves `voice_prefs::input`,
+    /// and with it the meter. A dictation
+    /// wins: none opens while one runs, and its press closed any that was
+    /// open. Levels arrive on `Wake::Voice`, at most ten a second and only
+    /// when they move, and a window redraws only when its bar does.
+    fn sync_voice_meter(&mut self) {
+        // Hidden in the notification area is not looking at a bar, whatever
+        // the panel was left as.
+        let wanted = !koru_dictation::disabled()
+            && !self.in_tray
+            && !self.dictation.is_live()
+            && self
+                .panes
+                .values()
+                .any(|pane| pane.view.voice_meter_wanted());
+        self.dictation.meter(wanted.then(crate::voice_prefs::input));
+        let Some(level) = self.dictation.meter_level() else {
+            return;
+        };
+        let level = level.step();
+        let moved: Vec<WindowId> = self
+            .panes
+            .iter_mut()
+            .filter(|(_, pane)| pane.view.voice_meter_wanted())
+            .filter_map(|(id, pane)| pane.view.voice_meter_level(level).then_some(*id))
+            .collect();
+        for id in moved {
+            self.request_redraw(id);
+        }
     }
 
     /// **Hand the listening surface what it draws**, and take it away again.
@@ -16198,9 +16678,19 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
         // Background startup is the one deliberate exception: focusing a
         // window immediately before hiding it would flash and steal focus.
         if !self.background_start {
-            self.reveal_pane(id);
-            if let Some(pane) = self.panes.get(&id) {
-                pane.window.focus_window();
+            // **Shown once the person's settings are in, or at the budget.**
+            // The window is already hidden until its first frame; holding
+            // that a moment longer is what lets the first frame be drawn in
+            // their size, fonts and theme rather than the defaults it would
+            // otherwise correct a moment later. Nothing waits here: the loop
+            // keeps running, and `reveal_if_due` shows it.
+            if self.settings_heard {
+                self.reveal_and_focus(id);
+            } else {
+                self.pending_reveal = Some(PendingReveal {
+                    window: id,
+                    deadline: Instant::now() + REVEAL_BUDGET,
+                });
             }
         }
         if self.background_start {
@@ -16252,6 +16742,11 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
 
             WindowEvent::Focused(focused) => {
                 self.host.window_focus_changed(focused);
+                // A change of key window is another titlebar layout.
+                if let Some(pane) = self.panes.get(&id) {
+                    koru_window::traffic_lights::place(&pane.window, f64::from(theme::CAPTION_H));
+                }
+                let was_shown = AppearanceShown::now();
                 crate::search_debug!(
                     "[Koru][search-open][pid={}] focus event: pane={id:?} focused={focused} in_tray={} global_search={}",
                     std::process::id(),
@@ -16267,6 +16762,7 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                     pane.focused = focused;
                     pane.view.set_window_focused(focused);
                 }
+                self.show_appearance_change(&was_shown);
                 // **The tie-break between two windows on one workspace.** The
                 // agent stamps the order it observed rather than trusting a
                 // clock, so "the window I was just in" wins — which is the
@@ -16342,17 +16838,7 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
 
             WindowEvent::Resized(size) => {
                 if size.width > 0 && size.height > 0 {
-                    // **Only when the size actually changed.** Reconfiguring
-                    // waits for the GPU to go idle and rebuilds the swapchain
-                    // and the target texture. A launch delivers resizes that
-                    // were buffered while the window was being built, after
-                    // it is already on screen and at that size, and each one
-                    // paid all of that on the UI thread before the first
-                    // keystroke could be read.
-                    if let Some(pane) = self.panes.get_mut(&id)
-                        && (pane.surface.config.width, pane.surface.config.height)
-                            != (size.width, size.height)
-                    {
+                    if let Some(pane) = self.panes.get_mut(&id) {
                         self.context
                             .resize_surface(&mut pane.surface, size.width, size.height);
                     }
@@ -16367,6 +16853,12 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                     }
                 }
                 self.sync_viewport(id);
+                // AppKit lays its titlebar out again on every resize and on
+                // entering or leaving full screen, putting the lights back
+                // where it wants them; seat them in the lane again.
+                if let Some(pane) = self.panes.get(&id) {
+                    koru_window::traffic_lights::place(&pane.window, f64::from(theme::CAPTION_H));
+                }
                 // Maximising and restoring arrive as resizes and nothing else,
                 // so this is where the caption's restore button and the corner
                 // style find out. The drawn hairline follows flush edges, which
@@ -16532,7 +17024,14 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                         event.repeat,
                     ));
                     if !event.repeat && self.dictation_key.is_none() {
-                        self.dictation_press(id, event.physical_key);
+                        // A dictation the microphone or `/dictate` began has
+                        // no key to release; in either mode the chord ends
+                        // it, keeping its words (koru-ai D103).
+                        if self.dictation_commanded && self.dictation.is_live() {
+                            self.stop_dictation();
+                        } else {
+                            self.dictation_press(id, event.physical_key);
+                        }
                     }
                     return;
                 }
@@ -16554,13 +17053,32 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                 // `koru_dictation`'s module note, which records both rejected
                 // alternatives. Deliberately no `return`: the key goes on to
                 // do what it was pressed for.
-                if self.dictation.is_live() {
-                    let why = if matches!(logical_key, Key::Named(NamedKey::Escape)) {
-                        Interruption::Escape
-                    } else {
-                        Interruption::LocalEvent
-                    };
-                    self.interrupt_dictation(why);
+                //
+                // **A recording is the exception** (koru-ai D103): a chat
+                // composer's dictation shows its own Stop and Cancel, so a
+                // key stops it and keeps its words — see
+                // [`dictation_key_outcome`].
+                match dictation_key_outcome(
+                    self.dictation.is_live(),
+                    self.dictation_records(),
+                    self.dictation_pane == Some(id),
+                    is_modifier_key(event.physical_key, &logical_key),
+                ) {
+                    DictationKey::Ignore => {}
+                    DictationKey::Stop { spent } => {
+                        self.stop_dictation();
+                        if spent {
+                            return;
+                        }
+                    }
+                    DictationKey::Discard => {
+                        let why = if matches!(logical_key, Key::Named(NamedKey::Escape)) {
+                            Interruption::Escape
+                        } else {
+                            Interruption::LocalEvent
+                        };
+                        self.interrupt_dictation(why);
+                    }
                 }
                 // Window-level chords are the app shell's business, not a
                 // view's: Ctrl+Alt+A needs the Window handle.
@@ -16578,36 +17096,6 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                     self.wake(id);
                     return;
                 }
-                // Ctrl+N opens another window on the same workspace. Two views
-                // of one document, which is the whole point of the seam: type
-                // in either and both follow.
-                //
-                // **Alt has to be excluded, not just Shift.** `Ctrl+Alt+N` is a
-                // document's Narrow layout, and without this it opened a second
-                // window instead — the shell claiming a chord it does not own,
-                // three modifiers deep, which is exactly why `keys::resolve`
-                // checks all three.
-                if koru_keys::primary_only(mods)
-                    && ctrl_letter(&logical_key, event.text.as_deref()) == Some('n')
-                {
-                    inputdebug::write(format_args!(
-                        "[Koru][input][pid={}] shell claimed=new-window",
-                        std::process::id()
-                    ));
-                    let view = self.host.duplicate(&self.runtime.workspace.ws);
-                    let title = self.app_window_title();
-                    let new_id = self.open_pane(event_loop, view, &title);
-                    self.reveal_pane(new_id);
-                    // The first `set_visible(true)` on a hidden window is
-                    // `SW_SHOWNOACTIVATE`, so the activation that creation-time
-                    // visibility used to provide has to be asked for.
-                    if let Some(pane) = self.panes.get(&new_id) {
-                        pane.window.focus_window();
-                    }
-                    self.request_redraw(new_id);
-                    return;
-                }
-
                 // Ctrl+Tab cycles tabs, and it can only be resolved here.
                 //
                 // On Windows Ctrl+I arrives as `NamedKey::Tab`, and the key map
@@ -16627,6 +17115,7 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                         std::process::id()
                     ));
                     let delta = if mods.shift_key() { -1 } else { 1 };
+                    let was_shown = AppearanceShown::now();
                     if self
                         .panes
                         .get_mut(&id)
@@ -16634,6 +17123,7 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                     {
                         self.wake(id);
                     }
+                    self.show_appearance_change(&was_shown);
                     return;
                 }
 
@@ -16751,11 +17241,7 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
 
                 // Font roles and density are process-global and baked into every
                 // parley layout — a change has to relay out every window.
-                let was_ui = theme::ui_font();
-                let was_body = theme::body_font();
-                let was_headings = theme::headings_font();
-                let was_code = theme::code_font();
-                let was_density = theme::density();
+                let was_shown = AppearanceShown::now();
                 // Voice preferences use the same process-global path as typography.
                 let was_voice = crate::voice_prefs::snapshot();
                 let document_before = self.runtime.workspace.ws.version();
@@ -16803,17 +17289,21 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                     self.open_document(event_loop, doc);
                 }
 
-                let typography_moved = theme::ui_font() != was_ui
-                    || theme::body_font() != was_body
-                    || theme::headings_font() != was_headings
-                    || theme::code_font() != was_code
-                    || theme::density() != was_density;
+                let shown = AppearanceShown::now();
+                let typography_moved = shown.typography_moved(&was_shown);
                 let voice_moved = crate::voice_prefs::snapshot() != was_voice;
-                if typography_moved || voice_moved {
-                    // A font or density change is baked into every layout, and a
-                    // voice preference change has to be visible in every Settings
-                    // tab — so every window has to relay out, not just this one.
-                    self.invalidate_everywhere();
+                let choice_moved = shown.choice_moved(&was_shown);
+                if !typography_moved && shown.icon_paint_moved(&was_shown) {
+                    self.repaint_icons();
+                }
+                if typography_moved || voice_moved || choice_moved {
+                    // A font, size or density change is baked into every layout,
+                    // and a voice preference change has to be visible in every
+                    // Settings tab — so every window has to relay out, not just
+                    // this one. A choice that changed nothing drawn only saves.
+                    if typography_moved || voice_moved {
+                        self.invalidate_everywhere();
+                    }
                     // And it is committed by the keystroke that made it, for
                     // the same reason the press is: there is no Apply, and the
                     // next tick is a tick in which the app can be closed.
@@ -16871,12 +17361,17 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                 pane.resize_edge = pane.resize_edge_at(x, y);
                 // The view lives in unscaled logical pixels — zoom is folded
                 // into the root transform — so hand it zoom-adjusted coords.
+                // Pointing at a face or a size in a Settings list previews it
+                // on the whole app, which every window lays out again;
+                // pointing at an icon style only repaints.
+                let was_shown = AppearanceShown::now();
                 let changed = pane.view.mouse_move(x / self.zoom, y / self.zoom);
                 pane.sync_cursor_icon();
                 if let Some(WindowRequest::Drag) = pane.view.take_window_request() {
                     let _ = pane.window.drag_window();
                 }
-                if changed {
+                if self.show_appearance_change(&was_shown) {
+                } else if changed {
                     self.request_redraw(id);
                 }
                 // A tab drag that has left this window's frame may be over
@@ -16899,6 +17394,19 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                 // would throw away the sentence the button exists to keep; the
                 // press is consumed by the surface and reaches no view.
                 if state == ElementState::Pressed {
+                    // A recording's ✕ (koru-ai D103) is the one press that
+                    // throws the words away on purpose, and it is spent there.
+                    let on_cancel = self.dictation.is_live()
+                        && self.panes.get(&id).is_some_and(|pane| {
+                            pane.view.dictation_cancel_hit(
+                                pane.cursor.0 / self.zoom,
+                                pane.cursor.1 / self.zoom,
+                            )
+                        });
+                    if on_cancel {
+                        self.interrupt_dictation(Interruption::LocalEvent);
+                        return;
+                    }
                     let on_surface = self.dictation.is_live()
                         && self.panes.get(&id).is_some_and(|pane| {
                             pane.view
@@ -16908,7 +17416,14 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                         self.stop_dictation();
                         return;
                     }
-                    self.interrupt_dictation(Interruption::LocalEvent);
+                    // Anywhere else a recording stops and keeps its words,
+                    // and the press still lands; any other dictation is
+                    // thrown away first, as a keystroke throws it away.
+                    if self.dictation_records() {
+                        self.stop_dictation();
+                    } else {
+                        self.interrupt_dictation(Interruption::LocalEvent);
+                    }
                 }
                 // ⌘-click on macOS, Ctrl+click elsewhere — both are the
                 // platform's "open this somewhere else" click.
@@ -16999,11 +17514,7 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                         // which are baked into every layout — snapshot before so
                         // the change can relay out to every window afterwards.
                         let was_theme_pref = theme::theme_preference();
-                        let was_ui = theme::ui_font();
-                        let was_body = theme::body_font();
-                        let was_headings = theme::headings_font();
-                        let was_code = theme::code_font();
-                        let was_density = theme::density();
+                        let was_shown = AppearanceShown::now();
                         let was_caret = theme::caret_color();
                         let was_caret_w = theme::caret_width();
                         let was_caret_h = theme::caret_height();
@@ -17029,15 +17540,13 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                             pane.window.focus_window();
                         }
                         let theme_pref_moved = theme::theme_preference() != was_theme_pref;
-                        let typography_moved = theme::ui_font() != was_ui
-                            || theme::body_font() != was_body
-                            || theme::headings_font() != was_headings
-                            || theme::code_font() != was_code
-                            || theme::density() != was_density
+                        let shown = AppearanceShown::now();
+                        let typography_moved = shown.typography_moved(&was_shown)
                             || theme::caret_color() != was_caret
                             || theme::caret_width() != was_caret_w
                             || theme::caret_height() != was_caret_h;
                         let voice_moved = crate::voice_prefs::snapshot() != was_voice;
+                        let choice_moved = shown.choice_moved(&was_shown);
                         let layout_moved = theme::default_view_mode() != was_view_mode
                             || theme::default_canvas_bg() != was_canvas_bg;
                         // Performed here, inside the press, because winit only
@@ -17202,7 +17711,15 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                         // committed — a second later is a second in which the
                         // app can be closed, and a preference that did not
                         // survive that is a preference nobody trusts.
-                        if theme_pref_moved || typography_moved || voice_moved || layout_moved {
+                        if shown.icon_paint_moved(&was_shown) {
+                            self.repaint_icons();
+                        }
+                        if theme_pref_moved
+                            || typography_moved
+                            || voice_moved
+                            || layout_moved
+                            || choice_moved
+                        {
                             // The cheap half only: geometry is asked for once a
                             // second, and a press must not pay 3.5 ms of window
                             // server round trips to save a colour.
@@ -17247,6 +17764,19 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                 button: MouseButton::Right,
                 ..
             } => {
+                // A recording (koru-ai D103) stops and keeps its words; a
+                // right press on its composer is spent there, because the
+                // composer's menu cannot act on a composition still open.
+                if self.dictation_records() {
+                    let on_surface = self.panes.get(&id).is_some_and(|pane| {
+                        let (x, y) = (pane.cursor.0 / self.zoom, pane.cursor.1 / self.zoom);
+                        pane.view.dictation_hit(x, y) || pane.view.dictation_cancel_hit(x, y)
+                    });
+                    self.stop_dictation();
+                    if on_surface {
+                        return;
+                    }
+                }
                 let Some(pane) = self.panes.get_mut(&id) else {
                     return;
                 };
@@ -17300,7 +17830,11 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                         self.rezoom(next);
                     }
                 } else if let Some(pane) = self.panes.get_mut(&id) {
+                    // Scrolling closes an open list, and with it a font
+                    // preview the list was showing.
+                    let was_shown = AppearanceShown::now();
                     pane.view.scroll_by(delta);
+                    self.show_appearance_change(&was_shown);
                 }
                 self.request_redraw(id);
             }
@@ -17313,10 +17847,9 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                 if let Some(format) = format {
                     queue_content_drop(&mut self.pending_content_drops, id, format, path);
                 } else if dropped_image(&path) {
-                    if self.import_image(id, None, path) {
-                        self.runtime.workspace.touched();
-                        self.adopt_others(id);
-                    }
+                    // Lands later, through the image service, which marks
+                    // the document touched and adopts it everywhere.
+                    self.import_image(id, None, path);
                 } else {
                     queue_content_drop(&mut self.pending_content_drops, id, "files", path);
                 }
@@ -17372,6 +17905,17 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
         // event.
         let now = Instant::now();
         if self.settle_window_moves(now) {
+            // **Unless the shell is the one moving the window.** On macOS a
+            // window drag is ours, polled (`WindowDrag`), and each step it
+            // takes arrives back here as a `Moved` — so this early return used
+            // to swallow the very poll that produced it, and the drag advanced
+            // once per `WINDOW_MOVE_SETTLE` (~13 Hz) instead of every tick.
+            // Driving it here keeps the rest of the deferral intact: still no
+            // Store or view maintenance while the window is in motion.
+            if self.drive_window_drags() {
+                event_loop.set_control_flow(ControlFlow::Poll);
+                return;
+            }
             let deadline = self
                 .panes
                 .values()
@@ -17521,15 +18065,16 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
             // **A `bool` per pane and nothing else when nobody asked.**
             self.begin_commanded_dictations();
             self.service_dictation();
+            // A chat's microphone picker's level meter (koru-ai D103):
+            // after the dictation drain, so a press that began one this pass
+            // is seen and no meter opens beside it.
+            self.sync_voice_meter();
         }
         if let Some(activation) = self.host.take_global_search_request() {
             self.open_search(event_loop, Some(PhysicalKey::Code(activation.trigger)));
         }
         if let Some(message) = self.host.take_global_search_notice() {
             self.report(ErrorReport::new("Global search shortcut", message));
-        }
-        if let Some(report) = self.host.take_agent_notice() {
-            self.report(report);
         }
         #[cfg(target_os = "macos")]
         for url in crate::macos_urls::take_pending() {
@@ -17553,9 +18098,6 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
         // A Jump List *Search* click. The overlay is the agent's window, so the
         // host performs the whole ask; nothing here needs to focus or draw.
         let _ = self.host.take_search_activation();
-        // AI Chat is also agent-owned and singleton. The taskbar listener only
-        // wakes this loop; the host passes the foreground grant and request on.
-        let _ = self.host.take_ai_chat_activation();
         for id in self.host.take_unpinned_documents() {
             for pane in self.panes.values_mut() {
                 let _ = pane.view.unpin_document(id);
@@ -17926,6 +18468,10 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
             let _phase = timing::Watch::start("maintenance.poll_settings");
             self.poll_settings();
         }
+        // After the poll, whichever way it returned: an answer that changed
+        // nothing still ends the wait, or a default-configured install would
+        // sit out the whole budget.
+        self.reveal_if_due(Instant::now());
         // A tab the container popped out becomes its own window here, between
         // events — the one place that both has the event loop and is not a press.
         {
@@ -18069,6 +18615,9 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
         }
         if let Some(due) = self.import_cancel_hide_due {
             deadline = deadline.min(due);
+        }
+        if let Some(pending) = &self.pending_reveal {
+            deadline = deadline.min(pending.deadline);
         }
         if let Some(due) = self.image_loader.retry_due() {
             deadline = deadline.min(due);
@@ -18508,6 +19057,63 @@ fn other_profile_workspace<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **The first window waits for its settings, and only so long** (D8). A
+    /// settings answer — including one that changes nothing — reveals it at
+    /// once; with no answer it is revealed at the budget; nothing reveals twice,
+    /// because the caller clears the wait when it reveals.
+    #[test]
+    fn the_first_window_is_revealed_after_settings_or_at_the_budget() {
+        let window = WindowId::from(7u64);
+        let start = Instant::now();
+        let pending = PendingReveal {
+            window,
+            deadline: start + REVEAL_BUDGET,
+        };
+        assert_eq!(
+            reveal_due(Some(&pending), false, start),
+            None,
+            "still waiting"
+        );
+        assert_eq!(
+            reveal_due(Some(&pending), true, start),
+            Some(window),
+            "an answer reveals it at once, whether or not it moved anything"
+        );
+        assert_eq!(
+            reveal_due(Some(&pending), false, start + REVEAL_BUDGET),
+            Some(window),
+            "no answer: the budget reveals it with the defaults"
+        );
+        assert_eq!(reveal_due(None, true, start + REVEAL_BUDGET * 2), None);
+        assert_eq!(REVEAL_BUDGET, Duration::from_millis(400));
+    }
+
+    /// **A window is titled by its workspace and its tab** (the review's note):
+    /// two windows on two workspaces read apart in Alt+Tab. A tab named as
+    /// the workspace is not said twice; a replica's slot stays last.
+    #[test]
+    fn a_workspace_window_is_titled_by_its_workspace_and_its_tab() {
+        let slot = session::DEFAULT_PEER;
+        assert_eq!(
+            workspace_window_title("Execution", Some("Notes"), slot),
+            "Execution — Notes"
+        );
+        assert_eq!(workspace_window_title("Execution", None, slot), "Execution");
+        assert_eq!(
+            workspace_window_title("Execution", Some("  "), slot),
+            "Execution"
+        );
+        assert_eq!(
+            workspace_window_title("Koru", Some("Koru"), slot),
+            "Koru",
+            "not the same word twice"
+        );
+        assert_eq!(
+            workspace_window_title("Execution", Some("Home"), "b"),
+            "Execution — Home — b"
+        );
+    }
 
     /// **A canvas counts as a document** in the workspace manager's column:
     /// pages and canvases together, and nothing else the Store counts — and
@@ -19019,6 +19625,67 @@ mod tests {
         }
     }
 
+    /// Applying settings sets the theme's base color for each theme, and
+    /// `None` puts the theme's own back. The only test in this crate that
+    /// moves that global, so it needs no lock of its own.
+    #[test]
+    fn applying_settings_sets_each_themes_base_color() {
+        apply_base_colors(Some(0xDDE7F6), Some(0x293750));
+        assert_eq!(theme::base_color(false), Some(0xDDE7F6));
+        assert_eq!(theme::base_color(true), Some(0x293750));
+        apply_base_colors(None, Some(0x0A0B0C));
+        assert_eq!(theme::base_color(false), None);
+        assert_eq!(theme::base_color(true), Some(0x0A0B0C));
+        apply_base_colors(None, None);
+        assert_eq!(theme::base_color(true), None);
+    }
+
+    /// **A Chat font change lays every window out again** (koru-ai D79), as
+    /// an App font change does — the chat's finished messages included,
+    /// which `ChatSurface::invalidate` lays out afresh — and it is a choice
+    /// to save. While the chat follows the App font, an App font change
+    /// moves the chat's face with it. The only test in this crate that moves
+    /// the font globals, so it needs no lock of its own.
+    #[test]
+    fn a_chat_font_change_lays_every_window_out_again() {
+        use koru_settings::FontSetting;
+        let was_ui = theme::font_setting(theme::FontSlot::Ui);
+        let was_chat = theme::font_setting(theme::FontSlot::Chat);
+        theme::set_font_setting(theme::FontSlot::Chat, FontSetting::FollowDefault);
+        theme::set_ui_font(theme::FontChoice::Inter);
+
+        let before = AppearanceShown::now();
+        theme::set_chat_font(theme::FontChoice::Lora);
+        let after = AppearanceShown::now();
+        assert!(after.typography_moved(&before));
+        assert!(after.choice_moved(&before));
+        assert_eq!(after.faces[4], theme::FontChoice::Lora);
+        assert_eq!(
+            after.faces[0],
+            theme::FontChoice::Inter,
+            "the app keeps its own"
+        );
+
+        theme::set_font_setting(theme::FontSlot::Chat, FontSetting::FollowDefault);
+        let following = AppearanceShown::now();
+        theme::set_ui_font(theme::FontChoice::Nunito);
+        let moved = AppearanceShown::now();
+        assert!(moved.typography_moved(&following));
+        assert_eq!(
+            moved.faces[4],
+            theme::FontChoice::Nunito,
+            "the chat followed"
+        );
+        assert_eq!(
+            theme::font_setting(theme::FontSlot::Chat),
+            FontSetting::FollowDefault,
+            "and still follows: nothing was chosen for it"
+        );
+
+        theme::set_font_setting(theme::FontSlot::Ui, was_ui);
+        theme::set_font_setting(theme::FontSlot::Chat, was_chat);
+    }
+
     #[test]
     fn reminder_startup_facts_are_projected_from_the_global_authority() {
         let section = koru_settings::GlobalSettings {
@@ -19114,6 +19781,30 @@ mod tests {
             &enter,
             ModifiersState::SHIFT
         ));
+    }
+
+    /// **A recording stops on a key and keeps its words** (koru-ai D103):
+    /// Escape or any other key in the window that records is spent on the
+    /// stop — it never reaches the chat to arm a reply's stop — a key in
+    /// another window stops it and lands, and a modifier alone stops
+    /// nothing. A document's dictation still discards and lets the key land.
+    #[test]
+    fn a_key_stops_a_recording_and_discards_any_other_dictation() {
+        use DictationKey::*;
+        // (live, records, in the recording window, a modifier alone)
+        assert_eq!(dictation_key_outcome(false, false, true, false), Ignore);
+        assert_eq!(dictation_key_outcome(false, true, true, false), Ignore);
+        assert_eq!(
+            dictation_key_outcome(true, true, true, false),
+            Stop { spent: true }
+        );
+        assert_eq!(
+            dictation_key_outcome(true, true, false, false),
+            Stop { spent: false }
+        );
+        assert_eq!(dictation_key_outcome(true, true, true, true), Ignore);
+        assert_eq!(dictation_key_outcome(true, false, true, false), Discard);
+        assert_eq!(dictation_key_outcome(true, false, true, true), Discard);
     }
 
     /// **Q44.** Two windows on one workspace, and the second one holds the
@@ -19301,17 +19992,6 @@ mod tests {
             source.contains("event.repeat && is_modifier_key"),
             "Ctrl auto-repeat after a Ctrl+click must not keep the bit held"
         );
-    }
-
-    #[test]
-    fn temporary_open_paths_are_leaf_only_and_keep_the_extension() {
-        let id = koru_store_core::ids::DocumentId::new();
-        let path = temporary_open_path(id, "..\\..\\CON:<report>?.pdf");
-        assert_eq!(
-            path.file_name().and_then(|name| name.to_str()),
-            Some("koru-CON__report__.pdf")
-        );
-        assert!(path.ends_with(format!("{}/koru-CON__report__.pdf", id.to_storage())));
     }
 
     #[test]
@@ -20047,5 +20727,102 @@ pub fn tasks_debug_log(line: std::fmt::Arguments<'_>) {
         .open(&path)
     {
         let _ = writeln!(f, "[koru:tasks] {line}");
+    }
+}
+
+/// How long the first window waits for the settings' first answer before it
+/// is shown with the defaults (Q-F, 2026-10-30: "renders within 400 ms").
+const REVEAL_BUDGET: Duration = Duration::from_millis(400);
+
+/// The first window, drawn but held back for its settings.
+struct PendingReveal {
+    window: WindowId,
+    deadline: Instant,
+}
+
+/// The window to show now, if one is waiting and its wait is over: the
+/// settings have answered, or the budget has passed. Pure, so the startup
+/// sequence is tested with a clock of the test's own.
+fn reveal_due(
+    pending: Option<&PendingReveal>,
+    settings_heard: bool,
+    now: Instant,
+) -> Option<WindowId> {
+    let pending = pending?;
+    (settings_heard || now >= pending.deadline).then_some(pending.window)
+}
+
+/// What a Settings choice or preview can change in how every window draws,
+/// read before an event and again after it.
+///
+/// **One snapshot, three answers.** Text moving means every window lays out
+/// again; only the icons' artwork moving means a repaint and nothing more, so
+/// hovering an icon style never reflows a document; and a saved choice moving
+/// means a save, even when nothing drawn changed — choosing the font a list is
+/// already previewing changes the choice and not one pixel. These used to be
+/// separate before-and-after copies on every event path.
+#[derive(Clone, PartialEq)]
+struct AppearanceShown {
+    /// App, body, headings, code and the chat's — the chat's as drawn, so
+    /// an App font change moves it too while it follows.
+    faces: [theme::FontChoice; 5],
+    doc_text_size: f32,
+    density: theme::Density,
+    icon_paint: koru_draw::icons::IconPack,
+    /// The base color per theme: paint only, like the icons' artwork, and
+    /// a saved choice, which the icons' artwork is not.
+    base: [Option<u32>; 2],
+    choices: (
+        [koru_settings::FontSetting; 5],
+        Option<u8>,
+        Option<koru_draw::icons::IconPack>,
+    ),
+}
+
+impl AppearanceShown {
+    fn now() -> Self {
+        use theme::FontSlot;
+        Self {
+            faces: [
+                theme::ui_font(),
+                theme::body_font(),
+                theme::headings_font(),
+                theme::code_font(),
+                theme::chat_font(),
+            ],
+            doc_text_size: theme::doc_text_size(),
+            density: theme::density(),
+            icon_paint: koru_draw::icons::rendered_pack(),
+            base: [theme::base_color(false), theme::base_color(true)],
+            choices: (
+                [
+                    theme::font_setting(FontSlot::Ui),
+                    theme::font_setting(FontSlot::Body),
+                    theme::font_setting(FontSlot::Headings),
+                    theme::font_setting(FontSlot::Code),
+                    theme::font_setting(FontSlot::Chat),
+                ],
+                theme::chosen_doc_text_size(),
+                koru_draw::icons::chosen_pack(),
+            ),
+        }
+    }
+
+    /// Text is set differently now: every window lays out again.
+    fn typography_moved(&self, before: &Self) -> bool {
+        self.faces != before.faces
+            || self.doc_text_size != before.doc_text_size
+            || self.density != before.density
+    }
+
+    /// Only the icons' artwork changed: a repaint, never a layout.
+    fn icon_paint_moved(&self, before: &Self) -> bool {
+        self.icon_paint != before.icon_paint || self.base != before.base
+    }
+
+    /// A saved choice changed, whether or not anything drawn did. The base
+    /// color is both: a swatch has no preview, so what is drawn is the choice.
+    fn choice_moved(&self, before: &Self) -> bool {
+        self.choices != before.choices || self.base != before.base
     }
 }

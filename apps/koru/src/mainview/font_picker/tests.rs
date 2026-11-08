@@ -171,3 +171,76 @@ fn the_picker_opens_over_a_terminal_tab_and_closes_on_escape() {
     let (mut v, _workspace) = container();
     assert!(!v.open_font_picker(0));
 }
+
+/// A role's picker: *Code* opens on monospaced families like the terminal's,
+/// the others on every family; its first row names the role's default.
+#[test]
+fn a_role_picker_opens_on_the_right_families_and_names_its_default() {
+    let mut engine = TextEngine::new();
+    let body = FontPickerSurface::for_role(&mut engine, Some(fonts()), None, false, "Inter");
+    assert_eq!(names(&body).len(), 5, "every family, after the default");
+    assert_eq!(body.default_label, "Default (Inter)");
+    let code =
+        FontPickerSurface::for_role(&mut engine, Some(fonts()), None, true, "JetBrains Mono");
+    assert_eq!(
+        names(&code),
+        [None, Some("Cascadia Code".into()), Some("Consolas".into())]
+    );
+}
+
+/// The lit row previews: moving it answers what it lights, and a terminal's
+/// picker never does.
+#[test]
+fn moving_the_light_answers_what_it_lights() {
+    let mut engine = TextEngine::new();
+    let mut surface = FontPickerSurface::for_role(&mut engine, Some(fonts()), None, false, "Inter");
+    match press(&mut surface, &mut engine, NamedKey::ArrowDown) {
+        Action::Lit(Lit::Family(family)) => assert_eq!(family, "Arial"),
+        _ => panic!("the light moved onto Arial"),
+    }
+    match press(&mut surface, &mut engine, NamedKey::ArrowUp) {
+        Action::Lit(Lit::Default) => {}
+        _ => panic!("back on the default row"),
+    }
+    let mut terminal = FontPickerSurface::new(&mut engine, fonts(), None);
+    assert!(matches!(
+        press(&mut terminal, &mut engine, NamedKey::ArrowDown),
+        Action::Keep
+    ));
+}
+
+/// Opened before the scan finished: only the default row until the list
+/// arrives, then the list — keeping what was typed and the lit family.
+#[test]
+fn a_picker_opened_early_fills_in_and_keeps_the_query_and_the_light() {
+    let mut engine = TextEngine::new();
+    let mut surface = FontPickerSurface::for_role(&mut engine, None, None, false, "Inter");
+    assert!(!surface.has_fonts());
+    assert_eq!(names(&surface), [None]);
+    type_text(&mut surface, &mut engine, "con");
+    surface.set_fonts(fonts());
+    assert!(surface.has_fonts());
+    assert_eq!(names(&surface), [Some("Consolas".into())]);
+    assert_eq!(surface.lit(), Lit::Family("Consolas".into()));
+}
+
+/// **Every word the picker shows comes from the catalogue.** The four
+/// sentences it used to spell in English, and its default row, are not in
+/// its source any more.
+#[test]
+fn the_picker_spells_no_sentence_of_its_own() {
+    let source = include_str!("../font_picker.rs");
+    for literal in [
+        "\"Search fonts",
+        "\"No font matches",
+        "\"Show all fonts",
+        "\"Enter to choose",
+        "\"Default (Settings)",
+        "\"Looking for fonts",
+    ] {
+        assert!(
+            !source.contains(literal),
+            "{literal} is spelled in font_picker.rs"
+        );
+    }
+}

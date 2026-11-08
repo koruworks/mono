@@ -173,6 +173,8 @@ pub enum ChipMenu {
     Color,
     Due,
     Priority,
+    /// The title's list chip.
+    List,
 }
 
 impl ChipMenu {
@@ -186,6 +188,7 @@ impl ChipMenu {
             Self::Color => "Edit colour…",
             Self::Due => "Edit due date…",
             Self::Priority => "Edit priority…",
+            Self::List => "Edit list…",
         }
     }
 
@@ -195,6 +198,7 @@ impl ChipMenu {
             Self::Color => "Clear colour",
             Self::Due => "Clear due date",
             Self::Priority => "Clear priority",
+            Self::List => "Remove from list",
         }
     }
 
@@ -204,6 +208,7 @@ impl ChipMenu {
             Self::Color => icons::PALETTE,
             Self::Due => icons::DATE,
             Self::Priority => icons::FLAG,
+            Self::List => icons::LIST,
         }
     }
 }
@@ -446,7 +451,8 @@ impl Choice {
     /// Whether this build shows the surface the choice belongs to
     /// (`koru_features`, guide/contributing/FEATURE-FLAGS.md): the task rows with
     /// tasks (Due stays — it still makes a task), the reminder rows with
-    /// reminders, Delegate with Koru AI.
+    /// reminders, Delegate with Koru AI and the agent views
+    /// (`koru_features::delegate`).
     pub fn shown_in_product(self) -> bool {
         match self {
             Self::GoToTask | Self::CompleteTask | Self::RemoveFromTasks | Self::Priority => {
@@ -457,7 +463,7 @@ impl Choice {
             | Self::ReminderPause
             | Self::ReminderResume
             | Self::ReminderDelete => koru_features::reminders(),
-            Self::Delegate => koru_features::ai(),
+            Self::Delegate => koru_features::delegate(),
             _ => true,
         }
     }

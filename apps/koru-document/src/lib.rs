@@ -19,12 +19,12 @@ use winit::keyboard::{Key, ModifiersState, NamedKey};
 
 use koru_editor::Body;
 use koru_editor::{Editing, Editor, OpenWhere};
+use koru_ui::media_viewer::{ActionSet, MediaViewer, Outcome, Stage, ViewerOptions};
 
 pub mod blockmenu;
 pub mod bubble;
 pub mod caption;
 pub mod context_menu;
-pub mod diagram_viewer;
 
 /// Where a container lifts the diagram viewer to: the window. `origin` is
 /// the hosting pane's top-left in window coordinates, `size` the window's,
@@ -199,7 +199,10 @@ pub struct BuiltInDocument {
     /// up — and below the confirm, which is a question and outranks a
     /// picture. Holds the drawing it opened on, so a keystroke in the text
     /// meanwhile cannot change the picture under the person looking at it.
-    viewer: Option<diagram_viewer::DiagramViewer>,
+    /// The shared `koru_ui::media_viewer` (ADR-482), offering copy and save.
+    viewer: Option<MediaViewer>,
+    /// The block the viewer's drawing belongs to, for its *Save as…*.
+    viewer_node: Option<NodeId>,
     /// Where the viewer lives when a container lifts it over its own chrome:
     /// the whole window, not this view's pane. `None` in a window of the
     /// document's own, where the pane is the window.
@@ -209,6 +212,9 @@ pub struct BuiltInDocument {
     /// only hands the drawing over — drained by `View::take_wants_copy_diagram`
     /// on the next maintenance pass, the way *Save as…* is.
     wants_copy_diagram: Option<std::sync::Arc<koru_draw::diagram::PreparedDiagram>>,
+    /// The page menu's *Global settings* was chosen: the host opens its
+    /// Settings tab. Drained by `View::take_wants_global_settings`.
+    wants_global_settings: bool,
     /// **Where a live dictation is going, decided once.**
     ///
     /// Recorded when the composition opened and never re-derived. Re-running
@@ -417,8 +423,10 @@ impl BuiltInDocument {
                     list_table: Vec::new(),
                     confirm: None,
                     viewer: None,
+                    viewer_node: None,
                     viewer_lift: None,
                     wants_copy_diagram: None,
+                    wants_global_settings: false,
                     dictation: None,
                     spelling: spelling::SpellCheck::new(),
                     context_spelling: None,
@@ -494,8 +502,10 @@ impl BuiltInDocument {
             list_table: Vec::new(),
             confirm: None,
             viewer: None,
+            viewer_node: None,
             viewer_lift: None,
             wants_copy_diagram: None,
+            wants_global_settings: false,
             dictation: None,
             spelling: spelling::SpellCheck::new(),
             context_spelling: None,
@@ -540,8 +550,10 @@ impl BuiltInDocument {
             list_table: Vec::new(),
             confirm: None,
             viewer: None,
+            viewer_node: None,
             viewer_lift: None,
             wants_copy_diagram: None,
+            wants_global_settings: false,
             dictation: None,
             spelling: spelling::SpellCheck::new(),
             context_spelling: None,
@@ -1027,7 +1039,7 @@ impl BuiltInDocument {
         if self.menu.is_some() {
             Blockers::Modal(ModalKind::ContextMenu)
         } else if self.viewer.is_some() {
-            Blockers::Modal(ModalKind::DiagramViewer)
+            Blockers::Modal(ModalKind::MediaViewer)
         } else {
             Blockers::None
         }
@@ -1035,7 +1047,7 @@ impl BuiltInDocument {
 
     // ------------------------------------------------------- the viewer
     //
-    // A drawn diagram in its own view (`diagram_viewer`). The editor asks
+    // A drawn diagram in its own view (`koru_ui::media_viewer`). The editor asks
     // for it — its magnifier control, a double click on the drawing — and the
     // menu's *Open* row asks the same way; this view owns the modal, routes
     // every input to it while it is up, and hands its copy and save requests
@@ -1052,9 +1064,18 @@ impl BuiltInDocument {
         self.bubble = None;
         self.bubble_pinned = None;
         let viewport = self.viewer_viewport();
-        self.viewer = Some(diagram_viewer::DiagramViewer::open(
-            node, prepared, viewport,
+        // Named by the diagram's own accessible title when it has one; the
+        // viewer names an untitled one *Diagram* in the reader's language.
+        let title = prepared.scene().acc_title.clone().unwrap_or_default();
+        self.viewer = Some(MediaViewer::open(
+            Stage::Diagram(prepared),
+            ViewerOptions {
+                actions: ActionSet::DIAGRAM,
+                title,
+            },
+            viewport,
         ));
+        self.viewer_node = Some(node);
         true
     }
 
@@ -1064,8 +1085,22 @@ impl BuiltInDocument {
     }
 
     /// The viewer, for a host or a test to read its zoom and pan.
-    pub fn diagram_viewer(&self) -> Option<&diagram_viewer::DiagramViewer> {
+    pub fn diagram_viewer(&self) -> Option<&MediaViewer> {
         self.viewer.as_ref()
+    }
+
+    /// The block whose drawing the viewer shows.
+    pub fn diagram_viewer_node(&self) -> Option<NodeId> {
+        self.viewer.as_ref().and(self.viewer_node)
+    }
+
+    /// Perform a viewer action a screen reader asked for. `false` when no
+    /// viewer is up.
+    pub fn viewer_act(&mut self, action: koru_ui::media_viewer::Action) -> bool {
+        let Some(out) = self.viewer.as_mut().map(|viewer| viewer.act(action)) else {
+            return false;
+        };
+        self.settle_viewer(out)
     }
 
     /// **Lift the viewer to the window.** A container hosting this view in a
@@ -1133,24 +1168,25 @@ impl BuiltInDocument {
     /// routes the block's rows use, and a copy raises the toast every copy
     /// in Koru raises. `true` always — the viewer is modal and the input
     /// was its own.
-    fn settle_viewer(&mut self, outcome: diagram_viewer::Outcome) -> bool {
+    fn settle_viewer(&mut self, outcome: Outcome) -> bool {
         match outcome {
-            diagram_viewer::Outcome::Handled => {}
-            diagram_viewer::Outcome::Copy => {
-                if let Some(viewer) = &self.viewer {
-                    self.wants_copy_diagram = Some(viewer.prepared().clone());
+            // Not offered for a diagram: the drawing is already Koru's own.
+            Outcome::Handled | Outcome::OpenExternally => {}
+            Outcome::Copy => {
+                if let Some(prepared) = self.viewer.as_ref().and_then(MediaViewer::diagram) {
+                    self.wants_copy_diagram = Some(prepared.clone());
                     self.editor.view.wants_toast = Some(koru_ui::CopyAffordance::TOAST.to_string());
                 }
             }
-            diagram_viewer::Outcome::SaveAs => {
-                if let Some(viewer) = &self.viewer {
-                    self.editor.view.wants_save_diagram_as = Some(koru_editor::SaveDiagramAs {
-                        node: viewer.node(),
-                    });
+            Outcome::SaveAs => {
+                if let Some(node) = self.diagram_viewer_node() {
+                    self.editor.view.wants_save_diagram_as =
+                        Some(koru_editor::SaveDiagramAs { node });
                 }
             }
-            diagram_viewer::Outcome::Close => {
+            Outcome::Close => {
                 self.viewer = None;
+                self.viewer_node = None;
             }
         }
         true
@@ -2057,6 +2093,7 @@ impl BuiltInDocument {
                 canvas_index(self.editor.view.canvas_bg),
                 self.prose_language(ws),
                 koru_i18n::Lang::for_system(koru_window::system_locale::system_locale().as_deref()),
+                !self.window_chrome,
             ),
             Some(OpenMenu::Block(_) | OpenMenu::ContextBlock { .. }) => {
                 blockmenu::block_rows(&self.command_state(ws))
@@ -2148,6 +2185,7 @@ impl BuiltInDocument {
                 ChipSpec::Color(_) => context_menu::ChipMenu::Color,
                 ChipSpec::Due(_) => context_menu::ChipMenu::Due,
                 ChipSpec::Priority(_) => context_menu::ChipMenu::Priority,
+                ChipSpec::List(_) => context_menu::ChipMenu::List,
             })
         } else {
             context_menu::PillContext::None
@@ -2182,6 +2220,7 @@ impl BuiltInDocument {
                 canvas_index(self.editor.view.canvas_bg),
                 None,
                 koru_i18n::Lang::En,
+                !self.window_chrome,
             ),
             Some(OpenMenu::Block(_) | OpenMenu::ContextBlock { .. }) => {
                 blockmenu::block_rows(&docview::State::default())
@@ -2294,6 +2333,12 @@ impl BuiltInDocument {
                             }
                             FontRole::Code => theme::set_code_font(theme::code_font().next()),
                         }
+                    }
+                    // The one row that leaves the document: the menu goes,
+                    // and the host opens Settings on its Editor page.
+                    Some(page_menu::Choice::OpenGlobalSettings) => {
+                        self.menu = None;
+                        self.wants_global_settings = true;
                     }
                     Some(page_menu::Choice::CycleProseLanguage) => {
                         // The one page-menu choice that writes to the document
@@ -3562,7 +3607,11 @@ impl BuiltInDocument {
         {
             return true;
         }
-        Editing::mouse_double_click(self, ws, x, y)
+        let handled = Editing::mouse_double_click(self, ws, x, y);
+        // The double-click runs after mouse_down drained its requests. Settle
+        // its own request now rather than waiting for another pointer press.
+        self.drain_diagram_requests();
+        handled
     }
 
     /// What a point lands on in this view's own title bar — always `None` when

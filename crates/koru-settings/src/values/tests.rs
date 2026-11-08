@@ -41,7 +41,7 @@ fn an_unknown_token_is_the_default_everywhere() {
     assert_eq!(ThemeChoice::parse("nonsense"), ThemeChoice::System);
     assert_eq!(CaretColorChoice::parse(""), CaretColorChoice::Default);
     assert_eq!(FontFamily::parse("comic"), FontFamily::Inter);
-    assert_eq!(ViewModeChoice::parse("wide"), ViewModeChoice::Full);
+    assert_eq!(ViewModeChoice::parse("wide"), ViewModeChoice::Narrow);
     assert_eq!(
         TerminalCursorBlink::parse("sometimes"),
         TerminalCursorBlink::Application

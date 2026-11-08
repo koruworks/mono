@@ -35,9 +35,9 @@ pub(super) fn confirmation(profile: ProfileId, profile_name: &str) -> (ProfileId
     let title = format!("Delete \u{201c}{profile_name}\u{201d} from Koru?");
     let body = concat!(
         "This removes the Profile from your Koru account and connected devices. ",
-        "Workspaces on this device move to Trash and remain recoverable. The Profile ",
-        "will stop syncing. Devices that are offline will be asked what to do when ",
-        "they next sign in."
+        "On this device its Workspaces move to Trash and its AI chats are kept for ",
+        "30 days, then both are deleted. The Profile will stop syncing. Devices that ",
+        "are offline will be asked what to do when they next sign in."
     );
     (profile, Confirm::new(title, body, "Delete from Koru"))
 }

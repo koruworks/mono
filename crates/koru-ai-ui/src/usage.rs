@@ -27,6 +27,16 @@ pub(crate) fn message_height(message: &MessageLayout) -> f32 {
 }
 
 pub(crate) fn message_content_height(message: &MessageLayout) -> f32 {
+    if !message.attachments.is_empty() {
+        // The person's own words, then their pictures and files; a message
+        // of attachments only is its tiles alone.
+        let (_, tiles) = crate::attachments::card_tiles(&message.attachments, message.wrap_width);
+        return if message.display.trim().is_empty() {
+            tiles
+        } else {
+            message.layout.height() + crate::attachments::TILE_GAP + tiles
+        };
+    }
     if message.blocks.is_empty() {
         if message.state == koru_ai_core::MessageState::Pending && message.markdown.is_empty() {
             role::ui().metrics.line_height
@@ -108,6 +118,7 @@ pub(crate) fn format_usage_report(report: &UsageReport) -> String {
     }
     for group in &report.groups {
         let surface = match group.surface {
+            // Usage kept from the retired Koru AI window.
             AiSurface::Standalone => "standalone",
             AiSurface::ContextPane => "context pane",
         };
@@ -194,8 +205,8 @@ mod tests {
     };
     use winit::keyboard::{Key as WinitKey, ModifiersState, NamedKey};
 
+    use crate::ChatSurface;
     use crate::reader::{Command, Reader, Update};
-    use crate::{ChatSurface, SurfaceMode};
 
     fn usage(
         prompt_tokens: Option<u64>,
@@ -229,6 +240,10 @@ mod tests {
                 },
                 branched_from: None,
                 agent_working_folder: None,
+                agent_mode: None,
+                agent_fast: None,
+                pinned_at: None,
+                profile_id: None,
                 created_at: now,
                 updated_at: now,
             },
@@ -238,12 +253,14 @@ mod tests {
                 workspace_ids: Vec::new(),
             },
             tool_activities: Vec::new(),
+            notices: Vec::new(),
             messages: Vec::new(),
             blocks: Vec::new(),
             pinned_documents: Vec::new(),
             feedback: Vec::new(),
             usage: Vec::new(),
             reasoning_control: None,
+            attachments: Vec::new(),
         }
     }
 
@@ -308,7 +325,7 @@ mod tests {
 
     #[test]
     fn pending_turn_pulses_until_first_delta_or_failure() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
         surface.reader = Some(reader);
         surface.transcript = Some(transcript());
@@ -336,7 +353,7 @@ mod tests {
         }));
         assert!(!surface.animating());
 
-        let mut failed = ChatSurface::new(SurfaceMode::Standalone);
+        let mut failed = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
         failed.reader = Some(reader);
         failed.transcript = Some(transcript());
@@ -357,7 +374,7 @@ mod tests {
 
     #[test]
     fn usage_event_labels_the_pending_response() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         surface.lang = Lang::En;
         surface.transcript = Some(transcript());
         surface.pending_user = Some("Question".into());
@@ -377,7 +394,7 @@ mod tests {
 
     #[test]
     fn transcript_usage_labels_historical_messages_and_grows_geometry() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         surface.lang = Lang::En;
         let mut transcript = transcript();
         let message_id = MessageId::new();

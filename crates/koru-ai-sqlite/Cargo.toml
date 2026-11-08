@@ -7,6 +7,11 @@ license.workspace = true
 publish = false
 description = "SQLite persistence adapter for Koru AI local state."
 
+[features]
+# `write_at_schema`: an ai.db as an older build left it, for tests above
+# this crate. Only dev-dependencies turn it on.
+fixtures = []
+
 [dependencies]
 koru-ai-core = { path = "../koru-ai-core" }
 # Opening and versioning the file: the one policy every Koru database shares.

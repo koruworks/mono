@@ -571,7 +571,7 @@ fn workspace_dictation_state_requires_the_exact_authenticated_connection_and_rou
 }
 
 /// Once update quiescence begins, a late shell must not restart the gateway or
-/// standalone chat behind the handoff's back. The updater has its own defensive
+/// open a window behind the handoff's back. The updater has its own defensive
 /// sweep, but the Agent's promise is to close this race before handing over.
 #[test]
 fn quiescing_rejects_new_process_launches() {
@@ -579,14 +579,18 @@ fn quiescing_rejects_new_process_launches() {
         Request::EnsureService {
             service: Service::ApiGateway,
         },
-        Request::OpenAiChat,
+        Request::OpenChatLink {
+            chat: "00000000-0000-4000-8000-000000000001".into(),
+            block: None,
+            profile: None,
+        },
         Request::OpenWorkspace {
             profile: None,
             inherit_stdio: false,
         },
     ] {
         let mut agent = agent();
-        agent.handoff = crate::update::Handoff::StoppingChat;
+        agent.handoff = crate::update::Handoff::StoppingSessions;
         let connection = ConnectionId(44);
         let (conn, queue) = Connection::for_test(connection);
         agent.connections.push(conn);
@@ -611,7 +615,11 @@ fn post_update_restart_gate_rejects_child_launch_requests() {
         Request::EnsureService {
             service: Service::ApiGateway,
         },
-        Request::OpenAiChat,
+        Request::OpenChatLink {
+            chat: "00000000-0000-4000-8000-000000000001".into(),
+            block: None,
+            profile: None,
+        },
         Request::OpenWorkspace {
             profile: None,
             inherit_stdio: false,
@@ -2092,30 +2100,254 @@ fn a_missing_sibling_app_has_specific_actionable_copy() {
     assert!(warning.contains("Build or install"));
 }
 
+/// **A chat link opens as a tab in the most recent Workspace window**: the
+/// shell that asked is answered `Ok`, and the window the person was just in
+/// is pushed the chat and its block — the most-recently-active rule the
+/// Agents rows use, until chats belong to a profile.
 #[test]
-fn a_missing_ai_chat_sibling_reopens_the_overlay_with_actionable_copy() {
+fn a_chat_link_opens_as_a_tab_in_the_most_recent_workspace_window() {
     let mut agent = agent();
-    let changed = agent.wake(AgentEvent::AiChatOpened {
-        error: Some("C:/Koru/koru-ai-chat.exe is not beside this executable".into()),
-    });
+    let first = ConnectionId(65);
+    let second = ConnectionId(66);
+    let (first_connection, first_queue) = Connection::for_test(first);
+    let (second_connection, second_queue) = Connection::for_test(second);
+    agent.connections.push(first_connection);
+    agent.connections.push(second_connection);
+    workspace_hello(&mut agent, first, &first_queue);
+    workspace_hello(&mut agent, second, &second_queue);
+    agent.said(second, 2, Request::Active, Duration::ZERO);
+    let _ = second_queue.recv();
 
-    assert!(changed);
-    assert!(agent.overlay.is_some(), "Agent owns the fallback surface");
-    let warning = agent
-        .overlay
-        .as_ref()
-        .and_then(|surface| surface.host_warning())
-        .expect("the failed gesture has visible copy");
-    assert!(warning.contains("Koru AI Chat was not found beside Koru Agent"));
-    assert!(warning.contains("Reinstall this Koru build"));
-    assert!(warning.contains("try again"));
+    let chat = "00000000-0000-4000-8000-000000000001";
+    let block = "00000000-0000-4000-8000-000000000002";
+    agent.said(
+        first,
+        3,
+        Request::OpenChatLink {
+            chat: chat.into(),
+            block: Some(block.into()),
+            profile: None,
+        },
+        Duration::ZERO,
+    );
+    assert_eq!(
+        first_queue.recv(),
+        Ok(FromAgent::Response {
+            id: 3,
+            body: Response::Ok,
+        })
+    );
+    assert_eq!(
+        second_queue.recv(),
+        Ok(FromAgent::Push {
+            body: Push::OpenChat {
+                chat: chat.into(),
+                block: Some(block.into()),
+            },
+        }),
+        "the most recently active Workspace window opens the chat"
+    );
+    assert!(first_queue.try_recv().is_err(), "nobody else is asked");
 }
 
+/// **A chat hit in the overlay opens as a tab too**, at its block.
 #[test]
-fn a_successful_ai_chat_open_does_not_create_an_agent_window() {
+fn an_overlay_chat_hit_opens_as_a_tab() {
     let mut agent = agent();
-    assert!(!agent.wake(AgentEvent::AiChatOpened { error: None }));
-    assert!(agent.overlay.is_none());
+    let workspace = ConnectionId(67);
+    let (connection, queue) = Connection::for_test(workspace);
+    agent.connections.push(connection);
+    workspace_hello(&mut agent, workspace, &queue);
+
+    let chat = koru_ai_core::ChatId::new();
+    let block = koru_ai_core::MessageBlockId::new();
+    agent.open_target(koru_search_ui::Target::Chat {
+        chat,
+        message: koru_ai_core::MessageId::new(),
+        block,
+        profile: None,
+        disposition: koru_search_ui::Disposition::CurrentWindow,
+    });
+    assert_eq!(
+        queue.recv(),
+        Ok(FromAgent::Push {
+            body: Push::OpenChat {
+                chat: chat.as_uuid().to_string(),
+                block: Some(block.as_uuid().to_string()),
+            },
+        })
+    );
+}
+
+/// **A chat asked for with no Workspace window is latched, not lost**, and
+/// spent once, by the next Workspace `Hello`.
+#[test]
+fn a_latched_chat_is_spent_by_the_next_workspace_hello() {
+    let mut agent = agent();
+    let chat = uuid::Uuid::new_v4();
+    agent.pending_workspace_chat = Some(crate::app::PendingChat {
+        chat,
+        block: None,
+        profile: None,
+    });
+
+    let workspace = ConnectionId(68);
+    let (connection, queue) = Connection::for_test(workspace);
+    agent.connections.push(connection);
+    workspace_hello(&mut agent, workspace, &queue);
+    assert_eq!(
+        queue.recv(),
+        Ok(FromAgent::Push {
+            body: Push::OpenChat {
+                chat: chat.to_string(),
+                block: None,
+            },
+        }),
+        "the launched window is handed the chat"
+    );
+
+    let later = ConnectionId(69);
+    let (later_connection, later_queue) = Connection::for_test(later);
+    agent.connections.push(later_connection);
+    workspace_hello(&mut agent, later, &later_queue);
+    assert!(
+        later_queue.try_recv().is_err(),
+        "the latch is spent by the first Hello, not re-read"
+    );
+}
+
+/// A Workspace window of `profile`, introduced as a window says Hello.
+fn profile_hello(
+    agent: &mut Agent,
+    connection: ConnectionId,
+    profile: ProfileId,
+) -> std::sync::mpsc::Receiver<FromAgent> {
+    let (conn, queue) = Connection::for_test(connection);
+    agent.connections.push(conn);
+    agent.said(
+        connection,
+        1,
+        Request::Hello {
+            profile: profile.to_storage(),
+            workspace: WorkspaceId::new().to_storage(),
+            profile_name: "Profile".into(),
+            workspace_name: "Notes".into(),
+            pinned: Vec::new(),
+            reopen_claim: None,
+        },
+        Duration::ZERO,
+    );
+    let _ = drained(&queue);
+    queue
+}
+
+/// **A chat opens in a window of its own profile** (AI schema 13), not the
+/// most recent window when that is another profile's: a chat a window of
+/// Private would not show is named with its profile, and the Work window
+/// opens it — though Private's was used last.
+#[test]
+fn a_chat_named_with_its_profile_opens_in_that_profiles_window() {
+    let mut agent = agent();
+    let (private, work) = (ProfileId::new(), ProfileId::new());
+    let at_work = profile_hello(&mut agent, ConnectionId(80), work);
+    let at_home = profile_hello(&mut agent, ConnectionId(81), private);
+    agent.said(ConnectionId(81), 2, Request::Active, Duration::ZERO);
+    let _ = drained(&at_home);
+
+    let chat = "00000000-0000-4000-8000-000000000001";
+    agent.said(
+        ConnectionId(81),
+        3,
+        Request::OpenChatLink {
+            chat: chat.into(),
+            block: None,
+            profile: Some(work.to_storage()),
+        },
+        Duration::ZERO,
+    );
+    assert_eq!(
+        drained(&at_home),
+        vec![FromAgent::Response {
+            id: 3,
+            body: Response::Ok,
+        }],
+        "the asking window is answered, and not handed it back"
+    );
+    assert_eq!(
+        drained(&at_work),
+        vec![FromAgent::Push {
+            body: Push::OpenChat {
+                chat: chat.into(),
+                block: None,
+            },
+        }]
+    );
+
+    // An overlay hit names its chat's profile too.
+    let hit = koru_ai_core::ChatId::new();
+    let block = koru_ai_core::MessageBlockId::new();
+    agent.open_target(koru_search_ui::Target::Chat {
+        chat: hit,
+        message: koru_ai_core::MessageId::new(),
+        block,
+        profile: Some(work),
+        disposition: koru_search_ui::Disposition::CurrentWindow,
+    });
+    assert_eq!(
+        drained(&at_work),
+        vec![FromAgent::Push {
+            body: Push::OpenChat {
+                chat: hit.as_uuid().to_string(),
+                block: Some(block.as_uuid().to_string()),
+            },
+        }]
+    );
+    assert!(drained(&at_home).is_empty());
+}
+
+/// **A chat of a profile with no window open waits for that profile's**
+/// (AI schema 13): it is latched for that profile, a window of another
+/// profile arriving does not take it, and the profile's window does.
+#[test]
+fn a_chat_waits_for_a_window_of_its_own_profile() {
+    let mut agent = agent();
+    let (private, work) = (ProfileId::new(), ProfileId::new());
+    let chat = uuid::Uuid::new_v4();
+    agent.pending_workspace_chat = Some(crate::app::PendingChat {
+        chat,
+        block: None,
+        profile: Some(work),
+    });
+
+    let at_home = profile_hello(&mut agent, ConnectionId(82), private);
+    assert!(drained(&at_home).is_empty(), "not another profile's window");
+    assert!(agent.pending_workspace_chat.is_some());
+
+    let (conn, at_work) = Connection::for_test(ConnectionId(83));
+    agent.connections.push(conn);
+    agent.said(
+        ConnectionId(83),
+        1,
+        Request::Hello {
+            profile: work.to_storage(),
+            workspace: WorkspaceId::new().to_storage(),
+            profile_name: "Work".into(),
+            workspace_name: "Office".into(),
+            pinned: Vec::new(),
+            reopen_claim: None,
+        },
+        Duration::ZERO,
+    );
+    assert!(
+        drained(&at_work).contains(&FromAgent::Push {
+            body: Push::OpenChat {
+                chat: chat.to_string(),
+                block: None,
+            },
+        }),
+        "the profile's own window takes it"
+    );
+    assert!(agent.pending_workspace_chat.is_none());
 }
 
 /// **The guard that keeps this file off a real store.** Opening the overlay
@@ -3215,34 +3447,36 @@ fn reminder_health_projection_is_content_free_and_keeps_local_choice() {
     }
 }
 
-/// **A build that hides Koru AI opens nothing**, whichever door asks: a
-/// `koru://chat/…` from another app reaches the Agent as `OpenChatLink`, and
-/// the title row's twin as `OpenAiChat`. Both answer `Ok` — silent in the
-/// shell — and launch no chat process (koru-features, M39).
+/// **A build that hides Koru AI opens nothing**: a `koru://chat/…` from
+/// another app reaches the Agent as `OpenChatLink`, answers `Ok` — silent in
+/// the shell — and no window is asked to open a chat (koru-features, M39).
 #[test]
-fn a_build_that_hides_koru_ai_opens_no_chat_from_any_door() {
+fn a_build_that_hides_koru_ai_opens_no_chat() {
     koru_features::testing::with(koru_features::Features::ALL_OFF, || {
-        for request in [
-            Request::OpenAiChat,
+        let mut agent = agent();
+        let connection = ConnectionId(46);
+        let (conn, queue) = Connection::for_test(connection);
+        agent.connections.push(conn);
+        workspace_hello(&mut agent, connection, &queue);
+
+        agent.said(
+            connection,
+            9,
             Request::OpenChatLink {
                 chat: "00000000-0000-4000-8000-000000000001".into(),
                 block: None,
+                profile: None,
             },
-        ] {
-            let mut agent = agent();
-            let connection = ConnectionId(46);
-            let (conn, queue) = Connection::for_test(connection);
-            agent.connections.push(conn);
-
-            agent.said(connection, 9, request, Duration::ZERO);
-            assert_eq!(
-                queue.recv(),
-                Ok(FromAgent::Response {
-                    id: 9,
-                    body: Response::Ok,
-                })
-            );
-        }
+            Duration::ZERO,
+        );
+        assert_eq!(
+            drained(&queue),
+            vec![FromAgent::Response {
+                id: 9,
+                body: Response::Ok,
+            }]
+        );
+        assert!(agent.pending_workspace_chat.is_none());
     });
 }
 

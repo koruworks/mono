@@ -14,25 +14,35 @@
 use koru_draw::theme::FontChoice;
 use koru_settings::{
     CaretColorChoice, CaretHeightChoice, CaretWidthChoice, CloseBehaviorChoice, DensityChoice,
-    DictationGesture, DictationInput, DictationLanguage, DictationTier, FontFamily, LanguageChoice,
-    TerminalCursorBlink, TerminalCursorHeight, TerminalCursorWidth, ThemeChoice, ViewModeChoice,
+    DictationGesture, DictationInput, DictationLanguage, DictationTier, FontFamily, IconPackChoice,
+    LanguageChoice, TerminalCursorBlink, TerminalCursorHeight, TerminalCursorWidth, ThemeChoice,
+    ViewModeChoice,
 };
 
-/// Which of the four font roles a chip belongs to.
+/// Which of the five font roles a chip belongs to.
 ///
-/// The order is welcome's, and it is the order the roles are drawn in: app,
-/// body, headings, code.
+/// The first four are welcome's, in the order they are drawn: app, body,
+/// headings, code. The chat's is drawn beside the app's, and is the one
+/// role whose default is another role — the app font, followed live.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FontRole {
     App,
     Body,
     Headings,
     Code,
+    /// The AI chat's messages and composer.
+    Chat,
 }
 
 impl FontRole {
     #[cfg(test)]
-    pub(crate) const ALL: [Self; 4] = [Self::App, Self::Body, Self::Headings, Self::Code];
+    pub(crate) const ALL: [Self; 5] = [
+        Self::App,
+        Self::Body,
+        Self::Headings,
+        Self::Code,
+        Self::Chat,
+    ];
 
     /// The label welcome drew, carried across unchanged.
     #[cfg(test)]
@@ -42,6 +52,7 @@ impl FontRole {
             Self::Body => "Body font",
             Self::Headings => "Headings font",
             Self::Code => "Code font",
+            Self::Chat => "Chat font",
         }
     }
 
@@ -53,15 +64,25 @@ impl FontRole {
             Self::Body => koru_i18n::t(lang, koru_i18n::Key::SettingsBody),
             Self::Headings => koru_i18n::t(lang, koru_i18n::Key::SettingsHeadings),
             Self::Code => koru_i18n::t(lang, koru_i18n::Key::SettingsCode),
+            Self::Chat => koru_i18n::t(lang, koru_i18n::Key::SettingsChatFont),
         }
     }
 
+    /// The font chosen for this role: what its list ticks, never the one
+    /// being previewed. For the chat while it follows, the app font's.
     pub(crate) fn current(self) -> FontChoice {
+        koru_draw::theme::chosen_font(self.slot())
+    }
+
+    /// The theme global this role sets.
+    pub fn slot(self) -> koru_draw::theme::FontSlot {
+        use koru_draw::theme::FontSlot;
         match self {
-            Self::App => koru_draw::theme::ui_font(),
-            Self::Body => koru_draw::theme::body_font(),
-            Self::Headings => koru_draw::theme::headings_font(),
-            Self::Code => koru_draw::theme::code_font(),
+            Self::App => FontSlot::Ui,
+            Self::Body => FontSlot::Body,
+            Self::Headings => FontSlot::Headings,
+            Self::Code => FontSlot::Code,
+            Self::Chat => FontSlot::Chat,
         }
     }
 
@@ -71,6 +92,7 @@ impl FontRole {
             Self::Body => koru_draw::theme::set_body_font(family),
             Self::Headings => koru_draw::theme::set_headings_font(family),
             Self::Code => koru_draw::theme::set_code_font(family),
+            Self::Chat => koru_draw::theme::set_chat_font(family),
         }
     }
 }
@@ -86,8 +108,20 @@ pub(crate) enum Action {
     CanvasBackground,
     ApplyLayoutToAll,
     Density(DensityChoice),
+    IconPack(IconPackChoice),
     PinnedShowTitle(bool),
     Font(FontRole, FontChoice),
+    /// A document body size, in px, from `DocTextSize::ALL`.
+    DocTextSize(u8),
+    /// The base colour — the window's frame — for the light (`false`) or
+    /// dark (`true`) theme:
+    /// `0xRRGGBB`, or `None` for the theme's own.
+    BaseColor(bool, Option<u32>),
+    /// A font role set to exactly this — the row for an installed family
+    /// that is not installed here keeps it.
+    FontSetting(FontRole, koru_settings::FontSetting),
+    /// *More fonts…*: the picker over every installed family, for a role.
+    MoreFonts(FontRole),
     VoiceLanguage(DictationLanguage),
     VoiceInput(DictationInput),
     VoiceTier(DictationTier),
@@ -109,9 +143,8 @@ pub(crate) enum Action {
     TelemetryConsent(bool),
     /// *Show Koru in the app menu*: the value the switch moves to.
     AppMenuEntry(bool),
-    /// Unfold (`true`) or fold the System page's Advanced card. View state:
-    /// nothing is written.
-    ShowAdvanced(bool),
+    /// *Preview in sample document*, at the right of *Document fonts*.
+    PreviewSampleDocument,
 
     // ----------------------------------------------------------- Terminal
     TerminalTheme(ThemeChoice),
@@ -126,10 +159,22 @@ pub(crate) enum Action {
     /// `Application`; `false` gives them the editor caret's current values.
     TerminalMatchCaret(bool),
 
-    // ----------------------------------------------------------------- AI
-    /// The AI section's one row: open the provider setup the AI surface owns.
-    /// See [`crate::ai`] for why the section is a slot rather than rows.
-    OpenAiSetup,
+    // ---------------------------------------------------- Agent providers
+    /// An agent's switch: its key, and the value the switch moves to.
+    AgentEnabled(String, bool),
+    /// *Restore defaults*: every agent on.
+    RestoreAgentDefaults,
+    /// *Refresh status*: read every agent's status again.
+    RefreshAgentStatus,
+    /// *Setup guide ↗*: the agent's install or setup page.
+    AgentGuide(&'static str),
+    /// *Install*: run the vendor's install command for the agent, by key.
+    InstallAgent(String),
+    /// *Default permission for new chats*: `true` for the *Other agents*
+    /// row, and the permission chosen.
+    AgentPermission(bool, koru_settings::AgentPermission),
+    /// *Default agent*: an agent's key, or `None` for *Auto*.
+    DefaultAgent(Option<String>),
 }
 
 /// **What the surface cannot do for itself.**
@@ -141,6 +186,9 @@ pub(crate) enum Action {
 /// and performs them in its own vocabulary.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Request {
+    /// *More fonts…* on a font list: the container opens the installed-font
+    /// picker for this role (it owns the window the picker stands over).
+    MoreFonts(FontRole),
     /// *Apply to all documents*. Only the container can reach every open tab.
     ApplyLayoutToAllDocuments,
     /// The canvas swatch was pressed; the host cycles it and hands the new
@@ -173,8 +221,15 @@ pub enum Request {
     AskVoiceDevices,
     /// Act through `koru-voice-consent`, which is the record's only owner.
     RevokeVoiceConsent,
-    /// Open the AI provider setup the AI surface owns.
+    /// Open the AI provider setup the AI surface owns. No Settings row raises
+    /// it while the Koru AI card is off the System page; Welcome's *Set up
+    /// your AI* still does, through the same host path.
     OpenAiSetup,
+    /// Show the sample document — a short read-only page in the person's
+    /// document fonts — beside this Settings tab, or bring it forward if it
+    /// is already open. Only a host with tabs and panes can; see
+    /// [`offer_sample_document`](crate::SettingsSurface::offer_sample_document).
+    OpenSampleDocument,
     /// Record this device's telemetry answer. The record is the events
     /// journal's, behind the Gateway (the opt-in contract of 2026-10-11), and
     /// the write must leave the event loop — so it is the host's to perform.
@@ -182,4 +237,33 @@ pub enum Request {
     /// Add Koru's entry to the desktop's app menu, or take it out. A file the
     /// host's executable path goes into, so the host writes it.
     SetAppMenuEntry(bool),
+    /// Turn a coding agent on or off on this machine, by its key. The host
+    /// holds the stored list and everything that hides an agent.
+    SetAgentEnabled {
+        key: String,
+        on: bool,
+    },
+    /// Turn every coding agent on.
+    RestoreAgentDefaults,
+    /// Read every agent's status again — the host's existing checks, off
+    /// the event loop.
+    RefreshAgentStatus,
+    /// Open an agent's setup guide in the browser: a fixed vendor page.
+    OpenAgentGuide(&'static str),
+    /// Install an agent, by key: the host opens a terminal tab running the
+    /// vendor's install command, where the person sees its output and
+    /// answers its prompts, and checks the agent again when it ends.
+    InstallAgent(String),
+    /// Store the permission new chats start in, on this machine: for the
+    /// supported agents, or (`other`) for every other agent.
+    SetAgentPermission {
+        other: bool,
+        permission: koru_settings::AgentPermission,
+    },
+    /// Store the agent new chats start with, on this machine: a key, or
+    /// `None` for *Auto* (the last agent used).
+    SetDefaultAgent(Option<String>),
+    /// Store the order the agents are listed in, on this machine: every
+    /// agent's key, in the order the page now shows them.
+    SetAgentOrder(Vec<String>),
 }

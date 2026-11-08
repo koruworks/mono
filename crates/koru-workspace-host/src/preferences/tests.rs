@@ -2,7 +2,7 @@
 
 use super::*;
 
-use koru_settings::{DensityChoice, TerminalCursorWidth};
+use koru_settings::{DensityChoice, FamilyName, FontFamily, TerminalCursorWidth};
 
 /// **What a window shows before it has heard anything.**
 ///
@@ -56,14 +56,17 @@ fn a_patch_names_only_what_moved() {
 #[test]
 fn every_preference_round_trips_through_the_section() {
     let settings = Settings {
+        icon_pack: Some(koru_draw::icons::IconPack::Lucide),
         theme: ThemePreference::Light,
         caret_color: CaretColor::Violet,
         caret_width: CaretWidth::Thick,
         caret_height: CaretHeight::Tall,
-        font: FontChoice::Poppins,
-        body_font: FontChoice::SourceSerif4,
-        headings_font: FontChoice::Lora,
-        code_font: FontChoice::SourceCodePro,
+        font: FontSetting::Chosen(FontFamily::Poppins),
+        // An installed family round-trips by name, installed here or not.
+        body_font: FontSetting::Installed(FamilyName::new("EB Garamond").unwrap()),
+        headings_font: FontSetting::Chosen(FontFamily::Lora),
+        code_font: FontSetting::Chosen(FontFamily::SourceCodePro),
+        chat_font: FontSetting::Chosen(FontFamily::SourceSerif4),
         density: Density::Comfortable,
         zoom: 1.25,
         view_mode: ViewMode::Page,
@@ -128,7 +131,7 @@ fn a_role_that_follows_the_app_is_not_reported_as_a_choice() {
     assert!(patch(&section, &following).headings_font.is_none());
 
     let chose = Settings {
-        headings_font: FontChoice::Lora,
+        headings_font: FontSetting::Chosen(FontFamily::Lora),
         ..Settings::default()
     };
     assert_eq!(
@@ -139,13 +142,49 @@ fn a_role_that_follows_the_app_is_not_reported_as_a_choice() {
     // And the other way: a role the authority says follows the app resolves to
     // *this build's* default, not to whatever was frozen into a file.
     let mut settings = Settings {
-        headings_font: FontChoice::Lora,
+        headings_font: FontSetting::Chosen(FontFamily::Lora),
         ..Settings::default()
     };
     adopt(&section, &mut settings);
+    assert_eq!(settings.headings_font, FontSetting::FollowDefault);
     assert_eq!(
-        settings.headings_font,
+        koru_draw::theme::resolve_font(
+            koru_draw::theme::FontSlot::Headings,
+            &settings.headings_font
+        ),
         koru_draw::theme::default_headings_font()
+    );
+}
+
+/// **The Chat font travels like the other roles** (koru-ai D79): a section
+/// without one — every section before it existed — leaves the window
+/// following the app font and sends nothing; a choice is sent and adopted
+/// back; and going back to following the app font is sent too.
+#[test]
+fn the_chat_font_follows_the_app_until_chosen_and_travels_both_ways() {
+    let section = GlobalSettings::default();
+    let mut settings = Settings::default();
+    adopt(&section, &mut settings);
+    assert_eq!(settings.chat_font, FontSetting::FollowDefault);
+    assert!(patch(&section, &settings).chat_font.is_none());
+
+    let chose = Settings {
+        chat_font: FontSetting::Chosen(FontFamily::Lora),
+        ..Settings::default()
+    };
+    let sent = patch(&section, &chose);
+    assert_eq!(sent.chat_font, Some(FontSetting::Chosen(FontFamily::Lora)));
+    assert!(sent.ui_font.is_none(), "the app font is its own");
+    let mut stored = section.clone();
+    sent.apply(&mut stored);
+    let mut back = Settings::default();
+    assert!(adopt(&stored, &mut back));
+    assert_eq!(back.chat_font, FontSetting::Chosen(FontFamily::Lora));
+
+    assert_eq!(
+        patch(&stored, &Settings::default()).chat_font,
+        Some(FontSetting::FollowDefault),
+        "following the app font again is a change to send"
     );
 }
 
@@ -318,5 +357,125 @@ fn capture_preferences_reads_back_the_layout_globals() {
     assert!(
         source.contains("let was_canvas_bg = theme::default_canvas_bg()"),
         "same for the canvas swatch"
+    );
+}
+
+/// **The setting is compared as a setting** (D14). Choosing the bundled face
+/// a missing installed family already falls back to, or going back to the
+/// default from an explicit choice of the same face, changes nothing drawn and
+/// is still saved; nothing changed saves nothing.
+#[test]
+fn a_change_of_font_setting_is_saved_even_when_the_face_is_the_same() {
+    let garamond = FontSetting::Installed(FamilyName::new("No Such Face 9000").unwrap());
+    let section = GlobalSettings {
+        body_font: garamond.clone(),
+        ..GlobalSettings::default()
+    };
+    let unchanged = Settings {
+        body_font: garamond,
+        ..Settings::default()
+    };
+    assert_eq!(patch(&section, &unchanged).body_font, None);
+    let chose_inter = Settings {
+        body_font: FontSetting::Chosen(FontFamily::Inter),
+        ..Settings::default()
+    };
+    assert_eq!(
+        patch(&section, &chose_inter).body_font,
+        Some(FontSetting::Chosen(FontFamily::Inter))
+    );
+    let chose = GlobalSettings {
+        body_font: FontSetting::Chosen(FontFamily::Inter),
+        ..GlobalSettings::default()
+    };
+    let following = Settings::default();
+    assert_eq!(
+        patch(&chose, &following).body_font,
+        Some(FontSetting::FollowDefault),
+        "the picker's default row is a change too"
+    );
+}
+
+/// **The base color travels both ways, per theme.** A color the authority
+/// holds lands in this window; a swatch picked here is named in the patch; the
+/// theme's own swatch is sent as a clear, because going back to the theme is
+/// a choice this row offers — and nothing moved names nothing.
+#[test]
+fn a_base_color_is_adopted_patched_and_taken_back_per_theme() {
+    use koru_settings::{Field, RgbColor};
+    let section = GlobalSettings {
+        base_color_dark: RgbColor::new(0x293750),
+        ..GlobalSettings::default()
+    };
+    let mut settings = Settings::default();
+    assert!(adopt(&section, &mut settings), "a held color is a change");
+    assert_eq!(settings.base_color_light, None);
+    assert_eq!(settings.base_color_dark, Some(0x293750));
+    assert!(patch(&section, &settings).is_empty(), "nothing moved");
+
+    let picked = Settings {
+        base_color_light: Some(0xDDE7F6),
+        ..settings.clone()
+    };
+    let sent = patch(&section, &picked);
+    assert_eq!(
+        sent.base_color_light,
+        Field::Set(RgbColor::new(0xDDE7F6).unwrap())
+    );
+    assert!(
+        sent.base_color_dark.is_unchanged(),
+        "the other theme keeps its own"
+    );
+    assert!(sent.touches_roaming());
+
+    let back = Settings {
+        base_color_dark: None,
+        ..settings
+    };
+    let sent = patch(&section, &back);
+    assert_eq!(sent.base_color_dark, Field::Clear);
+    assert!(sent.base_color_light.is_unchanged());
+}
+
+/// The base colors take the road every other appearance preference takes:
+/// pushed into the theme by both `apply_*` functions, read back by
+/// `capture_preferences`, and counted as a saved choice by the snapshot that
+/// decides whether a press patches. Missing any one of them is a swatch that
+/// paints and is then reset by the next poll, or never saved at all.
+#[test]
+fn the_base_colors_are_applied_captured_and_saved_like_any_preference() {
+    let source = include_str!("../app.rs");
+    assert_eq!(
+        source
+            .matches("apply_base_colors(settings.base_color_light, settings.base_color_dark);")
+            .count(),
+        2,
+        "apply_settings and apply_pre_identity_preferences"
+    );
+    assert!(source.contains("settings.base_color_light = theme::base_color(false)"));
+    assert!(source.contains("settings.base_color_dark = theme::base_color(true)"));
+    assert!(
+        source.contains("self.choices != before.choices || self.base != before.base"),
+        "a swatch click has to count as a choice, or the press never patches"
+    );
+}
+
+/// The Chat font takes the same road: pushed into the theme by both
+/// `apply_*` functions and read back by `capture_preferences` as the
+/// setting, so following the app font is never saved as a face.
+#[test]
+fn the_chat_font_is_applied_and_captured_like_any_font_role() {
+    let source = include_str!("../app.rs");
+    assert_eq!(
+        source
+            .matches("theme::set_font_setting(theme::FontSlot::Chat, settings.chat_font.clone());")
+            .count(),
+        2,
+        "apply_settings and apply_pre_identity_preferences"
+    );
+    assert!(
+        source.contains(
+            "self.runtime.settings.chat_font = theme::font_setting(theme::FontSlot::Chat);"
+        )
     );
 }

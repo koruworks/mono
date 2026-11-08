@@ -50,15 +50,17 @@ pub use authority::{PatchError, SettingsAuthority, SettingsEventSink, StartOnLog
 pub use paths::{RUNS_FOLDER, SettingsPaths, delegate_temporary_base};
 pub use registry::{Backing, EXEMPTIONS, REGISTRY, SettingSpec, ValueKind, settings_in};
 pub use sections::{
-    AiPatch, AiSettings, GlobalPatch, GlobalSettings, Invalid, OllamaSection, OpenAiSection,
-    RecordingPrefs, Section, SectionValues, StorageClass, TerminalPatch, TerminalSettings,
+    AiPatch, AiSettings, FavoriteModel, GlobalPatch, GlobalSettings, Invalid, OllamaSection,
+    OpenAiSection, RecordingPrefs, Section, SectionValues, StorageClass, TerminalPatch,
+    TerminalSettings,
 };
 pub use values::{
-    AiProvider, CanvasBackground, CaretColorChoice, CaretHeightChoice, CaretWidthChoice,
-    CloseBehaviorChoice, DensityChoice, DictationGesture, DictationInput, DictationLanguage,
-    DictationShortcut, DictationTier, Field, FontFamily, FontSetting, GlobalShortcut,
-    LanguageChoice, PopoutCloseChoice, ReasoningChoice, TerminalCursorBlink, TerminalCursorHeight,
-    TerminalCursorWidth, ThemeChoice, ViewModeChoice, Zoom,
+    AgentPermission, AiProvider, CanvasBackground, CaretColorChoice, CaretHeightChoice,
+    CaretWidthChoice, CloseBehaviorChoice, DensityChoice, DictationGesture, DictationInput,
+    DictationLanguage, DictationShortcut, DictationTier, DocTextSize, DocTextSizeSetting,
+    FamilyName, Field, FontFamily, FontSetting, GlobalShortcut, IconPackChoice, LanguageChoice,
+    PopoutCloseChoice, ReasoningChoice, RgbColor, TerminalCursorBlink, TerminalCursorHeight,
+    TerminalCursorWidth, ThemeChoice, ViewModeChoice, Zoom, is_storable_family_name,
 };
 
 /// The bounded wait a window gives the Gateway at startup, in milliseconds.
@@ -68,6 +70,14 @@ pub use values::{
 /// in the authoritative section when it lands. If nothing lands inside this
 /// budget the window stays on defaults — never a hang, and never a splash
 /// screen while somebody's editor waits on a preferences file.
+///
+/// **Revised 2026-10-30 (owner, DOCFONTSIZE Q-F: "Ok").** "Renders
+/// immediately" became "renders within 400 ms": a process's *first* window
+/// is held hidden for at most `REVEAL_BUDGET` (400 ms, beside `reveal_pane`
+/// in `koru-workspace-host`) waiting for the first answer, so its first
+/// visible frame is the person's size, fonts and theme. Past the budget it is
+/// shown with the defaults and corrects when the answer lands, as before;
+/// this wait is unchanged and still bounds how long the link listens.
 ///
 /// Spelled here rather than in the client so the authority and the client
 /// cannot disagree about it; `koru-api-client` reads this constant.

@@ -4,12 +4,15 @@ mod antigravity;
 mod claude;
 mod config;
 mod diagnostics;
+mod elicitation;
 mod events;
 mod grok;
 mod input;
 mod models;
+mod modes;
 mod probe;
 mod routes;
+mod steering;
 
 pub use config::{AcpConfig, AcpRoute};
 pub use probe::{AcpCompatibilityProbe, AcpFactory};
@@ -40,16 +43,49 @@ pub struct AcpControl {
     session_id: Option<SessionId>,
     native_session: Option<String>,
     mcp_sse: bool,
+    /// The agent advertised the steering extension at initialize
+    /// (`_meta.steering.supported`), so text can go into a running turn
+    /// ([`steering`]).
+    steering: bool,
     wrapper_auth: Option<claude::WrapperAuth>,
     grok_inventory: Option<String>,
     /// What the session advertised under its `model` config option, for
     /// discovery; empty where the route advertises none.
     model_options: Vec<koru_session_protocol::ProviderModel>,
+    /// The approval modes the session advertised, with the one it is in
+    /// (koru-ai D7); `None` where it advertised none.
+    modes: Option<koru_session_protocol::AgentModes>,
+    /// The `mode` config option's id, when the modes came with one.
+    mode_config: Option<String>,
+    /// A mode the agent moved to between turns, said with the next turn
+    /// (`ModeChanged` belongs to a turn).
+    unreported_mode: Option<koru_session_protocol::AgentModeId>,
+    /// The session's model's Fast mode option, as the latest answer or
+    /// update carried it; `None` for a model without one (D11).
+    fast: Option<models::FastOption>,
+    /// The session's `thought_level` option as the latest answer or update
+    /// carried it — its id, its values and the level it is at — so a level
+    /// chosen after the start can be set (koru-ai D70); `None` for a model
+    /// without one.
+    thought_level: Option<models::ThoughtLevel>,
+    /// The model the session's turns run on, as its `model` option last
+    /// said: the start's, then the last one a turn moved it to. `None`
+    /// where the session advertised no such option.
+    turn_model: Option<koru_session_protocol::ModelName>,
+    /// Notices the agent said while no turn ran, said with the next turn
+    /// (koru-ai D69; `Notice` belongs to a turn).
+    unsaid_notices: Vec<String>,
     next_request_id: u64,
     turns: BTreeMap<AgentTurnId, Turn>,
     active: Option<AgentTurnId>,
     tools: BTreeMap<String, Tool>,
+    /// The native ids of calls whose start is held back, oldest first.
+    unstarted: Vec<String>,
     approvals: BTreeMap<ApprovalId, PendingApproval>,
+    /// Forms the agent asked (`elicitation/create`) and nobody has
+    /// answered: each one a question set (D108).
+    elicitations:
+        BTreeMap<koru_session_protocol::QuestionRequestId, elicitation::PendingElicitation>,
     events: VecDeque<AgentEvent>,
     diagnostics: ProviderDiagnostics,
     log: diagnostics::SessionLog,
@@ -78,9 +114,22 @@ struct Tool {
     id: ToolCallId,
     kind: ToolKind,
     completed: bool,
-    /// The latest of what the tool produced, as its updates carried it;
-    /// the completion takes it (UC17).
-    output: Option<String>,
+    /// Whether an update has said what the call does. A call that arrives
+    /// with nothing to say it — Claude announces a tool the moment the model
+    /// starts writing its input, as *Terminal* with `rawInput: {}` — is held
+    /// in `unstarted` until one does; a ready call starts once every call
+    /// announced before it is ready too (`AcpControl::flush_starts`).
+    ready: bool,
+    /// The agent's latest title for the call, bounded.
+    title: Option<String>,
+    /// The latest of what the call was asked to do (`rawInput`), bounded.
+    input: Option<String>,
+    /// What the tool produced, as its updates carried it (UC17): the latest
+    /// diff blocks, the latest result text, and the latest `rawOutput`. The
+    /// completion takes the diff and the text, else the raw output.
+    diff: Option<String>,
+    text: Option<String>,
+    raw_output: Option<String>,
 }
 
 #[derive(Clone)]
@@ -104,14 +153,24 @@ impl AcpControl {
             session_id: None,
             native_session: None,
             mcp_sse: false,
+            steering: false,
             wrapper_auth: None,
             grok_inventory: None,
             model_options: Vec::new(),
+            modes: None,
+            mode_config: None,
+            unreported_mode: None,
+            fast: None,
+            thought_level: None,
+            turn_model: None,
+            unsaid_notices: Vec::new(),
             next_request_id: 1,
             turns: BTreeMap::new(),
             active: None,
             tools: BTreeMap::new(),
+            unstarted: Vec::new(),
             approvals: BTreeMap::new(),
+            elicitations: BTreeMap::new(),
             events: VecDeque::new(),
             diagnostics: ProviderDiagnostics::default(),
             log: diagnostics::SessionLog::default(),
@@ -134,6 +193,158 @@ impl AcpControl {
         &self.model_options
     }
 
+    /// The approval modes the session advertised, in the mode it is in now;
+    /// `None` before start and where it advertised none (D7).
+    pub(super) fn modes(&self) -> Option<&koru_session_protocol::AgentModes> {
+        self.modes.as_ref()
+    }
+
+    /// Follow the mode an answer or an update reports: the session's modes
+    /// with that one current. The new mode when it moved, `None` when it is
+    /// the same, is not one of the session's, or the answer names none.
+    fn follow_mode(
+        &mut self,
+        reported: Option<koru_session_protocol::AgentModeId>,
+    ) -> Option<koru_session_protocol::AgentModeId> {
+        let reported = reported?;
+        let modes = self.modes.as_ref()?;
+        if modes.current() == Some(&reported) {
+            return None;
+        }
+        self.modes = Some(modes.with_current(&reported)?);
+        Some(reported)
+    }
+
+    /// Say a mode the agent moved to by itself: on the running turn, or
+    /// with the next one when none runs (D7).
+    pub(super) fn report_mode(
+        &mut self,
+        moved: Option<koru_session_protocol::AgentModeId>,
+    ) -> Result<(), ProviderFailure> {
+        let Some(mode) = moved else {
+            return Ok(());
+        };
+        match self.active {
+            Some(turn_id) if self.turns[&turn_id].cancelling.is_none() => {
+                self.unreported_mode = None;
+                self.queue(AgentEvent::ModeChanged { turn_id, mode })
+            }
+            Some(_) => Ok(()),
+            None => {
+                self.unreported_mode = Some(mode);
+                Ok(())
+            }
+        }
+    }
+
+    /// **Turn the model's Fast mode on or off** (koru-ai D11), between turns:
+    /// through its `fast` option, verified from the answer like a level. A
+    /// model with no Fast mode ignores the choice — it is offered only where
+    /// the model has one. Claude's wrapper takes it live, so it may change
+    /// with any message.
+    fn apply_fast(
+        &mut self,
+        native_session: &str,
+        on: bool,
+        stage: ProviderStage,
+    ) -> Result<(), ProviderFailure> {
+        let rejected = || {
+            tracing::warn!(target: "koru::acp", event = "acp.fast.rejected", on);
+            failure(
+                ErrorCode::InvalidRequest,
+                stage,
+                ProviderDiagnostic::InvalidInput,
+            )
+        };
+        let Some(option) = &self.fast else {
+            if on {
+                tracing::info!(target: "koru::acp", event = "acp.fast.not_offered");
+            }
+            return Ok(());
+        };
+        if option.on == on {
+            return Ok(());
+        }
+        let params =
+            json!({"sessionId":native_session, "configId":option.id, "value":option.value(on)});
+        let applied = self
+            .call("session/set_config_option", params)
+            .map_err(|_| rejected())?;
+        let reported = models::fast_option(&applied).ok_or_else(rejected)?;
+        if reported.on != on {
+            return Err(rejected());
+        }
+        self.fast = Some(reported);
+        tracing::info!(target: "koru::acp", event = "acp.fast.selected", on);
+        Ok(())
+    }
+
+    /// **Move the session to `mode`** (D7), between turns. The mode must be
+    /// one the session offers; it is set through the `mode` config option
+    /// when the agent advertised one — the answer reports where the session
+    /// is — else through `session/set_mode`, whose answer is empty. An agent
+    /// may land on another of its modes than the one asked (Claude, asked
+    /// for `auto` on a model without it, takes `acceptEdits`): the session
+    /// follows it, and the next turn says so. A refused set, or one whose
+    /// answer names no mode it offers, refuses the start or the turn —
+    /// never runs it in a mode nobody chose.
+    fn apply_mode(
+        &mut self,
+        native_session: &str,
+        mode: &koru_session_protocol::AgentModeId,
+        stage: ProviderStage,
+    ) -> Result<(), ProviderFailure> {
+        let rejected = || {
+            tracing::warn!(target: "koru::acp", event = "acp.mode.rejected", mode = %mode);
+            failure(
+                ErrorCode::InvalidRequest,
+                stage,
+                ProviderDiagnostic::InvalidInput,
+            )
+        };
+        let Some(modes) = &self.modes else {
+            return Err(rejected());
+        };
+        if !modes.contains(mode) {
+            return Err(rejected());
+        }
+        if modes.current() == Some(mode) {
+            return Ok(());
+        }
+        let reported = match self.mode_config.clone() {
+            Some(config_id) => {
+                let applied = self
+                    .call(
+                        "session/set_config_option",
+                        json!({"sessionId":native_session, "configId":config_id, "value":mode.as_str()}),
+                    )
+                    .map_err(|_| rejected())?;
+                modes::current(&applied).ok_or_else(rejected)?
+            }
+            None => {
+                self.call(
+                    "session/set_mode",
+                    json!({"sessionId":native_session, "modeId":mode.as_str()}),
+                )
+                .map_err(|_| rejected())?;
+                mode.clone()
+            }
+        };
+        if !self
+            .modes
+            .as_ref()
+            .is_some_and(|modes| modes.contains(&reported))
+        {
+            return Err(rejected());
+        }
+        self.follow_mode(Some(reported.clone()));
+        // What the agent said while setting it is the answer itself: only
+        // a landing elsewhere than asked is news for the next turn.
+        self.unreported_mode = (reported != *mode).then_some(reported.clone());
+        tracing::info!(target: "koru::acp", event = "acp.mode.selected", mode = %reported, asked = %mode);
+        Ok(())
+    }
+
     fn ensure_transport(&mut self) -> Result<(), ProviderFailure> {
         if self.transport.is_none() {
             let mut environment = self.config.route.environment.clone();
@@ -151,7 +362,8 @@ impl AcpControl {
                 &self.config.route.arguments,
                 &environment,
                 &self.config.working_directory,
-                self.config.maximum_frame_bytes,
+                self.config.maximum_inbound_frame_bytes,
+                self.config.maximum_prompt_frame_bytes,
                 self.config.wake.clone(),
             );
             let mut transport = match spawned {
@@ -237,8 +449,48 @@ impl AcpControl {
         Ok(())
     }
 
+    /// Queue `event`, after every call start still held back: nothing that
+    /// follows a call in the stream may reach the chat before it, or the
+    /// call's place in the reply's text and its order among the rows move.
     fn queue(&mut self, event: AgentEvent) -> Result<(), ProviderFailure> {
-        if self.events.len() + self.approvals.len() >= self.config.event_capacity {
+        self.flush_starts(usize::MAX)?;
+        self.push_event(event)
+    }
+
+    /// Queue the held-back starts: all of them up to `upto` of the oldest,
+    /// each with the title and input its updates have brought so far.
+    fn flush_starts(&mut self, upto: usize) -> Result<(), ProviderFailure> {
+        let count = upto.min(self.unstarted.len());
+        for native_id in self.unstarted.drain(..count).collect::<Vec<_>>() {
+            let Some(turn_id) = self.active else {
+                break;
+            };
+            let Some(tool) = self.tools.get(&native_id) else {
+                continue;
+            };
+            let event = AgentEvent::ToolStarted {
+                turn_id,
+                tool_call_id: tool.id,
+                label: tool
+                    .title
+                    .clone()
+                    .unwrap_or_else(|| tool.kind.as_str().to_owned()),
+                input: tool.input.clone(),
+            };
+            self.push_event(event)?;
+        }
+        Ok(())
+    }
+
+    fn clear_tools(&mut self) {
+        self.tools.clear();
+        self.unstarted.clear();
+    }
+
+    fn push_event(&mut self, event: AgentEvent) -> Result<(), ProviderFailure> {
+        if self.events.len() + self.approvals.len() + self.elicitations.len()
+            >= self.config.event_capacity
+        {
             return Err(failure(
                 ErrorCode::Backpressure,
                 ProviderStage::Read,
@@ -279,6 +531,7 @@ impl AcpControl {
         });
         self.log.cancel_requested(unrepresentable);
         self.expire_permissions(turn_id)?;
+        self.expire_elicitations(turn_id)?;
         let params = json!({"sessionId":self.native_session});
         self.transport()?
             .send(&json!({"jsonrpc":"2.0", "method":"session/cancel", "params":params}))
@@ -295,8 +548,9 @@ impl AcpControl {
         self.log.cancel_deadline();
         self.turns.get_mut(&turn_id).unwrap().terminal = true;
         self.active = None;
-        self.tools.clear();
+        self.clear_tools();
         self.approvals.clear();
+        self.elicitations.clear();
         self.events.retain(|event| {
             !matches!(
                 event,
@@ -348,11 +602,20 @@ impl AcpControl {
                     | AgentEvent::ProviderState { .. }
             )
         });
-        self.tools.clear();
+        self.clear_tools();
         for (approval_id, pending) in std::mem::take(&mut self.approvals) {
             let event = AgentEvent::ApprovalExpired {
                 turn_id: pending.turn_id,
                 approval_id,
+            };
+            self.log.observe(&event, self.diagnostics);
+            self.events.push_back(event);
+        }
+        for (request_id, pending) in std::mem::take(&mut self.elicitations) {
+            let event = AgentEvent::QuestionsResolved {
+                turn_id: pending.turn_id,
+                request_id,
+                outcome: koru_session_protocol::QuestionsOutcome::Expired,
             };
             self.log.observe(&event, self.diagnostics);
             self.events.push_back(event);
@@ -369,6 +632,7 @@ impl AcpControl {
             .cancelling
             .is_some_and(|value| value.unrepresentable);
         self.expire_permissions(turn_id)?;
+        self.expire_elicitations(turn_id)?;
         let event = if unrepresentable {
             failed_approval_event(turn_id)
         } else {
@@ -386,8 +650,183 @@ impl AcpControl {
         self.queue(event)?;
         self.turns.get_mut(&turn_id).unwrap().terminal = true;
         self.active = None;
-        self.tools.clear();
+        self.clear_tools();
         Ok(())
+    }
+
+    /// **Start the session at the chosen reasoning level** (agent-models
+    /// D18): the `thought_level` option of the latest answer must offer it,
+    /// `session/set_config_option` sets it, and the answer must report it
+    /// applied — the same validate, set and verify the model gets. Anything
+    /// short of that fails the start as a refused level (D19), never runs
+    /// the agent at a level the person did not choose.
+    fn apply_reasoning(
+        &mut self,
+        native_session: &str,
+        options: &Value,
+        level: koru_session_protocol::LaunchReasoning,
+        session_id: SessionId,
+    ) -> Result<(), ProviderFailure> {
+        let rejected = || {
+            tracing::warn!(target: "koru::acp", event = "acp.reasoning.rejected", session_id = %session_id);
+            failure(
+                ErrorCode::ProviderModelUnavailable,
+                ProviderStage::Initialize,
+                ProviderDiagnostic::ReasoningRejected,
+            )
+        };
+        let Some(option) = models::thought_level(options) else {
+            return Err(rejected());
+        };
+        let Some(value) = option.value_for(level).map(str::to_owned) else {
+            return Err(rejected());
+        };
+        let applied = self
+            .call(
+                "session/set_config_option",
+                json!({"sessionId":native_session, "configId":option.id, "value":value}),
+            )
+            .map_err(|_| rejected())?;
+        let reported = models::thought_level(&applied);
+        if reported
+            .as_ref()
+            .and_then(|option| option.current.as_deref())
+            != Some(value.as_str())
+        {
+            return Err(rejected());
+        }
+        self.thought_level = reported;
+        tracing::info!(target: "koru::acp", event = "acp.reasoning.selected", session_id = %session_id, applied = true);
+        Ok(())
+    }
+
+    /// **Move the session to the turn's level** (koru-ai D70), between
+    /// turns: through the same `thought_level` option the start sets,
+    /// verified from the answer the same way, and only when the session is
+    /// elsewhere. A session whose model has no such option, a level it does
+    /// not offer, or a set it refuses refuses the turn as a refused level
+    /// (D19) — never runs it at a level nobody chose.
+    fn apply_turn_reasoning(
+        &mut self,
+        native_session: &str,
+        level: koru_session_protocol::LaunchReasoning,
+    ) -> Result<(), ProviderFailure> {
+        let rejected = || {
+            tracing::warn!(target: "koru::acp", event = "acp.reasoning.rejected", level = level.as_str(), stage = "submit");
+            failure(
+                ErrorCode::ProviderModelUnavailable,
+                ProviderStage::Submit,
+                ProviderDiagnostic::ReasoningRejected,
+            )
+        };
+        let Some(option) = &self.thought_level else {
+            return Err(rejected());
+        };
+        let Some(value) = option.value_for(level).map(str::to_owned) else {
+            return Err(rejected());
+        };
+        if option.current.as_deref() == Some(value.as_str()) {
+            return Ok(());
+        }
+        let id = option.id.clone();
+        let applied = self
+            .call(
+                "session/set_config_option",
+                json!({"sessionId":native_session, "configId":id, "value":value}),
+            )
+            .map_err(|_| rejected())?;
+        let reported = models::thought_level(&applied);
+        if reported
+            .as_ref()
+            .and_then(|option| option.current.as_deref())
+            != Some(value.as_str())
+        {
+            return Err(rejected());
+        }
+        self.thought_level = reported;
+        tracing::info!(target: "koru::acp", event = "acp.reasoning.selected", level = level.as_str(), stage = "submit");
+        Ok(())
+    }
+
+    /// **Move the session to the turn's model**, between turns: through the
+    /// same `model` config option the start sets, verified from the answer
+    /// the same way, and only when the session is on another. A model the
+    /// session did not advertise, or a set it refuses or does not apply,
+    /// refuses the turn — never runs it on a model nobody chose. The answer
+    /// carries the new model's level option and Fast mode, and the mode the
+    /// agent may have moved the session to (said with the turn), as at the
+    /// start.
+    fn apply_turn_model(
+        &mut self,
+        native_session: &str,
+        model: &koru_session_protocol::ModelName,
+    ) -> Result<(), ProviderFailure> {
+        if self.turn_model.as_ref() == Some(model) {
+            return Ok(());
+        }
+        let rejected = || {
+            tracing::warn!(target: "koru::acp", event = "acp.model.rejected", stage = "submit");
+            failure(
+                ErrorCode::ProviderModelUnavailable,
+                ProviderStage::Submit,
+                ProviderDiagnostic::InvalidInput,
+            )
+        };
+        // A model's longer window is advertised under the model it folds
+        // into (koru-ai D10).
+        let advertised = self.model_options.iter().any(|option| {
+            &option.id == model
+                || option
+                    .context
+                    .as_ref()
+                    .is_some_and(|context| &context.id == model)
+        });
+        if !advertised {
+            return Err(rejected());
+        }
+        let applied = self
+            .call(
+                "session/set_config_option",
+                json!({"sessionId":native_session, "configId":"model", "value":model.as_str()}),
+            )
+            .map_err(|_| rejected())?;
+        models::validate_applied(&applied, model).map_err(|_| rejected())?;
+        if let Some(moved) = self.follow_mode(modes::current(&applied)) {
+            self.unreported_mode = Some(moved);
+        }
+        self.fast = models::fast_option(&applied);
+        self.thought_level = models::thought_level(&applied);
+        self.turn_model = Some(model.clone());
+        tracing::info!(target: "koru::acp", event = "acp.model.selected", stage = "submit");
+        Ok(())
+    }
+
+    /// **Each model's levels, read by walking the models once** (D16): the
+    /// discovery session's own model is set to each listed one in turn, and
+    /// the `thought_level` option its answer carries is that model's. No
+    /// prompt is sent, and only this session's model changes; a set that
+    /// fails ends the walk, and the models already read keep their levels.
+    pub(super) fn walk_levels(&mut self) -> Vec<koru_session_protocol::ProviderModel> {
+        let mut models = self.model_options.clone();
+        let Some(session) = self.native_session.clone() else {
+            return models;
+        };
+        let mut dropped = 0;
+        for model in &mut models {
+            let Ok(answer) = self.call(
+                "session/set_config_option",
+                json!({"sessionId":session, "configId":"model", "value":model.id.as_str()}),
+            ) else {
+                break;
+            };
+            let level = models::thought_level(&answer);
+            dropped += level.as_ref().map_or(0, |level| level.dropped);
+            model.reasoning = level.and_then(|level| level.reasoning);
+            // The answer that set the model says whether it has Fast mode.
+            model.fast = models::model_fast(&answer);
+        }
+        models::levels_dropped(self.config.route.provider.as_str(), dropped);
+        models
     }
 
     fn start_session(&mut self, start: AgentStart) -> Result<AgentCapabilities, ProviderFailure> {
@@ -406,12 +845,7 @@ impl AcpControl {
                 ProviderDiagnostic::InvalidInput,
             ));
         }
-        if !self
-            .config
-            .route
-            .supported_versions
-            .contains(&self.config.executable_version)
-        {
+        if !self.config.route.supports(&self.config.executable_version) {
             return Err(failure(
                 ErrorCode::ProviderIncompatible,
                 ProviderStage::Version,
@@ -433,7 +867,7 @@ impl AcpControl {
             json!({
                 "protocolVersion":ACP_PROTOCOL_VERSION,
                 "clientInfo":{"name":"koru","version":env!("CARGO_PKG_VERSION")},
-                "clientCapabilities":{}
+                "clientCapabilities":client_capabilities(self.config.questions)
             }),
         )?;
         decode::<acp::InitializeResponse>(&initialized).map_err(|_| handshake_rejected())?;
@@ -456,6 +890,7 @@ impl AcpControl {
             .pointer("/agentCapabilities/mcpCapabilities/sse")
             .and_then(Value::as_bool)
             == Some(true);
+        self.steering = steering::advertised(&initialized);
         let image = initialized
             .pointer("/agentCapabilities/promptCapabilities/image")
             .and_then(Value::as_bool)
@@ -529,7 +964,19 @@ impl AcpControl {
             .ok_or_else(handshake_rejected)?
             .to_owned();
         self.model_options = models::config_models(&session, self.config.route.provider.as_str());
+        if let Some(read) = modes::read(&session) {
+            self.modes = Some(read.modes);
+            self.mode_config = read.config_id;
+        }
+        self.fast = models::fast_option(&session);
+        if self.config.route.is_claude() {
+            self.model_options =
+                claude::fold_context_siblings(std::mem::take(&mut self.model_options));
+        }
         let requested_model = self.config.requested_model();
+        // The latest answer's options: the model's levels arrive with the
+        // answer that set the model (D18).
+        let mut latest = None;
         if let Some(model) = &requested_model {
             // A model the session did not advertise fails the start, on any
             // route: ACP's `session/set_config_option` is the same verb for
@@ -545,6 +992,26 @@ impl AcpControl {
                 .map_err(|_| models::selection_unavailable())?;
             models::validate_applied(&selected, model)?;
             tracing::info!(target: "koru::acp", event = "acp.model.selected", session_id = %start.session_id, selected = true);
+            // A model may not offer a mode the session was in (Claude's
+            // `auto`), and the agent moves it; the answer says where. Its
+            // Fast mode is the new model's (D11).
+            self.follow_mode(modes::current(&selected));
+            self.fast = models::fast_option(&selected);
+            latest = Some(selected);
+        }
+        // The session's level option, as the model now in it has it (D70),
+        // and the model itself, for one chosen after the start.
+        self.thought_level = models::thought_level(latest.as_ref().unwrap_or(&session));
+        self.turn_model = models::current_model(latest.as_ref().unwrap_or(&session));
+        if let Some(level) = self.config.requested_reasoning() {
+            let options = latest.as_ref().unwrap_or(&session);
+            self.apply_reasoning(&native_session, options, level, start.session_id)?;
+        }
+        if let Some(mode) = self.config.requested_mode() {
+            self.apply_mode(&native_session, &mode, ProviderStage::Initialize)?;
+        }
+        if let Some(on) = self.config.requested_fast() {
+            self.apply_fast(&native_session, on, ProviderStage::Initialize)?;
         }
         if self.config.route.is_claude() {
             self.await_wrapper_auth()?;
@@ -643,8 +1110,11 @@ impl AgentControl for AcpControl {
         if self.capabilities.is_none() || self.active.is_some() {
             return Err(invalid_state(ProviderStage::Submit));
         }
-        // Reserve the start and attachment acknowledgements before accepting.
-        if self.events.len() + 1 + input.attachments.len() > self.config.event_capacity {
+        // Reserve the start, the notices said before it and the attachment
+        // acknowledgements before accepting.
+        if self.events.len() + 1 + self.unsaid_notices.len() + input.attachments.len()
+            > self.config.event_capacity
+        {
             return Err(failure(
                 ErrorCode::Backpressure,
                 ProviderStage::Submit,
@@ -652,6 +1122,23 @@ impl AgentControl for AcpControl {
             ));
         }
         let prompt = self.prompt(&input)?;
+        // A model chosen after the start goes first: the mode, Fast and the
+        // level below are then set as the new model offers them.
+        if let (Some(model), Some(native_session)) = (&input.model, self.native_session.clone()) {
+            self.apply_turn_model(&native_session, model)?;
+        }
+        // The turn's mode is set before its prompt, between turns (D7).
+        if let (Some(mode), Some(native_session)) = (&input.mode, self.native_session.clone()) {
+            self.apply_mode(&native_session, mode, ProviderStage::Submit)?;
+        }
+        if let (Some(on), Some(native_session)) = (input.fast, self.native_session.clone()) {
+            self.apply_fast(&native_session, on, ProviderStage::Submit)?;
+        }
+        // A level chosen after the start (D70), likewise.
+        if let (Some(level), Some(native_session)) = (input.reasoning, self.native_session.clone())
+        {
+            self.apply_turn_reasoning(&native_session, level)?;
+        }
         let params = json!({"sessionId":self.native_session,"prompt":prompt});
         let request_id = match self.send_request("session/prompt", params) {
             Ok(id) => id,
@@ -673,6 +1160,19 @@ impl AgentControl for AcpControl {
         self.queue(AgentEvent::TurnStarted {
             turn_id: input.turn_id,
         })?;
+        if let Some(mode) = self.unreported_mode.take() {
+            self.queue(AgentEvent::ModeChanged {
+                turn_id: input.turn_id,
+                mode,
+            })?;
+        }
+        // What the agent said before the turn is said first in it (D69).
+        for text in std::mem::take(&mut self.unsaid_notices) {
+            self.queue(AgentEvent::Notice {
+                turn_id: input.turn_id,
+                text,
+            })?;
+        }
         for attachment in input.attachments {
             self.queue(AgentEvent::AttachmentAccepted {
                 turn_id: input.turn_id,
@@ -680,6 +1180,10 @@ impl AgentControl for AcpControl {
             })?;
         }
         Ok(())
+    }
+
+    fn steer(&mut self, input: AgentInput) -> Result<(), ProviderFailure> {
+        self.steer_turn(input)
     }
 
     fn cancel(&mut self, turn_id: AgentTurnId) -> Result<(), ProviderFailure> {
@@ -744,6 +1248,14 @@ impl AgentControl for AcpControl {
             decision,
             choice,
         })
+    }
+
+    fn answer_questions(
+        &mut self,
+        request_id: koru_session_protocol::QuestionRequestId,
+        answers: Option<Vec<koru_session_protocol::QuestionAnswer>>,
+    ) -> Result<(), ProviderFailure> {
+        self.answer_elicitation(request_id, answers)
     }
 
     fn next_event(&mut self, timeout: Duration) -> Result<Option<AgentEvent>, ProviderFailure> {
@@ -886,6 +1398,17 @@ fn temp_owner(name: &str) -> Option<u32> {
     let (pid, sequence) = name.strip_prefix("koru-acp-")?.split_once('-')?;
     sequence.parse::<u64>().ok()?;
     pid.parse().ok()
+}
+
+/// **What Koru tells the agent it can do** at `initialize`: form
+/// elicitation — an agent's questions — only for a session whose creator
+/// draws them (D108). Nothing else is advertised.
+fn client_capabilities(questions: bool) -> Value {
+    if questions {
+        json!({"elicitation":{"form":{}}})
+    } else {
+        json!({})
+    }
 }
 
 fn failure(

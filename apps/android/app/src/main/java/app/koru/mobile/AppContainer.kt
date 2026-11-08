@@ -31,6 +31,8 @@ class AppContainer(application: Application) {
     internal val cloudProgress: CloudProgressSource = NativeCloudProgressSource(deviceLink, content)
     val shareIntents = AndroidShareIntentReader(application.contentResolver)
     val recents = RecentDestinations(application)
+    /** The nightly's update notice; inert in every other build (§5.5). */
+    val updates = AppUpdates(application, logger)
     val serviceImplementation = "native-link + replicated-store"
     internal val pendingLink = MutableStateFlow<String?>(null)
 

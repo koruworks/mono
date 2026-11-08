@@ -3,7 +3,7 @@
 //! Exact CLI dialects and immutable process policy; no registration side effects.
 use super::*;
 use koru_session_profiles::{self as profiles, ManagedProviderRegistration};
-use koru_session_protocol::ProviderKind;
+use koru_session_protocol::{ProviderKind, VersionNeed};
 use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
 
@@ -15,6 +15,7 @@ pub(super) enum AcpDialect {
     Kimi,
     Grok,
     Antigravity,
+    Devin,
 }
 
 impl AcpDialect {
@@ -26,6 +27,7 @@ impl AcpDialect {
             Self::Kimi => profiles::KIMI_REGISTRATION,
             Self::Grok => profiles::GROK_REGISTRATION,
             Self::Antigravity => profiles::ANTIGRAVITY_REGISTRATION,
+            Self::Devin => profiles::DEVIN_REGISTRATION,
         })
     }
 
@@ -35,6 +37,21 @@ impl AcpDialect {
     /// version too, and the handshake checks the two agree.
     pub(super) fn identified_by_digest(self) -> bool {
         self == Self::Antigravity
+    }
+
+    /// OpenCode's list comes from its catalog commands, because the
+    /// session's own `model` option is not filtered to the accounts the
+    /// person connected; a generic route lists nothing; every other route's
+    /// readiness probe already receives its list.
+    pub(super) fn catalog_source(self) -> crate::providers::CatalogSource {
+        use crate::providers::CatalogSource;
+        match self {
+            Self::OpenCode => CatalogSource::Listing,
+            Self::Generic => CatalogSource::OnDemand,
+            Self::Claude | Self::Kimi | Self::Grok | Self::Antigravity | Self::Devin => {
+                CatalogSource::Probe
+            }
+        }
     }
 
     /// Whether closing stdin ends the process. Antigravity's server was
@@ -62,6 +79,75 @@ impl AcpDialect {
             _ => Duration::ZERO,
         }
     }
+    /// The version number in a `--version` print that is not one of the
+    /// pinned ones: the whole print for the CLIs that print a bare number,
+    /// the word after `grok` for Grok, nothing for a digest-identified
+    /// route. The caller checks it against the pin.
+    pub(super) fn printed_version(self, printed: &str) -> Option<&str> {
+        fn bare(text: &str) -> Option<&str> {
+            let text = text.strip_prefix('v').unwrap_or(text);
+            (text.starts_with(|c: char| c.is_ascii_digit())
+                && text
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+')))
+            .then_some(text)
+        }
+        match self {
+            Self::Generic | Self::Antigravity => None,
+            Self::Claude | Self::OpenCode | Self::Kimi => bare(printed),
+            // `devin <version> (<commit>)`, that shape and no other.
+            Self::Devin => match printed.split_ascii_whitespace().collect::<Vec<_>>()[..] {
+                ["devin", version, build] if build.starts_with('(') && build.ends_with(')') => {
+                    bare(version)
+                }
+                _ => None,
+            },
+            // `grok <version> (<build>) [<channel>]`, that shape and no
+            // other: an adorned print is still refused.
+            Self::Grok => {
+                let words: Vec<&str> = printed.split_ascii_whitespace().collect();
+                match words.as_slice() {
+                    ["grok", version, build, channel]
+                        if build.starts_with('(')
+                            && build.ends_with(')')
+                            && channel.starts_with('[')
+                            && channel.ends_with(']') =>
+                    {
+                        bare(version)
+                    }
+                    _ => None,
+                }
+            }
+        }
+    }
+
+    /// Whether a release newer than the pin is admitted: the CLIs that
+    /// print a version number are; a digest-identified route and a route
+    /// built by hand with its own list (the Generic dialect) are not.
+    pub(super) fn admits_newer_releases(self) -> bool {
+        matches!(
+            self,
+            Self::Claude | Self::OpenCode | Self::Kimi | Self::Grok | Self::Devin
+        )
+    }
+
+    /// Whether the route picks among every installed copy of its program by
+    /// version. Devin's standalone CLI updates itself, while the copy inside
+    /// its desktop app moves with the app, so a machine can hold one below
+    /// the pin and one at it; the first that qualifies is the one run.
+    pub(super) fn chooses_by_version(self) -> bool {
+        self == Self::Devin
+    }
+
+    /// Whether a session that starts with **no models** means signed out.
+    /// Signed out, Devin 3000.10.48 answered `session/new` with a session
+    /// and an empty `model` list rather than ACP's `-32000`, and a missing
+    /// sign-in would surface only at the first prompt. For any other agent
+    /// an empty list is just an empty list.
+    pub(super) fn no_models_means_signed_out(self) -> bool {
+        self == Self::Devin
+    }
+
     /// The qualified pin: the first accepted version, which the probe logs
     /// as the expected one.
     pub(super) fn version(self) -> &'static str {
@@ -77,7 +163,11 @@ impl AcpDialect {
     pub(super) fn versions(self) -> &'static [(&'static str, &'static str)] {
         match self {
             Self::Generic => &[],
-            Self::Claude => &[("0.76.0", "0.76.0")],
+            // Shared with *Agent providers*' *Install*, which installs it.
+            Self::Claude => &[(
+                profiles::CLAUDE_ADAPTER_VERSION,
+                profiles::CLAUDE_ADAPTER_VERSION,
+            )],
             Self::OpenCode => &[("1.18.27", "1.18.27")],
             // 2.3.3 and 2.4.0: the normally installed CLI on 2026-10-27 and 2026-10-28 (UPDATEAGENTS),
             // admitted on the same factory handshake as 2.0.0.
@@ -102,6 +192,14 @@ impl AcpDialect {
                 "04fd51b5c6dfb6d11e649c2cfc61a64ca31d9a4a58a9a3e5c93db934cd7a9695",
                 "1.2.1",
             )],
+            // 3000.11.1 is the floor because Devin's changelog says it is
+            // the release where the MCP servers sent in `session/new` reach
+            // the agent and model, thinking effort and speed come through
+            // config options (maintainers' decision, 2026-11-02). Its
+            // handshake is not recorded yet — the frames replayed are
+            // 3000.10.48's (`devin-3000.10.48`) — so the print's commit is a
+            // stand-in; the commit is never read (`printed_version`).
+            Self::Devin => &[("devin 3000.11.1 (unrecorded)", "3000.11.1")],
         }
     }
 }
@@ -158,6 +256,16 @@ impl AcpRoute {
     /// the route out of delegation; a chat does not delegate.
     pub fn antigravity() -> Self {
         Self::named(AcpDialect::Antigravity)
+    }
+
+    /// Cognition's Devin CLI as `devin acp`. No `authenticate` call: its one
+    /// advertised method (`devin-browser`) opens a browser, and the server
+    /// already falls back to `WINDSURF_API_KEY` or the sign-in `devin auth
+    /// login` stored, which Koru never reads. Child sessions stay
+    /// uncontrolled — Devin has subagents and Koru has no switch for them —
+    /// which keeps the route out of delegation; a chat does not delegate.
+    pub fn devin() -> Self {
+        Self::named(AcpDialect::Devin)
     }
 
     pub(super) fn is_antigravity(&self) -> bool {
@@ -219,28 +327,105 @@ impl AcpRoute {
     }
 
     pub(super) fn parse_version(&self, output: &str) -> Result<ProviderVersion, ProviderFailure> {
-        let rejected = || {
-            failure(
-                ErrorCode::ProviderIncompatible,
-                ProviderStage::Version,
-                ProviderDiagnostic::VersionRejected,
-            )
-        };
+        let unreadable = |error: ProviderFailure| error.refusing(None, self.need());
         if self.dialect == AcpDialect::Generic {
             let token = output
                 .split_ascii_whitespace()
                 .last()
-                .ok_or_else(rejected)?;
-            return ProviderVersion::from_str(token.strip_prefix('v').unwrap_or(token));
+                .ok_or_else(|| self.refused(None))?;
+            return ProviderVersion::from_str(token.strip_prefix('v').unwrap_or(token))
+                .map_err(unreadable);
         }
         let printed = output.trim();
-        let (_, version) = self
+        if let Some((_, version)) = self
             .dialect
             .versions()
             .iter()
             .find(|(expected, _)| *expected == printed)
-            .ok_or_else(rejected)?;
-        ProviderVersion::from_str(version)
+        {
+            return ProviderVersion::from_str(version);
+        }
+        // Not a pinned print: read the number the CLI printed and admit it
+        // when it is at or above the qualified pin (the review's note). A
+        // digest-identified route has no number to read.
+        let token = self
+            .dialect
+            .printed_version(printed)
+            .ok_or_else(|| self.refused(None))?;
+        let version = ProviderVersion::from_str(token).map_err(unreadable)?;
+        self.admit(version)
+    }
+
+    /// **A `--version` run's answer**: the version it printed, if this route
+    /// accepts it. A run that failed or printed nothing is the program not
+    /// starting (`version_print`), never a refused version; a print this
+    /// route cannot read is refused with no version found.
+    pub(super) fn read_print(
+        &self,
+        success: bool,
+        stdout: &[u8],
+    ) -> Result<ProviderVersion, ProviderFailure> {
+        let version = match crate::providers::discovery::version_print(success, stdout)? {
+            Some(text) => self.parse_version(text)?,
+            None => return Err(self.refused(None)),
+        };
+        self.admit(version)
+    }
+
+    /// `version`, if this route accepts it; refused, naming it, if not.
+    pub(super) fn admit(
+        &self,
+        version: ProviderVersion,
+    ) -> Result<ProviderVersion, ProviderFailure> {
+        if self.supports(&version) {
+            Ok(version)
+        } else {
+            Err(self.refused(Some(version)))
+        }
+    }
+
+    /// The version stage's refusal, carrying what was found and
+    /// [`need`](Self::need), so readiness can say both.
+    pub(super) fn refused(&self, found: Option<ProviderVersion>) -> ProviderFailure {
+        failure(
+            ErrorCode::ProviderIncompatible,
+            ProviderStage::Version,
+            ProviderDiagnostic::VersionRejected,
+        )
+        .refusing(found, self.need())
+    }
+
+    /// **What this route accepts, as a refusal says it**: the qualified pin
+    /// as a floor where newer releases are admitted
+    /// ([`AcpRoute::supports`]), else the newest of its list. `None` for a
+    /// route with no list at all.
+    pub(super) fn need(&self) -> Option<VersionNeed> {
+        if self.dialect.admits_newer_releases() {
+            return self
+                .supported_versions
+                .first()
+                .map(|pin| VersionNeed::AtLeast(pin.as_str().to_owned()));
+        }
+        VersionNeed::reviewed(self.supported_versions.iter().map(ProviderVersion::as_str))
+    }
+
+    /// **A started session's sign-in, read from the models it listed.** A
+    /// route whose signed-out answer is a session with no models
+    /// ([`AcpDialect::no_models_means_signed_out`]) is refused as
+    /// `AuthenticationRequired`, which readiness reads as *Signed out*;
+    /// every other route, and a session that listed a model, passes.
+    pub(super) fn signed_in_by_models(
+        &self,
+        models: &[koru_session_protocol::ProviderModel],
+    ) -> Result<(), ProviderFailure> {
+        if self.dialect.no_models_means_signed_out() && models.is_empty() {
+            return Err(failure(
+                ErrorCode::ProviderUnavailable,
+                ProviderStage::Initialize,
+                ProviderDiagnostic::AuthenticationRequired,
+            ));
+        }
+        Ok(())
     }
 }
 

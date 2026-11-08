@@ -225,3 +225,156 @@ fn negotiated_host_receives_the_exact_selected_choice() {
         decision: ApprovalDecision::Approve, choice: Some(id), ..
     } if id == selected));
 }
+
+/// **A set's answers as the next message reach only a host that asks
+/// questions** (koru-ai D108): to any other the input is refused before the
+/// wire — it has no set to answer.
+#[test]
+fn answers_as_the_next_message_need_managed_questions() {
+    let (client, bytes) = approval_client(21, true, true);
+    assert!(!client.supports_questions());
+    let refused = client.send_pending_answers(
+        SessionId::mint(),
+        ControllerLeaseToken::mint(),
+        PendingInput {
+            model: None,
+            idempotency_key: IdempotencyKey::mint(),
+            text: String::new(),
+            attachment_ids: Vec::new(),
+            mode: None,
+            fast: None,
+            reasoning: None,
+            skills: Vec::new(),
+        },
+        koru_session_protocol::QuestionsReply {
+            request_id: koru_session_protocol::QuestionRequestId::mint(),
+            answers: Vec::new(),
+        },
+    );
+    assert!(matches!(
+        refused,
+        Err(ClientError::Session(SessionFailure {
+            code: ErrorCode::CapabilityNotNegotiated,
+            ..
+        }))
+    ));
+    assert!(bytes.lock().unwrap().is_empty(), "refused before the wire");
+}
+
+/// **Skills named with an input, and an agent's skills listed, need
+/// `agent-commands`** (koru-ai D121): to any other host they are refused
+/// before the wire — it would read past the skills and send `$name` as
+/// words alone.
+#[test]
+fn skills_need_agent_commands() {
+    let (client, bytes) = approval_client(21, true, true);
+    assert!(!client.supports_agent_commands());
+    let refused = client.send_pending_input(
+        SessionId::mint(),
+        ControllerLeaseToken::mint(),
+        PendingInput {
+            model: None,
+            idempotency_key: IdempotencyKey::mint(),
+            text: "Use $review".into(),
+            attachment_ids: Vec::new(),
+            mode: None,
+            fast: None,
+            reasoning: None,
+            skills: vec!["review".into()],
+        },
+    );
+    assert!(matches!(
+        refused,
+        Err(ClientError::Session(SessionFailure {
+            code: ErrorCode::CapabilityNotNegotiated,
+            ..
+        }))
+    ));
+    let listed = client
+        .discover_provider_commands("codex".parse().unwrap(), std::path::PathBuf::from("/work"));
+    assert!(matches!(
+        listed,
+        Err(ClientError::Session(SessionFailure {
+            code: ErrorCode::CapabilityNotNegotiated,
+            ..
+        }))
+    ));
+    assert!(bytes.lock().unwrap().is_empty(), "refused before the wire");
+}
+
+/// **A turn's level never reaches a v19 host** (koru-ai D70): it would read
+/// and ignore it and run the turn at the old level, so the input is refused
+/// before any wire traffic. A v20 host takes it.
+#[test]
+fn a_turns_level_is_sent_only_to_a_v20_host() {
+    let input = || PendingInput {
+        model: None,
+        idempotency_key: IdempotencyKey::mint(),
+        text: "go on".into(),
+        attachment_ids: Vec::new(),
+        mode: None,
+        fast: None,
+        reasoning: Some(koru_session_protocol::LaunchReasoning::High),
+        skills: Vec::new(),
+    };
+    let (older, bytes) = approval_client(19, true, true);
+    assert!(!older.supports_turn_reasoning());
+    let refused =
+        older.send_pending_input(SessionId::mint(), ControllerLeaseToken::mint(), input());
+    assert!(matches!(
+        refused,
+        Err(ClientError::Session(SessionFailure {
+            code: ErrorCode::CapabilityNotNegotiated,
+            ..
+        }))
+    ));
+    assert!(bytes.lock().unwrap().is_empty(), "refused before the wire");
+    let (current, bytes) = approval_client(20, true, true);
+    assert!(current.supports_turn_reasoning());
+    let _ = current.send_pending_input(SessionId::mint(), ControllerLeaseToken::mint(), input());
+    let bytes = bytes.lock().unwrap();
+    let body = std::str::from_utf8(&bytes[koru_ipc::frame::HEADER_LEN..]).unwrap();
+    assert!(body.contains("\"reasoning\":\"high\""), "{body}");
+}
+
+/// **A turn's model never reaches a v21 host**: it would read past it and
+/// run the turn on the session's old model, so the input — and a set's
+/// answers sent as the next message — is refused before any wire traffic.
+/// A v22 host takes it.
+#[test]
+fn a_turns_model_is_sent_only_to_a_v22_host() {
+    let input = || PendingInput {
+        model: Some("sonnet".parse().unwrap()),
+        idempotency_key: IdempotencyKey::mint(),
+        text: "go on".into(),
+        attachment_ids: Vec::new(),
+        mode: None,
+        fast: None,
+        reasoning: None,
+        skills: Vec::new(),
+    };
+    let refused = |result: Result<SendPendingInputResult, ClientError>| {
+        matches!(
+            result,
+            Err(ClientError::Session(SessionFailure {
+                code: ErrorCode::CapabilityNotNegotiated,
+                ..
+            }))
+        )
+    };
+    let (older, bytes) = approval_client(21, true, true);
+    assert!(older.supports_turn_reasoning());
+    assert!(!older.supports_turn_model());
+    assert!(refused(older.send_pending_input(
+        SessionId::mint(),
+        ControllerLeaseToken::mint(),
+        input()
+    )));
+    assert!(bytes.lock().unwrap().is_empty(), "refused before the wire");
+    let (current, bytes) = approval_client(22, true, true);
+    assert!(current.supports_turn_model());
+    let _ = current.send_pending_input(SessionId::mint(), ControllerLeaseToken::mint(), input());
+    let bytes = bytes.lock().unwrap();
+    let body = std::str::from_utf8(&bytes[koru_ipc::frame::HEADER_LEN..]).unwrap();
+    assert!(body.contains("\"model\":\"sonnet\""), "{body}");
+}

@@ -120,12 +120,33 @@ impl MainView {
     /// The caption's own controls — the ones the *container* performs.
     pub(super) fn caption_semantics(&self, cx: &Shell) -> Vec<SemanticNode> {
         let caption = self.regions.caption;
+        // The lane's controls, wherever they are this frame: in the pane's
+        // top band while it is open, in the caption's leading chain while it
+        // is shut. One geometry function either way (`lane_controls`).
+        let lane = self.lane_controls();
         let mut out = vec![
             SemanticNode::new(cx.surface(SHELL, parts::TOGGLE_EXPLORE), Role::Button)
                 .with_label(t(cx.lang, Key::A11yToggleNavigator))
-                .with_bounds(koru_shell_chrome::caption::sidebar_toggle(caption))
+                .with_bounds(lane.toggle)
                 .with_action(Action::Click),
         ];
+        if lane.search.w > 0.0 {
+            out.push(
+                SemanticNode::new(cx.surface(SHELL, parts::SEARCH), Role::Button)
+                    .with_label(t(cx.lang, Key::SearchOrTypeACommand))
+                    .with_bounds(lane.search)
+                    .with_action(Action::Click),
+            );
+        }
+        if lane.new.w > 0.0 {
+            out.push(
+                SemanticNode::new(cx.surface(SHELL, parts::NEW), Role::Button)
+                    .with_label(t(cx.lang, Key::A11yNewTab))
+                    .with_bounds(lane.new)
+                    .with_action(Action::Click),
+            );
+        }
+        let _ = caption;
         if crate::mainview::WINDOW_BUTTONS
             && let Some(control) = koru_ui::caption::controls(caption)
                 .into_iter()
@@ -149,6 +170,13 @@ impl MainView {
 /// back — a screen reader has no icon slot, and a tab that reads as its bare
 /// title loses the mark a person chose to tell it apart by.
 fn tab_label(tab: &crate::mainview::tab::Tab, cx: &Shell) -> String {
+    // A chat tab draws its title cut at twenty characters (D22); a screen
+    // reader is given all of it, as it is given a document's whole name.
+    if let crate::mainview::tab::TabView::AiChat(chat) = &tab.view
+        && let Some(title) = chat.started_title().filter(|t| !t.trim().is_empty())
+    {
+        return title.trim().to_owned();
+    }
     match (&tab.icon, tab.label.is_empty()) {
         (Some(icon), false) => format!("{icon} {}", tab.label),
         (Some(icon), true) => icon.clone(),
@@ -185,6 +213,8 @@ pub(super) fn action(
             view.focus_or_toggle_sidebar(ws);
             return true;
         }
+        p if p == parts::SEARCH => Outcome::Search,
+        p if p == parts::NEW => return view.open_launcher(),
         p if p == parts::WINDOW_MENU => {
             let Some(button) = view.window_menu_button() else {
                 return false;

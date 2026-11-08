@@ -79,6 +79,16 @@ pub struct SettingSpec {
 /// Global's roaming half first, then Global's device-local half, then
 /// Terminal, then the AI facade — which is the order the plan freezes them in.
 pub const REGISTRY: &[SettingSpec] = &[
+    SettingSpec {
+        field: "icon_pack",
+        section: Section::Global,
+        storage: StorageClass::Roaming,
+        backing: Backing::PreferencesConf,
+        kind: ValueKind::Token,
+        doc: "In-app icon artwork: Phosphor, Tabler, Lucide or Remix. Absent until the \
+              person chooses one, which follows the build's default artwork. Applied \
+              immediately.",
+    },
     // ------------------------------------ Global, roaming: preferences.conf
     SettingSpec {
         field: "theme",
@@ -152,12 +162,55 @@ pub const REGISTRY: &[SettingSpec] = &[
               deliberately not the terminal's font.",
     },
     SettingSpec {
+        field: "chat_font",
+        section: Section::Global,
+        storage: StorageClass::Roaming,
+        backing: Backing::PreferencesConf,
+        kind: ValueKind::Font,
+        doc: "The AI chat's typeface — its messages and the box a person types \
+              in. `follow_default` follows the app font (`ui_font`), now and \
+              later, rather than a default of its own, and persists as no key. \
+              A code block or inline code in a message keeps the code font.",
+    },
+    SettingSpec {
         field: "density",
         section: Section::Global,
         storage: StorageClass::Roaming,
         backing: Backing::PreferencesConf,
         kind: ValueKind::Token,
         doc: "How much space the interface leaves around things.",
+    },
+    SettingSpec {
+        field: "document_text_size",
+        section: Section::Global,
+        storage: StorageClass::Roaming,
+        backing: Backing::PreferencesConf,
+        kind: ValueKind::Token,
+        doc: "The document body size in px: 14, 15, 16, 17, 18, 20 or 22, written as \
+              `doc_text_size=`. Headings, code and block spacing scale with it; the app's \
+              own text does not. Absent until chosen, which follows the build's default \
+              (16).",
+    },
+    SettingSpec {
+        field: "base_color_light",
+        section: Section::Global,
+        storage: StorageClass::Roaming,
+        backing: Backing::PreferencesConf,
+        kind: ValueKind::Nullable,
+        doc: "The window's base color — the rail, header, side lanes and foot — in the \
+              light theme, written as `base_color_light=#rrggbb`. Any `#rrggbb`, not only \
+              the swatches offered. Absent, or `null` in a patch, follows the theme.",
+    },
+    SettingSpec {
+        field: "base_color_dark",
+        section: Section::Global,
+        storage: StorageClass::Roaming,
+        backing: Backing::PreferencesConf,
+        kind: ValueKind::Nullable,
+        doc: "The window's base color in the dark theme, written as \
+              `base_color_dark=#rrggbb`. Kept apart from the light one: a tint that sits \
+              well on light is wrong on dark. Absent, or `null` in a patch, follows the \
+              theme.",
     },
     SettingSpec {
         field: "zoom",
@@ -273,6 +326,21 @@ pub const REGISTRY: &[SettingSpec] = &[
               never resolves it: the closed set of dictionaries is the \
               consumer's.",
     },
+    SettingSpec {
+        field: "favorite_models",
+        section: Section::Global,
+        storage: StorageClass::Roaming,
+        backing: Backing::PreferencesConf,
+        kind: ValueKind::Nullable,
+        doc: "The models starred in the chat's model picker, as `{agent, model}` pairs: \
+              an agent key (`claude`, `codex`, …) and the model id it takes, in the \
+              order they were starred. The picker lists them under *Favorites* at the \
+              top of its agent rail. Written whole; an empty list clears them. Written \
+              as `favorite_models=[\"agent:model\", …]`, and only while there is one; a \
+              build without the key carries it through its writes. Roaming: a favorite \
+              follows the person. An agent turned off on a machine keeps its favorites \
+              and the picker hides them there.",
+    },
     // ------------------------------ Global, device-local: desktop-v1.json
     SettingSpec {
         field: "close_behavior",
@@ -373,6 +441,70 @@ pub const REGISTRY: &[SettingSpec] = &[
               every Record; absent means first use, which is the modal's own \
               default set. Device-local because the folder names a directory \
               on this machine — the delegate_temporary_root rule.",
+    },
+    SettingSpec {
+        field: "disabled_agents",
+        section: Section::Global,
+        storage: StorageClass::DeviceLocal,
+        backing: Backing::DesktopJson,
+        kind: ValueKind::Nullable,
+        doc: "The coding agents turned off on this machine (Settings → \
+              Coding → Agent providers), by agent key — `claude`, `codex`, \
+              …. An agent listed is hidden from the chat's agent picker, the \
+              terminal's Agents menu and new-session choices; its chats and \
+              sessions are kept. Absent — and an empty list — mean every \
+              agent is on, so an agent a later Koru adds starts on. \
+              Device-local because the agents installed differ per machine.",
+    },
+    SettingSpec {
+        field: "default_permission",
+        section: Section::Global,
+        storage: StorageClass::DeviceLocal,
+        backing: Backing::DesktopJson,
+        kind: ValueKind::Token,
+        doc: "The permission a new chat with a supported agent — one with \
+              an auto mode, Claude or Codex — starts in (Settings → Coding → \
+              Agent providers): `manual`, `auto` or `yolo`, mapped onto the \
+              agent's own modes by `koru-ai-ui`'s `approval_modes`. A change \
+              inside a chat stays that chat's. Absent is `manual`. \
+              Device-local beside `disabled_agents`.",
+    },
+    SettingSpec {
+        field: "default_permission_other",
+        section: Section::Global,
+        storage: StorageClass::DeviceLocal,
+        backing: Backing::DesktopJson,
+        kind: ValueKind::Token,
+        doc: "The same for every other agent — one with no auto mode: \
+              `manual` or `yolo`, never `auto` (refused on a patch, read as \
+              `manual` from a file). Yolo falls back to the agent's asking \
+              mode when the agent offers no full-access mode. Absent is \
+              `manual`.",
+    },
+    SettingSpec {
+        field: "default_agent",
+        section: Section::Global,
+        storage: StorageClass::DeviceLocal,
+        backing: Backing::DesktopJson,
+        kind: ValueKind::Nullable,
+        doc: "The agent a new chat starts with (Settings → Coding → Agent \
+              providers), by agent key. `null` — and an absent key — is \
+              Auto: the last agent used. An agent turned off or not \
+              installed falls back to Auto where a chat is made, and the \
+              page says so; the key is kept.",
+    },
+    SettingSpec {
+        field: "agent_order",
+        section: Section::Global,
+        storage: StorageClass::DeviceLocal,
+        backing: Backing::DesktopJson,
+        kind: ValueKind::Nullable,
+        doc: "The order the coding agents are listed in (dragged on \
+              Settings → Coding → Agent providers), by agent key: the chat's \
+              agent rail, the Agents menu, the Default agent chips and the \
+              delegate dialog follow it. Absent — and an empty list — is the \
+              built-in order, Claude first; an agent it does not name \
+              follows the named ones. Device-local beside disabled_agents.",
     },
     // ------------------------------------- Terminal, roaming: terminal.conf
     SettingSpec {

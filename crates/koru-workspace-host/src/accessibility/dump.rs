@@ -185,7 +185,7 @@ pub fn render(dump: &Dump<'_>) -> String {
     let _ = writeln!(
         out,
         "[koru:a11y] dump counters rebuilds={} activations={} deltas={} nodes_published={} \
-         actions_routed={} actions_refused={} actions_dropped={} duplicate_ids={} repairs={} \
+         actions_routed={} actions_refused={} actions_dropped={} duplicate_ids={} \
          unresolved_focus={} dumps={}",
         counters.rebuilds,
         counters.activations,
@@ -195,7 +195,6 @@ pub fn render(dump: &Dump<'_>) -> String {
         counters.actions_refused,
         counters.actions_dropped,
         counters.duplicate_ids,
-        counters.repairs,
         counters.unresolved_focus,
         counters.dumps,
     );

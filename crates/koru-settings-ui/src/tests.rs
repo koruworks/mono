@@ -88,6 +88,7 @@ pub(crate) fn koru() -> SettingsSurface {
         note: "OpenAI · a key is configured".to_owned(),
         action: Some("Open AI setup…".to_owned()),
     });
+    surface.offer_sample_document(true);
     surface.relayout();
     surface
 }
@@ -99,10 +100,14 @@ pub(crate) fn page_lines(surface: &SettingsSurface) -> Vec<String> {
     for block in &surface.laid.blocks {
         match block {
             Block::Title {
-                title, description, ..
+                title,
+                description,
+                button,
+                ..
             } => {
                 out.push(title.clone());
                 out.push(description.clone());
+                out.extend(button.as_ref().map(|(label, _, _)| label.clone()));
             }
             Block::Note { text, .. } => out.push(text.clone()),
             Block::Tiles { title, .. } => out.extend(title.clone()),
@@ -160,8 +165,10 @@ fn clone_surface(surface: &SettingsSurface) -> SettingsSurface {
     copy.dictionary = surface.dictionary.clone();
     copy.voice = surface.voice.clone();
     copy.renderer = surface.renderer.clone();
+    copy.agent_providers = surface.agent_providers.clone();
     copy.ai = surface.ai.clone();
     copy.telemetry = surface.telemetry;
+    copy.sample_document = surface.sample_document;
     copy.availability = surface.availability;
     copy.notice = surface.notice.clone();
     copy.host_section_height = surface.host_section_height;
@@ -216,6 +223,11 @@ fn words(surface: &SettingsSurface) -> Vec<(String, Found, bool)> {
                 walk(a, laid, out);
                 walk(b, laid, out);
             }
+            Widget::Chips(chips) => {
+                for chip in chips {
+                    out.push((chip.label.clone(), Found::Hit(chip.hit), chip.selected));
+                }
+            }
             Widget::None | Widget::Toggle { .. } | Widget::Swatches { .. } => {}
         }
     }
@@ -240,6 +252,10 @@ fn words(surface: &SettingsSurface) -> Vec<(String, Found, bool)> {
                 link: Some((text, _, hit)),
                 ..
             } => out.push((text.clone(), Found::Hit(*hit), false)),
+            Block::Title {
+                button: Some((label, _, hit)),
+                ..
+            } => out.push((label.clone(), Found::Hit(*hit), false)),
             _ => {}
         }
     }
@@ -348,11 +364,19 @@ pub(crate) fn press_on(surface: &mut SettingsSurface, page: PageId, word: &str) 
 /// The switch on the row named `row` on the showing page: its hit, and
 /// whether it is on.
 pub(crate) fn switch(surface: &SettingsSurface, row: &str) -> Option<(usize, bool)> {
-    surface.laid.blocks.iter().find_map(|block| match block {
-        Block::Card(card) => card.rows.iter().find_map(|r| match &r.widget {
-            Widget::Toggle { on, hit, .. } if r.label == row => Some((*hit, *on)),
+    fn toggle(widget: &Widget) -> Option<(usize, bool)> {
+        match widget {
+            Widget::Toggle { on, hit, .. } => Some((*hit, *on)),
+            // A switch with a button before it — an agent's *Install*.
+            Widget::Pair(a, b) => toggle(a).or_else(|| toggle(b)),
             _ => None,
-        }),
+        }
+    }
+    surface.laid.blocks.iter().find_map(|block| match block {
+        Block::Card(card) => card
+            .rows
+            .iter()
+            .find_map(|r| (r.label == row).then(|| toggle(&r.widget)).flatten()),
         _ => None,
     })
 }
@@ -411,11 +435,16 @@ fn koru_lists_every_page_in_sidebar_order() {
             PageId::Reminders,
             PageId::Terminal,
             PageId::System,
+            PageId::AgentProviders,
         ]
     );
-    // The standalone hosts, while they last: no Reminders, and the Terminal
-    // page only where the terminal is.
-    assert!(!Sections::koru_ai().pages().contains(&PageId::Terminal));
+    // The standalone Terminal host, while it lasts: no Reminders, and no
+    // coding agents.
+    assert!(
+        !Sections::terminal()
+            .pages()
+            .contains(&PageId::AgentProviders)
+    );
     assert!(!Sections::terminal().pages().contains(&PageId::Reminders));
 }
 
@@ -496,7 +525,10 @@ fn a_page_that_is_not_showing_has_no_pressable_rect() {
 
 #[test]
 fn a_page_this_host_does_not_have_is_refused() {
-    let mut surface = SettingsSurface::new(Sections::koru_ai());
+    let mut surface = SettingsSurface::new(Sections {
+        terminal: false,
+        ..Sections::koru()
+    });
     assert!(!surface.show_page(PageId::Terminal));
     assert_ne!(surface.page(), PageId::Terminal);
 }
@@ -569,7 +601,9 @@ fn focusing_the_search_box_selects_its_query_for_the_next_one() {
 fn blank_space_beside_the_column_mutates_nothing() {
     let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
     let mut surface = koru();
-    assert!(!surface.mouse_down(NAV_W + 4.0, 300.0));
+    // Below the sidebar's last row (Coding's *Agent providers* now sits
+    // where 300 used to be blank).
+    assert!(!surface.mouse_down(NAV_W + 4.0, 600.0));
     assert!(!surface.mouse_down(996.0, 300.0));
     assert!(surface.take_requests().is_empty());
 }
@@ -589,12 +623,70 @@ fn a_dropdown_opens_its_list_and_a_choice_closes_it() {
     theme::set_body_font(was);
 }
 
+/// **A font list previews the lit face on the whole app**, and only a
+/// choice keeps it: the face under the pointer shows everywhere at once,
+/// leaving the list without choosing puts the chosen face back, and what
+/// Settings saves (`chosen_font`) never sees the preview.
+#[test]
+fn a_font_list_previews_the_lit_face_and_only_a_choice_keeps_it() {
+    use theme::{FontChoice, FontSlot};
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let was = theme::chosen_font(FontSlot::Ui);
+    theme::set_ui_font(FontChoice::Inter);
+    let mut surface = koru();
+    let lora = FontChoice::Lora.label();
+    assert!(goto(&mut surface, lora));
+    // The first Lora on the page is the App font's.
+    let Some(Found::Option { dropdown, item }) = find(&surface, lora) else {
+        panic!("Lora is an option of a list");
+    };
+    let field = surface.laid.dropdowns[dropdown].field;
+    assert!(press_rect(&mut surface, field));
+    let at = |surface: &SettingsSurface| {
+        surface
+            .open
+            .as_ref()
+            .expect("the list is open")
+            .menu
+            .item_rect(surface.viewport, item)
+            .centre()
+    };
+    let (x, y) = at(&surface);
+    assert!(surface.mouse_move(x, y));
+    assert_eq!(
+        theme::ui_font(),
+        FontChoice::Lora,
+        "the app shows the lit face"
+    );
+    assert_eq!(theme::chosen_font(FontSlot::Ui), FontChoice::Inter);
+    assert!(
+        !is_active(&surface, lora),
+        "the list still ticks the choice"
+    );
+
+    // Escape: no choice, and the chosen face is back.
+    assert!(surface.key(
+        &WinitKey::Named(NamedKey::Escape),
+        None,
+        ModifiersState::empty()
+    ));
+    assert_eq!(theme::ui_font(), FontChoice::Inter);
+
+    // Lit and chosen: it stays.
+    assert!(press_rect(&mut surface, field));
+    let (x, y) = at(&surface);
+    surface.mouse_move(x, y);
+    assert!(surface.mouse_down(x, y));
+    assert_eq!(theme::ui_font(), FontChoice::Lora);
+    assert_eq!(theme::chosen_font(FontSlot::Ui), FontChoice::Lora);
+    theme::set_ui_font(was);
+}
+
 #[test]
 fn a_press_outside_an_open_list_closes_it_and_presses_nothing() {
     let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
     let mut surface = koru();
     surface.show_page(PageId::System);
-    surface.advanced_open = true;
     surface.relayout();
     let field = rect_of(&surface, "Vulkan").expect("the renderer field");
     assert!(press_rect(&mut surface, field));
@@ -617,7 +709,6 @@ fn the_keyboard_steps_through_an_open_list() {
     let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
     let mut surface = koru();
     surface.show_page(PageId::System);
-    surface.advanced_open = true;
     surface.relayout();
     let field = rect_of(&surface, "Vulkan").expect("the renderer field");
     assert!(press_rect(&mut surface, field));
@@ -671,7 +762,7 @@ fn a_read_only_surface_takes_the_press_and_changes_nothing() {
     surface.set_availability(Availability::Down);
     let before = theme::density();
     assert!(
-        press(&mut surface, "Comfortable"),
+        press(&mut surface, "Compact"),
         "the press is still ours — the pointer is over a control"
     );
     assert_eq!(theme::density(), before, "and it moved nothing");
@@ -784,15 +875,53 @@ fn a_request_is_drained_once() {
 fn the_renderer_row_hands_the_host_its_own_token() {
     let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
     let mut surface = koru();
-    // Folded away until *Show* unfolds the Advanced card.
-    assert!(!goto(&mut surface, "Vulkan"));
-    assert!(press(&mut surface, "Show"));
     assert!(press(&mut surface, "Vulkan"));
     assert_eq!(
         surface.take_requests(),
         vec![Request::SetRenderer("vulkan".to_owned())],
         "the surface never learns what a RendererBackend is"
     );
+}
+
+/// **The row shows what is stored, not what was pressed.** A pick is only a
+/// request; the field and its tick move when the host hands back a fresh
+/// reading of `renderer.conf`, so a write that did not land visibly does not
+/// switch — and one that did, does.
+#[test]
+fn the_renderer_row_follows_the_hosts_fresh_reading() {
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let mut surface = koru();
+    let closed = |surface: &SettingsSurface| {
+        surface.laid.blocks.iter().find_map(|block| match block {
+            Block::Card(card) => card.rows.iter().find_map(|row| match &row.widget {
+                Widget::Dropdown { value, .. } if row.label == "Renderer" => Some(value.clone()),
+                _ => None,
+            }),
+            _ => None,
+        })
+    };
+    assert!(press(&mut surface, "DirectX 12"));
+    assert_eq!(
+        surface.take_requests(),
+        vec![Request::SetRenderer("dx12".to_owned())]
+    );
+    surface.relayout();
+    assert_eq!(
+        closed(&surface).as_deref(),
+        Some("Auto"),
+        "nothing stored yet"
+    );
+    assert!(is_active(&surface, "Auto"));
+
+    // The host wrote it and read the file back.
+    surface.set_renderer(RendererRow {
+        current: "dx12".to_owned(),
+        ..renderer_row()
+    });
+    surface.relayout();
+    assert_eq!(closed(&surface).as_deref(), Some("DirectX 12"));
+    assert!(is_active(&surface, "DirectX 12"));
+    assert!(!is_active(&surface, "Auto"));
 }
 
 /// A host that offers no renderer choice — macOS has one backend — gets no row
@@ -806,19 +935,25 @@ fn a_host_with_no_renderer_choice_draws_no_renderer_row() {
     assert!(!goto(&mut surface, "Vulkan"));
 }
 
+/// **No Koru AI card, for now**, even with the slot filled: its providers are
+/// set up in Koru AI itself, and the System page no longer names them.
 #[test]
-fn the_ai_card_is_the_slot_the_host_filled() {
+fn a_filled_ai_slot_draws_no_card_for_now() {
     let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
     let mut surface = koru();
     let drawn = lines(&surface);
-    assert!(drawn.iter().any(|line| line == "Koru AI"));
+    assert!(!drawn.iter().any(|line| line == "Koru AI"));
     assert!(
-        drawn
+        !drawn
+            .iter()
+            .any(|line| line == "Providers, models and reasoning")
+    );
+    assert!(
+        !drawn
             .iter()
             .any(|line| line == "OpenAI · a key is configured")
     );
-    assert!(press(&mut surface, "Open AI setup…"));
-    assert_eq!(surface.take_requests(), vec![Request::OpenAiSetup]);
+    assert!(!goto(&mut surface, "Open AI setup…"));
 }
 
 /// A host that fills nothing draws no AI card either — an empty card is worse
@@ -986,7 +1121,8 @@ fn every_page_draws_shared_components_nested_in_cards() {
         let snapshot = capture.finish();
         let records = &snapshot.records;
         let named = |name: &str| records.iter().filter(|r| r.name == name).count();
-        assert_eq!(named("KoruNavList"), 1, "{page:?}");
+        // Two runs: the ungrouped pages, and Coding's under its heading.
+        assert_eq!(named("KoruNavList"), 2, "{page:?}");
         assert!(named("KoruCard") >= 1, "{page:?}");
         let under = |index: usize, ancestor: &str| {
             let mut at = records[index].parent;
@@ -1040,4 +1176,85 @@ fn a_wide_window_keeps_the_page_beside_the_nav() {
     // The nav's own parts move with it.
     assert!(surface.search_rect().x >= nav.x);
     assert!(surface.nav_rect().x >= nav.x);
+}
+
+/// **The Size row previews and keeps a document size** the way the font
+/// lists do: the lit size shows on every document, the choice does not move
+/// until a click, and Escape puts it back.
+#[test]
+fn the_size_row_previews_the_lit_size_and_only_a_choice_keeps_it() {
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    theme::set_doc_text_size(None);
+    let mut surface = koru();
+    let twenty = "20 px";
+    assert!(goto(&mut surface, twenty));
+    let Some(Found::Option { dropdown, item }) = find(&surface, twenty) else {
+        panic!("20 px is an option of a list");
+    };
+    let field = surface.laid.dropdowns[dropdown].field;
+    assert!(press_rect(&mut surface, field));
+    let at = |surface: &SettingsSurface| {
+        surface
+            .open
+            .as_ref()
+            .expect("the list is open")
+            .menu
+            .item_rect(surface.viewport, item)
+            .centre()
+    };
+    let (x, y) = at(&surface);
+    surface.mouse_move(x, y);
+    assert_eq!(theme::doc_text_size(), 20.0, "documents show the lit size");
+    assert_eq!(theme::chosen_doc_text_size(), None);
+    assert!(surface.key(
+        &WinitKey::Named(NamedKey::Escape),
+        None,
+        ModifiersState::empty()
+    ));
+    assert_eq!(theme::doc_text_size(), 16.0);
+    assert!(press_rect(&mut surface, field));
+    let (x, y) = at(&surface);
+    surface.mouse_move(x, y);
+    assert!(surface.mouse_down(x, y));
+    assert_eq!(theme::chosen_doc_text_size(), Some(20));
+    theme::set_doc_text_size(None);
+}
+
+/// *More fonts…* ends a font list and asks the host for the picker; a role
+/// set to an installed family missing here lists it, ticked, as not
+/// installed rather than ticking the default it draws.
+#[test]
+fn more_fonts_asks_the_host_and_a_missing_family_is_named() {
+    use koru_settings::{FamilyName, FontSetting};
+    use theme::FontSlot;
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let was = theme::font_setting(FontSlot::Ui);
+    theme::set_font_setting(
+        FontSlot::Ui,
+        FontSetting::Installed(FamilyName::new("No Such Face 9000").unwrap()),
+    );
+    let mut surface = koru();
+    let missing = "No Such Face 9000 (not installed)";
+    assert!(goto(&mut surface, missing));
+    assert!(is_active(&surface, missing), "the missing family is ticked");
+    let more = koru_i18n::t(koru_i18n::Lang::En, koru_i18n::Key::SettingsMoreFonts);
+    let Some(Found::Option { dropdown, item }) = find(&surface, more) else {
+        panic!("More fonts… ends the list");
+    };
+    let field = surface.laid.dropdowns[dropdown].field;
+    assert!(press_rect(&mut surface, field));
+    let (x, y) = surface
+        .open
+        .as_ref()
+        .expect("the list is open")
+        .menu
+        .item_rect(surface.viewport, item)
+        .centre();
+    surface.mouse_move(x, y);
+    assert!(surface.mouse_down(x, y));
+    assert_eq!(
+        surface.take_requests(),
+        vec![Request::MoreFonts(crate::FontRole::App)]
+    );
+    theme::set_font_setting(FontSlot::Ui, was);
 }

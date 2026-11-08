@@ -11,6 +11,7 @@
 //! retained but not enabled unless both peers advertise it, and an unknown
 //! error code remains an error.
 
+mod agent_commands;
 mod approval;
 mod attachment;
 mod command;
@@ -19,10 +20,12 @@ mod error;
 mod event;
 mod ids;
 mod models;
+mod modes;
 mod negotiation;
 mod origin;
 mod profile;
 mod project;
+mod questions;
 mod readiness;
 pub mod schema;
 mod session;
@@ -30,6 +33,7 @@ mod terminal;
 mod token;
 mod tool;
 
+pub use agent_commands::*;
 pub use approval::*;
 pub use attachment::*;
 pub use command::*;
@@ -38,10 +42,12 @@ pub use error::*;
 pub use event::*;
 pub use ids::*;
 pub use models::*;
+pub use modes::*;
 pub use negotiation::*;
 pub use origin::*;
 pub use profile::*;
 pub use project::*;
+pub use questions::*;
 pub use readiness::*;
 pub use session::*;
 pub use terminal::*;

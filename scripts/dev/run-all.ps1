@@ -1,18 +1,16 @@
 # SPDX-License-Identifier: MPL-2.0
 
 # Start this worktree's complete debug stack after `koru.bat` has stopped its
-# exact-path images. Agent supervises API Gateway exactly as it does in the
-# product; Store is an in-gateway worker, never a separately launched daemon.
-# -Ai also opens the standalone chat after Gateway readiness. The services stay
-# up while either Koru UI is open; closing every UI or pressing Ctrl+C runs the
-# exact-path stop helper.
+# exact-path images - and, on the shared internal-debug channel, every other
+# checkout's debug stack (`stop-worktree.ps1 -SharedChannel`). Agent supervises
+# API Gateway exactly as it does in the product; Store is an in-gateway worker,
+# never a separately launched daemon.
+# The services stay up while Koru is open; closing it or pressing Ctrl+C runs
+# the exact-path stop helper.
 
 param(
     [switch] $Mcp,
-    # Open the standalone Koru AI chat after the supervised gateway is ready.
-    [switch] $Ai,
     # Open the Koru workspace surface against this explicitly named profile.
-    # Standalone AI Chat is profile-free and receives only the optional root.
     [string] $Profile,
     # Run Koru with the stall diagnostics on: the same environment
     # capture-stalls.ps1 sets (KORU_STARTUP_STATS, KORU_FRAME_STATS) plus the
@@ -26,7 +24,6 @@ $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $bin = Join-Path $repo "target\debug"
 $agent = Join-Path $bin "koru-agent.exe"
 $app = Join-Path $bin "koru.exe"
-$aiChat = Join-Path $bin "koru-ai-chat.exe"
 $mcpBridge = Join-Path $bin "koru-mcp.exe"
 
 $root = $null
@@ -46,7 +43,6 @@ $script:payloadLogJob = $null
 $script:lastReadyProbe = $null
 $readinessAttempts = 150
 $appProcess = $null
-$aiProcess = $null
 
 # PowerShell normally treats Ctrl+C as pipeline cancellation. Install a small
 # process-wide handler so the script can turn it into an orderly trip through
@@ -103,92 +99,6 @@ function Quote-NativeArgument([string] $Value) {
     '"' + $escaped.Replace('"', '\"') + '"'
 }
 
-function Start-KoruUiProcess(
-    [string] $Executable,
-    [string[]] $Arguments,
-    [string] $WorkingDirectory,
-    [string] $StandardOutput,
-    [string] $StandardError
-) {
-    # `Start-Process -NoNewWindow -PassThru` returns a Process whose ExitCode
-    # stays `$null` for these GUI-subsystem binaries, even after WaitForExit.
-    # That made an ordinary zero exit look like a crash. Start through .NET so
-    # the runner retains a real process handle and therefore a real exit code.
-    $start = [System.Diagnostics.ProcessStartInfo]::new()
-    $start.FileName = $Executable
-    $start.WorkingDirectory = $WorkingDirectory
-    $start.UseShellExecute = $false
-    $start.CreateNoWindow = $false
-    $start.Arguments = $Arguments -join ' '
-    $start.RedirectStandardOutput = -not [string]::IsNullOrWhiteSpace($StandardOutput)
-    $start.RedirectStandardError = -not [string]::IsNullOrWhiteSpace($StandardError)
-
-    $outputFile = $null
-    $errorFile = $null
-    try {
-        if ($start.RedirectStandardOutput) {
-            $outputFile = [System.IO.File]::Open(
-                $StandardOutput,
-                [System.IO.FileMode]::Create,
-                [System.IO.FileAccess]::Write,
-                [System.IO.FileShare]::ReadWrite
-            )
-        }
-        if ($start.RedirectStandardError) {
-            $errorFile = [System.IO.File]::Open(
-                $StandardError,
-                [System.IO.FileMode]::Create,
-                [System.IO.FileAccess]::Write,
-                [System.IO.FileShare]::ReadWrite
-            )
-        }
-
-        $process = [System.Diagnostics.Process]::new()
-        $process.StartInfo = $start
-        [void] $process.Start()
-        $outputTask = if ($null -ne $outputFile) {
-            $process.StandardOutput.BaseStream.CopyToAsync($outputFile)
-        } else {
-            $null
-        }
-        $errorTask = if ($null -ne $errorFile) {
-            $process.StandardError.BaseStream.CopyToAsync($errorFile)
-        } else {
-            $null
-        }
-    } catch {
-        if ($null -ne $outputFile) { $outputFile.Dispose() }
-        if ($null -ne $errorFile) { $errorFile.Dispose() }
-        throw
-    }
-
-    Add-Member -InputObject $process -NotePropertyName KoruOutputTask -NotePropertyValue $outputTask
-    Add-Member -InputObject $process -NotePropertyName KoruErrorTask -NotePropertyValue $errorTask
-    Add-Member -InputObject $process -NotePropertyName KoruOutputFile -NotePropertyValue $outputFile
-    Add-Member -InputObject $process -NotePropertyName KoruErrorFile -NotePropertyValue $errorFile
-    Add-Member -InputObject $process -NotePropertyName KoruStreamsCompleted -NotePropertyValue $false
-    return $process
-}
-
-function Complete-KoruUiProcess([System.Diagnostics.Process] $Process) {
-    $Process.WaitForExit()
-    if (-not $Process.KoruStreamsCompleted) {
-        try {
-            if ($null -ne $Process.KoruOutputTask) {
-                [void] $Process.KoruOutputTask.GetAwaiter().GetResult()
-            }
-            if ($null -ne $Process.KoruErrorTask) {
-                [void] $Process.KoruErrorTask.GetAwaiter().GetResult()
-            }
-        } finally {
-            if ($null -ne $Process.KoruOutputFile) { $Process.KoruOutputFile.Dispose() }
-            if ($null -ne $Process.KoruErrorFile) { $Process.KoruErrorFile.Dispose() }
-            $Process.KoruStreamsCompleted = $true
-        }
-    }
-    return $Process.ExitCode
-}
-
 function Assert-NotCancelled {
     if ([KoruRunAllCancellation]::Requested) {
         throw [System.OperationCanceledException]::new("Ctrl+C received")
@@ -227,11 +137,10 @@ function Receive-PayloadLog {
 
 function Get-WorktreeUiProcesses {
     $expected = @(
-        [System.IO.Path]::GetFullPath($app),
-        [System.IO.Path]::GetFullPath($aiChat)
+        [System.IO.Path]::GetFullPath($app)
     )
     @(
-        Get-Process -Name "koru", "koru-ai-chat" -ErrorAction SilentlyContinue |
+        Get-Process -Name "koru" -ErrorAction SilentlyContinue |
             ForEach-Object {
                 try {
                     if ($expected -contains [System.IO.Path]::GetFullPath($_.Path)) {
@@ -329,12 +238,10 @@ try {
         }
     }
     # Agent discovers its supervised and window siblings beside its own
-    # executable. Always build AI Chat so the workspace caption can launch it
-    # on demand. -Ai controls startup, not availability.
+    # executable.
     $packages = @(
         "-p", "koru-agent",
         "-p", "koru",
-        "-p", "koru-ai-chat",
         "-p", "koru-voice-worker"
     )
     if ($Mcp) {
@@ -352,8 +259,8 @@ try {
     if ($Performance) {
         # Set diagnostics before Agent starts: Agent is the security boundary
         # that launches Koru, and the child inherits this environment through
-        # it. Setting these after Agent startup would instrument AI Chat but not
-        # the supervised workspace window.
+        # it. Setting these after Agent startup would not instrument the
+        # supervised workspace window.
         $env:KORU_STARTUP_STATS = '1'
         $env:KORU_FRAME_STATS = '1'
         $env:KORU_JANK = '1'
@@ -461,15 +368,6 @@ try {
         Write-Host "[Koru] MCP bridge ready for a stdio host to launch"
     }
 
-    if ($Ai) {
-        [string[]] $aiStartArgs = @()
-        if ($null -ne $root) {
-            $aiStartArgs += @("--root", (Quote-NativeArgument $root))
-        }
-        $aiProcess = Start-KoruUiProcess $aiChat $aiStartArgs $repo $null $null
-        Write-Host "[Koru] Koru AI Chat started, pid $($aiProcess.Id)"
-    }
-
     Write-Host "[Koru] API Gateway ready, Agent pid $($agentProcess.Id)"
     Write-Host "[Koru] asking Agent to launch Koru; Ctrl+C stops this worktree's complete stack"
     [string[]] $appStartArgs = @("open", "--inherit-stdio")
@@ -496,7 +394,6 @@ try {
     $appProcess = [System.Diagnostics.Process]::GetProcessById($appPid)
 
     $appExitReported = $false
-    $aiExitReported = $false
     $processFailure = $null
     while ($true) {
         Receive-PayloadLog
@@ -513,19 +410,7 @@ try {
                     Write-Warning "$processFailure; services remain available to another open Koru UI"
                 }
             } elseif ((Get-WorktreeUiProcesses).Count -gt 0) {
-                Write-Host "[Koru] workspace window closed; services remain available to Koru AI Chat"
-            }
-        }
-        if ($null -ne $aiProcess -and -not $aiExitReported -and $aiProcess.HasExited) {
-            $aiExitReported = $true
-            $aiExitCode = Complete-KoruUiProcess $aiProcess
-            if ($aiExitCode -ne 0 -and $null -eq $processFailure) {
-                $processFailure = "Koru AI Chat exited with code $aiExitCode"
-                if ((Get-WorktreeUiProcesses).Count -gt 0) {
-                    Write-Warning "$processFailure; services remain available to another open Koru UI"
-                }
-            } elseif ((Get-WorktreeUiProcesses).Count -gt 0) {
-                Write-Host "[Koru] Koru AI Chat closed; services remain available to Koru"
+                Write-Host "[Koru] workspace window closed; services remain available to another open Koru UI"
             }
         }
         if ((Get-WorktreeUiProcesses).Count -eq 0) {
@@ -552,25 +437,6 @@ try {
             $exitCode = 1
         } else {
             Write-Warning "Koru cleanup also failed: $_"
-        }
-    }
-    try {
-        # Ctrl+C and failure paths can enter `finally` before the observation
-        # loop sees a UI exit. Finish redirected copies and retain the native
-        # exit status before the performance summary reads those files.
-        foreach ($uiProcess in @($aiProcess)) {
-            if ($null -ne $uiProcess -and
-                $uiProcess.HasExited -and
-                -not $uiProcess.KoruStreamsCompleted) {
-                [void] (Complete-KoruUiProcess $uiProcess)
-            }
-        }
-    } catch {
-        if ($null -eq $failure) {
-            $failure = $_
-            $exitCode = 1
-        } else {
-            Write-Warning "Koru UI output cleanup also failed: $_"
         }
     }
     if ($null -ne $script:payloadLogJob) {

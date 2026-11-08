@@ -130,10 +130,10 @@ document-rename-prompt         arrow-down  handled=Y open=tab-prompt doc=Notes//
 document-rename-prompt         enter       handled=Y open=- doc=Notes//row 0/row 1 tabs=2/1:leaf explore=popover:n,focus:n,sel:- ai=n
 document-rename-prompt         ctrl-t      handled=Y open=- doc= tabs=3/2:leaf explore=popover:n,focus:n,sel:- ai=n
 document-rename-prompt         f13         handled=Y open=tab-prompt doc=Notes//row 0/row 1 tabs=2/1:leaf explore=popover:n,focus:n,sel:- ai=n
-ai-focused                     char-x      handled=n open=- doc=Notes//row 0/row 1 tabs=2/1:leaf explore=popover:n,focus:n,sel:- ai=Y
-ai-focused                     escape      handled=n open=- doc=Notes//row 0/row 1 tabs=2/1:leaf explore=popover:n,focus:n,sel:- ai=Y
-ai-focused                     arrow-down  handled=n open=- doc=Notes//row 0/row 1 tabs=2/1:leaf explore=popover:n,focus:n,sel:- ai=Y
-ai-focused                     enter       handled=n open=- doc=Notes//row 0/row 1 tabs=2/1:leaf explore=popover:n,focus:n,sel:- ai=Y
+ai-focused                     char-x      handled=Y open=- doc=Notes//row 0/row 1 tabs=2/1:leaf explore=popover:n,focus:n,sel:- ai=Y
+ai-focused                     escape      handled=Y open=- doc=Notes//row 0/row 1 tabs=2/1:leaf explore=popover:n,focus:n,sel:- ai=Y
+ai-focused                     arrow-down  handled=Y open=- doc=Notes//row 0/row 1 tabs=2/1:leaf explore=popover:n,focus:n,sel:- ai=Y
+ai-focused                     enter       handled=Y open=- doc=Notes//row 0/row 1 tabs=2/1:leaf explore=popover:n,focus:n,sel:- ai=Y
 ai-focused                     ctrl-t      handled=Y open=- doc= tabs=3/2:leaf explore=popover:n,focus:n,sel:- ai=Y
 ai-focused                     f13         handled=n open=- doc=Notes//row 0/row 1 tabs=2/1:leaf explore=popover:n,focus:n,sel:- ai=Y
 move-to                        char-x      handled=Y open=move-to doc=Notes//row 0/row 1 tabs=2/1:leaf explore=popover:n,focus:n,sel:- ai=n

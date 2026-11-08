@@ -481,4 +481,13 @@
     <string name="open_source_license_notice">Koru の通知</string>
     <string name="open_source_license_third_party">サードパーティの通知</string>
     <string name="open_source_licenses_missing">このビルドにはライセンスファイルが含まれていません。</string>
+    <string name="update_available">Koru Nightly %1$s が利用可能です</string>
+    <string name="update_download">ダウンロード</string>
+    <string name="update_downloading">Koru Nightly %1$s をダウンロードして確認しています…</string>
+    <string name="update_ready">Koru Nightly %1$s のダウンロードと確認が完了しました。</string>
+    <string name="update_install">インストール</string>
+    <string name="update_failed">アップデートをダウンロードまたは検証できませんでした。</string>
+    <string name="update_retry">再試行</string>
+    <string name="update_not_now">後で</string>
+    <string name="update_whats_new">新機能</string>
 </resources>

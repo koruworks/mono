@@ -9,7 +9,14 @@ use serde_json::Value;
 
 use super::{ProviderDiagnostic, ProviderFailure, ProviderStage};
 
+/// The most one frame an agent sends Koru may carry. It protects Koru from
+/// a misbehaving agent, so it stays small whatever Koru sends.
 pub const DEFAULT_PROVIDER_FRAME_BYTES: usize = 1024 * 1024;
+
+/// The most one frame Koru sends an ACP agent may carry: a prompt with its
+/// pictures inline as base64. Ten 1 MiB sent copies and the text fit, under
+/// the 32 MB a vendor takes (chat-attachments D6, ADR-480).
+pub const DEFAULT_PROVIDER_PROMPT_FRAME_BYTES: usize = 16 * 1024 * 1024;
 
 /// One private provider JSON value. Debug output exposes only its encoded size.
 pub struct ProviderFrame {

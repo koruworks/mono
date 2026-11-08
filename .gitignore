@@ -54,6 +54,9 @@ apps/ios/KoruMobile/GitStamp.json
 
 __pycache__/
 
+# Checksum-pinned upstream icon archives; generated Rust data is committed.
+third-party/icons/
+
 # Environment files: the `.env.production` that points a build at a Koru
 # Cloud, a root's own `.env.local`, apps/android's build settings, or any
 # local override. They hold machine- and account-specific values and must

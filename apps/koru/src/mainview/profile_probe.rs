@@ -5,8 +5,11 @@
 //!
 //! The `+` menu's *Shell* and *Agents* flyouts list programs a machine
 //! may not have, and a row that launches nothing should say so before it is
-//! pressed — the same probe-and-dim Koru Terminal's launch menus do. The probe
-//! itself
+//! pressed — the same probe-and-dim Koru Terminal's launch menus do. An
+//! *Agents* flyout goes one further and leaves a missing agent out
+//! (`context_menu::agent_missing`); the dim still covers a missing shell, and
+//! an agent row in a menu whose rows were fixed before the answer landed. The
+//! probe itself
 //! (`koru_session_profiles::probe`) walks `PATH` and stats files, and **a
 //! thread that answers a person never waits on the world**
 //! (`guide/contributing/PRINCIPLES.md`): so it runs on its own worker, the menu opens
@@ -58,6 +61,27 @@ impl ProfileProbe {
             .unwrap_or_else(|error| error.into_inner())
             .as_ref()
             .is_none_or(|rows| rows.get(index).copied().unwrap_or(false))
+    }
+
+    /// The probe's answer for row `index`: `Some(present)` once a probe has
+    /// answered, `None` before — what *Agent providers* reads as *Checking…*
+    /// where the menu reads optimism.
+    pub(super) fn presence(&self, index: usize) -> Option<bool> {
+        self.latest
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .as_ref()
+            .map(|rows| rows.get(index).copied().unwrap_or(false))
+    }
+
+    /// The whole answer, `None` before the first — what the agent menus are
+    /// handed (`context_menu::set_profile_presence`) to leave out the agents
+    /// this machine does not have.
+    pub(super) fn snapshot(&self) -> Option<Vec<bool>> {
+        self.latest
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
     }
 
     /// Start a probe on a worker, unless one is already out. Never blocks:

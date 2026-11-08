@@ -27,14 +27,12 @@
 //! area's top-left**. [`build`] is the one place that multiplies by the scale
 //! factor, and no other part of this feature touches a scale.
 
-use std::collections::hash_map::Entry;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use accesskit::{Action, Node, NodeId, Rect, Role, TextSelection, Tree, TreeId, TreeUpdate};
 use koru_draw::geometry::Rect as LogicalRect;
 
 use super::identity::{Occurrence, WindowSlot};
-use super::repair::{self, Repair};
 
 /// The runs of one text control, published or merely named.
 ///
@@ -211,6 +209,10 @@ pub struct SemanticNode {
     /// reader inside a modal, which is the other half of publishing nothing
     /// beneath one.
     pub modal: bool,
+    /// **Still being made** — a picture loading into the place this node
+    /// stands for. AccessKit's `busy`, which a screen reader reads as the
+    /// content not being ready yet rather than as an empty control.
+    pub busy: bool,
     /// The children to publish. In a whole snapshot this is every child; in a
     /// delta it is only the ones that changed, and
     /// [`child_order`](Self::child_order) then says what the full list is.
@@ -267,6 +269,7 @@ impl SemanticNode {
             position: None,
             size_of_set: None,
             modal: false,
+            busy: false,
             live: None,
             children: Vec::new(),
             child_order: None,
@@ -291,6 +294,12 @@ impl SemanticNode {
     /// [`live`](SemanticNode::live): the announcement follows the **label**.
     pub fn with_live(mut self, live: accesskit::Live) -> Self {
         self.live = Some(live);
+        self
+    }
+
+    /// Content still on its way. See [`busy`](SemanticNode::busy).
+    pub fn with_busy(mut self) -> Self {
+        self.busy = true;
         self
     }
 
@@ -467,10 +476,6 @@ pub struct Projection {
     /// the consumer drops an unreachable node by itself — so they are here for
     /// the occurrence map, which is what a later action is resolved against.
     pub retired: Vec<NodeId>,
-    /// What [`repair`] had to change so AccessKit would accept the update.
-    /// Empty unless a view published something twice, which is a bug in that
-    /// view; the window survives it instead of panicking. See [`super::repair`].
-    pub repairs: Vec<Repair>,
 }
 
 /// An update with nothing in it, so [`build`] can fill a value in as it goes.
@@ -508,7 +513,6 @@ pub fn build(semantics: &WindowSemantics, known: &HashMap<NodeId, Occurrence>) -
             .iter()
             .map(|occurrence| occurrence.node_id())
             .collect(),
-        repairs: Vec::new(),
     };
     let mut nodes: Vec<(NodeId, Node)> = Vec::new();
 
@@ -538,9 +542,14 @@ pub fn build(semantics: &WindowSemantics, known: &HashMap<NodeId, Occurrence>) -
     // ordinary case, since a caret move inside a paragraph republishes that
     // paragraph and nothing else. The question is whether the client holds it
     // *anywhere*, which is what `known` answers and what a single update
-    // cannot.
-    let holds =
-        |id: &NodeId| projection.occurrences.contains_key(id) || (!whole && known.contains_key(id));
+    // cannot. **Less what this update retires**: `known` is the map *before*
+    // it, and a control the delta takes away is gone once the client applies
+    // it — naming it as the focus panics AccessKit (switching profile retired
+    // the focused row and took the window down).
+    let holds = |id: &NodeId| {
+        projection.occurrences.contains_key(id)
+            || (!whole && known.contains_key(id) && !projection.retired.contains(id))
+    };
     let focus = match semantics.focus {
         None => root_id,
         Some(occurrence) => {
@@ -569,19 +578,6 @@ pub fn build(semantics: &WindowSemantics, known: &HashMap<NodeId, Occurrence>) -
         tree_id: TreeId::ROOT,
         focus,
     };
-    // **Last, over the finished update**, because a repeat can come from any
-    // view and only the whole update shows it: a control published twice is
-    // two entries here and its parent naming it twice, and either one is a
-    // panic inside `accesskit_consumer`.
-    projection.repairs = repair::repair(&mut projection.update, root_id);
-    if !projection.repairs.is_empty() {
-        let published: HashSet<NodeId> =
-            projection.update.nodes.iter().map(|(id, _)| *id).collect();
-        projection
-            .occurrences
-            .retain(|id, _| published.contains(id));
-        projection.nodes = projection.update.nodes.len();
-    }
     projection
 }
 
@@ -647,6 +643,9 @@ fn append(
     if node.modal {
         built.set_modal();
     }
+    if node.busy {
+        built.set_busy();
+    }
     if let Some(live) = node.live {
         built.set_live(live);
     }
@@ -702,15 +701,8 @@ fn record(id: NodeId, occurrence: Occurrence, projection: &mut Projection) {
     // Any repeat is a bug, and the two kinds are worth telling apart in a
     // debugger but not in the count: either two locators hashed to one id, or
     // one control was published twice and would then have two parents.
-    //
-    // The first occurrence is kept, because the first copy of the node is the
-    // one [`repair`] keeps, and an action has to resolve to the control the
-    // client was actually given.
-    match projection.occurrences.entry(id) {
-        Entry::Occupied(_) => projection.duplicate_ids += 1,
-        Entry::Vacant(slot) => {
-            slot.insert(occurrence);
-        }
+    if projection.occurrences.insert(id, occurrence).is_some() {
+        projection.duplicate_ids += 1;
     }
 }
 

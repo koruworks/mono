@@ -21,12 +21,31 @@
 //! is offered; a window that offers neither leaves a zero-width rect there and
 //! draws nothing.
 //!
+//! **The leading furniture is a left-to-right chain from `caption.x`** — the
+//! lane's controls, folded into the caption while the pane is shut
+//! ([`leading_chain`]; `docs/features/workspace-foundation/TECHNICAL.final.md`
+//! §5.1):
+//!
+//! ```text
+//! [K] [≡] [🔍] [+] |  tabs …
+//!  ^   ^    ^    ^  ^
+//!  mark toggle search new divider
+//! ```
+//!
+//! With [`crate::lane::Leading::NONE`] every link but the toggle is
+//! zero-width, the divider too, and the chain is the sidebar toggle alone —
+//! exactly the caption every window had before the lane existed.
+//!
 //! **The trailing furniture is one right-to-left chain**, and [`trailing_edge`]
 //! is where it starts. Each rect takes its right edge from its neighbour's `.x`:
 //!
 //! ```text
-//! window buttons ← settings slot ← context toggle ← host action ← search ← lane
+//! window buttons ← settings slot ← context toggle ← host action ← lane
 //! ```
+//!
+//! The trailing search slot that used to sit between the host action and the
+//! lane is gone: search is a leading control now, in the lane or in the
+//! chain, and a window has one search button rather than two slots for it.
 //!
 //! The banner's Settings slot is the outermost of them (`banner::settings_slot`),
 //! which is why every function below that has to know where the lane begins takes
@@ -45,7 +64,7 @@
 use koru_draw::geometry::Rect;
 use koru_draw::theme;
 
-use crate::banner;
+use crate::{banner, lane};
 
 /// The panel toggles are square and the height of the strip; the window buttons
 /// are wider, as they are on Windows, so the pointer can slam into the
@@ -162,40 +181,70 @@ pub fn context_toggle_with_host_action(
     context_toggle(caption, window_buttons, show)
 }
 
-/// Open global search. It sits immediately left of the optional context
-/// toggle, keeping the platform window controls in their conventional corner.
-pub fn search_button(caption: Rect, window_buttons: bool, context: bool) -> Rect {
-    search_button_with_host_action(caption, window_buttons, context, false)
+/// The lane's controls, folded into the caption's left end while the pane is
+/// shut, in the canvas's order: leading · toggle · search · new · divider.
+#[derive(Copy, Clone, PartialEq, Debug)]
+pub struct Chain {
+    /// The mark, or the lights' reserve. Not a button: a press here drags.
+    pub leading: Rect,
+    pub toggle: Rect,
+    pub search: Rect,
+    pub new: Rect,
+    /// A thin rule between the chain and the tabs; zero-width when the chain
+    /// is the toggle alone, so the old caption is unchanged to the pixel.
+    pub divider: Rect,
+    /// Where the chain ends and the tab lane may begin.
+    pub end: f32,
 }
 
-/// Search geometry when the host also reserves its own right-hand action.
-pub fn search_button_with_host_action(
-    caption: Rect,
-    window_buttons: bool,
-    context: bool,
-    host_action_shown: bool,
-) -> Rect {
-    search_button_with_banner(
-        caption,
-        window_buttons,
-        context,
-        host_action_shown,
-        banner::Slots::NONE,
-    )
-}
+/// The divider between the folded chain and the tabs: a hairline with a
+/// square's worth of air either side would read as a gap; one square's width
+/// with the rule drawn at its centre keeps the tabs' pitch.
+pub const DIVIDER_W: f32 = 9.0;
 
-/// ...and the same behind a banner.
-pub fn search_button_with_banner(
-    caption: Rect,
-    window_buttons: bool,
-    context: bool,
-    host_action_shown: bool,
-    slots: banner::Slots,
-) -> Rect {
-    let right =
-        host_action_with_banner(caption, window_buttons, context, host_action_shown, slots).x;
-    let w = toggle_w(caption).min((right - caption.x).max(0.0));
-    Rect::new(right - w, caption.y, w, caption.h)
+/// **The leading chain.** Each rect takes its left edge from its neighbour's
+/// right, starting at `caption.x`; a slot the window does not offer is
+/// zero-width at its place. With [`lane::Leading::NONE`] this is
+/// [`sidebar_toggle`] and nothing else, which is what every pre-lane test
+/// still asserts.
+pub fn leading_chain(caption: Rect, leading: lane::Leading) -> Chain {
+    let s = toggle_w(caption);
+    let right = caption.x + caption.w;
+    let mut x = caption.x;
+    // **Unfolded: the lane holds the controls and the caption's left end is
+    // bare.** Every link is zero-width at `caption.x`, so a caller does one
+    // arithmetic either way and the tabs begin at the caption's edge.
+    if !leading.folded {
+        let z = Rect::new(x, caption.y, 0.0, caption.h);
+        return Chain {
+            leading: z,
+            toggle: z,
+            search: z,
+            new: z,
+            divider: z,
+            end: x,
+        };
+    }
+    let mut take = |w: f32| {
+        let w = w.min((right - x).max(0.0));
+        let r = Rect::new(x, caption.y, w, caption.h);
+        x += w;
+        r
+    };
+    let leading_rect = take(lane::leading_w(caption, leading.mark));
+    let toggle = take(s);
+    let search = take(if leading.search { s } else { 0.0 });
+    let new = take(if leading.new { s } else { 0.0 });
+    let folded = leading.search || leading.new || leading.mark != lane::Mark::None;
+    let divider = take(if folded { DIVIDER_W } else { 0.0 });
+    Chain {
+        leading: leading_rect,
+        toggle,
+        search,
+        new,
+        divider,
+        end: x,
+    }
 }
 
 /// Total width the window buttons occupy, or zero while the OS still draws its
@@ -262,38 +311,26 @@ pub fn tab_strip_with_banner(
     Rect::new(x, caption.y, (right - x).max(0.0), caption.h)
 }
 
-/// The tab strip when the host reserves a caption button for search.
-pub fn tab_strip_with_search(caption: Rect, window_buttons: bool, context: bool) -> Rect {
-    tab_strip_with_search_and_host_action(caption, window_buttons, context, false)
-}
-
-/// Search-reserved tab geometry with an optional host-owned action as well.
-pub fn tab_strip_with_search_and_host_action(
+/// **The lane begins after the leading chain.** The workspace window's
+/// strip: the chain's `end` is the sidebar toggle's far edge for
+/// [`lane::Leading::NONE`], so this and [`tab_strip_with_host_action`] agree
+/// to the pixel for a window that folds nothing into its caption.
+pub fn tab_strip_with_leading(
     caption: Rect,
     window_buttons: bool,
     context: bool,
     host_action_shown: bool,
+    leading: lane::Leading,
 ) -> Rect {
-    tab_strip_with_search_and_banner(
+    let x = leading_chain(caption, leading).end;
+    let right = host_action_with_banner(
         caption,
         window_buttons,
         context,
         host_action_shown,
         banner::Slots::NONE,
     )
-}
-
-/// Search-reserved tab geometry, after the banner has taken its leading slots.
-pub fn tab_strip_with_search_and_banner(
-    caption: Rect,
-    window_buttons: bool,
-    context: bool,
-    host_action_shown: bool,
-    slots: banner::Slots,
-) -> Rect {
-    let x = banner::end(caption, slots);
-    let right =
-        search_button_with_banner(caption, window_buttons, context, host_action_shown, slots).x;
+    .x;
     Rect::new(x, caption.y, (right - x).max(0.0), caption.h)
 }
 

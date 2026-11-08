@@ -16,6 +16,10 @@
 //! - `muse` (Meta's Muse Code) has no self-update and no package this crate
 //!   could find; its Windows launcher only reports an unsupported platform.
 //! - `gemini` is retired from the profile catalogue (ADR-391).
+//! - `devin` has `devin update` (3000.10.21 checked 2026-11-02) but no
+//!   check-only form (`--force` is its one option) and no package registry
+//!   this crate can read; the latest version it knows sits in a cache file
+//!   of its own, which is not a published source. It also updates itself.
 
 use koru_session_profiles::ProfileLabel;
 

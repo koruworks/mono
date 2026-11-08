@@ -28,8 +28,15 @@
 /// Koru itself.
 pub const APP: &str = if cfg!(windows) { "koru.exe" } else { "koru" };
 
-/// The standalone host for the reusable Koru AI chat surface. The Agent
-/// launches it beside itself for blank opens and canonical chat links.
+/// The retired standalone Koru AI window (2026-11-03): Koru AI chat runs in
+/// Koru's own context pane and chat tabs, and no current package ships this
+/// binary.
+///
+/// The name is kept for the reason [`GATEWAY`]'s is: an installation being
+/// upgraded still has the file, and may have the window **running** — it had
+/// a `stop` verb — so the updater asks it to stop and moves the file aside
+/// with the rest of the installed manifest. It is deliberately absent from
+/// [`ALL`].
 pub const AI_CHAT: &str = if cfg!(windows) {
     "koru-ai-chat.exe"
 } else {
@@ -264,8 +271,8 @@ pub const INVENTORY_VERSION: u32 = 10;
 /// `docs/contributing/release/BACKLOG.md`'s.
 ///
 /// The retired names — [`GATEWAY`], [`SESSION_HOST`], [`TERMINAL`],
-/// [`LEGACY_STORE`], [`LEGACY_STORE_SERVER`], [`LEGACY_VOICE`] — are
-/// deliberately absent. A file an installation still has is owned through its
+/// [`AI_CHAT`], [`LEGACY_STORE`], [`LEGACY_STORE_SERVER`], [`LEGACY_VOICE`] —
+/// are deliberately absent. A file an installation still has is owned through its
 /// own installed manifest, not through this list.
 ///
 /// **Linux carries no [`VOICE`] yet**: the worker is not built there until
@@ -273,11 +280,11 @@ pub const INVENTORY_VERSION: u32 = 10;
 /// Linux package. That arm is deleted when voice lands on Linux, together with
 /// the Linux arm of `koru-release`'s `CHANNEL_BINARIES`.
 #[cfg(windows)]
-pub const ALL: &[&str] = &[APP, AI_CHAT, AGENT, COM_NOTIFICATION, MCP, VOICE, UPDATER];
+pub const ALL: &[&str] = &[APP, AGENT, COM_NOTIFICATION, MCP, VOICE, UPDATER];
 #[cfg(target_os = "linux")]
-pub const ALL: &[&str] = &[APP, AI_CHAT, AGENT, MCP, UPDATER];
+pub const ALL: &[&str] = &[APP, AGENT, MCP, UPDATER];
 #[cfg(not(any(windows, target_os = "linux")))]
-pub const ALL: &[&str] = &[APP, AI_CHAT, AGENT, MCP, VOICE, UPDATER];
+pub const ALL: &[&str] = &[APP, AGENT, MCP, VOICE, UPDATER];
 
 pub const NOTIFICATION_OWNER_INFO_PLIST: &str =
     "Koru.app/Contents/Library/LoginItems/Koru Agent.app/Contents/Info.plist";
@@ -390,21 +397,21 @@ mod tests {
     #[test]
     fn every_executable_is_in_the_list_exactly_once() {
         let expected: &[&str] = if cfg!(windows) {
-            &[APP, AI_CHAT, AGENT, COM_NOTIFICATION, MCP, VOICE, UPDATER]
+            &[APP, AGENT, COM_NOTIFICATION, MCP, VOICE, UPDATER]
         } else if cfg!(target_os = "linux") {
-            &[APP, AI_CHAT, AGENT, MCP, UPDATER]
+            &[APP, AGENT, MCP, UPDATER]
         } else {
-            &[APP, AI_CHAT, AGENT, MCP, VOICE, UPDATER]
+            &[APP, AGENT, MCP, VOICE, UPDATER]
         };
         assert_eq!(ALL, expected);
         assert_eq!(
             ALL.len(),
             if cfg!(windows) {
-                7
-            } else if cfg!(target_os = "linux") {
-                5
-            } else {
                 6
+            } else if cfg!(target_os = "linux") {
+                4
+            } else {
+                5
             }
         );
         assert_eq!(
@@ -428,6 +435,7 @@ mod tests {
             GATEWAY,
             SESSION_HOST,
             TERMINAL,
+            AI_CHAT,
             LEGACY_STORE,
             LEGACY_STORE_SERVER,
             LEGACY_VOICE,

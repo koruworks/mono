@@ -458,6 +458,7 @@ fn document_text(v: &MainView, ws: &WorkspaceDoc) -> String {
 fn tab_kind(v: &MainView) -> &'static str {
     match &v.tabs().active_tab().view {
         TabView::Welcome(_) => "welcome",
+        TabView::Home(_) => "home",
         TabView::Manage(_) => "manage",
         TabView::Trash(_) => "trash",
         TabView::Settings(_) => "settings",
@@ -538,6 +539,14 @@ fn table() -> String {
 /// `arrow-down` and `enter` are `handled=Y`: Manage's nav walks its rows with
 /// the arrows and opens one with Enter. The other four keys route as the
 /// Workspaces tab's did.
+///
+/// **Moved a fourth time, deliberately, when the Koru AI setup went
+/// dormant.** The `ai-focused` pane has no provider in the suite, so it used
+/// to show the provider setup, whose unfocused fields claimed no key. It
+/// shows the chat now, whatever is configured: `char-x` types into the
+/// composer, `escape` and `arrow-down` are the composer's, and `enter` opens
+/// the model picker — all four `handled=Y`. `ctrl-t` and `f13` route as
+/// before.
 const EXPECTED: &str = include_str!("routing.table");
 
 #[test]
@@ -1159,4 +1168,56 @@ fn the_dedicated_global_search_window_accepts_a_dictation() {
     assert!(commit(&mut v, &mut ws, 22, "global search"));
     let (query, _) = v.search.as_mut().unwrap().dictation_field();
     assert_eq!(query.raw_text(), "global search");
+}
+
+/// **Ctrl+L adds a reply's selection through the window's own routing**
+/// (koru-ai D90, the user's report 2026-11-03). The Koru AI pane is open
+/// with the keyboard in its composer; a drag through the reply selects
+/// "Koru" and *Add to chat* shows; then the keys arrive as the shell
+/// delivers them — the Ctrl key's own press first, then `L` with Windows'
+/// control character for text — through `View::key`, past the container's
+/// chords and the side pane's routing. The bare Ctrl used to move the
+/// chat's keyboard back to the composer, where the chord was refused.
+#[test]
+fn ctrl_l_adds_a_reply_selection_through_the_windows_key_path() {
+    let (mut v, mut w) = on_document();
+    assert!(v.toggle_ai());
+    v.ai_chat
+        .show_reply_for_host_test("Koru keeps every workspace in one store.");
+    let frame = |v: &mut MainView, w: &koru_workspace::Workspace| {
+        v.draw_frame(
+            &mut vello::Scene::new(),
+            w,
+            &koru_draw::ImageCache::new(),
+            vello::kurbo::Affine::IDENTITY,
+            false,
+            (-1.0, -1.0),
+        );
+    };
+    frame(&mut v, &w);
+    let (x0, y) = v
+        .ai_chat
+        .reply_point_for_host_test(0)
+        .expect("the reply is laid out in the pane");
+    let (x1, _) = v.ai_chat.reply_point_for_host_test(4).unwrap();
+    assert!(View::mouse_down(&mut v, &mut w.ws, x0 + 0.5, y, false));
+    View::mouse_move(&mut v, x1, y);
+    View::mouse_up(&mut v, &mut w.ws);
+    frame(&mut v, &w);
+
+    let ctrl = koru_keys::PRIMARY;
+    let modifier = if cfg!(target_os = "macos") {
+        NamedKey::Super
+    } else {
+        NamedKey::Control
+    };
+    View::key(&mut v, &mut w.ws, &Key::Named(modifier), None, ctrl);
+    assert!(View::key(
+        &mut v,
+        &mut w.ws,
+        &Key::Character("l".into()),
+        Some("\u{c}"),
+        ctrl
+    ));
+    assert_eq!(v.ai_chat.composer_text_for_host_test(), "> Koru");
 }

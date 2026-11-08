@@ -553,4 +553,14 @@
     <string name="open_source_license_notice">Koru notice</string>
     <string name="open_source_license_third_party">Third-party notices</string>
     <string name="open_source_licenses_missing">This build carries no license files.</string>
+    <!-- The nightly's update notice (TECHNICAL.final §5.5). The version is shown verbatim. -->
+    <string name="update_available">Koru Nightly %1$s is available</string>
+    <string name="update_download">Download</string>
+    <string name="update_downloading">Downloading and checking Koru Nightly %1$s…</string>
+    <string name="update_ready">Koru Nightly %1$s is downloaded and checked.</string>
+    <string name="update_install">Install</string>
+    <string name="update_failed">The update could not be downloaded or verified.</string>
+    <string name="update_retry">Try again</string>
+    <string name="update_not_now">Not now</string>
+    <string name="update_whats_new">What’s new</string>
 </resources>

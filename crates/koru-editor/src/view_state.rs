@@ -172,6 +172,64 @@ pub enum OpenWhere {
     BackgroundTab,
     /// A new window — Shift+Enter, and Shift+click on a document pill.
     NewWindow,
+    /// A new pane split off the current one on `side`, showing the reference —
+    /// one of the four edges of the chooser Alt+click on a reference opens.
+    /// The chooser's middle is [`NewTab`](Self::NewTab).
+    Split(SplitSide),
+}
+
+/// Which edge of the current pane a [`OpenWhere::Split`] puts the new pane on.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum SplitSide {
+    Up,
+    Right,
+    Down,
+    Left,
+}
+
+/// **What a reference in a document names**, once the editor has read it.
+///
+/// One vocabulary for every reference a click can follow — an `@` document
+/// pill, an older pill that names a node, and a `koru://` link written as a
+/// URL — so the click rule ([`OpenWhere`]) is one rule, and the container
+/// answers it in one place whichever kind it was.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Reference {
+    /// A node, the way a pill written before Store-per-document named its
+    /// target ([`ViewState::wants_open`]).
+    Node(NodeId),
+    /// A document, and optionally one block in it: an `@` pill, or a
+    /// `koru://doc/…` link ([`ViewState::wants_entity_open`]).
+    Document(crate::trigger::DocumentTarget),
+    /// A Koru AI chat, and optionally one message block in it — a
+    /// `koru://chat/…` link ([`ViewState::wants_chat_open`]).
+    Chat(ChatTarget),
+}
+
+/// A chat a link names. Uuids rather than the AI crate's ids: this layer
+/// never links the AI domain, and the container converts at its edge.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct ChatTarget {
+    pub chat: uuid::Uuid,
+    pub block: Option<uuid::Uuid>,
+}
+
+impl Reference {
+    /// The reference a `koru://` URL names, or `None` for any other URL — an
+    /// `https:` link is still the browser's — and for a `koru://` form this
+    /// build cannot read, which is refused rather than guessed at.
+    pub fn of_link(url: &str) -> Option<Self> {
+        Some(match koru_link::parse(url).ok()? {
+            koru_link::KoruLink::Document { document, node } => {
+                Self::Document(crate::trigger::DocumentTarget {
+                    document: koru_core::DocumentId::from_uuid(document),
+                    node: node.map(NodeId::from_uuid),
+                })
+            }
+            koru_link::KoruLink::Chat { chat, block } => Self::Chat(ChatTarget { chat, block }),
+            koru_link::KoruLink::Node(node) => Self::Node(NodeId::from_uuid(node)),
+        })
+    }
 }
 
 /// The clickable URL hover chip: destination plus copy and edit.
@@ -775,6 +833,15 @@ pub struct ViewState {
     pub wants_open: Option<(NodeId, OpenWhere)>,
     /// A store-backed document reference, including its workspace route.
     pub wants_entity_open: Option<(crate::trigger::DocumentTarget, OpenWhere)>,
+    /// A Koru AI chat a `koru://chat/…` link in the document asked to open,
+    /// and where. A chat opens inside this window, never through the OS's
+    /// handler for the scheme.
+    pub wants_chat_open: Option<(ChatTarget, OpenWhere)>,
+    /// A reference somebody **Alt+clicked**: the container asks where to open
+    /// it with the place chooser at the pointer, then opens it there. Only
+    /// the reference travels — the chooser is the window's, which is the one
+    /// thing that knows the panes and is not clipped by this view's edges.
+    pub wants_place_chooser: Option<Reference>,
     /// A **delegated run** somebody clicked the pill of, by its Run document
     /// (delegation roadmap D8). Its own field rather than
     /// [`wants_entity_open`](Self::wants_entity_open), because a run opens the
@@ -874,6 +941,10 @@ pub struct ViewState {
     /// offered at all — so a task you were reading in its document could only
     /// be found again by remembering which queue it fell in.
     pub wants_task_view: Option<NodeId>,
+    /// **Open this list's page** — the title's list chip was pressed. The
+    /// container owns the Tasks tab and the rail, so it is asked, as it is
+    /// for [`wants_task_view`](Self::wants_task_view).
+    pub wants_task_list: Option<koru_core::ids::ListId>,
     /// **The row whose task the due chip's `×` was pressed on.**
     ///
     /// A request rather than an edit, because what the `×` asks for is a
@@ -898,6 +969,11 @@ pub struct ViewState {
     /// the only side with disk and an image-capable clipboard: it decodes the
     /// bytes, stores them in the blob tree, and calls `paste_images` on the view.
     pub wants_paste_image: Option<(NodeId, Vec<NodeId>)>,
+    /// A paste under the composer policy found no text: the host may offer
+    /// the clipboard's picture or files as attachments (chat-attachments D9).
+    /// Never set in a document, whose pictures go through
+    /// [`Self::wants_paste_image`]. Cleared by the host.
+    pub wants_paste_attachment: bool,
     /// Text pasted from **outside** that may carry images (a Word document with
     /// inline pictures). Holds the insertion anchor, selection roots, **and the
     /// text itself**: the editor defers the whole paste to the shell (so it
@@ -936,6 +1012,11 @@ pub struct ViewState {
     /// has entries: a button that leads almost nowhere is worse than no button.
     /// On in a document, off in a bare list.
     pub insert_button: bool,
+    /// Whether a hovered row shows its drag grip in the affordance lane.
+    ///
+    /// On everywhere but the chat composer: a message of a few lines is not
+    /// a document to reorder, and the grip there only crowded the text.
+    pub drag_grip: bool,
     /// Whether this document may be changed at all.
     ///
     /// **A capability of the view, like [`images_enabled`], not a condition like
@@ -1049,6 +1130,18 @@ pub struct ViewState {
     /// keystroke that broke the text. Entries retire when their node leaves
     /// the body (`crate::diagram::sync`). Never synced: a drawing is derived.
     pub diagrams: HashMap<NodeId, crate::diagram::DiagramEntry>,
+    /// Images the shell is still reading, decoding and storing for this
+    /// view, each drawn as a skeleton where it will land. View-local and never
+    /// synced — see `crate::pending_image` for why the placeholder is not a
+    /// node.
+    pub pending_images: Vec<crate::pending_image::PendingImage>,
+    /// Whether the platform asks for reduced motion. Read by the host view
+    /// when something animated begins (today, an image placeholder), so its
+    /// pulse rests rather than breathes.
+    pub reduced_motion: bool,
+    /// The display scale (DPI times zoom) the last frame was drawn at, so
+    /// work done off the event loop can size an image for it.
+    pub drawn_scale: f64,
     /// The diagram whose text is open for editing in this view, if any. A
     /// reading position, like scroll — per view, never synced, and closed the
     /// moment the focus leaves the row.
@@ -1144,6 +1237,8 @@ impl Default for ViewState {
             wants_sharing_toggle: false,
             wants_open: None,
             wants_entity_open: None,
+            wants_chat_open: None,
+            wants_place_chooser: None,
             wants_run_open: None,
             wants_run_menu: None,
             wants_schedule_open: None,
@@ -1165,9 +1260,11 @@ impl Default for ViewState {
             wants_reminder_context: None,
             wants_file_action: None,
             wants_task_view: None,
+            wants_task_list: None,
             wants_remove_from_tasks: None,
             wants_copy_image: None,
             wants_paste_image: None,
+            wants_paste_attachment: false,
             wants_paste_rich: None,
             wants_copy_html: None,
             last_image_pastes: Vec::new(),
@@ -1175,6 +1272,7 @@ impl Default for ViewState {
             paste_redo_exhausted: false,
             pending_cut_image: None,
             insert_button: false,
+            drag_grip: true,
             read_only: false,
             tags: crate::chips::TagLookup::default(),
             lists: crate::chips::ListLookup::default(),
@@ -1192,6 +1290,9 @@ impl Default for ViewState {
             table_controls: koru_ui::Tooltip::default(),
             table_controls_node: None,
             diagrams: HashMap::new(),
+            pending_images: Vec::new(),
+            reduced_motion: false,
+            drawn_scale: 1.0,
             diagram_text_open: None,
             diagram_requests: Vec::new(),
             wants_save_diagram_as: None,
@@ -1240,6 +1341,7 @@ impl ViewState {
         self.policy = policy;
         if policy == crate::policy::Policy::Composer {
             self.insert_button = false;
+            self.drag_grip = false;
             self.images_enabled = false;
             self.dividers_enabled = false;
             self.quotes_enabled = false;

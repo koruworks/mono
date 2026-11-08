@@ -33,6 +33,7 @@ impl Outgoing {
         generation: i64,
         batch: [u8; 8],
         bytes: Vec<u8>,
+        claim: Option<[u8; 32]>,
         budget: &MemoryBudget,
     ) -> Result<Self, Error> {
         if bytes.len() > MAX_PAYLOAD {
@@ -53,6 +54,7 @@ impl Outgoing {
             total_length: bytes.len(),
             fragment_count: bytes.len().div_ceil(FRAGMENT_BYTES),
             sha256: Bytes(Sha256::digest(&bytes).into()),
+            claim: claim.map(Bytes),
         };
         start.validate()?;
         let reservation = budget.reserve(
