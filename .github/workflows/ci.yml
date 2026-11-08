@@ -54,6 +54,8 @@ jobs:
           submodules: false
       - name: Check script regressions
         run: python3 -m unittest discover -s scripts/checks -p 'test_*.py'
+      - name: Check Android Cloud release configuration
+        run: python3 scripts/release/test_android_account_config.py
       - name: Check SPDX headers
         run: python3 scripts/checks/spdx-headers.py --check
       - name: Check the public source export

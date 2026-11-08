@@ -27,6 +27,7 @@ impl ProfilesController {
         if self
             .profile_creation
             .as_mut()
+            .map(std::cell::RefCell::get_mut)
             .is_some_and(|view| view.account_command_failed(failure))
         {
             return true;
@@ -38,7 +39,11 @@ impl ProfilesController {
         self.account.stage = AccountStage::Unavailable;
         self.account.failure_code = Some("account_command_unavailable".into());
         self.account_warning_dismissed = false;
-        if let Some(creation) = &mut self.profile_creation {
+        if let Some(creation) = self
+            .profile_creation
+            .as_mut()
+            .map(std::cell::RefCell::get_mut)
+        {
             creation.account_command_failed(failure);
         }
         true
@@ -57,6 +62,7 @@ impl ProfilesController {
             let changed = form
                 .profile_creation
                 .as_mut()
+                .map(std::cell::RefCell::get_mut)
                 .is_some_and(|creation| creation.account_command_admitted(admission));
             if changed {
                 form.drain_profile_creation_action();
@@ -105,15 +111,35 @@ impl ProfilesController {
     }
 
     pub fn connected_profile_creation_failed(&mut self, message: &str) -> bool {
-        let Some(creation) = self.profile_creation.as_mut() else {
+        let Some(creation) = self
+            .profile_creation
+            .as_mut()
+            .map(std::cell::RefCell::get_mut)
+        else {
             return false;
         };
         creation.creation_failed(message);
         true
     }
 
+    pub fn connected_profile_creation_conflict(&mut self) -> bool {
+        let Some(creation) = self
+            .profile_creation
+            .as_mut()
+            .map(std::cell::RefCell::get_mut)
+        else {
+            return false;
+        };
+        creation.creation_conflict();
+        true
+    }
+
     pub fn local_profile_restore_failed(&mut self, message: &str) -> bool {
-        let Some(creation) = self.profile_creation.as_mut() else {
+        let Some(creation) = self
+            .profile_creation
+            .as_mut()
+            .map(std::cell::RefCell::get_mut)
+        else {
             return false;
         };
         creation.restore_failed(message);
@@ -247,6 +273,11 @@ impl ProfilesController {
             return true;
         }
         self.notice = Some(match code {
+            "profile_cascade_unsupported" => koru_i18n::t(
+                crate::format::lang(),
+                koru_i18n::Key::ProfileRemovalUnsupported,
+            )
+            .into(),
             "profile_not_empty" => "Delete all Workspaces in this Profile first.".into(),
             "profile_cascade_incomplete" => koru_i18n::t(
                 crate::format::lang(),
@@ -261,7 +292,11 @@ impl ProfilesController {
                 koru_i18n::Key::ProfilesRemoveNotPermitted,
             )
             .into(),
-            _ => "Koru couldn't remove this Profile. Nothing was deleted.".into(),
+            _ => koru_i18n::t(
+                crate::format::lang(),
+                koru_i18n::Key::ProfilesRemoveCascadeIncomplete,
+            )
+            .into(),
         });
         true
     }
@@ -281,7 +316,11 @@ impl ProfilesController {
     }
 
     pub fn complete(&mut self, result: AccountOperationResult) -> bool {
-        if let Some(creation) = self.profile_creation.as_mut() {
+        if let Some(creation) = self
+            .profile_creation
+            .as_mut()
+            .map(std::cell::RefCell::get_mut)
+        {
             match &result {
                 AccountOperationResult::SignedIn | AccountOperationResult::SignedOut => {
                     creation.account_creation_finished()
@@ -316,7 +355,11 @@ impl ProfilesController {
                 self.account_warning_dismissed = false;
                 self.creation_decision_pending = false;
                 self.notice = None;
-                if let Some(creation) = self.profile_creation.as_mut() {
+                if let Some(creation) = self
+                    .profile_creation
+                    .as_mut()
+                    .map(std::cell::RefCell::get_mut)
+                {
                     creation.account_creation_required(&self.account);
                 }
             }
@@ -437,7 +480,11 @@ impl ProfilesController {
                 display_name,
                 choices,
             } => {
-                if let Some(creation) = self.profile_creation.as_mut() {
+                if let Some(creation) = self
+                    .profile_creation
+                    .as_mut()
+                    .map(std::cell::RefCell::get_mut)
+                {
                     creation.show_account_profile_choices(&display_name, choices.clone());
                 }
                 self.account_profiles = choices.into_iter().map(|choice| choice.profile).collect();

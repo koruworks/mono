@@ -442,10 +442,7 @@ impl TasksView {
         })
     }
 
-    /// **The list chip, where it leads somewhere.** The one chip that is a
-    /// control (the others are labels and stay labels), so it is the one that
-    /// is published as one — a `Role::Link`, because following it opens
-    /// another page.
+    /// The list chip opens the list picker, so it is published as a button.
     ///
     /// Its name is the list's own, which is the person's content: never
     /// translated, never invented.

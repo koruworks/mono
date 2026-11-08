@@ -865,8 +865,13 @@ jobs:
           test -n "$VERSION" || { echo "::error::an APK names its release version: the caller passes it"; exit 1; }
           code="$(cargo run --locked -q -p koru-release -- android-version-code --build "$BUILD" | tail -n 1)"
           echo "versionCode $code, versionName $VERSION"
-          mapfile -t account_args < <(python3 scripts/release/android-account-config.py release-args \
-            --channel "$CHANNEL" --with-cloud "$WITH_CLOUD")
+          # Keep validation in a simple command so errexit stops the build on failure.
+          account_config="$(python3 scripts/release/android-account-config.py release-args \
+            --channel "$CHANNEL" --with-cloud "$WITH_CLOUD")"
+          account_args=()
+          if [[ -n "$account_config" ]]; then
+            mapfile -t account_args <<< "$account_config"
+          fi
           (cd apps/android && ./gradlew --no-daemon --console=plain :app:assembleRelease \
             "${account_args[@]}" \
             "-PkoruNightly=$NIGHTLY" "-PkoruVersionCode=$code" "-PkoruVersionName=$VERSION")

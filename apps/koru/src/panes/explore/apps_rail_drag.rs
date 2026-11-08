@@ -39,12 +39,13 @@ use koru_shell_chrome::reorder;
 use super::{ExploreView, NavigatorMode};
 use crate::panes::sidebar::apps_rail;
 use crate::panes::sidebar::rail_order::RailOrder;
+pub(super) mod workspaces;
 
 /// A view's square on the move.
 pub(super) struct RailDrag {
     mode: NavigatorMode,
-    /// Where it sat when the press began: what Esc puts it back to.
-    from: usize,
+    /// The order when the press began: what Escape restores.
+    original: RailOrder,
     /// The press's offset into the square, so the square travels from the
     /// point it was grabbed rather than snapping its top under the pointer.
     grab: f32,
@@ -87,18 +88,18 @@ impl ExploreView {
     /// Whether a view's square is held — what sends the pointer's moves, its
     /// release and Esc here wherever the pointer has gone.
     pub fn rail_dragging(&self) -> bool {
-        self.rail_drag.is_some()
+        self.rail_drag.is_some() || self.workspace_drag.is_some()
     }
 
     /// A press on `mode`'s square, `square` being where it is: it is now
     /// held.
     pub(super) fn begin_rail_drag(&mut self, mode: NavigatorMode, square: Rect, y: f32) {
-        let Some(from) = self.rail_modes().iter().position(|m| *m == mode) else {
+        if !self.rail_modes().contains(&mode) {
             return;
-        };
+        }
         self.rail_drag = Some(RailDrag {
             mode,
-            from,
+            original: self.rail_order.clone(),
             grab: y - square.y,
             y,
         });
@@ -110,7 +111,14 @@ impl ExploreView {
         let drag = self.rail_drag.as_ref()?;
         let index = rects.apps.iter().position(|(m, _)| *m == drag.mode)?;
         let square = rects.apps[index].1;
-        let (first, last) = (rects.apps.first()?.1, rects.apps.last()?.1);
+        let projection = self.view_projection(rects.band.h);
+        let last = rects
+            .apps
+            .iter()
+            .rev()
+            .find(|(mode, _)| Some(*mode) != projection.promoted)?
+            .1;
+        let first = rects.apps.first()?.1;
         let top = reorder::carry(drag.y - drag.grab, first.y, last.y + last.h, square.h);
         Some((index, Rect::new(square.x, top, square.w, square.h)))
     }
@@ -119,6 +127,9 @@ impl ExploreView {
     /// places once half of it is over a neighbour. Always a repaint — the
     /// square moved.
     pub fn rail_drag_move(&mut self, rail: Rect, y: f32) -> bool {
+        if self.workspace_drag.is_some() {
+            return self.workspace_drag_move(rail, y);
+        }
         let Some(drag) = self.rail_drag.as_mut() else {
             return false;
         };
@@ -137,6 +148,10 @@ impl ExploreView {
     /// The release: the square drops into its slot from wherever the pointer
     /// left it. The order is already the one drawn.
     pub fn rail_drag_release(&mut self, rail: Rect) -> bool {
+        if self.workspace_drag.take().is_some() {
+            self.workspace_slides.clear();
+            return true;
+        }
         let rects = self.apps_rail_rects(rail);
         let landing = self.rail_carried(&rects);
         if self.rail_drag.take().is_none() {
@@ -153,25 +168,36 @@ impl ExploreView {
     /// Esc while a square is held: it goes back where the press found it, and
     /// the views it passed slide back too.
     pub fn cancel_rail_drag(&mut self, rail: Rect) -> bool {
+        if self.workspace_drag.take().is_some() {
+            self.workspace_slides.clear();
+            return true;
+        }
+        if self.rail_drag.is_none() {
+            return false;
+        }
         let rects = self.apps_rail_rects(rail);
+        let before: Vec<_> = rects.apps.iter().map(|(_, rect)| rect.y).collect();
         let landing = self.rail_carried(&rects);
         let Some(drag) = self.rail_drag.take() else {
             return false;
         };
-        let Some((index, carried)) = landing else {
+        self.rail_order = drag.original;
+        self.rail_slides.clear();
+        let Some((from, carried)) = landing else {
             return true;
         };
-        // Every move a drag makes moves only the held view, so undoing them
-        // all is one move: from where it is back to where it was.
-        self.move_rail_view(rail, index, drag.from);
         let rects = self.apps_rail_rects(rail);
-        if let Some((_, home)) = rects.apps.get(drag.from) {
-            self.rail_slides.settle(
-                rects.apps.len(),
-                drag.from,
-                carried.y - home.y,
-                Instant::now(),
-            );
+        if let Some((index, (_, home))) = rects
+            .apps
+            .iter()
+            .enumerate()
+            .find(|(_, (mode, _))| *mode == drag.mode)
+        {
+            let after: Vec<_> = rects.apps.iter().map(|(_, rect)| rect.y).collect();
+            self.rail_slides
+                .moved(&before, &after, from, index, Instant::now());
+            self.rail_slides
+                .settle(rects.apps.len(), index, carried.y - home.y, Instant::now());
         }
         true
     }
@@ -180,16 +206,39 @@ impl ExploreView {
     /// view easing into its new slot as the one it passed eases into the old.
     /// Where the view now is, or `None` at the end of the run.
     pub fn nudge_rail_view(&mut self, rail: Rect, index: usize, up: bool) -> Option<usize> {
-        let to = if up { index.checked_sub(1)? } else { index + 1 };
+        let mut modes = self.rail_modes();
+        let mode = *modes.get(index)?;
+        let projection = self.view_projection(rail.h);
+        let to = if up && projection.promoted == Some(mode) {
+            projection.visible.len().saturating_sub(1)
+        } else if up {
+            index.checked_sub(1)?
+        } else {
+            index + 1
+        };
+        if to >= modes.len() || to == index {
+            return None;
+        }
         let before = self.apps_rail_rects(rail);
-        let was = before.apps.get(index)?.1.y;
-        if !self.move_rail_view(rail, index, to) {
+        let was = before.apps.iter().find(|(m, _)| *m == mode)?.1.y;
+        modes.remove(index);
+        modes.insert(to, mode);
+        if !self.rail_order.set_visible(&modes) {
             return None;
         }
         let after = self.apps_rail_rects(rail);
-        if let Some((_, now)) = after.apps.get(to) {
+        if let Some((slot, (_, now))) = after.apps.iter().enumerate().find(|(_, (m, _))| *m == mode)
+        {
+            let from = before.apps.iter().position(|(m, _)| *m == mode).unwrap();
+            self.rail_slides.moved(
+                &before.apps.iter().map(|(_, r)| r.y).collect::<Vec<_>>(),
+                &after.apps.iter().map(|(_, r)| r.y).collect::<Vec<_>>(),
+                from,
+                slot,
+                Instant::now(),
+            );
             self.rail_slides
-                .settle(after.apps.len(), to, was - now.y, Instant::now());
+                .settle(after.apps.len(), slot, was - now.y, Instant::now());
         }
         Some(to)
     }
@@ -199,7 +248,14 @@ impl ExploreView {
     /// the slide cannot disagree. `false` when there is no such move.
     fn move_rail_view(&mut self, rail: Rect, from: usize, to: usize) -> bool {
         let mut modes = self.rail_modes();
-        if from == to || from >= modes.len() || to >= modes.len() {
+        let projection = self.view_projection(rail.h);
+        let mut movable: Vec<_> = projection
+            .visible
+            .iter()
+            .copied()
+            .filter(|mode| Some(*mode) != projection.promoted)
+            .collect();
+        if from == to || from >= movable.len() || to >= movable.len() {
             return false;
         }
         let tops = |view: &Self| -> Vec<f32> {
@@ -210,8 +266,16 @@ impl ExploreView {
                 .collect()
         };
         let before = tops(self);
-        let mode = modes.remove(from);
-        modes.insert(to, mode);
+        let slots: Vec<_> = modes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, mode)| movable.contains(mode).then_some(i))
+            .collect();
+        let mode = movable.remove(from);
+        movable.insert(to, mode);
+        for (slot, mode) in slots.into_iter().zip(movable) {
+            modes[slot] = mode;
+        }
         if !self.rail_order.set_visible(&modes) {
             return false;
         }

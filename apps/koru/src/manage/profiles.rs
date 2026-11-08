@@ -127,7 +127,7 @@ pub struct ProfilesController {
     creation_decision_pending: bool,
     creation_submission: Option<koru_workspace_host::account_ui::CommandSubmissionId>,
     different_account_dismissed: bool,
-    profile_creation: Option<koru_workspace_host::onboarding::OnboardingView>,
+    profile_creation: Option<std::cell::RefCell<koru_workspace_host::onboarding::OnboardingView>>,
     profile_creation_request: Option<ConnectedProfileDraft>,
     profile_restore_request: Option<ProfileId>,
     profile_switch_request: Option<ProfileId>,
@@ -311,10 +311,17 @@ impl ProfilesController {
             self.creation_decision_pending = false;
             self.creation_submission = None;
         }
-        if let Some(creation) = self.profile_creation.as_mut() {
+        if let Some(creation) = self
+            .profile_creation
+            .as_mut()
+            .map(std::cell::RefCell::get_mut)
+        {
             creation.observe_account_projection(&state);
         }
-        if let Some(creation) = self.profile_creation.as_mut()
+        if let Some(creation) = self
+            .profile_creation
+            .as_mut()
+            .map(std::cell::RefCell::get_mut)
             && (matches!(
                 state.stage,
                 AccountStage::AwaitingAccountCreation
@@ -436,11 +443,30 @@ impl ProfilesController {
     pub fn creation_form_mut(
         &mut self,
     ) -> Option<&mut koru_workspace_host::onboarding::OnboardingView> {
-        self.profile_creation.as_mut()
+        self.profile_creation
+            .as_mut()
+            .map(std::cell::RefCell::get_mut)
     }
     /// The embedded form, for what it says about itself (its pointer shape).
-    pub fn creation_form(&self) -> Option<&koru_workspace_host::onboarding::OnboardingView> {
-        self.profile_creation.as_ref()
+    pub fn creation_form(
+        &self,
+    ) -> Option<std::cell::Ref<'_, koru_workspace_host::onboarding::OnboardingView>> {
+        self.profile_creation
+            .as_ref()
+            .map(std::cell::RefCell::borrow)
+    }
+
+    /// Semantic projection measures the existing form only when a provider
+    /// asks. Interior mutability is limited to that form's layout/identity.
+    pub fn creation_semantics(
+        &self,
+        window: koru_workspace_host::accessibility::WindowSlot,
+        view: koru_workspace_host::accessibility::ViewSlot,
+    ) -> Vec<koru_workspace_host::accessibility::SemanticNode> {
+        self.profile_creation
+            .as_ref()
+            .map(|form| form.borrow_mut().accessibility_semantics(window, view))
+            .unwrap_or_default()
     }
     /// Input into the embedded form that may raise an action: run `input`,
     /// then act on whatever the form asked for.
@@ -448,7 +474,7 @@ impl ProfilesController {
         &mut self,
         input: impl FnOnce(&mut koru_workspace_host::onboarding::OnboardingView) -> R,
     ) -> Option<R> {
-        let result = input(self.profile_creation.as_mut()?);
+        let result = input(self.profile_creation.as_mut()?.get_mut());
         self.drain_profile_creation_action();
         Some(result)
     }

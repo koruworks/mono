@@ -63,6 +63,34 @@ fn a_partial_failure_is_recognised_by_what_it_did_rather_than_by_its_code() {
     assert!(nothing.partial_outcome().is_none());
 }
 
+#[test]
+fn committed_removal_preserves_typed_authority_listing_and_replacement_on_failure() {
+    let error = failure(
+        409,
+        "workspace_lifecycle_incomplete",
+        serde_json::json!({
+            "retryable":true, "cause":"storage_failed", "outcome": {
+                "workspace":"w", "action":"archive", "terminated_sessions":[],
+                "sessions_closed":true, "mutation_applied":false, "authority_committed":true,
+                "listing":{"state":"pending", "cause":"storage_failed"}, "replacement":{"state":"unknown"}
+            }
+        }),
+    );
+    let outcome = error.partial_outcome().unwrap();
+    assert_eq!(outcome.authority_committed, Some(true));
+    assert_eq!(
+        outcome.listing,
+        Some(koru_store_core::service::ListingState::Pending {
+            cause: "storage_failed".into()
+        })
+    );
+    assert_eq!(
+        outcome.replacement,
+        Some(koru_store_core::service::Replacement::Unknown)
+    );
+    assert!(error.is_retryable());
+}
+
 /// **The documents-connected refusal is recognised, not translated away.**
 ///
 /// Current gateways use the confirmed Store room-disconnect contract. An older

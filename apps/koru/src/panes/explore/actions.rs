@@ -91,24 +91,6 @@ pub(super) fn available(mode: NavigatorMode) -> &'static [Action] {
     }
 }
 
-pub(super) fn button(band: Rect, modes_right: f32) -> Rect {
-    let w = band.h.min(theme::CAPTION_H);
-    if band.w <= 0.0 || band.x + band.w - modes_right < w {
-        return Rect::new(band.x + band.w, band.y, 0.0, band.h);
-    }
-    Rect::new(band.x + band.w - w, band.y, w, band.h)
-}
-
-pub(super) fn draw_button(
-    scene: &mut Scene,
-    root: Affine,
-    engine: &mut TextEngine,
-    button: Rect,
-    hot: bool,
-) {
-    draw_dots(scene, root, engine, button, hot);
-}
-
 pub(super) fn glyph(action: Action) -> char {
     match action {
         Action::Import => icons::IMPORT,

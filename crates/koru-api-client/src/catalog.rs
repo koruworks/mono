@@ -25,6 +25,7 @@ use koru_store_core::model::Workspace;
 
 use crate::Client;
 
+mod removal;
 #[cfg(test)]
 mod tests;
 
@@ -235,6 +236,47 @@ impl CatalogClient<'_> {
         action: WorkspaceLifecycleAction,
         confirmation: &str,
     ) -> WorkspaceResult<WorkspaceLifecycleOutcome> {
+        self.lifecycle_replacing(
+            workspace,
+            action,
+            confirmation,
+            &koru_api_wire::default_workspace_name(),
+        )
+    }
+
+    pub fn lifecycle_replacing(
+        &self,
+        workspace: &str,
+        action: WorkspaceLifecycleAction,
+        confirmation: &str,
+        replacement_name: &str,
+    ) -> WorkspaceResult<WorkspaceLifecycleOutcome> {
+        self.lifecycle_with_attempt(workspace, action, confirmation, replacement_name, None)
+    }
+
+    pub fn lifecycle_for_removal(
+        &self,
+        workspace: &str,
+        confirmation: &str,
+        attempt: koru_store_core::ids::RemovalAttemptId,
+    ) -> WorkspaceResult<WorkspaceLifecycleOutcome> {
+        self.lifecycle_with_attempt(
+            workspace,
+            WorkspaceLifecycleAction::SoftDelete,
+            confirmation,
+            "",
+            Some(attempt),
+        )
+    }
+
+    fn lifecycle_with_attempt(
+        &self,
+        workspace: &str,
+        action: WorkspaceLifecycleAction,
+        confirmation: &str,
+        replacement_name: &str,
+        removal_attempt: Option<koru_store_core::ids::RemovalAttemptId>,
+    ) -> WorkspaceResult<WorkspaceLifecycleOutcome> {
         self.client
             .store()
             .post_public_json(
@@ -242,6 +284,8 @@ impl CatalogClient<'_> {
                 &WorkspaceLifecycleRequest {
                     action,
                     confirmation: confirmation.to_owned(),
+                    replacement_name: replacement_name.to_owned(),
+                    removal_attempt,
                 },
                 // **Never replayed by the transport.** The operation is
                 // idempotent *as a whole request a caller repeats*, but the
@@ -305,6 +349,21 @@ impl CatalogClient<'_> {
         to: &str,
         confirmation: &str,
     ) -> WorkspaceResult<WorkspaceMigrationOutcome> {
+        self.migrate_replacing(
+            workspace,
+            to,
+            confirmation,
+            &koru_api_wire::default_workspace_name(),
+        )
+    }
+
+    pub fn migrate_replacing(
+        &self,
+        workspace: &str,
+        to: &str,
+        confirmation: &str,
+        replacement_name: &str,
+    ) -> WorkspaceResult<WorkspaceMigrationOutcome> {
         self.client
             .store()
             .post_public_json(
@@ -312,6 +371,7 @@ impl CatalogClient<'_> {
                 &WorkspaceMigrationRequest {
                     to: to.to_owned(),
                     confirmation: confirmation.to_owned(),
+                    replacement_name: replacement_name.to_owned(),
                 },
                 // Never replayed by the transport, for [`Self::lifecycle`]'s
                 // reason: the token is spent on the first attempt.

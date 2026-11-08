@@ -492,7 +492,7 @@ impl ProfilesController {
         self.creation_submission = Some(
             self.profile_creation
                 .as_ref()
-                .and_then(|creation| creation.account_submission())
+                .and_then(|creation| creation.borrow().account_submission())
                 .unwrap_or_else(koru_workspace_host::account_ui::CommandSubmissionId::next),
         );
         self.pending = Some(if confirm {

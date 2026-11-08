@@ -18,6 +18,8 @@ use koru_core::{Kind, NodeId};
 pub mod durability;
 pub mod explore;
 pub mod fromstore;
+mod store_open;
+use store_open::require_live_manifest;
 pub mod open;
 pub mod pages;
 pub mod profile;
@@ -430,6 +432,7 @@ impl Workspace {
         let (mut session, snapshot) =
             store::StoreSession::join_manifest(segment, root, explore::store_workspace(workspace))?;
         let mut manifest = koru_store_core::manifest::Manifest::from_snapshot(&snapshot)?;
+        require_live_manifest(&manifest, workspace)?;
         // Discover and authenticate the ordinary HTTP side too before touching
         // the outgoing workspace. A failed incoming open must leave all of its
         // rooms and documents intact.
@@ -487,20 +490,21 @@ impl Workspace {
         if keep.is_empty() {
             return self.open_from_store(segment, root, workspace);
         }
-        if let Some(id) = self.active
-            && keep.contains(&id)
-        {
-            self.park_active();
-        }
         let (mut session, snapshot) =
             store::StoreSession::join_manifest(segment, root, explore::store_workspace(workspace))?;
         let mut manifest = koru_store_core::manifest::Manifest::from_snapshot(&snapshot)?;
+        require_live_manifest(&manifest, workspace)?;
         let client = match root {
             Some(root) => koru_api_client::Client::open_at(segment, root),
             None => koru_api_client::Client::open(segment),
         }?;
         self.replay_trouble
             .extend(session.replay_buffered(&mut manifest));
+        if let Some(id) = self.active
+            && keep.contains(&id)
+        {
+            self.park_active();
+        }
         self.close_store_sessions_except(keep);
         self.manifest = Some(manifest);
         if let Some(waker) = &self.waker {

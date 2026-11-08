@@ -81,13 +81,17 @@ impl ManageView {
         let top = self.laid.head.as_ref().map_or(column.y, |head| {
             head.lead.y + head.lead.h + koru_ui::PageShell::TITLE_GAP
         });
-        Rect::new(column.x, top, column.w, (area.y + area.h - top).max(0.0))
+        let available = (area.y + area.h - top).max(0.0);
+        let height = self.c.creation_form().map_or(available, |form| {
+            form.embedded_content_height().max(available)
+        });
+        Rect::new(column.x, top, column.w, height)
     }
 
     /// A point in the tab, in the form's space.
     pub(super) fn form_point(&self, x: f32, y: f32) -> (f32, f32) {
         let form = self.form_rect();
-        (x - form.x, y - form.y)
+        (x - form.x, y + self.page_scroll - form.y)
     }
 
     /// Give the form its rect's size. Asked whenever the tab's size changes
@@ -96,10 +100,49 @@ impl ManageView {
         let form = self.form_rect();
         if let Some(form_view) = self.c.creation_form_mut() {
             form_view.set_viewport(form.w, form.h);
+            let height = form_view.embedded_content_height().max(form.h);
+            form_view.set_viewport(form.w, height);
+        }
+        self.update_creation_visible_area();
+    }
+
+    pub(super) fn update_creation_visible_area(&mut self) {
+        let form = self.form_rect();
+        let area = self.page_area();
+        let visible = Rect::new(
+            area.x - form.x,
+            area.y + self.page_scroll - form.y,
+            area.w,
+            area.h,
+        );
+        if let Some(form_view) = self.c.creation_form_mut() {
+            form_view.set_embedded_visible_area(visible);
         }
     }
 
+    pub(super) fn reveal_creation_focus(&mut self) {
+        let form = self.form_rect();
+        let Some(focus) = self
+            .c
+            .creation_form_mut()
+            .and_then(|form| form.focused_form_rect())
+        else {
+            return;
+        };
+        let area = self.page_area();
+        let top = form.y + focus.y;
+        let bottom = top + focus.h;
+        if top - self.page_scroll < area.y {
+            self.page_scroll = top - area.y;
+        } else if bottom - self.page_scroll > area.y + area.h {
+            self.page_scroll = bottom - area.y - area.h;
+        }
+        self.clamp_scroll();
+        self.update_creation_visible_area();
+    }
+
     pub(super) fn paint_new_profile(&mut self, canvas: &mut Scene, root: Affine) {
+        self.update_creation_visible_area();
         let area = self.page_area();
         let _page = inspect::scope(
             "Manage new profile",

@@ -15,6 +15,9 @@ impl Backend for MemoryBackend {
     fn open_workspace(&self, _: WorkspaceId) -> Result<Self::Workspace> {
         crate::SqliteWorkspace::in_memory()
     }
+    fn create_workspace(&self, id: WorkspaceId) -> Result<Self::Workspace> {
+        self.open_workspace(id)
+    }
     fn delete_workspace(&self, _: WorkspaceId) -> Result<()> {
         panic!("projection repair never deletes a Workspace")
     }
@@ -118,7 +121,19 @@ fn restart_repairs_equal_version_identity_without_rewriting_bytes_or_restoring_r
         // Model the old writer: correct retained CRDT, stale listing timestamp.
         keeper.commit_profile_identity(&stale, &bytes).unwrap();
         if removed {
-            keeper.remove_profile_local(profile.id, at()).unwrap();
+            let mark = keeper
+                .update_profile_removal(
+                    profile.id,
+                    koru_store_core::profile_removal::RemovalUpdate::Begin {
+                        kind: koru_store_core::profile_removal::RemovalKind::Local,
+                        at: at(),
+                    },
+                )
+                .unwrap()
+                .unwrap();
+            keeper
+                .remove_profile_local(profile.id, Some(mark.attempt), at())
+                .unwrap();
         }
         let before = keeper.profile_units(profile.id).unwrap();
         for _ in 0..2 {

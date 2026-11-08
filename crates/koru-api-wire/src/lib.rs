@@ -141,6 +141,17 @@ pub struct WorkspaceConfirmation {
 pub struct WorkspaceLifecycleRequest {
     pub action: WorkspaceLifecycleAction,
     pub confirmation: String,
+    /// Localized default for a required replacement. Older callers use the
+    /// protocol's English fallback; this is not a second creation operation.
+    #[serde(default = "default_workspace_name")]
+    pub replacement_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub removal_attempt: Option<koru_store_wire::RemovalAttemptId>,
+}
+
+/// English fallback for callers predating localized replacement names.
+pub fn default_workspace_name() -> String {
+    "My Workspace".into()
 }
 
 /// What the operation actually did, in the order it did it.
@@ -161,6 +172,12 @@ pub struct WorkspaceLifecycleOutcome {
     /// Whether step 4 committed. `false` with `sessions_closed: true` is
     /// exactly S24, and the retry is the same request again.
     pub mutation_applied: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authority_committed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub listing: Option<koru_store_wire::ListingState>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replacement: Option<koru_store_wire::Replacement>,
 }
 
 // ---------------------------------------------------- the workspace migration
@@ -215,6 +232,8 @@ pub struct WorkspaceMigration {
 pub struct WorkspaceMigrationRequest {
     pub to: String,
     pub confirmation: String,
+    #[serde(default = "default_workspace_name")]
+    pub replacement_name: String,
 }
 
 /// What the migration actually did, in the order it did it.
@@ -238,6 +257,8 @@ pub struct WorkspaceMigrationOutcome {
     /// `sessions_closed: true` is the partial failure, and the retry is the
     /// same request with a fresh confirmation.
     pub mutation_applied: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replacement: Option<koru_store_wire::Replacement>,
     /// **The projects whose typed scope now names the new owner**, or `None`
     /// when the session host could not be asked.
     ///

@@ -481,7 +481,14 @@ impl Profiles {
     fn remove(&self, profile: ProfileId, at: Timestamp) {
         self.store
             .client()
-            .with_store(move |store| store.remove_profile_local(profile, at))
+            .with_store(move |store| {
+                let mark = store.begin_profile_removal(
+                    profile,
+                    koru_store_core::profile_removal::RemovalKind::Local,
+                    at,
+                )?;
+                store.remove_profile_local(profile, Some(mark.attempt), at)
+            })
             .unwrap()
             .unwrap();
     }

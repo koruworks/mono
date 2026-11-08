@@ -28,9 +28,19 @@
 use koru_channel::RELEASE_NOTES_FILE;
 use koru_workspace_host::{RichBlock, parse_markdown};
 
-/// Every release, on the website — what the help popover's *Full changelog*
-/// opens in the browser.
-pub const RELEASES_URL: &str = "https://www.koru.do/en/releases";
+/// The GitHub releases list, including release discussions and reactions.
+pub const RELEASES_URL: &str = "https://github.com/koruworks/mono/releases";
+
+/// Match the release tool's tags: moving `nightly`, otherwise `v<version>`.
+/// Internal builds have no published release, so use the releases list.
+pub fn release_url(version: &str, channel: koru_channel::ReleaseChannel) -> String {
+    use koru_channel::ReleaseChannel;
+    match channel {
+        ReleaseChannel::Internal => RELEASES_URL.to_owned(),
+        ReleaseChannel::Nightly => format!("{RELEASES_URL}/tag/nightly"),
+        ReleaseChannel::Stable | ReleaseChannel::Beta => format!("{RELEASES_URL}/tag/v{version}"),
+    }
+}
 
 /// This build's release notes, if it shipped with any.
 ///

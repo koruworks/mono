@@ -119,6 +119,9 @@ pub struct SemanticNode {
     /// What a screen reader says. Localized, and deliberately not part of any
     /// identity.
     pub label: Option<String>,
+    /// Extra context kept separate from the actionable name, such as a
+    /// disabled reason or the account behind a same-named Profile.
+    pub description: Option<String>,
     /// **What the control currently holds**, for a control whose name and
     /// contents are two different things — a field named *Workspace name*
     /// whose value is what somebody typed.
@@ -258,6 +261,7 @@ impl SemanticNode {
             occurrence,
             role,
             label: None,
+            description: None,
             value: None,
             bounds: None,
             actions: Vec::new(),
@@ -278,6 +282,11 @@ impl SemanticNode {
 
     pub fn with_label(mut self, label: impl Into<String>) -> Self {
         self.label = Some(label.into());
+        self
+    }
+
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
         self
     }
 
@@ -592,6 +601,9 @@ fn append(
     built.set_author_id(node.occurrence.locator());
     if let Some(label) = &node.label {
         built.set_label(label.clone());
+    }
+    if let Some(description) = &node.description {
+        built.set_description(description.clone());
     }
     // **A `Role::Label` reads its accessible name out of its *value*.**
     //

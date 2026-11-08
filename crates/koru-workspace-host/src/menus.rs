@@ -187,9 +187,13 @@ fn tag_in(rows: &[(MenuId, u32)], is_match: impl Fn(&MenuId) -> bool) -> Option<
 mod tests {
     use super::*;
 
+    // Both queue tests call the production drain, which consumes every id.
+    // Distinct ids alone cannot isolate concurrent drains.
+    static QUEUE_TEST_LOCK: Mutex<()> = Mutex::new(());
+
     #[test]
     fn ingest_then_drain_keeps_order_and_empties_the_queue() {
-        // The queue is process-wide; use ids no other test would.
+        let _guard = QUEUE_TEST_LOCK.lock().unwrap();
         let a = MenuId::new("menus-test-a");
         let b = MenuId::new("menus-test-b");
         ingest(a.clone(), None);
@@ -230,6 +234,7 @@ mod tests {
     /// the queue holds it and the row list still maps it.
     #[test]
     fn a_row_chosen_after_the_show_call_is_still_mapped() {
+        let _guard = QUEUE_TEST_LOCK.lock().unwrap();
         let rows = rows();
         ingest(rows[1].0.clone(), None);
         let chosen: Vec<u32> = drain()

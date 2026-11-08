@@ -254,7 +254,10 @@ pub mod metrics {
     /// A floating panel's width: `theme::PANEL_W`.
     pub const PANEL_W: Metric = Metric::new("PANEL_W", crate::theme::PANEL_W);
     /// A workspace's tile in a popover row.
-    pub const WORKSPACE_TILE: Metric = Metric::new("WORKSPACE_TILE", 20.0);
+    pub const WORKSPACE_TILE: Metric = Metric::new("WORKSPACE_TILE", 24.0);
+    pub const RAIL_SQUARE: Metric = Metric::new("RAIL_SQUARE", 36.0);
+    pub const RAIL_GLYPH: Metric = Metric::new("RAIL_GLYPH", 18.0);
+    pub const RAIL_RULE_W: Metric = Metric::new("RAIL_RULE_W", 20.0);
     /// A Profile's tile in its two-line row.
     pub const PROFILE_TILE: Metric = Metric::new("PROFILE_TILE", 24.0);
     /// The trailing lane every popover row reserves for its tick or gear.
@@ -266,7 +269,7 @@ pub mod metrics {
     pub const WORKSPACE_GEAR_RADIUS: Metric = Metric::new("WORKSPACE_GEAR_RADIUS", 5.0);
 
     /// Every metric, for the registry test and the inspector's legend.
-    pub const ALL: [Metric; 13] = [
+    pub const ALL: [Metric; 16] = [
         NAV_ROW_MIN,
         ROW_MIN,
         BUTTON_MIN,
@@ -275,6 +278,9 @@ pub mod metrics {
         PROFILE_FOOT_MIN,
         PANEL_W,
         WORKSPACE_TILE,
+        RAIL_SQUARE,
+        RAIL_GLYPH,
+        RAIL_RULE_W,
         PROFILE_TILE,
         TRAILING_LANE_W,
         WORKSPACE_GEAR_PLATE,
@@ -342,11 +348,12 @@ pub mod roles {
     pub const META: TextRole = TextRole::new("meta", role::meta);
     pub const UI: TextRole = TextRole::new("ui", role::ui);
     pub const POPOVER_HEADING: TextRole = TextRole::new("popover_heading", role::popover_heading);
+    pub const PANE_TITLE: TextRole = TextRole::new("pane_title", role::pane_title);
     /// A page's heading on a list surface — the Tasks page's *Today* — and a
     /// document's subtitle: `role::subtitle`, 18/26.
     pub const SUBTITLE: TextRole = TextRole::new("subtitle", role::subtitle);
 
-    pub const ALL: [TextRole; 6] = [ROW, HINT, META, UI, POPOVER_HEADING, SUBTITLE];
+    pub const ALL: [TextRole; 7] = [ROW, HINT, META, UI, POPOVER_HEADING, SUBTITLE, PANE_TITLE];
 }
 
 macro_rules! colour_roles {

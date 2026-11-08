@@ -65,6 +65,61 @@ fn the_shared_picker_surface_lies_inside_the_modal() {
 }
 
 #[test]
+fn a_compact_modal_keeps_its_choices_scrollable_and_its_actions_visible() {
+    for viewport in [(300.0, 360.0), (360.0, 413.0), (600.0, 500.0), VP] {
+        let (mut modal, mut engine) = modal();
+        modal.draw(&mut Scene::new(), Affine::IDENTITY, &mut engine, viewport);
+        let panel = modal.panel(viewport);
+        let picker = modal.picker_rect(panel);
+        assert!(picker.x >= panel.x && picker.x + picker.w <= panel.x + panel.w);
+        let (clear, cancel, save) = modal.buttons(&mut engine, panel);
+        for button in [clear, cancel, save] {
+            assert!(button.x >= panel.x && button.x + button.w <= panel.x + panel.w);
+            assert!(button.y >= panel.y && button.y + button.h <= panel.y + panel.h);
+        }
+        assert!(clear.y + clear.h <= cancel.y || clear.x + clear.w <= cancel.x);
+        modal.scroll_by(MouseScrollDelta::LineDelta(0.0, -1000.0));
+        let body = modal.body_rect(&mut engine, panel);
+        let category = modal.picker.geometry().category_rect(0).unwrap();
+        assert!(picker.y + category.y + category.h - modal.body_scroll <= body.y + body.h);
+        // Keyboard movement reveals the color choices again, using the same
+        // translated rectangles pointer input reads.
+        modal.key(
+            &mut engine,
+            &Key::Named(NamedKey::ArrowRight),
+            None,
+            ModifiersState::empty(),
+        );
+        for index in 0..EmojiColorPanel::colors().len() {
+            let swatch = modal.swatch_rect(panel, index).unwrap();
+            assert!(swatch.x >= body.x && swatch.x + swatch.w <= body.x + body.w);
+            let (x, y) = swatch.centre();
+            let y = y - modal.body_scroll;
+            assert!(body.contains(x, y));
+            assert_eq!(
+                modal.hit_at(&mut engine, viewport, x, y),
+                Some(Hit::Swatch(index))
+            );
+        }
+        for _ in 0..3 {
+            modal.key(
+                &mut engine,
+                &Key::Named(NamedKey::Tab),
+                None,
+                ModifiersState::empty(),
+            );
+        }
+        assert_eq!(modal.focus, Focus::Category);
+        assert!(picker.y + category.y - modal.body_scroll >= body.y);
+        let (x, y) = save.centre();
+        assert!(matches!(
+            modal.mouse_down(&mut engine, viewport, x, y),
+            Outcome::Save { .. }
+        ));
+    }
+}
+
+#[test]
 fn choosing_from_the_shared_picker_updates_the_preview_value() {
     let (mut m, mut engine) = modal();
     let expected_index = m.picker.visible_hits()[0];

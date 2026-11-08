@@ -237,6 +237,7 @@ fn the_store_catalog_rows_carry_ids_and_closed_tokens_only() {
         "profile.created",
         "profile.renamed",
         "profile.appearance_changed",
+        "profile.removal_changed",
         "workspace.catalog.created",
         "workspace.catalog.renamed",
         "workspace.catalog.appearance_changed",

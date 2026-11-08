@@ -9,6 +9,8 @@
 //! set of UI callbacks that happen to run in the right order.
 
 use super::*;
+use koru_store_core::ids::RemovalAttemptId;
+use koru_store_core::profile_removal::RemovalKind;
 
 pub(super) struct ProfileRemovalCleanup {
     pub(super) profile: koru_core::ProfileId,
@@ -17,7 +19,12 @@ pub(super) struct ProfileRemovalCleanup {
 
 pub(super) struct ProfileCascadeCompletion {
     pub(super) profile: koru_core::ProfileId,
-    pub(super) result: Result<(), CascadeFailure>,
+    pub(super) result: Result<CascadeReady, CascadeFailure>,
+}
+
+pub(super) enum CascadeReady {
+    Complete(RemovalAttemptId),
+    AlreadyRemoved,
 }
 
 /// Why a cascade stopped, as the code the Profiles page words.
@@ -31,6 +38,7 @@ pub(super) struct ProfileCascadeCompletion {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum CascadeFailure {
     NotPermitted,
+    Unsupported,
     Incomplete,
 }
 
@@ -38,6 +46,7 @@ impl CascadeFailure {
     pub(super) fn code(self) -> &'static str {
         match self {
             Self::NotPermitted => "profile_cascade_not_permitted",
+            Self::Unsupported => "profile_cascade_unsupported",
             Self::Incomplete => "profile_cascade_incomplete",
         }
     }
@@ -62,25 +71,90 @@ pub(super) enum HostedProfileRemovalSource {
 fn cascade_profile_workspaces(
     root: Option<&std::path::Path>,
     profile: koru_core::ProfileId,
+    kind: RemovalKind,
+) -> Result<CascadeReady, CascadeFailure> {
+    let client = cascade_client(root)?;
+    // Checked before Begin, so a permission refusal persists no mark.
+    if !client.catalog().may_destroy() {
+        return Err(CascadeFailure::NotPermitted);
+    }
+    let store_profile = koru_store_core::ids::ProfileId::from_uuid(profile.as_uuid());
+    let mark = match client.catalog().begin_profile_removal(store_profile, kind) {
+        Ok(mark) => mark,
+        Err(koru_api_client::WorkspaceError::Api(failure))
+            if failure.code == "profile_not_found" =>
+        {
+            return verify_removed(&client, store_profile).map(|()| CascadeReady::AlreadyRemoved);
+        }
+        Err(koru_api_client::WorkspaceError::Api(failure)) if failure.status == 404 => {
+            return Err(CascadeFailure::Unsupported);
+        }
+        Err(_) => return Err(CascadeFailure::Incomplete),
+    };
+    let result = cascade_steps(&client, store_profile, mark.attempt);
+    if result.is_err() {
+        let _ = client
+            .catalog()
+            .stop_profile_removal(store_profile, mark.attempt);
+    }
+    result.map(|()| CascadeReady::Complete(mark.attempt))
+}
+
+/// Completion clears the attempt atomically with removing the Profile. A lost
+/// reply therefore cannot be recovered by replaying the attempt. Require both
+/// authoritative listings before continuing the still-owed settings cleanup.
+fn verify_removed(
+    client: &koru_api_client::Client,
+    profile: koru_store_core::ProfileId,
 ) -> Result<(), CascadeFailure> {
+    let workspaces = client
+        .catalog()
+        .workspaces()
+        .map_err(|_| CascadeFailure::Incomplete)?;
+    let profiles = client
+        .store()
+        .profiles()
+        .map_err(|_| CascadeFailure::Incomplete)?;
+    removal_absence(
+        profiles.iter().any(|row| row.id == profile),
+        workspaces
+            .iter()
+            .any(|row| row.owner == profile && row.deleted_at.is_none()),
+    )
+}
+
+fn removal_absence(
+    profile_present: bool,
+    has_retained_workspace: bool,
+) -> Result<(), CascadeFailure> {
+    if profile_present || has_retained_workspace {
+        Err(CascadeFailure::Incomplete)
+    } else {
+        Ok(())
+    }
+}
+
+fn cascade_client(
+    root: Option<&std::path::Path>,
+) -> Result<koru_api_client::Client, CascadeFailure> {
     const SCOPES: &[&str] = &[
         "store.read_documents",
         "store.manage_workspaces",
         koru_api_client::WORKSPACE_DESTROY_SCOPE,
     ];
     let segment = koru_workspace::fromstore::segment();
-    let client = match root {
+    match root {
         Some(root) => koru_api_client::Client::connect_at_first_party(segment, root, SCOPES),
         None => koru_api_client::Client::connect_first_party(segment, SCOPES),
     }
-    .map_err(|_| CascadeFailure::Incomplete)?;
-    // Checked before the first Workspace is touched, so a refusal here has
-    // moved nothing to Trash.
-    if !client.catalog().may_destroy() {
-        return Err(CascadeFailure::NotPermitted);
-    }
+    .map_err(|_| CascadeFailure::Incomplete)
+}
 
-    let store_profile = koru_store_core::ids::ProfileId::from_uuid(profile.as_uuid());
+fn cascade_steps(
+    client: &koru_api_client::Client,
+    store_profile: koru_store_core::ids::ProfileId,
+    attempt: RemovalAttemptId,
+) -> Result<(), CascadeFailure> {
     let mut workspaces = client
         .catalog()
         .workspaces()
@@ -98,11 +172,7 @@ fn cascade_profile_workspaces(
             .map_err(|_| CascadeFailure::Incomplete)?;
         client
             .catalog()
-            .lifecycle(
-                &id,
-                koru_api_client::WorkspaceLifecycleAction::SoftDelete,
-                &confirmation.confirmation,
-            )
+            .lifecycle_for_removal(&id, &confirmation.confirmation, attempt)
             .map_err(|_| CascadeFailure::Incomplete)?;
     }
     Ok(())
@@ -177,10 +247,15 @@ impl<H: Host> App<H> {
         let root = self.gateway_root.clone();
         let tx = self.profile_cascade_tx.clone();
         let proxy = self.wake_proxy.clone();
+        let kind = if self.hosted_profile_removals.contains_key(&profile) {
+            RemovalKind::HostedCleanup
+        } else {
+            RemovalKind::Local
+        };
         let started = std::thread::Builder::new()
             .name("koru-profile-cascade".into())
             .spawn(move || {
-                let result = cascade_profile_workspaces(root.as_deref(), profile);
+                let result = cascade_profile_workspaces(root.as_deref(), profile, kind);
                 let _ = tx.send(ProfileCascadeCompletion { profile, result });
                 let _ = proxy.send_event(Wake::Profiles);
             });
@@ -198,7 +273,7 @@ impl<H: Host> App<H> {
         }
     }
 
-    fn acknowledge_profile_cleanup(
+    pub(super) fn acknowledge_profile_cleanup(
         &self,
         profile: koru_core::ProfileId,
         stage: koru_agent_wire::ProfileCleanupStage,
@@ -212,9 +287,10 @@ impl<H: Host> App<H> {
 
     pub(super) fn service_profile_cascades(&mut self) {
         while let Ok(completion) = self.profile_cascade_rx.try_recv() {
-            self.profile_cascades_in_flight.remove(&completion.profile);
             match completion.result {
-                Ok(()) => {
+                Ok(CascadeReady::Complete(attempt)) => {
+                    self.profile_removal_attempts
+                        .insert(completion.profile, attempt);
                     if self
                         .hosted_profile_removals
                         .contains_key(&completion.profile)
@@ -224,9 +300,13 @@ impl<H: Host> App<H> {
                             koru_agent_wire::ProfileCleanupStage::WorkspacesRemoved,
                         );
                     }
-                    self.host.remove_local_profile(completion.profile)
+                    self.host.remove_local_profile(completion.profile, attempt)
+                }
+                Ok(CascadeReady::AlreadyRemoved) => {
+                    self.begin_removed_profile_cleanup(completion.profile);
                 }
                 Err(failure) => {
+                    self.profile_cascades_in_flight.remove(&completion.profile);
                     tracing::warn!(
                         target: "koru::profiles",
                         failure = failure.code(),
@@ -252,61 +332,42 @@ impl<H: Host> App<H> {
             let Some(profile) = koru_core::ProfileId::parse(&raw_profile) else {
                 continue;
             };
-            if let Err(code) = outcome {
-                // A trusted deletion can reach a device that retained no
-                // local replica. There is no content to remove, so absence is
-                // the idempotent local result and settings cleanup may
-                // continue. A plain device-local removal still treats it as
-                // an error rather than claiming it removed something.
-                let hosted_absence = code == "profile_not_found"
-                    && self.hosted_profile_removals.contains_key(&profile);
-                if !hosted_absence {
-                    let mut changed = false;
-                    for pane in self.panes.values_mut() {
-                        changed |= pane.view.local_profile_remove_failed(profile, &code);
-                    }
-                    if changed {
-                        self.invalidate_everywhere();
-                    }
-                    continue;
+            let Some(attempt) = self.profile_removal_attempts.remove(&profile) else {
+                // A duplicate/late Agent reply owns no current completion.
+                continue;
+            };
+            if outcome.is_err() {
+                let root = self.gateway_root.clone();
+                let tx = self.profile_cascade_tx.clone();
+                let failure_tx = tx.clone();
+                let proxy = self.wake_proxy.clone();
+                let spawned = std::thread::Builder::new()
+                    .name("koru-profile-stop".into())
+                    .spawn(move || {
+                        let mut result = Err(CascadeFailure::Incomplete);
+                        if let Ok(client) = cascade_client(root.as_deref()) {
+                            let store_profile =
+                                koru_store_core::ProfileId::from_uuid(profile.as_uuid());
+                            if verify_removed(&client, store_profile).is_ok() {
+                                result = Ok(CascadeReady::AlreadyRemoved);
+                            } else {
+                                let _ = client
+                                    .catalog()
+                                    .stop_profile_removal(store_profile, attempt);
+                            }
+                        }
+                        let _ = tx.send(ProfileCascadeCompletion { profile, result });
+                        let _ = proxy.send_event(Wake::Profiles);
+                    });
+                if spawned.is_err() {
+                    let _ = failure_tx.send(ProfileCascadeCompletion {
+                        profile,
+                        result: Err(CascadeFailure::Incomplete),
+                    });
                 }
-            }
-            if !self.profile_removals_in_flight.insert(profile) {
                 continue;
             }
-            if self.hosted_profile_removals.contains_key(&profile) {
-                self.acknowledge_profile_cleanup(
-                    profile,
-                    koru_agent_wire::ProfileCleanupStage::ProfileRemoved,
-                );
-            }
-            let remaining_workspaces = self
-                .runtime
-                .catalog_workspaces
-                .iter()
-                .filter(|workspace| {
-                    koru_core::ProfileId::from_uuid(workspace.owner.as_uuid()) != profile
-                })
-                .map(|workspace| WorkspaceId::from_uuid(workspace.id.as_uuid()))
-                .collect::<HashSet<_>>();
-            let profile_dir = self.runtime.profile_dir.clone();
-            let gateway_root = self.gateway_root.clone();
-            let tx = self.profile_removal_tx.clone();
-            let proxy = self.wake_proxy.clone();
-            let _ = std::thread::Builder::new()
-                .name("koru-profile-cleanup".into())
-                .spawn(move || {
-                    let result = crate::settings::cleanup_removed_profile_state(
-                        &profile_dir,
-                        gateway_root.as_deref(),
-                        profile,
-                        &remaining_workspaces,
-                    )
-                    .and_then(|()| startup::forget_store_profile(profile))
-                    .map_err(|error| error.to_string());
-                    let _ = tx.send(ProfileRemovalCleanup { profile, result });
-                    let _ = proxy.send_event(Wake::Profiles);
-                });
+            self.begin_removed_profile_cleanup(profile);
         }
 
         while let Ok(completion) = self.profile_removal_rx.try_recv() {
@@ -330,6 +391,11 @@ impl<H: Host> App<H> {
                 .find(|profile| profile.id == completion.profile)
                 .map(|profile| profile.name.clone())
                 .unwrap_or_else(|| "This Profile".into());
+            // Cancellation of the asynchronous next-Profile open must not
+            // select the just-removed Profile from the previous cached list.
+            self.runtime
+                .profile_catalog
+                .retain(|row| row.id != completion.profile);
             let remaining_workspaces = self
                 .runtime
                 .catalog_workspaces
@@ -386,7 +452,11 @@ impl<H: Host> App<H> {
             let mut navigation_settled = true;
             if removed_current {
                 if let Some(next) = next {
-                    navigation_settled = self.switch_profile_after_removal(next);
+                    navigation_settled = false;
+                    if let Some(source) = self.primary.or_else(|| self.panes.keys().copied().next())
+                    {
+                        self.begin_profile_switch_after_removal(source, next, completion.profile);
+                    }
                 } else {
                     startup::launch(&self.runtime.profile_dir, None);
                     self.primary = None;
@@ -415,4 +485,59 @@ impl<H: Host> App<H> {
             }
         }
     }
+
+    fn begin_removed_profile_cleanup(&mut self, profile: koru_core::ProfileId) {
+        self.profile_removal_attempts.remove(&profile);
+        self.profile_cascades_in_flight.remove(&profile);
+        if !self.profile_removals_in_flight.insert(profile) {
+            return;
+        }
+        if self.hosted_profile_removals.contains_key(&profile) {
+            self.acknowledge_profile_cleanup(
+                profile,
+                koru_agent_wire::ProfileCleanupStage::WorkspacesRemoved,
+            );
+            self.acknowledge_profile_cleanup(
+                profile,
+                koru_agent_wire::ProfileCleanupStage::ProfileRemoved,
+            );
+        }
+        let remaining_workspaces = self
+            .runtime
+            .catalog_workspaces
+            .iter()
+            .filter(|workspace| {
+                koru_core::ProfileId::from_uuid(workspace.owner.as_uuid()) != profile
+            })
+            .map(|workspace| WorkspaceId::from_uuid(workspace.id.as_uuid()))
+            .collect::<HashSet<_>>();
+        let profile_dir = self.runtime.profile_dir.clone();
+        let gateway_root = self.gateway_root.clone();
+        let tx = self.profile_removal_tx.clone();
+        let failure_tx = tx.clone();
+        let proxy = self.wake_proxy.clone();
+        let started = std::thread::Builder::new()
+            .name("koru-profile-cleanup".into())
+            .spawn(move || {
+                let result = crate::settings::cleanup_removed_profile_state(
+                    &profile_dir,
+                    gateway_root.as_deref(),
+                    profile,
+                    &remaining_workspaces,
+                )
+                .and_then(|()| startup::forget_store_profile(profile))
+                .map_err(|error| error.to_string());
+                let _ = tx.send(ProfileRemovalCleanup { profile, result });
+                let _ = proxy.send_event(Wake::Profiles);
+            });
+        if let Err(error) = started {
+            let _ = failure_tx.send(ProfileRemovalCleanup {
+                profile,
+                result: Err(error.to_string()),
+            });
+        }
+    }
 }
+
+#[cfg(test)]
+mod tests;

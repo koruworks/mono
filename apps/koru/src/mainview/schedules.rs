@@ -220,8 +220,12 @@ mod tests {
     #[test]
     fn startup_device_identity_makes_local_floating_next_exact() {
         let (agent, requests) = crate::agent::AgentLink::for_test();
-        let mut view =
-            MainView::new_with_agent(crate::agent::UpdateFeed::absent(), agent.clone(), true);
+        let mut view = MainView::new_with_agent(
+            crate::agent::UpdateFeed::absent(),
+            agent.clone(),
+            true,
+            koru_workspaces_ui::WorkspaceLinks::inert(),
+        );
         let owner = DeviceId::new();
         view.schedule_index.take_listing(ListSchedulesResponse {
             schedules: vec![local_floating(owner)],
@@ -282,7 +286,12 @@ mod tests {
     #[test]
     fn schedule_retirement_confirmation_defaults_to_cancel() {
         let (agent, _) = crate::agent::AgentLink::for_test();
-        let mut view = MainView::new_with_agent(crate::agent::UpdateFeed::absent(), agent, true);
+        let mut view = MainView::new_with_agent(
+            crate::agent::UpdateFeed::absent(),
+            agent,
+            true,
+            koru_workspaces_ui::WorkspaceLinks::inert(),
+        );
         let owner = DeviceId::new();
         let schedule = local_floating(owner);
         let schedule_id = schedule.header.schedule;

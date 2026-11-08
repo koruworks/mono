@@ -957,22 +957,54 @@ Down the left is the **sidebar** — `Ctrl+Shift+E`, or the sidebar button
 that says *Hide sidebar* / *Show sidebar* when you point at it. It runs the
 full height of the window and pushes everything else to the right. At its
 top is a lane with the Koru mark, **Search** and the sidebar button; under
-it a row of **apps** — Documents, Files, Tasks and the rest the build shows
-— with the one you are in wearing its name (`Alt+1`…`Alt+8` switch them by
+it a vertical rail with the **current workspace** first, then the **apps** —
+Documents, Files, Tasks and the rest the build shows (`Alt+1`…`Alt+8` switch them by
 place: `Alt+1` is the top view, `Alt+2` the next;
 drag an icon up or down to put it where you want it, or with the rail
 focused by F6 press `Ctrl+Shift+↑`/`↓`, and Esc while dragging puts it back;
 the shortcuts go with the place, so moving Chats to the top makes it `Alt+1`;
 the order is remembered on this computer);
-then that app's own navigation; and on the floor one chip that says which
-workspace you are in and who you are, with a **?** beside it. The chip opens
-the workspace and account switcher; the **?** opens help: what is new in
+then that app's own navigation. Press the current workspace square for its
+menu: switch workspace, create or import one, open Trash, or open Manage.
+Right-click a workspace row for its management actions. Help, Settings and
+your Profile stay at the bottom of the rail. The **?** opens help: what is new in
 this build, the full changelog, **Send feedback**, **Star us on GitHub**
 (Koru's repository, in your browser), and Koru's website and socials.
-Hide the sidebar and the lane's buttons fold into the title bar's left end; the chip goes with the pane, and
-`Ctrl+Alt+W` / `Ctrl+Alt+P` still open the switcher. `F6` walks the
-keyboard over the lane, the apps row and the floor; the arrows move within
+Hide the sidebar and the lane's buttons fold into the title bar's left end;
+`Ctrl+Alt+W` still opens the workspace menu and `Ctrl+Alt+P` opens Profiles.
+`F6` walks the keyboard over the visible chrome, including the lane and rail;
+the arrows move within
 each, Enter presses, Escape returns to the page.
+
+Use a workspace row's **Pin to rail** control to keep it one click away.
+The rail shows your current workspace first and up to three saved pins,
+without repeating the current workspace. New pins are capped at three;
+additional saved pins received from another device or restored from Archive
+remain saved and available in the workspace menu. Unpinning is always available.
+Pin choices sync; their order stays on this computer. Drag a pinned square,
+or focus it with F6 and press `Ctrl+Shift+↑`/`↓`, to change that order.
+The current square stays first. Escape cancels a drag. A pending pin has a
+progress mark; if its listing needs repair, **Try again** remains in the menu.
+
+In a short window, **More views** (`⋯`) opens the apps that no longer fit on
+the rail. The active app remains visible, and `Alt+1`…`Alt+8` still count the
+saved order, including folded apps. An active app temporarily shown out of
+its saved position cannot be dragged; `Ctrl+Shift+↑` moves it into the visible
+part of the saved order. Workspace controls, Help and your Profile stay visible.
+
+A new Profile is created together with its first workspace. Opening a Profile
+uses a healthy workspace already on this device when one is available. If
+content is still arriving, Koru shows a waiting page with **Cancel** instead
+of creating an empty replacement. A damaged or unreadable workspace offers
+recovery; it is not treated as an empty Profile.
+
+Archiving, trashing or moving a Profile's last usable workspace creates its
+replacement before completing the change. Removing the whole Profile is the
+exception: that operation moves its workspaces to Trash without replacing
+them. If a local removal stops, **Resume removal** continues it and **Keep this profile**
+keeps what remains; Keep does not restore workspaces already in Trash. A
+hosted Profile deletion offers **Finish removal** because that Profile has
+already been deleted from Koru Cloud.
 
 In the desktop **Documents** list, a document's chosen color tints its outline
 icon. A priority flag (Urgent, High, Medium or Low) appears after the icon and
@@ -5641,24 +5673,50 @@ of the header slides to the other page; pressing the half whose page is showing,
 On the **Workspaces** page, pointing at a workspace shows its **Manage**
 control at the row's end; it opens the **Manage** tab on that workspace. From
 the keyboard, `↓` and `↑` move between workspaces, `→` moves onto the lit
-workspace's Manage control and `←` back to the workspace, and `Enter` opens
-what is lit: the workspace, or Manage on it. A screen reader announces the
-control as *Manage workspace*.
+workspace's Manage control and again to its pin control; `←` moves back.
+`Enter` or `Space` activates what is lit. A screen reader announces the gear
+as *Manage workspace* and names the pin action or its refusal reason.
 
-Click the **avatar** — or press **`Ctrl+Alt+P`** — to open the Profiles page.
-It is the same profile choice global search shows at its bottom left. The
-shortcut opens whichever profile control is in front of you and leaves Explore
-open or closed as you set it.
+In a workspace window, click the **Profile tile** at the bottom of the rail,
+or press **`Ctrl+Alt+P`**, to open the Profile menu. The shortcut works with
+Explore folded and leaves it open or closed as you set it. Each Profile is
+one line; hover its name to see its email, or *On this computer*. Screen
+readers receive the same description. Selecting a different Profile closes
+the menu and opens its usable workspace, or its waiting/recovery screen.
 
 Each profile's **Manage** control works as a workspace's does: point at the
 row to show it, or press `→` on the lit profile to move onto it and `←` to
-come back; `Enter` on it opens the **Manage** tab on that profile. A screen
-reader announces it as *Manage profile*. The page's foot is one keyboard
-stop: `Enter` there makes a new profile.
+come back; `Enter` or `Space` opens the **Manage** tab on that Profile. A
+screen reader announces it as *Manage profile*. **Manage profiles** in the
+heading opens Manage on the current Profile.
 
-Under the profiles sit **New profile**, then **Manage profiles…** and **Link a
-device…**. *New profile* opens the **Manage** tab on its create form, and *Manage
-profiles…* opens it on the open profile's page. The account chooser —
+The fixed rows below the Profiles are **Add new profile**, **Global sync**
+and **App settings**. Add opens the combined Profile/workspace creation form.
+Global sync opens **Linked devices** in Manage. In both menus,
+the device icon opens **Linked devices** and the cloud icon opens **Koru Cloud**.
+When both channels are configured, each icon is a separate control. With neither
+configured, the computer icon opens Linked devices. These destinations reuse
+the existing Manage tab. The glyphs show configured channels independently of
+their health. App settings opens Settings and carries its shortcut in the tooltip.
+Each row is its own keyboard stop and closes the menu when activated.
+
+The rail's **Help (`?`)** opens **What's new** with a release timeline. The
+current version opens its GitHub release page in your browser; local builds open
+the GitHub releases list. A build without bundled notes says
+*Not shipped with this build*. An offered update appears above it with its
+current stage and one available action: **Download**, **Download manually**,
+**Restart**, or **Try again**. Downloading, verifying and installing show
+progress without another action. Restart retains the existing separate install
+consent and terminal-session warning.
+
+Choosing **Later** in the update banner keeps the offer in Help and clears
+that offer's dot. Unread release notes can keep the dot lit; opening Help does
+not read them. Opening the release clears the notes' contribution for this
+window, while an active update offer still contributes its own dot. **View all
+releases**, **Send feedback**, **Star us on GitHub** and
+**Follow on X** are the remaining Help rows.
+
+The account chooser —
 **Accounts…** on Manage's **Koru Cloud** page — switches between held accounts; **Add Account** starts
 sign-in or returns to an unfinished account choice. Switching keeps your open
 Workspace and tabs, local content, and established device sync. It shows the

@@ -63,6 +63,7 @@ fn everything_set() -> ProfilesController {
     c.different_account_dismissed = true;
     c.profile_creation = Some(Default::default());
     c.profile_creation_request = Some(ConnectedProfileDraft {
+        id: koru_core::ProfileId::new(),
         owner_display_name: String::new(),
         profile_name: String::new(),
         workspace_name: String::new(),

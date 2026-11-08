@@ -7,7 +7,6 @@
 //! Workspaces tab's own suite are marked as such.
 use super::*;
 use koru_core::schema::WorkspaceDoc;
-use koru_ui::confirm::Outcome;
 use koru_workspace_host::accessibility::{ViewSlot, WindowSlot};
 use koru_workspaces_ui::Authorization;
 
@@ -30,6 +29,7 @@ fn row(name: &str, owner: &ProfileSummary, position: i64) -> Catalog {
         owner: catalog_profile(owner.id),
         name: name.into(),
         position,
+        authority: koru_workspaces_ui::Authority::Verified,
         ..Catalog::default()
     }
 }
@@ -224,7 +224,7 @@ fn a_click_selects_and_a_double_click_opens() {
         [Request::OpenWorkspace(app_workspace(id))]
     );
 
-    view.w.set_selected(None);
+    view.w.borrow_mut().set_selected(None);
     assert_eq!(
         view.workspace_menu_target_at(x, y),
         Some(app_workspace(id)),
@@ -412,76 +412,7 @@ fn whether_the_archive_is_open_survives_a_restart() {
 
 // ------------------------------------------ the controller's questions and notice
 
-/// The move's confirmation — which the Workspaces tab held but never drew,
-/// so a move never completed — is drawn over the tab, takes the keys, and
-/// Enter (its declared default) spends the token; the move then lands.
-#[test]
-fn the_move_confirmation_is_drawn_answered_and_completes() {
-    let (mut view, personal, work, rows) =
-        manage_with(|personal, _| vec![row("Notes", personal, 0)]);
-    let id = rows[0].id;
-    view.with_workspaces(|c| {
-        c.perform(Action::MigrateTo(id, catalog_profile(work.id)));
-        c.fixture_move_consequence(id, catalog_profile(work.id), "Work", &["shell"])
-    });
-    assert!(view.workspaces().is_confirming());
-    assert!(!view.no_question_up(), "nothing else opens under it");
-    let shot = capture(&mut view);
-    assert!(
-        shot.records
-            .iter()
-            .any(|r| r.name == "Manage workspace prompt"),
-        "drawn over the tab"
-    );
-
-    assert!(View::key(
-        &mut view,
-        &mut doc(),
-        &Key::Named(NamedKey::Enter),
-        None,
-        ModifiersState::empty(),
-    ));
-    assert!(!view.workspaces().is_confirming(), "answered");
-    view.with_workspaces(|c| {
-        c.fixture_moved(id, catalog_profile(personal.id), catalog_profile(work.id))
-    });
-    assert!(
-        view.workspaces().notice().is_none(),
-        "a clean move says nothing"
-    );
-}
-
-/// The archive and delete confirmations are drawn and answered here too; a
-/// press outside the panel is consumed and answers nothing.
-#[test]
-fn a_lifecycle_confirmation_is_answered_in_manage() {
-    let (mut view, _, _, rows) = manage_with(|personal, _| vec![row("Notes", personal, 0)]);
-    let id = rows[0].id;
-    view.with_workspaces(|c| {
-        c.delete_workspace(id);
-        c.fixture_consequence(Action::SoftDelete(id), &[])
-    });
-    assert!(view.workspaces().is_confirming());
-    assert!(View::mouse_down(&mut view, &mut doc(), 1.0, 1.0, false));
-    assert!(
-        view.workspaces().is_confirming(),
-        "a stray press answers nothing"
-    );
-    assert!(View::key(
-        &mut view,
-        &mut doc(),
-        &Key::Named(NamedKey::Escape),
-        None,
-        ModifiersState::empty(),
-    ));
-    assert!(!view.workspaces().is_confirming(), "Escape cancels");
-    assert_eq!(
-        view.workspaces().confirmation_default(),
-        None,
-        "and nothing is left asking"
-    );
-    let _ = Outcome::Cancel;
-}
+// Window-owned confirmation coverage lives in mainview/workspace_menu/tests.rs.
 
 /// S24: the controller's notice is a line under the heading with *Retry* and
 /// *Dismiss*.

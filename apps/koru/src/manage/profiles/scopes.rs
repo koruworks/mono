@@ -38,7 +38,7 @@ pub(super) struct AccountForm {
     creation_decision_pending: bool,
     creation_submission: Option<koru_workspace_host::account_ui::CommandSubmissionId>,
     different_account_dismissed: bool,
-    profile_creation: Option<koru_workspace_host::onboarding::OnboardingView>,
+    profile_creation: Option<std::cell::RefCell<koru_workspace_host::onboarding::OnboardingView>>,
     profile_creation_request: Option<ConnectedProfileDraft>,
     profile_restore_request: Option<ProfileId>,
     profile_switch_request: Option<ProfileId>,
@@ -191,7 +191,11 @@ impl ProfilesController {
     ) -> bool {
         let active = self.account.active_scope;
         self.activate_scope(owner_scope);
-        if let Some(form) = self.profile_creation.as_mut() {
+        if let Some(form) = self
+            .profile_creation
+            .as_mut()
+            .map(std::cell::RefCell::get_mut)
+        {
             form.connection_paused(profile, retry);
         }
         self.activate_scope(active);
@@ -313,11 +317,10 @@ impl ProfilesController {
             return true;
         }
         if owner_scope == self.account.active_scope {
-            if self
-                .profile_creation
-                .as_mut()
-                .is_some_and(|view| view.selection_result(owner_scope, generation, &result))
-            {
+            if self.profile_creation.as_mut().is_some_and(|view| {
+                view.get_mut()
+                    .selection_result(owner_scope, generation, &result)
+            }) {
                 self.drain_profile_creation_action();
                 return true;
             }
@@ -340,11 +343,10 @@ impl ProfilesController {
         }
         let active = self.account.active_scope;
         self.activate_scope(owner_scope);
-        if self
-            .profile_creation
-            .as_mut()
-            .is_some_and(|view| view.selection_result(owner_scope, generation, &result))
-        {
+        if self.profile_creation.as_mut().is_some_and(|view| {
+            view.get_mut()
+                .selection_result(owner_scope, generation, &result)
+        }) {
             self.activate_scope(active);
             return true;
         }

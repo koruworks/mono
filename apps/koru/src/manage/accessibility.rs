@@ -57,7 +57,7 @@
 //! would cost the row its Invoke pattern. Which page is showing is the
 //! heading, and which row the keyboard is on is focus.
 
-use accesskit::{Action, Role};
+use accesskit::{Action, ActionData, Role};
 use koru_core::ProfileId;
 use koru_draw::geometry::Rect;
 use koru_workspace_host::accessibility::{
@@ -313,17 +313,30 @@ impl ManageView {
                 children.push(self.workspaces_list(cx, &button));
             }
         }
+        if self.content_page_open() {
+            let form = self.form_rect();
+            let dx = cx.area.x + form.x;
+            let dy = cx.area.y + form.y - self.page_scroll;
+            let mut form_nodes = self.c.creation_semantics(cx.window, cx.view);
+            fn translate(node: &mut SemanticNode, dx: f32, dy: f32) {
+                if let Some(bounds) = node.bounds.as_mut() {
+                    bounds.x += dx;
+                    bounds.y += dy;
+                }
+                for child in &mut node.children {
+                    translate(child, dx, dy);
+                }
+            }
+            for node in &mut form_nodes {
+                translate(node, dx, dy);
+            }
+            children.extend(form_nodes);
+        }
         if self.switcher.open {
             children.push(
                 SemanticNode::new(cx.surface(parts::DIALOG), Role::Dialog)
                     .with_label("Accounts")
                     .with_bounds(cx.place(self.page_area())),
-            );
-        } else if let Some(confirm) = self.w.dialog() {
-            children.push(
-                SemanticNode::new(cx.surface(parts::DIALOG), Role::Dialog)
-                    .with_label(confirm.title().to_owned())
-                    .with_bounds(cx.area),
             );
         } else if let Some(dialog) = &self.dialog {
             children.push(
@@ -548,6 +561,11 @@ impl ManageView {
 
     /// Everything the tree is built from, folded into the shell's revision.
     pub(crate) fn revise(&self, rev: &mut Revision) {
+        if self.content_page_open()
+            && let Some(form) = self.c.creation_form()
+        {
+            rev.u64(form.semantics_revision());
+        }
         match self.page {
             Some(Page::Profile(id)) => {
                 rev.byte(1).uuid(id.as_uuid());
@@ -593,10 +611,10 @@ impl ManageView {
                 rev.str(&row.sub_text);
             }
         }
-        rev.bool(self.w.is_confirming())
-            .bool(self.w.show_archived())
-            .bool(self.w.show_trash())
-            .opt_uuid(self.w.selected().map(|id| id.as_uuid()));
+        rev.bool(self.w.borrow().is_confirming())
+            .bool(self.w.borrow().show_archived())
+            .bool(self.w.borrow().show_trash())
+            .opt_uuid(self.w.borrow().selected().map(|id| id.as_uuid()));
         if let Some(section) = &self.laid.workspaces {
             for (_, row) in section.rows() {
                 rev.str(&row.full_name);
@@ -630,8 +648,14 @@ impl ManageView {
     /// Which control has the keyboard: the question up, the focused page
     /// control, the focused nav row, or the tab.
     pub(crate) fn accessible_focus(&self, cx: &Context) -> Occurrence {
-        if self.dialog.is_some() || self.w.is_confirming() || self.switcher.open {
+        if self.dialog.is_some() || self.w.borrow().is_confirming() || self.switcher.open {
             return cx.surface(parts::DIALOG);
+        }
+        if self.content_page_open()
+            && let Some(form) = self.c.creation_form()
+            && let Some(focus) = form.accessibility_focus(cx.window, cx.view)
+        {
+            return focus;
         }
         match (self.page_focus, self.focus) {
             (Some(control), _) => cx.control(control),
@@ -695,5 +719,26 @@ impl ManageView {
             Action::Click => self.activate(entry),
             _ => false,
         }
+    }
+
+    pub(crate) fn creation_accessibility_action(
+        &mut self,
+        target: Occurrence,
+        action: Action,
+        data: Option<&ActionData>,
+    ) -> bool {
+        if !self.content_page_open() || !self.no_question_up() || self.switcher.open {
+            return false;
+        }
+        let done = self
+            .c
+            .with_creation_form(|form| form.accessibility_action(target, action, data))
+            .unwrap_or(false);
+        if done {
+            self.sync();
+            self.size_creation_form();
+            self.reveal_creation_focus();
+        }
+        done
     }
 }

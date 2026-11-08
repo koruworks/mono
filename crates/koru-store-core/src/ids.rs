@@ -138,6 +138,11 @@ id_type!(
     "doc"
 );
 id_type!(
+    /// One coordinated attempt to remove a Profile on this installation.
+    RemovalAttemptId,
+    "removal"
+);
+id_type!(
     /// An API client holding a scoped credential. Not a person and not a device.
     ClientId,
     "client"

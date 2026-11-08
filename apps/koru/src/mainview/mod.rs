@@ -54,6 +54,8 @@
 
 #[cfg(test)]
 mod harness;
+#[cfg(test)]
+mod profile_menu_tests;
 
 /// What this window offers a screen reader, and what a request to one of its
 /// controls means. A focused module rather than another subsystem grown
@@ -79,6 +81,7 @@ mod document_appearance;
 pub(crate) mod draw;
 mod error_dialog;
 mod font_picker;
+mod help_menu;
 mod history;
 mod icon_action;
 mod import_dialog;
@@ -96,6 +99,8 @@ mod open;
 pub mod panes;
 mod place_chooser;
 mod profile_probe;
+mod profile_wait;
+mod rail_overflow;
 mod recording;
 mod reminder_creation;
 mod reminder_management;
@@ -118,6 +123,7 @@ mod terminal_look;
 pub(crate) mod trash;
 mod update_ui;
 mod welcome_progress;
+mod workspace_controller;
 mod workspace_icon;
 mod workspace_menu;
 mod workspace_rename;
@@ -954,10 +960,12 @@ pub struct MainView {
     ///
     /// A queue rather than one slot: see [`ask_pane`](Self::ask_pane).
     pane_requests: std::collections::VecDeque<PaneRequest>,
-    /// **The manager's next poll, while that tab is in front.** Dropped the
-    /// moment it is not: a window looking at a document does no work for a
-    /// manager nobody can see.
+    /// Fallback only while a keyed workspace command is pending. Worker
+    /// answers and catalog events wake the window without an idle timer.
     workspaces_poll_due: Option<Instant>,
+    /// One workspace controller for this window, also borrowed by Manage.
+    workspace_controller: crate::manage::SharedWorkspaces,
+    profile_wait: profile_wait::WaitPane,
     /// **The preferences as this container last heard them.** Most of what a
     /// Settings page draws reads a process global, but the pieces it keeps a
     /// field of do not — a tab opened an hour into a session would otherwise
@@ -1144,6 +1152,7 @@ pub struct MainView {
     /// Where `F6` has put the keyboard on the sidebar's chrome, if anywhere
     /// (`chrome_focus.rs`).
     chrome_focus: Option<chrome_focus::ChromeStop>,
+    folded_rail_focus: Option<crate::panes::explore::NavigatorMode>,
     /// The sidebar's fold in flight: when it began and whether it is
     /// opening. `None` at rest. The slide itself is the panel's; this is the
     /// clock the fade and the riding chain read (`theme::motion::pane_fold`).
@@ -1223,6 +1232,7 @@ pub struct MainView {
     /// help popover. `None` until the read lands or when no notes shipped.
     help_headlines: Option<Vec<String>>,
     help_headlines_rx: Option<std::sync::mpsc::Receiver<Option<Vec<String>>>>,
+    help_notes_read: bool,
     /// The global-search chord the agent registered (`Ctrl+Shift+K`), once it
     /// has said so; `None` before that, without an agent, or with no chord.
     /// The Search tooltip teaches it beside this window's own.
@@ -1786,13 +1796,19 @@ impl MainView {
     }
 
     pub fn new_with(updates: crate::agent::UpdateFeed, search_enabled: bool) -> Self {
-        Self::new_with_agent(updates, crate::agent::AgentLink::absent(), search_enabled)
+        Self::new_with_agent(
+            updates,
+            crate::agent::AgentLink::absent(),
+            search_enabled,
+            koru_workspaces_ui::WorkspaceLinks::inert(),
+        )
     }
 
     pub fn new_with_agent(
         updates: crate::agent::UpdateFeed,
         agent: crate::agent::AgentLink,
         search_enabled: bool,
+        workspace_links: koru_workspaces_ui::WorkspaceLinks,
     ) -> Self {
         Self {
             panes: panes::PaneTree::new(Tab::welcome()),
@@ -1928,6 +1944,10 @@ impl MainView {
             window_request: None,
             pane_requests: std::collections::VecDeque::new(),
             workspaces_poll_due: None,
+            profile_wait: profile_wait::WaitPane::default(),
+            workspace_controller: std::rc::Rc::new(std::cell::RefCell::new(
+                koru_workspaces_ui::WorkspacesController::with_links(workspace_links),
+            )),
             preferences: Settings::default(),
             entries: None,
             store_trouble: None,
@@ -1964,6 +1984,7 @@ impl MainView {
             nested: None,
             toggle_tip_muted: false,
             chrome_focus: None,
+            folded_rail_focus: None,
             fold: None,
             reduced_motion: koru_workspace_host::environment::reduced_motion().unwrap_or(false),
             chats_looking: std::collections::HashSet::new(),
@@ -1971,6 +1992,7 @@ impl MainView {
             relayouts: 0,
             help_headlines: None,
             help_headlines_rx: Some(crate::whatsnew::read_headlines_async()),
+            help_notes_read: false,
             global_search_chord: None,
             tooltip: Tooltip::default(),
             recents: Vec::new(),
@@ -4211,6 +4233,8 @@ impl MainView {
 
     fn item_is_enabled(&self, menu: &ContextMenu, action: MenuAction) -> bool {
         match &menu.subject {
+            MenuSubject::RailOverflow => matches!(action, MenuAction::RailView { mode, .. }
+                if self.explore.view_projection(self.rail_area().h).folded.contains(&mode)),
             MenuSubject::NewTab => match action {
                 // A profile row reflects the off-thread presence probe: a
                 // shell whose executable is not on this machine is dimmed
@@ -4549,17 +4573,12 @@ impl MainView {
                 matches!(action, MenuAction::EmptyTrash) && self.explore.trash_count() > 0
             }
             // *Invite people* waits for an invite flow (E60); the rest act.
-            MenuSubject::Floor => !matches!(action, MenuAction::InvitePeople),
             // The help popover's rows are always there. The card's Download
             // is a control, gated by its own `enabled` rather than here.
             MenuSubject::Help => matches!(
                 action,
-                MenuAction::HelpRelease
-                    | MenuAction::HelpDownload
-                    | MenuAction::HelpFullChangelog
-                    | MenuAction::HelpSendFeedback
+                MenuAction::HelpSendFeedback
                     | MenuAction::HelpStarOnGitHub
-                    | MenuAction::HelpWebsite
                     | MenuAction::HelpSocial(_)
             ),
             // Every window action is always available — the rows were built from
@@ -4621,6 +4640,18 @@ impl MainView {
             return false;
         }
         match subject {
+            MenuSubject::RailOverflow => match action {
+                MenuAction::RailView { mode, .. }
+                    if self
+                        .explore
+                        .view_projection(self.rail_area().h)
+                        .folded
+                        .contains(&mode) =>
+                {
+                    self.show_navigator(mode)
+                }
+                _ => false,
+            },
             MenuSubject::NewTab => match action {
                 MenuAction::NewDocument => self.new_tab(),
                 MenuAction::NewCanvas => self.new_canvas(),
@@ -5157,39 +5188,14 @@ impl MainView {
                 }
                 _ => false,
             },
-            MenuSubject::Floor => match action {
-                MenuAction::NewWorkspace => self.prompt_new_workspace(),
-                MenuAction::ImportFiles => self.ask_pane(PaneRequest::ImportFiles(
-                    koru_workspace_host::ImportSourceSelection::Picker,
-                )),
-                MenuAction::OpenTrash => self.open_trash_tab(),
-                MenuAction::ImportFormat(format) => {
-                    self.ask_pane(PaneRequest::ImportContent {
-                        format,
-                        source: koru_workspace_host::ImportSourceSelection::Picker,
-                    });
-                    true
-                }
-                _ => false,
-            },
             // The help popover (QUESTIONS.md E33). The card opens the What's
             // new tab; its button sends the update's first consent; the
             // changelog, the website and the socials open in the browser
             // through the shell's URI port, never from the view.
             MenuSubject::Help => match action {
-                MenuAction::HelpRelease => self.open_whats_new(env!("CARGO_PKG_VERSION")),
-                MenuAction::HelpDownload => self.help_download(),
-                MenuAction::HelpFullChangelog => {
-                    self.ask_pane(PaneRequest::OpenUri(crate::whatsnew::RELEASES_URL));
-                    true
-                }
                 MenuAction::HelpSendFeedback => self.open_send_feedback_tab(),
                 MenuAction::HelpStarOnGitHub => {
                     self.ask_pane(PaneRequest::OpenUri(context_menu::GITHUB_URL));
-                    true
-                }
-                MenuAction::HelpWebsite => {
-                    self.ask_pane(PaneRequest::OpenUri(context_menu::WEBSITE_URL));
                     true
                 }
                 MenuAction::HelpSocial(social) => {
@@ -5293,94 +5299,6 @@ impl MainView {
         let enabled = self.enabled_items(&m);
         m.step(&enabled, 1);
         self.menu = Some(m);
-        true
-    }
-
-    /// The help popover's release card: the build the Agent is offering when
-    /// it has one — its title and summary straight from the manifest, Download
-    /// live while it waits for the first consent — else the build that is
-    /// running: channel and version, the day it was released, the shipped
-    /// notes' first sections for a title and a line, and Download drawn dim
-    /// since there is nothing to fetch (the review's artboard). A build without
-    /// notes says so in the card rather than inventing a headline.
-    fn help_card(&self) -> context_menu::HelpCard {
-        use koru_agent_wire::UpdateStage;
-        let lang = crate::format::lang();
-        let info = koru_channel::build_info();
-        let report = self.updates.report();
-        let offered = report.as_ref().filter(|r| {
-            !r.version.is_empty()
-                && matches!(
-                    r.stage,
-                    UpdateStage::Available
-                        | UpdateStage::Downloading
-                        | UpdateStage::Verifying
-                        | UpdateStage::Ready
-                        | UpdateStage::Installing
-                        | UpdateStage::Deferred
-                )
-        });
-        if let Some(r) = offered {
-            let channel = if r.channel.is_empty() {
-                info.channel
-            } else {
-                r.channel.as_str()
-            };
-            return context_menu::HelpCard {
-                badge: format!("{} · {}", channel.to_uppercase(), r.version),
-                date: String::new(),
-                title: r.title.clone(),
-                body: r
-                    .summary
-                    .iter()
-                    .take(2)
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join(" "),
-                download: Some(matches!(
-                    r.stage,
-                    UpdateStage::Available | UpdateStage::Deferred
-                )),
-                unread: true,
-            };
-        }
-        let date = chrono::DateTime::parse_from_rfc3339(info.released_at)
-            .ok()
-            .and_then(|t| crate::format::local_parts(t.timestamp_millis()))
-            .map(|parts| koru_i18n::time::absolute_date(lang, parts, false))
-            .unwrap_or_default();
-        let headlines = self.help_headlines.as_deref().unwrap_or(&[]);
-        let (title, body) = match headlines.split_first() {
-            Some((first, rest)) => (
-                first.clone(),
-                rest.iter().take(2).cloned().collect::<Vec<_>>().join(" · "),
-            ),
-            None => (
-                format!("Koru {}", info.version),
-                koru_i18n::t(lang, koru_i18n::Key::NotShippedWithThisBuild).to_owned(),
-            ),
-        };
-        context_menu::HelpCard {
-            badge: format!("{} · {}", info.channel.to_uppercase(), info.version),
-            date,
-            title,
-            body,
-            download: Some(false),
-            unread: false,
-        }
-    }
-
-    /// The card's Download: the update's first consent, the one the banner's
-    /// own button sends. Refused unless a build is waiting for it.
-    fn help_download(&mut self) -> bool {
-        use koru_agent_wire::{UpdateChoice, UpdateStage};
-        let Some(report) = self.updates.report() else {
-            return false;
-        };
-        if !matches!(report.stage, UpdateStage::Available | UpdateStage::Deferred) {
-            return false;
-        }
-        self.update_consent(UpdateChoice::Download, report.stage);
         true
     }
 
@@ -5512,6 +5430,7 @@ impl MainView {
         self.error.is_none()
             && self.import_dialog.is_none()
             && self.confirm.is_none()
+            && !self.workspace_controller.borrow().is_confirming()
             && self.new_document.is_none()
             && self.snapshot_prompt.is_none()
             && self.link_device.is_none()
@@ -6607,6 +6526,8 @@ impl MainView {
                 .is_some_and(|n| n.page == tab::PrivatePage::WhatsNew)
         });
         if let Some(i) = existing {
+            self.help_notes_read = true;
+            self.refresh_help();
             self.select(i);
             return true;
         }
@@ -6617,6 +6538,8 @@ impl MainView {
         let Some(tab) = Tab::whats_new(version, notes.as_deref()) else {
             return false;
         };
+        self.help_notes_read = true;
+        self.refresh_help();
         self.tabs_mut().push(tab);
         // Pushing changes every tab's *width*. A slide left mid-flight would
         // finish at the old pitch and overshoot, so the animation is dropped
@@ -6778,7 +6701,9 @@ impl MainView {
         if let Some(index) = existing {
             self.select(index);
         } else {
-            self.tabs_mut().push(Tab::manage());
+            let controller = self.workspace_controller.clone();
+            self.tabs_mut()
+                .push(Tab::manage_with_controller(controller));
             self.slides_mut().clear();
             self.relayout();
         }
@@ -7658,10 +7583,14 @@ impl MainView {
     /// entry. It shares the NewTab subject because those are the same import
     /// actions; only the parent menu's New document row is omitted here.
     fn open_import_menu(&mut self) -> bool {
+        let at = self
+            .explore
+            .workspace_import_anchor(self.explore_popover_area(), self.viewport)
+            .unwrap_or(self.pointer);
         let mut menu = ContextMenu::new(
             &mut self.engine,
             MenuSubject::NewTab,
-            self.pointer,
+            at,
             context_menu::import_menu_items(),
         );
         let enabled = self.enabled_items(&menu);
@@ -7679,74 +7608,26 @@ impl MainView {
     /// count. Beside the button to its right (the review's note), level with
     /// its top; the menu lifts itself to stay on screen at the window's
     /// foot.
-    fn open_floor_menu(&mut self, at: (f32, f32)) -> bool {
-        context_menu::set_trash_count(self.explore.trash_count());
-        let mut menu = ContextMenu::aligned(
-            &mut self.engine,
-            MenuSubject::Floor,
-            at,
-            context_menu::floor_items(),
-            MenuAnchor::Cursor,
-        );
-        let enabled = self.enabled_items(&menu);
-        menu.step(&enabled, 1);
-        self.menu = Some(menu);
-        true
-    }
 
     /// The help popover beside the rail's `?`, its foot level with the
     /// control's.
     fn open_help_beside(&mut self) -> bool {
-        let rail = self.rail_area();
-        let help = self.explore.apps_rail_rects(rail).help;
-        if help.w <= 0.0 {
+        use crate::panes::explore::PopoverKind;
+        if self.support_only || self.rail_area().w <= 0.0 {
             return false;
         }
-        let edge = rail.x + rail.w;
-        if self.support_only {
-            return false;
+        self.refresh_help();
+        self.menu = None;
+        if self.explore.popover_is(PopoverKind::Help) {
+            self.explore.close_popover()
+        } else {
+            self.explore.open_popover(PopoverKind::Help)
         }
-        chrome_debug::chrome_debug!("help popover opened beside its ?");
-        let items = context_menu::help_items(self.help_card());
-        let x = edge + koru_app_shell::popover::GAP;
-        let mut m = ContextMenu::aligned(
-            &mut self.engine,
-            MenuSubject::Help,
-            (x, help.y),
-            items,
-            MenuAnchor::Cursor,
-        );
-        let height = m.height();
-        m.set_anchor((x, (help.y + help.h - height).max(0.0)));
-        let enabled = self.enabled_items(&m);
-        m.step(&enabled, 1);
-        self.menu = Some(m);
-        true
     }
 
-    /// The Sync settings tab: a singleton page that, for now, says only its
-    /// name (the review's artboard; what it holds is QUESTIONS.md E31). Nothing
-    /// opens it since the popover's toolbar went (E32); it waits for the
-    /// Sync settings design to say where its door is.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Global sync opens the existing device-management page.
     pub(crate) fn open_sync_settings_tab(&mut self) -> bool {
-        let existing = self.tabs().iter().position(|t| {
-            t.whats_new
-                .as_ref()
-                .is_some_and(|n| n.page == tab::PrivatePage::SyncSettings)
-        });
-        if let Some(i) = existing {
-            self.select(i);
-            return true;
-        }
-        let Some(tab) = Tab::sync_settings() else {
-            return false;
-        };
-        self.tabs_mut().push(tab);
-        self.slides_mut().clear();
-        self.relayout();
-        self.select(self.tabs().len() - 1);
-        true
+        self.open_manage(crate::manage::Page::Devices)
     }
 
     /// The library background's context menu. It deliberately keeps the
@@ -7901,6 +7782,8 @@ impl MainView {
             Outcome::NewChildDocument(parent) => self.prompt_new_child_document(parent),
             Outcome::Search => self.open_search(),
             Outcome::OpenHelp => self.open_help_beside(),
+            Outcome::Help(action) => self.help_action(action),
+            Outcome::OpenRailOverflow => self.open_rail_overflow(),
             Outcome::OpenNode(id)
                 if self.explore.navigator_mode() == crate::panes::explore::NavigatorMode::Files =>
             {
@@ -7988,7 +7871,37 @@ impl MainView {
             // Swapping the open document, picking a folder and starting a
             // process are all the shell's; a view has neither the data
             // directory nor a `Window`. So each is recorded and drained.
-            Outcome::SwitchWorkspace(id) => self.switch_workspace_here(id),
+            Outcome::SwitchWorkspace(id) => self.open_workspace(id),
+            Outcome::ToggleWorkspacePin(id) => {
+                let handled = self
+                    .act_on_listed(id, |controller, workspace| {
+                        controller.perform(koru_workspaces_ui::Action::TogglePinned(workspace));
+                    })
+                    .is_some();
+                self.arm_workspaces_poll();
+                handled
+            }
+            Outcome::RetryWorkspaceOperation => {
+                if let Some(owner) = self.current_profile_id() {
+                    self.workspace_controller
+                        .borrow_mut()
+                        .retry_for(crate::manage::workspaces::catalog_profile(owner));
+                }
+                self.arm_workspaces_poll();
+                true
+            }
+            Outcome::ReorderWorkspace { workspace, before } => {
+                let handled = self
+                    .act_on_listed(workspace, |controller, workspace| {
+                        controller.reorder_before(
+                            workspace,
+                            before.map(crate::manage::workspaces::catalog_workspace),
+                        )
+                    })
+                    .unwrap_or(false);
+                self.arm_workspaces_poll();
+                handled
+            }
             // The popover stays open on its main page, and lists the new
             // Profile's workspaces once the switch has happened (the review's
             // artboard). The window lands on the workspace that Profile
@@ -8004,13 +7917,21 @@ impl MainView {
                 )))
             }
             Outcome::ImportContent => self.open_import_menu(),
-            Outcome::ManageWorkspace(_) => self.open_manage_workspaces(None),
+            Outcome::ManageWorkspace(id) => {
+                let owner = self
+                    .workspace_facts(id)
+                    .and_then(|workspace| workspace.owner);
+                self.workspace_controller
+                    .borrow_mut()
+                    .set_selected(Some(crate::manage::workspaces::catalog_workspace(id)));
+                self.open_manage_workspaces(owner)
+            }
+            Outcome::ManageWorkspaces => self.open_manage_workspaces(None),
+            Outcome::OpenSyncSettings => self.open_sync_settings_tab(),
             Outcome::ManageProfile(profile) => {
                 self.open_manage(crate::manage::Page::Profile(profile))
             }
-            Outcome::ManageDevices => self.open_manage(crate::manage::Page::Devices),
             Outcome::ManageCloud => self.open_manage(crate::manage::Page::Cloud),
-            Outcome::FloorMenu { at } => self.open_floor_menu(at),
             Outcome::WorkspaceMenu { workspace, at } => {
                 self.open_workspace_menu(workspace, at, false)
             }
@@ -8771,14 +8692,7 @@ impl MainView {
         {
             self.explore.rail_mut().set_selected(Some(target));
         }
-        if self.context_stale
-            && let Some((profiles, current_profile, workspaces, current)) =
-                self.pane_context.clone()
-        {
-            self.context_stale = false;
-            self.explore
-                .set_context(profiles, current_profile, workspaces, current);
-        }
+        self.refresh_explore_context();
     }
 
     // ------------------------------------------------------- the tasks rail
@@ -9992,6 +9906,9 @@ impl MainView {
         if self.agent_cli_mouse_down(x, y) {
             return true;
         }
+        if self.workspace_confirmation_mouse_down(x, y) {
+            return true;
+        }
         if let Some((dialog, _)) = self.confirm.as_mut() {
             let out = dialog.mouse_down(&mut self.engine, self.viewport, x, y);
             self.settle_confirm_outcome(out);
@@ -10309,8 +10226,15 @@ impl MainView {
             // first (the review's note: the Profiles list stayed up beside the
             // help popover the `?` opened) — unless the press is the square,
             // the popover's own door, which toggles it.
-            let square = self.explore.apps_rail_rects(self.rail_area()).profile;
-            let shut = !square.contains(x, y) && self.explore.close_popover();
+            let door = matches!(
+                self.explore.rail_hit(self.rail_area(), x, y),
+                Some(
+                    crate::panes::sidebar::apps_rail::Hit::Profile
+                        | crate::panes::sidebar::apps_rail::Hit::Workspace(_)
+                        | crate::panes::sidebar::apps_rail::Hit::WaitingWorkspace
+                )
+            );
+            let shut = !door && self.explore.close_popover();
             let out = self.explore.apps_rail_mouse_down(self.rail_area(), x, y);
             return self.apply(ws, out) || shut;
         }
@@ -10342,6 +10266,9 @@ impl MainView {
             self.focus_pane_at(x, y);
             let out = self.press(hit, x, y, ctrl);
             return self.apply(ws, out) || dismissed;
+        }
+        if self.profile_wait_mouse_down(x, y) {
+            return true;
         }
         // A press in the document area focuses the pane it landed in before the
         // active view sees it. Single-group builds are unaffected; this is the
@@ -10445,7 +10372,7 @@ impl MainView {
         if self.import_dialog.is_some() {
             return true;
         }
-        if self.confirm.is_some() {
+        if self.confirm.is_some() || self.workspace_controller.borrow().is_confirming() {
             return true;
         }
         if self.reminder_creation.is_open() {
@@ -10500,6 +10427,9 @@ impl MainView {
         }
         // A rail view drops into its slot wherever the pointer let go; its
         // order reaches the session file at the next capture.
+        if let Some(outcome) = self.explore.release_workspace_drag(self.rail_area()) {
+            return self.apply(ws, outcome);
+        }
         if self.explore.rail_dragging() {
             return self.explore.rail_drag_release(self.rail_area());
         }
@@ -10956,6 +10886,7 @@ impl View for MainView {
         if self.error.is_some()
             || self.import_dialog.is_some()
             || self.confirm.is_some()
+            || self.workspace_controller.borrow().is_confirming()
             || self.new_document.is_some()
             || self.snapshot_prompt.is_some()
             || self.link_device.is_some()
@@ -11442,7 +11373,11 @@ impl View for MainView {
         if self.link_device.is_some() {
             return;
         }
-        if self.confirm.is_some() || self.new_document.is_some() || self.snapshot_prompt.is_some() {
+        if self.confirm.is_some()
+            || self.workspace_controller.borrow().is_confirming()
+            || self.new_document.is_some()
+            || self.snapshot_prompt.is_some()
+        {
             return;
         }
         let bell = self.reminder_bell_rect();
@@ -11585,6 +11520,10 @@ impl View for MainView {
     }
 
     fn set_viewport(&mut self, w: f32, h: f32) {
+        let rail_focus = self.focused_rail_identity();
+        if self.viewport != (w, h) {
+            self.explore.cancel_rail_drag(self.rail_area());
+        }
         self.viewport = (w, h);
         let bounds = self.search_bounds();
         if let Some(search) = self.search.as_mut() {
@@ -11592,6 +11531,7 @@ impl View for MainView {
         }
         // Only the tab being looked at lays out; see `relayout`.
         self.relayout();
+        self.retain_rail_focus(rail_focus);
         let bell = self.reminder_bell_rect();
         self.reminder_shell.maintain_geometry(self.viewport, bell);
     }
@@ -11666,6 +11606,9 @@ impl View for MainView {
             return dialog.cursor();
         }
         if let Some(dialog) = &self.import_dialog {
+            return dialog.cursor();
+        }
+        if let Some(dialog) = self.workspace_controller.borrow().dialog() {
             return dialog.cursor();
         }
         if let Some((dialog, _)) = &self.confirm {
@@ -11990,6 +11933,9 @@ impl View for MainView {
     /// smooth-scrolling, so the shell's fast wake-up is the exception it is
     /// meant to be. Each must return to `false` on its own (ADR-26).
     fn animating(&self) -> bool {
+        if self.profile_wait_animating() {
+            return true;
+        }
         // **Only while the toast is fading or showing indeterminate progress.**
         // Holding a message or a determinate bar still is not an animation; see
         // `koru_ui::toast`.
@@ -13248,6 +13194,13 @@ impl View for MainView {
         let next = (profiles, current_profile, workspaces, current);
         let changed = self.pane_context.as_ref() != Some(&next);
         if changed {
+            if self
+                .pane_context
+                .as_ref()
+                .is_none_or(|(_, _, rows, _)| *rows != next.2)
+            {
+                self.workspace_controller.borrow().invalidate();
+            }
             // A profile switch in place invalidates the store-terms recents:
             // a recents row from the old profile would offer a destination
             // the shell must refuse (a move never crosses a profile).
@@ -13277,6 +13230,7 @@ impl View for MainView {
             // The explore column keeps its own copy, and `refresh_explore` only
             // hands one over when this says there is a new one to hand.
             self.context_stale = true;
+            self.refresh_explore_context();
             self.push_manage_profiles_context();
         }
         changed
@@ -13338,7 +13292,11 @@ impl View for MainView {
         &mut self,
         workspaces: std::collections::HashMap<ProfileId, Vec<koru_core::WorkspaceEntry>>,
     ) -> bool {
-        self.explore.set_profile_workspaces(workspaces)
+        let changed = self.explore.set_profile_workspaces(workspaces);
+        if changed {
+            self.workspace_controller.borrow().invalidate();
+        }
+        changed
     }
     fn show_first_minutes(&mut self, owner: &str, profile: &str, workspace: &str) -> bool {
         MainView::show_first_minutes(self, owner, profile, workspace)
@@ -13513,6 +13471,101 @@ impl View for MainView {
             }
             _ => false,
         })
+    }
+
+    fn connected_profile_creation_conflict(&mut self) -> bool {
+        self.each_tab_mut(|tab| match &mut tab.view {
+            TabView::Manage(view) => view.delegate(|c| c.connected_profile_creation_conflict()),
+            _ => false,
+        })
+    }
+
+    fn show_profile_manager(&mut self, profile: ProfileId) -> bool {
+        self.open_manage(crate::manage::Page::Profile(profile))
+    }
+
+    fn create_profile_with_workspace(
+        &mut self,
+        request: koru_api_client::CreateProfileWithWorkspace,
+        reply: std::sync::mpsc::Sender<
+            koru_store_core::errors::Result<koru_api_client::CreatedProfile>,
+        >,
+    ) -> bool {
+        self.workspace_controller
+            .borrow_mut()
+            .create_profile(request, reply);
+        self.arm_workspaces_poll();
+        true
+    }
+
+    fn ensure_live_workspace(
+        &mut self,
+        owner: koru_store_core::ProfileId,
+        name: String,
+        attempt: u64,
+        reply: std::sync::mpsc::Sender<
+            koru_store_core::errors::Result<koru_api_client::EnsuredWorkspace>,
+        >,
+    ) -> bool {
+        self.workspace_controller
+            .borrow_mut()
+            .ensure_live(owner, name, attempt, reply);
+        self.arm_workspaces_poll();
+        true
+    }
+
+    fn workspace_retired(&self, profile: ProfileId, workspace: WorkspaceId) -> bool {
+        self.workspace_controller
+            .borrow()
+            .row(crate::manage::workspaces::catalog_workspace(workspace))
+            .is_some_and(|row| {
+                row.authority == koru_workspaces_ui::Authority::Verified
+                    && (row.archived
+                        || row.deleted
+                        || row.owner != crate::manage::workspaces::catalog_profile(profile))
+            })
+    }
+
+    fn profile_has_live_content(&self, profile: ProfileId) -> bool {
+        self.workspace_controller
+            .borrow()
+            .catalog_rows()
+            .is_some_and(|rows| {
+                rows.iter().any(|row| {
+                    row.owner == crate::manage::workspaces::catalog_profile(profile)
+                        && row.verified_live()
+                })
+            })
+    }
+
+    fn profile_removal(
+        &self,
+        profile: ProfileId,
+    ) -> Option<Option<koru_store_core::profile_removal::RemovalMark>> {
+        self.workspace_controller
+            .borrow()
+            .profile_removal_state(crate::manage::workspaces::catalog_profile(profile))
+    }
+
+    fn set_profile_wait(
+        &mut self,
+        waiting: Option<koru_workspace_host::profile_wait::ProfileWait>,
+    ) -> bool {
+        if self.search_only || self.feedback_only || self.support_only || self.fab_only {
+            return false;
+        }
+        if !self.profile_wait.set(waiting) {
+            return false;
+        }
+        let label = self
+            .profile_wait
+            .waiting
+            .as_ref()
+            .map(|wait| profile_wait::message(&wait.reading, crate::format::lang()));
+        self.explore.set_workspace_waiting(label);
+        self.context_stale = true;
+        self.refresh_explore_context();
+        true
     }
 
     fn local_profile_restored(&mut self, profile: ProfileId) -> bool {
@@ -14699,6 +14752,7 @@ impl View for MainView {
 
     fn maintenance_deadline(&self) -> Option<Instant> {
         [
+            self.profile_wait_deadline(),
             self.support.as_ref().and_then(|s| s.maintenance_deadline()),
             self.tooltip.maintenance_deadline(),
             self.entity_search
@@ -14766,6 +14820,7 @@ impl View for MainView {
     }
 
     fn maintain(&mut self, ws: &mut WorkspaceDoc, now: Instant) -> bool {
+        self.refresh_help();
         if self.support.is_some() || self.fab.is_some() {
             // Serviced by the background pass, which runs in both loop paths.
             return false;
@@ -14845,20 +14900,15 @@ impl View for MainView {
             self.pending_reminder_cancels.push_back(resolution);
         }
         let reminder_cancelled = self.apply_pending_reminder_cancels(ws);
-        // **The Manage tab's Workspaces tick.** Take what its controller's
-        // link answered, and re-arm while Manage is still the tab in front.
-        // Dropped the moment it is not: a window looking at a document does no
-        // work for a list nobody can see. The 120 ms pass is also the
-        // post-activation settle: a just-finished Store mutation reaches its
-        // indexed usage row within a poll or two, without a second mechanism.
-        let mut refresh_stats = false;
+        // Worker completions and catalog events wake every window. Drain the
+        // owning controller even when Manage is closed or in the background.
+        let refresh_stats = self.poll_manage_workspaces()
+            | self.drain_workspace_requests()
+            | self.maintain_profile_wait(now);
         if self.workspaces_poll_due.is_some_and(|due| now >= due) {
             self.workspaces_poll_due = None;
-            if matches!(self.tabs().active_tab().view, TabView::Manage(_)) {
-                refresh_stats |= self.poll_manage_workspaces();
-                self.workspaces_poll_due = Some(now + WORKSPACES_POLL);
-            }
         }
+        self.arm_workspaces_poll_at(now);
         // A deep-link caption follows a heading nobody here is editing, and
         // nothing announces that. Two seconds is the same tick the pane context
         // already runs on, and the work is one indexed query per linked
@@ -15326,6 +15376,9 @@ impl MainView {
             // Modal, and it swallows everything: a dialog that let keystrokes
             // through would take dictation into the document behind it.
             Blockers::Modal(ModalKind::Confirm) => {
+                if self.workspace_confirmation_key(key) {
+                    return true;
+                }
                 if let Some((dialog, _)) = self.confirm.as_mut() {
                     let out = dialog.key(key);
                     self.settle_confirm_outcome(out);
@@ -15578,6 +15631,9 @@ impl MainView {
             !matches!(chord, Chord::ShowRailSlot(slot)
                 if self.explore.rail_mode_at(*slot).is_none())
         }) {
+            if self.profile_wait_visible() && matches!(chord, Chord::Rename | Chord::SaveSnapshot) {
+                return true;
+            }
             return match chord {
                 Chord::NewTab => self.new_tab(),
                 Chord::New => self.open_launcher(),
@@ -15609,6 +15665,9 @@ impl MainView {
                 Chord::ToggleRecording => self.toggle_recording(),
                 Chord::Reminders => self.open_reminders_here(ws),
             };
+        }
+        if self.profile_wait_key(key, mods) {
+            return true;
         }
         if self.ai_visible() && self.ai_focused {
             inputdebug::write(format_args!("[Koru][input] view key claimed=ai"));
@@ -17482,6 +17541,7 @@ impl MainView {
     /// Show one of the explore column's views, opening the column when it is
     /// closed — the view was asked for by name.
     pub(super) fn show_navigator(&mut self, mode: crate::panes::explore::NavigatorMode) -> bool {
+        let rail_focus = self.focused_rail_identity();
         chrome_debug::chrome_debug!("app switch by chord to {}", mode.token());
         if !self.sidebar.is_open() {
             self.toggle_sidebar();
@@ -17508,6 +17568,7 @@ impl MainView {
                 self.explore.focus_tree(self.explore_area());
             }
         }
+        self.retain_rail_focus(rail_focus);
         self.explore_stale = true;
         true
     }
@@ -17541,6 +17602,12 @@ impl MainView {
         }
         if let Some(dialog) = self.import_dialog.as_mut() {
             return dialog.mouse_move(&mut self.engine, self.viewport, x, y);
+        }
+        if self.workspace_confirmation_mouse_move(x, y) {
+            return true;
+        }
+        if self.profile_wait_mouse_move(x, y) {
+            return true;
         }
         if let Some((dialog, _)) = self.confirm.as_mut() {
             // The scrim is modal over the entire window. Update button hover,
@@ -17776,7 +17843,16 @@ impl MainView {
             self.hover = Some(Hit::Sidebar);
             let area = self.explore_popover_area();
             let moved = self.explore.mouse_move(area, self.viewport, x, y);
-            return moved || left_content || reminder_moved;
+            let tip = self.explore.menu_tooltip(area, self.viewport, x, y).map(
+                |(rect, text, shortcut)| {
+                    TooltipContent::new(38, rect, text).with_optional_shortcut(
+                        shortcut
+                            .and_then(|id| koru_keys::show_hint(id, koru_keys::Section::Tooltip)),
+                    )
+                },
+            );
+            let tip_changed = self.tooltip.set_hover(tip, Instant::now());
+            return moved || left_content || reminder_moved || tip_changed;
         }
 
         let hit = self.hit_at(x, y);
@@ -17902,34 +17978,35 @@ impl MainView {
         let tooltip = if let Some(content) = self.document_ai_tooltip() {
             Some(content)
         } else if hit == Hit::Sidebar {
-            // The floor's chip, then the rail — icon-only and chip controls,
-            // so each carries its name (`DESIGN.md`: one interaction clock,
-            // flat chip).
-            let floor = self.explore.floor_rects(self.explore_area());
+            // Rail controls share their names with the element projection.
             let rail = self.explore.apps_rail_rects(self.rail_area());
             let lang = crate::format::lang();
             let on = |r: Rect| r.w > 0.0 && r.contains(x, y);
-            if on(floor.chip) {
-                Some(TooltipContent::new(
-                    5,
-                    floor.chip,
-                    koru_i18n::t(lang, koru_i18n::Key::TerminalSwitchWorkspace),
-                ))
-            } else if on(rail.settings) {
-                // The chord rides the tooltip (the review's note), the way the
-                // lane's controls carry theirs; the Settings page's own
-                // search box no longer prints it.
+            if let Some((id, square)) = rail.workspaces.iter().find(|(_, rect)| on(*rect)) {
+                use crate::panes::sidebar::apps_rail::Hit as RailHit;
+                let hit = id.map_or(RailHit::WaitingWorkspace, RailHit::Workspace);
+                let name = self
+                    .explore
+                    .rail_model()
+                    .workspaces
+                    .into_iter()
+                    .find(|item| item.hit == hit)
+                    .map(|item| item.name)
+                    .unwrap_or_default();
                 Some(
-                    TooltipContent::new(
-                        9,
-                        rail.settings,
-                        koru_i18n::t(lang, koru_i18n::Key::SettingsTab),
-                    )
-                    .with_optional_shortcut(koru_keys::show_hint(
-                        koru_keys::ShortcutId::Settings,
-                        koru_keys::Section::Tooltip,
-                    )),
+                    TooltipContent::new(5, *square, name).with_optional_shortcut(
+                        koru_keys::show_hint(
+                            koru_keys::ShortcutId::SwitchWorkspace,
+                            koru_keys::Section::Tooltip,
+                        ),
+                    ),
                 )
+            } else if on(rail.overflow) {
+                Some(TooltipContent::new(
+                    39,
+                    rail.overflow,
+                    koru_i18n::t(lang, koru_i18n::Key::RailMoreViews),
+                ))
             } else if on(rail.help) {
                 Some(TooltipContent::new(
                     6,
@@ -17937,11 +18014,17 @@ impl MainView {
                     koru_i18n::t(lang, koru_i18n::Key::Help),
                 ))
             } else if on(rail.profile) {
-                Some(TooltipContent::new(
-                    10,
-                    rail.profile,
-                    koru_i18n::t(lang, koru_i18n::Key::FloorChipAction),
-                ))
+                Some(
+                    TooltipContent::new(
+                        10,
+                        rail.profile,
+                        koru_i18n::t(lang, koru_i18n::Key::FloorChipAction),
+                    )
+                    .with_optional_shortcut(koru_keys::show_hint(
+                        koru_keys::ShortcutId::SwitchProfile,
+                        koru_keys::Section::Tooltip,
+                    )),
+                )
             } else {
                 self.navigator_mode_tooltip(x, y)
             }

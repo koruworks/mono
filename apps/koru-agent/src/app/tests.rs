@@ -659,6 +659,7 @@ fn local_profile_account_binding_is_classified_as_restart_gated_work() {
 fn local_profile_removal_is_classified_as_restart_gated_work() {
     let request = Request::RemoveLocalProfile {
         profile_id: "00000000-0000-4000-8000-000000000001".into(),
+        attempt: None,
     };
     assert!(starts_process_during_restart(&request));
     assert!(starts_work_while_quiescing(&request));

@@ -367,6 +367,30 @@ impl UpdateController {
             .clone()
     }
 
+    /// The status and its offer metadata from one lock acquisition. Progress
+    /// and deferral carry no manifest themselves; the existing cache retains
+    /// it without creating another persisted representation.
+    pub fn status_with_offer(&self) -> (UpdateStatus, Option<UpdateManifest>) {
+        let shared = self.shared.lock().unwrap_or_else(|e| e.into_inner());
+        let manifest = match &shared.status {
+            UpdateStatus::Available(manifest) | UpdateStatus::ReadyToInstall { manifest, .. } => {
+                Some(manifest.clone())
+            }
+            UpdateStatus::Downloading { .. }
+            | UpdateStatus::Verifying
+            | UpdateStatus::Installing
+            | UpdateStatus::Failed(_) => shared.state.last_manifest.clone(),
+            UpdateStatus::Deferred(build) => shared
+                .state
+                .last_manifest
+                .as_ref()
+                .filter(|m| m.build_number == *build)
+                .cloned(),
+            _ => None,
+        };
+        (shared.status.clone(), manifest)
+    }
+
     pub fn paths(&self) -> UpdatePaths {
         self.shared
             .lock()
@@ -1436,3 +1460,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod help_tests;

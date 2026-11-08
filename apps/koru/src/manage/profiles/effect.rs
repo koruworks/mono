@@ -141,7 +141,7 @@ impl ProfilesController {
         if let Some(submission) = self
             .profile_creation
             .as_ref()
-            .and_then(|view| view.command_submission(&command))
+            .and_then(|view| view.borrow().command_submission(&command))
         {
             return Some((command, Some(submission)));
         }

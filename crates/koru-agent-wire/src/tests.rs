@@ -12,6 +12,35 @@ fn json<T: Serialize>(value: &T) -> String {
 }
 
 #[test]
+fn an_older_cloud_profile_message_has_no_discovery_receipt() {
+    let old = r#"{"profile_id":"profile","stage":"syncing"}"#;
+    let row: AccountProfileCloud = serde_json::from_str(old).unwrap();
+    assert!(row.discovery.is_none());
+    let receipt = CloudDiscovery {
+        account_id: "account".into(),
+        pass: 4,
+        stale: true,
+        exhausted: false,
+        discovered: 3,
+        admitted: 1,
+        deferred: 1,
+        deferred_code: Some("cloud_unavailable".into()),
+        carried: 1,
+        failure_code: Some("cloud_unavailable".into()),
+        retry_at_millis: Some(99),
+        automatic_retry: true,
+    };
+    let row = AccountProfileCloud {
+        discovery: Some(receipt),
+        ..row
+    };
+    assert_eq!(
+        serde_json::from_str::<AccountProfileCloud>(&json(&row)).unwrap(),
+        row
+    );
+}
+
+#[test]
 fn open_workspace_request_round_trips() {
     let request = Request::OpenWorkspace {
         profile: Some("Research".into()),
@@ -493,6 +522,7 @@ fn local_profile_removal_has_a_correlated_typed_wire_shape() {
         id: 41,
         body: Request::RemoveLocalProfile {
             profile_id: profile_id.clone(),
+            attempt: Some("00000000-0000-4000-8000-000000000002".into()),
         },
     };
     let encoded = json(&request);

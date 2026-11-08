@@ -4027,7 +4027,7 @@ fn with_summary_open() -> (MainView, Workspace, Vec<koru_core::ProfileSummary>) 
         Some(list[0].id),
     );
     // The floor chip opens the switcher; its Profiles page is one page away.
-    let chip = crate::panes::sidebar::floor::solve(v.explore_area()).chip;
+    let chip = v.explore.apps_rail_rects(v.rail_area()).workspaces[0].1;
     let (x, y) = chip.centre();
     v.mouse_down(&mut w.ws, x, y, false);
     assert!(v.explore.popover_open(), "the chip opens the switcher");
@@ -4111,7 +4111,7 @@ fn a_press_on_the_overhang_reaches_the_profile_row() {
         Some(PaneRequest::SwitchProfile(profiles[1].id)),
         "choosing a Profile switches to it"
     );
-    assert!(v.explore.popover_open(), "the list stays up");
+    assert!(!v.explore.popover_open(), "switching closes the list");
     assert_eq!(
         v.explore.popover_rects(sb, vp).first().map(|(row, _)| *row),
         Some(crate::panes::explore::PopoverRow::ProfilesHeading),
@@ -4133,7 +4133,9 @@ fn the_chip_and_the_square_open_their_own_pages_and_shut_them() {
     let first = |v: &MainView| v.explore.popover_rects(sb, vp).first().map(|(row, _)| *row);
     assert_eq!(
         first(&v),
-        Some(PopoverRow::WorkspacesHeading),
+        Some(PopoverRow::WorkspaceAction(
+            crate::panes::explore::workspace_menu_elements::MenuAction::Sync
+        )),
         "the chip's page lists the workspaces only"
     );
     // The rail's profile square: the Profiles page.
@@ -4151,11 +4153,16 @@ fn the_chip_and_the_square_open_their_own_pages_and_shut_them() {
     assert!(!v.explore.popover_open(), "the square shuts it");
     v.explore
         .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
-    let chip = crate::panes::sidebar::floor::solve(sb).chip;
+    let chip = v.explore.apps_rail_rects(v.rail_area()).workspaces[0].1;
     let (cx, cy) = chip.centre();
     v.mouse_down(&mut w.ws, cx, cy, false);
     assert!(v.explore.popover_open(), "and the chip opens its page");
-    assert_eq!(first(&v), Some(PopoverRow::WorkspacesHeading));
+    assert_eq!(
+        first(&v),
+        Some(PopoverRow::WorkspaceAction(
+            crate::panes::explore::workspace_menu_elements::MenuAction::Sync
+        ))
+    );
 }
 
 /// **The floor answers in every app.** Tasks, Home, Artifacts, Chats and
@@ -4166,7 +4173,6 @@ fn the_chip_and_the_square_open_their_own_pages_and_shut_them() {
 /// popover beside the page, which stays.
 #[test]
 fn the_chip_and_the_help_open_whichever_app_is_showing() {
-    use crate::mainview::context_menu::MenuSubject;
     use crate::panes::explore::NavigatorMode;
     let (mut v, mut w, _) = with_summary_open();
     v.explore.close_popover();
@@ -4176,8 +4182,8 @@ fn the_chip_and_the_help_open_whichever_app_is_showing() {
         v.show_navigator(mode);
         // Read after the switch: a mode that opens a tab can relay out the
         // pane, and the floor moves with it.
-        let floor = crate::panes::sidebar::floor::solve(v.explore_area());
-        let (cx, cy) = floor.chip.centre();
+        let square = v.explore.apps_rail_rects(v.rail_area()).workspaces[0].1;
+        let (cx, cy) = square.centre();
         v.mouse_down(&mut w.ws, cx, cy, false);
         assert!(
             v.explore.popover_open(),
@@ -4200,12 +4206,14 @@ fn the_chip_and_the_help_open_whichever_app_is_showing() {
             .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
         let (hx, hy) = rail.help.centre();
         v.mouse_down(&mut w.ws, hx, hy, false);
-        assert_eq!(
-            v.menu.as_ref().map(|m| m.subject.clone()),
-            Some(MenuSubject::Help),
+        assert!(
+            v.explore
+                .popover_is(crate::panes::explore::PopoverKind::Help),
             "the rail's ? opens the help popover on {mode:?}"
         );
-        v.menu = None;
+        v.explore.close_popover();
+        v.explore
+            .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
     }
 }
 
@@ -4389,14 +4397,13 @@ fn selecting_the_tab_you_are_already_in_asks_for_nothing() {
     assert_eq!(View::take_pane_request(&mut v), None);
 }
 
-/// **Selecting Manage arms its Workspaces poll and asks the shell for
-/// nothing.** The controller answers on its own thread, so what selection
-/// arms is the pass that takes what arrived. The tick's re-arming is
-/// `workspace_menu/tests.rs`'s.
+/// Selecting Manage uses the window controller and does not create an idle tick.
 #[test]
-fn selecting_manage_arms_its_poll_and_asks_the_shell_for_nothing() {
+fn selecting_manage_asks_the_shell_for_nothing_and_does_not_arm_an_idle_poll() {
     let (mut v, _workspace) = container();
-    v.tabs_mut().push(tab::Tab::manage());
+    let controller = v.workspace_controller.clone();
+    v.tabs_mut()
+        .push(tab::Tab::manage_with_controller(controller));
     let manage = v.tabs().len() - 1;
     assert!(v.select(0));
     let _ = View::take_pane_request(&mut v);
@@ -4404,7 +4411,7 @@ fn selecting_manage_arms_its_poll_and_asks_the_shell_for_nothing() {
 
     assert!(v.select(manage));
     assert_eq!(View::take_pane_request(&mut v), None);
-    assert!(v.workspaces_poll_due.is_some(), "the Manage tick is armed");
+    assert!(v.workspaces_poll_due.is_none(), "no command is pending");
 }
 
 #[test]
@@ -6139,7 +6146,7 @@ fn ctrl_alt_w_shows_the_workspaces_without_opening_the_pane() {
 /// that closed it would make the second press of a chord you hold down undo the
 /// first.
 #[test]
-fn ctrl_alt_w_leaves_the_switcher_open() {
+fn ctrl_alt_w_toggles_the_workspace_menu() {
     let (mut v, mut workspace) = on_document();
     v.toggle_sidebar();
     v.adopt(&workspace.ws);
@@ -6147,7 +6154,12 @@ fn ctrl_alt_w_leaves_the_switcher_open() {
     v.key(&mut workspace.ws, &ch("w"), Some("w"), PRIMARY_ALT);
     assert!(v.explore.popover_open());
     v.key(&mut workspace.ws, &ch("w"), Some("w"), PRIMARY_ALT);
-    assert!(v.explore.popover_open(), "still showing");
+    assert!(
+        !v.explore.popover_open(),
+        "the second chord closes the menu"
+    );
+    v.key(&mut workspace.ws, &ch("w"), Some("w"), PRIMARY_ALT);
+    assert!(v.explore.popover_open(), "the next chord reopens it");
 
     // Escape is what shuts it, through the popover's own key handling.
     v.key(
@@ -6259,7 +6271,7 @@ fn a_right_click_on_a_workspace_row_opens_its_menu_over_the_page() {
     v.menu = None;
     v.explore
         .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
-    let chip = crate::panes::sidebar::floor::solve(v.explore_area()).chip;
+    let chip = v.explore.apps_rail_rects(v.rail_area()).workspaces[0].1;
     let (cx, cy) = chip.centre();
     v.mouse_down(&mut w.ws, cx, cy, false);
     assert!(v.explore.popover_open());
@@ -6274,26 +6286,41 @@ fn a_right_click_on_a_workspace_row_opens_its_menu_over_the_page() {
     assert!(v.explore.popover_open(), "and the page stays");
 }
 
-/// **The rail's Settings tooltip carries its chord** (the review's note), the
+/// **The Profile menu's App settings tooltip carries its chord**, the
 /// way the lane's controls carry theirs; the `?` has no chord to carry.
 #[test]
-fn the_rails_settings_tooltip_carries_its_chord() {
+fn the_profile_menus_settings_tooltip_carries_its_chord() {
     let (mut v, _w) = container();
     v.toggle_sidebar();
     let rects = v.explore.apps_rail_rects(v.rail_area());
-    let (x, y) = rects.settings.centre();
+    v.explore.toggle_profile_popover();
+    let (_, settings) = v
+        .explore
+        .popover_rects(v.explore_popover_area(), v.viewport)
+        .into_iter()
+        .find(|(row, _)| {
+            matches!(
+                row,
+                crate::panes::explore::PopoverRow::ProfileAction(
+                    crate::panes::explore::popover_elements::profiles::MenuAction::Settings
+                )
+            )
+        })
+        .unwrap();
+    let (x, y) = settings.centre();
     v.mouse_move(x, y);
     assert_eq!(
         v.tooltip.label(),
         Some(koru_i18n::t(
             crate::format::lang(),
-            koru_i18n::Key::SettingsTab
+            koru_i18n::Key::ProfileAppSettings
         ))
     );
     assert_eq!(
         v.tooltip.shortcut(),
         Some(koru_keys::label_of(koru_keys::ShortcutId::Settings).as_str())
     );
+    v.explore.close_popover();
     let (hx, hy) = rects.help.centre();
     v.mouse_move(hx, hy);
     assert_eq!(v.tooltip.shortcut(), None, "the ? has no chord");
@@ -6302,19 +6329,15 @@ fn the_rails_settings_tooltip_carries_its_chord() {
 /// **The profile tile and the chip's tile share a baseline** (the review's
 /// note): the same size, their centres level, side by side at the foot.
 #[test]
-fn the_profile_tile_sits_level_with_the_chips_tile() {
+fn the_workspace_and_profile_squares_keep_their_rail_positions() {
     let (mut v, _w) = container();
     v.toggle_sidebar();
-    let square = v.explore.apps_rail_rects(v.rail_area()).profile;
-    let tile = crate::panes::sidebar::apps_rail::PROFILE_TILE;
-    let profile_centre = square.y + square.h * 0.5;
-    let chip_tile = crate::panes::sidebar::floor::solve(v.explore_area()).avatar;
-    assert_eq!(chip_tile.h, tile, "the same size");
-    assert!(
-        (profile_centre - chip_tile.centre().1).abs() < 0.5,
-        "level: the square's centre {profile_centre} vs the chip tile's {:?}",
-        chip_tile
-    );
+    let rail = v.explore.apps_rail_rects(v.rail_area());
+    let current = rail.workspaces[0].1;
+    assert_eq!(current.w, rail.profile.w);
+    assert_eq!(current.h, rail.profile.h);
+    assert!(current.y < rail.apps[0].1.y);
+    assert!(rail.profile.y > rail.help.y);
 }
 
 /// **The lane has no `+`** (the review's note, E44): search and the toggle
@@ -6353,7 +6376,7 @@ fn rename_from_a_right_click_has_a_row_to_draw_on() {
     // Put the field and the page away, and rename with nothing listing the
     // workspace: the Manage tab opens to carry the field.
     v.workspace_rename = None;
-    let chip = crate::panes::sidebar::floor::solve(v.explore_area()).chip;
+    let chip = v.explore.apps_rail_rects(v.rail_area()).workspaces[0].1;
     let (cx, cy) = chip.centre();
     v.mouse_down(&mut w.ws, cx, cy, false);
     assert!(!v.explore.popover_open());
@@ -6375,7 +6398,7 @@ fn a_right_click_on_the_floor_chip_opens_the_open_workspaces_menu() {
     use crate::mainview::context_menu::MenuSubject;
     let (mut v, mut w, _) = with_summary_open();
     let id = v.workspaces()[0].id;
-    let chip = crate::panes::sidebar::floor::solve(v.explore_area()).chip;
+    let chip = v.explore.apps_rail_rects(v.rail_area()).workspaces[0].1;
     let (cx, cy) = chip.centre();
     // Shut the page the fixture opened; the chip is its door.
     v.mouse_down(&mut w.ws, cx, cy, false);
@@ -6398,73 +6421,66 @@ fn a_right_click_on_the_floor_chip_opens_the_open_workspaces_menu() {
 /// corner and lifts itself to stay on screen at the window's foot; a chosen
 /// format imports, Trash opens the tab, New workspace the name prompt.
 #[test]
-fn the_floor_dots_open_the_workspace_menu() {
+fn the_workspace_menu_actions_reach_import_trash_and_creation() {
     use crate::mainview::context_menu::{MenuAction, MenuSubject};
+    use crate::panes::explore::{
+        PopoverRow, workspace_menu_elements::MenuAction as WorkspaceAction,
+    };
     let (mut v, mut w, _) = with_summary_open();
-    let vp = v.viewport;
-    let dots = crate::panes::sidebar::floor::solve(v.explore_area()).dots;
-    let (x, y) = dots.centre();
-    v.mouse_down(&mut w.ws, x, y, false);
-    assert!(!v.explore.popover_open(), "the page shut under the menu");
-    let menu = v.menu.as_ref().expect("the menu opened");
-    assert_eq!(menu.subject, MenuSubject::Floor);
-    assert_eq!(menu.items(), context_menu::floor_items());
-    let m = menu.panel(vp);
-    assert!(m.y + m.h <= vp.1 + 0.5, "on screen: {m:?} vs {vp:?}");
-    assert!(m.y < dots.y, "lifted above the button: {m:?} vs {dots:?}");
-    assert!(
-        m.x >= dots.x + dots.w - 0.5,
-        "beside the button, to its right (the review's note): {m:?} vs {dots:?}"
-    );
-    let enabled = v.enabled_items(menu);
-    let dimmed: Vec<_> = menu
-        .items()
-        .iter()
-        .zip(enabled)
-        .filter(|(_, on)| !on)
-        .map(|(item, _)| *item)
-        .collect();
+    let import = v
+        .explore
+        .popover_rects(v.explore_area(), v.viewport)
+        .into_iter()
+        .find(|(row, _)| *row == PopoverRow::WorkspaceAction(WorkspaceAction::Import))
+        .unwrap()
+        .1;
+    let (x, y) = import.centre();
+    assert!(v.mouse_down(&mut w.ws, x, y, false));
+    assert!(v.explore.popover_open());
     assert_eq!(
-        dimmed,
-        vec![MenuAction::InvitePeople],
-        "only Invite people waits"
+        v.menu.as_ref().unwrap().items(),
+        context_menu::import_menu_items()
     );
-
     let format = koru_workspace_host::formats::import_menu_formats()[0].id;
-    assert!(v.run_menu_action_for_test(MenuSubject::Floor, MenuAction::ImportFormat(format)));
-    assert!(v.run_menu_action_for_test(MenuSubject::Floor, MenuAction::OpenTrash));
-    assert!(
-        matches!(v.tabs().active_tab().view, TabView::Trash(_)),
-        "Trash opened its tab"
-    );
-    assert!(v.run_menu_action_for_test(MenuSubject::Floor, MenuAction::NewWorkspace));
-    assert!(v.new_document.is_some(), "the name prompt is open");
+    assert!(v.run_menu_action_for_test(MenuSubject::NewTab, MenuAction::ImportFormat(format)));
+    assert!(!v.explore.popover_open());
+    assert!(v.apply(&mut w.ws, crate::panes::Outcome::OpenTrash));
+    assert!(matches!(v.tabs().active_tab().view, TabView::Trash(_)));
+    assert!(v.apply(&mut w.ws, crate::panes::Outcome::NewWorkspace));
+    assert!(v.new_document.is_some());
 }
 
-/// **The toolbar's sync icon opens the Sync settings tab**, once; the
-/// settings icon the Settings tab. Both shut the page. The sync tab says
-/// only its name for now, and comes back from a session as itself.
+/// Global sync opens Linked devices in the singleton Manage tab; the
+/// Profile menu's settings action opens Settings.
 #[test]
-fn the_sync_settings_tab_opens_once_and_the_rail_opens_settings() {
+fn the_sync_settings_tab_opens_once_and_the_profile_menu_opens_settings() {
     let (mut v, mut w, _) = with_summary_open();
     v.explore.close_popover();
     let tabs = v.tabs().len();
     assert!(v.open_sync_settings_tab());
     assert_eq!(v.tabs().len(), tabs + 1, "one tab opened");
-    let lang = crate::format::lang();
-    assert_eq!(
-        v.tabs().active_tab().label,
-        koru_i18n::t(lang, koru_i18n::Key::SyncSettingsTab)
-    );
-    assert_eq!(
-        v.tabs().active_tab().whats_new.as_ref().map(|n| n.page),
-        Some(tab::PrivatePage::SyncSettings)
-    );
+    let TabView::Manage(manage) = &v.tabs().active_tab().view else {
+        panic!("Global sync opens Manage");
+    };
+    assert_eq!(manage.page(), Some(crate::manage::Page::Devices));
     assert!(v.open_sync_settings_tab(), "the same tab comes forward");
     assert_eq!(v.tabs().len(), tabs + 1, "and no second one opens");
 
-    // The rail's settings square opens Settings.
-    let (x, y) = v.explore.apps_rail_rects(v.rail_area()).settings.centre();
+    v.explore.toggle_profile_popover();
+    let (_, settings) = v
+        .explore
+        .popover_rects(v.explore_popover_area(), v.viewport)
+        .into_iter()
+        .find(|(row, _)| {
+            matches!(
+                row,
+                crate::panes::explore::PopoverRow::ProfileAction(
+                    crate::panes::explore::popover_elements::profiles::MenuAction::Settings
+                )
+            )
+        })
+        .unwrap();
+    let (x, y) = settings.centre();
     v.mouse_down(&mut w.ws, x, y, false);
     assert!(
         matches!(v.tabs().active_tab().view, TabView::Settings(_)),
@@ -6505,18 +6521,18 @@ fn the_workspace_popover_owns_the_resize_grip_under_its_rows() {
         .find(|(row, _)| matches!(row, crate::panes::explore::PopoverRow::Workspace(0)))
         .expect("the workspace row");
     let grip = v.sidebar_grip();
-    // Where the row's gear and the grip overlap. Since ELEMENTS P4 a
+    // Where the row's pin and the grip overlap. Since ELEMENTS P4 a
     // target owns its start edge and not its end edge, so the point is the
-    // middle of the overlap, not the gear's last line.
-    let gear = v
+    // middle of the overlap, not the pin's last line.
+    let pin = v
         .explore
         .workspace_row_parts(crate::panes::explore::PopoverRow::Workspace(0), rect)
-        .trailing;
-    let left = gear.x.max(grip.x);
-    let right = (gear.x + gear.w).min(grip.x + grip.w);
+        .pin;
+    let left = pin.x.max(grip.x);
+    let right = (pin.x + pin.w).min(grip.x + grip.w);
     assert!(
         left < right,
-        "this test point is where the gear and the grip overlap"
+        "this test point is where the pin and the grip overlap"
     );
     let x = (left + right) * 0.5;
     let y = rect.centre().1;
@@ -6528,12 +6544,8 @@ fn the_workspace_popover_owns_the_resize_grip_under_its_rows() {
         v.sidebar_drag.is_none(),
         "the underlying grip did not start"
     );
-    // The press is the row's — its trailing end, where the grip overlaps,
-    // is the gear, so the Manage tab opens on the workspace.
-    assert!(
-        matches!(v.tabs().active_tab().view, TabView::Manage(_)),
-        "the gear under the grip opened Manage"
-    );
+    assert!(v.explore.popover_open(), "pinning keeps the menu open");
+    assert!(!matches!(v.tabs().active_tab().view, TabView::Manage(_)));
     let _ = workspace_id;
 }
 
@@ -13765,270 +13777,262 @@ fn press_help(
     (rail, help)
 }
 
-/// The rail's `?` opens the help popover beside the rail, its foot level with
-/// the `?`, as the review's artboard draws it (QUESTIONS.md E33): *WHAT'S NEW*
-/// over the release card, *Full changelog*, *Send feedback* and *Star us on
-/// GitHub*, and the strip of the website and the socials at the foot. With
-/// nothing on offer the card is this build: the shipped notes' first section
-/// for a title, the next two for its line, Download drawn dim.
+/// The element Help menu keeps its current release, fixed links and geometry
+/// at the minimum viewport in both themes, without a fictitious download row.
 #[test]
-fn the_help_popover_is_the_artboards_rows_beside_the_rail() {
-    use crate::mainview::context_menu::{self, MenuAction};
-    use koru_ui::MenuItem;
-    let (mut v, mut workspace, _) = with_summary_open();
-    v.explore.close_popover();
-    v.help_headlines_rx = None;
-    v.help_headlines = Some(vec![
-        "Welcome".to_owned(),
-        "Sync".to_owned(),
-        "Agents".to_owned(),
-        "A fourth that does not show".to_owned(),
-    ]);
-    let (rail, help) = press_help(&mut v, &mut workspace);
-    let menu = v.menu.as_ref().expect("the help popover opened");
-    let items = menu.items();
-    assert_eq!(
-        items,
-        &[
-            MenuAction::HelpWhatsNewHeading,
-            MenuAction::HelpRelease,
-            MenuAction::Divider,
-            MenuAction::HelpFullChangelog,
-            MenuAction::Divider,
-            MenuAction::HelpSendFeedback,
-            MenuAction::HelpStarOnGitHub,
-            MenuAction::Divider,
-            MenuAction::HelpSocials,
-        ]
-    );
-    assert!(!MenuAction::HelpWhatsNewHeading.selectable());
-    assert!(
-        !MenuAction::HelpSocials.selectable(),
-        "the strip is its buttons"
-    );
-    assert_eq!(
-        MenuAction::HelpWhatsNewHeading.label().as_ref(),
-        "WHAT'S NEW",
-        "a heading, in caps"
-    );
-    // The card: this build, since nothing is on offer.
-    let card = MenuItem::card(&MenuAction::HelpRelease).expect("a card");
-    assert_eq!(card.title, "Welcome");
-    assert_eq!(card.body, "Sync · Agents");
-    let info = koru_channel::build_info();
-    assert_eq!(
-        card.badge,
-        format!("{} · {}", info.channel.to_uppercase(), info.version)
-    );
-    assert_eq!(
-        card.button
-            .as_ref()
-            .map(|(label, on)| (label.as_str(), *on)),
-        Some(("Download", false)),
-        "nothing to download: the button is there, drawn dim"
-    );
-    assert!(
-        !MenuItem::unread(&MenuAction::HelpWhatsNewHeading),
-        "no dot without an offer"
-    );
-    let button = menu
-        .control_rect(v.viewport, 1, 0)
-        .expect("the card's button");
-    let (bx, by) = button.centre();
-    assert_eq!(menu.control_at(v.viewport, bx, by), Some((1, 0)));
-    assert!(
-        menu.pressable_control_at(v.viewport, bx, by).is_none(),
-        "and refuses the press"
-    );
-    // The changelog leaves the app, and says so where a chord would be.
-    assert_eq!(
-        MenuItem::trailing_icon(&MenuAction::HelpFullChangelog),
-        Some(koru_draw::icons::POP_OUT)
-    );
-    // So does the repository: the GitHub mark at its start, `↗` at its end,
-    // and its name is what a screen reader reads.
-    assert_eq!(
-        MenuItem::trailing_icon(&MenuAction::HelpStarOnGitHub),
-        Some(koru_draw::icons::POP_OUT)
-    );
-    assert_eq!(
-        MenuAction::HelpStarOnGitHub.icon(),
-        Some(koru_draw::icons::GITHUB)
-    );
-    assert_eq!(
-        MenuAction::HelpStarOnGitHub.label().as_ref(),
-        "Star us on GitHub"
-    );
-    assert!(MenuAction::HelpStarOnGitHub.selectable());
-    // The strip: the globe, then the socials, each named for its tooltip.
-    let strip = items
-        .iter()
-        .position(|i| *i == MenuAction::HelpSocials)
-        .unwrap();
-    let names: Vec<String> = (0..6)
-        .map(|c| {
-            context_menu::control_tooltip(MenuAction::HelpSocials, c)
-                .expect("a named button")
-                .0
-        })
-        .collect();
-    assert_eq!(
-        names,
-        ["koru.do", "X", "Reddit", "Instagram", "TikTok", "YouTube"]
-    );
-    assert!(menu.control_rect(v.viewport, strip, 5).is_some());
-    assert!(
-        menu.control_rect(v.viewport, strip, 6).is_none(),
-        "six, not seven"
-    );
-    // Beside the rail, its foot level with the ?, and wide enough for a card.
-    let panel = menu.panel(v.viewport);
-    assert!(
-        panel.x >= rail.x + rail.w - 0.5,
-        "the popover hangs beside the rail: {panel:?} vs {rail:?}"
-    );
-    assert!(
-        (panel.y + panel.h - (help.y + help.h)).abs() < 0.5,
-        "its foot level with the ?: {panel:?} vs {help:?}"
-    );
-    assert!(panel.y >= 0.0);
-    assert!(panel.w >= koru_ui::menu::CARD_MIN_W);
-    // Every row can be chosen; the Keyboard shortcuts row is gone until its
-    // page exists (the review's note).
-    let enabled = v.enabled_items(menu);
-    let at = |a: MenuAction| items.iter().position(|i| *i == a).unwrap();
-    for row in [
-        MenuAction::HelpRelease,
-        MenuAction::HelpFullChangelog,
-        MenuAction::HelpSendFeedback,
-        MenuAction::HelpStarOnGitHub,
-    ] {
-        assert!(enabled[at(row)], "{row:?}");
-    }
-    // Its own subject, not the window menu's: the caption's ⋯ tracker shuts
-    // a `Window` menu the moment the pointer leaves its button.
-    assert!(!v.window_menu_open());
-    let content = v.content();
-    v.mouse_move(content.x + content.w * 0.5, content.y + content.h * 0.5);
-    assert!(
-        v.menu.is_some(),
-        "a pointer move leaves the help popover up"
-    );
-    // Without notes the card says so, and the popover still opens.
-    v.menu = None;
-    v.help_headlines = None;
-    press_help(&mut v, &mut workspace);
-    assert!(v.menu.is_some(), "opens without notes too");
-    let card = MenuItem::card(&MenuAction::HelpRelease).expect("a card");
-    assert_eq!(card.title, format!("Koru {}", info.version));
-    assert_eq!(card.body, "Not shipped with this build");
+fn the_help_popover_lists_the_timeline_and_links_beside_the_rail() {
+    use crate::panes::explore::{PopoverKind, PopoverRow, help::Action};
+    use koru_draw::el::{Name, Role};
+    let _theme = crate::tests::lock_theme();
+    let was_dark = koru_draw::theme::is_dark();
+    koru_i18n::with_current(koru_i18n::Lang::En, || {
+        for dark in [false, true] {
+            koru_draw::theme::set_dark(dark);
+            for (width, height) in [(1200.0, 700.0), (720.0, 600.0)] {
+                let (mut v, mut workspace, _) = with_summary_open();
+                v.set_viewport(width, height);
+                v.explore.close_popover();
+                v.help_headlines_rx = None;
+                v.help_headlines = Some(vec![
+                    "Welcome".into(),
+                    "Sync".into(),
+                    "Agents".into(),
+                    "A fourth heading".into(),
+                ]);
+                let mut report = a_build_is_available();
+                report.stage = koru_agent_wire::UpdateStage::Idle;
+                report.version.clear();
+                v.updates = crate::agent::UpdateFeed::for_test(report).0;
+                let (rail, help) = press_help(&mut v, &mut workspace);
+                v.explore
+                    .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
+                assert!(v.explore.popover_is(PopoverKind::Help));
+                assert!(
+                    !v.help_notes_read,
+                    "opening Help does not read release notes"
+                );
+                let area = v.explore_popover_area();
+                let rows = v.explore.popover_rects(area, v.viewport);
+                assert_eq!(
+                    rows.iter().map(|(row, _)| *row).collect::<Vec<_>>(),
+                    [
+                        PopoverRow::Help(Action::Current),
+                        PopoverRow::Help(Action::Releases),
+                        PopoverRow::Help(Action::Feedback),
+                        PopoverRow::Help(Action::GitHub),
+                        PopoverRow::Help(Action::X),
+                    ]
+                );
+                v.explore
+                    .with_page(area, v.viewport, |frame| {
+                        let semantics = frame.semantics();
+                        assert_eq!(semantics[0].role, Role::Menu);
+                        assert_eq!(semantics[0].children[0].role, Role::Heading);
+                        assert_eq!(
+                            semantics[0].children[0].name,
+                            Some(Name::Key(koru_i18n::Key::WhatsNew))
+                        );
+                        assert!(
+                            frame.node(Action::Offer.key()).is_none(),
+                            "no disabled offer substitute"
+                        );
+                        let current = frame.node(Action::Current.key()).unwrap();
+                        let Some(Name::Text(label)) = &current.label else {
+                            panic!("current release label");
+                        };
+                        assert!(label.contains(koru_channel::build_info().version));
+                        assert!(label.contains("Current · Welcome"));
+                        assert!(
+                            !label.contains("Sync · Agents"),
+                            "only the first heading describes this build"
+                        );
+                        for (action, label) in [
+                            (Action::Releases, "View all releases"),
+                            (Action::Feedback, "Send feedback"),
+                            (Action::GitHub, "Star us on GitHub"),
+                            (Action::X, "Follow on X"),
+                        ] {
+                            let node = frame.node(action.key()).unwrap();
+                            assert_eq!(node.label, Some(Name::Text(label.into())));
+                            assert!(node.focusable);
+                            assert_eq!(node.role, Some(Role::MenuItem));
+                            let (x, y) = node.rect.centre();
+                            assert_eq!(frame.hit_at(x, y), Some(action.key()));
+                        }
+                    })
+                    .unwrap();
+                let panel = v.explore.popover_panel(area, v.viewport).unwrap();
+                assert!(panel.x >= rail.x + rail.w - 0.5, "{panel:?} / {rail:?}");
+                assert!(panel.x >= 0.0 && panel.y >= 0.0);
+                assert!(panel.x + panel.w <= width && panel.y + panel.h <= height);
+                assert!((panel.y + panel.h - (help.y + help.h)).abs() < 0.5);
+                assert!(
+                    rows.iter()
+                        .all(|(_, rect)| rect.y >= panel.y && rect.y + rect.h <= panel.y + panel.h)
+                );
+                let releases = rows
+                    .iter()
+                    .find(|(row, _)| *row == PopoverRow::Help(Action::Releases))
+                    .unwrap()
+                    .1;
+                let feedback = rows
+                    .iter()
+                    .find(|(row, _)| *row == PopoverRow::Help(Action::Feedback))
+                    .unwrap()
+                    .1;
+                assert!(
+                    feedback.y > releases.y + releases.h,
+                    "the divider precedes Send feedback"
+                );
+                assert!(!v.window_menu_open());
+                let content = v.content();
+                v.mouse_move(content.x + content.w * 0.5, content.y + content.h * 0.5);
+                assert!(
+                    v.explore.popover_is(PopoverKind::Help),
+                    "pointer movement keeps Help open"
+                );
+
+                v.explore.close_popover();
+                v.explore
+                    .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
+                v.help_headlines = None;
+                press_help(&mut v, &mut workspace);
+                v.explore
+                    .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
+                assert!(
+                    v.explore.popover_is(PopoverKind::Help),
+                    "missing notes do not hide Help"
+                );
+                v.explore
+                    .with_page(area, v.viewport, |frame| {
+                        let Some(Name::Text(label)) =
+                            &frame.node(Action::Current.key()).unwrap().label
+                        else {
+                            panic!("current release label");
+                        };
+                        assert!(label.contains(koru_channel::build_info().version));
+                        assert!(label.contains("Not shipped with this build"));
+                    })
+                    .unwrap();
+                v.explore.close_popover();
+            }
+        }
+    });
+    koru_draw::theme::set_dark(was_dark);
 }
 
-/// Each row's destination: the changelog, the repository, the website and
-/// the socials open in the browser through the shell's URI port; feedback
-/// and a problem open the Feedback tab — the second on *Something isn't working*, turning an
-/// open Feedback tab rather than doubling it; the card opens What's new.
+/// Help navigation uses the shell URI port and retains the Feedback tab.
 #[test]
 fn the_help_rows_open_their_destinations() {
-    use crate::mainview::context_menu::{GITHUB_URL, MenuAction, MenuSubject, Social, WEBSITE_URL};
+    use crate::mainview::context_menu::{GITHUB_URL, Social};
+    use crate::panes::explore::help::Action;
     use koru_workspace_host::{PaneRequest, View};
     let (mut v, _w) = container();
     while View::take_pane_request(&mut v).is_some() {}
-    assert!(v.run_menu_action_for_test(MenuSubject::Help, MenuAction::HelpFullChangelog));
-    assert_eq!(
-        View::take_pane_request(&mut v),
-        Some(PaneRequest::OpenUri(crate::whatsnew::RELEASES_URL))
-    );
-    assert_eq!(
-        crate::whatsnew::RELEASES_URL,
-        "https://www.koru.do/en/releases"
-    );
-    assert!(v.run_menu_action_for_test(MenuSubject::Help, MenuAction::HelpStarOnGitHub));
-    assert_eq!(
-        View::take_pane_request(&mut v),
-        Some(PaneRequest::OpenUri(GITHUB_URL))
-    );
-    assert_eq!(GITHUB_URL, "https://github.com/koruworks/mono");
-    assert!(v.run_menu_action_for_test(MenuSubject::Help, MenuAction::HelpWebsite));
-    assert_eq!(
-        View::take_pane_request(&mut v),
-        Some(PaneRequest::OpenUri(WEBSITE_URL))
-    );
-    for social in Social::ALL {
-        assert!(v.run_menu_action_for_test(MenuSubject::Help, MenuAction::HelpSocial(social)));
+    for (action, uri) in [
+        (
+            Action::Releases,
+            "https://github.com/koruworks/mono/releases",
+        ),
+        (Action::GitHub, "https://github.com/koruworks/mono"),
+        (Action::X, "https://x.com/korudotdo"),
+    ] {
+        assert!(v.help_action(action));
         assert_eq!(
             View::take_pane_request(&mut v),
-            Some(PaneRequest::OpenUri(social.url())),
-            "{social:?}"
+            Some(PaneRequest::OpenUri(uri)),
+            "{action:?}"
         );
         assert!(
-            social.url().contains("korudo"),
-            "{social:?}: {}",
-            social.url()
+            View::take_pane_request(&mut v).is_none(),
+            "one row, one URI request"
         );
     }
-    assert!(
-        View::take_pane_request(&mut v).is_none(),
-        "one row, one request"
+    assert_eq!(
+        crate::whatsnew::RELEASES_URL,
+        "https://github.com/koruworks/mono/releases"
     );
-    // Feedback: the one feedback row (the review's note).
-    assert!(v.run_menu_action_for_test(MenuSubject::Help, MenuAction::HelpSendFeedback));
-    assert!(
-        matches!(v.tabs().active_tab().view, TabView::Feedback(_)),
-        "the Feedback tab"
+    assert_eq!(GITHUB_URL, "https://github.com/koruworks/mono");
+    assert_eq!(Social::X.url(), "https://x.com/korudotdo");
+    assert!(v.help_action(Action::Feedback));
+    assert!(matches!(v.tabs().active_tab().view, TabView::Feedback(_)));
+    let tabs = v.tabs().len();
+    assert!(v.help_action(Action::Feedback));
+    assert_eq!(v.tabs().len(), tabs, "Feedback reuses its tab");
+    assert!(v.help_action(Action::Current));
+    assert_eq!(
+        v.tabs().len(),
+        tabs,
+        "release opens in the browser, not a new tab"
     );
-    // The card opens What's new.
-    assert!(v.run_menu_action_for_test(MenuSubject::Help, MenuAction::HelpRelease));
-    assert!(v.tabs().active_tab().whats_new.is_some());
+    assert_eq!(
+        View::take_pane_request(&mut v),
+        Some(PaneRequest::OpenWebsite(crate::whatsnew::release_url(
+            koru_channel::build_info().version,
+            koru_channel::ReleaseChannel::of_this_build(),
+        )))
+    );
+    assert!(
+        v.help_notes_read,
+        "opening the release acknowledges the notes"
+    );
     crate::feedback::draft::reset();
 }
 
-/// With a build on offer the card is that build — the manifest's title and
-/// summary, the heading's dot on — and its Download is live: pressing it in
-/// the popover the `?` opened sends the update's first consent and leaves
-/// the popover up, the way a stepper's button does.
+/// A real pointer press on the offer sends the first consent, closes Help,
+/// and a second press while that stage is pending sends no duplicate consent.
 #[test]
-fn the_cards_download_sends_the_first_consent_when_a_build_is_offered() {
-    use crate::mainview::context_menu::MenuAction;
-    use koru_ui::MenuItem;
+fn the_help_offer_sends_download_and_closes_with_a_pending_guard() {
+    use crate::panes::explore::{PopoverKind, PopoverRow, help::Action};
     let (mut v, mut workspace, _) = with_summary_open();
     v.explore.close_popover();
     v.help_headlines_rx = None;
     v.help_headlines = Some(vec!["Welcome".to_owned()]);
-    let report = a_build_is_available();
-    let (feed, sent) = crate::agent::UpdateFeed::for_test(report);
+    let (feed, sent) = crate::agent::UpdateFeed::for_test(a_build_is_available());
     v.updates = feed;
-    press_help(&mut v, &mut workspace);
-    let menu = v.menu.clone().expect("the help popover opened");
-    let card = MenuItem::card(&MenuAction::HelpRelease).expect("a card");
-    assert_eq!(card.badge, "NIGHTLY · 0.9.1", "the offer, not this build");
-    assert_eq!(card.title, "Faster documents, quieter windows");
-    assert_eq!(card.body, "Opening a large workspace is nine times faster.");
-    assert_eq!(
-        card.button.as_ref().map(|(_, on)| *on),
-        Some(true),
-        "Download is live"
-    );
-    assert!(
-        MenuItem::unread(&MenuAction::HelpWhatsNewHeading),
-        "the heading wears its dot"
-    );
-    let button = menu
-        .control_rect(v.viewport, 1, 0)
-        .expect("the card's button");
-    let (x, y) = button.centre();
-    assert_eq!(menu.pressable_control_at(v.viewport, x, y), Some((1, 0)));
-    assert!(v.mouse_down(&mut workspace.ws, x, y, false));
-    assert!(v.menu.is_some(), "the popover stays up");
-    let koru_agent_wire::FromShell::Request { body, .. } =
-        sent.try_recv().expect("the press sent the consent");
-    assert_eq!(
-        body,
-        koru_agent_wire::Request::UpdateChoice {
-            choice: koru_agent_wire::UpdateChoice::Download
+    for attempt in 0..2 {
+        press_help(&mut v, &mut workspace);
+        v.explore
+            .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
+        assert!(v.explore.popover_is(PopoverKind::Help));
+        let area = v.explore_popover_area();
+        let rows = v.explore.popover_rects(area, v.viewport);
+        assert_eq!(rows[0].0, PopoverRow::Help(Action::Offer));
+        assert_eq!(rows[1].0, PopoverRow::Help(Action::Current));
+        let (x, y) = rows[0].1.centre();
+        v.explore
+            .with_page(area, v.viewport, |frame| {
+                assert_eq!(frame.hit_at(x, y), Some(Action::Offer.key()));
+                let node = frame.node(Action::Offer.key()).unwrap();
+                let Some(koru_draw::el::Name::Text(label)) = &node.label else {
+                    panic!("offer name");
+                };
+                assert!(
+                    label.contains("0.9.1")
+                        && label.contains("Available")
+                        && label.contains("Download")
+                );
+            })
+            .unwrap();
+        assert!(v.mouse_down(&mut workspace.ws, x, y, false));
+        assert!(
+            !v.explore.popover_open(),
+            "the chosen action closes the menu"
+        );
+        if attempt == 0 {
+            let koru_agent_wire::FromShell::Request { body, .. } =
+                sent.try_recv().expect("first consent");
+            assert_eq!(
+                body,
+                koru_agent_wire::Request::UpdateChoice {
+                    choice: koru_agent_wire::UpdateChoice::Download
+                }
+            );
         }
-    );
-    assert!(sent.try_recv().is_err(), "one press, one message");
+        assert!(sent.try_recv().is_err(), "no duplicate consent");
+        v.explore
+            .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
+    }
 }
 
 /// A press on the rail is a press outside the who/where popover, so it shuts
@@ -14037,7 +14041,7 @@ fn the_cards_download_sends_the_first_consent_when_a_build_is_offered() {
 /// square is the list's own door and toggles it instead.
 #[test]
 fn a_press_on_the_rail_shuts_the_popover_and_still_acts() {
-    use crate::mainview::context_menu::MenuSubject;
+    use crate::panes::explore::PopoverKind;
     let settle = |v: &mut MainView| {
         v.explore
             .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
@@ -14045,15 +14049,21 @@ fn a_press_on_the_rail_shuts_the_popover_and_still_acts() {
     let (mut v, mut w, _) = with_summary_open();
     let rail = v.rail_area();
     let rects = v.explore.apps_rail_rects(rail);
-    // Settings on the rail, with the chip's page up.
-    let (x, y) = rects.settings.centre();
+    // A view on the rail, with the workspace menu open.
+    let (x, y) = rects
+        .apps
+        .iter()
+        .find(|(mode, _)| *mode == crate::panes::explore::NavigatorMode::Files)
+        .unwrap()
+        .1
+        .centre();
     assert!(v.mouse_down(&mut w.ws, x, y, false));
     assert!(
         !v.explore.popover_open(),
         "a press outside the popover shuts it"
     );
     assert!(
-        matches!(v.tabs().active_tab().view, TabView::Settings(_)),
+        v.explore.navigator_mode() == crate::panes::explore::NavigatorMode::Files,
         "and still acts"
     );
     settle(&mut v);
@@ -14063,12 +14073,12 @@ fn a_press_on_the_rail_shuts_the_popover_and_still_acts() {
     assert!(v.explore.popover_open(), "the square opens its list");
     let (hx, hy) = rects.help.centre();
     v.mouse_down(&mut w.ws, hx, hy, false);
-    assert!(!v.explore.popover_open(), "the ? is outside the list");
-    assert_eq!(
-        v.menu.as_ref().map(|m| m.subject.clone()),
-        Some(MenuSubject::Help)
+    assert!(
+        v.explore.popover_is(PopoverKind::Help),
+        "Help replaces the Profiles list"
     );
-    v.menu = None;
+    assert!(!v.explore.popover_is(PopoverKind::Profiles));
+    v.explore.close_popover();
     settle(&mut v);
     // The square shuts its own list.
     v.mouse_down(&mut w.ws, sx, sy, false);

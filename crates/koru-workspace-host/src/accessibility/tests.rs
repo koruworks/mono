@@ -16,6 +16,28 @@ use super::{CaptionGeometry, WindowSlot, window_commands};
 
 const LABEL: ControlPart = ControlPart::new("label");
 
+#[test]
+fn descriptions_reach_the_native_node_without_changing_its_name() {
+    let window = WindowSlot::from_raw(1);
+    let occurrence = Occurrence::surface(window, ViewSlot::from_raw(2), "menu", ControlPart::ROOT);
+    let node = SemanticNode::new(occurrence.clone(), Role::MenuItem)
+        .with_label("Pin workspace")
+        .with_description("You can pin up to three workspaces");
+    let projection = build(&semantics(window, "Window", vec![node]));
+    let node = &projection
+        .update
+        .nodes
+        .iter()
+        .find(|(id, _)| *id == occurrence.node_id())
+        .unwrap()
+        .1;
+    assert_eq!(node.label(), Some("Pin workspace"));
+    assert_eq!(
+        node.description(),
+        Some("You can pin up to three workspaces")
+    );
+}
+
 fn doc() -> Uuid {
     Uuid::parse_str("6f9619ff-8b86-d011-b42d-00cf4fc964ff").expect("a fixed fixture uuid")
 }

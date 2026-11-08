@@ -13,7 +13,7 @@ impl ProfilesController {
         creation.set_embedded(true);
         self.hints.size_creation_form = true;
         creation.begin_connected_profile_creation();
-        self.profile_creation = Some(creation);
+        self.profile_creation = Some(std::cell::RefCell::new(creation));
         self.hints.reset_focus = true;
     }
 
@@ -43,12 +43,16 @@ impl ProfilesController {
         // The page frames the form: no first-run pane, lined up with its head.
         creation.set_embedded(true);
         self.hints.size_creation_form = true;
-        self.profile_creation = Some(creation);
+        self.profile_creation = Some(std::cell::RefCell::new(creation));
         self.hints.reset_focus = true;
     }
 
     pub(super) fn drain_profile_creation_action(&mut self) {
-        if let Some(creation) = self.profile_creation.as_mut() {
+        if let Some(creation) = self
+            .profile_creation
+            .as_mut()
+            .map(std::cell::RefCell::get_mut)
+        {
             // These facts belong to first-run onboarding. The same form is
             // reused here, inside an already-open Profile manager.
             let _ = creation.take_telemetry();
@@ -56,9 +60,13 @@ impl ProfilesController {
         let action = self
             .profile_creation
             .as_mut()
+            .map(std::cell::RefCell::get_mut)
             .and_then(|creation| creation.take_action());
         use koru_workspace_host::onboarding::Action;
         match action {
+            Some(Action::ManageProfiles) => {
+                self.cancel_profile_creation();
+            }
             Some(Action::Account(command)) => self.pending = Some(command),
             Some(Action::OpenCreatedProfile(profile)) => {
                 self.profile_switch_request = Some(profile);
@@ -99,7 +107,7 @@ impl ProfilesController {
                 if let Some(submission) = self
                     .profile_creation
                     .as_ref()
-                    .and_then(|creation| creation.account_submission())
+                    .and_then(|creation| creation.borrow().account_submission())
                 {
                     self.creation_submission = Some(submission);
                     self.creation_decision_pending = true;
@@ -108,11 +116,11 @@ impl ProfilesController {
             }
             Some(Action::RetryEnrollment) => {
                 self.pending = Some(AccountCommand::RetryEnrollment {
-                    profile_id: self
-                        .profile_creation
-                        .as_ref()
-                        .and_then(|view| view.selected_account_profile_id())
-                        .map(str::to_owned),
+                    profile_id: self.profile_creation.as_ref().and_then(|view| {
+                        view.borrow()
+                            .selected_account_profile_id()
+                            .map(str::to_owned)
+                    }),
                 });
             }
             Some(Action::CancelGoogle) => {
@@ -120,7 +128,9 @@ impl ProfilesController {
                     generation: self
                         .profile_creation
                         .as_ref()
-                        .map_or(self.account.generation, |view| view.account_generation()),
+                        .map_or(self.account.generation, |view| {
+                            view.borrow().account_generation()
+                        }),
                 });
             }
             Some(Action::CancelEnrollment) => {
@@ -141,13 +151,18 @@ impl ProfilesController {
                     } else {
                         self.profile_restore_request = Some(profile);
                     }
-                } else if let Some(creation) = self.profile_creation.as_mut() {
+                } else if let Some(creation) = self
+                    .profile_creation
+                    .as_mut()
+                    .map(std::cell::RefCell::get_mut)
+                {
                     creation.restore_failed(
                         "Koru couldn't identify that Profile. Nothing was changed.",
                     );
                 }
             }
             Some(Action::CreateLocalProfile {
+                id,
                 owner_display_name,
                 name,
                 workspace_name,
@@ -159,6 +174,7 @@ impl ProfilesController {
                 connect_account,
             }) => {
                 self.profile_creation_request = Some(ConnectedProfileDraft {
+                    id,
                     owner_display_name,
                     profile_name: name,
                     workspace_name,

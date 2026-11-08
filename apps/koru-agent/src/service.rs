@@ -1158,6 +1158,7 @@ pub fn remove_local_profile(
     waker: crate::event::Waker,
     requester: (crate::registry::ConnectionId, u64),
     profile: koru_store_core::ids::ProfileId,
+    attempt: Option<koru_store_core::ids::RemovalAttemptId>,
 ) {
     let failure_waker = waker.clone();
     let profile_id = profile.to_storage();
@@ -1170,7 +1171,7 @@ pub fn remove_local_profile(
                 .and_then(|client| {
                     client
                         .store()
-                        .remove_profile_local(profile)
+                        .remove_profile_local(profile, attempt)
                         .map_err(|error| (error.code().as_str().to_owned(), error.to_string()))
                 })
                 .map(|outcome| match outcome {

@@ -119,7 +119,9 @@ fn identity_projection_preserves_lifecycle_and_rolls_back_with_snapshot() {
     let mut c = catalog();
     let mut profile = Profile::holder(Locale::default(), at()).unwrap();
     c.commit_profile_crdt(&profile, b"legacy").unwrap();
-    c.remove_profile_local(profile.id, at()).unwrap();
+    let attempt = super::begin_removal(&mut c, profile.id);
+    c.remove_profile_local(profile.id, Some(attempt), at())
+        .unwrap();
     c.initialize_profile_units(&profile, b"identity", b"private")
         .unwrap();
     let created_at = profile.created_at;
@@ -161,7 +163,9 @@ fn timestamp_repair_compares_source_bytes_and_changes_no_other_projection_fields
     let profile = a_profile(&mut c);
     c.commit_profile_identity(&profile, b"retained-identity")
         .unwrap();
-    c.remove_profile_local(profile.id, at()).unwrap();
+    let attempt = super::begin_removal(&mut c, profile.id);
+    c.remove_profile_local(profile.id, Some(attempt), at())
+        .unwrap();
     let original_units = c.profile_units(profile.id).unwrap();
     let original_mode = c
         .transport_mode(TransportSubject::Profile(profile.id))
@@ -396,7 +400,9 @@ fn logical_removal_retains_units_and_physical_deletion_is_refused() {
     c.set_workspace_deleted(workspace, Some(at()), &[]).unwrap();
     // An independently retained derived reference must survive failed purge.
     c.record_location(location, workspace).unwrap();
-    c.remove_profile_local(profile.id, at()).unwrap();
+    let attempt = super::begin_removal(&mut c, profile.id);
+    c.remove_profile_local(profile.id, Some(attempt), at())
+        .unwrap();
     assert!(c.workspace_has_personal_units(workspace).unwrap());
     assert!(!c.workspace_has_personal_units(WorkspaceId::new()).unwrap());
     let retained = c.profile_units(profile.id).unwrap();

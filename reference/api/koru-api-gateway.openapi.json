@@ -2460,6 +2460,17 @@
         ],
         "type": "object"
       },
+      "BeginProfileRemoval": {
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/RemovalKind"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object"
+      },
       "BindProfileAccount": {
         "description": "Atomic compare-and-set request for the existing Profile `account` field.\nBoth values are canonical Koru Identity UUIDs without the storage prefix;\nemails, names, and provider subjects have no representation here.",
         "properties": {
@@ -3500,6 +3511,25 @@
         ],
         "type": "object"
       },
+      "CompleteProfileRemoval": {
+        "properties": {
+          "attempt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RemovalAttemptId"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "default": null
+          }
+        },
+        "type": "object"
+      },
       "Completeness": {
         "oneOf": [
           {
@@ -3781,6 +3811,51 @@
         ],
         "type": "object"
       },
+      "CreateProfileWithWorkspace": {
+        "description": "`POST /v1/profiles/with-workspace`. Keep `id` through uncertain responses.",
+        "properties": {
+          "avatar": {
+            "default": null,
+            "nullable": true,
+            "type": "string"
+          },
+          "color": {
+            "default": null,
+            "nullable": true,
+            "type": "string"
+          },
+          "icon": {
+            "default": null,
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/ProfileId"
+          },
+          "locale": {
+            "default": null,
+            "nullable": true,
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "purpose": {
+            "default": null,
+            "nullable": true,
+            "type": "string"
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/FirstWorkspace"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "workspace"
+        ],
+        "type": "object"
+      },
       "CreateRunRequest": {
         "description": "`POST /v1/runs`. The client mints the run id, so a retried request is\nthe same run (§7.1); the executing device is the worker's own and is\nnot a field a caller supplies.",
         "properties": {
@@ -3964,6 +4039,21 @@
         },
         "required": [
           "id"
+        ],
+        "type": "object"
+      },
+      "CreatedProfile": {
+        "properties": {
+          "profile": {
+            "$ref": "#/components/schemas/Profile"
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/Workspace"
+          }
+        },
+        "required": [
+          "profile",
+          "workspace"
         ],
         "type": "object"
       },
@@ -4906,6 +4996,18 @@
       "EmptyResponse": {
         "type": "object"
       },
+      "EnsureLiveWorkspace": {
+        "description": "`POST /v1/profiles/{owner}/workspaces/ensure-live`.",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
       "EnsuredFileNote": {
         "description": "What `POST /v1/workspaces/{id}/documents/{document}/note` answers with.\n\n[`Created`] would lose the one fact the caller cannot otherwise learn:\nwhether this call made the note or the file already had one. The store\nreports it — `created` is its answer, not an inference from the delta —\nso the answer carries it through unchanged.",
         "properties": {
@@ -4927,6 +5029,134 @@
           "created"
         ],
         "type": "object"
+      },
+      "EnsuredWorkspace": {
+        "oneOf": [
+          {
+            "properties": {
+              "issues": {
+                "items": {
+                  "$ref": "#/components/schemas/WorkspaceAvailabilityIssue"
+                },
+                "type": "array"
+              },
+              "state": {
+                "enum": [
+                  "active"
+                ],
+                "type": "string"
+              },
+              "workspace": {
+                "$ref": "#/components/schemas/Workspace"
+              }
+            },
+            "required": [
+              "state",
+              "workspace",
+              "issues"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "state": {
+                "enum": [
+                  "created"
+                ],
+                "type": "string"
+              },
+              "workspace": {
+                "$ref": "#/components/schemas/Workspace"
+              }
+            },
+            "required": [
+              "state",
+              "workspace"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "state": {
+                "enum": [
+                  "pending"
+                ],
+                "type": "string"
+              },
+              "workspaces": {
+                "items": {
+                  "$ref": "#/components/schemas/WorkspaceId"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "state",
+              "workspaces"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "issues": {
+                "items": {
+                  "$ref": "#/components/schemas/WorkspaceAvailabilityIssue"
+                },
+                "type": "array"
+              },
+              "state": {
+                "enum": [
+                  "listing_pending"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state",
+              "issues"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "issues": {
+                "items": {
+                  "$ref": "#/components/schemas/WorkspaceAvailabilityIssue"
+                },
+                "type": "array"
+              },
+              "state": {
+                "enum": [
+                  "uncertain"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state",
+              "issues"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "mark": {
+                "$ref": "#/components/schemas/RemovalMark"
+              },
+              "state": {
+                "enum": [
+                  "removing"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state",
+              "mark"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "EntityRef": {
         "type": "string"
@@ -5611,6 +5841,27 @@
       "Filename": {
         "description": "The name the bytes had where the agent wrote them (D6). Redacted in\n`Debug`; shown only by the surface that lists the version.",
         "type": "string"
+      },
+      "FirstWorkspace": {
+        "properties": {
+          "color": {
+            "default": null,
+            "nullable": true,
+            "type": "string"
+          },
+          "icon": {
+            "default": null,
+            "nullable": true,
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
       },
       "FloatingDateTime": {
         "type": "string"
@@ -7257,6 +7508,42 @@
         },
         "type": "object"
       },
+      "ListingState": {
+        "oneOf": [
+          {
+            "properties": {
+              "state": {
+                "enum": [
+                  "applied"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "cause": {
+                "type": "string"
+              },
+              "state": {
+                "enum": [
+                  "pending"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state",
+              "cause"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "LocalProfileRemoval": {
         "description": "`DELETE /v1/profiles/{id}/local`.\n\nBoth outcomes mean the catalog marker is durable: retries do not turn an\nacknowledged write into a not-found error. Settings cleanup is outside this\nStore response, while clients can still distinguish the first marker write.",
         "enum": [
@@ -7756,6 +8043,40 @@
         },
         "required": [
           "owner"
+        ],
+        "type": "object"
+      },
+      "MoveWorkspaceReplacing": {
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "owner": {
+            "$ref": "#/components/schemas/ProfileId"
+          }
+        },
+        "required": [
+          "owner",
+          "name"
+        ],
+        "type": "object"
+      },
+      "MovedWorkspace": {
+        "properties": {
+          "from": {
+            "$ref": "#/components/schemas/ProfileId"
+          },
+          "replacement": {
+            "$ref": "#/components/schemas/Replacement"
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/Workspace"
+          }
+        },
+        "required": [
+          "workspace",
+          "from",
+          "replacement"
         ],
         "type": "object"
       },
@@ -8641,6 +8962,21 @@
         ],
         "type": "object"
       },
+      "PinnedWorkspace": {
+        "properties": {
+          "listing": {
+            "$ref": "#/components/schemas/ListingState"
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/Workspace"
+          }
+        },
+        "required": [
+          "workspace",
+          "listing"
+        ],
+        "type": "object"
+      },
       "PopoutCloseChoice": {
         "description": "`popout_close=`. Note `RestoreTab` persists as `restore`.",
         "enum": [
@@ -8868,6 +9204,17 @@
             "type": "string"
           }
         ]
+      },
+      "ProfileRemovalAttempt": {
+        "properties": {
+          "attempt": {
+            "$ref": "#/components/schemas/RemovalAttemptId"
+          }
+        },
+        "required": [
+          "attempt"
+        ],
+        "type": "object"
       },
       "ProjectId": {
         "format": "uuid",
@@ -9718,6 +10065,41 @@
         },
         "type": "object"
       },
+      "Recovery": {
+        "description": "What went wrong, and what was done about it.",
+        "properties": {
+          "from_checkpoint": {
+            "description": "Which checkpoint was fallen back to. `None` means the journal alone\nrebuilt the document.",
+            "format": "uint64",
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
+          "problem": {
+            "description": "Developer text. Never customer content.",
+            "type": "string"
+          },
+          "quarantined": {
+            "description": "Opaque locations of anything set aside, for the report.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "skipped_updates": {
+            "description": "Updates that would not apply and were skipped.",
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "problem",
+          "quarantined",
+          "skipped_updates"
+        ],
+        "type": "object"
+      },
       "RecurrenceRule": {
         "description": "A persisted recurrence rule. The variants preserve Koru's existing\nfloating-versus-zoned distinction without an optional timezone.",
         "oneOf": [
@@ -10225,6 +10607,45 @@
         ],
         "type": "string"
       },
+      "RemovalAttemptId": {
+        "description": "RemovalAttemptId — a client-minted v4 UUID, hyphenated and lowercase. Immutable, and never derived from a name or a path.",
+        "format": "uuid",
+        "type": "string"
+      },
+      "RemovalKind": {
+        "enum": [
+          "local",
+          "hosted_cleanup"
+        ],
+        "type": "string"
+      },
+      "RemovalMark": {
+        "properties": {
+          "attempt": {
+            "$ref": "#/components/schemas/RemovalAttemptId"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RemovalKind"
+          },
+          "last_step_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "started_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "stopped": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "attempt",
+          "kind",
+          "started_at",
+          "last_step_at",
+          "stopped"
+        ],
+        "type": "object"
+      },
       "RemoveAttachmentRequest": {
         "properties": {
           "controller_lease": {
@@ -10245,6 +10666,58 @@
         },
         "required": [
           "removed"
+        ],
+        "type": "object"
+      },
+      "RemoveWorkspaceReplacing": {
+        "properties": {
+          "force": {
+            "default": false,
+            "type": "boolean"
+          },
+          "name": {
+            "description": "Localized name supplied by the caller for a required replacement.",
+            "type": "string"
+          },
+          "removal_attempt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RemovalAttemptId"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "RemovedWorkspace": {
+        "properties": {
+          "authority_committed": {
+            "type": "boolean"
+          },
+          "listing": {
+            "$ref": "#/components/schemas/ListingState"
+          },
+          "replacement": {
+            "$ref": "#/components/schemas/Replacement"
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/Workspace"
+          }
+        },
+        "required": [
+          "workspace",
+          "authority_committed",
+          "listing",
+          "replacement"
         ],
         "type": "object"
       },
@@ -10383,6 +10856,74 @@
           "attention"
         ],
         "type": "object"
+      },
+      "Replacement": {
+        "oneOf": [
+          {
+            "properties": {
+              "state": {
+                "enum": [
+                  "created"
+                ],
+                "type": "string"
+              },
+              "workspace": {
+                "$ref": "#/components/schemas/Workspace"
+              }
+            },
+            "required": [
+              "state",
+              "workspace"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "state": {
+                "enum": [
+                  "existing"
+                ],
+                "type": "string"
+              },
+              "workspace": {
+                "$ref": "#/components/schemas/Workspace"
+              }
+            },
+            "required": [
+              "state",
+              "workspace"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "state": {
+                "enum": [
+                  "not_needed"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "state": {
+                "enum": [
+                  "unknown"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "ResizeRequest": {
         "properties": {
@@ -16883,6 +17424,128 @@
         },
         "type": "object"
       },
+      "WorkspaceAuthority": {
+        "properties": {
+          "authority": {
+            "$ref": "#/components/schemas/WorkspaceAuthorityState"
+          },
+          "listing_differs": {
+            "type": "boolean"
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/Workspace"
+          }
+        },
+        "required": [
+          "workspace",
+          "authority",
+          "listing_differs"
+        ],
+        "type": "object"
+      },
+      "WorkspaceAuthorityState": {
+        "oneOf": [
+          {
+            "properties": {
+              "applied": {
+                "type": "boolean"
+              },
+              "archived": {
+                "type": "boolean"
+              },
+              "deleted_at": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Timestamp"
+                  },
+                  {
+                    "enum": [
+                      null
+                    ],
+                    "nullable": true
+                  }
+                ]
+              },
+              "pinned": {
+                "type": "boolean"
+              },
+              "state": {
+                "enum": [
+                  "read"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state",
+              "archived",
+              "pinned",
+              "applied"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "cause": {
+                "type": "string"
+              },
+              "recovery": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Recovery"
+                  },
+                  {
+                    "enum": [
+                      null
+                    ],
+                    "nullable": true
+                  }
+                ]
+              },
+              "state": {
+                "enum": [
+                  "unreadable"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state",
+              "cause"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "WorkspaceAvailabilityIssue": {
+        "properties": {
+          "cause": {
+            "description": "Machine-readable cause, localized by the client.",
+            "type": "string"
+          },
+          "recovery": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Recovery"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/WorkspaceId"
+          }
+        },
+        "required": [
+          "workspace",
+          "cause"
+        ],
+        "type": "object"
+      },
       "WorkspaceConfirmation": {
         "description": "**A consequence the gateway computed, and the token that proves it was\nshown.**\n\nThe caller presents `sessions` (S13), and if the person accepts it sends\n`confirmation` straight back in a [`WorkspaceLifecycleRequest`]. The token\nis bound to this workspace, this action and this list, and it is spent by\nbeing used — so an acceptance is provably about the consequence that was on\nscreen rather than one the caller says it displayed. ADR-267 recorded this\nas the recommendation; SP-8b's dialog is the round trip it was waiting for.\n\n**It is still not a credential.** `workspace.destroy` is what authorizes the\noperation; this only says which question was answered. A token nobody can\nguess is not the point — a caller holding the scope could always mint its\nown before — the point is that the gateway and the dialog agree about what\nwas accepted.",
         "properties": {
@@ -16982,9 +17645,39 @@
           "action": {
             "$ref": "#/components/schemas/WorkspaceLifecycleAction"
           },
+          "authority_committed": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "listing": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ListingState"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
           "mutation_applied": {
             "description": "Whether step 4 committed. `false` with `sessions_closed: true` is\nexactly S24, and the retry is the same request again.",
             "type": "boolean"
+          },
+          "replacement": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Replacement"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
           },
           "sessions_closed": {
             "description": "Whether step 3 completed. `false` means nothing after it was attempted.",
@@ -17018,6 +17711,24 @@
             "$ref": "#/components/schemas/WorkspaceLifecycleAction"
           },
           "confirmation": {
+            "type": "string"
+          },
+          "removal_attempt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RemovalAttemptId"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "replacement_name": {
+            "default": "My Workspace",
+            "description": "Localized default for a required replacement. Older callers use the\nprotocol's English fallback; this is not a second creation operation.",
             "type": "string"
           }
         },
@@ -17099,6 +17810,19 @@
             "nullable": true,
             "type": "array"
           },
+          "replacement": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Replacement"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
           "sessions_closed": {
             "description": "Whether the terminals closed. `false` means nothing after it ran.",
             "type": "boolean"
@@ -17134,6 +17858,10 @@
           "confirmation": {
             "type": "string"
           },
+          "replacement_name": {
+            "default": "My Workspace",
+            "type": "string"
+          },
           "to": {
             "type": "string"
           }
@@ -17157,6 +17885,18 @@
         },
         "required": [
           "workspaces"
+        ],
+        "type": "object"
+      },
+      "WorkspacePin": {
+        "description": "`PUT /v1/workspaces/{id}/pinned` changes only the existing synced pin key.",
+        "properties": {
+          "pinned": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "pinned"
         ],
         "type": "object"
       },
@@ -24691,6 +25431,61 @@
         "summary": "Create a profile. Requires no account and no network."
       }
     },
+    "/v1/profiles/with-workspace": {
+      "post": {
+        "description": "profile and workspace; ProfileExists on conflicting or retired identity",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProfileWithWorkspace"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedProfile"
+                }
+              }
+            },
+            "description": "profile and workspace; ProfileExists on conflicting or retired identity"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "no bearer token, or one that is not recognised"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "the credential does not hold the required scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "manage_workspaces"
+            ]
+          }
+        ],
+        "summary": "Create a Profile and its first workspace atomically; retry with the same Profile id"
+      }
+    },
     "/v1/profiles/{id}": {
       "get": {
         "description": "a profile",
@@ -25175,7 +25970,7 @@
     },
     "/v1/profiles/{id}/local": {
       "delete": {
-        "description": "removed or already_removed; profile and deleted workspace data remain",
+        "description": "removed after exact attempt check; profile and deleted workspace data remain",
         "parameters": [
           {
             "in": "path",
@@ -25186,6 +25981,16 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompleteProfileRemoval"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "content": {
@@ -25195,7 +26000,7 @@
                 }
               }
             },
-            "description": "removed or already_removed; profile and deleted workspace data remain"
+            "description": "removed after exact attempt check; profile and deleted workspace data remain"
           },
           "401": {
             "content": {
@@ -26727,6 +27532,245 @@
         "summary": "Append a snooze action"
       }
     },
+    "/v1/profiles/{id}/removal": {
+      "delete": {
+        "description": "null; hosted cleanup and superseded attempts are refused",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProfileRemovalAttempt"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "null; hosted cleanup and superseded attempts are refused"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "no bearer token, or one that is not recognised"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "the credential does not hold the required scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "destroy_workspaces"
+            ]
+          }
+        ],
+        "summary": "Keep a Profile by abandoning its exact local removal attempt"
+      },
+      "get": {
+        "description": "persisted removal mark or null",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/RemovalMark"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "persisted removal mark or null"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "no bearer token, or one that is not recognised"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "the credential does not hold the required scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "read_documents"
+            ]
+          }
+        ],
+        "summary": "Read the current Profile removal attempt without changing it"
+      },
+      "post": {
+        "description": "fresh removal mark; a live attempt refuses competition",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BeginProfileRemoval"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemovalMark"
+                }
+              }
+            },
+            "description": "fresh removal mark; a live attempt refuses competition"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "no bearer token, or one that is not recognised"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "the credential does not hold the required scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "destroy_workspaces"
+            ]
+          }
+        ],
+        "summary": "Begin or supersede a stopped or expired Profile removal attempt"
+      }
+    },
+    "/v1/profiles/{id}/removal/stop": {
+      "post": {
+        "description": "null; a superseded attempt is refused",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProfileRemovalAttempt"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "null; a superseded attempt is refused"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "no bearer token, or one that is not recognised"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "the credential does not hold the required scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "destroy_workspaces"
+            ]
+          }
+        ],
+        "summary": "Stop only the named current Profile removal attempt"
+      }
+    },
     "/v1/profiles/{id}/workspace-order": {
       "put": {
         "description": "that profile's workspaces in their saved order",
@@ -27604,6 +28648,129 @@
           }
         ],
         "summary": "Append a snooze action"
+      }
+    },
+    "/v1/profiles/{owner}/workspaces/authority": {
+      "get": {
+        "description": "retained rows with read or unreadable authority and listing differences",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "owner",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/WorkspaceAuthority"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "retained rows with read or unreadable authority and listing differences"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "no bearer token, or one that is not recognised"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "the credential does not hold the required scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "read_documents"
+            ]
+          }
+        ],
+        "summary": "Inspect committed workspace lifecycle without creating, migrating or repairing storage"
+      }
+    },
+    "/v1/profiles/{owner}/workspaces/ensure-live": {
+      "post": {
+        "description": "active, created, pending, listing_pending, uncertain, or removing",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "owner",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnsureLiveWorkspace"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnsuredWorkspace"
+                }
+              }
+            },
+            "description": "active, created, pending, listing_pending, uncertain, or removing"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "no bearer token, or one that is not recognised"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "the credential does not hold the required scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "manage_workspaces"
+            ]
+          }
+        ],
+        "summary": "Resolve verified live content or prepare a workspace after confirming none is available"
       }
     },
     "/v1/runs": {
@@ -33743,6 +34910,71 @@
         "summary": "How a workspace appears in a switcher: icon, colour, pinned, archived"
       }
     },
+    "/v1/workspaces/{id}/archive-replacing": {
+      "post": {
+        "description": "authority, listing, and replacement facts; HTTP 409 listing_pending retains committed authority",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RemoveWorkspaceReplacing"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemovedWorkspace"
+                }
+              }
+            },
+            "description": "authority, listing, and replacement facts; HTTP 409 listing_pending retains committed authority"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "no bearer token, or one that is not recognised"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "the credential does not hold the required scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "destroy_workspaces"
+            ]
+          }
+        ],
+        "summary": "Archive a workspace, preparing its required replacement first"
+      }
+    },
     "/v1/workspaces/{id}/blobs": {
       "get": {
         "description": "an array of blobs — hash, size, mime, filename, created_at",
@@ -33979,6 +35211,71 @@
           }
         ],
         "summary": "Associate another workspace of the same Profile with one blob"
+      }
+    },
+    "/v1/workspaces/{id}/delete-replacing": {
+      "post": {
+        "description": "authority, listing, and replacement facts; HTTP 409 listing_pending retains committed authority",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RemoveWorkspaceReplacing"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemovedWorkspace"
+                }
+              }
+            },
+            "description": "authority, listing, and replacement facts; HTTP 409 listing_pending retains committed authority"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "no bearer token, or one that is not recognised"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "the credential does not hold the required scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "destroy_workspaces"
+            ]
+          }
+        ],
+        "summary": "Soft-delete a workspace, preparing its required replacement first"
       }
     },
     "/v1/workspaces/{id}/documents": {
@@ -34856,6 +36153,71 @@
         "summary": "Give a workspace to another profile"
       }
     },
+    "/v1/workspaces/{id}/move-replacing": {
+      "post": {
+        "description": "the moved workspace, previous owner, and replacement facts",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MoveWorkspaceReplacing"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MovedWorkspace"
+                }
+              }
+            },
+            "description": "the moved workspace, previous owner, and replacement facts"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "no bearer token, or one that is not recognised"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "the credential does not hold the required scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "migrate_workspaces"
+            ]
+          }
+        ],
+        "summary": "Move a workspace and atomically publish its required source replacement"
+      }
+    },
     "/v1/workspaces/{id}/restore": {
       "post": {
         "description": "the workspace with deleted_at cleared. The same scope the delete takes: whoever decides what the trash contains decides both ways",
@@ -35086,6 +36448,126 @@
           }
         ],
         "summary": "The checksum-verified CRDT snapshot a document version id names"
+      }
+    },
+    "/v1/workspaces/{workspace}/pinned": {
+      "put": {
+        "description": "committed workspace with applied or pending listing",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspacePin"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PinnedWorkspace"
+                }
+              }
+            },
+            "description": "committed workspace with applied or pending listing"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "no bearer token, or one that is not recognised"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "the credential does not hold the required scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "manage_workspaces"
+            ]
+          }
+        ],
+        "summary": "Commit only the synced workspace pin and project its listing"
+      }
+    },
+    "/v1/workspaces/{workspace}/reconcile-listing": {
+      "post": {
+        "description": "reconciled workspace; uncertainty refuses repair",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workspace"
+                }
+              }
+            },
+            "description": "reconciled workspace; uncertainty refuses repair"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "no bearer token, or one that is not recognised"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "the credential does not hold the required scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "manage_workspaces"
+            ]
+          }
+        ],
+        "summary": "Repair the listing from verified durable workspace authority"
       }
     },
     "/v2/runs": {

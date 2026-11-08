@@ -248,25 +248,29 @@ fn renaming_a_history_marker_costs_the_same_scope_as_capturing_one() {
 /// The three workspace permissions are deliberately three: `manage_workspaces`
 /// is in every ordinary token, `destroy_workspaces` takes a vouched grant, and
 /// this one takes a vouched grant of its own so a window trusted to remove a
-/// workspace is not thereby trusted to hand one to another persona. A second
-/// route appearing under `migrate_workspaces` would be a second way to change
-/// an owner, and there is exactly one.
+/// workspace is not thereby trusted to hand one to another persona. The legacy
+/// move and its replacing successor are the only ways to change an owner.
 #[test]
-fn moving_a_workspace_is_the_only_route_that_takes_the_migration_scope() {
+fn only_workspace_move_routes_take_the_migration_scope() {
     let migrating: Vec<&str> = ROUTES
         .iter()
         .filter(|route| route.scope == Some(Scope::MigrateWorkspaces))
         .map(|route| route.path)
         .collect();
-    assert_eq!(migrating, ["/v1/workspaces/{id}/move"]);
+    assert_eq!(
+        migrating,
+        [
+            "/v1/workspaces/{id}/move-replacing",
+            "/v1/workspaces/{id}/move"
+        ]
+    );
     // And it is not reachable by holding either of its neighbours.
-    let move_route = ROUTES
-        .iter()
-        .find(|route| route.path == "/v1/workspaces/{id}/move")
-        .expect("the move route is in the table");
-    assert_eq!(move_route.method, "POST");
-    assert_ne!(move_route.scope, Some(Scope::ManageWorkspaces));
-    assert_ne!(move_route.scope, Some(Scope::DestroyWorkspaces));
+    for path in migrating {
+        let move_route = ROUTES.iter().find(|route| route.path == path).unwrap();
+        assert_eq!(move_route.method, "POST");
+        assert_ne!(move_route.scope, Some(Scope::ManageWorkspaces));
+        assert_ne!(move_route.scope, Some(Scope::DestroyWorkspaces));
+    }
 }
 
 #[test]
@@ -327,15 +331,18 @@ fn every_row_builds_and_the_paths_are_grouped() {
     paths.sort_unstable();
     paths.dedup();
     // The combined account/lifecycle, task/reminder, document-version and
-    // Cloud catalog has 96 rows over 76 paths. Account binding and local
+    // Cloud catalog has 108 rows over 86 paths, including combined Profile
+    // creation, workspace availability/authority, replacing lifecycle and
+    // pin-only mutation with explicit listing repair.
+    // Account binding and local
     // removal/restoration share method-paired paths; lifecycle inventory
     // and enrolled Profile provisioning are internal, and so are the blob
     // pause, the blob release, the Profile transport mode, the documents
     // waiting on another device and one document's own Cloud coverage
     // (D256, D258, rung 2's space reclaim), as is the Welcome page's
     // installation-local progress (a query path and a per-row path).
-    assert_eq!(ROUTES.len(), 96, "a row was added or removed");
-    assert_eq!(paths.len(), 76, "a path was added or removed");
+    assert_eq!(ROUTES.len(), 108, "a row was added or removed");
+    assert_eq!(paths.len(), 86, "a path was added or removed");
 }
 
 #[test]

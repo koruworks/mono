@@ -53,6 +53,7 @@ pub mod personal_attributes;
 pub mod ports;
 pub mod profile_account;
 pub mod profile_manifest;
+pub mod profile_removal;
 pub mod profile_units;
 pub mod recovery;
 pub mod reminders;

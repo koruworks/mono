@@ -20,3 +20,5 @@
 #
 # Regenerating this list is not a reason for an entry. The contract is
 # docs/contributing/refactor-ui/ELEMENTS.final.md §4.
+apps/koru/src/panes/explore/heading_elements.rs | raw-size | .pad_start(theme::Tagged::new( | Preserve the existing heading-to-document-glyph alignment while the document lane remains on its solver | profile-workspace PLAN 5.1 / TECHNICAL 5.14 |
+apps/koru/src/panes/explore/heading_elements.rs | raw-size | Space::Px(leading_x(0.0)) | The inset is measured from the existing document row solver, not a separately authored size | profile-workspace PLAN 5.1 / TECHNICAL 5.14 |
