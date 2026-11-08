@@ -150,6 +150,21 @@ fn chat_picker_shows_window_recents_and_keeps_query_when_scope_widens() {
 }
 
 #[test]
+fn chat_picker_requests_documents_when_this_window_has_no_recents() {
+    let current = koru_ai_core::WorkspaceId::new();
+    let mut composer = ChatComposer::new(None);
+    composer.set_context(Some(current), None);
+    typed(&mut composer, "@");
+    assert!(composer.picker_open());
+    assert!(
+        composer
+            .search
+            .as_ref()
+            .is_some_and(|search| search.pending())
+    );
+}
+
+#[test]
 fn a_chip_survives_an_edit_and_undo_and_redo() {
     let mut composer = ChatComposer::new(None);
     let document = chip(&mut composer, "Plan");
@@ -303,6 +318,20 @@ fn the_picker_floats_above_a_one_line_composer() {
         "{panel:?} inside {room:?}"
     );
     assert!(composer.contains(panel.x + 4.0, panel.y + 4.0));
+}
+
+#[test]
+fn the_picker_floats_above_the_whole_multiline_composer() {
+    let mut composer = ChatComposer::new(None);
+    let text = Rect::new(20.0, 520.0, 400.0, 118.0);
+    let room = Rect::new(0.0, 46.0, 460.0, 592.0);
+    composer.place(text, room);
+    typed(&mut composer, "@");
+    let panel = composer.picker_rect().expect("the picker is open");
+    assert!(
+        panel.y + panel.h <= text.y - 4.0,
+        "{panel:?} above {text:?}"
+    );
 }
 
 #[test]

@@ -7579,6 +7579,19 @@ pub trait Editing {
         let geo = cursor.geometry(&row.layout, 1.0);
         let (w, h) = self.view().overlay.panel_size();
 
+        // A composer's mention picker belongs above the whole input, including
+        // a draft that wraps to several lines. Caret-relative placement can
+        // choose the space below an early line and cover the rest of the draft.
+        if matches!(&self.view().overlay, Overlay::Entity(_))
+            && let Some(embedded) = self.view().embedded
+        {
+            let room = embedded.panels;
+            let x = (cx + row.text_x() + geo.x0 as f32)
+                .clamp(room.x + 8.0, (room.x + room.w - w - 8.0).max(room.x + 8.0));
+            let y = (embedded.clip.y - h - 4.0).max(room.y + 8.0);
+            return Some(Rect::new(x, y, w, h));
+        }
+
         // The anchor can be far outside the viewport: the move picker anchors
         // at the *first* selected row, and a long mouse selection ends screens
         // below it. A panel pinned to an invisible caret is a panel nobody can

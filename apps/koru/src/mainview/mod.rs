@@ -16955,38 +16955,37 @@ impl MainView {
         if let Some((target, where_)) = open {
             self.open_document_target(target, where_);
         }
-        // A picker with nothing typed lists this window's recents, not
-        // the search service's idea of them — the service only remembers
-        // search-driven navigations, so its empty-query answer is not what a
-        // person means by "recent". Its request is dropped; the container's
-        // own list is the answer.
+        // Window recents lead an empty picker. When there are none, ask the
+        // shared search index for document titles in the selected scope.
         let recents_mode = self
             .active_editing_leaf()
             .is_some_and(|leaf| leaf.entity_wants_recents());
         let mut fed = false;
+        let mut have_recents = false;
         if recents_mode {
             let hits = self.recent_document_choices();
+            have_recents = !hits.is_empty();
             let leaf = match self.active_view() {
                 TabView::Leaf(leaf) => Some(leaf),
                 TabView::Tasks(t) => t.body_leaf_mut(),
                 _ => None,
             };
-            if let Some(leaf) = leaf {
+            if let Some(leaf) = leaf.filter(|_| have_recents) {
                 // Compare-first, or this per-gesture sync would report a
                 // change every time and pin the redraw loop.
                 fed = leaf.set_entity_recents(hits);
             }
         }
         let sent = request.is_some();
-        if let Some(request) = request {
-            if !(recents_mode && request.query.trim().is_empty()) {
-                let scope = request
-                    .workspaces
-                    .into_iter()
-                    .map(|id| koru_store_core::ids::WorkspaceId::from_uuid(id.as_uuid()))
-                    .collect();
-                self.entity_search.request(request.query, scope);
-            }
+        if let Some(request) =
+            request.and_then(|r| r.with_document_fallback(recents_mode && have_recents))
+        {
+            let scope = request
+                .workspaces
+                .into_iter()
+                .map(|id| koru_store_core::ids::WorkspaceId::from_uuid(id.as_uuid()))
+                .collect();
+            self.entity_search.request(request.query, scope);
         }
         if let Some(title) = new_page {
             return self.new_page_from_entity(title) || changed;
@@ -17239,6 +17238,7 @@ impl MainView {
             .as_ref()
             .and_then(|(_, _, _, current)| *current);
         let choices = self.entity_workspaces.clone();
+        let have_recents = !self.recent_document_choices().is_empty();
         // The picker that asked is the active tab's editor — a document
         // tab's, or the note above a Tasks page. Answering only a document
         // tab left the note's picker on *Searching…* for ever.
@@ -17246,7 +17246,7 @@ impl MainView {
             Some(leaf) => {
                 let context =
                     current.is_some_and(|current| leaf.set_entity_context(current, choices));
-                if leaf.entity_wants_recents() {
+                if leaf.entity_wants_recents() && have_recents {
                     context
                 } else {
                     leaf.set_entity_search_results(hits, update.unavailable) || context

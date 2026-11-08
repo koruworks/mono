@@ -744,7 +744,8 @@ impl ChatComposer {
             return false;
         }
         self.recent_documents = documents;
-        if matches!(&self.editor.view.overlay, Overlay::Entity(picker) if picker.document_query.trim().is_empty())
+        if !self.recent_documents.is_empty()
+            && matches!(&self.editor.view.overlay, Overlay::Entity(picker) if picker.document_query.trim().is_empty())
         {
             let hits = self
                 .recent_documents
@@ -1036,7 +1037,8 @@ impl ChatComposer {
                 is_file: false,
             });
         changed |= self.editor.set_entity_current_document(here);
-        if matches!(&self.editor.view.overlay, Overlay::Entity(picker) if picker.document_query.trim().is_empty())
+        if !self.recent_documents.is_empty()
+            && matches!(&self.editor.view.overlay, Overlay::Entity(picker) if picker.document_query.trim().is_empty())
         {
             let hits = self
                 .recent_documents
@@ -1054,8 +1056,10 @@ impl ChatComposer {
             changed |= self.editor.set_entity_recents(hits);
         }
         let search = self.search.as_mut().expect("started above");
-        if let Some(request) = self.editor.take_entity_search_request()
-            && !request.query.trim().is_empty()
+        if let Some(request) = self
+            .editor
+            .take_entity_search_request()
+            .and_then(|r| r.with_document_fallback(!self.recent_documents.is_empty()))
         {
             let scope = request
                 .workspaces
@@ -1121,7 +1125,8 @@ impl ChatComposer {
                     is_file: false,
                 })
                 .collect();
-            if !matches!(&self.editor.view.overlay, Overlay::Entity(picker) if picker.document_query.trim().is_empty())
+            if self.recent_documents.is_empty()
+                || !matches!(&self.editor.view.overlay, Overlay::Entity(picker) if picker.document_query.trim().is_empty())
             {
                 changed |= self
                     .editor

@@ -36,11 +36,20 @@ pub fn draw_overlay(
 ) {
     let (px, py, pw, ph) = panel;
 
+    let _entity = matches!(&view.overlay, Overlay::Entity(_)).then(|| {
+        koru_draw::inspect::scope(
+            "KoruEntityPicker",
+            "component",
+            root,
+            koru_draw::scene::rect(px, py, pw, ph),
+            |_| {},
+        )
+    });
     // Panel chrome first, so every overlay kind gets the same frame. All seven
     // of them are popovers — the slash menu, `@`, the date grid, the rename and
     // link prompts, the language list and the emoji grid — so this one call is
     // what raises the lot.
-    koru_draw::scene::floating_panel(
+    let _panel = koru_draw::scene::floating_panel_scope(
         scene,
         root,
         px,
@@ -850,7 +859,14 @@ pub fn draw_standalone_entity_picker(
     hovered_row: Option<usize>,
 ) -> koru_draw::geometry::Rect {
     let (pw, ph) = (theme::PANEL_W, picker.height());
-    koru_draw::scene::floating_panel(
+    let _entity = koru_draw::inspect::scope(
+        "KoruEntityPicker",
+        "component",
+        root,
+        koru_draw::scene::rect(at.0, at.1, pw, ph),
+        |_| {},
+    );
+    let _panel = koru_draw::scene::floating_panel_scope(
         scene,
         root,
         at.0,
@@ -874,7 +890,7 @@ fn draw_entity_panel(
     pw: f32,
     hovered_row: Option<usize>,
 ) {
-    use crate::components::entity_picker::{self, HEADER_H, MAX_ROWS};
+    use crate::components::entity_picker::{self, MAX_ROWS};
     let band = picker.field_band();
     // The move-mode query field, above everything: the mention picker's query
     // is the `@…` text in the document, but a move opens over a selection, so
@@ -903,7 +919,6 @@ fn draw_entity_panel(
             );
         }
     }
-    let scope = picker.scope_label();
     let hits = picker.hits.clone();
     let sel = picker.sel;
     let doc_capacity = picker.doc_capacity();
@@ -912,58 +927,8 @@ fn draw_entity_panel(
     let unavailable = picker.unavailable;
     let scrollbar = picker.scrolls().then(|| picker.scrollbar_thumb(pw));
 
-    let chip_x = px + theme::PANEL_PAD;
-    let chip_y = py + band + theme::PANEL_PAD + 3.0;
-    let chip_w = pw - theme::PANEL_PAD * 2.0;
-    fill(
-        scene,
-        root,
-        theme::p().hover_tint,
-        &rrect(chip_x, chip_y, chip_w, HEADER_H - 6.0, 7.0),
-    );
-    let icon = engine.icon_layout(icons::LIST_CHECKS, 15.0);
-    draw_layout(
-        scene,
-        root,
-        &icon,
-        chip_x + 9.0,
-        chip_y + (HEADER_H - 6.0 - icon.height()) * 0.5,
-        Some(theme::p().accent),
-    );
-    let hint = (!picker.widened_scope && !picker.link_mode && picker.headings().is_none())
-        .then(|| {
-            koru_keys::show_hint(
-                koru_keys::ShortcutId::WidenEntityScope,
-                koru_keys::Section::Heading,
-            )
-        })
-        .flatten();
-    let hint_width = hint.as_ref().map_or(0.0, |hint| {
-        engine.simple_layout(hint, theme::role::ui()).width() + 12.0
-    });
-    let fitted = engine.elided(&scope, theme::role::ui(), chip_w - 42.0 - hint_width);
-    let label = engine.simple_layout(&fitted, theme::role::ui());
-    draw_layout(
-        scene,
-        root,
-        &label,
-        chip_x + 31.0,
-        chip_y + (HEADER_H - 6.0 - label.height()) * 0.5,
-        Some(theme::p().text),
-    );
-    if let Some(hint) = hint {
-        let hint = engine.simple_layout(&hint, theme::role::ui());
-        draw_layout(
-            scene,
-            root,
-            &hint,
-            chip_x + chip_w - hint.width() - 9.0,
-            chip_y + (HEADER_H - 6.0 - hint.height()) * 0.5,
-            Some(theme::p().row_hint),
-        );
-    }
-
-    let rows_y = py + band + theme::PANEL_PAD + HEADER_H;
+    let rows_y = py + band + theme::PANEL_PAD;
+    draw_entity_footer(scene, root, engine, picker, px, py, pw);
     if let Some(headings) = picker.headings() {
         let headings = headings.clone();
         let first = picker.first;
@@ -1150,6 +1115,84 @@ fn draw_entity_panel(
     }
     if let Some(thumb) = scrollbar {
         draw_entity_scrollbar(scene, root, px, py, thumb);
+    }
+}
+
+fn draw_entity_footer(
+    scene: &mut Scene,
+    root: Affine,
+    engine: &mut TextEngine,
+    picker: &crate::components::entity_picker::EntityPicker,
+    px: f32,
+    py: f32,
+    pw: f32,
+) {
+    use crate::components::entity_picker::FOOTER_H;
+    let y = py + picker.height() - theme::PANEL_PAD - FOOTER_H;
+    let _footer = koru_draw::inspect::scope(
+        "ScopeFooter",
+        "part",
+        root,
+        koru_draw::scene::rect(px, y, pw, FOOTER_H),
+        |_| {},
+    );
+    fill(
+        scene,
+        root,
+        theme::p().panel_border,
+        &koru_draw::scene::rect(px + theme::PANEL_PAD, y, pw - theme::PANEL_PAD * 2.0, 1.0),
+    );
+    let lang = koru_i18n::current();
+    let scope = picker.headings().map_or_else(
+        || picker.scope_label(),
+        |headings| headings.anchor.title.clone(),
+    );
+    let line = koru_i18n::fill(
+        koru_i18n::t(lang, koru_i18n::Key::EntitySearchingIn),
+        &[&scope],
+    );
+    let fitted = engine.elided(
+        &line,
+        theme::role::meta(),
+        pw - 2.0 * theme::PANEL_PAD - 4.0,
+    );
+    let label = engine.simple_layout(&fitted, theme::role::meta());
+    let hint = (!picker.widened_scope && !picker.link_mode && picker.headings().is_none())
+        .then(|| {
+            koru_keys::show_hint(
+                koru_keys::ShortcutId::WidenEntityScope,
+                koru_keys::Section::Heading,
+            )
+        })
+        .flatten();
+    let label_y = if hint.is_some() { y + 3.0 } else { y + 12.0 };
+    draw_layout(
+        scene,
+        root,
+        &label,
+        px + theme::PANEL_PAD + 2.0,
+        label_y,
+        Some(theme::p().row_hint),
+    );
+    if let Some(chord) = hint {
+        let line = koru_i18n::fill(
+            koru_i18n::t(lang, koru_i18n::Key::EntitySearchAllHint),
+            &[&chord],
+        );
+        let fitted = engine.elided(
+            &line,
+            theme::role::meta(),
+            pw - 2.0 * theme::PANEL_PAD - 4.0,
+        );
+        let label = engine.simple_layout(&fitted, theme::role::meta());
+        draw_layout(
+            scene,
+            root,
+            &label,
+            px + theme::PANEL_PAD + 2.0,
+            y + 21.0,
+            Some(theme::p().row_hint),
+        );
     }
 }
 

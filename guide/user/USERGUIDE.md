@@ -1447,8 +1447,10 @@ another workspace's document, Koru grants the needed workspace before it sends
 the message. A refused grant leaves the draft and its attachments in place.
 Type `@` to find a document or a task by name. A selected task links to its
 place in the document; when you send it to AI, the containing document supplies
-context. The picker starts in the current workspace. Press `Ctrl+Space` while
-it is open to search your other workspaces too.
+context. The picker opens above the message box with recent documents. If this
+window has no recent documents, it lists documents in the current workspace.
+Its footer names the search scope. Press `Ctrl+Space` while it is open to search
+your other workspaces too.
 
 On a chat with a local agent, the send button carries the agent's current
 approval mode: its color and icon identify the mode, and its chevron appears
@@ -4364,9 +4366,10 @@ separate row. It starts in the current workspace. Press **Ctrl+Space** while the
 picker is open to include every active workspace without clearing your query;
 archived and deleted workspaces stay out of the results. Pick a result to insert
 the pill. **Clicking that pill opens the document.** The empty-query list shows
-this window's recent documents and always
-offers **Add new document**. With a typed query, that action creates the page with
-the query as its title, replaces the authored `@query` with its pill, and opens
+this window's recent documents, or the current workspace's document list when
+there are no recents, and always offers **Add new document**. With a typed
+query, that action creates the page with the query as its title, replaces the
+authored `@query` with its pill, and opens
 the new page.
 
 **Type `#` to link to a heading rather than a whole page.** With a document
@@ -6451,8 +6454,9 @@ and Escape closes it and leaves what you typed. While the list is open, Enter
 chooses rather than sends. Type `#` after a document's name to link one of its
 headings. `@` inside a word — an email address — is just text.
 
-The empty chat picker shows this window's recent documents. Search starts in
-the current workspace; **Ctrl+Space** widens it to all active workspaces and
+The empty chat picker shows this window's recent documents, or the document
+list when there are none. It opens above the composer and shows the current
+search scope in its footer; **Ctrl+Space** widens it to all active workspaces and
 keeps the query. A file selected through the chat's attachment menu is copied
 into the chat before sending, so it remains available if the workspace file
 moves.

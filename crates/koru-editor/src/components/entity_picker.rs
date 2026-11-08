@@ -15,9 +15,10 @@ use super::Outcome;
 use super::text_field::TextField;
 use crate::trigger::{DocumentTarget, PillSpec, Trigger};
 
-pub const HEADER_H: f32 = 38.0;
+/// Quiet scope guidance below the selectable rows.
+pub const FOOTER_H: f32 = 42.0;
 pub const MAX_ROWS: usize = 7;
-/// The height of the own-query band a move-mode picker adds above the header.
+/// The height of the own-query band a move-mode picker adds above the rows.
 pub const FIELD_H: f32 = 36.0;
 
 /// The band's rect, panel-local. Mirrors `emoji_picker::search_rect`'s shape:
@@ -48,6 +49,22 @@ pub struct DocumentChoice {
 pub struct EntitySearchRequest {
     pub query: String,
     pub workspaces: Vec<WorkspaceId>,
+}
+
+impl EntitySearchRequest {
+    /// Resolve an empty mention once for every host. Window recents win; when
+    /// there are none, a document-kind filter asks the search index for the
+    /// scoped document list without turning an ordinary blank search into a
+    /// whole-corpus query.
+    pub fn with_document_fallback(mut self, has_recents: bool) -> Option<Self> {
+        if self.query.trim().is_empty() {
+            if has_recents {
+                return None;
+            }
+            self.query = "doc:".into();
+        }
+        Some(self)
+    }
 }
 
 /// Which list the picker is showing.
@@ -367,7 +384,7 @@ impl EntityPicker {
     pub fn height(&self) -> f32 {
         koru_draw::theme::PANEL_PAD * 2.0
             + self.field_band()
-            + HEADER_H
+            + FOOTER_H
             + self.row_count() as f32 * koru_draw::theme::ROW_H
     }
 
@@ -631,10 +648,7 @@ impl EntityPicker {
         // below only has to look past it.
         let local_y = local_y - self.field_band();
         let pad = koru_draw::theme::PANEL_PAD;
-        if local_y >= pad && local_y < pad + HEADER_H {
-            return Outcome::Consumed;
-        }
-        let row = ((local_y - pad - HEADER_H) / koru_draw::theme::ROW_H).floor();
+        let row = ((local_y - pad) / koru_draw::theme::ROW_H).floor();
         if row < 0.0 {
             return Outcome::Consumed;
         }
@@ -678,7 +692,7 @@ impl EntityPicker {
 
     pub fn scope_label(&self) -> String {
         if self.widened_scope || self.link_mode {
-            "All workspaces".into()
+            koru_i18n::t(koru_i18n::current(), koru_i18n::Key::EntityScopeAll).into()
         } else {
             self.current_workspace
                 .and_then(|only| {
@@ -687,7 +701,9 @@ impl EntityPicker {
                         .find(|w| w.id == only)
                         .map(|w| w.name.clone())
                 })
-                .unwrap_or_else(|| "This workspace".into())
+                .unwrap_or_else(|| {
+                    koru_i18n::t(koru_i18n::current(), koru_i18n::Key::EntityScopeCurrent).into()
+                })
         }
     }
 
@@ -724,7 +740,7 @@ impl EntityPicker {
         let (x, _) = super::command_menu::scrollbar_column(panel_w);
         Rect::new(
             x + 4.0,
-            koru_draw::theme::PANEL_PAD + self.field_band() + HEADER_H,
+            koru_draw::theme::PANEL_PAD + self.field_band(),
             super::command_menu::SCROLLBAR_W,
             self.visible_scroll_rows() as f32 * koru_draw::theme::ROW_H,
         )
@@ -803,15 +819,15 @@ impl EntityPicker {
     }
 
     /// The item under a panel-local `y`, for a host that hovers rows itself
-    /// (the standalone link picker): `None` over the field, the scope chip
-    /// and past the last row.
+    /// (the standalone link picker): `None` over the field, footer and past
+    /// the last row.
     pub fn item_at(&self, local_y: f32) -> Option<usize> {
         let y = local_y - self.field_band();
         let pad = koru_draw::theme::PANEL_PAD;
-        if y < pad + HEADER_H {
+        if y < pad {
             return None;
         }
-        let row = ((y - pad - HEADER_H) / koru_draw::theme::ROW_H).floor();
+        let row = ((y - pad) / koru_draw::theme::ROW_H).floor();
         self.visible_item(row as usize)
     }
 
@@ -859,6 +875,42 @@ mod tests {
             breadcrumb: String::new(),
             is_file,
         }
+    }
+
+    #[test]
+    fn recent_documents_win_then_an_empty_query_requests_the_document_list() {
+        let workspace = WorkspaceId::new();
+        let request = EntitySearchRequest {
+            query: String::new(),
+            workspaces: vec![workspace],
+        };
+        assert_eq!(request.clone().with_document_fallback(true), None);
+        assert_eq!(
+            request.with_document_fallback(false),
+            Some(EntitySearchRequest {
+                query: "doc:".into(),
+                workspaces: vec![workspace],
+            })
+        );
+        let typed = EntitySearchRequest {
+            query: "budget".into(),
+            workspaces: vec![workspace],
+        };
+        assert_eq!(typed.clone().with_document_fallback(true), Some(typed));
+    }
+
+    #[test]
+    fn rows_are_above_the_scope_footer_for_hit_testing() {
+        let mut picker = EntityPicker::new(Trigger::at_start());
+        picker.set_results(vec![linked("Brief", false)], false);
+        let row_y = koru_draw::theme::PANEL_PAD + koru_draw::theme::ROW_H * 0.5;
+        let footer_y = picker.height() - koru_draw::theme::PANEL_PAD - FOOTER_H + 2.0;
+        assert_eq!(picker.item_at(row_y), Some(0));
+        assert_eq!(picker.item_at(footer_y), None);
+        assert!(matches!(
+            picker.click(20.0, footer_y, koru_draw::theme::PANEL_W),
+            Outcome::Consumed
+        ));
     }
 
     /// The standalone link picker (a Tasks page's *Add existing…*): its own
@@ -1014,6 +1066,56 @@ mod tests {
             None,
             "past the panel is nothing"
         );
+    }
+
+    #[test]
+    fn inspector_nests_all_picker_paint_inside_its_panel() {
+        let mut engine = koru_draw::text::TextEngine::new();
+        let mut picker = EntityPicker::for_link(&mut engine);
+        picker.set_results(vec![linked("Brief", false)], false);
+        let mut scene = vello::Scene::new();
+        let root = vello::kurbo::Affine::IDENTITY;
+        let frame = koru_draw::inspect::Frame::begin(
+            1,
+            root,
+            koru_draw::scene::rect(0.0, 0.0, 500.0, 500.0),
+        );
+        crate::components::draw::draw_standalone_entity_picker(
+            &mut scene,
+            root,
+            &mut engine,
+            &mut picker,
+            (12.0, 20.0),
+            None,
+        );
+        let snapshot = frame.finish();
+        let component = snapshot
+            .records
+            .iter()
+            .position(|record| record.name == "KoruEntityPicker")
+            .expect("named reusable component");
+        let panel = snapshot
+            .records
+            .iter()
+            .position(|record| record.name == "FloatingPanel")
+            .expect("panel chrome");
+        assert_eq!(snapshot.records[panel].parent, Some(component));
+        assert!(
+            snapshot
+                .records
+                .iter()
+                .any(|record| record.name == "ScopeFooter" && record.parent == Some(panel))
+        );
+        for (index, record) in snapshot.records.iter().enumerate() {
+            if index == component || index == panel {
+                continue;
+            }
+            let mut parent = record.parent;
+            while parent != Some(panel) && parent != Some(component) {
+                parent = parent.and_then(|at| snapshot.records[at].parent);
+            }
+            assert_eq!(parent, Some(panel), "{} escaped the panel", record.name);
+        }
     }
 
     #[test]

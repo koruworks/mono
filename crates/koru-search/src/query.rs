@@ -302,8 +302,13 @@ pub(crate) fn search(
     // query" — and this guard returned before it could. The tests did not
     // catch it because every one of them passes a word beside the filter, so
     // the filter-only query, which is the ordinary way to ask *what is due
-    // this month*, was the one shape nothing tried.
-    if terms.is_empty() && tag_filters.is_empty() && query.attributes.is_empty() {
+    // this month*, was the one shape nothing tried. An entity picker's explicit
+    // document-kind filter likewise asks for title rows without a typed term.
+    if terms.is_empty()
+        && tag_filters.is_empty()
+        && query.attributes.is_empty()
+        && !(query.entity_picker && !query.kinds.is_empty())
+    {
         return Ok(SearchPage {
             hits: Vec::new(),
             next_offset: None,
@@ -1069,6 +1074,33 @@ mod tests {
             [Some("n0"), Some("n1")]
         );
         assert!(page.hits.iter().all(|hit| hit.title == "Ship café"));
+    }
+
+    #[test]
+    fn document_picker_can_list_titles_without_a_typed_term() {
+        let index = with_values(&[("A task", &[("koru.task", "text", "explicit")])]);
+        let listed = index
+            .query(
+                &SearchQuery {
+                    kinds: vec!["document".into()],
+                    entity_picker: true,
+                    ..SearchQuery::default()
+                },
+                &[],
+            )
+            .unwrap()
+            .hits;
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].title, "Roadmap");
+        assert_eq!(listed[0].node, None, "a task is not a document row");
+        assert!(
+            index
+                .query(&SearchQuery::default(), &[])
+                .unwrap()
+                .hits
+                .is_empty(),
+            "an ordinary blank search still lists nothing"
+        );
     }
 
     #[test]

@@ -356,6 +356,10 @@ pub enum Key {
     AiComposerSkills,
     AiComposerNoRecent,
     AiComposerPlusHint,
+    EntityScopeAll,
+    EntityScopeCurrent,
+    EntitySearchingIn,
+    EntitySearchAllHint,
     AiComposerThisComputer,
     AiComposerComputerFile,
     AiComposerComputerFolder,
@@ -3038,7 +3042,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2138] = [
+    pub const ALL: [Key; 2142] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -3286,6 +3290,10 @@ impl Key {
         Key::AiComposerSkills,
         Key::AiComposerNoRecent,
         Key::AiComposerPlusHint,
+        Key::EntityScopeAll,
+        Key::EntityScopeCurrent,
+        Key::EntitySearchingIn,
+        Key::EntitySearchAllHint,
         Key::AiComposerThisComputer,
         Key::AiComposerComputerFile,
         Key::AiComposerComputerFolder,
@@ -7948,6 +7956,10 @@ pub const ROWS: &[Row] = &[
     Row { key: Key::AiComposerSkills, en: "Skills", es: "Habilidades", pt_br: "Habilidades", de: "Fähigkeiten", fr: "Compétences", ar: "المهارات", zh_hans: "技能", ja: "スキル" },
     Row { key: Key::AiComposerNoRecent, en: "No recent documents", es: "No hay documentos recientes", pt_br: "Nenhum documento recente", de: "Keine zuletzt geöffneten Dokumente", fr: "Aucun document récent", ar: "لا توجد مستندات حديثة", zh_hans: "没有最近的文档", ja: "最近の文書はありません" },
     Row { key: Key::AiComposerPlusHint, en: "Or type @ $ / in the message", es: "O escribe @ $ / en el mensaje", pt_br: "Ou digite @ $ / na mensagem", de: "Oder @ $ / in der Nachricht eingeben", fr: "Ou tapez @ $ / dans le message", ar: "أو اكتب @ $ / في الرسالة", zh_hans: "也可以在消息中输入 @ $ /", ja: "またはメッセージに @ $ / を入力" },
+    Row { key: Key::EntityScopeAll, en: "all workspaces", es: "todos los espacios", pt_br: "todos os espaços de trabalho", de: "allen Arbeitsbereichen", fr: "tous les espaces de travail", ar: "كل مساحات العمل", zh_hans: "所有工作区", ja: "すべてのワークスペース" },
+    Row { key: Key::EntityScopeCurrent, en: "this workspace", es: "este espacio", pt_br: "este espaço de trabalho", de: "diesem Arbeitsbereich", fr: "cet espace de travail", ar: "مساحة العمل هذه", zh_hans: "此工作区", ja: "このワークスペース" },
+    Row { key: Key::EntitySearchingIn, en: "Searching in {}", es: "Buscando en {}", pt_br: "Pesquisando em {}", de: "Suche in {}", fr: "Recherche dans {}", ar: "البحث في {}", zh_hans: "正在搜索{}", ja: "{}を検索中" },
+    Row { key: Key::EntitySearchAllHint, en: "{} to search in all", es: "{} para buscar en todos", pt_br: "{} para pesquisar em todos", de: "{} für Suche in allen", fr: "{} pour chercher partout", ar: "{} للبحث في الكل", zh_hans: "{} 可搜索全部", ja: "{}ですべてを検索" },
     Row { key: Key::AiComposerThisComputer, en: "This computer", es: "Este equipo", pt_br: "Este computador", de: "Dieser Computer", fr: "Cet ordinateur", ar: "هذا الكمبيوتر", zh_hans: "此电脑", ja: "このコンピューター" },
     Row { key: Key::AiComposerComputerFile, en: "File", es: "Archivo", pt_br: "Arquivo", de: "Datei", fr: "Fichier", ar: "ملف", zh_hans: "文件", ja: "ファイル" },
     Row { key: Key::AiComposerComputerFolder, en: "Folder", es: "Carpeta", pt_br: "Pasta", de: "Ordner", fr: "Dossier", ar: "مجلد", zh_hans: "文件夹", ja: "フォルダー" },
