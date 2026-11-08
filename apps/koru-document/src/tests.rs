@@ -4294,13 +4294,18 @@ fn an_unnamed_document_titles_its_window_untitled() {
 fn insert_attachment_puts_a_pill_on_the_row_and_siblings_for_extras() {
     let (mut ws, mut view) = document();
     let root = view.editor.body.root.expect("root");
+    // The row as the editor leaves it once `/attach` is chosen: the words
+    // typed before the command, the command itself gone, and where it stood
+    // recorded. The pill lands there and the words stay (acceptance round
+    // 2 — the row used to be wiped).
     let row = ws
         .insert(
             koru_core::schema::Parent::Node(root),
-            koru_core::node::Node::paragraph("/attach").unwrap(),
+            koru_core::node::Node::paragraph("Keep this ").unwrap(),
         )
         .expect("row");
     View::adopt(&mut view, &ws);
+    view.editor.view.attachment_at = Some(10);
 
     let first = koru_core::DocumentId::new();
     let second = koru_core::DocumentId::new();
@@ -4312,7 +4317,10 @@ fn insert_attachment_puts_a_pill_on_the_row_and_siblings_for_extras() {
     );
 
     let node = ws.read(row).expect("row");
-    assert_eq!(node.content.as_text(), Some(koru_core::text::ANCHOR_STR));
+    assert_eq!(
+        node.content.as_text(),
+        Some(format!("Keep this {}", koru_core::text::ANCHOR_STR).as_str())
+    );
     let attrs = node.content.attrs();
     assert_eq!(attrs.len(), 1);
     assert_eq!(attrs[0].role, "attachment");
@@ -4341,18 +4349,23 @@ fn insert_attachment_puts_a_pill_on_the_row_and_siblings_for_extras() {
 }
 
 #[test]
-fn attachment_cancelled_clears_the_trigger_text() {
+fn attachment_cancelled_leaves_the_row_as_it_is() {
     let (mut ws, mut view) = document();
     let root = view.editor.body.root.expect("root");
     let row = ws
         .insert(
             koru_core::schema::Parent::Node(root),
-            koru_core::node::Node::paragraph("/attach").unwrap(),
+            koru_core::node::Node::paragraph("Keep this ").unwrap(),
         )
         .expect("row");
     View::adopt(&mut view, &ws);
+    view.editor.view.attachment_at = Some(10);
     View::attachment_cancelled(&mut view, &mut ws, row);
-    assert_eq!(ws.read(row).unwrap().content.as_text(), Some(""));
+    assert_eq!(ws.read(row).unwrap().content.as_text(), Some("Keep this "));
+    assert_eq!(
+        view.editor.view.attachment_at, None,
+        "the place is forgotten"
+    );
 }
 
 // ---------------------------------------------------------------- completion

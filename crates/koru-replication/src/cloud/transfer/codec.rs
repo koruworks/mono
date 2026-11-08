@@ -33,7 +33,13 @@ impl Unit {
             Self::Document {
                 workspace_id,
                 document_id,
-            } => valid(workspace_id) && valid(document_id),
+            } => {
+                // Existing imported documents can have deterministic UUIDv5
+                // identities. Preserve those identities across the carrier;
+                // workspace/Profile authority IDs retain their v4 contract.
+                let document = document_id.as_bytes();
+                valid(workspace_id) && matches!(document[6] >> 4, 4 | 5) && document[8] >> 6 == 2
+            }
             Self::Identity { profile_id } | Self::Private { profile_id } => valid(profile_id),
             Self::Personal {
                 profile_id,

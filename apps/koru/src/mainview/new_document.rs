@@ -54,6 +54,10 @@ pub(super) enum Purpose {
     NewAgentProject,
     /// A project row's Rename…, seeded with the registry's current name.
     RenameAgentProject(ProjectId),
+    /// A note's Rename…, seeded with its resolved title: a page document has
+    /// no title row to type into, so its name is asked for here and written
+    /// as the page's override.
+    RenamePage(koru_core::DocumentId),
 }
 
 pub(super) struct NewDocument {
@@ -94,6 +98,14 @@ impl NewDocument {
         name: &str,
     ) -> Self {
         Self::with_purpose(engine, Purpose::RenameAgentProject(project), name)
+    }
+
+    pub fn rename_page(
+        engine: &mut TextEngine,
+        document: koru_core::DocumentId,
+        name: &str,
+    ) -> Self {
+        Self::with_purpose(engine, Purpose::RenamePage(document), name)
     }
 
     fn with_purpose(engine: &mut TextEngine, purpose: Purpose, seed: &str) -> Self {
@@ -153,7 +165,9 @@ impl NewDocument {
             Outcome::Commit(spec)
                 if matches!(
                     self.purpose,
-                    Purpose::NewAgentProject | Purpose::RenameAgentProject(_)
+                    Purpose::NewAgentProject
+                        | Purpose::RenameAgentProject(_)
+                        | Purpose::RenamePage(_)
                 ) && spec.label.trim().is_empty() =>
             {
                 Action::Keep
@@ -237,6 +251,7 @@ impl NewDocument {
                         Purpose::Workspace => "workspace",
                         Purpose::NewAgentProject => "new project",
                         Purpose::RenameAgentProject(_) => "rename project",
+                        Purpose::RenamePage(_) => "rename note",
                     };
                     r.property(
                         "purpose",
@@ -284,6 +299,11 @@ impl NewDocument {
                     Purpose::RenameAgentProject(_) => (
                         koru_i18n::t(lang, koru_i18n::Key::TerminalRenameProject),
                         koru_i18n::t(lang, koru_i18n::Key::TerminalProjectNamePlaceholder),
+                        "Enter to save · Esc to cancel",
+                    ),
+                    Purpose::RenamePage(_) => (
+                        koru_i18n::t(lang, koru_i18n::Key::PageRenameTitle),
+                        koru_i18n::t(lang, koru_i18n::Key::PageRenamePlaceholder),
                         "Enter to save · Esc to cancel",
                     ),
                 };

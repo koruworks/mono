@@ -1542,7 +1542,7 @@ fn list_face(name: &str, color: Option<&str>) -> (koru_core::ids::ListId, super:
     let id = koru_core::ids::ListId::new();
     (
         id,
-        super::ListFace {
+        crate::tasks_view::ListFace {
             id,
             name: name.to_owned(),
             color: color.map(str::to_owned),
@@ -4219,4 +4219,937 @@ fn a_task_typed_into_a_ranked_list_goes_on_top() {
     };
     assert_eq!(rank, Some(4 * GAP));
     assert_eq!(titles(&view)[0], "New", "drawn on top at once");
+}
+
+// ------------------------------------------------------------- the note
+
+mod note {
+    use super::*;
+    use koru_core::ids::{ListId, PageKey, page_document_id};
+    use koru_core::schema::{WorkspaceDoc, genesis_seed_id};
+    use koru_workspace::pages::{PagePhase, PageState};
+    use vello::kurbo::Affine;
+    use winit::window::CursorIcon;
+
+    fn page() -> (RailTarget, PageKey, DocumentId, WorkspaceDoc) {
+        let list = ListId::new();
+        let workspace = WorkspaceId::new();
+        let page = PageKey::List(list);
+        let document = page_document_id(workspace, page, 0);
+        let mut doc = WorkspaceDoc::page_genesis(workspace, document).unwrap();
+        doc.stamp_document_id(document).unwrap();
+        doc.enable_undo();
+        (RailTarget::List(list), page, document, doc)
+    }
+
+    fn state(page: PageKey, document: DocumentId, phase: PagePhase) -> PageState {
+        PageState {
+            page,
+            document,
+            generation: 0,
+            phase,
+            conflict: false,
+            note_shown: true,
+            attachments: Vec::new(),
+        }
+    }
+
+    fn conflict_state(page: PageKey, document: DocumentId) -> PageState {
+        PageState {
+            page,
+            document,
+            generation: 0,
+            phase: PagePhase::Empty,
+            conflict: true,
+            note_shown: true,
+            attachments: Vec::new(),
+        }
+    }
+
+    /// §6.2: a note in a deletion conflict shows the band with *Keep
+    /// deleted* and *Recover*, and a press on each routes the person's
+    /// answer out.
+    #[test]
+    fn a_conflicted_note_offers_keep_deleted_and_recover() {
+        use koru_workspace::pages::PageDecision;
+        let (target, page, document, mut doc) = page();
+        let mut view = TasksView::new(target);
+        view.set_viewport(900.0, 600.0);
+        assert!(view.set_page_state(&conflict_state(page, document)));
+        view.catch_up(&doc);
+        assert!(view.rows_top() > view.header_h, "the band takes a row");
+        let mut scene = vello::Scene::new();
+        view.layout_band();
+        view.paint_notice(&mut scene, Affine::IDENTITY);
+        let (keep, recover) = view.conflict_actions_for_test().expect("drawn");
+        assert!(view.take_wants_decision().is_none());
+        assert!(view.mouse_down(&mut doc, recover.x + 1.0, recover.y + 1.0, false));
+        assert_eq!(view.take_wants_decision(), Some(PageDecision::Recover));
+        assert!(view.mouse_down(&mut doc, keep.x + 1.0, keep.y + 1.0, false));
+        assert_eq!(view.take_wants_decision(), Some(PageDecision::Keep));
+        assert!(view.take_wants_decision().is_none(), "drained");
+    }
+
+    /// A page's state names the document the tab edits (D7), and an open
+    /// still in flight names none to activate.
+    #[test]
+    fn the_page_state_names_what_the_tab_edits() {
+        let (target, page, document, _) = page();
+        let mut view = TasksView::new(target);
+        assert_eq!(view.page_document(), None);
+        assert!(view.set_page_state(&state(page, document, PagePhase::Loading)));
+        assert_eq!(view.page_document(), Some(document));
+        assert!(!view.page_is_local(), "still opening: nothing to activate");
+        assert!(view.set_page_state(&state(page, document, PagePhase::Empty)));
+        assert!(view.page_is_local());
+        assert!(
+            !view.set_page_state(&state(page, document, PagePhase::Empty)),
+            "no change"
+        );
+        let other = PageKey::List(ListId::new());
+        assert!(
+            !view.set_page_state(&state(other, document, PagePhase::Empty)),
+            "not this page"
+        );
+    }
+
+    /// The note is built only over its own document, and the rows move
+    /// down by its band (D8).
+    #[test]
+    fn the_note_is_built_over_its_own_document_and_moves_the_rows_down() {
+        let (target, page, document, doc) = page();
+        let mut view = TasksView::new(target);
+        view.set_viewport(900.0, 600.0);
+        view.set_page_state(&state(page, document, PagePhase::Empty));
+
+        let stranger = WorkspaceDoc::create(WorkspaceId::new(), "other").unwrap();
+        view.catch_up(&stranger);
+        assert!(view.body.is_none(), "a stranger document builds nothing");
+
+        assert!(view.catch_up(&doc), "built over its own document");
+        assert!(view.body.is_some());
+        let top_before = view.rows_top();
+        view.layout_band();
+        assert!(view.rows_top() > view.header_h, "the rows moved down");
+        assert!(view.rows_top() >= top_before);
+        assert!(
+            view.rows_top() - view.header_h <= 600.0 * 0.4 + 1.0,
+            "never past its share"
+        );
+    }
+
+    /// A press in the note takes the keyboard, typing lands in the document,
+    /// and Escape hands the keyboard back to the table.
+    #[test]
+    fn a_press_in_the_note_takes_the_keyboard_and_escape_hands_it_back() {
+        let (target, page, document, mut doc) = page();
+        let mut view = TasksView::new(target);
+        view.set_viewport(900.0, 600.0);
+        view.set_page_state(&state(page, document, PagePhase::Empty));
+        view.catch_up(&doc);
+        view.layout_band();
+        let band = view.body.as_ref().unwrap().band;
+        let mods = ModifiersState::empty();
+
+        assert!(view.mouse_down(
+            &mut doc,
+            band.x + band.w * 0.5,
+            band.y + band.h * 0.5,
+            false
+        ));
+        assert!(view.body_is_focused_in(&doc));
+        view.key(&mut doc, &Key::Character("a".into()), Some("a"), mods);
+        let seed = genesis_seed_id(document);
+        assert_eq!(doc.read(seed).unwrap().content.as_text(), Some("a"));
+
+        assert!(view.key(&mut doc, &Key::Named(NamedKey::Escape), None, mods));
+        assert!(
+            !view.body_is_focused_in(&doc),
+            "Escape hands the keyboard back"
+        );
+        view.key(&mut doc, &Key::Character("b".into()), Some("b"), mods);
+        assert_eq!(
+            doc.read(seed).unwrap().content.as_text(),
+            Some("a"),
+            "the table has the keyboard now"
+        );
+    }
+
+    /// Rung 3 (P2): a bucket page — Completed, which has no capture row —
+    /// takes the same note, over its own document.
+    #[test]
+    fn the_note_is_built_on_a_bucket_page_too() {
+        let workspace = WorkspaceId::new();
+        let page = PageKey::Bucket(Bucket::Completed);
+        let document = page_document_id(workspace, page, 0);
+        let mut doc = WorkspaceDoc::page_genesis(workspace, document).unwrap();
+        doc.stamp_document_id(document).unwrap();
+        doc.enable_undo();
+        let mut view = TasksView::new(RailTarget::Bucket(Bucket::Completed));
+        view.set_viewport(900.0, 600.0);
+        assert_eq!(view.page_key(), Some(page));
+        view.set_page_state(&state(page, document, PagePhase::Empty));
+        assert!(view.catch_up(&doc));
+        view.layout_band();
+        assert!(view.rows_top() > view.header_h);
+        let band = view.body.as_ref().unwrap().band;
+        assert!(view.mouse_down(&mut doc, band.x + 5.0, band.y + 5.0, false));
+        assert!(view.body_is_focused_in(&doc), "the press focused the note");
+        let caret = view.body.as_ref().unwrap().leaf().caret_spot();
+        assert!(
+            caret.is_some(),
+            "the caret arrived: {caret:?} band {band:?}"
+        );
+        let took = view.key(
+            &mut doc,
+            &Key::Character("c".into()),
+            Some("c"),
+            ModifiersState::empty(),
+        );
+        assert!(took, "the note took the key");
+        assert_eq!(
+            doc.read(genesis_seed_id(document))
+                .unwrap()
+                .content
+                .as_text(),
+            Some("c")
+        );
+    }
+
+    /// Full document parity (P3): a picker opened in the note floats over
+    /// the rows, and a press on the page while it is open is the note's —
+    /// here, dismissing it — rather than the table's.
+    #[test]
+    fn a_picker_opened_in_the_note_takes_the_next_press_wherever_it_lands() {
+        let (target, page, document, mut doc) = page();
+        let mut view = TasksView::new(target);
+        view.set_viewport(900.0, 600.0);
+        view.set_page_state(&state(page, document, PagePhase::Empty));
+        view.catch_up(&doc);
+        view.layout_band();
+        let band = view.body.as_ref().unwrap().band;
+        let mods = ModifiersState::empty();
+        view.mouse_down(
+            &mut doc,
+            band.x + band.w * 0.5,
+            band.y + band.h * 0.5,
+            false,
+        );
+        view.key(&mut doc, &Key::Character("/".into()), Some("/"), mods);
+        assert!(
+            view.body.as_ref().unwrap().overlay_open(),
+            "the slash menu opened in the note"
+        );
+        // Far below the band, where a row would be.
+        let took = view.mouse_down(&mut doc, 300.0, 560.0, false);
+        assert!(took);
+        assert!(
+            !view.body.as_ref().unwrap().overlay_open(),
+            "the press was the note's: the menu closed"
+        );
+        assert!(view.selected_row().is_none(), "and no row was selected");
+    }
+
+    /// Rung 6 (P4): a task made in a list's note joins the list, in the
+    /// same step as the command that made it.
+    #[test]
+    fn a_task_made_in_a_lists_note_joins_the_list() {
+        let (target, page, document, mut doc) = page();
+        let RailTarget::List(list) = target else {
+            unreachable!()
+        };
+        let mut view = TasksView::new(target);
+        view.set_viewport(900.0, 600.0);
+        view.set_page_state(&state(page, document, PagePhase::Empty));
+        view.catch_up(&doc);
+        view.layout_band();
+        let band = view.body.as_ref().unwrap().band;
+        let mods = ModifiersState::empty();
+        view.mouse_down(
+            &mut doc,
+            band.x + band.w * 0.5,
+            band.y + band.h * 0.5,
+            false,
+        );
+        for ch in ["/", "t", "a", "s", "k"] {
+            view.key(&mut doc, &Key::Character(ch.into()), Some(ch), mods);
+        }
+        view.key(&mut doc, &Key::Named(NamedKey::Enter), None, mods);
+        let seed = genesis_seed_id(document);
+        let node = doc.read(seed).unwrap();
+        assert!(
+            koru_core::tasks::is_task(&koru_core::tasks::TaskFields::of(&node)),
+            "the line became a task"
+        );
+        let in_list = node.content.attrs().iter().any(|a| {
+            a.role == koru_core::attributes::KEY_LIST
+                && a.value == koru_core::node::AttrValue::Text(list.to_storage())
+        });
+        assert!(in_list, "and joined the list");
+        doc.undo().unwrap();
+        let node = doc.read(seed).unwrap();
+        assert!(
+            !node
+                .content
+                .attrs()
+                .iter()
+                .any(|a| a.role == koru_core::attributes::KEY_LIST),
+            "one undo takes the membership out with the task"
+        );
+    }
+
+    /// Rung 6 (P4): typing on a task's line asks the rows again once it
+    /// settles; typing prose asks nothing and remeasures nothing.
+    #[test]
+    fn typing_on_a_task_asks_the_rows_again_and_prose_does_not() {
+        let (target, page, document, mut doc) = page();
+        let mut view = TasksView::new(target);
+        view.set_viewport(900.0, 600.0);
+        view.set_page_state(&state(page, document, PagePhase::Empty));
+        view.catch_up(&doc);
+        view.layout_band();
+        let band = view.body.as_ref().unwrap().band;
+        let mods = ModifiersState::empty();
+        view.mouse_down(
+            &mut doc,
+            band.x + band.w * 0.5,
+            band.y + band.h * 0.5,
+            false,
+        );
+        view.key(&mut doc, &Key::Character("p".into()), Some("p"), mods);
+        assert_eq!(view.task_touch_deadline(), None, "prose asks nothing");
+        assert!(!view.is_stale());
+
+        let seed = genesis_seed_id(document);
+        koru_core::tasks::ensure_task(&mut doc, seed, koru_core::attributes::TaskReason::Explicit)
+            .unwrap();
+        view.key(&mut doc, &Key::Character("q".into()), Some("q"), mods);
+        let due = view
+            .task_touch_deadline()
+            .expect("a task's line was typed on");
+        assert!(
+            !view.flush_task_touch(std::time::Instant::now()),
+            "not yet settled"
+        );
+        assert!(view.flush_task_touch(due + std::time::Duration::from_millis(1)));
+        assert!(view.is_stale(), "the rows are asked again");
+        assert_eq!(view.task_touch_deadline(), None, "once");
+    }
+
+    /// A note that failed to register shows its notice with *Try again*,
+    /// and a press on it asks for the retry (plan Q8).
+    #[test]
+    fn a_failed_note_offers_try_again() {
+        let (target, page, document, mut doc) = page();
+        let mut view = TasksView::new(target);
+        view.set_viewport(900.0, 600.0);
+        view.set_page_state(&state(
+            page,
+            document,
+            PagePhase::Failed {
+                why: "no store".into(),
+                opening: false,
+            },
+        ));
+        view.catch_up(&doc);
+        assert!(view.rows_top() > view.header_h, "the notice takes a row");
+        let mut scene = vello::Scene::new();
+        view.paint_notice(&mut scene, Affine::IDENTITY);
+        let (_, retry) = view.notice.expect("drawn");
+        assert!(!view.take_wants_retry());
+        assert!(view.mouse_down(&mut doc, retry.x + 1.0, retry.y + 1.0, false));
+        assert!(view.take_wants_retry());
+        assert!(!view.take_wants_retry(), "drained");
+    }
+
+    fn note_view() -> (
+        RailTarget,
+        koru_core::ids::ListId,
+        DocumentId,
+        WorkspaceDoc,
+        TasksView,
+    ) {
+        let (target, page, document, doc) = page();
+        let RailTarget::List(list) = target else {
+            unreachable!()
+        };
+        let mut view = TasksView::new(target);
+        view.set_viewport(900.0, 600.0);
+        view.set_page_state(&state(page, document, PagePhase::Empty));
+        view.catch_up(&doc);
+        view.layout_band();
+        (target, list, document, doc, view)
+    }
+
+    /// Review note: the band's top-right corner opens the note's document
+    /// in a tab of its own, and lights under the pointer as a control.
+    #[test]
+    fn the_note_opens_in_a_new_tab_from_its_corner() {
+        let (_, _, document, mut doc, mut view) = note_view();
+        let open = view.body.as_ref().unwrap().open_rect();
+        assert!(open.w > 0.0 && open.h > 0.0, "the control has a place");
+        let (x, y) = (open.x + open.w * 0.5, open.y + open.h * 0.5);
+        assert!(view.mouse_move(x, y));
+        assert_eq!(view.cursor_icon(), koru_ui::cursor::PRESS);
+        assert!(view.mouse_down(&mut doc, x, y, false));
+        assert_eq!(view.take_request(), Some(Request::OpenNote { document }));
+        assert!(
+            !view.body.as_ref().unwrap().focused,
+            "the press was the control's, not the note's"
+        );
+    }
+
+    /// Review note: the band's grip sizes it by hand — taller than its
+    /// content, scrolling when shorter — and a double click on the grip
+    /// gives it back to its content.
+    #[test]
+    fn the_band_is_sized_by_its_grip_and_given_back_by_a_double_click() {
+        let (_, _, _, mut doc, mut view) = note_view();
+        let before = view.rows_top() - view.header_h;
+        assert!(
+            before > 0.0 && before < 100.0,
+            "one line's band to begin with"
+        );
+        let grip = view.body.as_ref().unwrap().grip_rect();
+        let (x, y) = (grip.x + grip.w * 0.5, grip.y + grip.h * 0.5);
+        assert!(view.mouse_move(x, y));
+        assert_eq!(view.cursor_icon(), CursorIcon::RowResize);
+        assert!(view.mouse_down(&mut doc, x, y, false));
+        assert!(view.mouse_move(x, y + 150.0));
+        assert_eq!(view.cursor_icon(), CursorIcon::RowResize, "while dragging");
+        assert!(view.mouse_up(&mut doc));
+        view.layout_band();
+        let after = view.rows_top() - view.header_h;
+        assert!(
+            (after - (before + 150.0)).abs() < 2.0,
+            "the band followed the pointer: {before} -> {after}"
+        );
+        assert!(view.band_fixed_h_for_test().is_some());
+
+        let grip = view.body.as_ref().unwrap().grip_rect();
+        assert!(view.mouse_double_click(&doc, grip.x + 10.0, grip.y + grip.h * 0.5));
+        view.layout_band();
+        assert!(view.band_fixed_h_for_test().is_none());
+        assert!(
+            ((view.rows_top() - view.header_h) - before).abs() < 0.5,
+            "back to its content"
+        );
+    }
+
+    /// Acceptance round 2: a drag can give the note more room, never less
+    /// than the band has on its own — squeezed to a sliver it showed a
+    /// line's top edge and nothing to read.
+    #[test]
+    fn the_band_is_never_dragged_shorter_than_its_content() {
+        let (_, _, _, mut doc, mut view) = note_view();
+        let natural = view.rows_top() - view.header_h;
+        let grip = view.body.as_ref().unwrap().grip_rect();
+        let (x, y) = (grip.x + grip.w * 0.5, grip.y + grip.h * 0.5);
+        assert!(view.mouse_down(&mut doc, x, y, false));
+        assert!(view.mouse_move(x, y - natural * 2.0));
+        assert!(view.mouse_up(&mut doc));
+        view.layout_band();
+        assert!(view.band_fixed_h_for_test().is_some(), "a height was given");
+        assert!(
+            ((view.rows_top() - view.header_h) - natural).abs() < 0.5,
+            "and it is floored at the band's own: {natural}"
+        );
+        // Typing a line while the band is held at its floor: the floor
+        // follows the content, as it does with no height given.
+        let band = view.body.as_ref().unwrap().band;
+        view.mouse_down(
+            &mut doc,
+            band.x + band.w * 0.5,
+            band.y + band.h * 0.5,
+            false,
+        );
+        view.key(
+            &mut doc,
+            &Key::Named(NamedKey::Enter),
+            None,
+            ModifiersState::empty(),
+        );
+        view.layout_band();
+        assert!(
+            view.rows_top() - view.header_h > natural + 1.0,
+            "a second line makes the band taller"
+        );
+    }
+
+    /// Acceptance round 2: a right-click in the note opens the editor's
+    /// own menu over it, as in a document tab, and takes the keyboard.
+    #[test]
+    fn a_right_click_in_the_note_opens_the_editors_menu() {
+        let (_, _, _, mut doc, mut view) = note_view();
+        let band = view.body.as_ref().unwrap().band;
+        assert!(view.context_menu(&mut doc, band.x + band.w * 0.5, band.y + band.h * 0.5));
+        let body = view.body.as_ref().unwrap();
+        assert!(body.focused, "the keyboard went with it");
+        assert!(body.menu_open(), "the editor's menu is up");
+    }
+
+    /// Plus-menu decision 2: the note is hidden until the page's record says
+    /// to show it — no band, no body, the rows right under the heading — and
+    /// comes back when it does.
+    #[test]
+    fn the_note_is_hidden_until_the_page_shows_it() {
+        let (target, page, document, doc) = page();
+        let mut view = TasksView::new(target);
+        view.set_viewport(900.0, 600.0);
+        let mut hidden = state(page, document, PagePhase::Empty);
+        hidden.note_shown = false;
+        assert!(view.set_page_state(&hidden));
+        view.catch_up(&doc);
+        view.layout_band();
+        assert!(view.body.is_none(), "hidden: no body");
+        assert!(!view.note_shown());
+        assert_eq!(
+            view.rows_top(),
+            view.header_h,
+            "the rows sit under the heading"
+        );
+
+        assert!(view.set_page_state(&state(page, document, PagePhase::Empty)));
+        assert!(view.catch_up(&doc), "shown: the body is built");
+        view.layout_band();
+        assert!(view.body.is_some());
+        assert!(view.rows_top() > view.header_h);
+
+        assert!(view.set_page_state(&hidden));
+        assert!(view.body.is_none(), "hidden again: the body goes");
+    }
+
+    /// The page's `+` sits in the left margin, **left of the colour square**,
+    /// and shows only while the pointer is over the heading line; a press on
+    /// it asks for the page's menu at the press.
+    #[test]
+    fn the_plus_left_of_the_colour_shows_on_hover_and_opens_the_pages_menu() {
+        let (_, list, _, mut doc, mut view) = note_view();
+        view.set_lists(vec![crate::tasks_view::ListFace {
+            id: list,
+            name: "Top".to_owned(),
+            color: Some("red".to_owned()),
+        }]);
+        let plus = view.plus_rect();
+        let swatch = view.swatch_rect().expect("a list wears its colour");
+        assert!(
+            plus.x + plus.w <= swatch.x,
+            "left of the colour: {plus:?} vs {swatch:?}"
+        );
+        assert!(plus.x >= 0.0, "inside the page");
+
+        assert!(!view.plus_visible(), "hidden until the heading is hovered");
+        let title = view.title_rect().expect("a list has a title");
+        assert!(
+            view.mouse_move(title.x + 3.0, title.y + 3.0),
+            "hover reveals it"
+        );
+        assert!(view.plus_visible());
+        // Away from the controls but on the line — the margin, on the way to it.
+        assert!(!view.mouse_move(2.0, title.y + 3.0) || view.plus_visible());
+        assert!(view.plus_visible(), "still on the heading line");
+
+        let (x, y) = (plus.x + plus.w * 0.5, plus.y + plus.h * 0.5);
+        view.mouse_move(x, y);
+        assert!(view.plus_visible());
+        assert_eq!(view.cursor_icon(), koru_ui::cursor::PRESS);
+        assert!(view.mouse_down(&mut doc, x, y, false));
+        assert_eq!(
+            view.take_request(),
+            Some(Request::PageMenu {
+                at: (x, y),
+                lane: false
+            })
+        );
+
+        assert!(view.mouse_move(300.0, 560.0), "off the line");
+        assert!(!view.plus_visible(), "hidden again");
+    }
+
+    /// With a lane, a `+` of its own in the same margin, shown while the
+    /// pointer is over the lane — and asking for the menu without the note.
+    #[test]
+    fn the_lane_has_a_plus_of_its_own_on_hover() {
+        let (_, _, _, mut doc, mut view) = note_view();
+        assert!(view.lane_plus_rect().is_none(), "no lane, no +");
+        let file = DocumentId::new();
+        view.set_attachment_faces(vec![crate::tasks_view::LaneItem {
+            id: file,
+            name: "brief.pdf".to_owned(),
+            is_file: true,
+        }]);
+        view.layout_band();
+        let chip = view.lane_for_test()[0];
+        let plus = view.lane_plus_rect().expect("a lane has one");
+        assert!(plus.x + plus.w <= chip.x, "left of the chips");
+        assert!(plus.y >= chip.y - 8.0 && plus.y + plus.h <= chip.y + chip.h + 8.0);
+        assert_ne!(plus, view.plus_rect(), "not the heading's");
+
+        assert!(!view.lane_plus_visible());
+        assert!(view.mouse_move(chip.x + 3.0, chip.y + 3.0), "over a chip");
+        assert!(view.lane_plus_visible());
+        assert!(!view.plus_visible(), "the heading's stays hidden");
+
+        let (x, y) = (plus.x + plus.w * 0.5, plus.y + plus.h * 0.5);
+        view.mouse_move(x, y);
+        assert!(view.lane_plus_visible());
+        assert_eq!(view.cursor_icon(), koru_ui::cursor::PRESS);
+        assert!(view.mouse_down(&mut doc, x, y, false));
+        assert_eq!(
+            view.take_request(),
+            Some(Request::PageMenu {
+                at: (x, y),
+                lane: true
+            })
+        );
+
+        // The *Add existing* picker hangs under the + that asked for it.
+        view.open_link_picker();
+        assert!(view.link_rect_for_test().y >= plus.y + plus.h);
+        assert!(
+            view.lane_plus_visible(),
+            "the + stays while its picker is up"
+        );
+    }
+
+    /// Plus-menu decisions 3 to 5: attached files make a lane under the
+    /// heading, above the note; a press opens the file and a right-click
+    /// asks for its menu.
+    #[test]
+    fn attached_files_make_a_lane_that_opens_and_offers_its_menu() {
+        let (_, _, _, mut doc, mut view) = note_view();
+        let band_top = view.header_h;
+        let (a, b) = (DocumentId::new(), DocumentId::new());
+        let faces = || {
+            vec![
+                crate::tasks_view::LaneItem {
+                    id: a,
+                    name: "brief.pdf".to_owned(),
+                    is_file: true,
+                },
+                crate::tasks_view::LaneItem {
+                    id: b,
+                    name: "Plan".to_owned(),
+                    is_file: false,
+                },
+            ]
+        };
+        assert!(view.set_attachment_faces(faces()));
+        assert!(!view.set_attachment_faces(faces()), "compare-first");
+        view.layout_band();
+        let lane: Vec<Rect> = view.lane_for_test().to_vec();
+        assert_eq!(lane.len(), 2);
+        assert!(lane[0].y >= band_top, "under the heading");
+        assert!(lane[1].x > lane[0].x, "left to right");
+        let band = view.body.as_ref().unwrap().band;
+        assert!(
+            band.y >= lane[0].y + lane[0].h,
+            "the note sits under the lane"
+        );
+        assert!(
+            view.rows_top() >= band.y + band.h,
+            "and the rows under both"
+        );
+
+        let (x, y) = (lane[0].x + lane[0].w * 0.5, lane[0].y + lane[0].h * 0.5);
+        assert!(view.mouse_move(x, y));
+        assert_eq!(view.cursor_icon(), koru_ui::cursor::PRESS);
+        assert!(view.mouse_down(&mut doc, x, y, false));
+        assert_eq!(
+            view.take_request(),
+            Some(Request::OpenAttachment { file: a })
+        );
+
+        let (x, y) = (lane[1].x + lane[1].w * 0.5, lane[1].y + lane[1].h * 0.5);
+        assert!(view.context_menu(&mut doc, x, y));
+        assert_eq!(
+            view.take_request(),
+            Some(Request::AttachmentMenu {
+                file: b,
+                at: (x, y)
+            })
+        );
+
+        assert!(view.set_attachment_faces(Vec::new()));
+        view.layout_band();
+        assert!(view.lane_for_test().is_empty());
+        assert_eq!(
+            view.body.as_ref().unwrap().band.y,
+            band_top,
+            "no lane, no gap"
+        );
+    }
+
+    fn found(title: &str, is_file: bool) -> koru_editor::components::entity_picker::DocumentChoice {
+        koru_editor::components::entity_picker::DocumentChoice {
+            target: koru_editor::trigger::DocumentTarget {
+                document: DocumentId::new(),
+                node: None,
+            },
+            title: title.to_owned(),
+            breadcrumb: String::new(),
+            is_file,
+        }
+    }
+
+    fn type_keys(view: &mut TasksView, doc: &mut WorkspaceDoc, words: &str) {
+        for ch in words.chars() {
+            let t = ch.to_string();
+            view.key(
+                doc,
+                &Key::Character(t.as_str().into()),
+                Some(&t),
+                ModifiersState::empty(),
+            );
+        }
+    }
+
+    /// *Add existing document or file…*: the `@` list opens under the `+`
+    /// with a field of its own, typing there owes a search for what was
+    /// typed in the page's workspace, and Enter on a result is the page's
+    /// request — the picker going with it.
+    #[test]
+    fn the_link_picker_types_in_its_own_field_and_commits_a_pick() {
+        let (_, _, _, mut doc, mut view) = note_view();
+        let mut scene = vello::Scene::new();
+        view.paint_heading(&mut scene, Affine::IDENTITY);
+        assert!(!view.link_open());
+        view.open_link_picker();
+        assert!(view.link_open());
+        let workspace = WorkspaceId::new();
+        view.set_link_context(workspace, Vec::new());
+
+        // It sits under the `+`, inside the page.
+        let plus = view.plus_rect();
+        let panel = view.link_rect_for_test();
+        assert!(panel.y >= plus.y + plus.h, "under the +");
+        assert!(panel.x + panel.w <= 900.0 && panel.y + panel.h <= 600.0);
+
+        // Typing goes to the picker, not the note or the capture row.
+        type_keys(&mut view, &mut doc, "bri");
+        assert!(view.body.as_ref().is_none_or(|b| !b.focused));
+        let request = view.take_link_request().expect("a search is owed");
+        assert_eq!(request.query, "bri");
+        assert_eq!(request.workspaces, vec![workspace]);
+
+        let (brief, plan) = (found("brief.pdf", true), found("Plan", false));
+        let picked = plan.target.document;
+        assert!(view.set_link_results(vec![brief, plan], false));
+        view.key(
+            &mut doc,
+            &Key::Named(NamedKey::ArrowDown),
+            None,
+            ModifiersState::empty(),
+        );
+        view.key(
+            &mut doc,
+            &Key::Named(NamedKey::Enter),
+            None,
+            ModifiersState::empty(),
+        );
+        assert!(!view.link_open(), "a pick closes it");
+        assert_eq!(
+            view.take_request(),
+            Some(Request::LinkExisting { document: picked })
+        );
+    }
+
+    /// Escape and a press outside close the picker and ask for nothing; a
+    /// click on a result picks it.
+    #[test]
+    fn the_link_picker_closes_on_escape_and_outside_and_picks_on_a_click() {
+        let (_, _, _, mut doc, mut view) = note_view();
+        let mods = ModifiersState::empty();
+        view.open_link_picker();
+        view.key(&mut doc, &Key::Named(NamedKey::Escape), None, mods);
+        assert!(!view.link_open());
+        assert_eq!(view.take_request(), None);
+
+        view.open_link_picker();
+        assert!(view.mouse_down(&mut doc, 2.0, 590.0, false), "swallowed");
+        assert!(!view.link_open(), "a press outside closes it");
+        assert_eq!(view.take_request(), None, "and acts on nothing");
+
+        view.open_link_picker();
+        let hit = found("Plan", false);
+        let picked = hit.target.document;
+        view.set_link_results(vec![hit], false);
+        let panel = view.link_rect_for_test();
+        // The first result row: past the field, the scope chip and padding.
+        let y = panel.y
+            + koru_editor::components::entity_picker::FIELD_H
+            + koru_draw::theme::PANEL_PAD
+            + koru_editor::components::entity_picker::HEADER_H
+            + koru_draw::theme::ROW_H * 0.5;
+        assert!(view.mouse_move(panel.x + 20.0, y), "the row lights");
+        assert!(view.mouse_down(&mut doc, panel.x + 20.0, y, false));
+        assert_eq!(
+            view.take_request(),
+            Some(Request::LinkExisting { document: picked })
+        );
+        assert!(!view.link_open());
+    }
+
+    /// What the picker offers leaves out what the page already holds and the
+    /// page's own note: linking either is no use to anyone.
+    #[test]
+    fn the_link_picker_leaves_out_what_the_page_holds_and_its_own_note() {
+        let (_, _, document, _, mut view) = note_view();
+        let held = DocumentId::new();
+        view.set_attachment_faces(vec![crate::tasks_view::LaneItem {
+            id: held,
+            name: "held.pdf".to_owned(),
+            is_file: true,
+        }]);
+        view.open_link_picker();
+        let mut own = found("The note", false);
+        own.target.document = document;
+        let mut already = found("held.pdf", true);
+        already.target.document = held;
+        view.set_link_results(vec![own, already, found("Fresh", false)], false);
+        let titles: Vec<String> = view
+            .link
+            .as_ref()
+            .unwrap()
+            .hits
+            .iter()
+            .map(|hit| hit.title.clone())
+            .collect();
+        assert_eq!(titles, vec!["Fresh".to_owned()]);
+    }
+
+    /// A reference to a document wears the page glyph and one to a file the
+    /// file glyph — the lane says which it holds.
+    #[test]
+    fn the_lane_tells_a_document_from_a_file() {
+        let (_, _, _, _, mut view) = note_view();
+        let (file, page) = (DocumentId::new(), DocumentId::new());
+        view.set_attachment_faces(vec![
+            crate::tasks_view::LaneItem {
+                id: file,
+                name: "brief.pdf".to_owned(),
+                is_file: true,
+            },
+            crate::tasks_view::LaneItem {
+                id: page,
+                name: "Plan".to_owned(),
+                is_file: false,
+            },
+        ]);
+        view.layout_band();
+        assert_eq!(view.lane_for_test().len(), 2);
+        let mut scene = vello::Scene::new();
+        view.paint_lane_for_test(&mut scene);
+    }
+
+    /// Review note: a note taller than its band shows the thumb a document
+    /// tab shows, and the band is what it scrolls in.
+    #[test]
+    fn a_tall_note_scrolls_in_its_band_and_wears_a_thumb() {
+        let (_, _, _, mut doc, mut view) = note_view();
+        let band = view.body.as_ref().unwrap().band;
+        let mods = ModifiersState::empty();
+        view.mouse_down(
+            &mut doc,
+            band.x + band.w * 0.5,
+            band.y + band.h * 0.5,
+            false,
+        );
+        for _ in 0..30 {
+            view.key(&mut doc, &Key::Named(NamedKey::Enter), None, mods);
+        }
+        view.layout_band();
+        let cap = 600.0 * 0.4;
+        let h = view.rows_top() - view.header_h;
+        assert!((h - cap).abs() < 1.0, "capped at the page's share: {h}");
+        let leaf = view.body_leaf_mut().expect("the note");
+        let content = koru_editor::rowlayout::content_height(koru_editor::Editing::body(leaf));
+        assert!(content > cap, "taller than the band");
+        assert!(
+            koru_editor::Editing::view(leaf)
+                .scrollbar_geom(content)
+                .is_some(),
+            "so the thumb is drawn"
+        );
+    }
+
+    /// Review note: the heading's colour square opens the list's colour
+    /// menu at the press — the rail row's *Color*, one press nearer.
+    #[test]
+    fn the_colour_square_opens_the_lists_colour_menu() {
+        let (_, list, _, mut doc, mut view) = note_view();
+        assert!(view.swatch_rect().is_some(), "a list page wears the square");
+        view.set_lists(vec![crate::tasks_view::ListFace {
+            id: list,
+            name: "Top".to_owned(),
+            color: Some("teal".to_owned()),
+        }]);
+        let swatch = view.swatch_rect().unwrap();
+        let (x, y) = (swatch.x + swatch.w * 0.5, swatch.y + swatch.h * 0.5);
+        assert!(view.mouse_move(x, y));
+        assert_eq!(view.cursor_icon(), koru_ui::cursor::PRESS);
+        assert!(view.mouse_down(&mut doc, x, y, false));
+        assert_eq!(
+            view.take_request(),
+            Some(Request::ListColor { list, at: (x, y) })
+        );
+    }
+
+    /// Review note: a double click on a list page's title renames the list
+    /// in place — Enter keeps the words, Escape puts the old ones back, and
+    /// a sibling's name is refused.
+    #[test]
+    fn a_double_click_on_the_title_renames_the_list_in_place() {
+        let (_, list, _, mut doc, mut view) = note_view();
+        let other = koru_core::ids::ListId::new();
+        view.set_lists(vec![
+            crate::tasks_view::ListFace {
+                id: list,
+                name: "Top".to_owned(),
+                color: Some("teal".to_owned()),
+            },
+            crate::tasks_view::ListFace {
+                id: other,
+                name: "Later".to_owned(),
+                color: None,
+            },
+        ]);
+        let mods = ModifiersState::empty();
+        let title = view
+            .title_rect()
+            .expect("a list page has a title to rename");
+        assert!(view.mouse_double_click(&doc, title.x + 2.0, title.y + 2.0));
+        assert!(view.heading_rename.is_some(), "the field stands");
+        for ch in ["N", "e", "w"] {
+            view.key(&mut doc, &Key::Character(ch.into()), Some(ch), mods);
+        }
+        view.key(&mut doc, &Key::Named(NamedKey::Enter), None, mods);
+        assert!(view.heading_rename.is_none(), "and goes");
+        assert_eq!(
+            view.take_request(),
+            Some(Request::RenameList {
+                list,
+                name: "New".to_owned()
+            })
+        );
+
+        assert!(view.mouse_double_click(&doc, title.x + 2.0, title.y + 2.0));
+        view.key(&mut doc, &Key::Named(NamedKey::Escape), None, mods);
+        assert!(view.heading_rename.is_none());
+        assert_eq!(view.take_request(), None, "Escape asks nothing");
+
+        assert!(view.mouse_double_click(&doc, title.x + 2.0, title.y + 2.0));
+        for ch in ["L", "a", "t", "e", "r"] {
+            view.key(&mut doc, &Key::Character(ch.into()), Some(ch), mods);
+        }
+        view.key(&mut doc, &Key::Named(NamedKey::Enter), None, mods);
+        assert_eq!(view.take_request(), None, "a sibling's name is refused");
+
+        let mut today = TasksView::new(RailTarget::Bucket(Bucket::Today));
+        today.set_viewport(900.0, 600.0);
+        assert!(
+            today.title_rect().is_none(),
+            "a queue's name is nobody's to change"
+        );
+    }
 }

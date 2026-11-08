@@ -54,6 +54,7 @@ use loro_protocol::BatchId;
 
 pub mod link;
 pub mod outbox;
+pub mod revisions;
 use link::{Inbound, Link, ThreadLink};
 
 /// Boundary-owned client construction used by explicit embedded/test hosts.
@@ -919,6 +920,13 @@ impl StoreSession {
     }
 
     /// Whether the store has said this batch is on the disk.
+    /// The version the store has durably acknowledged for this session, if
+    /// any batch has been — what a pending revision is released against.
+    /// Learned only from a durable answer, never from a join.
+    pub fn acked(&self) -> Option<&loro::VersionVector> {
+        self.acked.as_ref()
+    }
+
     pub fn is_durable(&self, batch: BatchId) -> bool {
         self.durable.contains(&batch)
     }

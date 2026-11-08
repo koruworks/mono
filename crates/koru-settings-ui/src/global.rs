@@ -53,6 +53,8 @@ pub(crate) struct Rows<'a> {
     pub(crate) layout_applied: bool,
     /// This device's telemetry answer; `None` draws no Privacy card.
     pub(crate) telemetry: Option<bool>,
+    /// Whether Koru's app-menu entry is there; `None` draws no row.
+    pub(crate) app_menu: Option<bool>,
     /// The host can open the sample document, so *Document fonts* links to it.
     pub(crate) sample_document: bool,
 }
@@ -578,6 +580,14 @@ pub(crate) fn system(b: &mut Builder<'_>, rows: &Rows<'_>) {
         rows.section.start_on_login,
         Action::StartOnLogin(!rows.section.start_on_login),
     );
+    if let Some(on) = rows.app_menu {
+        b.row_toggle(
+            koru_i18n::t(lang, Key::SettingsShowInAppMenu),
+            Some(koru_i18n::t(lang, Key::SettingsShowInAppMenuHint)),
+            on,
+            Action::AppMenuEntry(!on),
+        );
+    }
     // *Keep in background* first because it is the default.
     b.row_choice(
         koru_i18n::t(lang, Key::SettingsWhenTheLastWindowCloses),

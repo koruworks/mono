@@ -110,13 +110,20 @@ impl MainView {
         });
         match existing.flatten() {
             Some(i) => {
-                self.select(i);
+                // **Re-pointed before it is selected.** Selecting a tab
+                // activates the document it edits, and a Tasks tab still on
+                // its old page edits the old page's note — a stale activation
+                // the window would have no tab for, so it landed as an
+                // untitled document tab (acceptance round 2). Re-pointed
+                // first, the tab edits nothing until the shell names the new
+                // page's note, and that activation is the one that lands.
+                //
                 // **One tab, its content swaps.** A bucket press on a tab
                 // showing the Reminders page trades the view back to Tasks;
                 // the Reminders row on a tasks page trades it the other way.
                 // Same variant keeps the view — and its scroll, its chooser,
                 // its page state — exactly as re-pointing a queue always did.
-                let tab = self.tabs_mut().active_mut();
+                let tab = self.tabs_mut().get_mut(i).expect("found above");
                 let swapped = match (target, &mut tab.view) {
                     (RailTarget::Reminders, TabView::Reminders(_)) => false,
                     (RailTarget::Reminders, view) => {
@@ -139,6 +146,7 @@ impl MainView {
                     // size — leaving the new one laying out at 0×0 forever.
                     tab.invalidate_size();
                 }
+                self.select(i);
             }
             None => {
                 // **Inactive when it is a second tab.** Ctrl+click's whole
@@ -308,6 +316,12 @@ impl MainView {
         true
     }
 
+    /// One request, as if the Tasks tab in front had made it — for the suite.
+    #[cfg(test)]
+    pub(super) fn handle_tasks_request_for_test(&mut self, request: crate::tasks_view::Request) {
+        self.handle_tasks_request(request);
+    }
+
     /// One request from the Tasks tab, through the door its verb has.
     fn handle_tasks_request(&mut self, request: crate::tasks_view::Request) {
         // **A tab reports in its own coordinates.** The container passes the
@@ -352,9 +366,6 @@ impl MainView {
                     pinned_today,
                 );
                 self.open_subject_menu(subject, items, to_window(at));
-            }
-            crate::tasks_view::Request::OpenList { list } => {
-                self.go_to_task_list(list);
             }
             crate::tasks_view::Request::Complete {
                 document,
@@ -473,6 +484,125 @@ impl MainView {
                 for request in requests {
                     self.handle_tasks_request(request);
                 }
+            }
+            // The page's `+`: the note inline, and files as context.
+            crate::tasks_view::Request::PageMenu { at, lane } => {
+                let Some((page, shown)) = (match &self.tabs().active_tab().view {
+                    TabView::Tasks(t) => t.page_key().map(|page| (page, t.note_shown())),
+                    _ => None,
+                }) else {
+                    return;
+                };
+                let mut menu = super::context_menu::ContextMenu::new(
+                    &mut self.engine,
+                    super::context_menu::MenuSubject::Page(page),
+                    to_window(at),
+                    // The lane's `+` leaves the note out.
+                    if lane {
+                        super::context_menu::page_lane_items()
+                    } else {
+                        super::context_menu::page_plus_items(shown)
+                    },
+                );
+                let enabled = self.enabled_items(&menu);
+                menu.step(&enabled, 1);
+                self.menu = Some(menu);
+                self.submenu = None;
+                self.nested = None;
+            }
+            // A file on the page: its Files row's menu, plus taking it off
+            // the page. *Add note* or *Open note* is decided now, as the
+            // Files row decides it.
+            crate::tasks_view::Request::AttachmentMenu { file, at } => {
+                let Some(page) = (match &self.tabs().active_tab().view {
+                    TabView::Tasks(t) => t.page_key(),
+                    _ => None,
+                }) else {
+                    return;
+                };
+                let note = self.local_attachment_note(file);
+                let items = if self.linked_is_file(file) {
+                    super::context_menu::page_attachment_items(note)
+                } else {
+                    super::context_menu::page_link_items()
+                };
+                let mut menu = super::context_menu::ContextMenu::new(
+                    &mut self.engine,
+                    super::context_menu::MenuSubject::PageAttachment { page, file },
+                    to_window(at),
+                    items,
+                );
+                let enabled = self.enabled_items(&menu);
+                menu.step(&enabled, 1);
+                self.menu = Some(menu);
+                self.submenu = None;
+                self.nested = None;
+            }
+            // A press on a reference in the lane opens it as what it is: a
+            // file as a file pill does, a document as a document pill.
+            crate::tasks_view::Request::OpenAttachment { file } => {
+                if self.linked_is_file(file) {
+                    self.ask_pane(koru_workspace_host::PaneRequest::OpenFile(file));
+                } else {
+                    self.open_document_target(
+                        koru_editor::trigger::DocumentTarget {
+                            document: file,
+                            node: None,
+                        },
+                        koru_editor::OpenWhere::Reuse,
+                    );
+                }
+            }
+            // The *Add existing* picker chose a document or file: the page
+            // takes the reference, through the same edit an attached file
+            // does.
+            crate::tasks_view::Request::LinkExisting { document } => {
+                let Some(page) = (match &self.tabs().active_tab().view {
+                    TabView::Tasks(t) => t.page_key(),
+                    _ => None,
+                }) else {
+                    return;
+                };
+                self.list_edits
+                    .push(koru_workspace_host::tasks::ListEdit::Attach {
+                        page,
+                        files: vec![document],
+                    });
+            }
+            // The note's corner control: its document in a tab of its own,
+            // the way a Ctrl+Enter on a pill opens one — even when a tab is
+            // already on it, since the person asked for another.
+            crate::tasks_view::Request::OpenNote { document } => {
+                self.open_document_target(
+                    koru_editor::trigger::DocumentTarget {
+                        document,
+                        node: None,
+                    },
+                    koru_editor::OpenWhere::NewTab,
+                );
+            }
+            // The heading's colour square: the rail row's colour rows, at
+            // the press — the same subject, so the same action applies it.
+            crate::tasks_view::Request::ListColor { list, at } => {
+                let mut menu = super::context_menu::ContextMenu::new(
+                    &mut self.engine,
+                    super::context_menu::MenuSubject::List(list),
+                    to_window(at),
+                    super::context_menu::list_color_items(),
+                );
+                let enabled = self.enabled_items(&menu);
+                menu.step(&enabled, 1);
+                self.menu = Some(menu);
+                self.submenu = None;
+                self.nested = None;
+            }
+            // The heading's words: through the rail's own door, so the list
+            // has one rename whichever surface asked.
+            crate::tasks_view::Request::RenameList { list, name } => {
+                self.apply_tasks_rail(crate::panes::explore::rail::TasksRailRequest::RenameList {
+                    id: list,
+                    name,
+                });
             }
             crate::tasks_view::Request::RowsMenu {
                 tasks,

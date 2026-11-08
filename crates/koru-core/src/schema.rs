@@ -25,10 +25,11 @@ use std::sync::{Arc, Mutex};
 use loro::{
     ExportMode, LoroDoc, LoroError, LoroMap, LoroValue, TreeID, TreeParentId, ValueOrContainer,
 };
+use uuid::Uuid;
 
 use crate::change::ChangeTracker;
 
-use crate::ids::{AttrId, DocRef, DocumentId, NodeId, ProfileId, Ref, WorkspaceId};
+use crate::ids::{AttrId, DocRef, DocumentId, NodeId, ProfileId, Ref, WorkspaceId, genesis_peer};
 use crate::node::{
     Align, Attr, AttrValue, BlobHash, CANVAS_LIMIT, CanvasExtent, CanvasPoint, Content, Heading,
     Kind, ListStyle, Node, NodeMeta, ShapeError,
@@ -152,6 +153,30 @@ pub(crate) const K_SCHEMA: &str = "schema_version";
 const K_DOCUMENT: &str = "document";
 
 pub const SCHEMA_VERSION: i64 = 5;
+
+/// The `schema_version` a `V1` page-document genesis writes
+/// ([`WorkspaceDoc::page_genesis`]).
+///
+/// Pinned apart from [`SCHEMA_VERSION`] on purpose: the genesis has to write
+/// the same value on every build, or two builds would produce two different
+/// changes under one op id. It is the version current when `V1` was fixed,
+/// and it never moves; a build whose [`SCHEMA_VERSION`] is higher raises the
+/// marker through the ordinary `record_schema_for_kind` path, under its own
+/// peer, when it writes content the older schema cannot read.
+pub const PAGE_GENESIS_SCHEMA_VERSION_V1: i64 = 5;
+
+/// The root node's id in a page document: `UUIDv5(document, "root")`.
+///
+/// Derived from the document id so that every device's genesis names the one
+/// root the same way — the same reason the document id itself is derived.
+pub fn genesis_root_id(document: DocumentId) -> NodeId {
+    NodeId::from_uuid(Uuid::new_v5(&document.as_uuid(), b"root"))
+}
+
+/// The seed paragraph's id in a page document: `UUIDv5(document, "seed")`.
+pub fn genesis_seed_id(document: DocumentId) -> NodeId {
+    NodeId::from_uuid(Uuid::new_v5(&document.as_uuid(), b"seed"))
+}
 
 /// What a document carrying no marker *is*.
 ///
@@ -648,6 +673,91 @@ impl WorkspaceDoc {
             popped_undo_caret: Default::default(),
             grouping: false,
         })
+    }
+
+    /// **The genesis of a page document** — the one construction in Koru that
+    /// is identical on every device ([ADR-000-pagedocumentidentity]).
+    ///
+    /// A page document's id is derived ([`page_document_id`]), so two devices
+    /// that start the same note offline write to one id. What makes their two
+    /// starts *one document* rather than two seeds to be folded is that the
+    /// genesis is written under the document's own [`genesis_peer`], in a
+    /// pinned order, one commit per step, with every node id derived from the
+    /// document id — so both devices produce the same operations under the
+    /// same op ids, and importing one's genesis into the other is a no-op.
+    /// `unify_document_roots` is not the merge mechanism; it stays only as
+    /// the defensive repair it already was.
+    ///
+    /// **The order is the contract, and `V1` pins it:**
+    ///
+    /// 1. a fresh `LoroDoc` on [`genesis_peer`];
+    /// 2. the document meta — `id` = the workspace, `name` empty,
+    ///    `schema_version` = [`PAGE_GENESIS_SCHEMA_VERSION_V1`], **not** the
+    ///    moving [`SCHEMA_VERSION`] — in one commit;
+    /// 3. the root: a tree node under the top, `doc_id` written **first**,
+    ///    then the ordinary node envelope of a [`Kind::Document`] with empty
+    ///    text and [`genesis_root_id`]; one commit;
+    /// 4. the seed paragraph under the root, [`genesis_seed_id`]; one commit;
+    /// 5. a random peer, asserted different from the genesis peer, before the
+    ///    document reaches anything that edits.
+    ///
+    /// Nothing is ever committed under the genesis peer again: an edit, an
+    /// import or a restart leaves that peer's counter where genesis left it,
+    /// and `tests/page_genesis.rs` holds the golden file of the changes and
+    /// op ids this writes, so a code change or a Loro upgrade that would alter
+    /// them fails the build rather than forking op ids in the field.
+    ///
+    /// Root task attributes live on the root (`tasks::TASK_CAPABLE_KINDS`),
+    /// which is one more reason the root has to be shared rather than folded.
+    ///
+    /// [ADR-000-pagedocumentidentity]: ../../../docs/decisions/ADR-000-pagedocumentidentity.md
+    /// [`page_document_id`]: crate::ids::page_document_id
+    /// [`genesis_peer`]: crate::ids::genesis_peer
+    pub fn page_genesis(workspace: WorkspaceId, document: DocumentId) -> Result<Self> {
+        let genesis = genesis_peer(document);
+        let doc = LoroDoc::new();
+        configure_styles(&doc);
+        doc.set_peer_id(genesis)?;
+
+        let meta = doc.get_map(C_META);
+        meta.insert(K_ID, workspace.to_storage())?;
+        meta.insert(K_NAME, "")?;
+        meta.insert(K_SCHEMA, PAGE_GENESIS_SCHEMA_VERSION_V1)?;
+        doc.commit();
+
+        let mut ws = Self {
+            doc,
+            index: HashMap::new(),
+            blob_nodes: Vec::new(),
+            undo: None,
+            pending_undo_caret: Default::default(),
+            popped_undo_caret: Default::default(),
+            grouping: false,
+        };
+        let mut root = Node::document("")?;
+        root.id = genesis_root_id(document);
+        let root = ws.insert_seeded(Parent::Root, root, Some(document))?;
+        let mut seed = Node::paragraph("")?;
+        seed.id = genesis_seed_id(document);
+        ws.insert(Parent::Node(root), seed)?;
+
+        // The peer Loro would have minted for a fresh document, from Loro's
+        // own generator — this crate links no random source of its own.
+        let random = LoroDoc::new().peer_id();
+        assert_ne!(
+            random, genesis,
+            "a page document must leave its genesis peer before it is edited"
+        );
+        ws.doc.set_peer_id(random)?;
+        Ok(ws)
+    }
+
+    /// Whether this replica is still on `document`'s genesis peer — true only
+    /// inside [`page_genesis`](Self::page_genesis), and what the registry
+    /// asserts against before it hands a page document to anything that
+    /// writes.
+    pub fn on_genesis_peer(&self, document: DocumentId) -> bool {
+        self.doc.peer_id() == genesis_peer(document)
     }
 
     /// Rebuild from a snapshot. Also reindexes, since `TreeID`s are only
@@ -1487,6 +1597,20 @@ impl WorkspaceDoc {
     /// Insert `node` under `parent`. Rejects the insert if the parent cannot
     /// take children — an image and a table are leaves.
     pub fn insert(&mut self, parent: Parent, node: Node) -> Result<NodeId> {
+        self.insert_seeded(parent, node, None)
+    }
+
+    /// [`insert`](Self::insert), with the document id a [`Kind::Document`]
+    /// root carries written **before** the node envelope, so that
+    /// `mint_document_id` finds it and mints nothing. The page genesis is the
+    /// one caller that chooses a document's id; everything else passes `None`
+    /// and takes a minted v4.
+    fn insert_seeded(
+        &mut self,
+        parent: Parent,
+        node: Node,
+        document: Option<DocumentId>,
+    ) -> Result<NodeId> {
         if let Parent::Node(pid) = parent {
             self.read(pid)?.may_adopt()?;
         }
@@ -1494,6 +1618,9 @@ impl WorkspaceDoc {
         let under = self.resolve_parent(parent)?;
         let tid = tree.create(under)?;
         let meta = tree.get_meta(tid)?;
+        if let Some(id) = document {
+            meta.insert(K_DOC_ID, id.to_storage())?;
+        }
         write_node(&meta, &node)?;
         self.record_schema_for_kind(node.kind)?;
         mint_document_id(&meta, node.kind)?;

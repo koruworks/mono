@@ -137,17 +137,32 @@ where
     .await??
     .into_iter()
     .collect();
+    let mut changed = 0usize;
+    let mut reordered = 0usize;
     for proof in &mut outcome.documents {
         let Unit::Document { document_id, .. } = proof.unit else {
             continue;
         };
-        if proof.carried
-            && current.get(&DocumentId::from_uuid(document_id.as_uuid())) != Some(&proof.state)
-        {
+        if !proof.carried {
+            continue;
+        }
+        let current = current.get(&DocumentId::from_uuid(document_id.as_uuid()));
+        if current.is_some_and(|state| same_revision(state, &proof.state)) {
+            reordered += usize::from(current != Some(&proof.state));
+        } else {
+            if changed == 0 {
+                tracing::info!(%workspace, %document_id,
+                    current_bytes = current.map(Vec::len), proof_bytes = proof.state.len(),
+                    "cloud sync: first invalidated durable document proof");
+            }
             proof.carried = false;
             outcome.documents_synced = outcome.documents_synced.saturating_sub(1);
             outcome.remote_hint = true;
+            changed += 1;
         }
+    }
+    if changed != 0 || reordered != 0 {
+        tracing::info!(%workspace, changed, reordered, "cloud sync: rechecked durable document proofs");
     }
     progress(Progress::Documents {
         synced: outcome.documents_synced,
@@ -155,3 +170,22 @@ where
     });
     Ok(())
 }
+
+// Loro encodes a hash map, so byte order is not a document revision. Keep
+// the cheap byte comparison, but decode before invalidating a carried proof.
+// An absent/invalid position still cannot establish current coverage.
+fn same_revision(left: &[u8], right: &[u8]) -> bool {
+    if left == right {
+        return true;
+    }
+    match (
+        loro::VersionVector::decode(left),
+        loro::VersionVector::decode(right),
+    ) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests;

@@ -4795,6 +4795,7 @@ dependencies = [
  "koru-app-shell",
  "koru-appearance-ui",
  "koru-artifacts-ui",
+ "koru-autostart",
  "koru-canvas-flow",
  "koru-canvas-ui",
  "koru-channel",
@@ -5699,6 +5700,7 @@ dependencies = [
  "koru-env",
  "koru-tagname",
  "loro",
+ "serde_json",
  "unicode-normalization",
  "uuid",
 ]
@@ -7596,6 +7598,8 @@ dependencies = [
  "koru-store-core",
  "loro",
  "loro-protocol",
+ "serde",
+ "serde_json",
  "tempfile",
  "tracing",
 ]
@@ -13269,6 +13273,7 @@ dependencies = [
  "getrandom 0.4.3",
  "js-sys",
  "serde_core",
+ "sha1_smol",
  "wasm-bindgen",
 ]
 

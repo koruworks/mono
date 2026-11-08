@@ -5,10 +5,10 @@ Koru shows documents, files and terminal/shell session tabs — plus Welcome,
 Settings, Manage, Trash, Feedback, Search, Updates, What's New, Linked devices
 and Voice. Eight larger surfaces are built and tested behind flags — the
 first five from 2026-10-08, canvases and Socials from 2026-10-10, agent views
-from 2026-10-16. **Agent sessions ship on by default** (maintainers,
-2026-10-15), so the `+` menu offers agent runtimes beside shells; the other
-seven, including Explore's Agents and Artifacts views, are **hidden** until
-they are switched on. Nothing was deleted, and the flags are **UI only**:
+from 2026-10-16. **Cloud sync, agent sessions, Tasks and Koru AI ship on by
+default**. Cloud sync defaults on in every build (maintainers, 2026-11-07).
+Explore's Agents and Artifacts views, reminders, canvases and Socials are
+**hidden** until switched on. Nothing was deleted, and the flags are **UI only**:
 every background worker (reminders, sync, the delegate runner, the session
 host) starts exactly as it does with the flag on. **The one exception is the
 Socials publisher**, which Koru Agent starts only while `ENABLE_SOCIALS` is on
@@ -17,11 +17,11 @@ decision record is ADR-450.
 
 | Flag (Rust) | Env var | Default | Shows |
 | --- | --- | --- | --- |
-| `ENABLE_CLOUD_SYNC` | `KORU_ENABLE_CLOUD_SYNC` | off | Koru Cloud: account sign-in (email, Google, Apple), the Cloud page, every Cloud pointer |
+| `ENABLE_CLOUD_SYNC` | `KORU_ENABLE_CLOUD_SYNC` | **on** | Koru Cloud: account sign-in (email, Google, Apple), the Cloud page, every Cloud pointer |
 | `ENABLE_AGENTS` | `KORU_ENABLE_AGENTS` | **on** | Agent sessions as tabs: the `+` menu's *Agents ▸*, agent tabs and their restore, the tray's Agents submenu. **Shell sessions are always shown** |
 | `ENABLE_AGENT_VIEWS` | `KORU_ENABLE_AGENT_VIEWS` | off | Explore's *Agents* and *Artifacts* views and every way into them — **and every way to start Delegate** (with `ENABLE_AI` on). Needs `ENABLE_AGENTS` on as well |
-| `ENABLE_TASKS` | `KORU_ENABLE_TASKS` | off | The Tasks view and every way into it. **`/due` stays** and still creates a task |
-| `ENABLE_AI` | `KORU_ENABLE_AI` | off | Koru AI chat **and Delegate** (runs, results, schedules) — grouped by the maintainers. *Starting* a delegation also needs `ENABLE_AGENT_VIEWS` |
+| `ENABLE_TASKS` | `KORU_ENABLE_TASKS` | **on** | The Tasks view and every way into it. **`/due` stays** and still creates a task |
+| `ENABLE_AI` | `KORU_ENABLE_AI` | **on** | Koru AI chat **and Delegate** (runs, results, schedules) — grouped by the maintainers. *Starting* a delegation also needs `ENABLE_AGENT_VIEWS` |
 | `ENABLE_REMINDERS` | `KORU_ENABLE_REMINDERS` | off | The reminders UI. The reminder worker still runs, so an existing reminder can still notify |
 | `ENABLE_CANVAS` | `KORU_ENABLE_CANVAS` | off | Canvases: the Canvases view, its `+` flyout, canvas tabs, canvas search results and canvases in the Manage tab's document counts. With agents off as well, a shown canvas is cards and images only |
 | `ENABLE_SOCIALS` | `KORU_ENABLE_SOCIALS` | off | Socials: the Socials view, its `+` row, *New social post* and the Socials tab — **and the publisher in Koru Agent**, which starts only with the flag on; off, a scheduled post waits |
@@ -37,9 +37,9 @@ more than one flag: `agent_views()` is `agents && agent_views`, and
 
 1. **Baked in.** Each `ENABLE_*` constant is `option_env!("KORU_ENABLE_*")`
    read through koru-env's truthiness rule when `koru-features` is compiled.
-   Unset is **off** for every surface except agents, which are **on** when
-   unset, so a release built with nothing set ships documents, files, shells
-   and agents.
+   Cloud sync, agents, Tasks and Koru AI are **on** when unset; the other four
+   flags are **off**. This applies to development and release builds on every
+   platform.
 2. **Overridden at run time.** A `KORU_ENABLE_*` variable that is **set** in the
    process environment wins in both directions: `KORU_ENABLE_AI=1` shows Koru
    AI in a build that baked it off; `KORU_ENABLE_AI=0` hides it in one that
@@ -51,6 +51,11 @@ more than one flag: `agent_views()` is `agents && agent_views`, and
 that spells it is compiled — the trap `koru-release::package::run_cargo`
 documents for `KORU_RELEASE_CHANNEL` — so a second crate reading the same name
 could be compiled under a different environment and disagree.
+
+Cloud sync's default exposes its account and sync controls. Connecting still
+requires configured Cloud endpoints, a signed-in account with the required
+subscription, and the Profile's sync settings. The flag does not change those
+settings or automatically enable sync for every Profile or workspace.
 
 ## Baking a surface into a release
 

@@ -379,7 +379,10 @@ internal class AccountPresentation(
         if (snapshot.switchPending) return@withLock
         val allowed = when (intent) {
             AccountIntent.AddAccount, AccountIntent.SwitchAccount -> false
-            AccountIntent.SignIn, AccountIntent.SignInWithApple, AccountIntent.SignInWithEmail -> snapshot.canSignIn
+            // Email has no Android journey yet: the host refuses START_EMAIL,
+            // so the screen does not offer it and a stray intent is not sent.
+            AccountIntent.SignIn, AccountIntent.SignInWithApple -> snapshot.canSignIn
+            AccountIntent.SignInWithEmail -> false
             AccountIntent.ConfirmCreation, AccountIntent.CancelCreation -> snapshot.canDecideCreation
             AccountIntent.Cancel -> snapshot.canCancel
             AccountIntent.SelectProfiles -> snapshot.canChoose && profileId == null &&
@@ -482,9 +485,8 @@ internal fun AccountIntent.wire(): AccountAction = when (this) {
     // Apple has no Android sheet: the host asks for a browser page and takes
     // back the verified App Link (BrowserSignInPrompt / BrowserSignInReply).
     AccountIntent.SignInWithApple -> AccountAction.ACCOUNT_ACTION_START_APPLE
-    // Same act from the app's side as SignIn: open a Custom Tab, wait on the
-    // app link, exchange what comes back. Only the page differs, which is why
-    // nothing below this line needs to know which one was used.
+    // Retained for the wire mapping. The screen does not offer it, and the
+    // mobile host refuses the action until the email journey has its fields.
     AccountIntent.SignInWithEmail -> AccountAction.ACCOUNT_ACTION_START_EMAIL
     AccountIntent.Cancel -> AccountAction.ACCOUNT_ACTION_CANCEL
     AccountIntent.Retry -> AccountAction.ACCOUNT_ACTION_RETRY

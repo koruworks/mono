@@ -96,6 +96,10 @@ pub struct BuiltInDocument {
     /// rather than on the menu because it has to keep turning after the menu is
     /// gone.
     menu_morph: Tween,
+    /// What the first empty paragraph says instead of *Start typing…* — a
+    /// page document's *Write about {page}…* — when a host sets one. `None`
+    /// is every ordinary document.
+    body_placeholder: Option<String>,
     /// The document's name, for the title bar — **cached**, not read per frame.
     ///
     /// A standalone window turns `Body::title_row` off, so the name is no longer
@@ -401,6 +405,7 @@ impl BuiltInDocument {
                 Self {
                     editor,
                     window_chrome: false,
+                    body_placeholder: None,
                     maximized: false,
                     pinned: false,
                     store_trouble: None,
@@ -480,6 +485,7 @@ impl BuiltInDocument {
         Self {
             editor,
             window_chrome: false,
+            body_placeholder: None,
             maximized: false,
             pinned: false,
             store_trouble: None,
@@ -528,6 +534,7 @@ impl BuiltInDocument {
         Self {
             editor,
             window_chrome: false,
+            body_placeholder: None,
             maximized: false,
             pinned: false,
             store_trouble: None,
@@ -559,6 +566,26 @@ impl BuiltInDocument {
             context_spelling: None,
             diagrams: diagrams::Diagrams::new(),
         }
+    }
+
+    /// Say what the first empty paragraph should read, in place of the
+    /// default writing prompt. A page document names its page here.
+    pub fn set_body_placeholder(&mut self, placeholder: String) {
+        self.body_placeholder = Some(placeholder);
+    }
+
+    /// The name to draw where the title row would be, for a document whose
+    /// title is resolved rather than written (a note above a Tasks page in a
+    /// tab of its own). Takes effect once the title row is off. Answers
+    /// whether it changed, so a host pushing it every tick costs a compare.
+    pub fn set_title_display(&mut self, name: Option<String>) -> bool {
+        if self.editor.body.title_display == name {
+            return false;
+        }
+        self.editor.body.title_display = name;
+        // The band above the rows moved: every row's position is stale.
+        self.editor.body.invalidate();
+        true
     }
 
     /// This document *is* the window: draw a title bar above the toolbar.
@@ -3308,7 +3335,7 @@ impl BuiltInDocument {
                     return true;
                 }
             }
-            let vp = self.editor.view.viewport;
+            let vp = self.menu_viewport();
             let rows = self.menu_rows(ws);
             let m = open.menu();
             if let Some(i) = m.item_at(&rows, vp, x, y) {
@@ -3520,7 +3547,7 @@ impl BuiltInDocument {
             return true;
         }
         if self.menu.is_some() {
-            let vp = self.editor.view.viewport;
+            let vp = self.menu_viewport();
             let rows = self.menu_shape();
             let toolbar = self.context_toolbar_panel();
             let toolbar_button = toolbar.and_then(|p| bubble::hit(p, x, y));

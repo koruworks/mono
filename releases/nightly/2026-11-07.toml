@@ -1,0 +1,64 @@
+title = "More reliable Cloud sync and clearer assistant edits"
+
+summary = [
+  "Cloud sync is enabled by default in official nightlies, with fixes for imported documents and empty files.",
+  "Desktop sync progress keeps its confirmed counts during routine rechecks.",
+  "Missing attachments can be listed before you open them, while documents continue syncing.",
+  "MCP edits check their changes before writing and explain when only part of a request was saved.",
+]
+
+body = """
+## Cloud sync
+
+Official nightlies now include the Cloud connection settings and enable the
+Cloud sync feature by default. Your saved Profile and workspace sync choices
+still apply.
+
+Existing imported documents can sync without changing their identities or
+links. Documents with a missing saved revision index recover that index from
+their stored content, fixing cases where content reached Cloud but completion
+could not be confirmed. Verified empty files can now sync too.
+
+Locally removed Profiles no longer keep opening new sync sessions through
+retained workspace records.
+
+## Desktop progress and missing files
+
+The cloud status in the Profile popover opens Manage's Koru Cloud page directly.
+
+Routine verification no longer resets confirmed document counts or makes a
+synced workspace appear unfinished. Actual edits, inventory changes and sync
+failures still update the status.
+
+You can expand missing-file details even when you have never tried to download
+the attachment. The list names the affected documents and known source devices.
+An unavailable original attachment remains waiting for a source; it does not
+stop documents or other workspaces from syncing.
+
+## Search
+
+In-app search shows matching results without New task or New document options.
+Search also removes the overflow menu and its Help/Feedback previews.
+Result selection boxes contain their matching excerpts at compact density, and
+the UI inspector groups the overlay under one SearchModal component.
+
+## Documents
+
+Document outline icons use the document's chosen color. Priority flags appear
+between the icon and title, in the same colors as the priority picker.
+
+Fixed a Windows accessibility crash while the Move to dialog was open over a
+document. Repeated accessibility updates now keep the underlying document out
+of the modal's tree until the dialog closes.
+
+## MCP assistants
+
+MCP edits validate their requested changes before writing. If a request is
+only partly saved, the response identifies the effects that were saved instead
+of implying that the whole request succeeded. Refused edits leave the document
+untouched, and task listing works through the embedded MCP host.
+
+This preview also includes the client and protocol support for Cloud-connected
+assistants, including document claims and clearer refusal responses. Hosted
+assistant edits can be attributed to their connection in document history.
+"""

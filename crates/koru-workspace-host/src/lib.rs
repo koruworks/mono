@@ -1529,6 +1529,63 @@ pub trait View {
         Vec::new()
     }
 
+    /// **The Tasks pages this view is showing**, so the shell can make sure
+    /// each has its page document and say where it stands
+    /// ([`set_page_state`](Self::set_page_state)).
+    ///
+    /// Asked every turn and answered from what the tabs show, because a
+    /// page's document is the workspace's to create, open and register — a
+    /// view holds one `&mut WorkspaceDoc` at most and cannot reach the
+    /// registry. The shell calls `Workspace::ensure_page` for each, which is
+    /// idempotent and cheap once the document exists.
+    fn take_wants_page_documents(&mut self) -> Vec<koru_core::ids::PageKey> {
+        Vec::new()
+    }
+
+    /// Where a Tasks page's document stands, pushed after
+    /// [`take_wants_page_documents`](Self::take_wants_page_documents).
+    /// Returns whether anything on screen changed.
+    fn set_page_state(&mut self, _state: &koru_workspace::pages::PageState) -> bool {
+        false
+    }
+
+    /// **Pages whose *Retry* was pressed** — a failed registration or open
+    /// the person asked to run again.
+    fn take_wants_page_retry(&mut self) -> Vec<koru_core::ids::PageKey> {
+        Vec::new()
+    }
+
+    /// **A deletion-conflict answer the person gave on a Tasks page** — Keep
+    /// deleted or Recover, per page (plan §6.3).
+    fn take_wants_page_decisions(
+        &mut self,
+    ) -> Vec<(koru_core::ids::PageKey, koru_workspace::pages::PageDecision)> {
+        Vec::new()
+    }
+
+    /// **Documents the view wants to know the page of** — a note opened in a
+    /// tab of its own takes its list's default list only once the shell says
+    /// which list it is the note of.
+    fn take_wants_page_of(&mut self) -> Vec<koru_core::DocumentId> {
+        Vec::new()
+    }
+
+    /// **Tasks pages whose `+` asked for files** — the shell opens the
+    /// picker, stores what is chosen as workspace files, and attaches them
+    /// to the page as context.
+    fn take_wants_page_attachments(&mut self) -> Vec<koru_core::ids::PageKey> {
+        Vec::new()
+    }
+
+    /// The answer, per document: a page, or `None` for an ordinary one.
+    fn set_page_of(
+        &mut self,
+        _document: koru_core::DocumentId,
+        _page: Option<koru_core::ids::PageKey>,
+    ) -> bool {
+        false
+    }
+
     /// **Task changes a view asked for but cannot make**, in the order it asked.
     ///
     /// [`take_wants_create_list`](Self::take_wants_create_list)'s shape, for the
@@ -2442,6 +2499,13 @@ pub enum PaneRequest {
     /// whatever is open, which is a different thing that happens to look the
     /// same in the sidebar until you reopen.
     CreateDocument(String),
+    /// Rename a document by id — a note above a Tasks page, whose title is
+    /// not a row anybody can type into: the workspace writes the override
+    /// and the manifest follows.
+    RenameDocument {
+        document: koru_core::DocumentId,
+        title: String,
+    },
     /// Create a document **inside** `parent` — as its last child — and open
     /// it: a sidebar row's `+` (the review's note). The same round trip as
     /// [`CreateDocument`](Self::CreateDocument), placed under the row.
@@ -2849,6 +2913,7 @@ impl PaneRequest {
             Self::NewWorkspace { .. } => "request.new_workspace",
             Self::NewWorkspaceIn(..) => "request.new_workspace_in",
             Self::CreateDocument { .. } => "request.create_document",
+            Self::RenameDocument { .. } => "request.rename_document",
             Self::CreateDocumentIn { .. } => "request.create_document_in",
             Self::CreateCanvas(..) => "request.create_canvas",
             Self::CopyDocument { .. } => "request.copy_document",

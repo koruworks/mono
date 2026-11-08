@@ -17,8 +17,8 @@
 use std::collections::BTreeSet;
 use std::sync::{Arc, mpsc};
 
-use koru_core::ids::{DocumentId, ListId, TagId};
-use koru_core::system::{ListEntry, SystemDoc, TagEntry};
+use koru_core::ids::{DocumentId, ListId, PageKey, TagId};
+use koru_core::system::{ListEntry, PageTitle, SystemDoc, TagEntry};
 
 use crate::{Workspace, explore, open, store};
 
@@ -466,6 +466,214 @@ impl SystemSession {
 
     fn delete_list(&mut self, list: ListId) -> bool {
         self.edit_list(|doc| doc.delete_list(list, open::now_ms()).unwrap_or(false))
+    }
+
+    // ------------------------------------------------------------------ pages
+
+    /// A live list's name, as it stands.
+    pub(crate) fn list_name(&self, list: ListId) -> Option<String> {
+        let doc = self
+            .active
+            .as_ref()
+            .map(|live| &live.doc)
+            .or(self.local.as_ref())?;
+        doc.list_entry(list).map(|entry| entry.name)
+    }
+
+    /// The generations a page has had, or `None` while the open is in flight
+    /// and nothing can be asked yet.
+    pub(crate) fn page_generations(&self, page: PageKey) -> Option<Vec<u64>> {
+        let doc = self
+            .active
+            .as_ref()
+            .map(|live| &live.doc)
+            .or(self.local.as_ref())?;
+        Some(doc.page_generations(page))
+    }
+
+    /// The resolved title of a page document's generation, or `None` while
+    /// the open is in flight.
+    pub(crate) fn page_title(&self, page: PageKey, generation: u64) -> Option<PageTitle> {
+        let doc = self
+            .active
+            .as_ref()
+            .map(|live| &live.doc)
+            .or(self.local.as_ref())?;
+        Some(doc.page_title(page, generation))
+    }
+
+    /// Every list record, tombstones included, or none while the open is in
+    /// flight.
+    pub(crate) fn all_lists(&self) -> Option<Vec<ListEntry>> {
+        let doc = self
+            .active
+            .as_ref()
+            .map(|live| &live.doc)
+            .or(self.local.as_ref())?;
+        Some(doc.all_lists())
+    }
+
+    /// The deletion protocol of a page generation, or `None` while the open
+    /// is in flight.
+    pub(crate) fn deletion_record(
+        &self,
+        page: PageKey,
+        generation: u64,
+    ) -> Option<koru_core::pages::deletion::DeletionRecord> {
+        let doc = self
+            .active
+            .as_ref()
+            .map(|live| &live.doc)
+            .or(self.local.as_ref())?;
+        Some(doc.deletion_record(page, generation))
+    }
+
+    /// Page identity cannot be inferred from an unopened system document.
+    pub(crate) fn pages_loaded(&self) -> bool {
+        self.active.is_some() && self.pending.is_none() && self.local.is_none()
+    }
+
+    pub(crate) fn pages_version(&self) -> Option<loro::VersionVector> {
+        self.active
+            .as_ref()
+            .map(|live| live.doc.version())
+            .or_else(|| self.local.as_ref().map(SystemDoc::version))
+    }
+
+    /// A containing acknowledged version proves every event and decision we
+    /// just read is durable. Joining a room does not advance `acked`.
+    pub(crate) fn pages_durable(&self) -> bool {
+        self.pages_loaded()
+            && self.active.as_ref().is_some_and(|live| {
+                live.session
+                    .acked()
+                    .is_some_and(|acked| acked.includes_vv(&live.doc.version()))
+            })
+    }
+
+    pub(crate) fn write_deletion(
+        &mut self,
+        page: PageKey,
+        generation: u64,
+        event: koru_core::pages::deletion::EventId,
+        covers: &loro::VersionVector,
+        deleted_ms: i64,
+    ) -> bool {
+        self.edit_list(|doc| {
+            doc.write_deletion(page, generation, event, covers, deleted_ms)
+                .unwrap_or(false)
+        })
+    }
+
+    pub(crate) fn write_recover(
+        &mut self,
+        page: PageKey,
+        generation: u64,
+        replica: u64,
+        observed: Vec<koru_core::pages::deletion::EventId>,
+    ) -> bool {
+        self.edit_list(|doc| {
+            doc.write_recover(page, generation, replica, observed)
+                .unwrap_or(false)
+        })
+    }
+
+    pub(crate) fn write_keep(
+        &mut self,
+        page: PageKey,
+        generation: u64,
+        event: koru_core::pages::deletion::EventId,
+        decision: koru_core::pages::deletion::DecisionId,
+        keep: &koru_core::pages::deletion::Keep,
+    ) -> bool {
+        self.edit_list(|doc| {
+            doc.write_keep(page, generation, event, decision, keep)
+                .unwrap_or(false)
+        })
+    }
+
+    pub(crate) fn report_uncovered(
+        &mut self,
+        page: PageKey,
+        generation: u64,
+        replica: u64,
+        event: koru_core::pages::deletion::EventId,
+        version: &loro::VersionVector,
+    ) -> bool {
+        self.edit_list(|doc| {
+            doc.report_uncovered(page, generation, replica, event, version)
+                .unwrap_or(false)
+        })
+    }
+
+    /// A direct rename of a page document's generation.
+    pub(crate) fn set_page_override(
+        &mut self,
+        page: PageKey,
+        generation: u64,
+        title: Option<&str>,
+    ) -> bool {
+        self.edit_list(|doc| {
+            doc.set_page_override(page, generation, title)
+                .unwrap_or(false)
+        })
+    }
+
+    /// Whether the page shows its note inline, or `None` while the open is
+    /// in flight.
+    pub(crate) fn page_note_shown(&self, page: PageKey) -> Option<bool> {
+        let doc = self
+            .active
+            .as_ref()
+            .map(|live| &live.doc)
+            .or(self.local.as_ref())?;
+        Some(doc.page_note_shown(page))
+    }
+
+    pub(crate) fn set_page_note_shown(&mut self, page: PageKey, shown: bool) -> bool {
+        self.edit_list(|doc| doc.set_page_note_shown(page, shown).unwrap_or(false))
+    }
+
+    /// The files attached to the page, in attached order, or `None` while
+    /// the open is in flight.
+    pub(crate) fn page_attachments(&self, page: PageKey) -> Option<Vec<DocumentId>> {
+        let doc = self
+            .active
+            .as_ref()
+            .map(|live| &live.doc)
+            .or(self.local.as_ref())?;
+        Some(doc.page_attachments(page))
+    }
+
+    pub(crate) fn attach_to_page(&mut self, page: PageKey, file: DocumentId, now_ms: i64) -> bool {
+        self.edit_list(|doc| doc.attach_to_page(page, file, now_ms).unwrap_or(false))
+    }
+
+    pub(crate) fn detach_from_page(&mut self, page: PageKey, file: DocumentId) -> bool {
+        self.edit_list(|doc| doc.detach_from_page(page, file).unwrap_or(false))
+    }
+
+    /// Record a page's generation, creating the local document if the
+    /// workspace has none yet — a bucket's page may be the first thing a
+    /// workspace ever puts in its system document.
+    pub(crate) fn add_page_generation(&mut self, page: PageKey, generation: u64) -> bool {
+        let doc = match &mut self.active {
+            Some(live) => &mut live.doc,
+            None => {
+                if self.local.is_none() {
+                    self.local = SystemDoc::create().ok();
+                }
+                match self.local.as_mut() {
+                    Some(local) => local,
+                    None => return false,
+                }
+            }
+        };
+        let added = doc.add_page_generation(page, generation).unwrap_or(false);
+        if added && let Some(active) = &mut self.active {
+            let _ = active.session.publish(&active.doc);
+        }
+        added
     }
 
     /// The workspace spelling dictionary, per language.
@@ -1002,7 +1210,7 @@ impl Workspace {
 
     /// Schedule an open/create if necessary. This performs no HTTP, join,
     /// replay, or wait on the caller's thread.
-    fn ensure_system(&mut self, create: bool) -> bool {
+    pub(crate) fn ensure_system(&mut self, create: bool) -> bool {
         let ids = self.system_ids();
         if self.system.is_none() {
             if ids.is_empty() && !create {
@@ -1025,4 +1233,4 @@ impl Workspace {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

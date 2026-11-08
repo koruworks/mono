@@ -749,8 +749,39 @@ impl MainView {
         let mut fresh = SessionView::new(&SessionSender(sender), Some(launch));
         fresh.surface.bounds = view.surface.bounds;
         *view = fresh;
+        // The offer itself can have been settled while waiting for a click.
+        // The replacement uses the same tab id, but has new work to launch.
+        if self.session_settled == Some(tab_id) {
+            self.session_settled = None;
+        }
         // The settle pass launches it for the active tab, or when it next is.
         let _ = self.settle_session_tabs();
+        true
+    }
+
+    /// A failed continuation gets one ordinary launch in the same tab and
+    /// folder. This runs on the connection that reported the launch failure,
+    /// including a split pane's lane; changing focus must not move the retry.
+    fn retry_session_resume(&mut self, tab_id: u64) -> bool {
+        let Some(view) = self.session_view_by_tab(tab_id) else {
+            return false;
+        };
+        if view.session.is_some() {
+            return false;
+        }
+        let Some(mut launch) = view.resume_fallback.take() else {
+            return false;
+        };
+        launch.resume = false;
+        view.pending_launch = Some(launch);
+        view.surface.clear_raw_switch();
+        self.session_attaching = None;
+        self.session_attached = None;
+        self.take_session_controller(tab_id);
+        koru_workspace_host::View::show_notice(
+            self,
+            t(crate::format::lang(), I18nKey::TerminalResumeFailed).into(),
+        );
         true
     }
 
@@ -962,6 +993,11 @@ impl MainView {
                 true
             }
             (None, Some(launch)) => {
+                view.resume_fallback = launch.resume.then(|| {
+                    let mut fallback = launch.clone();
+                    fallback.working_directory = working_directory.clone();
+                    fallback
+                });
                 let size = view.surface.running_grid_size();
                 let intent = if launch.raw_fallback {
                     koru_session_profiles::LaunchIntent::Raw
@@ -1493,6 +1529,14 @@ impl MainView {
                 if failure.code == ErrorCode::HostUnavailable {
                     return self.sessions_unavailable();
                 }
+                if operation == "launch"
+                    && session_id.is_none()
+                    && failure.code != ErrorCode::ControllerConflict
+                    && let Some(tab) = self.session_attaching
+                    && self.retry_session_resume(tab)
+                {
+                    return true;
+                }
                 let launch = matches!(operation, "launch" | "attach");
                 // An attach answered "that session exited / does not exist":
                 // a confirmed end learned through the verb instead of the
@@ -1751,6 +1795,7 @@ impl MainView {
         if view.session.is_none() {
             view.session = Some(session_id);
         }
+        view.resume_fallback = None;
         if raw {
             // The surface arms its own sized-snapshot wait and answers the
             // grid the first acceptable snapshot must arrive at; the backend

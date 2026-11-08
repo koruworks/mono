@@ -1,0 +1,157 @@
+[
+  {
+    "deps": [],
+    "id": "0@18381036275663198973",
+    "lamport": 0,
+    "msg": null,
+    "ops": [
+      {
+        "container": "cid:root-meta:Map",
+        "content": {
+          "key": "id",
+          "type": "insert",
+          "value": "0f6d5c4b-3a29-4f18-8e07-16d5c4b3a291"
+        },
+        "counter": 0
+      },
+      {
+        "container": "cid:root-meta:Map",
+        "content": {
+          "key": "name",
+          "type": "insert",
+          "value": ""
+        },
+        "counter": 1
+      },
+      {
+        "container": "cid:root-meta:Map",
+        "content": {
+          "key": "schema_version",
+          "type": "insert",
+          "value": 5
+        },
+        "counter": 2
+      },
+      {
+        "container": "cid:root-nodes:Tree",
+        "content": {
+          "fractional_index": "80",
+          "parent": null,
+          "target": "3@18381036275663198973",
+          "type": "create"
+        },
+        "counter": 3
+      },
+      {
+        "container": "cid:3@18381036275663198973:Map",
+        "content": {
+          "key": "doc_id",
+          "type": "insert",
+          "value": "4bed194b-070d-53be-a817-8f0c596ad3c0"
+        },
+        "counter": 4
+      },
+      {
+        "container": "cid:3@18381036275663198973:Map",
+        "content": {
+          "key": "id",
+          "type": "insert",
+          "value": "dded49b5-8b14-5026-addf-cef2e4d0bcc3"
+        },
+        "counter": 5
+      },
+      {
+        "container": "cid:3@18381036275663198973:Map",
+        "content": {
+          "key": "kind",
+          "type": "insert",
+          "value": "document"
+        },
+        "counter": 6
+      },
+      {
+        "container": "cid:3@18381036275663198973:Map",
+        "content": {
+          "key": "done",
+          "type": "insert",
+          "value": false
+        },
+        "counter": 7
+      },
+      {
+        "container": "cid:3@18381036275663198973:Map",
+        "content": {
+          "key": "text",
+          "type": "insert",
+          "value": [
+            0,
+            76,
+            77,
+            1,
+            2,
+            147,
+            44,
+            232
+          ]
+        },
+        "counter": 8
+      },
+      {
+        "container": "cid:root-nodes:Tree",
+        "content": {
+          "fractional_index": "80",
+          "parent": "3@18381036275663198973",
+          "target": "9@18381036275663198973",
+          "type": "create"
+        },
+        "counter": 9
+      },
+      {
+        "container": "cid:9@18381036275663198973:Map",
+        "content": {
+          "key": "id",
+          "type": "insert",
+          "value": "b9b75ca5-d0db-50f0-90e4-016c6ef6da17"
+        },
+        "counter": 10
+      },
+      {
+        "container": "cid:9@18381036275663198973:Map",
+        "content": {
+          "key": "kind",
+          "type": "insert",
+          "value": "paragraph"
+        },
+        "counter": 11
+      },
+      {
+        "container": "cid:9@18381036275663198973:Map",
+        "content": {
+          "key": "done",
+          "type": "insert",
+          "value": false
+        },
+        "counter": 12
+      },
+      {
+        "container": "cid:9@18381036275663198973:Map",
+        "content": {
+          "key": "text",
+          "type": "insert",
+          "value": [
+            0,
+            76,
+            77,
+            1,
+            2,
+            177,
+            188,
+            33
+          ]
+        },
+        "counter": 13
+      }
+    ],
+    "timestamp": 0
+  }
+]

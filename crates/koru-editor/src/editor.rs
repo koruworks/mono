@@ -5776,8 +5776,23 @@ pub trait Editing {
                     "[koru:attach] editor slash Attachment trigger={from_trigger:?} node={node:?}"
                 );
             }
+            // **The typed `/attach` goes now, and the pill lands where it
+            // was.** The view used to wipe the whole row when the file came
+            // back, on the assumption the row held nothing but the command —
+            // typed at the end of a sentence, the sentence went with it. The
+            // rest of the row is kept; what the dialog returns goes in at
+            // the command's own place, or at the caret when a menu asked.
+            let at = match trigger {
+                Some(t) => {
+                    let start = t.start;
+                    self.erase_trigger(ws, t);
+                    start
+                }
+                None => self.body().focused().map_or(0, |row| row.caret()),
+            };
             if let Some(node) = node {
                 self.view_mut().wants_attachment = Some(node);
+                self.view_mut().attachment_at = Some(at);
             }
             return;
         }
@@ -6591,9 +6606,27 @@ pub trait Editing {
         // here that could roll one back. The two writes are independent — the
         // deletion is text on the trigger row, the command is attributes on
         // `nodes` — so nothing is lost by swapping them.
+        let default_list = self.view().default_list;
         let applied = koru_core::tasks::compose(ws, |ws| {
             ws.edit_group(|ws| {
                 op(ws)?;
+                // **A task made on a list's page joins the list** (D5), in
+                // this same undo step and only where the line carries no
+                // list of its own. The in-group attribute door, as
+                // `JoinList` uses: `set_list` checkpoints and would close
+                // this bracket.
+                if let Some(list) = default_list {
+                    for &node in nodes {
+                        let is_task = koru_core::tasks::is_task_node(ws, node).unwrap_or(false);
+                        if is_task && !carries_list(ws, node) {
+                            ws.set_attribute_on_all(
+                                &[node],
+                                koru_core::attributes::KEY_LIST,
+                                AttrValue::Text(list.to_storage()),
+                            )?;
+                        }
+                    }
+                }
                 if let Some((node, start, end)) = span
                     && end > start
                 {
@@ -14030,9 +14063,14 @@ mod tests {
 
     #[test]
     fn slash_attach_asks_the_host_for_the_focused_row() {
-        let (mut ws, mut editor) = doc_editor(&[""]);
+        let (mut ws, mut editor) = doc_editor(&["Keep this "]);
         editor.view.active = true;
+        // The paragraph, not the title row the harness starts on.
+        editor.body.focus = editor.body.first_body_row();
         let id = editor.body.focused().unwrap().id;
+        // Queued by `place_caret`, applied by the reflow — as a press would.
+        editor.place_caret(10);
+        editor.reflow();
         // Short prefix "attach" still finds Attachment (name is "attachment").
         type_str(&mut editor, &mut ws, "/attach");
         editor.key(
@@ -14043,6 +14081,11 @@ mod tests {
         );
         assert_eq!(editor.view.wants_attachment, Some(id));
         assert!(!editor.view.overlay.is_open());
+        // The command's text is gone and the words before it are kept; the
+        // pill is to land where the command was (acceptance round 2 — the
+        // whole row used to be wiped when the file came back).
+        assert_eq!(ws.read(id).unwrap().content.as_text(), Some("Keep this "));
+        assert_eq!(editor.view.attachment_at, Some(10));
     }
 
     /// **`/dictate` asks for a dictation and takes its own text back out.**
@@ -18040,4 +18083,15 @@ mod tests {
         assert_eq!(child, step);
         assert_eq!(task.node_id(), parent);
     }
+}
+
+/// Whether `node` is in a list already — the one case a page's default list
+/// leaves alone.
+fn carries_list(ws: &WorkspaceDoc, node: NodeId) -> bool {
+    ws.read(node).is_ok_and(|n| {
+        n.content
+            .attrs()
+            .iter()
+            .any(|attr| attr.role == koru_core::attributes::KEY_LIST)
+    })
 }

@@ -29,7 +29,7 @@ use std::collections::HashMap;
 
 use uuid::Uuid;
 
-use koru_store_wire::internal::{CloudDocumentActivity, CloudPassActivity};
+use koru_store_wire::internal::{CloudDocumentActivity, CloudDocumentProgress, CloudPassActivity};
 
 /// How many documents keep a record. Well past the handful a person has open
 /// while they are watching two roots agree, and small enough that the whole
@@ -107,9 +107,14 @@ impl CloudActivity {
     pub fn pass_started(&mut self, dataset: Uuid, at: i64) {
         let record = self.dataset_mut(dataset, at);
         record.facts = CloudPassActivity {
+            confirmed_documents: record.facts.confirmed_documents.take(),
             started_at: Some(at),
             ..CloudPassActivity::default()
         };
+        if let Some(confirmed) = &record.facts.confirmed_documents {
+            tracing::debug!(%dataset, synced = confirmed.synced, required = confirmed.required,
+                complete = confirmed.complete, "cloud progress: retaining confirmed documents for recheck");
+        }
     }
 
     pub fn document_progress(
@@ -120,9 +125,29 @@ impl CloudActivity {
         at: i64,
     ) {
         let facts = &mut self.dataset_mut(dataset, at).facts;
+        // A backwards step within one pass means its final proof check found
+        // a changed revision. A new pass's counter starts at zero separately.
+        let invalidated = synced < facts.documents_synced;
         facts.documents_synced = synced;
         if required.is_some() {
             facts.documents_required = required;
+        }
+        if facts.documents_changed {
+            return;
+        }
+        if let Some(required) = facts.documents_required {
+            match &mut facts.confirmed_documents {
+                Some(confirmed) if confirmed.required == required && !invalidated => {
+                    confirmed.synced = confirmed.synced.max(synced.min(required));
+                }
+                _ => {
+                    facts.confirmed_documents = Some(CloudDocumentProgress {
+                        required,
+                        synced: synced.min(required),
+                        complete: false,
+                    });
+                }
+            }
         }
     }
 
@@ -131,6 +156,7 @@ impl CloudActivity {
     pub fn documents_changed(&mut self, dataset: Uuid) {
         if let Some(record) = self.datasets.get_mut(&dataset) {
             record.facts.documents_changed = true;
+            record.facts.confirmed_documents = None;
         }
     }
 
@@ -173,6 +199,17 @@ impl CloudActivity {
         pass.remote_hint = counts.remote_hint;
         pass.refusal_code = None;
         pass.refused_at = None;
+        if let Some(confirmed) = &mut pass.confirmed_documents {
+            confirmed.complete = !pass.documents_changed
+                && !counts.remote_hint
+                && counts.deferred == 0
+                && pass.documents_required == Some(pass.documents_synced);
+            // A remote hint can announce a different inventory even before
+            // its local commit arrives. Do not retain an old lower bound.
+            if counts.remote_hint {
+                confirmed.synced = pass.documents_synced.min(confirmed.required);
+            }
+        }
     }
 
     /// The pass ended on a refusal. `code` is the stable lowercase token the
@@ -188,6 +225,9 @@ impl CloudActivity {
             pass.finished_at = Some(at);
             pass.refusal_code = Some(code.to_owned());
             pass.refused_at = Some(at);
+            if let Some(confirmed) = &mut pass.confirmed_documents {
+                confirmed.complete = false;
+            }
         }
         for key in touched {
             let facts = &mut self.document_mut(*key, at).facts;
@@ -219,6 +259,9 @@ impl CloudActivity {
             let pass = &mut self.dataset_mut(dataset, at).facts;
             pass.refusal_code = Some(code.to_owned());
             pass.refused_at = Some(at);
+            if let Some(confirmed) = &mut pass.confirmed_documents {
+                confirmed.complete = false;
+            }
         }
         let Some(key) = document else {
             return;

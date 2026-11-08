@@ -10,8 +10,8 @@
 //! name a holder, sort a list or spell an untitled document two ways.
 //!
 //! Four inputs, none of them new: the blob engine's grouping (its
-//! `object_missing` parks mapped back through the canonical walk, handed over
-//! as [`WaitingFiles`]); the manifest listing, which is where every other
+//! `object_missing` parks and measured missing coverage mapped through the
+//! canonical walk, handed over as [`WaitingFiles`]); the manifest listing, which is where every other
 //! listing reads a title; and two records of *who holds these bytes* — the
 //! Store's durable origin (the device that first held them) and the peer
 //! runtime's in-memory directory of the devices that advertised them this

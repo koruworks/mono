@@ -347,7 +347,12 @@ pub(super) fn openable(status: Option<&CloudSyncStatus>) -> bool {
             .as_ref()
             .is_some_and(|sync| sync.error_code.is_some())
             || status.blobs.as_ref().is_some_and(|blobs| {
-                blobs.paused || blobs.pending_reason.is_some() || blobs.missing > 0
+                blobs.paused
+                    || blobs.pending_reason.is_some()
+                    || blobs.missing > 0
+                    || blobs.coverage.as_ref().is_some_and(|coverage| {
+                        coverage.state != "superseded" && coverage.blobs_missing > 0
+                    })
             })
     })
 }
@@ -406,6 +411,11 @@ fn log_sync_presence(
 /// `(on Cloud, required)`, or `None` when no claim may be read.
 fn documents(status: &CloudSyncStatus) -> Option<(u32, u32)> {
     if let Some(pass) = &status.pass {
+        if !pass.documents_changed {
+            if let Some(confirmed) = &pass.confirmed_documents {
+                return Some((confirmed.synced.min(confirmed.required), confirmed.required));
+            }
+        }
         // An active pass supersedes the previous coverage sample, including
         // the interval before its manifest inventory is known.
         return pass
@@ -436,6 +446,17 @@ fn documents_synced(status: &CloudSyncStatus) -> bool {
         return false;
     }
     if let Some(pass) = &status.pass {
+        if pass.refusal_code.is_none()
+            && !pass.documents_changed
+            && !pass.remote_hint
+            && pass.deferred == 0
+            && pass
+                .confirmed_documents
+                .as_ref()
+                .is_some_and(|progress| progress.complete)
+        {
+            return true;
+        }
         return pass.finished_at.is_some()
             && pass.refusal_code.is_none()
             && !pass.documents_changed

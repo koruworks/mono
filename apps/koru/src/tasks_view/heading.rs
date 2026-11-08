@@ -175,7 +175,14 @@ impl TasksView {
     }
 
     pub(super) fn paint_heading(&mut self, scene: &mut Scene, root: Affine) {
-        let heading = self.heading();
+        let mut heading = self.heading();
+        // The rename field stands where the words were (`paint_over` draws
+        // it, with the caret); the heading draws none of its own under it.
+        if self.heading_rename.is_some() {
+            heading.title.clear();
+            heading.date = None;
+            heading.count = None;
+        }
         let area = self.heading_area();
         let tree = tree(&heading, &mut self.engine);
         let frame = tree.layout(
