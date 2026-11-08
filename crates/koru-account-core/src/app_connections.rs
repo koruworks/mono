@@ -128,6 +128,9 @@ impl AppConnectionRecord {
 pub struct CloudWorkspaceCandidate {
     pub profile_id: ProfileId,
     pub workspace_id: WorkspaceId,
+    /// The live membership also grants document writes. A read/sync
+    /// candidate may still be listed without it.
+    pub documents_write: bool,
     pub workspace_incarnation_id: Uuid,
     pub authorization_version: i64,
     pub membership_epoch: i64,
