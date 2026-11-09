@@ -129,7 +129,14 @@ pub(crate) fn layout(
         );
     }
     let send = boxed("ComposerSend")
-        .w(Length::Runtime(BUTTON_H, "action button height"))
+        .w(Length::Runtime(
+            if mode_name.is_some() {
+                SplitButton::ACTION_W
+            } else {
+                BUTTON_H
+            },
+            "send action width",
+        ))
         .h(Length::Runtime(BUTTON_H, "action button height"))
         .id(SEND)
         .hit()

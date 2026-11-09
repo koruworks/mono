@@ -350,6 +350,7 @@ pub enum Key {
     // The chip composer (AGENTUX I6).
     AiComposerPlaceholder,
     AiComposerAgentPlaceholder,
+    AiComposerContinuePlaceholder,
     AiComposerAddContext,
     AiComposerKoruContext,
     AiComposerCommands,
@@ -3051,7 +3052,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2151] = [
+    pub const ALL: [Key; 2152] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -3293,6 +3294,7 @@ impl Key {
         Key::AiChooseModel,
         Key::AiComposerPlaceholder,
         Key::AiComposerAgentPlaceholder,
+        Key::AiComposerContinuePlaceholder,
         Key::AiComposerAddContext,
         Key::AiComposerKoruContext,
         Key::AiComposerCommands,
@@ -7967,6 +7969,17 @@ pub const ROWS: &[Row] = &[
         ar: "ابدأ رسالتك… @ للسياق، $ للمهارات، / للأوامر",
         zh_hans: "开始输入消息… @ 上下文、$ 技能、/ 命令",
         ja: "メッセージを入力… @ コンテキスト、$ スキル、/ コマンド",
+    },
+    Row {
+        key: Key::AiComposerContinuePlaceholder,
+        en: "Continue the conversation…",
+        es: "Continúa la conversación…",
+        pt_br: "Continue a conversa…",
+        de: "Gespräch fortsetzen…",
+        fr: "Continuez la conversation…",
+        ar: "تابع المحادثة…",
+        zh_hans: "继续对话…",
+        ja: "会話を続ける…",
     },
     Row { key: Key::AiComposerAddContext, en: "Add context", es: "Añadir contexto", pt_br: "Adicionar contexto", de: "Kontext hinzufügen", fr: "Ajouter du contexte", ar: "إضافة سياق", zh_hans: "添加上下文", ja: "コンテキストを追加" },
     Row { key: Key::AiComposerKoruContext, en: "Koru context", es: "Contexto de Koru", pt_br: "Contexto do Koru", de: "Koru-Kontext", fr: "Contexte Koru", ar: "سياق Koru", zh_hans: "Koru 上下文", ja: "Koru コンテキスト" },

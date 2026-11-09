@@ -9862,8 +9862,10 @@ impl MainView {
         match self.lifted_viewer() {
             Some(LiftedViewer::AiPane) => return self.ai_chat.mouse_down(x, y),
             Some(LiftedViewer::AiTab(pane)) => {
+                let mods = self.mods;
                 let (view, doc) = self.tabs_mut().active_mut().doc(ws);
                 if let TabView::AiChat(chat) = view {
+                    View::set_mods(chat, mods);
                     return View::mouse_down(chat, doc, x - pane.x, y - pane.y, ctrl);
                 }
             }
@@ -10310,7 +10312,10 @@ impl MainView {
             }
             TabView::Feedback(f) => View::mouse_down(f, doc, lx, ly, ctrl),
             TabView::Diff(d) => View::mouse_down(d, doc, lx, ly, ctrl),
-            TabView::AiChat(a) => View::mouse_down(a, doc, lx, ly, ctrl),
+            TabView::AiChat(a) => {
+                View::set_mods(a, mods);
+                View::mouse_down(a, doc, lx, ly, ctrl)
+            }
             TabView::Socials(a) => View::mouse_down(a, doc, lx, ly, ctrl),
             TabView::Session(s) => View::mouse_down(s, doc, lx, ly, ctrl),
             TabView::Run(r) => View::mouse_down(r, doc, lx, ly, ctrl),
@@ -11575,6 +11580,7 @@ impl View for MainView {
 
     fn set_mods(&mut self, mods: ModifiersState) {
         self.mods = mods;
+        self.ai_chat.set_mods(mods);
         match self.active_view() {
             TabView::Trash(t) => View::set_mods(t, mods),
             TabView::Tasks(t) => View::set_mods(t, mods),
@@ -11582,6 +11588,7 @@ impl View for MainView {
             TabView::Reminders(r) => View::set_mods(r, mods),
             TabView::Leaf(l) => View::set_mods(l, mods),
             TabView::Canvas(c) => View::set_mods(c, mods),
+            TabView::AiChat(a) => View::set_mods(a, mods),
             _ => {}
         }
     }
@@ -16601,32 +16608,46 @@ impl MainView {
         self.ai_panel.is_open()
     }
 
-    /// A document chip in the AI chat — in its composer, or in a message it
-    /// sent — was clicked, in the pane or in an AI chat tab: open the document
-    /// as a tab, the way following a document pill does, or focus the tab
-    /// already showing it.
+    /// A document chip in the AI chat opens a fresh tab, preserving the chat.
+    /// Alt+click asks the same place chooser used by document references.
     fn open_pending_ai_document(&mut self) -> bool {
+        let place = self.ai_chat.take_place_document_request().or_else(|| {
+            match self.tabs_mut().active_view() {
+                TabView::AiChat(view) => view.take_place_document_request(),
+                _ => None,
+            }
+        });
+        if let Some(link) = place {
+            return self.open_ai_document_link(link, true);
+        }
         let link = self.ai_chat.take_open_document_request().or_else(|| {
             match self.tabs_mut().active_view() {
                 TabView::AiChat(view) => view.take_open_document_request(),
                 _ => None,
             }
         });
-        let Some(koru_link::KoruLink::Document { document, node }) = link else {
+        let Some(link) = link else {
             return false;
         };
-        let document = koru_core::DocumentId::from_uuid(document);
-        let node = node.map(koru_core::NodeId::from_uuid);
-        if self.focus_showing_document(document) {
-            return true;
+        self.open_ai_document_link(link, false)
+    }
+
+    fn open_ai_document_link(&mut self, link: koru_link::KoruLink, choose_place: bool) -> bool {
+        let koru_link::KoruLink::Document { document, node } = link else {
+            return false;
+        };
+        let target = koru_editor::trigger::DocumentTarget {
+            document: koru_core::DocumentId::from_uuid(document),
+            node: node.map(koru_core::NodeId::from_uuid),
+        };
+        if choose_place {
+            self.open_place_chooser(
+                koru_editor::view_state::Reference::Document(target),
+                self.pointer,
+            )
+        } else {
+            self.open_document_target(target, OpenWhere::NewTab)
         }
-        self.pending_lands.push_back((document, OpenWhere::NewTab));
-        self.ask_pane(koru_workspace_host::PaneRequest::Navigate {
-            target: koru_workspace_host::NavigationTarget::Document { document, node },
-            match_text: None,
-            disposition: koru_workspace_host::SearchTargetDisposition::CurrentWindow,
-        });
-        true
     }
 
     /// A sent file opens over this window whether the click came from the AI

@@ -209,6 +209,7 @@ pub struct ChatComposer {
     /// Where host coordinates put the editor's view origin.
     origin: (f32, f32),
     open_request: Option<koru_link::KoruLink>,
+    place_request: Option<koru_link::KoruLink>,
 }
 
 impl ChatComposer {
@@ -229,6 +230,7 @@ impl ChatComposer {
             text: Rect::new(0.0, 0.0, 1.0, 1.0),
             origin: (0.0, 0.0),
             open_request: None,
+            place_request: None,
         }
     }
 
@@ -787,6 +789,14 @@ impl ChatComposer {
         self.open_request.take()
     }
 
+    pub(crate) fn take_place_request(&mut self) -> Option<koru_link::KoruLink> {
+        self.place_request.take()
+    }
+
+    pub(crate) fn set_mods(&mut self, mods: ModifiersState) {
+        self.editor.view.mods = mods;
+    }
+
     // ------------------------------------------------------------ geometry
 
     /// The height of the text the composer should show at `inner_w`: between
@@ -1000,6 +1010,15 @@ impl ChatComposer {
         }
         if let Some((target, _)) = self.editor.take_wants_entity_open() {
             self.open_request = Some(koru_link::KoruLink::Document {
+                document: target.document.as_uuid(),
+                node: target.node.map(|node| node.as_uuid()),
+            });
+            changed = true;
+        }
+        if let Some(koru_editor::view_state::Reference::Document(target)) =
+            self.editor.take_wants_place_chooser()
+        {
+            self.place_request = Some(koru_link::KoruLink::Document {
                 document: target.document.as_uuid(),
                 node: target.node.map(|node| node.as_uuid()),
             });

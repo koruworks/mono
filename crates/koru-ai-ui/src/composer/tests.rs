@@ -92,6 +92,30 @@ fn an_inline_document_pill_is_a_control_under_the_pointer() {
 }
 
 #[test]
+fn alt_click_on_an_inline_document_pill_asks_for_a_place() {
+    let mut composer = ChatComposer::new(None);
+    let document = DocumentId::new();
+    assert!(composer.insert_document(document, "Top Priorities"));
+    let text = Rect::new(20.0, 80.0, 400.0, 50.0);
+    composer.text_height(text.w - 2.0 * PAD_X, 1, 8);
+    composer.place(text, Rect::new(0.0, 0.0, 500.0, 500.0));
+    let row = &composer.editor.body.rows[0];
+    let x = composer.origin.0 + composer.editor.view.content_x + row.text_x() + 6.0;
+    let y = composer.origin.1 + row.y - composer.editor.view.scroll + row.height * 0.5;
+
+    composer.set_mods(ModifiersState::ALT);
+    assert!(composer.mouse_down(x, y));
+    assert_eq!(
+        composer.take_place_request(),
+        Some(koru_link::KoruLink::Document {
+            document: document.as_uuid(),
+            node: None,
+        })
+    );
+    assert_eq!(composer.take_open_request(), None);
+}
+
+#[test]
 fn selected_task_keeps_its_node_link_and_containing_document_context() {
     let document = DocumentId::new();
     let node = NodeId::new();

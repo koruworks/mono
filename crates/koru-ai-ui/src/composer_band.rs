@@ -7,6 +7,7 @@
 use koru_draw::geometry::Rect;
 
 pub(crate) const GAP: f32 = 6.0;
+pub(crate) const MAX_CHIP_W: f32 = 280.0;
 pub(crate) const MAX_LINES: usize = 3;
 
 #[derive(Clone, Debug, Default)]

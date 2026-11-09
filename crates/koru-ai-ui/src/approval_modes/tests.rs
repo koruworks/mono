@@ -130,6 +130,24 @@ fn known_modes_are_worded_and_the_rest_keep_the_agents_own() {
     assert_eq!(titles, ["Build", "Plan"]);
 }
 
+#[test]
+fn claudes_full_advertised_mode_list_is_visible_and_selectable() {
+    let (mut surface, _commands) = surface();
+    surface.approval_mode_open = true;
+    let rows = surface.approval_mode_rows();
+    let panel = surface.approval_mode_panel().unwrap();
+    assert_eq!(rows.len(), 6);
+    assert!(panel.y >= surface.viewport.y);
+    assert!(panel.y + panel.h <= surface.viewport.y + surface.viewport.h);
+    for index in 0..rows.len() {
+        let rect = surface.approval_mode_row_rect(index).unwrap();
+        assert_eq!(
+            surface.approval_mode_row_at(rect.x + rect.w * 0.5, rect.y + rect.h * 0.5),
+            Some(index)
+        );
+    }
+}
+
 /// Every language words every mode: none falls back to English by accident.
 #[test]
 fn every_language_words_the_modes() {

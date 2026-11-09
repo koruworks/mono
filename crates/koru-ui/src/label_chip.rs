@@ -365,12 +365,17 @@ impl<'a> LabelChip<'a> {
     pub fn trail_rect(&self, rect: Rect) -> Option<Rect> {
         match self.trail {
             Trail::None => None,
-            Trail::Remove => Some(Rect::new(
-                rect.x + rect.w - CHIP_CLOSE_W,
-                rect.y,
-                CHIP_CLOSE_W,
-                rect.h,
-            )),
+            Trail::Remove => {
+                // The regular chip's × sits farther in than the compact
+                // chip's. Include all of its ink in the remove target while
+                // retaining the chip's measured width.
+                let width = if self.size == Size::Regular {
+                    REGULAR_PAD_X + X_ARM * 2.0
+                } else {
+                    CHIP_CLOSE_W
+                };
+                Some(Rect::new(rect.x + rect.w - width, rect.y, width, rect.h))
+            }
             Trail::Caret | Trail::Clear => Some(Rect::new(
                 rect.x + rect.w - self.size.pad_x() - MARK,
                 rect.y + (rect.h - MARK) * 0.5,
@@ -597,10 +602,20 @@ impl<'a> LabelChip<'a> {
                 );
             }
             Trail::Clear => draw_x(canvas, root, ink, cx, cy),
-            // A hair left of the lane's centre, where the remove `×` has
-            // always sat: the lane ends at the lozenge's rounded edge.
-            Trail::Remove if state.reveal => draw_x(canvas, root, ink, cx - 1.0, cy),
+            // Compact chips keep their established mark; regular chips use
+            // the same visible edge inset as their leading content.
+            Trail::Remove if state.reveal => {
+                draw_x(canvas, root, ink, self.remove_mark_x(rect, lane), cy)
+            }
             Trail::Remove => {}
+        }
+    }
+
+    fn remove_mark_x(&self, rect: Rect, lane: Rect) -> f32 {
+        if self.size == Size::Regular {
+            rect.x + rect.w - REGULAR_PAD_X - X_ARM
+        } else {
+            lane.x + lane.w * 0.5 - 1.0
         }
     }
 

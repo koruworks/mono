@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Pictures and files in the chat (chat-attachments R1–R4): the composer's
-//! strip, the tiles and file chips on a sent message, the threads that read,
+//! strip, the pills on a sent message, the threads that read,
 //! store and decode them, the shared viewer a picture opens in
 //! (`koru_ui::media_viewer`, ADR-482), and the host request for a sent file.
 //!
@@ -34,8 +34,9 @@ use koru_ai_wire::{Failure, attachment_codes};
 use koru_draw::geometry::Rect;
 use koru_draw::icons;
 use koru_draw::scene;
-use koru_draw::theme::{self, role};
+use koru_draw::text::TextEngine;
 use koru_i18n::{Key, Lang};
+use koru_ui::label_chip::{LabelChip, Lead, Size, State};
 use koru_ui::media_viewer::{
     Action as ViewerAction, ActionSet, MediaViewer, Outcome as ViewerOutcome, Stage, ViewerImage,
     ViewerOptions, ViewerSemantics, WheelAxis, ZoomKey,
@@ -48,13 +49,8 @@ use winit::window::CursorIcon;
 
 use super::{COMPOSER_PAD_TOP, COMPOSER_PAD_X, ChatSurface, LoadedImage, agents};
 
-/// A tile on a sent message.
-pub(crate) const CARD_TILE_H: f32 = 112.0;
-pub(crate) const TILE_GAP: f32 = 6.0;
-const CARD_TILE_MIN_W: f32 = 56.0;
-const CARD_TILE_MAX_W: f32 = 240.0;
-/// A file's tile, which shows its name rather than its content.
-const FILE_TILE_W: f32 = 168.0;
+/// Sent pills use the same row gap and maximum width as composer chips.
+pub(crate) const TILE_GAP: f32 = crate::composer_band::GAP;
 /// The long edge a decoded thumbnail is kept at: enough for a sharp tile on
 /// a high-density screen, small enough to keep many.
 const THUMB_EDGE: u32 = 512;
@@ -100,26 +96,39 @@ pub(crate) struct Draft {
 }
 
 impl Draft {
+    /// Opening from the composer's chip is a double-click action. A local
+    /// folder goes to the desktop file manager; a copied picture goes through
+    /// the same in-window viewer as a sent picture or Mermaid diagram.
+    fn double_click_target(&self) -> Option<StripOpen> {
+        if matches!(self.state, DraftState::Failed { .. }) {
+            return None;
+        }
+        match self.kind {
+            AttachmentKind::Folder => self
+                .reference_path
+                .as_ref()
+                .map(|path| StripOpen::Folder(PathBuf::from(path))),
+            AttachmentKind::Image | AttachmentKind::File
+                if (self.kind == AttachmentKind::Image || picture_name(&self.file_name))
+                    && (self.bytes.is_some()
+                        || self.path.is_some()
+                        || self.reference_path.is_some()
+                        || self.state == DraftState::Stored) =>
+            {
+                Some(StripOpen::Picture(
+                    self.tile(),
+                    self.bytes.clone(),
+                    self.path.clone(),
+                ))
+            }
+            AttachmentKind::Image | AttachmentKind::File => None,
+        }
+    }
+
     /// Keep both ends of a long name visible in the composer chip. The full
     /// name remains on the draft for storage, sending and opening the file.
     pub(crate) fn chip_label(&self) -> std::borrow::Cow<'_, str> {
-        let (stem, extension) = if self.kind == AttachmentKind::Folder {
-            (self.file_name.as_str(), "")
-        } else {
-            self.file_name
-                .rsplit_once('.')
-                .filter(|(stem, extension)| !stem.is_empty() && !extension.is_empty())
-                .map_or((self.file_name.as_str(), ""), |(stem, _)| {
-                    (stem, &self.file_name[stem.len()..])
-                })
-        };
-        let length = stem.chars().count();
-        if length <= 13 {
-            return std::borrow::Cow::Borrowed(&self.file_name);
-        }
-        let start: String = stem.chars().take(6).collect();
-        let end: String = stem.chars().skip(length - 6).collect();
-        std::borrow::Cow::Owned(format!("{start}…{end}{extension}"))
+        chip_label(&self.file_name, self.kind)
     }
 
     /// A fresh staged copy requested from a sent attachment. Its bytes stay
@@ -234,8 +243,18 @@ impl Draft {
             size: self.size,
             name: self.file_name.clone(),
             byte_count: self.byte_count,
+            chip_width: 0.0,
         }
     }
+}
+
+enum StripOpen {
+    Picture(Tile, Option<bytes::Bytes>, Option<PathBuf>),
+    Folder(PathBuf),
+}
+
+fn picture_name(name: &str) -> bool {
+    allowed_type(name).is_some_and(|allowed| allowed.family == AttachmentFamily::Picture)
 }
 
 /// The last part of a path, as the attachment's name.
@@ -296,8 +315,8 @@ pub(crate) fn refused_line(refused: &[String], lang: Lang) -> Option<String> {
     }
 }
 
-/// What a tile shows: a picture by its thumbnail, a file by its name.
-#[derive(Clone, Debug, PartialEq)]
+/// A sent attachment and the width of its one-line pill.
+#[derive(Clone, Debug)]
 pub(crate) struct Tile {
     pub id: ChatAttachmentId,
     pub kind: AttachmentKind,
@@ -305,8 +324,22 @@ pub(crate) struct Tile {
     pub reference_path: Option<String>,
     pub size: Option<(u32, u32)>,
     pub name: String,
-    /// A file chip's size line; `0` while a copied file's is not yet known.
+    /// Stored attachment metadata, independent of the pill's presentation.
     pub byte_count: u64,
+    /// Measured once while laying out the message; paint and hit testing share it.
+    pub chip_width: f32,
+}
+
+impl PartialEq for Tile {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+            && self.kind == other.kind
+            && self.source == other.source
+            && self.reference_path == other.reference_path
+            && self.size == other.size
+            && self.name == other.name
+            && self.byte_count == other.byte_count
+    }
 }
 
 /// A sent file the host should preview in this window. The source path is
@@ -370,46 +403,66 @@ impl Tile {
             size: attachment.dimensions,
             name: attachment.file_name.clone(),
             byte_count: attachment.byte_count,
+            chip_width: 0.0,
         }
     }
 
-    /// The tile's width at `height`, from the picture's known shape, so a
-    /// row is laid out before any thumbnail arrives and nothing jumps.
-    fn width_at(&self, height: f32, min: f32, max: f32) -> f32 {
-        match (self.kind, self.size) {
-            (AttachmentKind::Image, Some((width, height_px))) if width > 0 && height_px > 0 => {
-                (height * width as f32 / height_px as f32).clamp(min, max)
-            }
-            (AttachmentKind::Image, _) => height,
-            (AttachmentKind::File | AttachmentKind::Folder, _) => FILE_TILE_W.min(max),
+    fn chip_label(&self) -> std::borrow::Cow<'_, str> {
+        chip_label(&self.name, self.kind)
+    }
+
+    fn chip_icon(&self) -> char {
+        match self.kind {
+            AttachmentKind::Image => icons::IMAGE,
+            AttachmentKind::Folder => icons::FOLDER,
+            AttachmentKind::File => koru_ui::file_icon::glyph(None, Some(&self.name)),
         }
+    }
+
+    pub(crate) fn measure_chip(&mut self, engine: &mut TextEngine, max_w: f32) {
+        let label = self.chip_label();
+        self.chip_width = LabelChip::new(&label)
+            .size(Size::Regular)
+            .lead(Lead::Glyph(self.chip_icon()))
+            .width(engine)
+            .min(crate::composer_band::MAX_CHIP_W)
+            .min(max_w.max(1.0));
     }
 }
 
-/// The tiles of a sent message, wrapped into rows no wider than `max_w`:
-/// each tile's rect relative to the row's origin, and the total height.
+/// The pills of a sent message, wrapped into rows no wider than `max_w`.
 pub(crate) fn card_tiles(tiles: &[Tile], max_w: f32) -> (Vec<Rect>, f32) {
     let mut rects = Vec::with_capacity(tiles.len());
     let (mut x, mut y) = (0.0_f32, 0.0_f32);
+    let height = Size::Regular.height();
     for tile in tiles {
-        let w = tile.width_at(
-            CARD_TILE_H,
-            CARD_TILE_MIN_W,
-            CARD_TILE_MAX_W.min(max_w.max(1.0)),
-        );
+        let w = tile.chip_width.max(1.0).min(max_w.max(1.0));
         if x > 0.0 && x + w > max_w {
             x = 0.0;
-            y += CARD_TILE_H + TILE_GAP;
+            y += height + TILE_GAP;
         }
-        rects.push(Rect::new(x, y, w, CARD_TILE_H));
+        rects.push(Rect::new(x, y, w, height));
         x += w + TILE_GAP;
     }
-    let height = if tiles.is_empty() {
-        0.0
+    let total_height = if tiles.is_empty() { 0.0 } else { y + height };
+    (rects, total_height)
+}
+
+fn chip_label(name: &str, kind: AttachmentKind) -> std::borrow::Cow<'_, str> {
+    let (stem, extension) = if kind == AttachmentKind::Folder {
+        (name, "")
     } else {
-        y + CARD_TILE_H
+        name.rsplit_once('.')
+            .filter(|(stem, extension)| !stem.is_empty() && !extension.is_empty())
+            .map_or((name, ""), |(stem, _)| (stem, &name[stem.len()..]))
     };
-    (rects, height)
+    let length = stem.chars().count();
+    if length <= 13 {
+        return std::borrow::Cow::Borrowed(name);
+    }
+    let start: String = stem.chars().take(6).collect();
+    let end: String = stem.chars().skip(length - 6).collect();
+    std::borrow::Cow::Owned(format!("{start}…{end}{extension}"))
 }
 
 /// `screenshot-YYYY-MM-DD-HHMMSS.png`, in UTC: ASCII, untranslated, a real
@@ -474,8 +527,8 @@ pub(crate) enum Thumb {
 }
 
 /// The thumbnails a window keeps: decoded brushes up to [`THUMB_CACHE_BYTES`],
-/// the least recently drawn going first. An evicted picture is fetched
-/// again when it is next on screen.
+/// the least recently visible going first. An evicted picture is fetched
+/// again when its attachment is next on screen.
 #[derive(Default)]
 pub(crate) struct ThumbCache {
     entries: HashMap<ChatAttachmentId, (Thumb, u64)>,
@@ -484,7 +537,7 @@ pub(crate) struct ThumbCache {
 }
 
 impl ThumbCache {
-    /// The thumbnail to draw, marking it as just used.
+    /// A visible thumbnail, marked as just used for eviction.
     pub(crate) fn get(&mut self, id: ChatAttachmentId) -> Option<&Thumb> {
         self.tick += 1;
         let tick = self.tick;
@@ -622,7 +675,12 @@ enum ThumbJob {
     Fetch(ChatId, ChatAttachmentId),
     /// A picture for the viewer: its own bytes when they are here (a draft
     /// still being stored), else the original from the service.
-    Viewer(ChatId, ChatAttachmentId, Option<bytes::Bytes>),
+    Viewer(
+        ChatId,
+        ChatAttachmentId,
+        Option<bytes::Bytes>,
+        Option<PathBuf>,
+    ),
 }
 
 /// The threads behind the strip and the tiles, started on first use. None
@@ -645,6 +703,8 @@ pub(crate) struct Work {
     #[cfg(test)]
     pub(crate) viewer_fetched: Vec<ChatAttachmentId>,
     #[cfg(test)]
+    pub(crate) viewer_paths: Vec<Option<PathBuf>>,
+    #[cfg(test)]
     pub(crate) opened: Vec<(ChatAttachmentId, String, koru_window::OpenAs)>,
 }
 
@@ -662,6 +722,8 @@ impl Work {
             fetched: Vec::new(),
             #[cfg(test)]
             viewer_fetched: Vec::new(),
+            #[cfg(test)]
+            viewer_paths: Vec::new(),
             #[cfg(test)]
             opened: Vec::new(),
         }
@@ -780,16 +842,18 @@ impl Work {
         chat: ChatId,
         id: ChatAttachmentId,
         bytes: Option<bytes::Bytes>,
+        path: Option<PathBuf>,
     ) {
-        let job = ThumbJob::Viewer(chat, id, bytes);
+        let job = ThumbJob::Viewer(chat, id, bytes, path);
         // A test answers its own; nothing is dialed or decoded.
         #[cfg(test)]
-        if let ThumbJob::Viewer(_, id, _) = job {
-            self.viewer_fetched.push(id);
+        if let ThumbJob::Viewer(_, id, _, path) = &job {
+            self.viewer_fetched.push(*id);
+            self.viewer_paths.push(path.clone());
         }
         // A host built without a client dials nothing for the original.
         #[cfg(not(test))]
-        if !(cfg!(feature = "no-client") && matches!(job, ThumbJob::Viewer(_, _, None))) {
+        if !(cfg!(feature = "no-client") && matches!(job, ThumbJob::Viewer(_, _, None, None))) {
             self.thumb(job);
         }
     }
@@ -1046,16 +1110,20 @@ fn spawn_thumbnailer(root: Option<PathBuf>, events: Sender<Event>) -> Sender<Thu
             while let Ok(job) = jobs.recv() {
                 let started = std::time::Instant::now();
                 let (id, bytes) = match job {
-                    ThumbJob::Viewer(chat, id, bytes) => {
-                        let bytes = bytes.or_else(|| {
-                            if client.is_none() {
-                                client = super::reader::connect_client(root.as_deref()).ok();
+                    ThumbJob::Viewer(chat, id, bytes, path) => {
+                        let bytes = match (bytes, path) {
+                            (Some(bytes), _) => Some(bytes),
+                            (None, Some(path)) => read_payload(Payload::Path(path)).ok(),
+                            (None, None) => {
+                                if client.is_none() {
+                                    client = super::reader::connect_client(root.as_deref()).ok();
+                                }
+                                client
+                                    .as_ref()
+                                    .and_then(|client| client.ai().attachment_bytes(chat, id).ok())
+                                    .map(bytes::Bytes::from)
                             }
-                            client
-                                .as_ref()
-                                .and_then(|client| client.ai().attachment_bytes(chat, id).ok())
-                                .map(bytes::Bytes::from)
-                        });
+                        };
                         let picture = bytes.and_then(|bytes| {
                             ViewerImage::decode(&bytes, viewer_limits())
                                 .map(|image| (Arc::new(image), bytes))
@@ -1429,17 +1497,24 @@ impl ChatSurface {
         }
     }
 
-    /// A press on the strip: × takes a draft out and removes its stored copy
-    /// whatever its state — one whose upload timed out here may still have
-    /// been stored; a red draft the service could not take for a passing
-    /// reason is tried again with the same id.
-    pub(super) fn strip_mouse_down(&mut self, x: f32, y: f32) -> Option<bool> {
+    /// Both press routes use the same chip geometry, including a scrolled or
+    /// wrapped band, so the second click lands on the chip the first hit.
+    fn strip_chip_at(&self, x: f32, y: f32) -> Option<(usize, Rect)> {
         let composer = self.composer_hit_rect;
         let origin_x = composer.x + COMPOSER_PAD_X;
         let origin_y = composer.y + COMPOSER_PAD_TOP;
         let available = (composer.w - COMPOSER_PAD_X * 2.0).max(1.0);
         let index = self.chip_band.hit(x, y, origin_x, origin_y, available)?;
         let rect = self.chip_band.chip_rect(index, origin_x, origin_y)?;
+        Some((index, rect))
+    }
+
+    /// A press on the strip: × takes a draft out and removes its stored copy
+    /// whatever its state — one whose upload timed out here may still have
+    /// been stored; a red draft the service could not take for a passing
+    /// reason is tried again with the same id.
+    pub(super) fn strip_mouse_down(&mut self, x: f32, y: f32) -> Option<bool> {
+        let (index, rect) = self.strip_chip_at(x, y)?;
         if index == 0 && self.context_document.is_some() {
             let (_, title) = self.context_document.as_ref()?;
             let chip = koru_ui::context_chip::ContextChip {
@@ -1497,9 +1572,8 @@ impl ChatSurface {
             self.attachment_work.put(chat, &draft);
             return Some(true);
         }
-        // A picture opens in the viewer, from its own bytes while it is
-        // still being stored, from the service once it is; a stored file
-        // opens in the system's app.
+        // Pictures and folders open on a double-click. Keep a single press on
+        // a file's chip and the retry/remove controls as their own actions.
         match draft.state {
             DraftState::Failed { .. } => {}
             DraftState::Stored if draft.source == AttachmentSource::Path => {}
@@ -1507,34 +1581,71 @@ impl ChatSurface {
                 let name = draft.file_name.clone();
                 self.attachment_work.open_file(chat, id, &name);
             }
-            DraftState::Storing if draft.bytes.is_none() => {}
-            DraftState::Storing | DraftState::Stored => {
-                let (tile, bytes) = (draft.tile(), draft.bytes.clone());
-                self.open_picture(chat, &tile, bytes);
+            DraftState::Storing | DraftState::Stored => {}
+        }
+        Some(true)
+    }
+
+    pub(super) fn strip_mouse_double_click(&mut self, x: f32, y: f32) -> Option<bool> {
+        let (index, rect) = self.strip_chip_at(x, y)?;
+        if index == 0 && self.context_document.is_some() {
+            return Some(true);
+        }
+        let chat = self.current_chat_id()?;
+        let index = index - usize::from(self.context_document.is_some());
+        let draft = self.strips.get(chat).get(index)?;
+        let chip = koru_ui::context_chip::ContextChip {
+            label: &draft.file_name,
+            secondary: "",
+            icon: self.attachment_chip_icon(draft),
+            state: self.attachment_chip_state(draft),
+        };
+        if chip.remove_rect(rect).contains(x, y) {
+            return Some(true);
+        }
+        match draft.double_click_target() {
+            Some(StripOpen::Picture(tile, bytes, path)) => {
+                self.open_picture_with_path(chat, &tile, bytes, path);
             }
+            Some(StripOpen::Folder(path)) => {
+                crate::tool_output::open_path::open_on_the_desktop(path);
+            }
+            None => {}
         }
         Some(true)
     }
 
     // ----- the viewer (R3) ------------------------------------------------
 
-    /// Open a picture tile in the viewer. The bytes are fetched and decoded
-    /// off this thread; the viewer opens when they are ready, if the person
-    /// is still on the chat they clicked in. A file has no viewer.
+    /// Open a picture tile in the viewer. A file reference with a picture
+    /// extension uses its local path; copied pictures use their bytes or the
+    /// service. Reading and decoding stay off this thread. The viewer opens
+    /// only while the person remains on the chat they clicked in.
     pub(super) fn open_picture(
         &mut self,
         chat: ChatId,
         tile: &Tile,
         bytes: Option<bytes::Bytes>,
     ) -> bool {
-        if tile.kind != AttachmentKind::Image {
+        self.open_picture_with_path(chat, tile, bytes, None)
+    }
+
+    fn open_picture_with_path(
+        &mut self,
+        chat: ChatId,
+        tile: &Tile,
+        bytes: Option<bytes::Bytes>,
+        path: Option<PathBuf>,
+    ) -> bool {
+        if tile.kind != AttachmentKind::Image && !picture_name(&tile.name) {
             return false;
         }
         if self.viewer_opening.as_ref().map(|(_, id, _)| *id) == Some(tile.id) {
             return true;
         }
         self.viewer_opening = Some((chat, tile.id, tile.name.clone()));
-        self.attachment_work.open_viewer(chat, tile.id, bytes);
+        let path = path.or_else(|| tile.reference_path.as_ref().map(PathBuf::from));
+        self.attachment_work.open_viewer(chat, tile.id, bytes, path);
         true
     }
 
@@ -1759,10 +1870,23 @@ impl ChatSurface {
             .map(|(_, tile)| tile.clone())
     }
 
+    /// A sent folder pill opens the same local folder as its composer chip.
+    pub(super) fn card_folder_double_click(&self, x: f32, y: f32) -> Option<bool> {
+        let tile = self.card_tile_at(x, y)?;
+        if tile.kind != AttachmentKind::Folder {
+            return None;
+        }
+        if let Some(path) = tile.reference_path {
+            crate::tool_output::open_path::open_on_the_desktop(PathBuf::from(path));
+        }
+        Some(true)
+    }
+
     /// A click on a sent attachment asks the host to open its in-window preview.
     pub(super) fn open_tile(&mut self, chat: ChatId, tile: &Tile) -> bool {
         match tile.kind {
             AttachmentKind::Image => self.open_picture(chat, tile, None),
+            AttachmentKind::File if picture_name(&tile.name) => self.open_picture(chat, tile, None),
             AttachmentKind::File => {
                 self.attachment_open_request = Some(AttachmentOpenRequest::from_tile(chat, tile));
                 true
@@ -1915,7 +2039,11 @@ impl ChatSurface {
         };
         let now = Instant::now();
         for (_, tile) in tiles {
-            if tile.kind == AttachmentKind::Image && self.thumbnails.wants(tile.id, now) {
+            if tile.kind != AttachmentKind::Image {
+                continue;
+            }
+            let _ = self.thumbnails.get(tile.id);
+            if self.thumbnails.wants(tile.id, now) {
                 self.thumbnails.pending(tile.id);
                 self.attachment_work.fetch_thumbnail(chat, tile.id);
             }
@@ -1987,7 +2115,7 @@ impl ChatSurface {
         canvas.pop_layer();
     }
 
-    /// Tiles collected while the conversation was drawn.
+    /// Sent attachments use the composer's label chip styling, without a remove lane.
     pub(super) fn draw_card_tiles(
         &mut self,
         canvas: &mut Scene,
@@ -1995,106 +2123,21 @@ impl ChatSurface {
         tiles: &[(Rect, Tile)],
     ) {
         for (rect, tile) in tiles {
-            self.draw_tile(canvas, root, *rect, tile, false, false);
+            let label = tile.chip_label();
+            LabelChip::new(&label)
+                .size(Size::Regular)
+                .lead(Lead::Glyph(tile.chip_icon()))
+                .draw(
+                    canvas,
+                    root,
+                    &mut self.engine,
+                    *rect,
+                    State {
+                        hovered: rect.contains(self.pointer.0, self.pointer.1),
+                        reveal: false,
+                    },
+                );
         }
-    }
-
-    /// A file's chip (R4): its type's icon, its name on one line, cut with
-    /// an ellipsis where it does not fit, and its size under it once known.
-    fn draw_file_chip(&mut self, canvas: &mut Scene, root: Affine, rect: Rect, tile: &Tile) {
-        let p = theme::p();
-        let glyph = koru_ui::file_icon::glyph(None, Some(&tile.name));
-        let icon = self.engine.icon_layout(glyph, 18.0);
-        scene::draw_layout(
-            canvas,
-            root,
-            &icon,
-            rect.x + 8.0,
-            rect.y + 8.0,
-            Some(p.text_dim),
-        );
-        let width = (rect.w - 16.0).max(1.0);
-        let name = self.engine.elided(&tile.name, role::meta(), width);
-        let name = self.engine.simple_layout(&name, role::meta());
-        scene::draw_layout_first_line(
-            canvas,
-            root,
-            &name,
-            rect.x + 8.0,
-            rect.y + 30.0,
-            Some(p.text),
-        );
-        if tile.byte_count > 0 && rect.h >= 56.0 {
-            let size = koru_i18n::number::bytes(self.lang, tile.byte_count);
-            let size = self.engine.simple_layout(&size, role::meta());
-            scene::draw_layout_first_line(
-                canvas,
-                root,
-                &size,
-                rect.x + 8.0,
-                rect.y + 30.0 + name.height(),
-                Some(p.text_dim),
-            );
-        }
-    }
-
-    /// One tile: the picture fitted inside it, or its name for a file or a
-    /// picture whose thumbnail has not arrived.
-    fn draw_tile(
-        &mut self,
-        canvas: &mut Scene,
-        root: Affine,
-        rect: Rect,
-        tile: &Tile,
-        dimmed: bool,
-        failed: bool,
-    ) {
-        let p = theme::p();
-        let shape = scene::rrect(rect.x, rect.y, rect.w, rect.h, 6.0);
-        scene::fill(canvas, root, p.code_bg, &shape);
-        let picture = match self.thumbnails.get(tile.id) {
-            Some(Thumb::Ready(image)) if tile.kind == AttachmentKind::Image => Some(image),
-            _ => None,
-        };
-        if let Some(image) = picture {
-            let scale =
-                (rect.w / image.width.max(1) as f32).min(rect.h / image.height.max(1) as f32);
-            let (w, h) = (image.width as f32 * scale, image.height as f32 * scale);
-            let transform =
-                root * Affine::translate((
-                    (rect.x + (rect.w - w) * 0.5) as f64,
-                    (rect.y + (rect.h - h) * 0.5) as f64,
-                )) * Affine::scale(scale as f64);
-            canvas.push_clip_layer(vello::peniko::Fill::NonZero, root, &shape);
-            canvas.draw_image(&image.brush, transform);
-            canvas.pop_layer();
-        } else if tile.kind == AttachmentKind::File {
-            self.draw_file_chip(canvas, root, rect, tile);
-        } else {
-            let icon = self.engine.icon_layout(icons::IMAGE, 18.0);
-            scene::draw_layout(
-                canvas,
-                root,
-                &icon,
-                rect.x + 8.0,
-                rect.y + 8.0,
-                Some(p.text_dim),
-            );
-        }
-        if dimmed {
-            scene::fill(canvas, root, p.panel_bg.multiply_alpha(0.55), &shape);
-        }
-        scene::stroke(
-            canvas,
-            root,
-            if failed {
-                p.close_hover
-            } else {
-                p.panel_border
-            },
-            if failed { 2.0 } else { theme::BORDER_W },
-            &shape,
-        );
     }
 }
 

@@ -1107,7 +1107,8 @@ point at it**, so the strip is labels until you want to close something.
 **Clicking a document in the pane opens it in this tab**, replacing what was
 there. If that page is already open, that tab comes forward instead. A pin is
 left alone: the page opens in your last unpinned tab, or a new one if you have
-none. Right-click (or the row `…`) offers **Open in new tab** and **Open in new
+none. From a chat tab, the document opens in a new tab and the chat stays open.
+Right-click (or the row `…`) offers **Open in new tab** and **Open in new
 window**. **Clicking a
 document pill** follows the link in this tab the same way, unless this tab is
 pinned — then the link opens in a new unpinned tab (or focuses one that already
@@ -1684,8 +1685,10 @@ right-click inside it for **Copy** with its `Ctrl+C` hint or **Add to chat**
 with its `Ctrl+L` hint. `Ctrl+L` adds the selection whenever the **Add to
 chat** button is showing, even while you are typing in the message box.
 Click any link in an answer, including one inside a table, to open it: a web
-page opens in your browser, a Koru document opens as a tab. A web address the
-answer writes out in full is a link too. Rest the pointer on a link and a
+page opens in your browser, a Koru document opens in a new tab and keeps the
+chat available. Alt+click a document link or a document chip in the message box
+to choose a split or a new tab. A web address the answer writes out in full is
+a link too. Rest the pointer on a link and a
 card shows where it goes — a long address shortened in the middle — with
 **Copy** to put the whole address on the clipboard
 and **Open** to open it; press Escape or move away to close it.
@@ -6481,6 +6484,12 @@ search scope in its footer; **Ctrl+Space** widens it to all active workspaces an
 keeps the query. A file selected through the chat's attachment menu is copied
 into the chat before sending, so it remains available if the workspace file
 moves.
+
+Sent images, files, and folder references appear as one-line pills matching
+the composer. Image pills open the in-app viewer; file pills open Koru's file
+preview, where supported, with Save As available. A picture attached as a
+local file reference also opens in the image viewer after sending.
+Double-click a sent folder pill to open that folder in your file manager.
 
 When you send, each document you mentioned goes with the message and stays
 pinned to the chat, and your message shows its document icon and title as a

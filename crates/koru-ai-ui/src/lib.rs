@@ -526,6 +526,9 @@ pub struct ChatSurface {
     titles_requested: HashSet<DocumentId>,
     /// A chip or a titled link was clicked: the document the host should open.
     open_document_request: Option<koru_link::KoruLink>,
+    place_document_request: Option<koru_link::KoruLink>,
+    pointer_mods: ModifiersState,
+    pressed_alt: bool,
     conversation_hit_rect: Rect,
     /// The workspace-access panel's filter, shared with the leaf that draws
     /// it (D106).
@@ -869,11 +872,31 @@ impl ChatSurface {
     }
 
     /// A document chip, or a document link in the conversation, was clicked.
-    /// The host opens the document as a tab.
+    /// The host opens the document in a new tab.
     pub fn take_open_document_request(&mut self) -> Option<koru_link::KoruLink> {
         self.composer
             .take_open_request()
             .or_else(|| self.open_document_request.take())
+    }
+
+    /// An Alt+clicked document asks the host to show its place chooser.
+    pub fn take_place_document_request(&mut self) -> Option<koru_link::KoruLink> {
+        self.composer
+            .take_place_request()
+            .or_else(|| self.place_document_request.take())
+    }
+
+    pub fn set_mods(&mut self, mods: ModifiersState) {
+        self.pointer_mods = mods;
+        self.composer.set_mods(mods);
+    }
+
+    fn request_document_open(&mut self, link: koru_link::KoruLink) {
+        if self.pressed_alt {
+            self.place_document_request = Some(link);
+        } else {
+            self.open_document_request = Some(link);
+        }
     }
 
     /// Show the provider setup, for a host that arrives here from its own
@@ -985,6 +1008,9 @@ impl ChatSurface {
             document_titles: HashMap::new(),
             titles_requested: HashSet::new(),
             open_document_request: None,
+            place_document_request: None,
+            pointer_mods: ModifiersState::empty(),
+            pressed_alt: false,
             conversation_hit_rect: Rect::new(14.0, PAD, 432.0, 500.0),
             workspace_search,
             fresh_chat_wanted: false,
@@ -2061,7 +2087,7 @@ impl ChatSurface {
         let Some(document) = self.stored_open_document() else {
             return false;
         };
-        self.open_document_request = Some(koru_link::KoruLink::Document {
+        self.request_document_open(koru_link::KoruLink::Document {
             document: document.as_uuid(),
             node: None,
         });
@@ -2252,6 +2278,7 @@ impl ChatSurface {
 
     pub fn mouse_down(&mut self, x: f32, y: f32) -> bool {
         self.pointer = (x, y);
+        self.pressed_alt = self.pointer_mods == ModifiersState::ALT;
         if let Some(handled) = self.viewer_mouse_down(x, y) {
             return handled;
         }
@@ -2545,7 +2572,7 @@ impl ChatSurface {
         }
         match koru_link::parse(url) {
             Ok(link @ koru_link::KoruLink::Document { .. }) => {
-                self.open_document_request = Some(link);
+                self.request_document_open(link);
                 true
             }
             _ => {
@@ -2876,6 +2903,7 @@ impl ChatSurface {
                 self.follow_link(&url);
             }
         }
+        self.pressed_alt = false;
         // A drag through a reply let go: *Add to chat* over what it chose.
         if selected {
             self.show_add_pill();
@@ -2886,6 +2914,15 @@ impl ChatSurface {
     pub fn mouse_double_click(&mut self, x: f32, y: f32) -> bool {
         if let Some(handled) = self.viewer_double_click(x, y) {
             return handled;
+        }
+        if let Some(handled) = self.card_folder_double_click(x, y) {
+            return handled;
+        }
+        if !self.showing_setup() {
+            self.composer_rect();
+            if let Some(handled) = self.strip_mouse_double_click(x, y) {
+                return handled;
+            }
         }
         if !self.showing_setup() && self.composer.contains(x, y) {
             return self.composer.mouse_double_click(x, y);
@@ -5650,7 +5687,7 @@ impl ChatSurface {
         let content = self.content_rect();
         let width = content.w.max(MIN_COMPOSER_W);
         let available = (width - COMPOSER_PAD_X * 2.0).max(1.0);
-        let max_chip_w = available.min(280.0);
+        let max_chip_w = available.min(composer_band::MAX_CHIP_W);
         let mut chip_widths = Vec::new();
         if let Some((_, title)) = &self.context_document {
             chip_widths.push(
@@ -6693,23 +6730,24 @@ impl ChatSurface {
 
     fn paint_composer_text(&mut self, canvas: &mut Scene, root: Affine) {
         let focused = self.focus == Focus::Composer;
+        let placeholder = koru_i18n::t(self.lang, self.composer_placeholder_key());
         self.composer.set_focused(focused);
-        self.composer.draw(
-            canvas,
-            root,
-            focused,
-            self.pointer,
-            koru_i18n::t(
-                self.lang,
-                if self.transcript.as_ref().is_some_and(|chat| {
-                    agents::is_agent_provider(&chat.chat.current_model.provider)
-                }) {
-                    koru_i18n::Key::AiComposerAgentPlaceholder
-                } else {
-                    koru_i18n::Key::AiComposerPlaceholder
-                },
-            ),
-        );
+        self.composer
+            .draw(canvas, root, focused, self.pointer, placeholder);
+    }
+
+    fn composer_placeholder_key(&self) -> koru_i18n::Key {
+        if !self.chat_is_empty() {
+            koru_i18n::Key::AiComposerContinuePlaceholder
+        } else if self
+            .transcript
+            .as_ref()
+            .is_some_and(|chat| agents::is_agent_provider(&chat.chat.current_model.provider))
+        {
+            koru_i18n::Key::AiComposerAgentPlaceholder
+        } else {
+            koru_i18n::Key::AiComposerPlaceholder
+        }
     }
 
     /// Paint the controls whose model and microphone widths depend on the
@@ -7544,6 +7582,11 @@ impl ChatSurface {
                 attachments: Vec::new(),
             }));
         }
+        for message in &mut messages {
+            for tile in &mut message.attachments {
+                tile.measure_chip(&mut self.engine, message.wrap_width);
+            }
+        }
         self.message_layouts = messages;
         self.position_conversation_items();
         self.message_width = width;
@@ -7829,7 +7872,7 @@ impl ChatSurface {
                         p.row_selected,
                         &scene::rrect(card.x, card.y, card.w, card.h, 8.0),
                     );
-                    // Its pictures under its words, drawn once the cards are.
+                    // Its attachment pills under its words, drawn once the cards are.
                     if !message.attachments.is_empty() {
                         let top = if message.display.trim().is_empty() {
                             card.y + PAD
@@ -10464,6 +10507,40 @@ mod tests {
         let surface = ChatSurface::new();
         assert!(surface.reader.is_none());
         assert!(surface.maintenance_deadline().is_none());
+    }
+
+    #[test]
+    fn composer_placeholder_drops_shortcut_hints_after_the_first_message() {
+        let mut surface = ChatSurface::new();
+        assert_eq!(
+            surface.composer_placeholder_key(),
+            koru_i18n::Key::AiComposerPlaceholder
+        );
+        surface.transcript = Some(transcript());
+        surface
+            .transcript
+            .as_mut()
+            .unwrap()
+            .chat
+            .current_model
+            .provider = AiProviderId::parse("agent-claude").unwrap();
+        assert_eq!(
+            surface.composer_placeholder_key(),
+            koru_i18n::Key::AiComposerAgentPlaceholder
+        );
+        surface.pending_user = Some("Hello".into());
+        assert_eq!(
+            surface.composer_placeholder_key(),
+            koru_i18n::Key::AiComposerContinuePlaceholder
+        );
+        surface.pending_user = None;
+        let transcript = surface.transcript.as_mut().unwrap();
+        let message = user_message(transcript, "Hello");
+        transcript.messages.push(message);
+        assert_eq!(
+            surface.composer_placeholder_key(),
+            koru_i18n::Key::AiComposerContinuePlaceholder
+        );
     }
 
     #[test]
@@ -13276,6 +13353,23 @@ mod tests {
         );
         assert!(surface.follow_link("https://example.com"));
         assert_eq!(surface.take_open_document_request(), None);
+    }
+
+    #[test]
+    fn alt_click_on_a_sent_document_asks_for_the_place_chooser() {
+        let mut surface = ChatSurface::new();
+        let document = DocumentId::new();
+        surface.set_mods(ModifiersState::ALT);
+        surface.mouse_down(0.0, 0.0);
+        assert!(surface.follow_link(&format!("koru://doc/{document}")));
+        assert_eq!(surface.take_open_document_request(), None);
+        assert_eq!(
+            surface.take_place_document_request(),
+            Some(koru_link::KoruLink::Document {
+                document: document.as_uuid(),
+                node: None,
+            })
+        );
     }
 
     #[test]

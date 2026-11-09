@@ -323,10 +323,6 @@ impl AiChatView {
         self.surface.listed_chats()
     }
 
-    pub fn set_context_document(&mut self, document: Option<(DocumentId, String)>) -> bool {
-        self.surface.set_context_document(document)
-    }
-
     pub fn set_recent_documents(&mut self, documents: Vec<(DocumentId, String)>) -> bool {
         self.surface.set_recent_documents(documents)
     }
@@ -374,6 +370,10 @@ impl AiChatView {
     /// A document chip in this chat was clicked; the container opens it.
     pub fn take_open_document_request(&mut self) -> Option<koru_link::KoruLink> {
         self.surface.take_open_document_request()
+    }
+
+    pub fn take_place_document_request(&mut self) -> Option<koru_link::KoruLink> {
+        self.surface.take_place_document_request()
     }
 
     pub fn take_attachment_open_request(&mut self) -> Option<koru_ai_ui::AttachmentOpenRequest> {
@@ -548,6 +548,10 @@ impl AiChatView {
 }
 
 impl View for AiChatView {
+    fn set_mods(&mut self, mods: ModifiersState) {
+        self.surface.set_mods(mods);
+    }
+
     fn key(
         &mut self,
         _ws: &mut WorkspaceDoc,

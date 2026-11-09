@@ -13633,6 +13633,83 @@ fn opening_ai_setup_from_settings_is_a_chat_tab_not_the_setup() {
 }
 
 #[test]
+fn chat_document_link_opens_a_new_tab_and_keeps_the_chat_tab() {
+    let (mut view, workspace) = on_document();
+    let document = koru_core::DocumentId::new();
+    let original_document_at = view.tabs().active();
+    view.tabs_mut()
+        .get_mut(original_document_at)
+        .unwrap()
+        .document = Some(document);
+    assert!(view.open_ai_chat_tab());
+    let chat_at = view.tabs().active();
+    let before = view.tabs().len();
+    let link = koru_link::KoruLink::Document {
+        document: document.as_uuid(),
+        node: None,
+    };
+
+    assert!(view.open_ai_document_link(link, false));
+    assert_eq!(
+        view.pending_lands.back().copied(),
+        Some((document, OpenWhere::NewTab))
+    );
+    assert!(matches!(view.tabs().active_tab().view, TabView::AiChat(_)));
+    assert!(View::show_active_document(
+        &mut view,
+        &workspace.ws,
+        Some(document),
+    ));
+    assert_eq!(view.tabs().len(), before + 1);
+    assert_eq!(
+        view.tabs().get(original_document_at).unwrap().document,
+        Some(document),
+        "the existing document tab was not reused"
+    );
+    assert!(matches!(
+        view.tabs().get(chat_at).unwrap().view,
+        TabView::AiChat(_)
+    ));
+}
+
+#[test]
+fn alt_click_on_a_chat_document_link_opens_the_split_selector() {
+    use crate::mainview::place_chooser::PlaceTarget;
+    let (mut view, workspace) = on_document();
+    assert!(view.open_ai_chat_tab());
+    let document = koru_core::DocumentId::new();
+    let node = koru_core::NodeId::new();
+    let at = (260.0, 240.0);
+    view.pointer = at;
+    let before = view.pending_lands.len();
+
+    assert!(view.open_ai_document_link(
+        koru_link::KoruLink::Document {
+            document: document.as_uuid(),
+            node: Some(node.as_uuid()),
+        },
+        true,
+    ));
+    let ask = view.place_chooser.as_ref().expect("split selector");
+    assert_eq!(
+        ask.target,
+        PlaceTarget::Reference(koru_editor::Reference::Document(
+            koru_editor::trigger::DocumentTarget {
+                document,
+                node: Some(node),
+            }
+        ))
+    );
+    assert_eq!(ask.chooser.at(), at);
+    assert_eq!(view.pending_lands.len(), before, "wait for a place");
+    assert!(view.choose_place(&workspace.ws, koru_ui::place_chooser::Place::Right));
+    assert_eq!(
+        view.pending_lands.back().copied(),
+        Some((document, OpenWhere::Split(koru_editor::SplitSide::Right)))
+    );
+}
+
+#[test]
 fn computer_file_picker_returns_to_the_requesting_chat_host() {
     let (mut view, _workspace) = container();
     view.ai_computer_ask = Some((

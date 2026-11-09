@@ -28,8 +28,8 @@ pub(crate) fn message_height(message: &MessageLayout) -> f32 {
 
 pub(crate) fn message_content_height(message: &MessageLayout) -> f32 {
     if !message.attachments.is_empty() {
-        // The person's own words, then their pictures and files; a message
-        // of attachments only is its tiles alone.
+        // The person's own words, then their attachment pills; a message
+        // of attachments only is its pill row alone.
         let (_, tiles) = crate::attachments::card_tiles(&message.attachments, message.wrap_width);
         return if message.display.trim().is_empty() {
             tiles

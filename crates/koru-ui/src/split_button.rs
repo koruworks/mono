@@ -43,10 +43,14 @@ pub struct SplitButton {
 }
 
 impl SplitButton {
-    pub const ACTION_W: f32 = crate::button::ActionButton::H;
-    pub const MENU_W: f32 = 36.0;
-    /// The mode badge's resting lane; the chevron occupies the reserved right end on hover.
-    pub const RESTING_MENU_W: f32 = 25.0;
+    const PAD: f32 = theme::Space::S1_5.px(theme::Profile::Desktop);
+    const ICON_SIZE: f32 = theme::IconSize::M.px(theme::Profile::Desktop);
+    const CHEVRON_SIZE: f32 = theme::IconSize::XS.px(theme::Profile::Desktop);
+    const DIVIDER_W: f32 = theme::BORDER_W as f32;
+    // 6 + 16 + 6 | 6 + 16 + 6; hover adds a 12 px chevron and 6 px edge.
+    pub const ACTION_W: f32 = Self::PAD + Self::ICON_SIZE + Self::PAD + Self::DIVIDER_W;
+    pub const RESTING_MENU_W: f32 = Self::PAD + Self::ICON_SIZE + Self::PAD;
+    pub const MENU_W: f32 = Self::RESTING_MENU_W + Self::CHEVRON_SIZE + Self::PAD;
     pub const H: f32 = crate::button::ActionButton::H;
     pub const W: f32 = Self::ACTION_W + Self::MENU_W;
 
@@ -153,7 +157,12 @@ impl SplitButton {
             canvas,
             root,
             p.panel_border,
-            &scene::rect(menu.x, menu.y + 6.0, theme::BORDER_W as f32, menu.h - 12.0),
+            &scene::rect(
+                menu.x - Self::DIVIDER_W,
+                menu.y + Self::PAD,
+                Self::DIVIDER_W,
+                menu.h - Self::PAD * 2.0,
+            ),
         );
         let ink = if self.tone == SplitTone::Neutral {
             p.text
@@ -163,17 +172,17 @@ impl SplitButton {
         // An unavailable send is already inert and has no action hover. Keep
         // its glyph legible against the filled tone even with an empty draft.
         let action_ink = ink;
-        let action_icon = engine.icon_layout(glyph, 15.0);
+        let action_icon = engine.icon_layout(glyph, Self::ICON_SIZE);
         scene::draw_layout_first_line(
             canvas,
             root,
             &action_icon,
-            action.x + (action.w - action_icon.width()) * 0.5,
+            action.x + Self::PAD + (Self::ICON_SIZE - action_icon.width()) * 0.5,
             action.y + (action.h - action_icon.height()) * 0.5,
             Some(action_ink),
         );
-        let badge_icon = engine.icon_layout(badge, 12.0);
-        let badge_x = menu.x + 5.0;
+        let badge_icon = engine.icon_layout(badge, Self::ICON_SIZE);
+        let badge_x = menu.x + Self::PAD + (Self::ICON_SIZE - badge_icon.width()) * 0.5;
         scene::draw_layout_first_line(
             canvas,
             root,
@@ -183,8 +192,9 @@ impl SplitButton {
             Some(ink),
         );
         if self.reveal > 0.0 {
-            let caret = engine.icon_layout(icons::CARET_DOWN, 11.0);
-            let x = painted.x + painted.w - caret.width() - 8.0;
+            let caret = engine.icon_layout(icons::CARET_DOWN, Self::CHEVRON_SIZE);
+            let x = painted.x + painted.w - Self::PAD - Self::CHEVRON_SIZE
+                + (Self::CHEVRON_SIZE - caret.width()) * 0.5;
             let y = menu.y + (menu.h - caret.height()) * 0.5;
             let cx = x + caret.width() * 0.5;
             let cy = y + caret.height() * 0.5;
@@ -262,5 +272,9 @@ mod tests {
         assert!(idle.painted_rect().w < halfway.painted_rect().w);
         assert!(halfway.painted_rect().w < hot.painted_rect().w);
         assert_eq!(hot.painted_rect().w, SplitButton::W);
+        assert_eq!(SplitButton::ACTION_W, 29.0);
+        assert_eq!(SplitButton::RESTING_MENU_W, 28.0);
+        assert_eq!(idle.painted_rect().w, 57.0);
+        assert_eq!(SplitButton::W, 75.0);
     }
 }

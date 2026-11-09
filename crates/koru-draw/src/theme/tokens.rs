@@ -100,7 +100,7 @@ impl Space {
     }
 
     /// Logical units under `profile`.
-    pub fn px(self, profile: Profile) -> f32 {
+    pub const fn px(self, profile: Profile) -> f32 {
         match profile {
             Profile::Desktop => match self {
                 Self::S0 => 0.0,
@@ -208,7 +208,7 @@ impl IconSize {
         }
     }
 
-    pub fn px(self, profile: Profile) -> f32 {
+    pub const fn px(self, profile: Profile) -> f32 {
         let Profile::Desktop = profile;
         match self {
             Self::XS => 12.0,
