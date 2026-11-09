@@ -61,7 +61,7 @@ impl<C: Catalog, B: Backend> Store<C, B> {
 
     /// Open a committed v2 row under its persisted writer. A read-only unit
     /// refuses the writer, as every unit does, and the caller reports it.
-    fn open_personal(
+    pub(super) fn open_personal(
         workspace: WorkspaceId,
         state: &WorkspacePersonalUnitState,
     ) -> Result<PersonalManifest> {
@@ -627,7 +627,7 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         Ok(result)
     }
 
-    fn record_reminder_change(
+    pub(super) fn record_reminder_change(
         &mut self,
         profile: ProfileId,
         reminder: Option<ReminderId>,

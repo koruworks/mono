@@ -86,6 +86,12 @@ pub use root_lifecycle::{
 mod profile_projection;
 pub use preparation::{CreateProfileWithWorkspace, CreatedProfile, FirstWorkspace};
 mod profile_units;
+mod root_sync;
+pub use root_sync::{
+    JoinPhase, JoinUnit, K_JOIN_RECEIPT_PREFIX, K_PEER_SCOPE_PREFIX, PublishedOverlays,
+    RootExportSource, RootGrant, RootInventory, RootJoinOutcome, RootJoinReceipt,
+    StagedPersonalUnit, StagedRootUnit, grant_covers_workspace, join_receipt_key, peer_scope_key,
+};
 mod transport_modes;
 pub use transport_modes::TransportModeChoice;
 mod updates;
@@ -461,6 +467,32 @@ pub enum IdentityChange {
 pub struct IdentityCommitted {
     pub profile: ProfileId,
     pub change: IdentityChange,
+}
+
+/// How a replica provisioning may place a Workspace this device holds no
+/// root unit for (root-catalog TECHNICAL.final §7.2). A held unit always
+/// wins over either.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ReplicaPlacement {
+    /// The descriptor's owner may seed the unit: the Cloud bootstrap before
+    /// M3, or a Profile-granted peer whose hint names a granted Profile this
+    /// device holds.
+    Hint(ProfileId),
+    /// Only an already-known root placement may place it; otherwise the
+    /// provisioning is pending until a root unit arrives — the rule for the
+    /// same person's device (which sends the unit first) and for a
+    /// Workspace-scoped peer (which never installs its Profile here).
+    KnownOnly,
+}
+
+/// What [`Store::provision_replica_placed`] did.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ProvisionedReplica {
+    /// The rows exist and the manifest container is ready for its bytes.
+    Ready,
+    /// Nothing was written: no root placement this device can list the
+    /// Workspace under is known yet. Retry after root units.
+    PlacementPending,
 }
 
 /// A content-first document creation, safe to expose after this returns.
@@ -1258,8 +1290,9 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         }
         self.ensure_profile_manifest(owner)?;
         let prepared = self.prepare_workspace(owner, name, None, None, at)?;
-        // The root Workspace unit is published with the row (Plan 1.3): no
-        // live Workspace lacks one except a replica a peer provisions (M2).
+        // The root Workspace unit is published with the row (Plan 1.3); a
+        // replica a peer provisions publishes or receives its unit too
+        // (Plan 2.1).
         let scope = self.catalog.local_user_scope()?;
         let unit = match self.fresh_workspace_unit(&prepared.workspace) {
             Ok(unit) => unit,
@@ -1316,8 +1349,12 @@ impl<C: Catalog, B: Backend> Store<C, B> {
     /// container only; the peer's manifest snapshot/update must still traverse
     /// [`apply_update`](Self::apply_update) and [`flush`](Self::flush).
     ///
-    /// Narrow by design: transports call this after authorization. Ordinary
-    /// workspace creation continues to mint its own ids.
+    /// The legacy signature: the descriptor's owner is admitted as a
+    /// bootstrap hint that may seed the Workspace's root unit when this
+    /// device holds none — the Cloud bootstrap path before M3, and a
+    /// Profile-granted peer whose grant the adapter has already checked.
+    /// Root placement still wins when a unit is held. The negotiated peer
+    /// path calls [`Self::provision_replica_placed`] and chooses the rule.
     pub fn provision_replica(
         &mut self,
         profile: &Profile,
@@ -1325,41 +1362,56 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         manifest: DocumentId,
         at: Timestamp,
     ) -> Result<()> {
-        match self.catalog.profile(profile.id)? {
-            Some(existing) if existing.created_at != profile.created_at => {
-                // Keep the identity guard intact. These exact millisecond
-                // values distinguish a bootstrap/precision mismatch from a
-                // different replica identity; names and content are omitted.
-                tracing::warn!(
-                    profile = %profile.id.as_uuid(),
-                    workspace = %workspace.id.as_uuid(),
-                    manifest = %manifest.as_uuid(),
-                    local_profile_created_at_ms = existing.created_at.millis(),
-                    incoming_profile_created_at_ms = profile.created_at.millis(),
-                    creation_delta_ms = i128::from(profile.created_at.millis())
-                        - i128::from(existing.created_at.millis()),
-                    incoming_workspace_created_at_ms = workspace.created_at.millis(),
-                    "store replica: profile creation timestamp mismatch"
-                );
-                return Err(Error::new(
-                    Code::ProfileExists,
-                    "the replica profile id has a different immutable creation time",
-                ));
-            }
-            // Mutable profile fields come from the profile CRDT. A workspace
-            // descriptor is bootstrap compatibility data and may legitimately
-            // carry an older name or omit fields learned through a newer peer.
-            Some(_) => {}
-            None => self.catalog.put_profile(profile)?,
+        match self.provision_replica_placed(
+            Some(profile),
+            workspace,
+            manifest,
+            ReplicaPlacement::Hint(workspace.owner),
+            at,
+        )? {
+            ProvisionedReplica::Ready => Ok(()),
+            // A hint always places; only an explicitly unassigned or
+            // undelivered root placement holds, and that is reported.
+            ProvisionedReplica::PlacementPending => Err(Error::new(
+                Code::ProfileNotFound,
+                "the replica's root placement names no Profile this device holds yet",
+            )),
         }
+    }
 
-        if let Some(existing) = self.catalog.workspace(workspace.id)? {
-            if existing.owner != workspace.owner {
-                return Err(Error::new(
-                    Code::WorkspaceExists,
-                    "the replica workspace id already belongs to another profile",
-                ));
-            }
+    /// **Root-aware provisioning** (root-catalog TECHNICAL.final §7.2
+    /// "Specific changes", §6.2). The descriptor's `owner` is a bootstrap
+    /// hint; placement is resolved through root state:
+    ///
+    /// | unit known | rule | result |
+    /// | --- | --- | --- |
+    /// | yes, placed under a Profile this device holds | any | provisioned there; the descriptor's owner is ignored for placement and a differing one is **not** `WorkspaceExists` |
+    /// | yes, placed under a Profile not held, hidden, or a Holder | any | `PlacementPending` — pending/recovery, never a stale Profile |
+    /// | yes, explicitly unassigned | any | `PlacementPending` (see the module's judgment calls) |
+    /// | no | `Hint(p)` | seeded under `p` by a fresh unit published with the row |
+    /// | no | `KnownOnly` | `PlacementPending` — the sync pass retries after root units |
+    ///
+    /// What is kept unchanged: the manifest identity guard on an existing
+    /// row (`manifests.len() != 1 || id != manifest`), the Profile
+    /// immutable-creation-time guard for a Profile that really is being
+    /// provisioned (the one the resolved placement names, when `profile`
+    /// describes it), and the "manifest already belongs elsewhere" check.
+    /// The row, its routing and — when no unit was held — its unit are
+    /// published in one catalog transaction (`Catalog::publish_replica`),
+    /// closing Plan 1.3's "only replicas lack a unit". Nothing here creates
+    /// a Workspace of its own or a default.
+    pub fn provision_replica_placed(
+        &mut self,
+        profile: Option<&Profile>,
+        workspace: &Workspace,
+        manifest: DocumentId,
+        placement: ReplicaPlacement,
+        at: Timestamp,
+    ) -> Result<ProvisionedReplica> {
+        if self.workspace_including_deleted(workspace.id).is_ok() {
+            // Content identity is the only thing an existing row is checked
+            // against. Where this device places the Workspace is its root
+            // unit's business, not the descriptor's.
             let repo = self.backend.open_workspace(workspace.id)?;
             let manifests: Vec<_> = repo
                 .documents()?
@@ -1372,23 +1424,96 @@ impl<C: Catalog, B: Backend> Store<C, B> {
                     "the replica workspace id already has another manifest identity",
                 ));
             }
-            // The manifest is the replicated authority for the name. The
-            // descriptor supplies a useful name while a replica is first being
-            // provisioned, but after that it is only bootstrap metadata: an
-            // older peer inventory must not overwrite a rename already present
-            // in this replica's manifest. `flush` projects the authoritative
-            // manifest name back into this catalog row after a durable commit.
-            // Every shared mutable field is now manifest-authoritative. The
+            // Every shared mutable field is manifest-authoritative. The
             // descriptor is bootstrap only and must not overwrite local CRDT
             // state merely because an older peer sent another inventory.
-            return Ok(());
+            return Ok(ProvisionedReplica::Ready);
         }
 
-        if workspace.owner != profile.id {
-            return Err(Error::new(
-                Code::InvalidRequest,
-                "the replica workspace owner does not match its profile",
-            ));
+        // Placement, through root state first (§7.2 "Resolve placement
+        // through root state; if not known, hold provisioning pending").
+        let held_unit = self.effective_workspace_unit(workspace.id)?;
+        let resolved = match held_unit.as_ref().and_then(|unit| unit.placement()) {
+            Some(crate::root_catalog::Placement {
+                profile: Some(owner),
+                ..
+            }) => owner,
+            Some(crate::root_catalog::Placement { profile: None, .. }) => {
+                tracing::info!(
+                    workspace = %workspace.id,
+                    "store replica: root placement is explicitly unassigned; provisioning pending"
+                );
+                return Ok(ProvisionedReplica::PlacementPending);
+            }
+            None if held_unit.is_some() => {
+                // A unit with no register is pending by definition (§4.2).
+                return Ok(ProvisionedReplica::PlacementPending);
+            }
+            None => match placement {
+                ReplicaPlacement::Hint(owner) => owner,
+                ReplicaPlacement::KnownOnly => {
+                    tracing::info!(
+                        workspace = %workspace.id,
+                        "store replica: no root placement known; provisioning pending"
+                    );
+                    return Ok(ProvisionedReplica::PlacementPending);
+                }
+            },
+        };
+
+        // The Profile that really is being provisioned is the resolved one.
+        // The descriptor's Profile metadata is used only when it describes
+        // that Profile; a Profile absent from this device otherwise leaves
+        // the Workspace pending until its identity unit arrives.
+        match self.catalog.profile(resolved)? {
+            Some(existing) => {
+                if let Some(incoming) = profile
+                    && incoming.id == resolved
+                    && existing.created_at != incoming.created_at
+                {
+                    // Keep the identity guard intact. These exact millisecond
+                    // values distinguish a bootstrap/precision mismatch from a
+                    // different replica identity; names and content are
+                    // omitted.
+                    tracing::warn!(
+                        profile = %resolved.as_uuid(),
+                        workspace = %workspace.id.as_uuid(),
+                        manifest = %manifest.as_uuid(),
+                        local_profile_created_at_ms = existing.created_at.millis(),
+                        incoming_profile_created_at_ms = incoming.created_at.millis(),
+                        creation_delta_ms = i128::from(incoming.created_at.millis())
+                            - i128::from(existing.created_at.millis()),
+                        incoming_workspace_created_at_ms = workspace.created_at.millis(),
+                        "store replica: profile creation timestamp mismatch"
+                    );
+                    return Err(Error::new(
+                        Code::ProfileExists,
+                        "the replica profile id has a different immutable creation time",
+                    ));
+                }
+                if existing.is_holder() {
+                    // §6.3: a Holder is neither a persona nor a destination.
+                    return Ok(ProvisionedReplica::PlacementPending);
+                }
+            }
+            None => match profile {
+                Some(incoming) if incoming.id == resolved => {
+                    self.catalog.put_profile(incoming)?;
+                }
+                _ => {
+                    tracing::info!(
+                        workspace = %workspace.id,
+                        profile = %resolved,
+                        "store replica: placement names a Profile not held here; provisioning pending"
+                    );
+                    return Ok(ProvisionedReplica::PlacementPending);
+                }
+            },
+        }
+        if self.catalog.profile_catalog_state(resolved)? != Some(ProfileCatalogState::Active) {
+            // Hidden by a shared deletion or removed locally: the row cannot
+            // be listed under it, and nothing else may stand in.
+            return Ok(ProvisionedReplica::PlacementPending);
         }
         if let Some(other) = self.catalog.locate(manifest)? {
             return Err(Error::new(
@@ -1397,28 +1522,45 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             ));
         }
 
-        // Ordering and last-opened state are local. Shared appearance and
-        // lifecycle arrive in the descriptor for bootstrap, then the manifest
-        // CRDT becomes authoritative as soon as its updates are imported.
-        //
-        // **No root unit is published here** (M2). A replica's placement and
-        // lifecycle belong to the root Workspace unit the owning user's
-        // devices exchange once the peer protocol carries units; until then
-        // this row is the only evidence, `Store::root_placement` reads it as
-        // pending, and the first local move or lifecycle write mints the unit.
+        // Ordering and last-opened state are local. Shared appearance arrives
+        // in the descriptor for bootstrap, then the manifest CRDT becomes
+        // authoritative as soon as its updates are imported. Lifecycle comes
+        // from the root unit when one is held; the descriptor's `deleted_at`
+        // is the hint that seeds a fresh unit's deletion fact otherwise.
         let mut record = workspace.clone();
+        record.owner = resolved;
         record.last_opened_at = None;
-        let deleted_at = record.deleted_at.take();
-        record.position = self.next_workspace_position(profile.id)?;
-        self.catalog.put_workspace(&record)?;
+        record.position = self.next_workspace_position(resolved)?;
+        let scope = self.catalog.local_user_scope()?;
+        let unit = match &held_unit {
+            Some(unit) => {
+                record.deleted_at = root_lifecycle::earliest_active_deletion(unit);
+                None
+            }
+            None => Some(crate::ports::RootCatalogUnitCommit {
+                unit: crate::root_catalog::CatalogUnitRef::Workspace {
+                    workspace: record.id,
+                },
+                snapshot: crate::root_catalog::seed_workspace_unit(
+                    record.id,
+                    resolved,
+                    record.deleted_at.map(|deleted| deleted.millis()),
+                    self.peer_id,
+                )?,
+                expected_revision: None,
+            }),
+        };
+        self.catalog
+            .publish_replica(&record, manifest, scope, unit.as_ref())?;
         let mut repo = self.backend.open_workspace(record.id)?;
         repo.create_document(manifest, DocumentKind::Manifest, at)?;
-        self.catalog.record_location(manifest, record.id)?;
-        if let Some(deleted_at) = deleted_at {
-            self.catalog
-                .set_workspace_deleted(record.id, Some(deleted_at), &[manifest])?;
-        }
-        Ok(())
+        tracing::info!(
+            workspace = %record.id,
+            seeded_unit = unit.is_some(),
+            deleted = record.deleted_at.is_some(),
+            "store replica: provisioned under root placement"
+        );
+        Ok(ProvisionedReplica::Ready)
     }
 
     /// The manifest's own deletion state: `Some(Some(at))` actively deleted,

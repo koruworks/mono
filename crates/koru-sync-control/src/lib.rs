@@ -70,7 +70,15 @@ pub const CONTROL_SERVICE: &str = "koru-store-sync";
 /// 5 requires independent identity, private, personal and legacy Profile unit
 /// addresses. Exact Profile grants admit fresh identity/private state; legacy
 /// bytes still require all-data. Older peers receive profile_units_required.
-pub const PEER_PROTOCOL_VERSION: u32 = 5;
+/// 6 adds the root-catalog exchange (root-catalog TECHNICAL.final §4, §7.2,
+/// §11.4): per-subject Profile/Workspace catalog units and personal v2 units
+/// travel as their own frames through the native-redaction export boundary,
+/// a descriptor's Profile is a bootstrap placement hint rather than
+/// authority, and placement is read from the root unit. A 5 peer still
+/// writes `workspaces.owner` from descriptors and exports personal units on
+/// the v1 address, so it receives `root_catalog_required`; 0..=4 keep
+/// `profile_units_required`.
+pub const PEER_PROTOCOL_VERSION: u32 = 6;
 
 /// A sanity bound on one gossip batch, not a capacity limit: a trust store
 /// holds a handful of records per paired device, so anything near this is a

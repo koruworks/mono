@@ -759,6 +759,13 @@ impl Catalog for SqliteCatalog {
         root_catalog::clear_root_catalog_overlay(&self.connection, scope, unit)
     }
 
+    fn root_catalog_overlays(
+        &self,
+        scope: UserScopeId,
+    ) -> Result<Vec<(CatalogUnitRef, RootCatalogOverlay)>> {
+        root_catalog::root_catalog_overlays(&self.connection, scope)
+    }
+
     // ---- personal v2 (catalog 13)
 
     fn workspace_personal_unit(
@@ -848,6 +855,51 @@ impl Catalog for SqliteCatalog {
             .map_err(sql_failed)?;
         publish_workspace(&tx, workspace, manifest)?;
         root_catalog::commit_root_catalog_unit(&tx, scope, unit)?;
+        tx.commit().map_err(sql_failed)
+    }
+
+    fn publish_replica(
+        &mut self,
+        workspace: &Workspace,
+        manifest: DocumentId,
+        scope: UserScopeId,
+        unit: Option<&RootCatalogUnitCommit>,
+    ) -> Result<()> {
+        if let Some(unit) = unit
+            && unit.unit
+                != (CatalogUnitRef::Workspace {
+                    workspace: workspace.id,
+                })
+        {
+            return Err(Error::new(
+                Code::InvalidRequest,
+                "a replica publication names another unit than its row",
+            ));
+        }
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_failed)?;
+        if workspace.deleted_at.is_some() {
+            // A row provisioned straight into the Trash routes nothing, as
+            // `publish_removal(Delete)` leaves a trashed Workspace.
+            let exists: bool = tx
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = ?1)",
+                    params![workspace.id.to_storage()],
+                    |row| row.get(0),
+                )
+                .map_err(sql_failed)?;
+            if exists {
+                return Err(Error::bare(Code::WorkspaceExists));
+            }
+            write_workspace_projection(&tx, workspace)?;
+        } else {
+            publish_workspace(&tx, workspace, manifest)?;
+        }
+        if let Some(unit) = unit {
+            root_catalog::commit_root_catalog_unit(&tx, scope, unit)?;
+        }
         tx.commit().map_err(sql_failed)
     }
 

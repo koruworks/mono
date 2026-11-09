@@ -72,6 +72,65 @@ impl ReplicationStore for FakeStore {
             .collect())
         })
     }
+    fn bind_root_scope(&self, peer: &AuthenticatedPeer) -> Result<bool, StoreFailure> {
+        Ok(peer.binds_root_scope())
+    }
+    /// The eligible root inventory as the rule reads it: the Workspace unit
+    /// for every grant that covers the Workspace, the Profile unit only for
+    /// a grant that may know the Profile, the personal unit only for the
+    /// same person's device. Sentinel-free: ids and versions, nothing else.
+    fn root_catalog(&self, peer: &AuthenticatedPeer) -> Result<RootCatalogInventory, StoreFailure> {
+        let profile = ProfileId::from_uuid(self.workspace.as_uuid());
+        peer.with_catalog_scope(|| {
+            let mut inventory = RootCatalogInventory::default();
+            if peer.all_data || peer.authorized_profiles.contains(&profile) {
+                inventory.units.push(RootUnitState {
+                    unit: CatalogUnitRef::Profile { profile },
+                    version: loro::VersionVector::new().encode(),
+                });
+            }
+            if peer.all_data
+                || peer.authorized_profiles.contains(&profile)
+                || peer.authorized_workspaces.contains(&self.workspace)
+            {
+                inventory.units.push(RootUnitState {
+                    unit: CatalogUnitRef::Workspace {
+                        workspace: self.workspace,
+                    },
+                    version: loro::VersionVector::new().encode(),
+                });
+            }
+            if peer.all_data {
+                inventory.personal.push(PersonalUnitState {
+                    workspace: self.workspace,
+                    version: loro::VersionVector::new().encode(),
+                });
+            }
+            Ok(inventory)
+        })
+    }
+    fn root_unit_updates_since(
+        &self,
+        peer: &AuthenticatedPeer,
+        _: CatalogUnitRef,
+        _: &loro::VersionVector,
+    ) -> Result<Vec<u8>, StoreFailure> {
+        peer.with_catalog_scope(|| {
+            self.events.lock().unwrap().push("root_export");
+            Ok(vec![9])
+        })
+    }
+    fn personal_updates_since(
+        &self,
+        peer: &AuthenticatedPeer,
+        _: WorkspaceId,
+        _: &loro::VersionVector,
+    ) -> Result<Vec<u8>, StoreFailure> {
+        peer.with_root_scope(|| {
+            self.events.lock().unwrap().push("personal_export");
+            Ok(vec![10])
+        })
+    }
     fn workspace_profile(&self, workspace: WorkspaceId) -> Result<ProfileId, StoreFailure> {
         (workspace == self.workspace)
             .then(|| ProfileId::from_uuid(workspace.as_uuid()))
@@ -840,22 +899,28 @@ fn old_and_unknown_protocols_are_refused_before_catalog_or_payload() {
     };
     let mut peer = peer(workspace);
     peer.all_data = true;
-    for version in [None, Some(3), Some(4), Some(6)] {
+    for version in [None, Some(3), Some(4), Some(5), Some(7)] {
         peer.peer_protocol = version;
-        let code = if version == Some(6) {
-            "incompatible_protocol"
-        } else {
-            "profile_units_required"
+        let code = match version {
+            Some(7) => "incompatible_protocol",
+            // 5 has the unit addresses but writes placement from
+            // descriptors and exports personal units on the v1 address.
+            Some(5) => ROOT_CATALOG_REQUIRED,
+            _ => "profile_units_required",
         };
         assert_eq!(peer.protocol_refusal(), Some(code));
-        assert_eq!(
-            handle_frame(&store, &peer, PeerFrame::CatalogRequest),
-            vec![PeerFrame::Error { code: code.into() }]
-        );
+        for request in [PeerFrame::CatalogRequest, PeerFrame::RootCatalogRequest] {
+            assert_eq!(
+                handle_frame(&store, &peer, request),
+                vec![PeerFrame::Error { code: code.into() }]
+            );
+        }
         assert_eq!(catalog_digest(&peer, &[], &[]), None);
+        assert_eq!(root_catalog_digest(&peer, &[], &[]), None);
     }
     assert!(store.events.lock().unwrap().is_empty());
     peer.peer_protocol = Some(PEER_PROTOCOL_VERSION);
+    assert_eq!(PEER_PROTOCOL_VERSION, 6);
     assert_eq!(peer.protocol_refusal(), None);
 }
 
@@ -1273,4 +1338,354 @@ fn revocation_waits_for_an_operation_it_admitted_and_refuses_the_next() {
         "relationship_revoked"
     );
     operation.join().unwrap();
+}
+
+// ------------------------------------------------ protocol 6: the root frames
+
+fn store_for(workspace: WorkspaceId) -> FakeStore {
+    FakeStore {
+        workspace,
+        document: DocumentId::new(),
+        events: Mutex::new(Vec::new()),
+        applied: Mutex::new(Vec::new()),
+        fail_commit: false,
+    }
+}
+
+fn version_from(peer_id: u64) -> Vec<u8> {
+    let doc = loro::LoroDoc::new();
+    doc.set_peer_id(peer_id).unwrap();
+    doc.get_map("m").insert("k", 1).unwrap();
+    doc.commit();
+    doc.oplog_vv().encode()
+}
+
+/// Every root frame round-trips through serde, an unknown unit tag is
+/// refused, and a frame carries nothing but addresses, versions and bytes.
+#[test]
+fn root_frames_round_trip_and_refuse_unknown_unit_tags() {
+    let profile = ProfileId::new();
+    let workspace = WorkspaceId::new();
+    let units = vec![
+        RootUnitState {
+            unit: CatalogUnitRef::Profile { profile },
+            version: version_from(1),
+        },
+        RootUnitState {
+            unit: CatalogUnitRef::Workspace { workspace },
+            version: version_from(2),
+        },
+    ];
+    for unit in &units {
+        unit.validate().unwrap();
+    }
+    let personal = vec![PersonalUnitState {
+        workspace,
+        version: version_from(3),
+    }];
+    for frame in [
+        PeerFrame::RootCatalogRequest,
+        PeerFrame::RootCatalog {
+            digest: vec![1, 2, 3],
+            units: units.clone(),
+            personal: personal.clone(),
+        },
+        PeerFrame::RootUnitRequest {
+            unit: CatalogUnitRef::Workspace { workspace },
+            version: version_from(4),
+        },
+        PeerFrame::RootUnitUpdates {
+            unit: CatalogUnitRef::Profile { profile },
+            updates: vec![vec![5, 6]],
+        },
+        PeerFrame::PersonalRequest {
+            workspace,
+            version: version_from(7),
+        },
+        PeerFrame::PersonalUpdates {
+            workspace,
+            updates: vec![vec![8]],
+        },
+    ] {
+        let encoded = serde_json::to_value(&frame).unwrap();
+        assert_eq!(
+            serde_json::from_value::<PeerFrame>(encoded.clone()).unwrap(),
+            frame
+        );
+        assert_eq!(
+            frame_workspace(&frame),
+            None,
+            "root frames are account-scoped"
+        );
+        if encoded
+            .as_object()
+            .is_some_and(|object| object.contains_key("unit"))
+        {
+            let mut unknown = encoded.clone();
+            unknown["unit"]["type"] = "future_unit".into();
+            assert!(serde_json::from_value::<PeerFrame>(unknown).is_err());
+            let mut extra = encoded.clone();
+            extra["unit"]["name"] = "SENTINEL".into();
+            assert!(serde_json::from_value::<PeerFrame>(extra).is_err());
+        }
+    }
+    assert!(
+        RootUnitState {
+            unit: CatalogUnitRef::Profile { profile },
+            version: vec![0xff, 0xfe],
+        }
+        .validate()
+        .is_err()
+    );
+}
+
+/// The root digest is scope-bound, order-independent, moves with a version,
+/// refuses duplicates, and carries personal units only for the same
+/// person's device.
+#[test]
+fn root_catalog_digest_is_scope_bound_and_order_independent() {
+    let workspace = WorkspaceId::new();
+    let profile = ProfileId::from_uuid(workspace.as_uuid());
+    let a = RootUnitState {
+        unit: CatalogUnitRef::Profile { profile },
+        version: version_from(1),
+    };
+    let b = RootUnitState {
+        unit: CatalogUnitRef::Workspace { workspace },
+        version: version_from(2),
+    };
+    let mut all = peer(workspace);
+    all.all_data = true;
+    let scoped = peer(workspace);
+    let baseline = root_catalog_digest(&all, &[a.clone(), b.clone()], &[]).unwrap();
+    assert_eq!(
+        Some(&baseline),
+        root_catalog_digest(&all, &[b.clone(), a.clone()], &[]).as_ref()
+    );
+    assert_ne!(
+        Some(&baseline),
+        root_catalog_digest(&scoped, &[a.clone(), b.clone()], &[]).as_ref(),
+        "a value computed for one grant never equals one computed for another"
+    );
+    let mut moved = b.clone();
+    moved.version = version_from(3);
+    assert_ne!(
+        Some(&baseline),
+        root_catalog_digest(&all, &[a.clone(), moved], &[]).as_ref()
+    );
+    assert_eq!(
+        root_catalog_digest(&all, &[a.clone(), a.clone()], &[]),
+        None,
+        "duplicates are refused"
+    );
+    let personal = PersonalUnitState {
+        workspace,
+        version: version_from(4),
+    };
+    assert!(
+        root_catalog_digest(
+            &all,
+            std::slice::from_ref(&a),
+            std::slice::from_ref(&personal)
+        )
+        .is_some()
+    );
+    assert_eq!(
+        root_catalog_digest(&scoped, std::slice::from_ref(&b), &[personal]),
+        None,
+        "a scoped peer is never framed a personal unit"
+    );
+    let mut revoked = all.clone();
+    revoked.authorization_fence = AuthorizationFence::active();
+    revoked.authorization_fence.revoke();
+    assert_eq!(root_catalog_digest(&revoked, &[a, b], &[]), None);
+}
+
+/// `RootCatalogRequest` needs a catalog scope, answers the eligible units
+/// with the digest the receiver recomputes, and lists a personal unit only
+/// for the same person's device; a scoped peer's `PersonalRequest` is refused
+/// before the store is asked.
+#[test]
+fn root_catalog_and_personal_requests_are_admitted_by_scope() {
+    let workspace = WorkspaceId::new();
+    let store = store_for(workspace);
+    let mut denied = peer(workspace);
+    denied.authorized_workspaces.clear();
+    assert_eq!(
+        handle_frame(&store, &denied, PeerFrame::RootCatalogRequest),
+        vec![PeerFrame::Error {
+            code: "unauthorized_catalog".into()
+        }]
+    );
+
+    let mut all = peer(workspace);
+    all.all_data = true;
+    let inventory = store.root_catalog(&all).unwrap();
+    assert_eq!(inventory.units.len(), 2);
+    assert_eq!(inventory.personal.len(), 1);
+    let answer = handle_frame(&store, &all, PeerFrame::RootCatalogRequest);
+    let [
+        PeerFrame::RootCatalog {
+            digest,
+            units,
+            personal,
+        },
+    ] = answer.as_slice()
+    else {
+        panic!("expected one root catalog, got {}", answer.len())
+    };
+    assert_eq!(
+        Some(digest.clone()),
+        root_catalog_digest(&all, units, personal),
+        "the digest is over exactly the listed units"
+    );
+    assert_eq!(units.len(), 2);
+    assert_eq!(personal.len(), 1);
+
+    // A Workspace grant sees the Workspace unit, no Profile unit and no
+    // personal unit, and may not ask for one.
+    let scoped = peer(workspace);
+    let answer = handle_frame(&store, &scoped, PeerFrame::RootCatalogRequest);
+    let [
+        PeerFrame::RootCatalog {
+            units, personal, ..
+        },
+    ] = answer.as_slice()
+    else {
+        panic!("expected one root catalog, got {}", answer.len())
+    };
+    assert_eq!(
+        units.iter().map(|unit| unit.unit).collect::<Vec<_>>(),
+        vec![CatalogUnitRef::Workspace { workspace }]
+    );
+    assert!(personal.is_empty());
+    assert_eq!(
+        handle_frame(
+            &store,
+            &scoped,
+            PeerFrame::PersonalRequest {
+                workspace,
+                version: Vec::new(),
+            }
+        ),
+        vec![PeerFrame::Error {
+            code: ROOT_SCOPE_NOT_BOUND.into()
+        }]
+    );
+    assert!(
+        !store.events.lock().unwrap().contains(&"personal_export"),
+        "the store is not asked for a personal unit a scoped peer may not have"
+    );
+    assert!(!scoped.binds_root_scope());
+    assert!(all.binds_root_scope());
+    assert_eq!(
+        handle_frame(
+            &store,
+            &all,
+            PeerFrame::PersonalRequest {
+                workspace,
+                version: Vec::new(),
+            }
+        ),
+        vec![PeerFrame::PersonalUpdates {
+            workspace,
+            updates: vec![vec![10]],
+        }]
+    );
+}
+
+/// A root unit request decodes its version before the store is asked,
+/// answers through the export boundary, and is fenced by revocation.
+#[test]
+fn root_unit_requests_decode_the_frontier_and_respect_the_fence() {
+    let workspace = WorkspaceId::new();
+    let store = store_for(workspace);
+    let mut all = peer(workspace);
+    all.all_data = true;
+    let unit = CatalogUnitRef::Workspace { workspace };
+    assert_eq!(
+        handle_frame(
+            &store,
+            &all,
+            PeerFrame::RootUnitRequest {
+                unit,
+                version: vec![0xff, 0xfe, 0xfd],
+            }
+        ),
+        vec![PeerFrame::Error {
+            code: "invalid_root_version".into()
+        }]
+    );
+    assert!(store.events.lock().unwrap().is_empty());
+    assert_eq!(
+        handle_frame(
+            &store,
+            &all,
+            PeerFrame::RootUnitRequest {
+                unit,
+                version: loro::VersionVector::new().encode(),
+            }
+        ),
+        vec![PeerFrame::RootUnitUpdates {
+            unit,
+            updates: vec![vec![9]],
+        }]
+    );
+    assert_eq!(*store.events.lock().unwrap(), ["root_export"]);
+    all.authorization_fence.revoke();
+    assert_eq!(
+        handle_frame(
+            &store,
+            &all,
+            PeerFrame::RootUnitRequest {
+                unit,
+                version: loro::VersionVector::new().encode(),
+            }
+        ),
+        vec![PeerFrame::Error {
+            code: "relationship_revoked".into()
+        }]
+    );
+    assert_eq!(*store.events.lock().unwrap(), ["root_export"]);
+}
+
+/// The default `authorize_workspace` keeps every adapter that predates the
+/// root rule exactly where it was: UUID or owner Profile, existence hidden
+/// from a scoped peer.
+#[test]
+fn default_workspace_authorization_matches_the_legacy_owner_rule() {
+    let workspace = WorkspaceId::new();
+    let store = store_for(workspace);
+    let by_uuid = peer(workspace);
+    store.authorize_workspace(&by_uuid, workspace).unwrap();
+    let mut by_profile = peer(workspace);
+    by_profile.authorized_workspaces.clear();
+    by_profile
+        .authorized_profiles
+        .insert(ProfileId::from_uuid(workspace.as_uuid()));
+    store.authorize_workspace(&by_profile, workspace).unwrap();
+    let mut other = peer(workspace);
+    other.authorized_workspaces.clear();
+    assert_eq!(
+        store
+            .authorize_workspace(&other, workspace)
+            .unwrap_err()
+            .code,
+        "unauthorized_workspace"
+    );
+    assert_eq!(
+        store
+            .authorize_workspace(&other, WorkspaceId::new())
+            .unwrap_err()
+            .code,
+        "unauthorized_workspace",
+        "unknown and unrelated are indistinguishable to a scoped peer"
+    );
+    assert_eq!(
+        store
+            .authorize_workspace(&by_uuid, WorkspaceId::new())
+            .unwrap_err()
+            .code,
+        "workspace_not_found"
+    );
 }
