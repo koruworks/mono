@@ -985,3 +985,231 @@ fn the_account_scope_binds_once_refuses_a_second_account_and_gates_export_by_pat
         Code::Forbidden
     );
 }
+
+// ------------------- Q10: the unit the v1 Cloud window withheld
+
+use koru_store_core::model::Workspace;
+use koru_store_core::service::{ProvisionedReplica, ReplicaPlacement, RootGrant};
+
+/// A Workspace this device bootstrapped from Cloud during the v1 window: the
+/// content and the row exist, placed under `profile` by the descriptor's
+/// legacy owner column, and **no** Workspace unit was published
+/// (`ReplicaPlacement::HintWithoutUnit`, QUESTIONS.md Q7).
+fn window_bootstrap(f: &mut Root, profile: ProfileId, name: &str) -> WorkspaceId {
+    let row = Workspace::new(profile, name, at()).unwrap();
+    let provisioned = f
+        .store
+        .provision_replica_placed(
+            None,
+            &row,
+            DocumentId::new(),
+            ReplicaPlacement::HintWithoutUnit(profile),
+            at(),
+        )
+        .unwrap();
+    assert_eq!(provisioned, ProvisionedReplica::Ready);
+    assert!(f.unit(row.id).is_none(), "the window withholds the unit");
+    row.id
+}
+
+#[test]
+fn the_repair_publishes_the_withheld_unit_placed_by_the_hint_with_a_fresh_move_id() {
+    let mut f = Root::new();
+    let profile = f.cloud_profile("A");
+    let workspace = window_bootstrap(&mut f, profile, "W");
+    // Before the repair the Workspace is absent from the account's export
+    // inventory, which is the whole defect: no Cloud placement for it.
+    let listed = |f: &Root| -> bool {
+        f.store
+            .root_export_inventory(&RootGrant::account())
+            .unwrap()
+            .units
+            .iter()
+            .any(|(unit, _)| *unit == CatalogUnitRef::Workspace { workspace })
+    };
+    assert!(!listed(&f));
+
+    let repaired = f.store.repair_bootstrap_units(at()).unwrap();
+
+    assert_eq!(repaired.len(), 1);
+    assert_eq!(repaired[0].workspace, workspace);
+    assert!(repaired[0].durable, "a Cloud Profile admits export");
+    let placement = f.durable_placement(workspace).expect("the unit exists now");
+    assert_eq!(
+        placement.profile,
+        Some(profile),
+        "placed by the hint the row projected"
+    );
+    assert_eq!(placement.move_id, repaired[0].repair.move_id);
+    assert_ne!(
+        placement.move_id,
+        seeded_move_id(workspace),
+        "a fresh move id, never the deterministic seed two devices would agree on"
+    );
+    assert!(listed(&f), "the Workspace is in the export inventory now");
+    // The row itself did not move: the repair writes a unit, not a placement
+    // change, so there is nothing to project.
+    let row = f.store.workspace_including_deleted(workspace).unwrap();
+    assert_eq!(row.owner, profile);
+}
+
+#[test]
+fn the_journal_record_identifies_the_repair_operation_and_survives_a_restart() {
+    let mut f = Root::new();
+    let profile = f.cloud_profile("A");
+    let workspace = window_bootstrap(&mut f, profile, "W");
+
+    let repaired = f.store.repair_bootstrap_units(at()).unwrap();
+    let written = repaired[0].repair;
+    f.restart();
+
+    let record = f
+        .store
+        .bootstrap_repair(workspace)
+        .unwrap()
+        .expect("the record is durable");
+    assert_eq!(record, written);
+    assert_eq!(record.profile, profile);
+    assert_eq!(record.at_ms, at().millis());
+    // The identity is the one operation `set_placement` wrote, and it names a
+    // place in the unit's own history — which is what the later concurrency
+    // check compares an arriving placement write against.
+    let row = f.unit(workspace).unwrap();
+    let doc = loro::LoroDoc::new();
+    doc.import(&row.snapshot).unwrap();
+    assert_eq!(doc.oplog_frontiers(), record.frontiers());
+    assert_eq!(
+        doc.cmp_frontiers(&record.frontiers(), &doc.oplog_frontiers()),
+        Ok(Some(std::cmp::Ordering::Equal)),
+        "the recorded operation is in the published unit's history"
+    );
+    assert!(
+        f.store
+            .bootstrap_repair(WorkspaceId::new())
+            .unwrap()
+            .is_none(),
+        "one key per Workspace; an untouched Workspace has no record"
+    );
+}
+
+#[test]
+fn a_workspace_that_already_has_a_unit_is_never_repaired() {
+    let mut f = Root::new();
+    let (profile, ordinary) = f.cloud_pair();
+    let withheld = window_bootstrap(&mut f, profile, "W2");
+    let before = f.unit(ordinary).expect("creation publishes a unit");
+
+    let repaired = f.store.repair_bootstrap_units(at()).unwrap();
+
+    assert_eq!(
+        repaired.iter().map(|one| one.workspace).collect::<Vec<_>>(),
+        vec![withheld],
+        "only the unit-less row is a candidate"
+    );
+    assert_eq!(
+        f.unit(ordinary).unwrap(),
+        before,
+        "the Workspace that had a unit was not rewritten, revision included"
+    );
+    assert!(f.store.bootstrap_repair(ordinary).unwrap().is_none());
+
+    // And the repair does not run twice: the row now has a unit, so a second
+    // pass finds no candidate and leaves the first record exactly as it was.
+    let first = f.store.bootstrap_repair(withheld).unwrap().unwrap();
+    assert!(f.store.repair_bootstrap_units(at()).unwrap().is_empty());
+    assert_eq!(f.store.bootstrap_repair(withheld).unwrap().unwrap(), first);
+}
+
+#[test]
+fn a_local_only_hint_profile_repairs_into_the_private_overlay_and_stays_out_of_the_inventory() {
+    let mut f = Root::new();
+    // Migration 12 seeds every row Local-only and only a person opens it, so
+    // this is the ordinary state of a Profile nobody has answered for.
+    let profile = f.profile("A");
+    let workspace = window_bootstrap(&mut f, profile, "W");
+
+    let repaired = f.store.repair_bootstrap_units(at()).unwrap();
+
+    assert_eq!(repaired.len(), 1);
+    assert!(
+        !repaired[0].durable,
+        "the destination Profile's ceiling routes the write"
+    );
+    assert!(
+        f.unit(workspace).is_none(),
+        "the durable bytes are untouched"
+    );
+    let overlay = f.overlay(workspace).expect("the write is in the overlay");
+    assert_eq!(
+        repaired[0].repair.writer_peer, overlay.writer_peer_id,
+        "the record names the writer the operation was actually authored under"
+    );
+    // Q5/D258: the Local-only rule working, not a residual defect. The
+    // placement is live on this device and leaves it nowhere.
+    assert_eq!(
+        f.store
+            .root_placement(workspace)
+            .unwrap()
+            .map(|p| p.profile),
+        Some(Some(profile))
+    );
+    assert!(
+        !f.store
+            .root_export_inventory(&RootGrant::account())
+            .unwrap()
+            .units
+            .iter()
+            .any(|(unit, _)| *unit == CatalogUnitRef::Workspace { workspace })
+    );
+    // And the existing pending-overlay path publishes it once the person
+    // answers the Profile prompt for the Profile and its Workspaces (D258) —
+    // the transport-mode commit runs that publication itself.
+    f.store
+        .choose_transport_mode(profile, TransportMode::Cloud, true)
+        .unwrap();
+    assert!(f.overlay(workspace).is_none());
+    assert_eq!(
+        f.durable_placement(workspace).unwrap().move_id,
+        repaired[0].repair.move_id,
+        "the repair's own placement is what finally leaves the device"
+    );
+    assert_eq!(
+        f.store.bootstrap_repair(workspace).unwrap().unwrap(),
+        repaired[0].repair,
+        "publishing the overlay does not rewrite the record"
+    );
+    assert!(
+        f.store
+            .root_export_inventory(&RootGrant::account())
+            .unwrap()
+            .units
+            .iter()
+            .any(|(unit, _)| *unit == CatalogUnitRef::Workspace { workspace })
+    );
+}
+
+#[test]
+fn a_trashed_unit_less_workspace_is_left_to_the_lifecycle_writers() {
+    let mut f = Root::new();
+    let profile = f.cloud_profile("A");
+    let mut row = Workspace::new(profile, "W", at()).unwrap();
+    row.deleted_at = Some(at());
+    f.store
+        .provision_replica_placed(
+            None,
+            &row,
+            DocumentId::new(),
+            ReplicaPlacement::HintWithoutUnit(profile),
+            at(),
+        )
+        .unwrap();
+    assert!(f.unit(row.id).is_none());
+
+    assert!(f.store.repair_bootstrap_units(at()).unwrap().is_empty());
+
+    assert!(
+        f.unit(row.id).is_none(),
+        "a live placement must not be asserted over a row that is in the Trash"
+    );
+    assert!(f.store.bootstrap_repair(row.id).unwrap().is_none());
+}

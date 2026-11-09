@@ -78,7 +78,7 @@ fn replacement_waits_for_ack_reuses_endpoint_and_never_extends_old_expiry() {
 #[test]
 fn old_control_is_refused_before_any_state_change_and_peer_framing_is_unchanged() {
     use crate::*;
-    assert_eq!(CONTROL_PROTOCOL_VERSION, 7);
+    assert_eq!(CONTROL_PROTOCOL_VERSION, 8);
     assert_eq!(CONTROL_FRAME_VERSION, 1);
     // The peer number is pinned here so that a control change cannot move it
     // unnoticed; it is 6 since the root-catalog exchange, and the control

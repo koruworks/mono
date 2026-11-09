@@ -28,6 +28,7 @@ use crate::identity::AccountOwner;
 use crate::ports::{Clock, Entropy};
 
 mod discovery;
+mod root_repair;
 
 // ----- fixtures -----------------------------------------------------------
 
@@ -350,6 +351,16 @@ struct World {
     pushed: Vec<CloudUnitRefV2>,
     /// The host's eligible inventory, frontiers and exports.
     local_units: Vec<CloudRootUnitState>,
+    /// Workspace units the v1 Cloud window withheld (QUESTIONS.md Q7): this
+    /// device holds the content and no unit, so they are absent from the
+    /// eligible inventory until Q10's repair publishes them, at which point
+    /// they join `local_units`.
+    withheld: Vec<CloudRootUnitState>,
+    /// The catalog answers one page and names this cursor as its `next`, so
+    /// the pagination loop goes round again.
+    catalog_next: Option<CloudUnitRefV2>,
+    /// Request cancellation while that first catalog page is in flight.
+    cancel_catalog_page: Option<Cancel>,
     local_frontiers: HashMap<String, Vec<u8>>,
     exports: HashMap<String, CloudRootExport>,
     joined: Vec<String>,
@@ -573,10 +584,24 @@ impl Api for FakeApi {
     fn root_catalog(
         &mut self,
         _authority: &EnrollmentAuthorization,
-        _after: Option<CloudUnitRefV2>,
+        after: Option<CloudUnitRefV2>,
     ) -> Result<CloudRootCatalogV2, Failure> {
         let mut world = lock(&self.0);
         world.note("catalog");
+        // A paged catalog: the first page names a cursor, a continuation
+        // answers the last page. A test may cancel while the first is in
+        // flight, which is the only way this loop ends without reading
+        // everything.
+        let next = if after.is_none() {
+            world.catalog_next
+        } else {
+            None
+        };
+        if next.is_some() {
+            if let Some(cancel) = world.cancel_catalog_page.take() {
+                cancel.request();
+            }
+        }
         Ok(CloudRootCatalogV2 {
             version: Version2,
             digest: Vec::new(),
@@ -589,7 +614,7 @@ impl Api for FakeApi {
                     projection_watermark: 1,
                 })
                 .collect(),
-            next: None,
+            next,
         })
     }
 
@@ -925,6 +950,22 @@ impl Host for FakeHost {
         })
     }
 
+    fn repair_bootstrap_units(&self) -> Result<RootRepairOutcome, Failure> {
+        let mut world = lock(&self.0);
+        world.note("repair");
+        let published: Vec<CloudRootUnitState> = world.withheld.drain(..).collect();
+        let repaired = u32::try_from(published.len()).unwrap_or(u32::MAX);
+        // The Store published them, so they are eligible from now on.
+        world.local_units.extend(published);
+        Ok(RootRepairOutcome {
+            repaired,
+            inventory: RootInventory {
+                units: world.local_units.clone(),
+                held: 0,
+            },
+        })
+    }
+
     fn root_unit_frontier(&self, unit: JoinUnit) -> Result<Option<Vec<u8>>, Failure> {
         Ok(lock(&self.0)
             .local_frontiers
@@ -1114,6 +1155,11 @@ fn a_fresh_device_binds_joins_root_units_then_admits_content_and_profile_units()
         "token:user_catalog".to_owned(),
         "inventory".to_owned(),
         "catalog".to_owned(),
+        // Q10's exit: once the whole v2 catalog has been read and its pulls
+        // are done, a row still holding no unit proves none exists anywhere,
+        // so the unit the v1 window withheld is published here. On this
+        // device nothing is withheld and the answer is zero.
+        "repair".to_owned(),
         "discover".to_owned(),
         "jwks".to_owned(),
         "token:workspace:1".to_owned(),
@@ -1530,8 +1576,8 @@ fn a_v1_service_runs_the_pair_path_once_and_yields_the_same_two_scopes() {
     assert_eq!(&log[..expected.len()], &expected[..], "{log:?}");
     assert!(
         !log.iter()
-            .any(|entry| entry == "inventory" || entry == "catalog"),
-        "no root exchange against a v1 service: {log:?}"
+            .any(|entry| entry == "inventory" || entry == "catalog" || entry == "repair"),
+        "no root exchange against a v1 service, and no Q10 repair either — the          window is where the unit is withheld, not where it is published: {log:?}"
     );
     let state = lock(&harness.world);
     assert!(state.bound.is_empty());

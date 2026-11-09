@@ -348,7 +348,11 @@ enum CloudRootAction {
         bound_at_ms: i64,
     },
     ReadBinding,
-    Inventory,
+    Inventory {
+        /// Q10's repair runs before the read, in this one answer. The Agent
+        /// decides; the Store only does it.
+        repair: bool,
+    },
     Frontier {
         unit: koru_store_core::service::JoinUnit,
     },
@@ -474,9 +478,11 @@ impl RuntimeAction {
             ControlRequest::ReadCloudAccountBinding { .. } => {
                 Self::CloudRoot(CloudRootAction::ReadBinding)
             }
-            ControlRequest::ReadCloudRootInventory { .. } => {
-                Self::CloudRoot(CloudRootAction::Inventory)
-            }
+            ControlRequest::ReadCloudRootInventory {
+                repair_unitless, ..
+            } => Self::CloudRoot(CloudRootAction::Inventory {
+                repair: *repair_unitless,
+            }),
             ControlRequest::ReadCloudRootFrontier { unit, .. } => {
                 Self::CloudRoot(CloudRootAction::Frontier { unit: *unit })
             }
@@ -841,7 +847,27 @@ mod cloud_root {
                     })
                     .map_err(|error| code(&error))
             }),
-            CloudRootAction::Inventory => store.with_store(move |store| {
+            CloudRootAction::Inventory { repair } => store.with_store(move |store| {
+                // Q10's repair before the job and the read: the unit the v1
+                // window withheld is published, so a pending overlay the
+                // repair itself created gets the job's attention and the
+                // inventory below already carries the new unit. The Agent
+                // asked for it only after a complete v2 inventory read and
+                // its pulls; the Store does not re-derive that.
+                let repaired = if repair {
+                    match store.repair_bootstrap_units(koru_store_core::Timestamp::now()) {
+                        Ok(done) => u32::try_from(done.len()).unwrap_or(u32::MAX),
+                        Err(error) => {
+                            tracing::info!(
+                                code = code(&error),
+                                "cloud root: the withheld-unit repair did not run"
+                            );
+                            0
+                        }
+                    }
+                } else {
+                    0
+                };
                 // The publication job first, so a pending overlay has had
                 // its chance before the inventory is read (STORE.md).
                 if let Err(error) = store.publish_pending_overlays() {
@@ -880,6 +906,7 @@ mod cloud_root {
                     control_session_id: session,
                     units,
                     held,
+                    repaired,
                 })
             }),
             CloudRootAction::Frontier { unit } => store.with_store(move |store| {
@@ -1064,6 +1091,28 @@ mod tests {
         ControlRequest, ControlResponse, ControlSessionId, EndpointSecretBytes, RequestFrame,
         ResponseFrame,
     };
+
+    /// **The repair flag is carried, and a plain read never repairs**
+    /// (root-catalog QUESTIONS.md Q10). The Agent owns the decision — it is
+    /// the only side that knows the pass ran under the v2 contract, read the
+    /// whole catalog and finished its pulls — so the daemon's job is to pass
+    /// the answer through unchanged and never to invent it.
+    #[test]
+    fn the_inventory_request_carries_the_repair_decision_and_defaults_to_a_read() {
+        let session_id = ControlSessionId::new();
+        for (repair_unitless, expected) in [(false, false), (true, true)] {
+            let action = RuntimeAction::from_request(&ControlRequest::ReadCloudRootInventory {
+                control_session_id: session_id,
+                repair_unitless,
+            });
+            match action {
+                RuntimeAction::CloudRoot(CloudRootAction::Inventory { repair }) => {
+                    assert_eq!(repair, expected)
+                }
+                _ => panic!("the inventory request is a Store-backed root action"),
+            }
+        }
+    }
 
     /// How long these tests wait for an iroh endpoint to bind or clear.
     ///
