@@ -832,6 +832,31 @@ pub enum Key {
     /// A Profile deletion that arrived from another device (§6.3): the
     /// notice the settled window shows, taking the Profile's retained name.
     ProfileDeletedOnAnotherDevice,
+    /// The Profile page's footer (root-catalog QUESTIONS Q4, decided
+    /// 2026-11-09): the shared deletion and the device-local removal are two
+    /// actions whose labels say which is which; *Delete from Koru…* is the
+    /// account's, offered where the controller allows it.
+    ProfileDeleteAction,
+    ProfileRemoveFromDeviceAction,
+    ProfileDeleteFromKoruAction,
+    /// The shared deletion's confirmation (§6.1): the title over a Profile
+    /// with workspaces and over an empty one (both take the name), the body
+    /// and the answer. The captured list follows as `ProfileDeleteTargets*`.
+    ProfileDeleteTitle,
+    ProfileDeleteEmptyTitle,
+    ProfileDeleteBody,
+    ProfileDeleteConfirm,
+    /// The device-local removal's confirmation: the title (takes the name),
+    /// the body for a Profile whose workspaces go to Trash, the body for an
+    /// empty one, and the answer.
+    ProfileRemoveTitle,
+    ProfileRemoveCascadeBody,
+    ProfileRemoveEmptyBody,
+    ProfileRemoveConfirm,
+    /// Appended to either body for an account-bound Profile.
+    ProfileRemoveHostedBody,
+    /// Both confirmations' safe answer.
+    ProfileRemoveCancel,
     /// `NeedsProfile` recovery (§6.3): the way from the create form to the
     /// restorable Trash and the unassigned workspaces, shown only when there
     /// is something to recover.
@@ -3091,7 +3116,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2154] = [
+    pub const ALL: [Key; 2167] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -3685,6 +3710,19 @@ impl Key {
         Key::ProfileDeletePreviewStale,
         Key::ProfileDeletePreviewFailed,
         Key::ProfileDeletedOnAnotherDevice,
+        Key::ProfileDeleteAction,
+        Key::ProfileRemoveFromDeviceAction,
+        Key::ProfileDeleteFromKoruAction,
+        Key::ProfileDeleteTitle,
+        Key::ProfileDeleteEmptyTitle,
+        Key::ProfileDeleteBody,
+        Key::ProfileDeleteConfirm,
+        Key::ProfileRemoveTitle,
+        Key::ProfileRemoveCascadeBody,
+        Key::ProfileRemoveEmptyBody,
+        Key::ProfileRemoveConfirm,
+        Key::ProfileRemoveHostedBody,
+        Key::ProfileRemoveCancel,
         Key::OnboardingRecoveryLink,
         Key::OnboardingRecoveryTitle,
         Key::OnboardingRestoreDeleted,
@@ -10015,6 +10053,19 @@ pub const ROWS: &[Row] = &[
     Row { key: Key::ProfileDeletePreviewStale, en: "This Profile's workspaces changed since you looked. Check the list and confirm again.", es: "Los espacios de trabajo de este perfil cambiaron desde que los viste. Revisa la lista y confirma de nuevo.", pt_br: "Os espaços de trabalho deste perfil mudaram desde que você os viu. Verifique a lista e confirme novamente.", de: "Die Arbeitsbereiche dieses Profils haben sich seit dem letzten Blick geändert. Prüfen Sie die Liste und bestätigen Sie erneut.", fr: "Les espaces de travail de ce profil ont changé depuis votre dernier regard. Vérifiez la liste et confirmez à nouveau.", ar: "تغيّرت مساحات عمل ملف التعريف هذا منذ آخر مرة اطّلعت عليها. راجع القائمة وأكّد مرة أخرى.", zh_hans: "此配置文件的工作区自您上次查看后已发生变化。请检查列表并再次确认。", ja: "このプロファイルのワークスペースは前回確認した後に変わりました。一覧を確認してもう一度確定してください。" },
     Row { key: Key::ProfileDeletePreviewFailed, en: "Koru couldn't read this Profile's workspaces. Nothing was changed.", es: "Koru no pudo leer los espacios de trabajo de este perfil. No se cambió nada.", pt_br: "O Koru não conseguiu ler os espaços de trabalho deste perfil. Nada foi alterado.", de: "Koru konnte die Arbeitsbereiche dieses Profils nicht lesen. Es wurde nichts geändert.", fr: "Koru n'a pas pu lire les espaces de travail de ce profil. Rien n'a été modifié.", ar: "تعذّر على Koru قراءة مساحات عمل ملف التعريف هذا. لم يتغيّر شيء.", zh_hans: "Koru 无法读取此配置文件的工作区。未做任何更改。", ja: "Koru はこのプロファイルのワークスペースを読み取れませんでした。何も変更されていません。" },
     Row { key: Key::ProfileDeletedOnAnotherDevice, en: "“{}” was deleted on another device. Its workspaces here are in the Trash and can be restored for 30 days.", es: "“{}” se eliminó en otro dispositivo. Sus espacios de trabajo aquí están en la Papelera y pueden restaurarse durante 30 días.", pt_br: "“{}” foi excluído em outro dispositivo. Seus espaços de trabalho aqui estão na Lixeira e podem ser restaurados por 30 dias.", de: "„{}“ wurde auf einem anderen Gerät gelöscht. Seine Arbeitsbereiche liegen hier im Papierkorb und können 30 Tage lang wiederhergestellt werden.", fr: "« {} » a été supprimé sur un autre appareil. Ses espaces de travail sont ici dans la corbeille et peuvent être restaurés pendant 30 jours.", ar: "تم حذف ”{}“ على جهاز آخر. مساحات العمل الخاصة به هنا في سلة المهملات ويمكن استعادتها خلال 30 يومًا.", zh_hans: "“{}”已在另一台设备上删除。它在此处的工作区位于回收站中，30 天内可恢复。", ja: "「{}」は別の端末で削除されました。この端末のワークスペースはごみ箱にあり、30日間は復元できます。" },
+    Row { key: Key::ProfileDeleteAction, en: "Delete profile and its workspaces…", es: "Eliminar el perfil y sus espacios de trabajo…", pt_br: "Excluir o perfil e seus espaços de trabalho…", de: "Profil und seine Arbeitsbereiche löschen…", fr: "Supprimer le profil et ses espaces de travail…", ar: "حذف ملف التعريف ومساحات العمل الخاصة به…", zh_hans: "删除配置文件及其工作区…", ja: "プロファイルとそのワークスペースを削除…" },
+    Row { key: Key::ProfileRemoveFromDeviceAction, en: "Remove from this device…", es: "Quitar de este dispositivo…", pt_br: "Remover deste dispositivo…", de: "Von diesem Gerät entfernen…", fr: "Retirer de cet appareil…", ar: "إزالة من هذا الجهاز…", zh_hans: "从此设备移除…", ja: "この端末から削除…" },
+    Row { key: Key::ProfileDeleteFromKoruAction, en: "Delete from Koru…", es: "Eliminar de Koru…", pt_br: "Excluir do Koru…", de: "Aus Koru löschen…", fr: "Supprimer de Koru…", ar: "حذف من Koru…", zh_hans: "从 Koru 删除…", ja: "Koru から削除…" },
+    Row { key: Key::ProfileDeleteTitle, en: "Delete “{}” and its workspaces?", es: "¿Eliminar “{}” y sus espacios de trabajo?", pt_br: "Excluir “{}” e seus espaços de trabalho?", de: "„{}“ und seine Arbeitsbereiche löschen?", fr: "Supprimer « {} » et ses espaces de travail ?", ar: "هل تريد حذف ”{}“ ومساحات العمل الخاصة به؟", zh_hans: "删除“{}”及其工作区？", ja: "「{}」とそのワークスペースを削除しますか？" },
+    Row { key: Key::ProfileDeleteEmptyTitle, en: "Delete “{}”?", es: "¿Eliminar “{}”?", pt_br: "Excluir “{}”?", de: "„{}“ löschen?", fr: "Supprimer « {} » ?", ar: "هل تريد حذف ”{}“؟", zh_hans: "删除“{}”？", ja: "「{}」を削除しますか？" },
+    Row { key: Key::ProfileDeleteBody, en: "The Profile and its workspaces move to Trash together as one deletion. For 30 days you can restore them together from Deleted profiles, with the Profile's settings and AI chats; after that they are deleted. Devices that sync this Profile see the same deletion; a device that keeps it Local only is not told.", es: "El perfil y sus espacios de trabajo se mueven juntos a la papelera como una sola eliminación. Durante 30 días puedes restaurarlos juntos desde Perfiles eliminados, con la configuración y los chats de IA del perfil; después se eliminan. Los dispositivos que sincronizan este perfil ven la misma eliminación; a un dispositivo que lo mantiene Solo local no se le avisa.", pt_br: "O perfil e seus espaços de trabalho vão juntos para a Lixeira como uma única exclusão. Por 30 dias você pode restaurá-los juntos em Perfis excluídos, com as configurações e os chats de IA do perfil; depois disso são excluídos. Os dispositivos que sincronizam este perfil veem a mesma exclusão; um dispositivo que o mantém Somente local não é avisado.", de: "Das Profil und seine Arbeitsbereiche werden zusammen als eine Löschung in den Papierkorb verschoben. 30 Tage lang können Sie sie unter Gelöschte Profile gemeinsam wiederherstellen, mit den Einstellungen und KI-Chats des Profils; danach werden sie gelöscht. Geräte, die dieses Profil synchronisieren, sehen dieselbe Löschung; ein Gerät, das es Nur lokal hält, erfährt nichts davon.", fr: "Le profil et ses espaces de travail sont déplacés ensemble vers la corbeille, en une seule suppression. Pendant 30 jours, vous pouvez les restaurer ensemble depuis Profils supprimés, avec les réglages et les conversations IA du profil ; ensuite ils sont supprimés. Les appareils qui synchronisent ce profil voient la même suppression ; un appareil qui le garde en Local uniquement n'en est pas informé.", ar: "يُنقل ملف التعريف ومساحات العمل الخاصة به معًا إلى المهملات كعملية حذف واحدة. يمكنك خلال 30 يومًا استعادتها معًا من ملفات التعريف المحذوفة، مع إعدادات ملف التعريف ومحادثات الذكاء الاصطناعي؛ وبعد ذلك تُحذف. ترى الأجهزة التي تزامن ملف التعريف هذا الحذف نفسه؛ ولا يُبلَّغ الجهاز الذي يبقيه محليًا فقط.", zh_hans: "配置文件及其工作区会作为一次删除一同移到回收站。30 天内，您可以在“已删除的配置文件”中将它们连同配置文件的设置和 AI 聊天一起恢复；之后它们会被删除。同步此配置文件的设备会看到同一次删除；将其保持为“仅本地”的设备不会收到通知。", ja: "プロファイルとそのワークスペースは、1 回の削除としてまとめてゴミ箱に移動します。30 日間は「削除されたプロファイル」からプロファイルの設定と AI チャットとともにまとめて復元できます。その後は削除されます。このプロファイルを同期している端末には同じ削除が反映されます。「ローカルのみ」にしている端末には通知されません。" },
+    Row { key: Key::ProfileDeleteConfirm, en: "Delete profile", es: "Eliminar perfil", pt_br: "Excluir perfil", de: "Profil löschen", fr: "Supprimer le profil", ar: "حذف ملف التعريف", zh_hans: "删除配置文件", ja: "プロファイルを削除" },
+    Row { key: Key::ProfileRemoveTitle, en: "Remove “{}” from this device?", es: "¿Quitar “{}” de este dispositivo?", pt_br: "Remover “{}” deste dispositivo?", de: "„{}“ von diesem Gerät entfernen?", fr: "Retirer « {} » de cet appareil ?", ar: "هل تريد إزالة ”{}“ من هذا الجهاز؟", zh_hans: "从此设备移除“{}”？", ja: "「{}」をこの端末から削除しますか？" },
+    Row { key: Key::ProfileRemoveCascadeBody, en: "The Profile leaves this device only: its settings and AI chats are kept here for 30 days, and other devices keep the Profile. Its workspaces move to Trash for 30 days, where any device that syncs them can restore them one by one.", es: "El perfil sale solo de este dispositivo: su configuración y sus chats de IA se conservan aquí durante 30 días, y los demás dispositivos conservan el perfil. Sus espacios de trabajo se mueven a la papelera durante 30 días, desde donde cualquier dispositivo que los sincronice puede restaurarlos uno a uno.", pt_br: "O perfil sai apenas deste dispositivo: suas configurações e chats de IA ficam guardados aqui por 30 dias, e os outros dispositivos mantêm o perfil. Seus espaços de trabalho vão para a Lixeira por 30 dias, de onde qualquer dispositivo que os sincronize pode restaurá-los um a um.", de: "Das Profil verlässt nur dieses Gerät: Seine Einstellungen und KI-Chats bleiben hier 30 Tage lang erhalten, und andere Geräte behalten das Profil. Seine Arbeitsbereiche werden für 30 Tage in den Papierkorb verschoben, aus dem jedes Gerät, das sie synchronisiert, sie einzeln wiederherstellen kann.", fr: "Le profil ne quitte que cet appareil : ses réglages et ses conversations IA y sont conservés 30 jours, et les autres appareils gardent le profil. Ses espaces de travail sont déplacés vers la corbeille pendant 30 jours, d'où tout appareil qui les synchronise peut les restaurer un par un.", ar: "يغادر ملف التعريف هذا الجهاز فقط: تُحفظ إعداداته ومحادثات الذكاء الاصطناعي هنا لمدة 30 يومًا، وتحتفظ الأجهزة الأخرى بملف التعريف. تُنقل مساحات العمل الخاصة به إلى المهملات لمدة 30 يومًا، حيث يمكن لأي جهاز يزامنها استعادتها واحدة تلو الأخرى.", zh_hans: "配置文件仅从此设备移除：其设置和 AI 聊天在此保留 30 天，其他设备仍保留该配置文件。其工作区会移到回收站 30 天，任何同步这些工作区的设备都可以逐个恢复它们。", ja: "プロファイルはこの端末からのみ消えます。設定と AI チャットはこの端末に 30 日間保持され、他の端末にはプロファイルが残ります。ワークスペースは 30 日間ゴミ箱に移動し、それらを同期しているどの端末からも 1 件ずつ復元できます。" },
+    Row { key: Key::ProfileRemoveEmptyBody, en: "The Profile, its settings and its AI chats leave this device only; nothing changes on other devices. You can restore it with its chats for 30 days; after that the chats are deleted.", es: "El perfil, su configuración y sus chats de IA salen solo de este dispositivo; nada cambia en los demás dispositivos. Puedes restaurarlo con sus chats durante 30 días; después, los chats se eliminan.", pt_br: "O perfil, suas configurações e seus chats de IA saem apenas deste dispositivo; nada muda nos outros dispositivos. Você pode restaurá-lo com seus chats por 30 dias; depois disso, os chats são excluídos.", de: "Das Profil, seine Einstellungen und seine KI-Chats verlassen nur dieses Gerät; auf anderen Geräten ändert sich nichts. 30 Tage lang können Sie es mit seinen Chats wiederherstellen; danach werden die Chats gelöscht.", fr: "Le profil, ses réglages et ses conversations IA ne quittent que cet appareil ; rien ne change sur les autres appareils. Vous pouvez le restaurer avec ses conversations pendant 30 jours ; ensuite les conversations sont supprimées.", ar: "يغادر ملف التعريف وإعداداته ومحادثات الذكاء الاصطناعي الخاصة به هذا الجهاز فقط؛ ولا يتغير شيء على الأجهزة الأخرى. يمكنك استعادته مع محادثاته خلال 30 يومًا؛ وبعد ذلك تُحذف المحادثات.", zh_hans: "配置文件及其设置和 AI 聊天仅从此设备移除；其他设备不受影响。30 天内您可以连同聊天一起恢复它；之后聊天会被删除。", ja: "プロファイルとその設定、AI チャットはこの端末からのみ消えます。他の端末では何も変わりません。30 日間はチャットとともに復元できます。その後、チャットは削除されます。" },
+    Row { key: Key::ProfileRemoveConfirm, en: "Remove from this device", es: "Quitar de este dispositivo", pt_br: "Remover deste dispositivo", de: "Von diesem Gerät entfernen", fr: "Retirer de cet appareil", ar: "إزالة من هذا الجهاز", zh_hans: "从此设备移除", ja: "この端末から削除" },
+    Row { key: Key::ProfileRemoveHostedBody, en: "The hosted Profile listing stays in your Koru account so another trusted device can offer recovery.", es: "La lista alojada del perfil permanece en tu cuenta de Koru para que otro dispositivo de confianza pueda ofrecer la recuperación.", pt_br: "A listagem hospedada do perfil permanece na sua conta Koru para que outro dispositivo confiável possa oferecer a recuperação.", de: "Der gehostete Profileintrag bleibt in Ihrem Koru-Konto, damit ein anderes vertrauenswürdiges Gerät die Wiederherstellung anbieten kann.", fr: "La fiche hébergée du profil reste dans votre compte Koru afin qu'un autre appareil de confiance puisse proposer la récupération.", ar: "تبقى قائمة ملف التعريف المستضافة في حساب Koru الخاص بك حتى يتمكن جهاز موثوق آخر من عرض الاسترداد.", zh_hans: "托管的配置文件列表会保留在您的 Koru 帐户中，以便其他受信任的设备可以提供恢复。", ja: "ホストされたプロファイルの一覧は Koru アカウントに残るため、他の信頼済み端末から回復を提供できます。" },
+    Row { key: Key::ProfileRemoveCancel, en: "Cancel", es: "Cancelar", pt_br: "Cancelar", de: "Abbrechen", fr: "Annuler", ar: "إلغاء", zh_hans: "取消", ja: "キャンセル" },
     Row { key: Key::OnboardingRecoveryLink, en: "Restore a deleted profile or find unassigned workspaces…", es: "Restaurar un perfil eliminado o encontrar espacios de trabajo sin asignar…", pt_br: "Restaurar um perfil excluído ou encontrar espaços de trabalho não atribuídos…", de: "Ein gelöschtes Profil wiederherstellen oder nicht zugeordnete Arbeitsbereiche finden…", fr: "Restaurer un profil supprimé ou retrouver des espaces de travail non attribués…", ar: "استعادة ملف تعريف محذوف أو العثور على مساحات عمل غير معيّنة…", zh_hans: "恢复已删除的配置文件或查找未分配的工作区…", ja: "削除されたプロファイルを復元するか、未割り当てのワークスペースを探す…" },
     Row { key: Key::OnboardingRecoveryTitle, en: "Recover", es: "Recuperar", pt_br: "Recuperar", de: "Wiederherstellen", fr: "Récupérer", ar: "استرداد", zh_hans: "恢复", ja: "回復" },
     Row { key: Key::OnboardingRestoreDeleted, en: "Restore a deleted profile", es: "Restaurar un perfil eliminado", pt_br: "Restaurar um perfil excluído", de: "Ein gelöschtes Profil wiederherstellen", fr: "Restaurer un profil supprimé", ar: "استعادة ملف تعريف محذوف", zh_hans: "恢复已删除的配置文件", ja: "削除されたプロファイルを復元" },

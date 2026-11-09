@@ -1,20 +1,30 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! The questions a Profile's page asks, drawn over the whole tab with the
-//! shared dialogs (`koru_ui::Confirm`, `koru_ui::choice::Choice`).
+//! shared dialog (`koru_ui::Confirm`).
 //!
 //! Two kinds, in one enum:
 //!
-//! - **The page's own**: *Delete profile…* (which removal), *Sign out…*,
-//!   *Unlink…* of a Google Account that is not the last, and *Linked
-//!   devices*' *Unlink…* of a device. Nothing is sent until one is answered.
-//! - **The controller's questions, shown as dialogs**: removing from this
-//!   device, making a Profile offline-only and connecting a Google Account
-//!   are states of the controller (`confirming_remove`, `confirming_offline`,
+//! - **The page's own**: *Sign out…*, *Unlink…* of a Google Account that is
+//!   not the last, and *Linked devices*' *Unlink…* of a device. Nothing is
+//!   sent until one is answered.
+//! - **The controller's questions, shown as dialogs**: deleting a Profile
+//!   (the shared batch) or removing it from this device, making a Profile
+//!   offline-only and connecting a Google Account are states of the
+//!   controller (`confirming_remove`, `confirming_offline`,
 //!   `pending_add_google`) that Manage Profiles drew in its detail pane.
 //!   [`ManageView::settle_dialogs`] keeps a dialog up exactly while the
 //!   controller is asking, so the controller stays the one place that knows
 //!   a question is open, and answering is the same `Intent` it always was.
+//!
+//! **The footer's two removals are two actions, not one with a sub-menu**
+//! (root-catalog QUESTIONS Q4, decided 2026-11-09): *Delete profile and its
+//! workspaces…* asks the Store for the batch's preview and the question opens
+//! over it when it arrives; *Remove from this device…* opens the device-local
+//! question at once. Both are the controller's `confirming_remove`, told
+//! apart by whether a preview is under it, and the same `Intent::ConfirmRemove`
+//! answers either — the preview travelling with the request is what tells
+//! the host which Store operation to run.
 //!
 //! The controller's own modal prompts — *Delete from Koru?*, the D258 Cloud
 //! question and the attach question — are drawn by the tab over these and
@@ -26,19 +36,13 @@
 //! Escape cancels.
 
 use super::*;
-use koru_ui::choice::{Choice, ChoiceOutcome};
+use koru_i18n::Key as I18n;
 
 #[cfg(test)]
 mod tests;
 
 /// One question over the tab.
 pub(crate) enum Dialog {
-    /// *Delete profile…*: remove from this device, or delete from Koru.
-    Delete {
-        profile: ProfileId,
-        choice: Choice,
-        answers: Vec<DeleteAnswer>,
-    },
     /// *Sign out…*: this computer leaves the account.
     SignOut(Confirm),
     /// *Unlink…* on a Google Account that is not the Profile's last.
@@ -49,27 +53,12 @@ pub(crate) enum Dialog {
     },
     /// *Linked devices*' *Unlink…* on a directly linked device.
     UnlinkDevice { device_id: String, confirm: Confirm },
-    /// The controller's remove-from-this-device question.
+    /// The controller's deletion or remove-from-this-device question.
     Remove(Confirm),
     /// The controller's offline-only question.
     Offline(Confirm),
     /// The controller's *Connect this Google Account?*.
     AddGoogle(Confirm),
-}
-
-/// The *Delete profile…* dialog's answers, in the order they are drawn.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum DeleteAnswer {
-    Remove,
-    DeleteFromKoru,
-    Cancel,
-}
-
-/// What a key or a press said to a dialog.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Answer {
-    Choice(ChoiceOutcome),
-    Confirm(ConfirmOutcome),
 }
 
 /// Which controller question a dialog mirrors.
@@ -84,7 +73,6 @@ impl Dialog {
     /// What the inspector calls it.
     pub(crate) fn name(&self) -> &'static str {
         match self {
-            Self::Delete { .. } => "Manage delete dialog",
             Self::SignOut(_) => "Manage sign-out dialog",
             Self::Unlink { .. } => "Manage unlink dialog",
             Self::UnlinkDevice { .. } => "Manage unlink device dialog",
@@ -95,14 +83,29 @@ impl Dialog {
     }
 
     pub(crate) fn title(&self) -> &str {
+        self.confirm().title()
+    }
+
+    /// The shared confirmation every question here is.
+    fn confirm(&self) -> &Confirm {
         match self {
-            Self::Delete { choice, .. } => choice.title(),
             Self::SignOut(confirm)
             | Self::Unlink { confirm, .. }
             | Self::UnlinkDevice { confirm, .. }
             | Self::Remove(confirm)
             | Self::Offline(confirm)
-            | Self::AddGoogle(confirm) => confirm.title(),
+            | Self::AddGoogle(confirm) => confirm,
+        }
+    }
+
+    fn confirm_mut(&mut self) -> &mut Confirm {
+        match self {
+            Self::SignOut(confirm)
+            | Self::Unlink { confirm, .. }
+            | Self::UnlinkDevice { confirm, .. }
+            | Self::Remove(confirm)
+            | Self::Offline(confirm)
+            | Self::AddGoogle(confirm) => confirm,
         }
     }
 
@@ -117,9 +120,6 @@ impl Dialog {
 }
 
 const ADD_GOOGLE_BODY: &str = "This Google Account will be able to help connect new devices to this Profile. Your Profile content stays on your devices.";
-const REMOVE_CASCADE_BODY: &str = "Koru will close this Profile's open Workspace sessions, move every Workspace to Trash, and remove the Profile and its AI chats from this device. For 30 days you can restore the Profile with its chats and recover its Workspaces from Trash; after that they are deleted from this device.";
-const REMOVE_EMPTY_BODY: &str = "This removes the Profile, its settings and its AI chats from this device. You can restore it with its chats for 30 days; after that the chats are deleted.";
-const REMOVE_HOSTED_BODY: &str = "The hosted Profile listing stays in your Koru account so another trusted device can offer recovery.";
 const OFFLINE_BODY: &str = "This removes the last sign-in method. Local content and established trusted-device sync remain. Connect a Google Account again before adding a new device.";
 const SIGN_OUT_TITLE: &str = "Sign out of Koru on this computer?";
 const SIGN_OUT_BODY: &str = "Every signed-in profile on this computer stops syncing until you sign in again. Your profiles and their workspaces stay on this computer.";
@@ -143,36 +143,45 @@ impl ManageView {
             .map_or_else(|| "this Profile".to_owned(), |row| row.name.clone())
     }
 
-    /// *Delete profile…*: which of the two removals. *Delete from Koru* is
-    /// offered only where the controller allows it (`removal::can_delete`).
-    pub(super) fn ask_how_to_delete(&mut self, profile: ProfileId) {
+    /// *Delete profile and its workspaces…*: the shared, restorable batch.
+    /// The controller reads the preview off this thread and raises its
+    /// question over it, which [`Self::settle_dialogs`] then shows.
+    pub(super) fn ask_to_delete(&mut self, profile: ProfileId) {
         if !self.no_question_up() || self.c.selected() != Some(profile) {
             return;
         }
-        let name = self.profile_name(profile);
-        // *Delete from Koru* is an account operation; a build that hides
-        // Koru Cloud offers only *Remove from this device* (koru-features).
-        let everywhere =
-            koru_features::cloud_sync() && self.c.selected_profile_can_delete_from_koru();
-        let body = if everywhere {
-            "Remove it from this device only, or delete it from your Koru account and every device it syncs to."
-        } else {
-            "Remove it from this device. The next step says what happens to its workspaces."
-        };
-        let mut answers = vec![DeleteAnswer::Remove];
-        let mut choice = Choice::new(format!("Delete \u{201c}{name}\u{201d}?"), body)
-            .answer("Remove from this device…");
-        if everywhere {
-            choice = choice.answer("Delete from Koru…");
-            answers.push(DeleteAnswer::DeleteFromKoru);
+        self.perform(Intent::DeleteProfile);
+    }
+
+    /// *Remove from this device…*: the device-local removal, with the
+    /// Profile's workspaces when it has any. An unknown count takes the
+    /// cascade, which is also right for an empty Profile
+    /// (`selected_profile_removal`).
+    pub(super) fn ask_to_remove_from_device(&mut self, profile: ProfileId) {
+        if !self.no_question_up() || self.c.selected() != Some(profile) {
+            return;
         }
-        choice = choice.answer("Cancel");
-        answers.push(DeleteAnswer::Cancel);
-        self.dialog = Some(Dialog::Delete {
-            profile,
-            choice,
-            answers,
+        self.perform(Intent::RemoveFromDevice {
+            cascade: self.c.selected_profile_removal().unwrap_or(true),
         });
+    }
+
+    /// *Delete from Koru…*: the account's deletion, the controller's own
+    /// prompt. Offered only where it allows it (`removal::can_delete`) and
+    /// in a build that shows Koru Cloud (koru-features).
+    pub(super) fn ask_to_delete_from_koru(&mut self, profile: ProfileId) {
+        if !self.no_question_up()
+            || self.c.selected() != Some(profile)
+            || !Self::offers_delete_from_koru(&self.c)
+        {
+            return;
+        }
+        self.perform(Intent::DeleteFromKoru(profile));
+    }
+
+    /// Whether the selected Profile's page offers *Delete from Koru…*.
+    pub(super) fn offers_delete_from_koru(c: &ProfilesController) -> bool {
+        koru_features::cloud_sync() && c.selected_profile_can_delete_from_koru()
     }
 
     /// *Sign out…* (maintainers' decision 1): the session is the device's, so the
@@ -279,65 +288,82 @@ impl ManageView {
             .map_or_else(|| "this Profile".to_owned(), |row| row.name.clone());
         match mirror {
             Mirror::Remove => {
-                let cascade = self.c.confirming_remove() == Some(true);
-                let (title, body, label) = if cascade {
-                    (
-                        format!("Remove {name} and all its Workspaces?"),
-                        REMOVE_CASCADE_BODY,
-                        "Remove Profile and Workspaces",
-                    )
-                } else {
-                    (
-                        format!("Remove {name} from this device?"),
-                        REMOVE_EMPTY_BODY,
-                        "Remove Profile",
-                    )
-                };
-                let mut body = if self
+                let lang = crate::format::lang();
+                let t = |key: I18n| koru_i18n::t(lang, key);
+                let hosted = self
                     .c
                     .selected_profile()
-                    .is_some_and(|row| row.account.is_some())
-                {
-                    format!("{body} {REMOVE_HOSTED_BODY}")
-                } else {
-                    body.to_owned()
-                };
-                // The captured list (root-catalog §6.1): what the batch will
-                // trash, by name, from the Store's preview — never from a
-                // guess at the catalog.
-                if let Some(preview) = self.c.deletion_preview() {
-                    let lang = crate::format::lang();
-                    let names: Vec<String> = {
-                        let w = self.w.borrow();
-                        preview
-                            .targets
-                            .iter()
-                            .map(|id| {
-                                w.row(*id)
-                                    .map(|row| row.name.clone())
-                                    .unwrap_or_else(|| id.to_storage())
-                            })
-                            .collect()
+                    .is_some_and(|row| row.account.is_some());
+                let (title, mut body, targets, label) =
+                    if let Some(preview) = self.c.deletion_preview() {
+                        // The shared batch (root-catalog §6.1), over the captured
+                        // list: what it will trash, by name, from the Store's
+                        // preview — never from a guess at the catalog.
+                        let names: Vec<String> = {
+                            let w = self.w.borrow();
+                            preview
+                                .targets
+                                .iter()
+                                .map(|id| {
+                                    w.row(*id)
+                                        .map(|row| row.name.clone())
+                                        .unwrap_or_else(|| id.to_storage())
+                                })
+                                .collect()
+                        };
+                        let (title, targets) = match names.len() {
+                            0 => (
+                                I18n::ProfileDeleteEmptyTitle,
+                                t(I18n::ProfileDeleteTargetsNone).to_owned(),
+                            ),
+                            1 => (
+                                I18n::ProfileDeleteTitle,
+                                koru_i18n::fill(t(I18n::ProfileDeleteTargetsOne), &[&names[0]]),
+                            ),
+                            n => (
+                                I18n::ProfileDeleteTitle,
+                                koru_i18n::fill(
+                                    t(I18n::ProfileDeleteTargetsMany),
+                                    &[
+                                        &koru_i18n::number::decimal(lang, n as u64),
+                                        &names.join(", "),
+                                    ],
+                                ),
+                            ),
+                        };
+                        (
+                            koru_i18n::fill(t(title), &[&name]),
+                            t(I18n::ProfileDeleteBody).to_owned(),
+                            Some(targets),
+                            I18n::ProfileDeleteConfirm,
+                        )
+                    } else {
+                        // Device-local: the Profile leaves this device's lists;
+                        // its workspaces go to Trash when it has any.
+                        let body = if self.c.confirming_remove() == Some(true) {
+                            I18n::ProfileRemoveCascadeBody
+                        } else {
+                            I18n::ProfileRemoveEmptyBody
+                        };
+                        (
+                            koru_i18n::fill(t(I18n::ProfileRemoveTitle), &[&name]),
+                            t(body).to_owned(),
+                            None,
+                            I18n::ProfileRemoveConfirm,
+                        )
                     };
-                    let targets = match names.len() {
-                        0 => {
-                            koru_i18n::t(lang, koru_i18n::Key::ProfileDeleteTargetsNone).to_owned()
-                        }
-                        1 => koru_i18n::fill(
-                            koru_i18n::t(lang, koru_i18n::Key::ProfileDeleteTargetsOne),
-                            &[&names[0]],
-                        ),
-                        n => koru_i18n::fill(
-                            koru_i18n::t(lang, koru_i18n::Key::ProfileDeleteTargetsMany),
-                            &[
-                                &koru_i18n::number::decimal(lang, n as u64),
-                                &names.join(", "),
-                            ],
-                        ),
-                    };
+                if hosted {
+                    body = format!("{body} {}", t(I18n::ProfileRemoveHostedBody));
+                }
+                if let Some(targets) = targets {
                     body = format!("{body}\n\n{targets}");
                 }
-                Dialog::Remove(Confirm::new(title, body, label))
+                Dialog::Remove(Confirm::localized(
+                    title,
+                    body,
+                    t(label),
+                    t(I18n::ProfileRemoveCancel),
+                ))
             }
             Mirror::Offline => {
                 let name = self.c.pending_unlink_name().map_or(name, str::to_owned);
@@ -371,16 +397,8 @@ impl ManageView {
         let Some(mut dialog) = self.dialog.take() else {
             return false;
         };
-        let answer = match &mut dialog {
-            Dialog::Delete { choice, .. } => Answer::Choice(choice.key(key)),
-            Dialog::SignOut(confirm)
-            | Dialog::Unlink { confirm, .. }
-            | Dialog::UnlinkDevice { confirm, .. }
-            | Dialog::Remove(confirm)
-            | Dialog::Offline(confirm)
-            | Dialog::AddGoogle(confirm) => Answer::Confirm(confirm.key(key)),
-        };
-        self.answer(dialog, answer);
+        let outcome = dialog.confirm_mut().key(key);
+        self.answer(dialog, outcome);
         true
     }
 
@@ -389,53 +407,31 @@ impl ManageView {
             return false;
         };
         let viewport = self.viewport;
-        let engine = &mut self.engine;
-        let answer = match &mut dialog {
-            Dialog::Delete { choice, .. } => {
-                Answer::Choice(choice.mouse_down(engine, viewport, x, y))
-            }
-            Dialog::SignOut(confirm)
-            | Dialog::Unlink { confirm, .. }
-            | Dialog::UnlinkDevice { confirm, .. }
-            | Dialog::Remove(confirm)
-            | Dialog::Offline(confirm)
-            | Dialog::AddGoogle(confirm) => {
-                Answer::Confirm(confirm.mouse_down(engine, viewport, x, y))
-            }
-        };
-        self.answer(dialog, answer);
+        let outcome = dialog
+            .confirm_mut()
+            .mouse_down(&mut self.engine, viewport, x, y);
+        self.answer(dialog, outcome);
         true
     }
 
     pub(super) fn dialog_mouse_move(&mut self, x: f32, y: f32) -> bool {
         let viewport = self.viewport;
         match self.dialog.as_mut() {
-            Some(Dialog::Delete { choice, .. }) => {
-                choice.mouse_move(&mut self.engine, viewport, x, y)
-            }
-            Some(
-                Dialog::SignOut(confirm)
-                | Dialog::Unlink { confirm, .. }
-                | Dialog::UnlinkDevice { confirm, .. }
-                | Dialog::Remove(confirm)
-                | Dialog::Offline(confirm)
-                | Dialog::AddGoogle(confirm),
-            ) => confirm.mouse_move(&mut self.engine, viewport, x, y),
+            Some(dialog) => dialog
+                .confirm_mut()
+                .mouse_move(&mut self.engine, viewport, x, y),
             None => false,
         }
     }
 
     /// Settle a dialog taken out of its slot: put it back while it is still
     /// open, or perform what its answer means.
-    fn answer(&mut self, dialog: Dialog, answer: Answer) {
-        if matches!(
-            answer,
-            Answer::Choice(ChoiceOutcome::Keep) | Answer::Confirm(ConfirmOutcome::Keep)
-        ) {
+    fn answer(&mut self, dialog: Dialog, outcome: ConfirmOutcome) {
+        if outcome == ConfirmOutcome::Keep {
             self.dialog = Some(dialog);
             return;
         }
-        let confirmed = answer == Answer::Confirm(ConfirmOutcome::Confirm);
+        let confirmed = outcome == ConfirmOutcome::Confirm;
         // A device's unlink is Agent's, not the Profiles controller's.
         if let Dialog::UnlinkDevice { device_id, .. } = &dialog {
             if confirmed {
@@ -445,22 +441,6 @@ impl ManageView {
             return;
         }
         let intent = match dialog {
-            Dialog::Delete {
-                profile, answers, ..
-            } => {
-                let Answer::Choice(ChoiceOutcome::Chosen(index)) = answer else {
-                    return;
-                };
-                match answers.get(index) {
-                    // An unknown count takes the cascade, which is also right
-                    // for an empty Profile (`selected_profile_removal`).
-                    Some(DeleteAnswer::Remove) => Intent::RemoveFromDevice {
-                        cascade: self.c.selected_profile_removal().unwrap_or(true),
-                    },
-                    Some(DeleteAnswer::DeleteFromKoru) => Intent::DeleteFromKoru(profile),
-                    Some(DeleteAnswer::Cancel) | None => return,
-                }
-            }
             Dialog::SignOut(_) if confirmed => Intent::SignOut,
             Dialog::Unlink { profile, index, .. } if confirmed => Intent::Unlink(profile, index),
             Dialog::SignOut(_) | Dialog::Unlink { .. } | Dialog::UnlinkDevice { .. } => return,
@@ -494,14 +474,6 @@ impl ManageView {
             scene::rect(0.0, 0.0, w, h),
             |r| r.property("title", dialog.title(), "manage::dialogs"),
         );
-        match dialog {
-            Dialog::Delete { choice, .. } => choice.draw(canvas, root, engine, *viewport),
-            Dialog::SignOut(confirm)
-            | Dialog::Unlink { confirm, .. }
-            | Dialog::UnlinkDevice { confirm, .. }
-            | Dialog::Remove(confirm)
-            | Dialog::Offline(confirm)
-            | Dialog::AddGoogle(confirm) => confirm.draw(canvas, root, engine, *viewport),
-        }
+        dialog.confirm().draw(canvas, root, engine, *viewport);
     }
 }

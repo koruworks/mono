@@ -103,8 +103,9 @@ inspector does not see it (it is not drawn), and session restore drops it.
 - **Manage** (`apps/koru/src/manage/`): no *Koru Cloud* nav row or chip, no
   *Other Profiles*, no *{n} Profiles hidden*; a Profile's page has no
   *Sign-in and sync* section and no *Can't reach Koru — see Koru Cloud*
-  pointer; the account switcher does not open; *Delete profile…* offers only
-  *Remove from this device*. The Cloud page is unreachable: `ManageView::show`
+  pointer; the account switcher does not open; the page's footer offers
+  *Delete profile and its workspaces…* and *Remove from this device…* but no
+  *Delete from Koru…*. The Cloud page is unreachable: `ManageView::show`
   turns a request for it into the first Profile's page (or *Linked devices*
   when there is none) — which is also where *Manage profiles…* lands before the
   window knows its Profile.

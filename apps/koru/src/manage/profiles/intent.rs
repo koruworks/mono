@@ -50,11 +50,16 @@ pub enum Intent {
     Unlink(ProfileId, usize),
     ConfirmOffline,
     CancelOffline,
-    /// Ask to remove the selected Profile from this device — with all its
-    /// Workspaces when `cascade`.
+    /// Ask to delete the selected Profile with its workspaces as the shared,
+    /// restorable batch (root-catalog §6.1), over the Store's preview of
+    /// what goes. The question opens when the preview arrives.
+    DeleteProfile,
+    /// Ask to remove the selected Profile from this device only — its
+    /// workspaces go to Trash too when `cascade`. Never the shared batch.
     RemoveFromDevice {
         cascade: bool,
     },
+    /// Answer the open question, whichever of the two it is.
     ConfirmRemove,
     CancelRemove,
     /// Ask to delete a Profile from Koru everywhere.
@@ -279,21 +284,36 @@ impl ProfilesController {
                 self.confirm_offline = false;
                 self.pending_unlink = None;
             }
-            Intent::RemoveFromDevice { cascade } => {
-                self.remove_all_workspaces = cascade;
+            Intent::DeleteProfile => {
+                // The shared batch (root-catalog §6.1): the question is asked
+                // over the Store's own list of what goes, read off this
+                // thread first, and opens when it arrives. A window with no
+                // Store client cannot ask, so it says so and changes nothing
+                // — it never falls back to the device-local removal, which
+                // is a different action with a different label.
                 self.deletion_preview = None;
-                // A Profile with workspaces is deleted as the shared batch
-                // (root-catalog §6.1): the question is asked over the Store's
-                // own list of what goes, read off this thread first. An empty
-                // Profile, or a window with no Store client, keeps the
-                // device-local question.
-                let previewed = cascade
-                    && self
-                        .selected
-                        .is_some_and(|profile| self.request_deletion_preview(profile));
+                self.remove_all_workspaces = true;
+                let previewed = self
+                    .selected
+                    .is_some_and(|profile| self.request_deletion_preview(profile));
                 if !previewed {
-                    self.confirm_remove = true;
+                    self.notice = Some(
+                        koru_i18n::t(
+                            crate::format::lang(),
+                            koru_i18n::Key::ProfileDeletePreviewFailed,
+                        )
+                        .into(),
+                    );
                 }
+            }
+            Intent::RemoveFromDevice { cascade } => {
+                // Device-local, so no preview: one still in flight for the
+                // shared deletion is dropped, or its answer would reopen
+                // this question as that one.
+                self.preview_request = None;
+                self.deletion_preview = None;
+                self.remove_all_workspaces = cascade;
+                self.confirm_remove = true;
             }
             Intent::ConfirmRemove => {
                 // The caller performs Store mutation and settings cleanup. The
@@ -304,7 +324,12 @@ impl ProfilesController {
                 self.confirm_remove = false;
                 self.notice = Some("Finishing…".into());
             }
-            Intent::CancelRemove => self.confirm_remove = false,
+            Intent::CancelRemove => {
+                self.confirm_remove = false;
+                // A preview left behind would travel with the next removal
+                // request — the attention card's, say — and make it the batch.
+                self.deletion_preview = None;
+            }
             Intent::DeleteFromKoru(profile) => {
                 let profile_name = self.profile_name_or_default(profile);
                 self.confirm_hosted_delete = Some(removal::confirmation(profile, &profile_name));
