@@ -79,7 +79,7 @@ pub(crate) fn layout(
     let text_region = COMPOSER_PAD_TOP + text_height + COMPOSER_TEXT_GAP;
     let mut toolbar = row("ComposerToolbar")
         .h(Length::Runtime(BUTTON_H, "action button height"))
-        .pad_x(Space::S4)
+        .pad_x(Space::S5)
         .child(
             boxed("ComposerAddContext")
                 .w(Length::Runtime(BUTTON_H, "action button height"))
@@ -162,7 +162,7 @@ pub(crate) fn layout(
     };
     let tree = col("KoruComposer").child(
         col("ComposerBox")
-            .pad_bottom(Space::S2)
+            .pad_bottom(Space::S3_5)
             .child(
                 boxed("ComposerContextBand").h(Length::Runtime(band_height, "measured chip band")),
             )
@@ -204,7 +204,7 @@ mod tests {
         let text = shell.text();
         let toolbar = shell.toolbar();
         assert_eq!(text.y + text.h, toolbar.y);
-        assert_eq!(shell.send().x + shell.send().w, rect.x + rect.w - 16.0);
+        assert_eq!(shell.send().x + shell.send().w, rect.x + rect.w - 20.0);
         let text_node = shell.frame.named("ComposerText").next().unwrap();
         let box_node = shell.frame.named("ComposerBox").next().unwrap();
         let mut parent = text_node.parent;

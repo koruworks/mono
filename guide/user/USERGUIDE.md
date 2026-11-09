@@ -1563,7 +1563,9 @@ output, but never the provider credential; leave
 the switch off outside a trusted development session.
 
 A new chat opens on a short greeting with the Koru logo beside it, both at
-the title size, and the composer in the middle. The +, model and permission
+the title size, and the composer in the middle. The message box has generous
+inner spacing and a soft shadow; at the bottom of an active chat, the shadow
+stays clear of the window edge. The +, model and permission
 menus open below the composer when they fit. Once the first message is sent,
 the composer moves to the bottom and those menus open above it. The `@`, `/`
 and `$` pickers always open above the composer. In the

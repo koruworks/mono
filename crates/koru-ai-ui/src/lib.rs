@@ -175,10 +175,12 @@ const COMPOSER_TOOLBAR_H: f32 = BUTTON_H;
 /// `COMPOSER_PAD_X` and sits `COMPOSER_PAD_BOTTOM` above the bottom, with
 /// `COMPOSER_TEXT_GAP` between the last line and the row. It used to be the
 /// chrome field padding, 7 px, which left the words flush with the border.
-const COMPOSER_PAD_X: f32 = 16.0;
-const COMPOSER_PAD_TOP: f32 = 12.0;
-const COMPOSER_TEXT_GAP: f32 = 4.0;
-const COMPOSER_PAD_BOTTOM: f32 = 8.0;
+const COMPOSER_PAD_X: f32 = 20.0;
+const COMPOSER_PAD_TOP: f32 = 20.0;
+const COMPOSER_TEXT_GAP: f32 = 16.0;
+const COMPOSER_PAD_BOTTOM: f32 = 14.0;
+/// Clear the shared raised shadow's 20 px spread and 3 px downward offset.
+const COMPOSER_BOTTOM_MARGIN: f32 = 24.0;
 /// **The quiet row under the composer box**, left-aligned with it: an agent
 /// chat's folder, small and dim, the way a checkout is named under a prompt.
 /// `COMPOSER_FOOTER_GAP` below the box, `COMPOSER_FOOTER_H` tall; a chat with
@@ -5641,7 +5643,7 @@ impl ChatSurface {
         // The quiet row under the box, when there is one, is part of the
         // block: the box stands on it rather than on the window's edge.
         let below = self.composer_footer_h();
-        let bottom = self.viewport.y + self.viewport.h - PAD - below - height;
+        let bottom = self.viewport.y + self.viewport.h - COMPOSER_BOTTOM_MARGIN - below - height;
         let y = if self.chat_is_empty() {
             // The greeting, the composer and its row as one block, centred;
             // never lower than where the composer sits once the chat has begun.
@@ -6609,18 +6611,18 @@ impl ChatSurface {
 
     fn paint_composer_box(&self, canvas: &mut Scene, root: Affine, rect: Rect) {
         let p = theme::p();
-        let shape = scene::rrect(rect.x, rect.y, rect.w, rect.h, 8.0);
-        scene::fill(canvas, root, p.panel_bg, &shape);
-        scene::stroke(
+        scene::floating_panel(
             canvas,
             root,
-            if self.focus == Focus::Composer {
+            rect.x,
+            rect.y,
+            rect.w,
+            rect.h,
+            &scene::Panel::popover(18.0).border(if self.focus == Focus::Composer {
                 p.focus_ring
             } else {
                 p.panel_border
-            },
-            theme::BORDER_W,
-            &shape,
+            }),
         );
     }
 
@@ -13480,7 +13482,18 @@ mod tests {
         surface.pending_user = Some("hello".into());
         let active = surface.composer_rect();
         assert!(active.y > empty.y);
-        assert_eq!(active.y + active.h, surface.viewport.h - PAD);
+        assert_eq!(
+            active.y + active.h,
+            surface.viewport.h - COMPOSER_BOTTOM_MARGIN
+        );
+        let shadow = scene::panel_bounds(
+            active.x,
+            active.y,
+            active.w,
+            active.h,
+            scene::Elevation::Raised,
+        );
+        assert!(shadow.y + shadow.h <= surface.viewport.h);
         assert!(surface.composer_footer_rect().is_none());
     }
     #[test]
@@ -15217,7 +15230,7 @@ mod tests {
         surface.validated_ready = true;
 
         let centred = surface.composer_rect();
-        let bottom = surface.viewport.h - PAD - centred.h;
+        let bottom = surface.viewport.h - COMPOSER_BOTTOM_MARGIN - centred.h;
         let above = role::title().metrics.line_height + GREETING_GAP + COMPOSER_GAP;
         let middle = (centred.y - above + centred.y + centred.h) * 0.5;
         assert!((middle - surface.viewport.h * 0.5).abs() < 1.0);
