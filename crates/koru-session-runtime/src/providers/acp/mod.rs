@@ -59,6 +59,8 @@ pub struct AcpControl {
     /// Notifications can precede `session/new`'s answer. Keep only one for
     /// that native id until the answer confirms which session Koru started.
     early_commands: Option<(String, Vec<koru_session_protocol::AgentCommand>)>,
+    /// One usage notification received before `session/new` names the session.
+    early_context_usage: Option<(String, u64, u64)>,
     /// A catalog probe's single wall-clock budget across every request.
     probe_deadline: Option<Instant>,
     /// The approval modes the session advertised, with the one it is in
@@ -84,6 +86,8 @@ pub struct AcpControl {
     /// Notices the agent said while no turn ran, said with the next turn
     /// (koru-ai D69; `Notice` belongs to a turn).
     unsaid_notices: Vec<String>,
+    /// Latest ACP `usage_update`, including one sent between turns.
+    context_usage: Option<(u64, u64)>,
     next_request_id: u64,
     turns: BTreeMap<AgentTurnId, Turn>,
     active: Option<AgentTurnId>,
@@ -168,6 +172,7 @@ impl AcpControl {
             model_options: Vec::new(),
             live_commands: None,
             early_commands: None,
+            early_context_usage: None,
             probe_deadline: None,
             modes: None,
             mode_config: None,
@@ -176,6 +181,7 @@ impl AcpControl {
             thought_level: None,
             turn_model: None,
             unsaid_notices: Vec::new(),
+            context_usage: None,
             next_request_id: 1,
             turns: BTreeMap::new(),
             active: None,
@@ -798,6 +804,9 @@ impl AcpControl {
         if !advertised {
             return Err(rejected());
         }
+        // A context report for the old model's window cannot describe this
+        // one. Clear before the call so a report during it can replace it.
+        self.context_usage = None;
         let applied = self
             .call(
                 "session/set_config_option",
@@ -982,6 +991,12 @@ impl AcpControl {
         {
             self.live_commands = Some(commands.clone());
             self.queue(AgentEvent::CommandsUpdated { commands })?;
+        }
+        if let Some((early_session, used, size)) = self.early_context_usage.take()
+            && early_session == native_session
+        {
+            self.context_usage = Some((used, size));
+            self.queue(AgentEvent::ContextUsage { used, size })?;
         }
         self.model_options = models::config_models(&session, self.config.route.provider.as_str());
         if let Some(read) = modes::read(&session) {
@@ -1180,6 +1195,9 @@ impl AgentControl for AcpControl {
         self.queue(AgentEvent::TurnStarted {
             turn_id: input.turn_id,
         })?;
+        if let Some((used, size)) = self.context_usage {
+            self.queue(AgentEvent::ContextUsage { used, size })?;
+        }
         if let Some(mode) = self.unreported_mode.take() {
             self.queue(AgentEvent::ModeChanged {
                 turn_id: input.turn_id,

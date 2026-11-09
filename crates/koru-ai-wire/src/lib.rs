@@ -538,6 +538,11 @@ pub enum PublicAiEvent {
         attempt_id: InferenceAttemptId,
         usage: AiUsage,
     },
+    ContextUsage {
+        attempt_id: InferenceAttemptId,
+        used: u64,
+        size: u64,
+    },
     ToolActivity {
         attempt_id: InferenceAttemptId,
         activity: ToolActivity,
@@ -597,6 +602,7 @@ impl PublicAiEvent {
             | Self::TextDelta { attempt_id, .. }
             | Self::ReasoningDelta { attempt_id, .. }
             | Self::Usage { attempt_id, .. }
+            | Self::ContextUsage { attempt_id, .. }
             | Self::ToolActivity { attempt_id, .. }
             | Self::AgentNotice { attempt_id, .. }
             | Self::AgentCommands { attempt_id, .. }
@@ -655,6 +661,15 @@ impl TryFrom<AiEvent> for PublicAiEvent {
                 at,
             },
             AiEvent::Usage { attempt_id, usage } => Self::Usage { attempt_id, usage },
+            AiEvent::ContextUsage {
+                attempt_id,
+                used,
+                size,
+            } => Self::ContextUsage {
+                attempt_id,
+                used,
+                size,
+            },
             AiEvent::ToolActivity {
                 attempt_id,
                 activity,

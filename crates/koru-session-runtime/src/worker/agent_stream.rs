@@ -244,6 +244,7 @@ fn event_bytes(event: &AgentEvent) -> usize {
                 _ => 0,
             },
             AgentEvent::TurnStarted { .. }
+            | AgentEvent::ContextUsage { .. }
             | AgentEvent::ToolCompleted { .. }
             | AgentEvent::ApprovalResolved { .. }
             | AgentEvent::ApprovalExpired { .. }

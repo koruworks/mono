@@ -911,6 +911,10 @@ fn offline_replay(
         }
         event => panic!("unexpected event: {event:?}"),
     }
+    assert!(matches!(
+        next(&mut control),
+        AgentEvent::ContextUsage { size, .. } if size > 0
+    ));
     let approval_id = match next(&mut control) {
         AgentEvent::ApprovalRequired {
             turn_id: observed,
@@ -1070,6 +1074,10 @@ fn offline_replay(
         next(&mut control),
         AgentEvent::TurnStarted { turn_id: cancelled }
     );
+    assert!(matches!(
+        next(&mut control),
+        AgentEvent::ContextUsage { .. }
+    ));
     assert!(matches!(
         next(&mut control),
         AgentEvent::ProviderState { .. }
@@ -1476,6 +1484,40 @@ fn usage_frame(turn: &str, input: u64, output: u64, cached: Option<u64>) -> Valu
             "tokenUsage": { "last": total.clone(), "total": total, "modelContextWindow": 1000 }
         }
     })
+}
+
+#[test]
+fn codex_context_uses_last_usage_and_reported_window_not_cumulative_total() {
+    let mut frames = initialize_frames(false);
+    frames.push(turn_started(4, "t1"));
+    let mut usage = usage_frame("t1", 10_000, 100, None);
+    usage["params"]["tokenUsage"]["last"]["totalTokens"] = json!(48);
+    usage["params"]["tokenUsage"]["modelContextWindow"] = json!(475);
+    frames.push(usage);
+    let (mut control, _) = replay_control(frames, Arc::new(NoopAttachmentPathResolver));
+    control
+        .start(AgentStart::fresh(SessionId::mint(), None))
+        .unwrap();
+    control
+        .submit(AgentInput {
+            model: None,
+            turn_id: AgentTurnId::mint(),
+            text: "context".into(),
+            attachments: Vec::new(),
+            references: Vec::new(),
+            mode: None,
+            fast: None,
+            reasoning: None,
+            skills: Vec::new(),
+        })
+        .unwrap();
+    let mut context = None;
+    while let Some(event) = control.next_event(Duration::ZERO).unwrap() {
+        if let AgentEvent::ContextUsage { used, size } = event {
+            context = Some((used, size));
+        }
+    }
+    assert_eq!(context, Some((48, 475)));
 }
 
 fn turn_completed(turn: &str, status: &str) -> Value {

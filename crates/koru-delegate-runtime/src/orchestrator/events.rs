@@ -458,6 +458,8 @@ impl Orchestrator {
             AgentEvent::QuestionsRequired { .. } | AgentEvent::QuestionsResolved { .. } => {}
             // Command listings belong to the interactive chat catalog.
             AgentEvent::CommandsUpdated { .. } => {}
+            // Current context occupancy is a chat presentation signal.
+            AgentEvent::ContextUsage { .. } => {}
         }
         Ok(HandleOutcome::Continue)
     }

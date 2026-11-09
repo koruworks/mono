@@ -1832,6 +1832,7 @@ impl Shared {
                 }
             }
             AgentEvent::MessageDelta { .. }
+            | AgentEvent::ContextUsage { .. }
             | AgentEvent::ToolStarted { .. }
             | AgentEvent::ToolCompleted { .. }
             | AgentEvent::ApprovalResolved { .. }

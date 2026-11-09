@@ -111,7 +111,9 @@ pub const MIN_PROTOCOL_VERSION: u32 = 1;
 /// would read past it and run the turn on the session's old model, so a
 /// client sends it only to a v22 host, and the host refuses it from an
 /// older peer.
-pub const MAX_PROTOCOL_VERSION: u32 = 23;
+pub const MAX_PROTOCOL_VERSION: u32 = 24;
+/// The first version whose agent stream can carry current context occupancy.
+pub const CONTEXT_USAGE_PROTOCOL_VERSION: u32 = 24;
 /// The first version whose pending input can carry local path references.
 pub const PATH_REFERENCES_PROTOCOL_VERSION: u32 = 23;
 pub const PROVIDER_MODELS_PROTOCOL_VERSION: u32 = 15;

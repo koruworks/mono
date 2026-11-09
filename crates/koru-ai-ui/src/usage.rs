@@ -394,6 +394,26 @@ mod tests {
     }
 
     #[test]
+    fn reported_context_updates_the_ring_without_changing_turn_usage() {
+        let mut surface = ChatSurface::new();
+        surface.transcript = Some(transcript());
+        let chat = surface.current_chat_id().unwrap();
+        let attempt_id = koru_ai_core::InferenceAttemptId::new();
+        surface.attempt = Some(attempt_id);
+        surface.apply_update(event(PublicAiEvent::ContextUsage {
+            attempt_id,
+            used: 48_000,
+            size: 475_000,
+        }));
+        assert_eq!(
+            surface.context_window_usage.get(&chat),
+            Some(&(48_000, 475_000))
+        );
+        assert!((surface.context_progress().unwrap() - 0.101).abs() < 0.001);
+        assert_eq!(surface.live_usage, None);
+    }
+
+    #[test]
     fn transcript_usage_labels_historical_messages_and_grows_geometry() {
         let mut surface = ChatSurface::new();
         surface.lang = Lang::En;

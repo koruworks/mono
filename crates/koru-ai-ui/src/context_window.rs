@@ -158,8 +158,9 @@ impl ChatSurface {
         let chat = transcript.chat.id;
         let (used, size) = self
             .context_window_usage
-            .filter(|(id, _, size)| *id == chat && *size > 0)
-            .map_or((None, None), |(_, used, size)| (Some(used), Some(size)));
+            .get(&chat)
+            .filter(|(_, size)| *size > 0)
+            .map_or((None, None), |&(used, size)| (Some(used), Some(size)));
         let last_input = transcript
             .usage
             .iter()

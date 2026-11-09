@@ -637,7 +637,7 @@ pub struct ChatSurface {
     model_option_offset: usize,
     chat_model_open: bool,
     context_window_open: bool,
-    context_window_usage: Option<(ChatId, u64, u64)>,
+    context_window_usage: HashMap<ChatId, (u64, u64)>,
     model_chevron: Tween,
     microphone_chevron: Tween,
     send_chevron: Tween,
@@ -1080,7 +1080,7 @@ impl ChatSurface {
             model_option_offset: 0,
             chat_model_open: false,
             context_window_open: false,
-            context_window_usage: None,
+            context_window_usage: HashMap::new(),
             model_chevron: Tween::new(theme::GLYPH_MORPH_MS, false),
             microphone_chevron: Tween::new(theme::GLYPH_MORPH_MS, false),
             send_chevron: Tween::new(theme::GLYPH_MORPH_MS, false),
@@ -3553,6 +3553,15 @@ impl ChatSurface {
             }
             Update::ModelUpdated(chat, reasoning_control) => {
                 let previous_skill_source = self.skill_source();
+                let model_changed = self.transcript.as_ref().is_some_and(|transcript| {
+                    transcript.chat.id == chat.id
+                        && (transcript.chat.current_model.provider != chat.current_model.provider
+                            || transcript.chat.current_model.requested_model
+                                != chat.current_model.requested_model)
+                });
+                if model_changed {
+                    self.context_window_usage.remove(&chat.id);
+                }
                 let chat_id = chat.id;
                 self.waiting = false;
                 // The picker stays open over a model chosen in it (D66): its
@@ -3861,6 +3870,17 @@ impl ChatSurface {
                     }
                     PublicAiEvent::Usage { usage, .. } => {
                         self.live_usage = Some(usage.clone());
+                    }
+                    PublicAiEvent::ContextUsage {
+                        attempt_id,
+                        used,
+                        size,
+                    } => {
+                        if self.attempt == Some(*attempt_id)
+                            && let Some(chat) = self.current_chat_id()
+                        {
+                            self.context_window_usage.insert(chat, (*used, *size));
+                        }
                     }
                     PublicAiEvent::ToolActivity { activity, .. } => {
                         self.upsert_tool_activity(activity.clone());
@@ -6033,8 +6053,8 @@ impl ChatSurface {
 
     fn context_progress(&self) -> Option<f32> {
         let chat = self.current_chat_id()?;
-        let (reported_chat, used, size) = self.context_window_usage?;
-        (reported_chat == chat && size > 0).then_some(used as f32 / size as f32)
+        let &(used, size) = self.context_window_usage.get(&chat)?;
+        (size > 0).then_some(used as f32 / size as f32)
     }
 
     /// Whether the composer has its quiet row below: an agent chat's folder

@@ -637,6 +637,31 @@
         "type": "object"
       },
       {
+        "description": "Protocol v24. The provider's latest current context occupancy, not\ncumulative usage across turns. Absent when the provider did not say.",
+        "properties": {
+          "kind": {
+            "const": "context_usage",
+            "type": "string"
+          },
+          "size": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "used": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "used",
+          "size"
+        ],
+        "type": "object"
+      },
+      {
         "properties": {
           "kind": {
             "const": "turn_started",
@@ -1213,6 +1238,31 @@
             "required": [
               "kind",
               "commands"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Protocol v24. The provider's latest current context occupancy, not\ncumulative usage across turns. Absent when the provider did not say.",
+            "properties": {
+              "kind": {
+                "const": "context_usage",
+                "type": "string"
+              },
+              "size": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "used": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "kind",
+              "used",
+              "size"
             ],
             "type": "object"
           },
@@ -9951,6 +10001,31 @@
             "required": [
               "kind",
               "commands"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Protocol v24. The provider's latest current context occupancy, not\ncumulative usage across turns. Absent when the provider did not say.",
+            "properties": {
+              "kind": {
+                "const": "context_usage",
+                "type": "string"
+              },
+              "size": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "used": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "kind",
+              "used",
+              "size"
             ],
             "type": "object"
           },

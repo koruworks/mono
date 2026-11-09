@@ -1346,6 +1346,8 @@ panel says the current usage is unavailable. The panel can still show the
 last reported input tokens and the total tokens processed across replies;
 these are different from the current context window. Click the mark again,
 click outside, or press Esc to close the panel.
+The ring follows the latest report from the agent; after reopening Koru, it
+remains unavailable until the agent sends another report.
 
 When you scroll up in a chat, a round ↓ button appears above the message
 box; click it, or press `Ctrl+End`, to jump to the newest message and keep

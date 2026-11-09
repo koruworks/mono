@@ -354,7 +354,24 @@ impl CodexControl {
         self.queue(AgentEvent::Usage {
             turn_id,
             usage: normalize::turn_usage(total, baseline, model),
-        })
+        })?;
+        // `total` is cumulative spending. Codex's `last` and the reported
+        // window size describe the latest active context (its own TUI uses
+        // this pair); never divide the cumulative total by that window.
+        let context = params
+            .pointer("/tokenUsage/last/totalTokens")
+            .and_then(Value::as_u64)
+            .zip(
+                params
+                    .pointer("/tokenUsage/modelContextWindow")
+                    .and_then(Value::as_u64),
+            )
+            .filter(|(_, size)| *size > 0);
+        if let Some((used, size)) = context {
+            self.context_usage = Some((used, size));
+            self.queue(AgentEvent::ContextUsage { used, size })?;
+        }
+        Ok(())
     }
 
     /// `model/rerouted` (0.153.4): the provider served the turn with a model

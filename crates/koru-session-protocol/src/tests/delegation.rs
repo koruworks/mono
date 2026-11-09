@@ -9,7 +9,8 @@ use super::state::sample_summary;
 /// pins the two together so a host gate cannot drift from the changelog.
 #[test]
 fn the_delegation_family_rides_protocol_fourteen_and_its_own_capability() {
-    assert_eq!(MAX_PROTOCOL_VERSION, 23);
+    assert_eq!(MAX_PROTOCOL_VERSION, 24);
+    assert_eq!(CONTEXT_USAGE_PROTOCOL_VERSION, 24);
     assert_eq!(PATH_REFERENCES_PROTOCOL_VERSION, 23);
     assert_eq!(TURN_MODEL_PROTOCOL_VERSION, 22);
     assert_eq!(QUESTIONS_PROTOCOL_VERSION, 21);
@@ -36,6 +37,24 @@ fn the_delegation_family_rides_protocol_fourteen_and_its_own_capability() {
             .unwrap()
             .as_str(),
         "delegation"
+    );
+}
+
+#[test]
+fn context_usage_is_a_versioned_session_stream_event() {
+    let reported = AgentEvent::ContextUsage {
+        used: 48_000,
+        size: 475_000,
+    };
+    assert_eq!(
+        reported.minimum_protocol_version(),
+        CONTEXT_USAGE_PROTOCOL_VERSION
+    );
+    let value = serde_json::to_value(&reported).unwrap();
+    assert_eq!(value["kind"], "context_usage");
+    assert_eq!(
+        serde_json::from_value::<AgentEvent>(value).unwrap(),
+        reported
     );
 }
 

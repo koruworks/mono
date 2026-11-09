@@ -1730,6 +1730,7 @@ impl AiPersistence for Repository {
                     .map_err(storage_failed)?;
             }
             AiEvent::ToolActivity { .. }
+            | AiEvent::ContextUsage { .. }
             | AiEvent::AgentActivity { .. }
             | AiEvent::AgentNotice { .. }
             | AiEvent::Notice { .. } => {}
@@ -1925,6 +1926,7 @@ fn ai_event_transaction_name(event: &AiEvent) -> &'static str {
         AiEvent::TextDelta { .. } => "apply_coalesced_text",
         AiEvent::ReasoningDelta { .. } => "apply_coalesced_reasoning",
         AiEvent::Usage { .. } => "apply_usage",
+        AiEvent::ContextUsage { .. } => "apply_context_usage",
         AiEvent::ToolCalls { .. } => "apply_tool_calls",
         AiEvent::ToolActivity { .. } => "apply_tool_activity",
         AiEvent::AgentActivity { .. } => "apply_agent_activity",

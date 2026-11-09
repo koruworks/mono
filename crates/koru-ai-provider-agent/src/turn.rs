@@ -995,6 +995,13 @@ impl TurnStream {
         let attempt_id = self.attempt;
         match event {
             AgentEvent::TurnStarted { turn_id } if turn_id == self.turn => {}
+            AgentEvent::ContextUsage { used, size } if size > 0 => {
+                self.queued.push_back(AiEvent::ContextUsage {
+                    attempt_id,
+                    used,
+                    size,
+                });
+            }
             AgentEvent::MessageDelta { turn_id, text } if turn_id == self.turn => {
                 self.queued.push_back(AiEvent::TextDelta {
                     attempt_id,

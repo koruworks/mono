@@ -4314,7 +4314,7 @@ impl WorkerState {
             self.apply_agent_activity(&before, activity, at);
             return;
         }
-        if let AiEvent::Notice { .. } = &event {
+        if matches!(event, AiEvent::Notice { .. } | AiEvent::ContextUsage { .. }) {
             self.publish(event);
             return;
         }
@@ -6780,6 +6780,7 @@ fn ai_event_name(event: &AiEvent) -> &'static str {
         AiEvent::TextDelta { .. } => "text_delta",
         AiEvent::ReasoningDelta { .. } => "reasoning_delta",
         AiEvent::Usage { .. } => "usage",
+        AiEvent::ContextUsage { .. } => "context_usage",
         AiEvent::ToolCalls { .. } => "tool_calls",
         AiEvent::ToolActivity { .. } => "tool_activity",
         AiEvent::AgentActivity { .. } => "agent_activity",

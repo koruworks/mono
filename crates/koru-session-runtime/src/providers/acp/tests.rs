@@ -107,6 +107,27 @@ fn start(control: &mut AcpControl) -> AgentCapabilities {
 }
 
 #[test]
+fn acp_usage_update_reports_current_context_even_between_turns() {
+    let mut h = harness(FakeAcpConfig::default(), None, None);
+    start(&mut h.control);
+    h.control.events.clear();
+    h.injected.lock().unwrap().push_back(json!({
+        "jsonrpc":"2.0", "method":"session/update", "params":{
+            "sessionId":SESSION,
+            "update":{"sessionUpdate":"usage_update","used":48_000,"size":475_000}
+        }
+    }));
+    assert_eq!(
+        h.control.next_event(Duration::from_millis(1)).unwrap(),
+        Some(AgentEvent::ContextUsage {
+            used: 48_000,
+            size: 475_000,
+        })
+    );
+    assert_eq!(h.control.context_usage, Some((48_000, 475_000)));
+}
+
+#[test]
 fn commands_before_session_answer_and_live_empty_update_are_authoritative() {
     let mut h = harness(FakeAcpConfig::default(), None, None);
     let notice = |session: &str, commands: Value| {

@@ -141,6 +141,12 @@ pub enum AgentEvent {
     CommandsUpdated {
         commands: Vec<crate::AgentCommand>,
     },
+    /// Protocol v24. The provider's latest current context occupancy, not
+    /// cumulative usage across turns. Absent when the provider did not say.
+    ContextUsage {
+        used: u64,
+        size: u64,
+    },
     TurnStarted {
         turn_id: AgentTurnId,
     },
@@ -329,6 +335,7 @@ impl AgentEvent {
     pub fn minimum_protocol_version(&self) -> u32 {
         match self {
             Self::CommandsUpdated { .. } => crate::PATH_REFERENCES_PROTOCOL_VERSION,
+            Self::ContextUsage { .. } => crate::CONTEXT_USAGE_PROTOCOL_VERSION,
             Self::ModeChanged { .. } => crate::AGENT_MODES_PROTOCOL_VERSION,
             Self::Notice { .. } => crate::AGENT_NOTICES_PROTOCOL_VERSION,
             Self::QuestionsRequired { .. } | Self::QuestionsResolved { .. } => {
@@ -366,6 +373,7 @@ impl std::fmt::Debug for AgentEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let (kind, turn) = match self {
             Self::CommandsUpdated { .. } => ("CommandsUpdated", None),
+            Self::ContextUsage { .. } => ("ContextUsage", None),
             Self::TurnStarted { turn_id } => ("TurnStarted", Some(turn_id)),
             Self::MessageDelta { turn_id, .. } => ("MessageDelta", Some(turn_id)),
             Self::ToolStarted { turn_id, .. } => ("ToolStarted", Some(turn_id)),

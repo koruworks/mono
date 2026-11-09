@@ -9483,6 +9483,36 @@
           },
           {
             "properties": {
+              "attempt_id": {
+                "$ref": "#/components/schemas/InferenceAttemptId"
+              },
+              "size": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "type": {
+                "enum": [
+                  "context_usage"
+                ],
+                "type": "string"
+              },
+              "used": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "type",
+              "attempt_id",
+              "used",
+              "size"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
               "activity": {
                 "$ref": "#/components/schemas/ToolActivity"
               },

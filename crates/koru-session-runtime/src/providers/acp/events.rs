@@ -96,6 +96,23 @@ impl AcpControl {
         // The agent's mode moves with or without a turn: Claude leaving plan
         // mode once its plan is approved, or answering a set (koru-ai D7).
         match update["sessionUpdate"].as_str() {
+            Some("usage_update") => {
+                let used = update["used"].as_u64().ok_or_else(malformed)?;
+                let size = update["size"]
+                    .as_u64()
+                    .filter(|size| *size > 0)
+                    .ok_or_else(malformed)?;
+                if self.native_session.is_none() {
+                    let native = params["sessionId"]
+                        .as_str()
+                        .filter(|id| valid_native_id(id))
+                        .ok_or_else(malformed)?;
+                    self.early_context_usage = Some((native.to_owned(), used, size));
+                    return Ok(());
+                }
+                self.context_usage = Some((used, size));
+                return self.queue(AgentEvent::ContextUsage { used, size });
+            }
             Some("available_commands_update") => {
                 return self.command_update(params);
             }
