@@ -13,6 +13,7 @@ use std::{
 
 mod pins;
 mod replacement;
+mod root_catalog;
 
 struct BackendState {
     backend: SqliteBackend,

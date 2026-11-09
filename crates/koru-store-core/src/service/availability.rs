@@ -288,6 +288,11 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         if !listing.is_empty() {
             return Ok(EnsuredWorkspace::ListingPending { issues: listing });
         }
+        // Plan 1.3 of the root catalog (`TECHNICAL.final.md` §6.3, D17):
+        // `EnsureLive` becomes a non-creating query and answers Empty here.
+        // Plan 1.2 removed the manufacture of a replacement from the replacing
+        // routes only; this arm and the `NeedsProfile` host flow that relies
+        // on it are deliberately unchanged until then.
         Ok(EnsuredWorkspace::Created {
             workspace: self.create_workspace(owner, name, at)?,
         })

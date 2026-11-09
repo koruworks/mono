@@ -74,6 +74,7 @@ mod pins;
 mod preparation;
 mod removal;
 mod replacement;
+mod root_move;
 pub use pins::PinnedWorkspace;
 pub use replacement::{ListingState, MovedWorkspace, RemovedWorkspace, Replacement};
 mod profile_projection;
@@ -1787,6 +1788,13 @@ impl<C: Catalog, B: Backend> Store<C, B> {
     /// **Moving a workspace to the profile that already owns it succeeds and
     /// changes nothing** — not even the position. That is what makes the same
     /// request twice a retry rather than a second move to the end of the list.
+    ///
+    /// **A move is a root operation** (`docs/features/root-catalog/TECHNICAL.final.md`
+    /// §7.1): the Workspace unit's `placement.current` is written first, in
+    /// memory, and published with the `workspaces` projection in one catalog
+    /// transaction by `root_move::commit_root_move`. The acknowledgement is
+    /// the durable commit; no network, no disk replay and no document walk
+    /// happen on the caller's thread.
     pub fn move_workspace(&mut self, id: WorkspaceId, to: ProfileId) -> Result<Workspace> {
         self.refuse_profile_removal(self.workspace_including_deleted(id)?.owner)?;
         self.refuse_profile_removal(to)?;
@@ -1796,6 +1804,8 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         if self.catalog.profile(to)?.is_none() {
             return Err(Error::bare(Code::ProfileNotFound));
         }
+        // §6.3: a Holder is legacy inventory, never a destination.
+        self.refuse_holder(to, "a move destination")?;
         let mut workspace = self.workspace_including_deleted(id)?;
         // **The trash is answered honestly and by its own words.** A workspace
         // in the trash is not missing — the caller can see it in the
@@ -1814,7 +1824,7 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         }
         workspace.owner = to;
         workspace.position = self.next_workspace_position(to)?;
-        self.catalog.put_workspace(&workspace)?;
+        self.commit_root_move(&workspace)?;
         Ok(workspace)
     }
 
@@ -3826,6 +3836,34 @@ impl<C: Catalog, B: Backend> Store<C, B> {
     /// See [`ImportMode`]. The whole bundle is validated **before** anything is
     /// written: importing half a workspace and then finding the rest unreadable
     /// leaves something that looks present and is not.
+    ///
+    /// **Stage the content, then publish** (`TECHNICAL.final.md` §8.5–8.6).
+    /// Every `workspace.db` row — documents, history, blob metadata — is
+    /// written into a freshly claimed repository that no catalog row names
+    /// yet; only then does one catalog transaction publish the root Workspace
+    /// unit (placed under `owner` by a fresh move id), the `workspaces` row,
+    /// every document location and the import receipt in `workspace_lineage`.
+    /// The two databases are separate domains, so this is a staging job and
+    /// not a cross-file transaction: a failure before the publication deletes
+    /// the repository this call claimed, and a crash before it leaves an
+    /// unreferenced repository behind that nothing lists.
+    ///
+    /// How a retry behaves. A Restore keeps the origin's id, so once the
+    /// publication has committed the same bundle is refused with
+    /// `WorkspaceExists` and can never list a second Workspace; a Duplicate
+    /// mints a new id every time and cannot collide. A Restore retried after
+    /// a *crash* mid-staging meets the leftover repository at
+    /// `Backend::create_workspace` and is refused with `WorkspaceExists` too:
+    /// the import never deletes a repository it did not claim in this call,
+    /// because a repository with no catalog row is also what
+    /// `forget_workspace` deliberately leaves recoverable. Removing it is the
+    /// existing cleanup's job, by somebody who has looked at it.
+    ///
+    /// Restore consults **root evidence first**: a Workspace unit for the
+    /// origin that holds an active deletion or purge evidence refuses the
+    /// import even when the `workspaces` row is long gone — an old bundle
+    /// cannot bypass a deletion by ordinary import. A bundle carries no root
+    /// or transport data, and none is read from it.
     pub fn import_workspace(
         &mut self,
         bundle: &Bundle,
@@ -3837,10 +3875,30 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         if self.catalog.profile(owner)?.is_none() {
             return Err(Error::bare(Code::ProfileNotFound));
         }
+        let scope = self.catalog.local_user_scope()?;
 
         let origin = bundle.manifest.workspace;
-        let workspace = match mode {
+        let (workspace, held_unit) = match mode {
             ImportMode::Restore => {
+                let held = self.catalog.root_catalog_unit(
+                    scope,
+                    crate::root_catalog::CatalogUnitRef::Workspace { workspace: origin },
+                )?;
+                if let Some(row) = &held {
+                    let unit = crate::root_catalog::WorkspaceCatalogUnit::from_snapshot(
+                        &row.snapshot,
+                        origin,
+                        self.peer_id,
+                    )?;
+                    if unit.is_deleted() || !unit.purged().is_empty() {
+                        return Err(Error::new(
+                            Code::WorkspaceExists,
+                            "this workspace was deleted here and the deletion is still in force; \
+                             an exported bundle cannot bypass it. Restore it from the Trash, or \
+                             import it as a duplicate instead",
+                        ));
+                    }
+                }
                 if self.catalog.workspace(origin)?.is_some() {
                     // Restoring over a workspace already here would merge two
                     // histories under one id with no record of it. Refusing is
@@ -3850,9 +3908,9 @@ impl<C: Catalog, B: Backend> Store<C, B> {
                         "this workspace is already in the store; import it as a duplicate instead",
                     ));
                 }
-                origin
+                (origin, held)
             }
-            ImportMode::Duplicate => WorkspaceId::new(),
+            ImportMode::Duplicate => (WorkspaceId::new(), None),
         };
 
         // Document ids are preserved on restore and re-minted on duplicate, so
@@ -3891,97 +3949,162 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             deleted_at: None,
             position: self.next_workspace_position(owner)?,
         };
-        self.catalog.put_workspace(&record)?;
 
-        let mut repo = self.backend.open_workspace(workspace)?;
-        for document in &bundle.manifest.documents {
-            let id = remap[&document.id];
-            let bytes = match &duplicated_manifest {
-                Some((source, bytes)) if *source == document.id => bytes.as_slice(),
-                _ => bundle
-                    .snapshot_of(document.id)
-                    .ok_or_else(|| Error::new(Code::InvalidRequest, "a snapshot went missing"))?,
+        // The root unit, authored before any storage is claimed: a Loro
+        // failure here owns no repository. A Restore whose origin the root
+        // already holds live moves that unit under its read revision; a
+        // Duplicate, and a Restore the root has never seen, get a fresh one.
+        let unit_ref = crate::root_catalog::CatalogUnitRef::Workspace { workspace };
+        let unit_commit = {
+            let unit = match &held_unit {
+                Some(row) => crate::root_catalog::WorkspaceCatalogUnit::from_snapshot(
+                    &row.snapshot,
+                    workspace,
+                    self.peer_id,
+                )?,
+                None => crate::root_catalog::WorkspaceCatalogUnit::create(workspace, self.peer_id)?,
             };
+            unit.set_placement(Some(owner), uuid::Uuid::new_v4())?;
+            crate::ports::RootCatalogUnitCommit {
+                unit: unit_ref,
+                snapshot: unit.snapshot()?,
+                expected_revision: held_unit.as_ref().map(|row| row.revision),
+            }
+        };
+        // The receipt: a Duplicate records where it came from, as before; a
+        // Restore records that this replica of the origin arrived here by
+        // import at `at`, in the same journal rather than a new table.
+        let receipt = Lineage {
+            workspace,
+            derived_from: origin,
+            kind: match mode {
+                ImportMode::Restore => crate::model::LineageKind::Restore,
+                ImportMode::Duplicate => crate::model::LineageKind::Duplicate,
+            },
+            at,
+        };
 
-            repo.create_document(id, document.kind, at)?;
-            // The snapshot becomes the document's whole history, written as one
-            // update from nothing. A delta would name ancestors that do not
-            // exist here, and Loro would park it as pending — applying nothing
-            // and reporting nothing.
-            repo.commit_updates(&crate::ports::UpdateBatch {
-                document: id,
-                updates: vec![bytes.to_vec()],
-                version_vector: Vec::new(),
-                frontiers: Vec::new(),
-                received_at: at,
-                origins: vec![crate::ports::UpdateOrigin::Store],
-            })?;
-            self.catalog.record_location(id, workspace)?;
-        }
+        // ---- staging: every content row, into a repository nothing lists.
+        // `create_workspace` refuses an existing repository, which is what
+        // keeps a stale leftover from being written over.
+        let mut repo = self.backend.create_workspace(workspace)?;
+        let staged = (|| -> Result<Vec<DocumentId>> {
+            let mut locations = Vec::with_capacity(bundle.manifest.documents.len());
+            for document in &bundle.manifest.documents {
+                let id = remap[&document.id];
+                let bytes = match &duplicated_manifest {
+                    Some((source, bytes)) if *source == document.id => bytes.as_slice(),
+                    _ => bundle.snapshot_of(document.id).ok_or_else(|| {
+                        Error::new(Code::InvalidRequest, "a snapshot went missing")
+                    })?,
+                };
 
-        // History is imported after the live documents exist. `capture_history`
-        // intentionally re-mints storage ids while deduplicating identical
-        // frontiers: a duplicated workspace must not share external identities
-        // with its origin, and callers address the imported entries from the
-        // returned timeline rather than carrying stale ids across stores.
-        for entry in bundle.manifest.history_entries.iter().rev() {
-            let source = bundle
-                .manifest
-                .history_versions
-                .iter()
-                .find(|version| version.id == entry.version)
-                .ok_or_else(|| {
-                    Error::new(Code::InvalidRequest, "a history version went missing")
+                repo.create_document(id, document.kind, at)?;
+                // The snapshot becomes the document's whole history, written as
+                // one update from nothing. A delta would name ancestors that do
+                // not exist here, and Loro would park it as pending — applying
+                // nothing and reporting nothing.
+                repo.commit_updates(&crate::ports::UpdateBatch {
+                    document: id,
+                    updates: vec![bytes.to_vec()],
+                    version_vector: Vec::new(),
+                    frontiers: Vec::new(),
+                    received_at: at,
+                    origins: vec![crate::ports::UpdateOrigin::Store],
                 })?;
-            let snapshot = bundle.history_snapshot_of(source.id).ok_or_else(|| {
-                Error::new(Code::InvalidRequest, "a history snapshot went missing")
-            })?;
-            let document = remap[&entry.document];
-            repo.capture_history(&HistoryCapture {
-                document,
-                snapshot,
-                version_vector: &source.version_vector,
-                frontiers: &source.frontiers,
-                checksum: &source.checksum,
-                reason: entry.reason,
-                recorded_at: entry.recorded_at,
-                label: entry.label.as_deref(),
-                message: entry.message.as_deref(),
-                boundary: entry.boundary.as_deref(),
-            })?;
-        }
-
-        // **Objects first, then associations.** The bytes are installed into
-        // the one object store and only then does the Workspace gain its row,
-        // so a restore interrupted between the two leaves an object nothing
-        // references — which this rung keeps — rather than a row naming bytes
-        // that are not there.
-        let blobs = self.backend.objects()?;
-        for (hash, bytes) in &bundle.blobs {
-            let written = blobs.put(bytes)?;
-            if written != *hash {
-                return Err(Error::new(
-                    Code::BlobChecksumMismatch,
-                    "a blob in the bundle does not hash to the name it was filed under",
-                ));
+                locations.push(id);
             }
-            if let Some(meta) = bundle.manifest.blobs.iter().find(|b| b.hash == *hash) {
-                repo.put_blob(meta)?;
-            }
-        }
 
-        if mode == ImportMode::Duplicate {
-            self.catalog.record_lineage(&Lineage {
-                workspace,
-                derived_from: origin,
-                kind: crate::model::LineageKind::Duplicate,
-                at,
-            })?;
+            // History is imported after the live documents exist.
+            // `capture_history` intentionally re-mints storage ids while
+            // deduplicating identical frontiers: a duplicated workspace must
+            // not share external identities with its origin, and callers
+            // address the imported entries from the returned timeline rather
+            // than carrying stale ids across stores.
+            for entry in bundle.manifest.history_entries.iter().rev() {
+                let source = bundle
+                    .manifest
+                    .history_versions
+                    .iter()
+                    .find(|version| version.id == entry.version)
+                    .ok_or_else(|| {
+                        Error::new(Code::InvalidRequest, "a history version went missing")
+                    })?;
+                let snapshot = bundle.history_snapshot_of(source.id).ok_or_else(|| {
+                    Error::new(Code::InvalidRequest, "a history snapshot went missing")
+                })?;
+                let document = remap[&entry.document];
+                repo.capture_history(&HistoryCapture {
+                    document,
+                    snapshot,
+                    version_vector: &source.version_vector,
+                    frontiers: &source.frontiers,
+                    checksum: &source.checksum,
+                    reason: entry.reason,
+                    recorded_at: entry.recorded_at,
+                    label: entry.label.as_deref(),
+                    message: entry.message.as_deref(),
+                    boundary: entry.boundary.as_deref(),
+                })?;
+            }
+
+            // **Objects first, then associations.** The bytes are installed
+            // into the one object store and only then does the Workspace gain
+            // its row, so an import interrupted between the two leaves an
+            // object nothing references — which this rung keeps — rather than
+            // a row naming bytes that are not there. A bundle without blobs
+            // asks the object store for nothing, so a Store kept in memory
+            // can import one.
+            if !bundle.blobs.is_empty() {
+                let blobs = self.backend.objects()?;
+                for (hash, bytes) in &bundle.blobs {
+                    let written = blobs.put(bytes)?;
+                    if written != *hash {
+                        return Err(Error::new(
+                            Code::BlobChecksumMismatch,
+                            "a blob in the bundle does not hash to the name it was filed under",
+                        ));
+                    }
+                    if let Some(meta) = bundle.manifest.blobs.iter().find(|b| b.hash == *hash) {
+                        repo.put_blob(meta)?;
+                    }
+                }
+            }
+            Ok(locations)
+        })();
+        // Every handle on the staged repository is dropped before the catalog
+        // publication, and before any cleanup of it.
+        drop(repo);
+        let locations = match staged {
+            Ok(locations) => locations,
+            Err(error) => {
+                self.cleanup_fresh_repository(workspace);
+                return Err(error);
+            }
+        };
+
+        // ---- publication: one catalog transaction, after every content row.
+        if let Err(error) = self.catalog.publish_imported_workspace(
+            scope,
+            &unit_commit,
+            &record,
+            &locations,
+            &receipt,
+        ) {
+            // The repository is this call's own and nothing names it; an
+            // object already installed stays, as above.
+            self.cleanup_fresh_repository(workspace);
+            return Err(error);
         }
+        tracing::info!(
+            workspace = %workspace,
+            mode = mode.as_str(),
+            documents = locations.len(),
+            "imported workspace published"
+        );
 
         // Opened afresh, so the manifest is read back from what was actually
         // written rather than assumed from the bundle.
-        drop(repo);
         self.ensure_open(workspace)?;
         let entries = self.open[&workspace].manifest.entries();
         self.open

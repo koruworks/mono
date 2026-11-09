@@ -6,9 +6,10 @@
 //! §5.1): one unit per Workspace under the device's user scope, read and
 //! written through the `workspace_personal_*` ports. The facade stays
 //! Profile-oriented for its callers — `reminders(profile)` and friends answer
-//! over the Workspaces whose **current placement** is that Profile — but no
-//! personal row is keyed by a Profile any more, and the former Profile of a
-//! Workspace need not exist for its personal data to be found.
+//! over the Workspaces whose **current placement** is that Profile, read from
+//! the root Workspace unit (`root_move.rs`) — but no personal row is keyed by
+//! a Profile any more, and the former Profile of a Workspace need not exist
+//! for its personal data to be found.
 
 use super::*;
 use crate::ids::UserScopeId;
@@ -52,21 +53,11 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         self.catalog.local_user_scope()
     }
 
-    /// The Workspaces whose current placement is `profile`, Trash included.
-    ///
-    /// For this commit the placement is the `workspaces.owner` projection.
-    /// Plan 1.2 makes the root Workspace unit's `placement.current` the
-    /// authority and this reads it instead; nothing else in the facade
-    /// knows where the answer came from.
-    fn placed_workspaces(&self, profile: ProfileId) -> Result<BTreeSet<WorkspaceId>> {
-        Ok(self
-            .catalog
-            .workspaces_including_deleted()?
-            .into_iter()
-            .filter(|workspace| workspace.owner == profile)
-            .map(|workspace| workspace.id)
-            .collect())
-    }
+    // Which Workspaces are placed under a Profile — `placed_workspaces` — is
+    // the root catalog's answer and lives in `root_move.rs`: the Workspace
+    // unit's `placement.current` (overlay first), with the `workspaces.owner`
+    // projection only for a Workspace that has no unit yet. Nothing else in
+    // the facade knows where the answer came from.
 
     /// Open a committed v2 row under its persisted writer. A read-only unit
     /// refuses the writer, as every unit does, and the caller reports it.

@@ -1,11 +1,20 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Lifecycle authority commits before its listing, with any last-workspace
-//! replacement prepared before either changes. A failed publication is a value.
+//! replacement **selected** before either changes. A failed publication is a
+//! value.
+//!
+//! **No replacement is ever created here.** Until Plan 1.2 of the root
+//! catalog these routes manufactured a default Workspace when the source
+//! Profile would be left empty. `docs/features/root-catalog/TECHNICAL.final.md`
+//! §3.10 and §6.3 (D17; ADR-000-rootcatalog) settle that an empty Profile
+//! stays empty until the person creates a Workspace, so the replacing routes
+//! may *select* another verified live Workspace of the source Profile and
+//! otherwise answer [`Replacement::NotNeeded`]. `EnsureLive`'s own creation
+//! and the `NeedsProfile` host flow are Plan 1.3's.
 
 use super::*;
 use crate::ports::Removal;
-use preparation::Prepared;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -20,9 +29,17 @@ pub enum ListingState {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "state", content = "workspace", rename_all = "snake_case")]
 pub enum Replacement {
+    /// A Workspace manufactured for the emptied Profile. **Never produced
+    /// since Plan 1.2 of the root catalog.** Kept on the wire so the
+    /// generated schemas, an older client's decoder and every consumer that
+    /// handled it are unchanged; new code branches on the other three.
     Created(Workspace),
+    /// Another verified live Workspace of the source Profile.
     Existing(Workspace),
+    /// The source Profile has no other live Workspace and stays empty, or a
+    /// whole-Profile removal is in progress and wants none.
     NotNeeded,
+    /// The catalog publication did not commit, so nothing is known.
     Unknown,
 }
 
@@ -43,10 +60,11 @@ pub struct MovedWorkspace {
     pub replacement: Replacement,
 }
 
-enum Ready<W> {
+/// What `prepare_removal_replacement` selected. Nothing here owns storage,
+/// so there is nothing to discard on a failed publication.
+enum Ready {
     NotNeeded,
     Existing(Workspace),
-    Prepared(Prepared<W>),
 }
 
 #[derive(Clone, Copy)]
@@ -56,22 +74,25 @@ enum Lifecycle {
 }
 
 impl<C: Catalog, B: Backend> Store<C, B> {
+    /// `name` was the localized name of a manufactured replacement. It is
+    /// accepted for wire compatibility and unused: no replacement is created.
     pub fn archive_workspace_replacing(
         &mut self,
         workspace: WorkspaceId,
-        name: &str,
+        _name: &str,
         at: Timestamp,
     ) -> Result<RemovedWorkspace> {
-        self.remove_workspace_replacing(workspace, Lifecycle::Archive, name, None, at)
+        self.remove_workspace_replacing(workspace, Lifecycle::Archive, None, at)
     }
 
+    /// See [`Self::archive_workspace_replacing`] for `name`.
     pub fn delete_workspace_replacing(
         &mut self,
         workspace: WorkspaceId,
-        name: &str,
+        _name: &str,
         at: Timestamp,
     ) -> Result<RemovedWorkspace> {
-        self.remove_workspace_replacing(workspace, Lifecycle::Delete, name, None, at)
+        self.remove_workspace_replacing(workspace, Lifecycle::Delete, None, at)
     }
 
     pub fn delete_workspace_for_removal(
@@ -80,19 +101,25 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         attempt: crate::ids::RemovalAttemptId,
         at: Timestamp,
     ) -> Result<RemovedWorkspace> {
-        self.remove_workspace_replacing(workspace, Lifecycle::Delete, "", Some(attempt), at)
+        self.remove_workspace_replacing(workspace, Lifecycle::Delete, Some(attempt), at)
     }
 
+    /// A move with the verified authority projection and a replacement
+    /// selected for the source Profile. The move itself is the root operation
+    /// of `root_move::commit_root_move`, published with the projection in one
+    /// catalog transaction; see [`Self::move_workspace`] for `name`, see
+    /// [`Self::archive_workspace_replacing`].
     pub fn move_workspace_replacing(
         &mut self,
         workspace: WorkspaceId,
         to: ProfileId,
-        name: &str,
+        _name: &str,
         at: Timestamp,
     ) -> Result<MovedWorkspace> {
         self.refuse_profile_removal(self.workspace_including_deleted(workspace)?.owner)?;
         self.refuse_profile_removal(to)?;
         self.profile(to)?;
+        self.refuse_holder(to, "a move destination")?;
         self.flush_workspace_manifest(workspace, at)?;
         let row = self.workspace_including_deleted(workspace)?;
         let authority = self.verified_removal_authority(workspace)?;
@@ -110,19 +137,12 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         }
         projected.owner = to;
         projected.position = self.next_workspace_position(to)?;
-        let ready = self.prepare_removal_replacement(&row, name, at)?;
-        if let Err(error) = self
-            .catalog
-            .publish_removal(Removal::Move(&projected), ready.publication())
-        {
-            self.discard_replacement(ready);
-            return Err(error);
-        }
-        let replacement = self.adopt_replacement(ready);
+        let ready = self.prepare_removal_replacement(&row, at)?;
+        self.commit_root_move(&projected)?;
         Ok(MovedWorkspace {
             workspace: projected,
             from,
-            replacement,
+            replacement: adopt_replacement(ready),
         })
     }
 
@@ -130,7 +150,6 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         &mut self,
         workspace: WorkspaceId,
         lifecycle: Lifecycle,
-        name: &str,
         removal_attempt: Option<crate::ids::RemovalAttemptId>,
         at: Timestamp,
     ) -> Result<RemovedWorkspace> {
@@ -152,17 +171,14 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         let ready = if removal_attempt.is_some() {
             Ready::NotNeeded
         } else {
-            self.prepare_removal_replacement(&row, name, at)?
+            self.prepare_removal_replacement(&row, at)?
         };
         let already_committed = match lifecycle {
             Lifecycle::Archive => authority.archived,
             Lifecycle::Delete => authority.deleted_at.is_some(),
         };
         if !already_committed {
-            if let Err(error) = self.commit_removal(workspace, lifecycle, at) {
-                self.discard_replacement(ready);
-                return Err(error);
-            }
+            self.commit_removal(workspace, lifecycle, at)?;
             match lifecycle {
                 Lifecycle::Archive => projected.archived = true,
                 Lifecycle::Delete => projected.deleted_at = Some(at),
@@ -172,7 +188,9 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             Lifecycle::Archive => Removal::Archive(&projected),
             Lifecycle::Delete => Removal::Delete(&projected),
         };
-        let publication = self.catalog.publish_removal(removal, ready.publication());
+        // No prepared replacement travels with the removal any more: a
+        // selected Workspace is already listed, and nothing is created.
+        let publication = self.catalog.publish_removal(removal, None);
         // Never leave a durably deleted open document usable, including when
         // catalog publication fails. Its commit notification remains queued.
         if projected.deleted_at.is_some() {
@@ -183,21 +201,18 @@ impl<C: Catalog, B: Backend> Store<C, B> {
                 workspace: projected,
                 authority_committed: true,
                 listing: ListingState::Applied,
-                replacement: self.adopt_replacement(ready),
+                replacement: adopt_replacement(ready),
             }),
-            Err(error) => {
-                // Keep the prepared repository's durable bytes unlisted. It is
-                // no longer safe to undo a committed source to reclaim them.
-                drop(ready);
-                Ok(RemovedWorkspace {
-                    workspace: projected,
-                    authority_committed: true,
-                    listing: ListingState::Pending {
-                        cause: error.code().as_str().into(),
-                    },
-                    replacement: Replacement::Unknown,
-                })
-            }
+            // The removal is committed in the manifest and cannot be undone
+            // to repair a listing; the listing is repaired on the retry.
+            Err(error) => Ok(RemovedWorkspace {
+                workspace: projected,
+                authority_committed: true,
+                listing: ListingState::Pending {
+                    cause: error.code().as_str().into(),
+                },
+                replacement: Replacement::Unknown,
+            }),
         }
     }
 
@@ -258,15 +273,13 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         }
     }
 
-    fn prepare_removal_replacement(
-        &mut self,
-        removed: &Workspace,
-        name: &str,
-        at: Timestamp,
-    ) -> Result<Ready<B::Workspace>> {
+    /// Select another verified live Workspace of the source Profile, or
+    /// answer that none is needed. **Never creates one** (§6.3): a Profile
+    /// about to be left empty stays empty, as a valid state.
+    fn prepare_removal_replacement(&mut self, removed: &Workspace, at: Timestamp) -> Result<Ready> {
         self.profile(removed.owner)?;
         // Whole-Profile removal has a separate, attempt-checked path. Ordinary
-        // lifecycle requests must not create a replacement during that cascade.
+        // lifecycle requests must not select around that cascade.
         self.refuse_profile_removal(removed.owner)?;
         let mut rows: Vec<_> = self
             .catalog
@@ -293,34 +306,19 @@ impl<C: Catalog, B: Backend> Store<C, B> {
                 Err(error) => unresolved = Some(error),
             }
         }
-        // Unknown bytes are not evidence that this was the last workspace.
+        // Unknown bytes are not evidence that this was the last workspace, and
+        // the refusal stands even though nothing would be created: the caller
+        // is about to retire the one Workspace it can read.
         if let Some(error) = unresolved {
             return Err(error);
         }
-        self.prepare_workspace(removed.owner, name, None, None, at)
-            .map(Ready::Prepared)
-    }
-
-    fn discard_replacement(&self, ready: Ready<B::Workspace>) {
-        if let Ready::Prepared(prepared) = ready {
-            self.discard_prepared(prepared);
-        }
-    }
-
-    fn adopt_replacement(&mut self, ready: Ready<B::Workspace>) -> Replacement {
-        match ready {
-            Ready::NotNeeded => Replacement::NotNeeded,
-            Ready::Existing(workspace) => Replacement::Existing(workspace),
-            Ready::Prepared(prepared) => Replacement::Created(self.adopt_prepared(prepared)),
-        }
+        Ok(Ready::NotNeeded)
     }
 }
 
-impl<W> Ready<W> {
-    fn publication(&self) -> Option<(&Workspace, DocumentId)> {
-        match self {
-            Self::Prepared(prepared) => Some((&prepared.workspace, prepared.open.manifest_id)),
-            Self::Existing(_) | Self::NotNeeded => None,
-        }
+fn adopt_replacement(ready: Ready) -> Replacement {
+    match ready {
+        Ready::NotNeeded => Replacement::NotNeeded,
+        Ready::Existing(workspace) => Replacement::Existing(workspace),
     }
 }

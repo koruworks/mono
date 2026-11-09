@@ -177,7 +177,10 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         self.cleanup_fresh_repository(id);
     }
 
-    fn cleanup_fresh_repository(&self, id: WorkspaceId) {
+    /// Delete a repository this operation claimed and never published. Also
+    /// the bundle import's cleanup, for the same reason: the repository is
+    /// the caller's own and no catalog row names it.
+    pub(super) fn cleanup_fresh_repository(&self, id: WorkspaceId) {
         if let Err(error) = self.backend.delete_workspace(id) {
             tracing::warn!(workspace = %id, error = %error,
                 "could not clean up this operation's unpublished workspace");

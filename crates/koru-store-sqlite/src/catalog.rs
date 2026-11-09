@@ -849,6 +849,110 @@ impl Catalog for SqliteCatalog {
         tx.commit().map_err(sql_failed)
     }
 
+    fn publish_root_unit(
+        &mut self,
+        scope: UserScopeId,
+        unit: CatalogUnitRef,
+        write: koru_store_core::ports::RootUnitWrite,
+        projection: Option<&Workspace>,
+    ) -> Result<()> {
+        use koru_store_core::ports::RootUnitWrite;
+        // IMMEDIATE: the unit's compare-and-set, the overlay row and the
+        // owner projection are one write-serialized step, and a stale
+        // revision rolls every one of them back.
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_failed)?;
+        match &write {
+            RootUnitWrite::Durable {
+                commit,
+                clear_overlay,
+            } => {
+                if commit.unit != unit {
+                    return Err(Error::new(
+                        Code::InvalidRequest,
+                        "a root unit write names a different unit than its address",
+                    ));
+                }
+                root_catalog::commit_root_catalog_unit(&tx, scope, commit)?;
+                if *clear_overlay {
+                    root_catalog::clear_root_catalog_overlay(&tx, scope, unit)?;
+                }
+            }
+            RootUnitWrite::Overlay(overlay) => {
+                root_catalog::commit_root_catalog_overlay(&tx, scope, unit, overlay)?;
+            }
+        }
+        if let Some(workspace) = projection {
+            let exists: bool = tx
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = ?1)",
+                    [workspace.id.to_storage()],
+                    |row| row.get(0),
+                )
+                .map_err(sql_failed)?;
+            if !exists {
+                return Err(Error::bare(Code::WorkspaceNotFound));
+            }
+            // Owner and position, and the Workspace's `local_transport_modes`
+            // row re-keyed to the new owner with its `mode`, `explicit_choice`
+            // and `revision` exactly as they were: a stored choice above the
+            // new Profile's ceiling is reported by the effective read, never
+            // repaired here.
+            write_workspace_projection(&tx, workspace)?;
+        }
+        tx.commit().map_err(sql_failed)
+    }
+
+    fn publish_imported_workspace(
+        &mut self,
+        scope: UserScopeId,
+        unit: &RootCatalogUnitCommit,
+        workspace: &Workspace,
+        locations: &[DocumentId],
+        receipt: &Lineage,
+    ) -> Result<()> {
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_failed)?;
+        let exists: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = ?1)",
+                [workspace.id.to_storage()],
+                |row| row.get(0),
+            )
+            .map_err(sql_failed)?;
+        if exists {
+            return Err(Error::new(
+                Code::WorkspaceExists,
+                "this workspace is already in the store; import it as a duplicate instead",
+            ));
+        }
+        root_catalog::commit_root_catalog_unit(&tx, scope, unit)?;
+        write_workspace_projection(&tx, workspace)?;
+        for document in locations {
+            tx.execute(
+                "INSERT OR REPLACE INTO document_locations (document_id, workspace_id) VALUES (?1, ?2)",
+                params![document.to_storage(), workspace.id.to_storage()],
+            )
+            .map_err(sql_failed)?;
+        }
+        tx.execute(
+            "INSERT OR REPLACE INTO workspace_lineage (workspace, derived_from, kind, at)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![
+                receipt.workspace.to_storage(),
+                receipt.derived_from.to_storage(),
+                receipt.kind.as_str(),
+                receipt.at.millis(),
+            ],
+        )
+        .map_err(sql_failed)?;
+        tx.commit().map_err(sql_failed)
+    }
+
     fn workspace_locations(&self, workspace: WorkspaceId) -> Result<Vec<DocumentId>> {
         let mut statement = self.connection.prepare("SELECT document_id FROM document_locations WHERE workspace_id = ?1 ORDER BY document_id").map_err(sql_failed)?;
         let values = statement

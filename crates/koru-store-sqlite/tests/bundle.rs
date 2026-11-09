@@ -224,8 +224,11 @@ fn a_restore_over_a_workspace_already_here_is_refused() {
 }
 
 #[test]
-fn a_restore_records_no_lineage() {
-    // It is not derived from anything. It *is* the thing.
+fn a_restore_records_its_import_receipt_and_nothing_it_was_derived_from() {
+    // It is not derived from anything — it *is* the thing — so the one row
+    // names itself: the receipt of the publication that brought this replica
+    // here, in the lineage journal rather than a table of its own
+    // (root-catalog TECHNICAL.final §8.5).
     let mut f = Fixture::new();
     let ws = f.a_workspace(&["One"]);
     let bundle = f.store.export_workspace(ws, at(100)).unwrap();
@@ -234,7 +237,12 @@ fn a_restore_records_no_lineage() {
     let restored = there
         .import_workspace(&bundle, ImportMode::Restore, owner, at(200))
         .unwrap();
-    assert!(there.lineage(restored).unwrap().is_empty());
+    let lineage = there.lineage(restored).unwrap();
+    assert_eq!(lineage.len(), 1);
+    assert_eq!(lineage[0].workspace, restored);
+    assert_eq!(lineage[0].derived_from, restored);
+    assert_eq!(lineage[0].kind.as_str(), "restore");
+    assert_eq!(lineage[0].at, at(200));
 }
 
 // ------------------------------------------------------------------ duplicate

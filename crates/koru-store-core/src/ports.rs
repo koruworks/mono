@@ -49,6 +49,11 @@ use crate::transport::{
 // ------------------------------------------------------------------ catalog
 
 /// The complete verified projection to publish with a replacement.
+///
+/// `Move` is no longer produced by the Store: since Plan 1.2 a move is a root
+/// operation and goes through [`Catalog::publish_root_unit`], which carries
+/// the same projection write. The variant stays so the port's vocabulary is
+/// unchanged for an implementation that still handles it.
 pub enum Removal<'a> {
     Archive(&'a Workspace),
     Delete(&'a Workspace),
@@ -162,6 +167,27 @@ pub struct RootCatalogOverlay {
     pub private_snapshot: Vec<u8>,
     /// Stored as the i64 with the same bits; SQLite has no u64.
     pub writer_peer_id: u64,
+}
+
+/// What a root operation writes about one unit, decided by the Store before
+/// the catalog transaction opens (`docs/features/root-catalog/TECHNICAL.final.md`
+/// §4.3, §7.1). Exactly one of the two rows changes:
+///
+/// - [`Durable`](Self::Durable): the `root_catalog_units` row moves to the
+///   new snapshot under its compare-and-set revision. `clear_overlay` is set
+///   when the snapshot already folds a private overlay in, so the
+///   `root_catalog_overlays` row goes in the same transaction.
+/// - [`Overlay`](Self::Overlay): the edit cannot be published yet (the
+///   subject's effective transport admission is Local-only or fenced), so the
+///   `root_catalog_overlays` row is written whole and the durable row is not
+///   touched — byte for byte.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RootUnitWrite {
+    Durable {
+        commit: RootCatalogUnitCommit,
+        clear_overlay: bool,
+    },
+    Overlay(RootCatalogOverlay),
 }
 
 /// One `workspace_personal_crdts` row: a personal v2 unit under
@@ -362,6 +388,42 @@ pub trait Catalog {
         &mut self,
         scope: UserScopeId,
         unit: CatalogUnitRef,
+    ) -> Result<()>;
+    /// **The durable root operation** (TECHNICAL.final §7.1), in one
+    /// `IMMEDIATE` transaction: the unit's [`RootUnitWrite`] and, when the
+    /// operation is a move, the `workspaces` projection it implies — owner and
+    /// position, plus the re-keying of the Workspace's `local_transport_modes`
+    /// row to the new owner without touching its `mode`, `explicit_choice`
+    /// or `revision`. `projection` is `None` when only the unit changes, as
+    /// when a pending overlay is published after its subject became eligible
+    /// for export. A compare-and-set mismatch on the unit rolls the whole
+    /// transaction back; the Store acknowledges only after this returns.
+    ///
+    /// Modeled on [`Self::publish_removal`], which a move used before the root
+    /// unit existed; the archive/delete removals still go through that method
+    /// until Plan 1.3 makes the root the lifecycle writer.
+    fn publish_root_unit(
+        &mut self,
+        scope: UserScopeId,
+        unit: CatalogUnitRef,
+        write: RootUnitWrite,
+        projection: Option<&Workspace>,
+    ) -> Result<()>;
+    /// **A `.koru` bundle's publication** (TECHNICAL.final §8.5–8.6), after
+    /// every content row of the staged repository exists: the root Workspace
+    /// unit (`None` revision for a fresh unit, the read revision for one the
+    /// root already held), the `workspaces` row, every `document_locations`
+    /// row and the import receipt in `workspace_lineage`, in one `IMMEDIATE`
+    /// transaction. A `workspaces` row already present refuses with
+    /// `WorkspaceExists`, so a Restore retried after publication cannot list
+    /// a second Workspace under the same id.
+    fn publish_imported_workspace(
+        &mut self,
+        scope: UserScopeId,
+        unit: &RootCatalogUnitCommit,
+        workspace: &Workspace,
+        locations: &[DocumentId],
+        receipt: &Lineage,
     ) -> Result<()>;
 
     // ---- personal v2 (docs/features/root-catalog/TECHNICAL.final.md §5.1)

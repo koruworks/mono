@@ -27,6 +27,7 @@
 //! and a failed write cannot promise anything across it.
 
 use super::*;
+use crate::root_catalog::CatalogUnitRef;
 use crate::transport::{
     EffectiveTransportMode, InitializeTransportMode, SetTransportMode, TransportMode,
     TransportModeCommit, TransportModeGroup, TransportModeRequest, TransportModeState,
@@ -69,16 +70,40 @@ impl<C: Catalog, B: Backend> Store<C, B> {
     /// inconsistency go away.
     pub fn transport_admission(&self, subject: TransportSubject) -> Result<EffectiveTransportMode> {
         let state = self.catalog.transport_mode(subject)?;
+        self.admission_of(state, state.owner)
+    }
+
+    /// [`Self::transport_admission`] as it will read once `subject` is filed
+    /// under `owner` — what a move asks about its **destination** before it
+    /// writes anything (root-catalog TECHNICAL.final §4.4), so a placement
+    /// bound for a Local-only or fenced Profile goes to the private overlay
+    /// rather than the durable unit. The row's stored choice is read as it
+    /// is; only the ceiling and the fence come from `owner`.
+    pub(super) fn transport_admission_under(
+        &self,
+        subject: TransportSubject,
+        owner: ProfileId,
+    ) -> Result<EffectiveTransportMode> {
+        let state = self.catalog.transport_mode(subject)?;
+        self.admission_of(state, owner)
+    }
+
+    fn admission_of(
+        &self,
+        state: TransportModeState,
+        owner: ProfileId,
+    ) -> Result<EffectiveTransportMode> {
+        let subject = state.subject;
         let profile_mode = match subject {
             TransportSubject::Profile(_) => state.mode,
             TransportSubject::Workspace(_) => {
                 self.catalog
-                    .transport_mode(TransportSubject::Profile(state.owner))?
+                    .transport_mode(TransportSubject::Profile(owner))?
                     .mode
             }
         };
         let ceiling_mismatch = state.mode > profile_mode;
-        let fenced = self.transport.is_closed(subject, state.owner);
+        let fenced = self.transport.is_closed(subject, owner);
         let mode = if fenced {
             TransportMode::LocalOnly
         } else {
@@ -345,6 +370,17 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         // transaction — so a racing change here can only make the fence wider,
         // which is the safe direction.
         let before = self.catalog.transport_mode_group(owner)?;
+        // What may export *now*, remembered before the fence moves: a subject
+        // this group turns from no-export to export has its pending root
+        // overlay published once the rows have committed (root_move.rs).
+        let exportable_before: Vec<(TransportSubject, bool)> = std::iter::once(&before.profile)
+            .chain(before.children.iter())
+            .map(|state| {
+                let effective = state.mode.min(before.profile.mode);
+                let fenced = self.transport.is_closed(state.subject, owner);
+                (state.subject, !fenced && effective.allows_peer())
+            })
+            .collect();
         let restrictive = restrictive_subjects(&before, requests);
         // A row whose revision is exhausted can never be changed again, so this
         // device could never turn that transport off later either. Contract §2
@@ -377,6 +413,9 @@ impl<C: Catalog, B: Backend> Store<C, B> {
                     // across it would deny something now allowed.
                     self.transport.invalidate();
                 }
+                if outcomes.iter().any(|outcome| outcome.wrote()) {
+                    self.publish_newly_exportable_overlays(&exportable_before);
+                }
                 Ok(outcomes)
             }
             // **The guard stays closed and the failure is reported.** Saying
@@ -384,6 +423,41 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             // choice that is not on the disk — and the next restart would
             // silently go back to the old mode with transfers running.
             Err(error) => Err(error),
+        }
+    }
+
+    /// Root-catalog TECHNICAL.final §4.3: when a committed group makes a
+    /// Workspace exportable, the private overlay its placement waited in is
+    /// published into the durable unit. A failure is logged, not returned —
+    /// the mode rows have committed and the overlay is intact, so the next
+    /// move or eligibility change retries, and the export seam answers
+    /// `None` for a subject with a pending overlay in the meantime.
+    fn publish_newly_exportable_overlays(
+        &mut self,
+        exportable_before: &[(TransportSubject, bool)],
+    ) {
+        for (subject, before) in exportable_before {
+            let TransportSubject::Workspace(workspace) = *subject else {
+                continue;
+            };
+            if *before {
+                continue;
+            }
+            let now = self
+                .transport_admission(*subject)
+                .is_ok_and(|admission| admission.allows_peer());
+            if !now {
+                continue;
+            }
+            if let Err(error) =
+                self.publish_pending_overlay(CatalogUnitRef::Workspace { workspace })
+            {
+                tracing::warn!(
+                    workspace = %workspace,
+                    error = %error,
+                    "a pending root overlay could not be published after its subject became exportable"
+                );
+            }
         }
     }
 
