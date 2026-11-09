@@ -5642,9 +5642,10 @@ impl ChatSurface {
         let drafts = self.strip().to_vec();
         for draft in &drafts {
             let secondary = self.attachment_chip_secondary(draft);
+            let label = draft.chip_label();
             chip_widths.push(
                 ContextChip {
-                    label: &draft.file_name,
+                    label: &label,
                     secondary: &secondary,
                     icon: self.attachment_chip_icon(draft),
                     state: self.attachment_chip_state(draft),

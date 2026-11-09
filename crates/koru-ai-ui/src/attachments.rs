@@ -99,6 +99,28 @@ pub(crate) struct Draft {
 }
 
 impl Draft {
+    /// Keep both ends of a long name visible in the composer chip. The full
+    /// name remains on the draft for storage, sending and opening the file.
+    pub(crate) fn chip_label(&self) -> std::borrow::Cow<'_, str> {
+        let (stem, extension) = if self.kind == AttachmentKind::Folder {
+            (self.file_name.as_str(), "")
+        } else {
+            self.file_name
+                .rsplit_once('.')
+                .filter(|(stem, extension)| !stem.is_empty() && !extension.is_empty())
+                .map_or((self.file_name.as_str(), ""), |(stem, _)| {
+                    (stem, &self.file_name[stem.len()..])
+                })
+        };
+        let length = stem.chars().count();
+        if length <= 13 {
+            return std::borrow::Cow::Borrowed(&self.file_name);
+        }
+        let start: String = stem.chars().take(6).collect();
+        let end: String = stem.chars().skip(length - 6).collect();
+        std::borrow::Cow::Owned(format!("{start}…{end}{extension}"))
+    }
+
     /// A fresh staged copy requested from a sent attachment. Its bytes stay
     /// at the AI service; only metadata and a pending id enter the window.
     pub(crate) fn restaged(source: &ChatAttachment, id: ChatAttachmentId) -> Self {
@@ -1907,8 +1929,9 @@ impl ChatSurface {
                 break;
             };
             let secondary = self.attachment_chip_secondary(draft);
+            let label = draft.chip_label();
             koru_ui::context_chip::ContextChip {
-                label: &draft.file_name,
+                label: &label,
                 secondary: &secondary,
                 icon: self.attachment_chip_icon(draft),
                 state: self.attachment_chip_state(draft),

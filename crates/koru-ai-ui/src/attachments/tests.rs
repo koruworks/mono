@@ -59,6 +59,34 @@ fn png(width: u32, height: u32) -> koru_clipboard::PngBitmap {
     }
 }
 
+#[test]
+fn composer_chip_shortens_long_names_but_keeps_extensions_and_full_drafts() {
+    let file = Draft::reference(
+        PathBuf::from("CFTC Staff Letter 26 - Passive Software Provider.pdf"),
+        AttachmentKind::File,
+    );
+    assert_eq!(file.chip_label(), "CFTC S…ovider.pdf");
+    assert_eq!(
+        file.file_name,
+        "CFTC Staff Letter 26 - Passive Software Provider.pdf"
+    );
+
+    let folder = Draft::reference(
+        PathBuf::from("research.materials.archive"),
+        AttachmentKind::Folder,
+    );
+    assert_eq!(folder.chip_label(), "resear…rchive");
+
+    let short = Draft::reference(PathBuf::from("notes.pdf"), AttachmentKind::File);
+    assert_eq!(short.chip_label(), "notes.pdf");
+
+    let unicode = Draft::reference(
+        PathBuf::from("日本語の長いファイル名の詳細資料.pdf"),
+        AttachmentKind::File,
+    );
+    assert_eq!(unicode.chip_label(), "日本語の長い…名の詳細資料.pdf");
+}
+
 fn surface_with_agent_chat() -> (ChatSurface, ChatId, std::sync::mpsc::Receiver<Command>) {
     let mut surface = ChatSurface::new();
     let (reader, commands, _updates) = Reader::test_pair();
