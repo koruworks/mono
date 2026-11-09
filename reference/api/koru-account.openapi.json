@@ -170,6 +170,12 @@
         ],
         "type": "integer"
       },
+      "AccountWireVersion2": {
+        "enum": [
+          2
+        ],
+        "type": "integer"
+      },
       "AddGoogleCandidateId": {
         "description": "Opaque, one-use authorization candidate produced by a verified provider\ncallback. Its contents are server-owned and must never be logged.",
         "type": "string"
@@ -318,6 +324,14 @@
           },
           "version": {
             "$ref": "#/components/schemas/AccountWireVersion1"
+          },
+          "workspaces": {
+            "default": [],
+            "description": "Grants pinned to a Workspace UUID (root-catalog Plan 3.3); empty for\na connection approved before them.",
+            "items": {
+              "$ref": "#/components/schemas/AppConnectionWorkspaceGrantV1"
+            },
+            "type": "array"
           }
         },
         "required": [
@@ -330,6 +344,23 @@
           "profiles",
           "created_at_millis",
           "last_used_at_millis"
+        ],
+        "type": "object"
+      },
+      "AppConnectionWorkspaceGrantV1": {
+        "additionalProperties": false,
+        "description": "The person's choice for one Workspace, pinned to its UUID (root-catalog\nTECHNICAL.final §3.9): it follows the Workspace wherever it is placed,\nwhere a Profile decision follows the Profile's current placement. Added\nby root-catalog Plan 3.3; every list that carries it defaults to empty,\nso a v1 body without it keeps its meaning.",
+        "properties": {
+          "workspace_access": {
+            "$ref": "#/components/schemas/ProfileAccessV1"
+          },
+          "workspace_id": {
+            "$ref": "#/components/schemas/WorkspaceId"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "workspace_access"
         ],
         "type": "object"
       },
@@ -543,6 +574,331 @@
         ],
         "type": "string"
       },
+      "CatalogScopeId": {
+        "format": "uuid",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        "type": "string"
+      },
+      "CloudCatalogBindingRefV2": {
+        "additionalProperties": false,
+        "description": "What the device already records as its account-scope binding\n(`Store::bind_account_scope`), if anything. Declared so the service\nrefuses a device of another account before reading or writing.",
+        "properties": {
+          "account_id": {
+            "$ref": "#/components/schemas/KoruIdentityId"
+          },
+          "catalog_scope_id": {
+            "$ref": "#/components/schemas/CatalogScopeId"
+          }
+        },
+        "required": [
+          "account_id",
+          "catalog_scope_id"
+        ],
+        "type": "object"
+      },
+      "CloudCatalogBindingRequestV2": {
+        "additionalProperties": false,
+        "description": "`PUT /v1/account/cloud/catalog/binding`. The account and the identity\ncome from the native session; the body is only what the device holds.",
+        "properties": {
+          "held": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CloudCatalogBindingRefV2"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "version": {
+            "$ref": "#/components/schemas/AccountWireVersion2"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "type": "object"
+      },
+      "CloudCatalogBindingV2": {
+        "additionalProperties": false,
+        "description": "The account's one catalog binding (§4.1). A second device, a second\nverified identity of the account and a retry all get exactly this.",
+        "properties": {
+          "account_id": {
+            "$ref": "#/components/schemas/KoruIdentityId"
+          },
+          "binding_generation": {
+            "description": "1 at creation; moves only if the service ever re-mints the scope,\nwhich nothing in this contract does.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "bound_at_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "catalog_scope_id": {
+            "$ref": "#/components/schemas/CatalogScopeId"
+          },
+          "version": {
+            "$ref": "#/components/schemas/AccountWireVersion2"
+          }
+        },
+        "required": [
+          "version",
+          "account_id",
+          "catalog_scope_id",
+          "bound_at_ms",
+          "binding_generation"
+        ],
+        "type": "object"
+      },
+      "CloudCoverageV2": {
+        "description": "How much of the admitted catalog the projection this receipt was read\nfrom has committed. A count computed under `Partial` is a count of what\nthe projection has read, not of the catalog; a former Profile is not\ndeclared empty while a unit that may still place something under it is\npending.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "state": {
+                "enum": [
+                  "complete"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "pending": {
+                "items": {
+                  "$ref": "#/components/schemas/CloudUnitRefV2"
+                },
+                "type": "array"
+              },
+              "state": {
+                "enum": [
+                  "partial"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state",
+              "pending"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "reason": {
+                "$ref": "#/components/schemas/CloudHoldReasonV2"
+              },
+              "state": {
+                "enum": [
+                  "held"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state",
+              "reason"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "CloudDiscoveryCursorV2": {
+        "additionalProperties": false,
+        "description": "The cursor of a discovery page: the last Workspace listed.",
+        "properties": {
+          "workspace_id": {
+            "$ref": "#/components/schemas/WorkspaceId"
+          }
+        },
+        "required": [
+          "workspace_id"
+        ],
+        "type": "object"
+      },
+      "CloudDiscoveryReceiptV2": {
+        "additionalProperties": false,
+        "description": "`GET /v1/account/cloud/discovery?scope=…[&after_workspace_id=…]`.\nCounts a client derives group by `results[*].placement`; a Workspace\nappears once, under its current placement, and the receipt says how\nmuch of the catalog that grouping covers.",
+        "properties": {
+          "account_id": {
+            "$ref": "#/components/schemas/KoruIdentityId"
+          },
+          "authorization_generation": {
+            "description": "The account's authorization generation the receipt was read under;\na permit from an older generation does not correlate to it.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "catalog_scope_id": {
+            "$ref": "#/components/schemas/CatalogScopeId"
+          },
+          "coverage": {
+            "$ref": "#/components/schemas/CloudCoverageV2"
+          },
+          "next": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CloudDiscoveryCursorV2"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "pass": {
+            "description": "The service's projection pass that produced the receipt. Monotonic\nper scope; a client correlates its own pass to it and never treats\nan older pass as newer evidence.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "profiles": {
+            "items": {
+              "$ref": "#/components/schemas/CloudProfileResultV2"
+            },
+            "type": "array"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/CloudWorkspaceCandidateV2"
+            },
+            "type": "array"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/CloudDiscoveryScopeV2"
+          },
+          "version": {
+            "$ref": "#/components/schemas/AccountWireVersion2"
+          }
+        },
+        "required": [
+          "version",
+          "account_id",
+          "catalog_scope_id",
+          "authorization_generation",
+          "pass",
+          "scope",
+          "coverage",
+          "profiles",
+          "results"
+        ],
+        "type": "object"
+      },
+      "CloudDiscoveryScopeV2": {
+        "description": "What a discovery pass asks about.",
+        "oneOf": [
+          {
+            "description": "The Profiles and their lifecycle, with the Workspaces currently\nplaced under each.",
+            "enum": [
+              "user_catalog"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "The Workspaces the account may sync, with their placement.",
+            "enum": [
+              "workspaces"
+            ],
+            "type": "string"
+          }
+        ]
+      },
+      "CloudHoldReasonV2": {
+        "description": "Why a valid unit was held rather than stored or forwarded: the export\nboundary's own reasons (§4.3) plus the two hosted preconditions.",
+        "oneOf": [
+          {
+            "enum": [
+              "owner_hidden",
+              "lifecycle_differs"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "The Workspace's current placement names a Profile whose unit the\naccount's catalog does not hold as Cloud-eligible. Send that Profile's\nunit first, or the Workspace stays held.",
+            "enum": [
+              "current_placement_hidden"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "A personal unit whose Workspace catalog unit is not admitted yet.",
+            "enum": [
+              "workspace_unit_required"
+            ],
+            "type": "string"
+          }
+        ]
+      },
+      "CloudMembershipV2": {
+        "additionalProperties": false,
+        "description": "The account's membership facts for one Workspace — separate from where\nthe Workspace is placed. These are what content admission reads.",
+        "properties": {
+          "authorization_version": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "cloud_access_epoch": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "documents_write": {
+            "description": "The live membership also grants document writes.",
+            "type": "boolean"
+          },
+          "membership_epoch": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "authorization_version",
+          "membership_epoch",
+          "cloud_access_epoch",
+          "documents_write"
+        ],
+        "type": "object"
+      },
+      "CloudProfileResultV2": {
+        "additionalProperties": false,
+        "description": "One Profile in a discovery receipt: lifecycle from its catalog unit,\nwhether its Identity/Private units are currently eligible (§4.4), and\nthe watermark the answer was read at.",
+        "properties": {
+          "lifecycle": {
+            "$ref": "#/components/schemas/SubjectLifecycle"
+          },
+          "profile_id": {
+            "$ref": "#/components/schemas/ProfileId"
+          },
+          "profile_units_eligible": {
+            "type": "boolean"
+          },
+          "projection_watermark": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "profile_id",
+          "lifecycle",
+          "profile_units_eligible",
+          "projection_watermark"
+        ],
+        "type": "object"
+      },
       "CloudProfileSelectionRequestV1": {
         "additionalProperties": false,
         "description": "Select one exact discovery eligibility pair for the current native device.\nThe Profile comes from the path; every other identity comes from the\nsession, never from this body.",
@@ -584,6 +940,346 @@
               "selected"
             ],
             "type": "string"
+          }
+        ]
+      },
+      "CloudRootCatalogV2": {
+        "additionalProperties": false,
+        "description": "`GET /v1/account/cloud/catalog`: the account's admitted units, with a\ndigest over exactly them so equal digests end the root exchange. No\nname, no scope, no hidden subject.",
+        "properties": {
+          "digest": {
+            "items": {
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "next": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CloudUnitRefV2"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "The last unit listed iff more follow; explicitly null otherwise."
+          },
+          "units": {
+            "items": {
+              "$ref": "#/components/schemas/CloudRootUnitStateV2"
+            },
+            "type": "array"
+          },
+          "version": {
+            "$ref": "#/components/schemas/AccountWireVersion2"
+          }
+        },
+        "required": [
+          "version",
+          "digest",
+          "units"
+        ],
+        "type": "object"
+      },
+      "CloudRootJoinReceiptV2": {
+        "description": "The service's answer to a push: the join receipt of §4.1 on the account\npath. `frontier` is always the frontier Cloud holds after the call.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "Stored durably at `revision`; the projection advances to it\nseparately and the watermark says when it has.",
+            "properties": {
+              "frontier": {
+                "items": {
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              "outcome": {
+                "enum": [
+                  "applied"
+                ],
+                "type": "string"
+              },
+              "projection_watermark": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "redacted_ops": {
+                "description": "How many historical references the hosted derivation redacted\nbefore storing. A number for the device's log, never a list.",
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "revision": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "unit": {
+                "$ref": "#/components/schemas/CloudUnitRefV2"
+              },
+              "version": {
+                "$ref": "#/components/schemas/AccountWireVersion2"
+              }
+            },
+            "required": [
+              "outcome",
+              "version",
+              "unit",
+              "frontier",
+              "revision",
+              "projection_watermark",
+              "redacted_ops"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Ancestors missing: nothing stored; send from `frontier`.",
+            "properties": {
+              "frontier": {
+                "items": {
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              "outcome": {
+                "enum": [
+                  "pending"
+                ],
+                "type": "string"
+              },
+              "unit": {
+                "$ref": "#/components/schemas/CloudUnitRefV2"
+              },
+              "version": {
+                "$ref": "#/components/schemas/AccountWireVersion2"
+              }
+            },
+            "required": [
+              "outcome",
+              "version",
+              "unit",
+              "frontier"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Nothing new; an idempotent re-send.",
+            "properties": {
+              "frontier": {
+                "items": {
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              "outcome": {
+                "enum": [
+                  "unchanged"
+                ],
+                "type": "string"
+              },
+              "unit": {
+                "$ref": "#/components/schemas/CloudUnitRefV2"
+              },
+              "version": {
+                "$ref": "#/components/schemas/AccountWireVersion2"
+              }
+            },
+            "required": [
+              "outcome",
+              "version",
+              "unit",
+              "frontier"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Valid but not storable now; retried when the hold reason clears.",
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "held"
+                ],
+                "type": "string"
+              },
+              "reason": {
+                "$ref": "#/components/schemas/CloudHoldReasonV2"
+              },
+              "unit": {
+                "$ref": "#/components/schemas/CloudUnitRefV2"
+              },
+              "version": {
+                "$ref": "#/components/schemas/AccountWireVersion2"
+              }
+            },
+            "required": [
+              "outcome",
+              "version",
+              "unit",
+              "reason"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "CloudRootUnitRequestV2": {
+        "additionalProperties": false,
+        "description": "`POST /v1/account/cloud/catalog/units/pull`: ask for one unit from the\ndevice's accepted frontier (its join receipt); the empty vector asks for\na snapshot.",
+        "properties": {
+          "frontier": {
+            "items": {
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "unit": {
+            "$ref": "#/components/schemas/CloudUnitRefV2"
+          },
+          "version": {
+            "$ref": "#/components/schemas/AccountWireVersion2"
+          }
+        },
+        "required": [
+          "version",
+          "unit",
+          "frontier"
+        ],
+        "type": "object"
+      },
+      "CloudRootUnitStateV2": {
+        "additionalProperties": false,
+        "description": "One admitted unit as the service advertises it: its address, the\nfrontier Cloud holds (an encoded version vector) and how far the\ndiscovery projection has committed it. The watermark is a per-unit\n`i64` — the unit revision the projection has read — never a global\nvector (§7.3).",
+        "properties": {
+          "frontier": {
+            "items": {
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "projection_watermark": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "unit": {
+            "$ref": "#/components/schemas/CloudUnitRefV2"
+          }
+        },
+        "required": [
+          "unit",
+          "frontier",
+          "projection_watermark"
+        ],
+        "type": "object"
+      },
+      "CloudRootUnitUpdatesV2": {
+        "additionalProperties": false,
+        "description": "Bytes of one unit through the export boundary, in either direction: a\nderived snapshot or updates since the requested frontier, never raw unit\nbytes. On a push the device sends them (`POST\n/v1/account/cloud/catalog/units/push`); on a pull the service answers\nthem with the watermark its projection holds for the unit.",
+        "properties": {
+          "projection_watermark": {
+            "description": "The service's watermark for the unit on a pull; on a push the device\nechoes the last watermark it saw, which the service may ignore.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "unit": {
+            "$ref": "#/components/schemas/CloudUnitRefV2"
+          },
+          "updates": {
+            "items": {
+              "items": {
+                "format": "uint8",
+                "maximum": 255,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            "type": "array"
+          },
+          "version": {
+            "$ref": "#/components/schemas/AccountWireVersion2"
+          }
+        },
+        "required": [
+          "version",
+          "unit",
+          "updates",
+          "projection_watermark"
+        ],
+        "type": "object"
+      },
+      "CloudRouteResultV2": {
+        "description": "Where the scope's session dials, or why not yet. Mirrors the v1\n`DatasetRouteResultV1` without a dataset: the dataset, when there is\none, is on the response beside it.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "route": {
+                "$ref": "#/components/schemas/CloudSyncRouteV1"
+              },
+              "state": {
+                "enum": [
+                  "available"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state",
+              "route"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "enum": [
+                  "sync_unavailable"
+                ],
+                "type": "string"
+              },
+              "retry_after_seconds": {
+                "format": "uint16",
+                "maximum": 300,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "state": {
+                "enum": [
+                  "unavailable"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state",
+              "code",
+              "retry_after_seconds"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -640,6 +1336,150 @@
         ],
         "type": "object"
       },
+      "CloudSyncScopeV2": {
+        "description": "One admission scope (§7.3 \"separately versioned user-catalog, workspace,\nuser-personal and optional Profile Identity/Private admissions, each\nwith its own eligibility and authority generation\"). A token is for one\nscope; a device holding several holds several tokens.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "The account's root units: Profile and Workspace catalog units.",
+            "properties": {
+              "scope": {
+                "enum": [
+                  "user_catalog"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "scope"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "One Workspace's content, admitted on Workspace id, membership and\nincarnation. No Profile is named and none is required.",
+            "properties": {
+              "scope": {
+                "enum": [
+                  "workspace"
+                ],
+                "type": "string"
+              },
+              "workspace_id": {
+                "$ref": "#/components/schemas/WorkspaceId"
+              }
+            },
+            "required": [
+              "scope",
+              "workspace_id"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "The account's personal unit for one Workspace. Follows the\nWorkspace's policy plus the account's own authorization; no Profile.",
+            "properties": {
+              "scope": {
+                "enum": [
+                  "user_personal"
+                ],
+                "type": "string"
+              },
+              "workspace_id": {
+                "$ref": "#/components/schemas/WorkspaceId"
+              }
+            },
+            "required": [
+              "scope",
+              "workspace_id"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "One Profile's Identity and Private units, eligible only while a\nCloud-enabled Workspace is currently placed under it (§4.4).",
+            "properties": {
+              "profile_id": {
+                "$ref": "#/components/schemas/ProfileId"
+              },
+              "scope": {
+                "enum": [
+                  "profile_units"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "scope",
+              "profile_id"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "CloudUnitRefV2": {
+        "description": "One unit of the account's catalog: kind and subject, under the session's\nscope. Request-side ids are canonical v4 or the body is refused.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "enum": [
+                  "profile_catalog"
+                ],
+                "type": "string"
+              },
+              "subject_id": {
+                "$ref": "#/components/schemas/ProfileId"
+              }
+            },
+            "required": [
+              "kind",
+              "subject_id"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "enum": [
+                  "workspace_catalog"
+                ],
+                "type": "string"
+              },
+              "subject_id": {
+                "$ref": "#/components/schemas/WorkspaceId"
+              }
+            },
+            "required": [
+              "kind",
+              "subject_id"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "The user's personal unit for a Workspace, keyed by the Workspace\nalone under the account's scope (§5.1).",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "personal_v2"
+                ],
+                "type": "string"
+              },
+              "subject_id": {
+                "$ref": "#/components/schemas/WorkspaceId"
+              }
+            },
+            "required": [
+              "kind",
+              "subject_id"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "CloudWorkspaceCandidateKindV1": {
         "description": "Fixed discriminator of a Cloud discovery candidate.",
         "enum": [
@@ -684,6 +1524,40 @@
           "authorization_version",
           "membership_epoch",
           "cloud_access_epoch"
+        ],
+        "type": "object"
+      },
+      "CloudWorkspaceCandidateV2": {
+        "additionalProperties": false,
+        "description": "One Workspace in a discovery receipt: content identity, the account's\nmembership, and its placement as the committed projection holds it.\n`placement.placement` null is explicitly unassigned.",
+        "properties": {
+          "lifecycle": {
+            "$ref": "#/components/schemas/SubjectLifecycle"
+          },
+          "membership": {
+            "$ref": "#/components/schemas/CloudMembershipV2"
+          },
+          "placement": {
+            "$ref": "#/components/schemas/WorkspacePlacement"
+          },
+          "projection_watermark": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "workspace_id": {
+            "$ref": "#/components/schemas/WorkspaceId"
+          },
+          "workspace_incarnation_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "workspace_incarnation_id",
+          "lifecycle",
+          "membership",
+          "placement",
+          "projection_watermark"
         ],
         "type": "object"
       },
@@ -753,6 +1627,58 @@
           "authorization_version",
           "membership_epoch",
           "cloud_access_epoch"
+        ],
+        "type": "object"
+      },
+      "CloudWorkspaceDescriptorV2": {
+        "additionalProperties": false,
+        "description": "`GET /v1/account/cloud/workspaces/{workspace_id}/descriptor`:\nidentity-only bootstrap facts for one authorized Workspace, with its\n**placement as a projection of the committed catalog** beside — not\ninside — the content identity. Nothing here names a membership Profile,\nand an explicitly unassigned Workspace is describable (`placement`\nnull), which the v1 descriptor could not say.",
+        "properties": {
+          "authorization_version": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "cloud_access_epoch": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "lineage_id": {
+            "type": "string"
+          },
+          "logical_replica_id": {
+            "type": "string"
+          },
+          "manifest_document_id": {
+            "type": "string"
+          },
+          "membership_epoch": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "placement": {
+            "$ref": "#/components/schemas/WorkspacePlacement"
+          },
+          "version": {
+            "$ref": "#/components/schemas/AccountWireVersion2"
+          },
+          "workspace_id": {
+            "$ref": "#/components/schemas/WorkspaceId"
+          },
+          "workspace_incarnation_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "workspace_id",
+          "workspace_incarnation_id",
+          "logical_replica_id",
+          "lineage_id",
+          "manifest_document_id",
+          "authorization_version",
+          "membership_epoch",
+          "cloud_access_epoch",
+          "placement"
         ],
         "type": "object"
       },
@@ -2850,6 +3776,14 @@
           },
           "version": {
             "$ref": "#/components/schemas/AccountWireVersion1"
+          },
+          "workspaces": {
+            "default": [],
+            "description": "Grants pinned to a Workspace UUID (root-catalog Plan 3.3). A v1\nconsent page sends none.",
+            "items": {
+              "$ref": "#/components/schemas/AppConnectionWorkspaceGrantV1"
+            },
+            "type": "array"
           }
         },
         "required": [
@@ -3563,6 +4497,15 @@
         ],
         "type": "object"
       },
+      "SubjectLifecycle": {
+        "description": "A subject's lifecycle as the unit's facts reduce it (§4.2: deleted while\na deletion id is named by no restore; purge evidence is terminal).",
+        "enum": [
+          "live",
+          "deleted",
+          "purged"
+        ],
+        "type": "string"
+      },
       "SymbolicReturnTarget": {
         "enum": [
           "account",
@@ -3591,6 +4534,23 @@
         "required": [
           "version",
           "profile_id"
+        ],
+        "type": "object"
+      },
+      "SyncTokenRequestV2": {
+        "additionalProperties": false,
+        "description": "`POST /v1/account/cloud/sync-token`. Everything but the scope comes\nfrom the native session.",
+        "properties": {
+          "scope": {
+            "$ref": "#/components/schemas/CloudSyncScopeV2"
+          },
+          "version": {
+            "$ref": "#/components/schemas/AccountWireVersion2"
+          }
+        },
+        "required": [
+          "version",
+          "scope"
         ],
         "type": "object"
       },
@@ -3889,6 +4849,127 @@
         ],
         "type": "object"
       },
+      "SyncTokenResponseV2": {
+        "additionalProperties": false,
+        "properties": {
+          "authority_generation": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "catalog_scope_id": {
+            "$ref": "#/components/schemas/CatalogScopeId"
+          },
+          "credential": {
+            "maxLength": 10240,
+            "minLength": 1,
+            "type": "string"
+          },
+          "dataset": {
+            "oneOf": [
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "incarnation_id": {
+                    "format": "uuid",
+                    "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "enum": [
+                      "workspace"
+                    ],
+                    "type": "string"
+                  },
+                  "logical_replica_id": {
+                    "format": "uuid",
+                    "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                    "type": "string"
+                  },
+                  "workspace_id": {
+                    "format": "uuid",
+                    "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "workspace_id",
+                  "incarnation_id",
+                  "logical_replica_id"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "profile"
+                    ],
+                    "type": "string"
+                  },
+                  "lineage_id": {
+                    "format": "uuid",
+                    "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                    "type": "string"
+                  },
+                  "logical_replica_id": {
+                    "format": "uuid",
+                    "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                    "type": "string"
+                  },
+                  "profile_id": {
+                    "format": "uuid",
+                    "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "profile_id",
+                  "lineage_id",
+                  "logical_replica_id"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "expires_at_seconds": {
+            "maximum": 9223372036854775807,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "route": {
+            "$ref": "#/components/schemas/CloudRouteResultV2"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/CloudSyncScopeV2"
+          },
+          "version": {
+            "enum": [
+              2
+            ],
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "credential",
+          "expires_at_seconds",
+          "catalog_scope_id",
+          "scope",
+          "authority_generation",
+          "dataset",
+          "route"
+        ],
+        "type": "object"
+      },
       "TokenPairV1": {
         "properties": {
           "access_expires_at_millis": {
@@ -3979,6 +5060,14 @@
           },
           "version": {
             "$ref": "#/components/schemas/AccountWireVersion1"
+          },
+          "workspaces": {
+            "default": [],
+            "description": "Writes a row for every Workspace it names; the others keep theirs.",
+            "items": {
+              "$ref": "#/components/schemas/AppConnectionWorkspaceGrantV1"
+            },
+            "type": "array"
           }
         },
         "required": [
@@ -4139,6 +5228,34 @@
           "already_absent"
         ],
         "type": "string"
+      },
+      "WorkspacePlacement": {
+        "description": "Where a Workspace is placed, as the hosted side projects it. Carried on\nthe v2 descriptor and the v2 candidate beside — never inside — the\nmembership facts.",
+        "properties": {
+          "placement": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProfileId"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "`None` is explicitly unassigned."
+          },
+          "placement_revision": {
+            "description": "The unit revision at which this placement was committed to the\nprojection; a Profile-grant cache invalidates on it.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "placement_revision"
+        ],
+        "type": "object"
       }
     },
     "securitySchemes": {
@@ -4261,6 +5378,343 @@
         "summary": "Update the current Koru Identity"
       }
     },
+    "/v1/account/cloud/catalog": {
+      "get": {
+        "operationId": "account.cloud_catalog_read",
+        "parameters": [
+          {
+            "description": "The previous page's next unit as `kind:subject_id`; absent for the first page.",
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudRootCatalogV2"
+                }
+              }
+            },
+            "description": "List the account's admitted catalog units with their frontiers and projection watermarks"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeveloperErrorV1"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeveloperErrorV1"
+                }
+              }
+            },
+            "description": "Account capability unavailable"
+          }
+        },
+        "security": [
+          {
+            "accountBearer": []
+          }
+        ],
+        "summary": "List the account's admitted catalog units with their frontiers and projection watermarks"
+      }
+    },
+    "/v1/account/cloud/catalog/binding": {
+      "put": {
+        "operationId": "account.cloud_catalog_binding_update",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CloudCatalogBindingRequestV2"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudCatalogBindingV2"
+                }
+              }
+            },
+            "description": "Get or create the account's one root-catalog binding; idempotent, never a merge"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeveloperErrorV1"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeveloperErrorV1"
+                }
+              }
+            },
+            "description": "Account capability unavailable"
+          }
+        },
+        "security": [
+          {
+            "accountBearer": []
+          }
+        ],
+        "summary": "Get or create the account's one root-catalog binding; idempotent, never a merge"
+      }
+    },
+    "/v1/account/cloud/catalog/units/pull": {
+      "post": {
+        "operationId": "account.cloud_catalog_unit_pull",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CloudRootUnitRequestV2"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudRootUnitUpdatesV2"
+                }
+              }
+            },
+            "description": "Read one catalog or personal unit from the device's accepted frontier, through the export boundary"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeveloperErrorV1"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeveloperErrorV1"
+                }
+              }
+            },
+            "description": "Account capability unavailable"
+          }
+        },
+        "security": [
+          {
+            "accountBearer": []
+          }
+        ],
+        "summary": "Read one catalog or personal unit from the device's accepted frontier, through the export boundary"
+      }
+    },
+    "/v1/account/cloud/catalog/units/push": {
+      "post": {
+        "operationId": "account.cloud_catalog_unit_push",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CloudRootUnitUpdatesV2"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudRootJoinReceiptV2"
+                }
+              }
+            },
+            "description": "Admit one catalog or personal unit's derived bytes and answer the join receipt"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeveloperErrorV1"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeveloperErrorV1"
+                }
+              }
+            },
+            "description": "Account capability unavailable"
+          }
+        },
+        "security": [
+          {
+            "accountBearer": []
+          }
+        ],
+        "summary": "Admit one catalog or personal unit's derived bytes and answer the join receipt"
+      }
+    },
+    "/v1/account/cloud/discovery": {
+      "get": {
+        "operationId": "account.cloud_discovery_read",
+        "parameters": [
+          {
+            "description": "Which discovery to answer: the Profiles with the Workspaces placed under each, or the Workspaces the account may sync.",
+            "in": "query",
+            "name": "scope",
+            "required": true,
+            "schema": {
+              "enum": [
+                "user_catalog",
+                "workspaces"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Discovery cursor from the previous receipt's next value.",
+            "in": "query",
+            "name": "after_workspace_id",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudDiscoveryReceiptV2"
+                }
+              }
+            },
+            "description": "Read one discovery receipt: scope, authorization generation, projection coverage and results grouped by current placement"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeveloperErrorV1"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeveloperErrorV1"
+                }
+              }
+            },
+            "description": "Account capability unavailable"
+          }
+        },
+        "security": [
+          {
+            "accountBearer": []
+          }
+        ],
+        "summary": "Read one discovery receipt: scope, authorization generation, projection coverage and results grouped by current placement"
+      }
+    },
+    "/v1/account/cloud/sync-token": {
+      "post": {
+        "operationId": "account.cloud_sync_token_issue_v2",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SyncTokenRequestV2"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncTokenResponseV2"
+                }
+              }
+            },
+            "description": "Obtain a short-lived credential for one Cloud scope: user catalog, one Workspace, one personal unit or one Profile's units"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeveloperErrorV1"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeveloperErrorV1"
+                }
+              }
+            },
+            "description": "Account capability unavailable"
+          }
+        },
+        "security": [
+          {
+            "accountBearer": []
+          }
+        ],
+        "summary": "Obtain a short-lived credential for one Cloud scope: user catalog, one Workspace, one personal unit or one Profile's units"
+      }
+    },
     "/v1/account/cloud/workspaces": {
       "get": {
         "operationId": "account.cloud_workspaces_list",
@@ -4328,6 +5782,62 @@
           }
         ],
         "summary": "List one bounded page of currently authorized Cloud Workspace eligibility pairs"
+      }
+    },
+    "/v1/account/cloud/workspaces/{workspace_id}/descriptor": {
+      "get": {
+        "operationId": "account.cloud_workspace_descriptor_read_v2",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudWorkspaceDescriptorV2"
+                }
+              }
+            },
+            "description": "Read the identity-only bootstrap descriptor of one authorized Workspace with its current placement; no membership Profile is named"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeveloperErrorV1"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeveloperErrorV1"
+                }
+              }
+            },
+            "description": "Account capability unavailable"
+          }
+        },
+        "security": [
+          {
+            "accountBearer": []
+          }
+        ],
+        "summary": "Read the identity-only bootstrap descriptor of one authorized Workspace with its current placement; no membership Profile is named"
       }
     },
     "/v1/account/connections": {
