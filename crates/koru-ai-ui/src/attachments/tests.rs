@@ -87,6 +87,41 @@ fn composer_chip_shortens_long_names_but_keeps_extensions_and_full_drafts() {
     assert_eq!(unicode.chip_label(), "日本語の長い…名の詳細資料.pdf");
 }
 
+#[test]
+fn local_reference_tile_keeps_its_path_for_open_and_save() {
+    let draft = Draft::reference(
+        PathBuf::from("C:/Reports/Quarterly review.pdf"),
+        AttachmentKind::File,
+    );
+    let pending = draft.tile();
+    assert_eq!(pending.source, AttachmentSource::Path);
+    assert_eq!(
+        pending.reference_path.as_deref(),
+        Some("C:/Reports/Quarterly review.pdf")
+    );
+
+    let sent = ChatAttachment {
+        id: draft.id,
+        message_id: None,
+        ordinal: None,
+        kind: draft.kind,
+        source: draft.source,
+        file_name: draft.file_name.clone(),
+        media_type: "application/pdf".into(),
+        byte_count: 0,
+        dimensions: None,
+        origin: None,
+        reference_path: draft.reference_path.clone(),
+        created_at: koru_ai_core::Timestamp::from_millis(1),
+    };
+    assert_eq!(Tile::of(&sent), pending);
+    let request = AttachmentOpenRequest::from_tile(ChatId::new(), &pending);
+    assert_eq!(
+        request.reference_path.as_deref(),
+        Some(std::path::Path::new("C:/Reports/Quarterly review.pdf"))
+    );
+}
+
 fn surface_with_agent_chat() -> (ChatSurface, ChatId, std::sync::mpsc::Receiver<Command>) {
     let mut surface = ChatSurface::new();
     let (reader, commands, _updates) = Reader::test_pair();
@@ -137,6 +172,8 @@ fn card_tiles_keep_the_pictures_shape_and_wrap() {
     let wide = Tile {
         id: ChatAttachmentId::new(),
         kind: AttachmentKind::Image,
+        source: AttachmentSource::Clipboard,
+        reference_path: None,
         size: Some((400, 200)),
         name: "wide.png".into(),
         byte_count: 0,
@@ -549,6 +586,8 @@ fn surface_with_a_sent_picture() -> (ChatSurface, ChatId, Tile) {
     let tile = Tile {
         id: ChatAttachmentId::new(),
         kind: AttachmentKind::Image,
+        source: AttachmentSource::Clipboard,
+        reference_path: None,
         size: Some((300, 150)),
         name: "shot.png".into(),
         byte_count: 4_000,
@@ -877,15 +916,15 @@ fn a_send_over_the_messages_total_is_held() {
     assert_eq!(surface.strips.get(chat).len(), 3, "nothing was taken");
 }
 
-/// A click on a file chip opens it in the system's app from a copy — text
-/// and source code as `.txt`, anything else under its own name; a file still
-/// being stored opens nothing yet.
+/// A sent file requests a host preview; a draft still being stored stays inert.
 #[test]
-fn a_file_chip_opens_in_the_systems_app_text_as_text() {
+fn a_sent_file_requests_an_in_window_preview() {
     let (mut surface, chat, _tile) = surface_with_a_sent_picture();
     let chip = |name: &str| Tile {
         id: ChatAttachmentId::new(),
         kind: AttachmentKind::File,
+        source: AttachmentSource::Clipboard,
+        reference_path: None,
         size: None,
         name: name.into(),
         byte_count: 10,
@@ -896,14 +935,13 @@ fn a_file_chip_opens_in_the_systems_app_text_as_text() {
         (Rect::new(300.0, 100.0, 168.0, 112.0), source.clone()),
     ];
     assert!(surface.mouse_down(150.0, 150.0));
+    let pdf_request = surface.take_attachment_open_request().unwrap();
+    assert_eq!(pdf_request.id, pdf.id);
+    assert_eq!(pdf_request.preview, AttachmentPreview::Unsupported);
     assert!(surface.mouse_down(350.0, 150.0));
-    assert_eq!(
-        surface.attachment_work.opened,
-        vec![
-            (pdf.id, "report.pdf".to_string(), koru_window::OpenAs::AsIs),
-            (source.id, "main.rs".to_string(), koru_window::OpenAs::Text),
-        ]
-    );
+    let source_request = surface.take_attachment_open_request().unwrap();
+    assert_eq!(source_request.id, source.id);
+    assert_eq!(source_request.preview, AttachmentPreview::Text);
     assert!(!surface.viewer_open(), "a file has no viewer");
     assert!(surface.attachment_work.viewer_fetched.is_empty());
 
@@ -921,5 +959,5 @@ fn a_file_chip_opens_in_the_systems_app_text_as_text() {
         )
         .unwrap();
     surface.strip_mouse_down(rect.x + 4.0, rect.y + rect.h - 4.0);
-    assert_eq!(surface.attachment_work.opened.len(), 2);
+    assert!(surface.take_attachment_open_request().is_none());
 }

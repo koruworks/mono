@@ -80,6 +80,7 @@ pub(crate) mod dictation;
 mod document_appearance;
 pub(crate) mod draw;
 mod error_dialog;
+mod file_preview;
 mod font_picker;
 mod help_menu;
 mod history;
@@ -689,6 +690,7 @@ pub struct MainView {
     /// lifetime.
     ai_panel: Panel,
     ai_chat: ChatSurface,
+    file_preview: Option<file_preview::FilePreview>,
     /// The chat whose folder pick is out with the shell, and which surface
     /// asked: the pane's, or an AI chat tab's.
     ai_chat_folder_ask: Option<(AiChatFolderSource, koru_ai_ui::ChatId)>,
@@ -1850,6 +1852,7 @@ impl MainView {
                 chat.offer_microphone_choice(koru_dictation::available());
                 chat
             },
+            file_preview: None,
             ai_focused: false,
             document_history: {
                 // One resolved language for everything the app dates. Stored
@@ -9808,6 +9811,9 @@ impl MainView {
     fn mouse_down(&mut self, ws: &mut WorkspaceDoc, x: f32, y: f32, ctrl: bool) -> bool {
         self.tooltip.clear();
         self.pointer = (x, y);
+        if self.file_preview.is_some() {
+            return self.file_preview_press(x, y);
+        }
         // A press anywhere moves the keyboard off the chrome stop it was on.
         self.chrome_focus = None;
         // Keyboard focus also decides which surface receives the matching
@@ -10777,6 +10783,9 @@ impl View for MainView {
         text: Option<&str>,
         mods: ModifiersState,
     ) -> bool {
+        if self.file_preview.is_some() {
+            return self.file_preview_key(key);
+        }
         if let Some(support) = self.support.as_mut()
             && support.key(key)
         {
@@ -10810,6 +10819,9 @@ impl View for MainView {
     }
 
     fn mouse_down(&mut self, ws: &mut WorkspaceDoc, x: f32, y: f32, ctrl: bool) -> bool {
+        if self.file_preview.is_some() {
+            return self.file_preview_press(x, y);
+        }
         // The recorder sees every press, with its position — a no-op unless a
         // capture is live. A press that reaches the document's content is
         // reclassified a node click at the leaf dispatch below.
@@ -10853,12 +10865,16 @@ impl View for MainView {
             return handled;
         }
         let handled = MainView::mouse_down(self, ws, x, y, ctrl);
+        let attachment_opened = self.open_pending_ai_attachment();
         let acted = self.drain_trash_all(ws);
         if handled || acted {}
-        handled || acted
+        handled || acted || attachment_opened
     }
 
     fn mouse_up(&mut self, ws: &mut WorkspaceDoc) -> bool {
+        if self.file_preview.is_some() {
+            return true;
+        }
         if let Some(fab) = self.fab.as_mut() {
             let changed = fab.mouse_up();
             self.gather_support_intents();
@@ -10874,6 +10890,9 @@ impl View for MainView {
     }
 
     fn context_menu(&mut self, ws: &mut WorkspaceDoc, x: f32, y: f32) -> bool {
+        if self.file_preview.is_some() {
+            return true;
+        }
         if let Some(fab) = self.fab.as_mut() {
             return fab.context_menu();
         }
@@ -11093,6 +11112,9 @@ impl View for MainView {
     /// is what makes a hover menu usable at all.
     fn mouse_move(&mut self, x: f32, y: f32) -> bool {
         self.pointer = (x, y);
+        if self.file_preview.is_some() {
+            return true;
+        }
         if let Some(fab) = self.fab.as_mut() {
             let viewport = self.viewport;
             let changed = fab.mouse_move(x, y, viewport);
@@ -11190,6 +11212,9 @@ impl View for MainView {
     }
 
     fn mouse_double_click(&mut self, ws: &WorkspaceDoc, x: f32, y: f32) -> bool {
+        if self.file_preview.is_some() {
+            return true;
+        }
         match self.lifted_viewer() {
             Some(LiftedViewer::AiPane) => return self.ai_chat.mouse_double_click(x, y),
             Some(LiftedViewer::AiTab(pane)) => {
@@ -11307,6 +11332,10 @@ impl View for MainView {
     }
 
     fn scroll_by(&mut self, delta: MouseScrollDelta) {
+        if let Some(preview) = self.file_preview.as_mut() {
+            preview.scroll_by(delta, self.viewport);
+            return;
+        }
         if self.updates_modal || self.support_only || self.fab_only {
             return;
         }
@@ -11558,6 +11587,9 @@ impl View for MainView {
     }
 
     fn cursor_icon(&self) -> CursorIcon {
+        if self.file_preview.is_some() {
+            return CursorIcon::Default;
+        }
         match self.lifted_viewer() {
             Some(LiftedViewer::AiPane) => return self.ai_chat.cursor_icon(),
             Some(LiftedViewer::AiTab(_)) => {
@@ -12171,6 +12203,9 @@ impl View for MainView {
         // to…* filter — so an indicator painted earlier would be hidden by the
         // thing it is about. It exists only while somebody is speaking.
         self.draw_dictation(scene, root);
+        if let Some(preview) = &self.file_preview {
+            preview.draw(scene, root, &mut self.engine, self.viewport, pointer);
+        }
     }
 
     fn document_root(&self) -> Option<NodeId> {
@@ -14752,6 +14787,9 @@ impl View for MainView {
 
     fn maintenance_deadline(&self) -> Option<Instant> {
         [
+            self.file_preview
+                .as_ref()
+                .and_then(file_preview::FilePreview::maintenance_deadline),
             self.profile_wait_deadline(),
             self.support.as_ref().and_then(|s| s.maintenance_deadline()),
             self.tooltip.maintenance_deadline(),
@@ -15144,6 +15182,11 @@ impl View for MainView {
         let chats_changed = self.maintain_chats();
         let socials_changed = self.maintain_socials_navigation(now);
         let ai_document_opened = self.open_pending_ai_document();
+        let ai_attachment_opened = self.open_pending_ai_attachment();
+        let file_preview_changed = self
+            .file_preview
+            .as_mut()
+            .is_some_and(file_preview::FilePreview::maintain);
         let agent_settings_opened = self.open_agent_settings_from_chat();
         self.reveal_paths_from_chat();
         // A star pressed in a chat's model picker: stored, roaming, and
@@ -15287,6 +15330,8 @@ impl View for MainView {
             || ai_changed
             || ai_credential_saved
             || ai_document_opened
+            || ai_attachment_opened
+            || file_preview_changed
             || link_device_changed
             || tooltip_changed
             || meter_changed
@@ -15346,6 +15391,9 @@ impl MainView {
         // `key` rather than the trait one because that is what both the shell
         // and a direct caller reach — an inherent method wins name resolution,
         // so putting it on the trait impl left the tests going round it.
+        if self.file_preview.is_some() {
+            return self.file_preview_key(key);
+        }
         self.flush_promoted_draft(ws);
         self.trace_input_state("key");
         // **The blocking prefix, in an order this function no longer owns.**
@@ -16578,6 +16626,43 @@ impl MainView {
             match_text: None,
             disposition: koru_workspace_host::SearchTargetDisposition::CurrentWindow,
         });
+        true
+    }
+
+    /// A sent file opens over this window whether the click came from the AI
+    /// column or an AI chat tab. Preparation is a worker's; this records the
+    /// loading preview now so the click has an immediate visible answer.
+    fn open_pending_ai_attachment(&mut self) -> bool {
+        let request = self.ai_chat.take_attachment_open_request().or_else(|| {
+            match self.tabs_mut().active_view() {
+                TabView::AiChat(view) => view.take_attachment_open_request(),
+                _ => None,
+            }
+        });
+        let Some(request) = request else {
+            return false;
+        };
+        self.file_preview = Some(file_preview::FilePreview::open(request));
+        true
+    }
+
+    fn file_preview_press(&mut self, x: f32, y: f32) -> bool {
+        let stays_open = self
+            .file_preview
+            .as_mut()
+            .is_some_and(|preview| preview.press(x, y, self.viewport));
+        if !stays_open {
+            self.file_preview = None;
+        }
+        true
+    }
+
+    fn file_preview_key(&mut self, key: &Key) -> bool {
+        if matches!(key, Key::Named(winit::keyboard::NamedKey::Escape)) {
+            self.file_preview = None;
+        } else if let Some(preview) = self.file_preview.as_mut() {
+            preview.key(key, self.viewport);
+        }
         true
     }
 

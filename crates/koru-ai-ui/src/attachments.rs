@@ -3,7 +3,7 @@
 //! Pictures and files in the chat (chat-attachments R1–R4): the composer's
 //! strip, the tiles and file chips on a sent message, the threads that read,
 //! store and decode them, the shared viewer a picture opens in
-//! (`koru_ui::media_viewer`, ADR-482), and the copy a file opens from.
+//! (`koru_ui::media_viewer`, ADR-482), and the host request for a sent file.
 //!
 //! **Only allowed types get in** (D16, ADR-481). A copied file whose name is
 //! off the allowlist is never added — the status line names its type — and
@@ -17,7 +17,8 @@
 //! maintenance tick; the window thread lays tiles out from sizes it already
 //! knows and draws brushes it already has. A picture opened in the viewer is
 //! fetched and decoded, with its mips, on `koru-ai-thumbs` too, and opened in
-//! an external app from a copy written on a helper thread.
+//! an external app from a copy written on a helper thread. A sent file asks
+//! the host for an in-window preview and Save As.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -228,6 +229,8 @@ impl Draft {
         Tile {
             id: self.id,
             kind: self.kind,
+            source: self.source,
+            reference_path: self.reference_path.clone(),
             size: self.size,
             name: self.file_name.clone(),
             byte_count: self.byte_count,
@@ -298,10 +301,45 @@ pub(crate) fn refused_line(refused: &[String], lang: Lang) -> Option<String> {
 pub(crate) struct Tile {
     pub id: ChatAttachmentId,
     pub kind: AttachmentKind,
+    pub source: AttachmentSource,
+    pub reference_path: Option<String>,
     pub size: Option<(u32, u32)>,
     pub name: String,
     /// A file chip's size line; `0` while a copied file's is not yet known.
     pub byte_count: u64,
+}
+
+/// A sent file the host should preview in this window. The source path is
+/// present only for a byte-free local reference; copied files come from AI.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AttachmentOpenRequest {
+    pub chat: ChatId,
+    pub id: ChatAttachmentId,
+    pub name: String,
+    pub reference_path: Option<PathBuf>,
+    pub preview: AttachmentPreview,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AttachmentPreview {
+    Text,
+    Unsupported,
+}
+
+impl AttachmentOpenRequest {
+    fn from_tile(chat: ChatId, tile: &Tile) -> Self {
+        let preview = match allowed_type(&tile.name).map(|allowed| allowed.family) {
+            Some(AttachmentFamily::Text | AttachmentFamily::SourceCode) => AttachmentPreview::Text,
+            _ => AttachmentPreview::Unsupported,
+        };
+        Self {
+            chat,
+            id: tile.id,
+            name: tile.name.clone(),
+            reference_path: tile.reference_path.as_deref().map(PathBuf::from),
+            preview,
+        }
+    }
 }
 
 impl Tile {
@@ -309,6 +347,8 @@ impl Tile {
         Self {
             id: attachment.id,
             kind: attachment.kind,
+            source: attachment.source,
+            reference_path: attachment.reference_path.clone(),
             size: attachment.dimensions,
             name: attachment.file_name.clone(),
             byte_count: attachment.byte_count,
@@ -1716,17 +1756,20 @@ impl ChatSurface {
             .map(|(_, tile)| tile.clone())
     }
 
-    /// A click on a sent attachment: a picture opens in the viewer, a file
-    /// in the system's app.
+    /// A click on a sent attachment asks the host to open its in-window preview.
     pub(super) fn open_tile(&mut self, chat: ChatId, tile: &Tile) -> bool {
         match tile.kind {
             AttachmentKind::Image => self.open_picture(chat, tile, None),
             AttachmentKind::File => {
-                self.attachment_work.open_file(chat, tile.id, &tile.name);
+                self.attachment_open_request = Some(AttachmentOpenRequest::from_tile(chat, tile));
                 true
             }
             AttachmentKind::Folder => false,
         }
+    }
+
+    pub fn take_attachment_open_request(&mut self) -> Option<AttachmentOpenRequest> {
+        self.attachment_open_request.take()
     }
 
     /// What a send carries, or `None` when it must wait: while a draft is

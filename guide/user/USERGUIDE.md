@@ -1408,11 +1408,13 @@ that pictures go to local agents only.
 chat: a PDF, a Word, Excel or PowerPoint file, an OpenDocument or EPUB, RTF,
 an MP4 or MOV, text, Markdown, CSV, JSON and the like, or source code. Each
 shows as a chip with its icon, name and size, and the agent is told where it
-is. Click a chip to open the file in the app your system uses for it; text and
-source code always open in your text editor, so a script never runs from the
-chat. Any other type — an `.exe`, a `.zip` — is refused, with one line naming
-it, and a file that only claims an allowed type is refused when Koru stores
-it. Pasting files is not available on Linux yet.
+is. Click a sent file tile to open a preview over the Koru window. Plain text
+and source code appear there, with **Save as…** to keep a copy. PDFs, Office
+files and other types without an in-app preview offer **Save as…** and
+**Open externally**. Source code is shown as text in Koru, so a script never
+runs from the chat. Any other type — an `.exe`, a `.zip` — is refused, with one
+line naming it, and a file that only claims an allowed type is refused when
+Koru stores it. Pasting files is not available on Linux yet.
 
 **Look at a picture closely.** Click a picture on a message, or in the strip
 above the text, and it opens over the whole window — at its own size when it

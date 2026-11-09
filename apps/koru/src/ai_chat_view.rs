@@ -376,6 +376,10 @@ impl AiChatView {
         self.surface.take_open_document_request()
     }
 
+    pub fn take_attachment_open_request(&mut self) -> Option<koru_ai_ui::AttachmentOpenRequest> {
+        self.surface.take_attachment_open_request()
+    }
+
     /// The coding agents turned off on this machine (Agent providers).
     pub fn set_hidden_agents(&mut self, keys: Vec<String>) -> bool {
         self.surface.set_hidden_agents(keys)

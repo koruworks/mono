@@ -138,6 +138,7 @@ mod work_view;
 pub use agents::{AgentDefaults, agent_key, provider_mark};
 pub use approval_modes::NewChatPermission;
 pub use attachments::ViewerLift;
+pub use attachments::{AttachmentOpenRequest, AttachmentPreview};
 pub use composer::{ChatComposer, ComposedMessage};
 pub use composer_plus::ComputerPickerKind;
 pub use composer_plus::WorkspaceImportRequest;
@@ -800,6 +801,7 @@ pub struct ChatSurface {
     /// A picture tile clicked whose bytes are being fetched and decoded:
     /// the chat, the attachment and its name.
     viewer_opening: Option<(ChatId, koru_ai_core::ChatAttachmentId, String)>,
+    attachment_open_request: Option<attachments::AttachmentOpenRequest>,
     /// Where the viewer lives when a host lifts it over the window.
     viewer_lift: Option<attachments::ViewerLift>,
     /// The sent pictures' tiles as last drawn, for a click to open one.
@@ -1128,6 +1130,7 @@ impl ChatSurface {
             clipboard_reading: false,
             viewer: None,
             viewer_opening: None,
+            attachment_open_request: None,
             viewer_lift: None,
             card_tile_hits: Vec::new(),
             queues: queue::Queues::default(),
