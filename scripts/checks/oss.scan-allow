@@ -59,3 +59,6 @@ crates/koru-release/src/mobile/tests.rs ipv4 0.1.5.1 # a malformed-version test 
 
 # Sample paths in a comment, not anybody's machine.
 crates/koru-ai-ui/src/tool_output/picture.rs home-path /home/a.png # file-URL sample in a doc comment
+
+# Linux launcher quoting samples: a stand-in home path that is nobody's.
+crates/koru-autostart/src/tests.rs home-path * # exec-argument quoting samples use a stand-in home path
