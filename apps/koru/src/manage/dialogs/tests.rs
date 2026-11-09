@@ -355,17 +355,47 @@ fn delete_from_koru_is_offered_where_allowed_and_asks_the_controllers_question()
     assert!(view.c.hosted_delete().is_some());
 }
 
+/// **A press while the question is up is the dialog's, never the page's.**
+/// `Confirm` keeps the question on a press outside its panel — a stray
+/// click must not be able to answer a question about somebody's work in
+/// either direction (unlike the old `Choice`, which an outside press
+/// dismissed) — and on a press inside the panel that lands on no button.
+/// Only Cancel, Escape or the button answers it (ADR-265).
 #[test]
-fn a_press_answers_the_dialog_where_its_button_is_drawn() {
+fn a_press_under_the_scrim_is_the_dialogs_not_the_pages() {
     let local = profile("Local", None);
     let mut view = manage(&local);
     press(&mut view, Control::RemoveFromDevice);
-    // A press on the page under the scrim reaches the dialog, not the page:
-    // the header's name is under it, and outside the panel dismisses.
+    let panel = {
+        let ManageView {
+            dialog,
+            engine,
+            viewport,
+            ..
+        } = &mut view;
+        dialog
+            .as_ref()
+            .expect("the removal question")
+            .confirm()
+            .panel(engine, *viewport)
+    };
+    // The header's name, under the scrim.
     let (x, y) = view.laid().placed(Control::Name).unwrap().rect.centre();
     assert!(View::mouse_down(&mut view, &mut doc(), x, y, false));
-    assert!(view.dialog().is_none());
+    assert!(matches!(view.dialog(), Some(Dialog::Remove(_))));
     assert_eq!(view.take_request(), None, "the name was not pressed");
+    // Beside the panel, over the page.
+    let (x, y) = (panel.x * 0.5, panel.y + panel.h * 0.5);
+    assert!(View::mouse_down(&mut view, &mut doc(), x, y, false));
+    assert!(matches!(view.dialog(), Some(Dialog::Remove(_))));
+    // Inside the panel, on its title: no button there.
+    let (x, y) = (panel.x + panel.w * 0.5, panel.y + 4.0);
+    assert!(View::mouse_down(&mut view, &mut doc(), x, y, false));
+    assert!(matches!(view.dialog(), Some(Dialog::Remove(_))));
+    assert_eq!(view.take_request(), None);
+    assert_eq!(view.c.take_remove_request(), None);
+    assert!(key(&mut view, NamedKey::Escape));
+    assert!(view.dialog().is_none());
     assert_eq!(view.c.take_remove_request(), None);
 }
 
