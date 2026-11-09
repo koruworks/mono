@@ -6928,6 +6928,18 @@ impl MainView {
         self.recompose_run_pill_captions();
     }
 
+    /// **Take the organization sync status** (root-catalog Plan 2.2) — the
+    /// Agent's whole reading per Profile and Workspace per linked device —
+    /// and hand it to the one surface that words it, the Explore pane's
+    /// sync icon and Workspace menu. A single-consumer snapshot like the
+    /// device list, drained here whether or not the switcher is open.
+    fn refresh_root_sync(&mut self) -> bool {
+        let Some(status) = self.agent.take_root_sync() else {
+            return false;
+        };
+        self.explore.set_root_sync(&status)
+    }
+
     /// Ask for device identity once on each live Agent connection until that
     /// generation answers. A dropped writer advances the generation, so the
     /// reconnect wake reissues naturally without a timer or polling.
@@ -14814,6 +14826,7 @@ impl View for MainView {
         let delegation_requested = self.drain_delegate_request();
         let delegation_answered = self.maintain_delegation();
         self.refresh_device_names();
+        let root_sync_changed = self.refresh_root_sync();
         let welcome_ticks = self.welcome_progress.maintain(now);
         if welcome_ticks {
             self.sync_welcome_lists();
@@ -15308,6 +15321,7 @@ impl View for MainView {
             || feedback_failed
             || telemetry_changed
             || refresh_stats
+            || root_sync_changed
     }
 }
 impl MainView {

@@ -539,6 +539,12 @@ pub struct AgentLink {
     /// unsolicited Agent push. The QR secret never enters application logs.
     pairing: Arc<Mutex<koru_agent_wire::PairingView>>,
     pairing_dirty: Arc<AtomicBool>,
+    /// Whole organization sync status (root-catalog Plan 2.2): what the
+    /// daemon says about every Profile and Workspace per linked device. A
+    /// snapshot like pairing, so a window opened mid-pass reads the current
+    /// answer; ids and states only.
+    root_sync: Arc<Mutex<koru_agent_wire::RootSyncStatus>>,
+    root_sync_dirty: Arc<AtomicBool>,
     /// Whole linked-device list. Like pairing state, this is a snapshot so the
     /// modal may close and reopen without replaying relationship deltas. The
     /// first element is this device itself, when the agent knows it.
@@ -632,6 +638,8 @@ impl AgentLink {
                 error_code: None,
             })),
             pairing_dirty: Arc::new(AtomicBool::new(false)),
+            root_sync: Arc::new(Mutex::new(koru_agent_wire::RootSyncStatus::default())),
+            root_sync_dirty: Arc::new(AtomicBool::new(false)),
             linked_devices: Arc::new(Mutex::new((None, Vec::new(), None))),
             linked_devices_dirty: Arc::new(AtomicBool::new(false)),
             linked_devices_generation: Arc::new(AtomicU64::new(0)),
@@ -1228,6 +1236,27 @@ impl AgentLink {
         })
     }
 
+    /// The latest whole organization sync status when it changed
+    /// (root-catalog Plan 2.2) — the same single-consumer snapshot shape as
+    /// [`Self::take_pairing`]; the main view is its one drain.
+    pub fn take_root_sync(&self) -> Option<koru_agent_wire::RootSyncStatus> {
+        self.root_sync_dirty.swap(false, Ordering::AcqRel).then(|| {
+            self.root_sync
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .clone()
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn answer_root_sync_for_test(&self, status: koru_agent_wire::RootSyncStatus) {
+        *self
+            .root_sync
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = status;
+        self.root_sync_dirty.store(true, Ordering::Release);
+    }
+
     /// Every linked device's id and display name, **without draining** the
     /// dirty flag [`Self::take_linked_devices`] reads.
     ///
@@ -1667,6 +1696,8 @@ impl AgentLink {
         let browser_completions = Arc::clone(&self.browser_completions);
         let pairing = Arc::clone(&self.pairing);
         let pairing_dirty = Arc::clone(&self.pairing_dirty);
+        let root_sync = Arc::clone(&self.root_sync);
+        let root_sync_dirty = Arc::clone(&self.root_sync_dirty);
         let linked_devices = Arc::clone(&self.linked_devices);
         let linked_devices_dirty = Arc::clone(&self.linked_devices_dirty);
         let linked_devices_generation = Arc::clone(&self.linked_devices_generation);
@@ -1959,6 +1990,13 @@ impl AgentLink {
                         } => {
                             *pairing.lock().unwrap_or_else(|error| error.into_inner()) = *view;
                             pairing_dirty.store(true, Ordering::Release);
+                            let _ = wake_the_loop(&wake);
+                        }
+                        FromAgent::Push {
+                            body: Push::RootSync { status },
+                        } => {
+                            *root_sync.lock().unwrap_or_else(|error| error.into_inner()) = status;
+                            root_sync_dirty.store(true, Ordering::Release);
                             let _ = wake_the_loop(&wake);
                         }
                         FromAgent::Response {
@@ -2860,6 +2898,9 @@ fn translate(push: Push) -> Option<FromTheAgent> {
         // before this is reached, and this arm exists so adding a third push
         // is a compile error here rather than a message silently dropped.
         Push::Update { .. } => None,
+        // Stored by the reader as a snapshot, like pairing; see
+        // [`AgentLink::take_root_sync`].
+        Push::RootSync { .. } => None,
         // Stored as whole content-free state by the reader, not queued.
         Push::ReminderDiagnostics { .. } => None,
         Push::OpenReminders => Some(FromTheAgent::OpenReminders),

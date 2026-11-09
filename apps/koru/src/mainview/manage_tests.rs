@@ -369,6 +369,37 @@ fn done_after_a_device_is_linked_opens_manage_on_linked_devices() {
     assert_eq!(active_manage(&mut v).page(), Some(Page::Devices));
 }
 
+/// **The window's one drain of Agent's organization status reaches the
+/// switcher's icon** (root-catalog Plan 2.2): a pending root unit for the
+/// open Profile turns the icon's word to *Pending* on the next maintenance
+/// pass, and the same snapshot twice is no change.
+#[test]
+fn the_switcher_hears_the_windows_organization_status() {
+    use koru_agent_wire::{RootSyncState, RootSyncStatus, RootSyncSubject};
+    let (mut v, _w, personal) = with_profile();
+    assert_eq!(
+        v.explore.sync_status(),
+        crate::panes::explore::SyncStatus::NotSetUp
+    );
+    v.agent.answer_root_sync_for_test(RootSyncStatus {
+        subjects: vec![RootSyncSubject {
+            peer_device_id: "laptop".into(),
+            profile_id: Some(personal.id.to_string()),
+            workspace_id: None,
+            state: RootSyncState::Pending,
+        }],
+    });
+    assert!(
+        v.refresh_root_sync(),
+        "the snapshot changed what the icon says"
+    );
+    assert_eq!(
+        v.explore.sync_status(),
+        crate::panes::explore::SyncStatus::Pending
+    );
+    assert!(!v.refresh_root_sync(), "drained");
+}
+
 /// The window's one drain of Agent's device list reaches the page, and the
 /// page's *Link a device…* is the window's dialog.
 #[test]

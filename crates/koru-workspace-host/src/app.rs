@@ -2486,6 +2486,14 @@ struct App<H: Host> {
     profile_offline_tx: mpsc::Sender<ProfileOfflineCompletion>,
     profile_offline_rx: mpsc::Receiver<ProfileOfflineCompletion>,
     profile_offline_in_flight: HashSet<koru_core::ProfileId>,
+    /// The open Profile left the Store's catalog without this window asking
+    /// (root-catalog Plan 2.2, §6.3): a bounded worker confirms it is a
+    /// shared deletion before the window settles, and the Profiles it
+    /// confirmed word their notice as a deletion from another device.
+    remote_deletion_tx: mpsc::Sender<profile_removal::RemoteDeletionCheck>,
+    remote_deletion_rx: mpsc::Receiver<profile_removal::RemoteDeletionCheck>,
+    remote_deletion_checks_in_flight: HashSet<koru_core::ProfileId>,
+    remote_profile_deletions: HashSet<koru_core::ProfileId>,
     profile_bindings_in_flight: HashSet<koru_core::ProfileId>,
     connected_profile_creation_tx: mpsc::Sender<OnboardingCreation>,
     connected_profile_creation_rx: mpsc::Receiver<OnboardingCreation>,
@@ -3359,7 +3367,14 @@ fn create_onboarding_profile(
 fn profile_catalog_event(name: &str) -> bool {
     matches!(
         name,
-        "profile.created" | "profile.renamed" | "profile.appearance_changed"
+        "profile.created"
+            | "profile.renamed"
+            | "profile.appearance_changed"
+            // A shared deletion or its restore, whether this device confirmed
+            // it or another device's root units carried it here (root-catalog
+            // Plan 2.2): the Profile left or rejoined the list.
+            | "profile.deleted"
+            | "profile.restored"
     )
 }
 
@@ -5586,6 +5601,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
         let (profile_cascade_tx, profile_cascade_rx) = mpsc::channel();
         let (profile_removal_tx, profile_removal_rx) = mpsc::channel();
         let (profile_offline_tx, profile_offline_rx) = mpsc::channel();
+        let (remote_deletion_tx, remote_deletion_rx) = mpsc::channel();
         let (connected_profile_creation_tx, connected_profile_creation_rx) = mpsc::channel();
         let (profile_publication_tx, profile_publication_rx) = mpsc::channel();
         let (embedded_profile_restore_tx, embedded_profile_restore_rx) = mpsc::channel();
@@ -5733,6 +5749,10 @@ Nothing was written. The store starts on demand, so this usually means it could 
             profile_offline_tx,
             profile_offline_rx,
             profile_offline_in_flight: HashSet::new(),
+            remote_deletion_tx,
+            remote_deletion_rx,
+            remote_deletion_checks_in_flight: HashSet::new(),
+            remote_profile_deletions: HashSet::new(),
             profile_bindings_in_flight: HashSet::new(),
             connected_profile_creation_tx,
             connected_profile_creation_rx,
@@ -7987,7 +8007,35 @@ Nothing was written. The store starts on demand, so this usually means it could 
             // service_profile_waits closes retired content after their answers
             // have drained; a stale catalog alone does not choose a replacement.
             self.sync_pane_context();
+            self.notice_open_profile_gone();
         }
+    }
+
+    /// **The open Profile is no longer in the Store's catalog and nothing in
+    /// this window removed it** (root-catalog Plan 2.2, TECHNICAL.final
+    /// §6.3): another device's root units carried a deletion here, or a
+    /// device-local removal ran elsewhere. Neither is acted on from a
+    /// catalog listing alone — a bounded worker confirms a shared deletion
+    /// from the Store's restorable deletions first, off this thread, and the
+    /// settled window then takes the same path a local removal does: its
+    /// editors are already fenced by the Store, its settings are cleaned up,
+    /// and it moves to another Profile or relaunches into `NeedsProfile`,
+    /// where restore, create and Unassigned are offered.
+    fn notice_open_profile_gone(&mut self) {
+        let open = self.runtime.profile_id();
+        if self
+            .runtime
+            .profile_catalog
+            .iter()
+            .any(|row| row.id == open)
+            || self.profile_removals_in_flight.contains(&open)
+            || self.profile_cascades_in_flight.contains(&open)
+            || self.profile_removal_attempts.contains_key(&open)
+            || self.hosted_profile_removals.contains_key(&open)
+        {
+            return;
+        }
+        self.start_remote_deletion_check(open);
     }
 
     /// Record the one-time reminder startup answer through the one settings
@@ -19687,6 +19735,10 @@ mod tests {
         assert!(profile_catalog_event("profile.created"));
         assert!(profile_catalog_event("profile.renamed"));
         assert!(profile_catalog_event("profile.appearance_changed"));
+        // A shared deletion or restore, local or from another device
+        // (root-catalog Plan 2.2), changes what the catalog lists.
+        assert!(profile_catalog_event("profile.deleted"));
+        assert!(profile_catalog_event("profile.restored"));
         assert!(!profile_catalog_event("profile.dictionary.changed"));
         assert!(!profile_catalog_event("workspace.catalog.renamed"));
         assert!(!profile_catalog_event("profile"));

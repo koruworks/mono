@@ -617,6 +617,21 @@ pub struct RootCatalogInventory {
     pub personal: Vec<PersonalUnitState>,
 }
 
+/// One local subject's transport reading for the status surfaces
+/// ([`ReplicationStore::root_sync_admissions`]). Device-local facts about a
+/// subject this device holds; never framed to a peer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RootSubjectAdmission {
+    pub subject: CatalogUnitRef,
+    /// The effective mode admits the peer path.
+    pub allows_peer: bool,
+    /// The stored choice is above the Profile's ceiling (`ceiling_mismatch`).
+    pub ceiling_mismatch: bool,
+    /// Edits wait in a private overlay that the publication job has not
+    /// folded into the durable unit yet — pending publication, never lost.
+    pub overlay_pending: bool,
+}
+
 /// Wire tags determine order, independently of Rust's enum declaration order.
 pub fn root_unit_sort_key(unit: CatalogUnitRef) -> (&'static str, String) {
     (unit.kind().as_str(), unit.subject_id())
@@ -905,6 +920,18 @@ pub trait ReplicationStore: Send + Sync + 'static {
     /// Returns how many were published.
     fn publish_pending_root_overlays(&self) -> Result<usize, StoreFailure> {
         Ok(0)
+    }
+    /// **This device's own reading of every subject it holds**, for the
+    /// status a person sees (Plan 2.2, TECHNICAL.final §4.4, §9): whether the
+    /// subject's device-local mode admits the peer path, whether its stored
+    /// choice sits above its Profile's ceiling, and whether a private overlay
+    /// is still waiting to be published. Asked once per full pass, outside
+    /// any UI thread; the pass seeds the peer's status with it before the
+    /// units it actually exchanges override the reading. Local subjects only
+    /// and local facts only: nothing here leaves the device. The default says
+    /// nothing, which the phone's adapter keeps while it has no mode toggle.
+    fn root_sync_admissions(&self) -> Result<Vec<RootSubjectAdmission>, StoreFailure> {
+        Ok(Vec::new())
     }
     /// The eligible root inventory for `peer`: what this device may frame
     /// for that recipient on the peer path, after the publication job.

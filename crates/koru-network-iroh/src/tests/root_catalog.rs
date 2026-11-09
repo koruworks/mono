@@ -257,6 +257,20 @@ async fn a_pending_placement_retries_the_whole_pass_and_fails_nothing() {
         status.last_sync_event.as_ref().map(|event| event.stage),
         Some("sync_incomplete")
     );
+    // The status a person reads (Plan 2.2): the Workspace is pending, not
+    // failed and not up to date, until its placement arrives.
+    let readings = status.root_sync.values().flatten().collect::<Vec<_>>();
+    assert!(
+        readings
+            .iter()
+            .any(|row| row.workspace == Some(workspace) && row.state == RootSyncState::Pending),
+        "{readings:?}"
+    );
+    assert!(
+        !readings
+            .iter()
+            .any(|row| row.workspace == Some(workspace) && row.state == RootSyncState::UpToDate)
+    );
 }
 
 /// A unit the source holds back and a Workspace this device's mode closes
@@ -287,6 +301,24 @@ async fn a_held_unit_and_a_blocked_subject_are_states_not_failures() {
     assert_eq!(
         status.last_sync_event.as_ref().map(|event| event.stage),
         Some("sync_complete")
+    );
+    // The readings (Plan 2.2): this device's own mode closes the Workspace's
+    // peer path, which outranks the peer holding its unit back; neither is
+    // "up to date", and no reading names a hidden Profile — the only
+    // Profile named is the one both stores hold.
+    let readings = status.root_sync.values().flatten().collect::<Vec<_>>();
+    let about_workspace = readings
+        .iter()
+        .find(|row| row.workspace == Some(workspace))
+        .expect("the Workspace has a reading");
+    assert_eq!(about_workspace.state, RootSyncState::PausedBySettings);
+    let owner = ProfileId::from_uuid(workspace.as_uuid());
+    assert!(
+        readings
+            .iter()
+            .filter_map(|row| row.profile)
+            .all(|profile| profile == owner),
+        "{readings:?}"
     );
 }
 

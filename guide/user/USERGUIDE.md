@@ -538,6 +538,32 @@ sync protocol as yours: it stays linked and listed, and nothing is lost, but
 no content moves between the two until the named side updates. A device from
 before this feature simply shows no build until it is updated.
 
+**Linked devices converge on their own.** Once two of your devices are
+linked and a Profile's sync is turned on on both, how you organize it — which
+Profile a workspace sits under, what is in the Trash, what came back from it
+— arrives on the other device and applies there. Nothing asks you to confirm
+a move that came from another device, and nothing merges: two Profiles (or
+two workspaces) that happen to share a name are two, on every device, and
+stay two. A workspace that arrives under a Profile this device does not have
+yet waits in the **Unassigned** group at the top of the Workspace menu, marked
+*Its Profile has not arrived yet*, and moves into place when the Profile
+does. A Profile you keep **Local only** on a device never leaves it — not
+its name, not its workspaces, not where they sit — whatever the same Profile
+does on your other devices.
+
+**What the sync icon says about your organization.** The switcher's sync
+icon and each workspace row say how the organization stands with your linked
+devices: **Up to date** when everything they offered has arrived; **Pending**
+while something is still on its way — a workspace's place, a Profile, or a
+change this device made while it could not yet send it; **Paused by your
+settings** when this device keeps the Profile or workspace Local only, so
+nothing moves until you change its sync under **Manage › Koru Cloud** (the
+other device may have it on — that alone does nothing here); **Blocked by a
+sync mismatch** when a workspace's own sync choice is above its Profile's,
+which the same page corrects; and **Held for privacy** when another device is
+keeping part of it to itself. *Up to date* is never claimed while something
+is still owed, however many documents have already arrived.
+
 ### Sign in on another device
 
 After Google sign-in, choose the exact existing Profile you want on this device.
@@ -1014,7 +1040,17 @@ Profile while that Profile was being deleted is kept, not deleted. It appears
 in an **Unassigned (from deleted Profile)** group at the top of the Workspace
 menu and on every Profile's Manage page. **Move to…** puts it in one of your
 Profiles; **Restore Profile** brings its deleted Profile back with everything
-that deletion moved to Trash.
+that deletion moved to Trash. A workspace another device placed under a
+Profile this device has not received yet sits in the same group as *Its
+Profile has not arrived yet* and moves into place by itself when it does.
+
+**A Profile deleted on another device.** When another of your devices deletes
+a Profile you have open here, this window settles the same way a deletion
+made here does: its workspaces are in the Trash, you are moved to another
+Profile — or, if it was your last one, to the first-run window — and a notice
+says the Profile was deleted on another device. The deletion is listed under
+**Deleted profiles** here as well, so **Restore** works from whichever device
+you are at. Nothing is created in its place.
 
 In the desktop **Documents** list, a document's chosen color tints its outline
 icon. A priority flag (Urgent, High, Medium or Low) appears after the icon and

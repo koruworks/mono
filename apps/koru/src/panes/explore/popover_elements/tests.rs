@@ -98,6 +98,56 @@ fn near(a: Rect, b: Rect) -> bool {
         && (a.h - b.h).abs() < 0.01
 }
 
+/// **A Workspace row says its organization reading where it already shows
+/// state** (root-catalog Plan 2.2): a word after the name while the
+/// Workspace is pending, paused, blocked or held, nothing while it is up
+/// to date or unknown, and the row's geometry is unchanged by it.
+#[test]
+fn a_workspace_row_shows_its_organization_reading_only_while_not_up_to_date() {
+    use koru_agent_wire::{RootSyncState, RootSyncStatus, RootSyncSubject};
+    let mut v = opened(workspaces(2));
+    let a = area(dtheme::SIDEBAR_MIN_W);
+    let (_, frame) = lay(&v, a);
+    assert!(
+        frame.named(ORGANIZATION).next().is_none(),
+        "nothing said, nothing shown"
+    );
+
+    let pending = v.workspaces[0].id;
+    let up_to_date = v.workspaces[1].id;
+    let subject = |workspace: WorkspaceId, state| RootSyncSubject {
+        peer_device_id: "laptop".into(),
+        profile_id: None,
+        workspace_id: Some(workspace.to_string()),
+        state,
+    };
+    assert!(v.set_root_sync(&RootSyncStatus {
+        subjects: vec![
+            subject(pending, RootSyncState::Pending),
+            subject(up_to_date, RootSyncState::UpToDate),
+        ],
+    }));
+    let (_, frame) = lay(&v, a);
+    let words: Vec<_> = frame.named(ORGANIZATION).collect();
+    assert_eq!(words.len(), 1, "one row is not up to date");
+    let rows: Vec<_> = frame.named(ROW).collect();
+    assert_eq!(rows.len(), 2);
+    assert!(
+        words[0].rect.y >= rows[0].rect.y && words[0].rect.y < rows[0].rect.y + rows[0].rect.h,
+        "the word sits in the pending row"
+    );
+    let gear = frame.node(manage(pending)).expect("the gear");
+    assert!(
+        words[0].rect.x + words[0].rect.w <= gear.rect.x,
+        "the word stays before the trailing lane"
+    );
+    assert_eq!(
+        v.workspace_organization_status(pending),
+        Some(super::super::SyncStatus::Pending)
+    );
+    assert_eq!(v.workspace_organization_status(up_to_date), None);
+}
+
 /// **The element page lays out where today's page is**, row for row and
 /// part for part, at both widths, scrolled and not.
 #[test]

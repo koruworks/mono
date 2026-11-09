@@ -559,6 +559,7 @@ impl RuntimeAction {
                             items: event.items,
                             error_code: event.error_code,
                         });
+                status.root_sync = network.root_sync.into_values().flatten().collect();
                 return koru_sync_control::ControlResponse::Status(status);
             }
             // Deliberately no runtime call: the host already answered.

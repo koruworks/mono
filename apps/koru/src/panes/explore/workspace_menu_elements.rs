@@ -153,12 +153,19 @@ impl ExploreView {
 
     pub(crate) fn sync_control_name(&self) -> String {
         let lang = crate::format::lang();
+        let status = self.sync_status();
+        // An organization reading carries its sentence for a reader: what
+        // it means and, for a stop, where to change it (Plan 2.2).
+        let status_words = match status.hint() {
+            Some(hint) => format!("{}. {}", t(lang, status.key()), t(lang, hint)),
+            None => t(lang, status.key()).to_owned(),
+        };
         koru_i18n::fill(
             t(lang, Words::SyncControlDescription),
             &[
                 self.profile()
                     .map_or(t(lang, Words::WorkspacesProfiles), |p| p.name.as_str()),
-                t(lang, self.sync_status().key()),
+                &status_words,
                 &self.sync_channels().words(lang),
             ],
         )
@@ -249,11 +256,7 @@ impl ExploreView {
         );
         for entry in &rows {
             let id = crate::manage::workspaces::app_workspace(entry.id);
-            let hint = if entry.from_deleted_profile() {
-                Words::WorkspacesUnassignedHeading
-            } else {
-                Words::WorkspacesUnassignedNoProfile
-            };
+            let hint = entry.hint_key();
             group = group.child(
                 row("Unassigned row")
                     .id(unassigned(id))

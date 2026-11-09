@@ -71,3 +71,41 @@ fn only_a_notice_carrying_an_operation_is_retryable() {
     };
     assert!(s24.is_retryable());
 }
+
+/// **An Unassigned row's hint follows its reason** (root-catalog Plan 2.2,
+/// §7.2): from a deleted Profile it says so and offers the restore; a
+/// Profile that has not arrived from another device yet is *pending*, not
+/// an error; anything else is plainly unassigned.
+#[test]
+fn an_unassigned_rows_hint_follows_its_reason() {
+    use koru_api_client::UnassignedReason;
+    let row = |reason, former: Option<ProfileId>| UnassignedRow {
+        id: WorkspaceId::new(),
+        name: "Orphan".into(),
+        icon: None,
+        color: None,
+        former_profile: former,
+        reason,
+    };
+    let former = ProfileId::new();
+    let deleted = row(UnassignedReason::ProfileDeleted, Some(former));
+    assert!(deleted.from_deleted_profile());
+    assert_eq!(
+        deleted.hint_key(),
+        koru_i18n::Key::WorkspacesUnassignedHeading
+    );
+    let pending = row(UnassignedReason::ProfileAbsent, Some(former));
+    assert!(!pending.from_deleted_profile());
+    assert_eq!(
+        pending.hint_key(),
+        koru_i18n::Key::WorkspacesUnassignedProfilePending
+    );
+    assert_eq!(
+        row(UnassignedReason::ExplicitlyUnassigned, None).hint_key(),
+        koru_i18n::Key::WorkspacesUnassignedNoProfile
+    );
+    assert_eq!(
+        row(UnassignedReason::HolderPlaced, Some(former)).hint_key(),
+        koru_i18n::Key::WorkspacesUnassignedNoProfile
+    );
+}

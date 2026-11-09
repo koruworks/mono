@@ -179,11 +179,7 @@ impl ManageView {
             ROW_TILE,
             ROW_TILE,
         );
-        let reason = if row.from_deleted_profile() {
-            Words::WorkspacesUnassignedHeading
-        } else {
-            Words::WorkspacesUnassignedNoProfile
-        };
+        let reason = row.hint_key();
         controls.push(Placed {
             control: Control::UnassignedRow(id),
             rect,

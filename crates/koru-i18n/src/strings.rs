@@ -785,6 +785,9 @@ pub enum Key {
     /// The row's hint when the workspace is unassigned for another reason
     /// than a deleted Profile: nothing to restore, only somewhere to move it.
     WorkspacesUnassignedNoProfile,
+    /// The row's hint when its Profile has not arrived from another device
+    /// yet (`ProfileAbsent`, TECHNICAL.final §7.2): pending, not an error.
+    WorkspacesUnassignedProfilePending,
     /// Opens the destination picker for an unassigned workspace.
     WorkspacesMoveTo,
     /// Restores the deleted Profile an unassigned workspace came from: the
@@ -826,6 +829,9 @@ pub enum Key {
     ProfileDeletePreviewStale,
     /// The preview could not be read, so no confirmation was shown.
     ProfileDeletePreviewFailed,
+    /// A Profile deletion that arrived from another device (§6.3): the
+    /// notice the settled window shows, taking the Profile's retained name.
+    ProfileDeletedOnAnotherDevice,
     /// `NeedsProfile` recovery (§6.3): the way from the create form to the
     /// restorable Trash and the unassigned workspaces, shown only when there
     /// is something to recover.
@@ -2847,6 +2853,17 @@ pub enum Key {
     SyncSyncing,
     SyncOffline,
     SyncNeedsAttention,
+    /// The organization sync states the root catalog adds (root-catalog
+    /// Plan 2.2, TECHNICAL.final §4.4, §7.2, §9): the word the sync icon and
+    /// a Workspace row show, and the sentence behind it for a reader.
+    SyncPending,
+    SyncPausedBySettings,
+    SyncBlockedByMismatch,
+    SyncHeld,
+    SyncPendingHint,
+    SyncPausedBySettingsHint,
+    SyncBlockedByMismatchHint,
+    SyncHeldHint,
     SyncSettingsTab,
     SyncChannelDevices,
     SyncControlDescription,
@@ -3074,7 +3091,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2144] = [
+    pub const ALL: [Key; 2154] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -3644,6 +3661,7 @@ impl Key {
         Key::WorkspacesProfiles,
         Key::WorkspacesUnassignedHeading,
         Key::WorkspacesUnassignedNoProfile,
+        Key::WorkspacesUnassignedProfilePending,
         Key::WorkspacesMoveTo,
         Key::WorkspacesRestoreProfile,
         Key::WorkspacesDeletedProfiles,
@@ -3666,6 +3684,7 @@ impl Key {
         Key::ProfileDeleteTargetsNone,
         Key::ProfileDeletePreviewStale,
         Key::ProfileDeletePreviewFailed,
+        Key::ProfileDeletedOnAnotherDevice,
         Key::OnboardingRecoveryLink,
         Key::OnboardingRecoveryTitle,
         Key::OnboardingRestoreDeleted,
@@ -5080,6 +5099,14 @@ impl Key {
         Key::SyncSyncing,
         Key::SyncOffline,
         Key::SyncNeedsAttention,
+        Key::SyncPending,
+        Key::SyncPausedBySettings,
+        Key::SyncBlockedByMismatch,
+        Key::SyncHeld,
+        Key::SyncPendingHint,
+        Key::SyncPausedBySettingsHint,
+        Key::SyncBlockedByMismatchHint,
+        Key::SyncHeldHint,
         Key::SyncSettingsTab,
         Key::SyncChannelDevices,
         Key::SyncControlDescription,
@@ -9964,6 +9991,7 @@ pub const ROWS: &[Row] = &[
     Row { key: Key::WorkspacesProfiles, en: "Profiles", es: "Perfiles", pt_br: "Perfis", de: "Profile", fr: "Profils", ar: "ملفات التعريف", zh_hans: "配置文件", ja: "プロファイル" },
     Row { key: Key::WorkspacesUnassignedHeading, en: "Unassigned (from deleted Profile)", es: "Sin asignar (de un perfil eliminado)", pt_br: "Não atribuídos (de perfil excluído)", de: "Nicht zugeordnet (aus gelöschtem Profil)", fr: "Non attribués (d'un profil supprimé)", ar: "غير معيّن (من ملف تعريف محذوف)", zh_hans: "未分配（来自已删除的配置文件）", ja: "未割り当て（削除されたプロファイルから）" },
     Row { key: Key::WorkspacesUnassignedNoProfile, en: "Unassigned", es: "Sin asignar", pt_br: "Não atribuído", de: "Nicht zugeordnet", fr: "Non attribué", ar: "غير معيّن", zh_hans: "未分配", ja: "未割り当て" },
+    Row { key: Key::WorkspacesUnassignedProfilePending, en: "Its Profile has not arrived yet", es: "Su perfil aún no ha llegado", pt_br: "Seu perfil ainda não chegou", de: "Sein Profil ist noch nicht angekommen", fr: "Son profil n'est pas encore arrivé", ar: "لم يصل ملف التعريف الخاص بها بعد", zh_hans: "它的配置文件尚未到达", ja: "そのプロファイルはまだ届いていません" },
     Row { key: Key::WorkspacesMoveTo, en: "Move to…", es: "Mover a…", pt_br: "Mover para…", de: "Verschieben nach…", fr: "Déplacer vers…", ar: "نقل إلى…", zh_hans: "移动到…", ja: "移動先…" },
     Row { key: Key::WorkspacesRestoreProfile, en: "Restore Profile", es: "Restaurar perfil", pt_br: "Restaurar perfil", de: "Profil wiederherstellen", fr: "Restaurer le profil", ar: "استعادة ملف التعريف", zh_hans: "恢复配置文件", ja: "プロファイルを復元" },
     Row { key: Key::WorkspacesDeletedProfiles, en: "Deleted profiles", es: "Perfiles eliminados", pt_br: "Perfis excluídos", de: "Gelöschte Profile", fr: "Profils supprimés", ar: "ملفات التعريف المحذوفة", zh_hans: "已删除的配置文件", ja: "削除されたプロファイル" },
@@ -9986,6 +10014,7 @@ pub const ROWS: &[Row] = &[
     Row { key: Key::ProfileDeleteTargetsNone, en: "This Profile has no workspaces to move to Trash.", es: "Este perfil no tiene espacios de trabajo que mover a la papelera.", pt_br: "Este perfil não tem espaços de trabalho para mover para a Lixeira.", de: "Dieses Profil hat keine Arbeitsbereiche, die in den Papierkorb verschoben werden könnten.", fr: "Ce profil n'a aucun espace de travail à déplacer vers la corbeille.", ar: "لا توجد مساحات عمل في ملف التعريف هذا لنقلها إلى المهملات.", zh_hans: "此配置文件没有可移到回收站的工作区。", ja: "このプロファイルにはゴミ箱に移動するワークスペースがありません。" },
     Row { key: Key::ProfileDeletePreviewStale, en: "This Profile's workspaces changed since you looked. Check the list and confirm again.", es: "Los espacios de trabajo de este perfil cambiaron desde que los viste. Revisa la lista y confirma de nuevo.", pt_br: "Os espaços de trabalho deste perfil mudaram desde que você os viu. Verifique a lista e confirme novamente.", de: "Die Arbeitsbereiche dieses Profils haben sich seit dem letzten Blick geändert. Prüfen Sie die Liste und bestätigen Sie erneut.", fr: "Les espaces de travail de ce profil ont changé depuis votre dernier regard. Vérifiez la liste et confirmez à nouveau.", ar: "تغيّرت مساحات عمل ملف التعريف هذا منذ آخر مرة اطّلعت عليها. راجع القائمة وأكّد مرة أخرى.", zh_hans: "此配置文件的工作区自您上次查看后已发生变化。请检查列表并再次确认。", ja: "このプロファイルのワークスペースは前回確認した後に変わりました。一覧を確認してもう一度確定してください。" },
     Row { key: Key::ProfileDeletePreviewFailed, en: "Koru couldn't read this Profile's workspaces. Nothing was changed.", es: "Koru no pudo leer los espacios de trabajo de este perfil. No se cambió nada.", pt_br: "O Koru não conseguiu ler os espaços de trabalho deste perfil. Nada foi alterado.", de: "Koru konnte die Arbeitsbereiche dieses Profils nicht lesen. Es wurde nichts geändert.", fr: "Koru n'a pas pu lire les espaces de travail de ce profil. Rien n'a été modifié.", ar: "تعذّر على Koru قراءة مساحات عمل ملف التعريف هذا. لم يتغيّر شيء.", zh_hans: "Koru 无法读取此配置文件的工作区。未做任何更改。", ja: "Koru はこのプロファイルのワークスペースを読み取れませんでした。何も変更されていません。" },
+    Row { key: Key::ProfileDeletedOnAnotherDevice, en: "“{}” was deleted on another device. Its workspaces here are in the Trash and can be restored for 30 days.", es: "“{}” se eliminó en otro dispositivo. Sus espacios de trabajo aquí están en la Papelera y pueden restaurarse durante 30 días.", pt_br: "“{}” foi excluído em outro dispositivo. Seus espaços de trabalho aqui estão na Lixeira e podem ser restaurados por 30 dias.", de: "„{}“ wurde auf einem anderen Gerät gelöscht. Seine Arbeitsbereiche liegen hier im Papierkorb und können 30 Tage lang wiederhergestellt werden.", fr: "« {} » a été supprimé sur un autre appareil. Ses espaces de travail sont ici dans la corbeille et peuvent être restaurés pendant 30 jours.", ar: "تم حذف ”{}“ على جهاز آخر. مساحات العمل الخاصة به هنا في سلة المهملات ويمكن استعادتها خلال 30 يومًا.", zh_hans: "“{}”已在另一台设备上删除。它在此处的工作区位于回收站中，30 天内可恢复。", ja: "「{}」は別の端末で削除されました。この端末のワークスペースはごみ箱にあり、30日間は復元できます。" },
     Row { key: Key::OnboardingRecoveryLink, en: "Restore a deleted profile or find unassigned workspaces…", es: "Restaurar un perfil eliminado o encontrar espacios de trabajo sin asignar…", pt_br: "Restaurar um perfil excluído ou encontrar espaços de trabalho não atribuídos…", de: "Ein gelöschtes Profil wiederherstellen oder nicht zugeordnete Arbeitsbereiche finden…", fr: "Restaurer un profil supprimé ou retrouver des espaces de travail non attribués…", ar: "استعادة ملف تعريف محذوف أو العثور على مساحات عمل غير معيّنة…", zh_hans: "恢复已删除的配置文件或查找未分配的工作区…", ja: "削除されたプロファイルを復元するか、未割り当てのワークスペースを探す…" },
     Row { key: Key::OnboardingRecoveryTitle, en: "Recover", es: "Recuperar", pt_br: "Recuperar", de: "Wiederherstellen", fr: "Récupérer", ar: "استرداد", zh_hans: "恢复", ja: "回復" },
     Row { key: Key::OnboardingRestoreDeleted, en: "Restore a deleted profile", es: "Restaurar un perfil eliminado", pt_br: "Restaurar um perfil excluído", de: "Ein gelöschtes Profil wiederherstellen", fr: "Restaurer un profil supprimé", ar: "استعادة ملف تعريف محذوف", zh_hans: "恢复已删除的配置文件", ja: "削除されたプロファイルを復元" },
@@ -15844,6 +15873,14 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::SyncSyncing, en: "Syncing", es: "Sincronizando", pt_br: "Sincronizando", de: "Synchronisiert", fr: "Synchronisation", ar: "جارٍ المزامنة", zh_hans: "正在同步", ja: "同期中" },
     Row { key: Key::SyncOffline, en: "Offline", es: "Sin conexión", pt_br: "Off-line", de: "Offline", fr: "Hors ligne", ar: "غير متصل", zh_hans: "离线", ja: "オフライン" },
     Row { key: Key::SyncNeedsAttention, en: "Needs attention", es: "Requiere atención", pt_br: "Precisa de atenção", de: "Aufmerksamkeit nötig", fr: "À traiter", ar: "يحتاج إلى اهتمام", zh_hans: "需要处理", ja: "要対応" },
+    Row { key: Key::SyncPending, en: "Pending", es: "Pendiente", pt_br: "Pendente", de: "Ausstehend", fr: "En attente", ar: "قيد الانتظار", zh_hans: "待同步", ja: "保留中" },
+    Row { key: Key::SyncPausedBySettings, en: "Paused by your settings", es: "Pausado por tu configuración", pt_br: "Pausado pelas suas configurações", de: "Durch deine Einstellungen pausiert", fr: "En pause selon vos réglages", ar: "متوقف مؤقتًا حسب إعداداتك", zh_hans: "已按你的设置暂停", ja: "設定により一時停止中" },
+    Row { key: Key::SyncBlockedByMismatch, en: "Blocked by a sync mismatch", es: "Bloqueado por un desajuste de sincronización", pt_br: "Bloqueado por uma divergência de sincronização", de: "Durch eine Synchronisierungsabweichung blockiert", fr: "Bloqué par une incohérence de synchronisation", ar: "محظور بسبب تعارض في المزامنة", zh_hans: "因同步设置冲突而阻止", ja: "同期設定の不一致によりブロック中" },
+    Row { key: Key::SyncHeld, en: "Held for privacy", es: "Retenido por privacidad", pt_br: "Retido por privacidade", de: "Aus Datenschutzgründen zurückgehalten", fr: "Retenu pour des raisons de confidentialité", ar: "محتجز لأسباب تتعلق بالخصوصية", zh_hans: "出于隐私原因暂不同步", ja: "プライバシーのため保留中" },
+    Row { key: Key::SyncPendingHint, en: "Organization changes from another device have not all arrived yet.", es: "Aún no han llegado todos los cambios de organización de otro dispositivo.", pt_br: "Nem todas as alterações de organização de outro dispositivo chegaram ainda.", de: "Noch sind nicht alle Organisationsänderungen eines anderen Geräts angekommen.", fr: "Les changements d'organisation d'un autre appareil ne sont pas tous arrivés.", ar: "لم تصل بعد كل تغييرات التنظيم من جهاز آخر.", zh_hans: "来自另一台设备的整理更改尚未全部到达。", ja: "別の端末からの整理の変更がまだすべて届いていません。" },
+    Row { key: Key::SyncPausedBySettingsHint, en: "Local-only on this device. Change its sync in Manage › Koru Cloud.", es: "Solo local en este dispositivo. Cambia su sincronización en Administrar › Koru Cloud.", pt_br: "Somente local neste dispositivo. Altere a sincronização em Gerenciar › Koru Cloud.", de: "Nur lokal auf diesem Gerät. Ändere die Synchronisierung unter Verwalten › Koru Cloud.", fr: "Local uniquement sur cet appareil. Modifiez sa synchronisation dans Gérer › Koru Cloud.", ar: "محلي فقط على هذا الجهاز. غيّر مزامنته من إدارة › Koru Cloud.", zh_hans: "此设备上为仅本地。可在“管理 › Koru Cloud”中更改其同步。", ja: "この端末ではローカルのみです。同期は「管理 › Koru Cloud」で変更できます。" },
+    Row { key: Key::SyncBlockedByMismatchHint, en: "This workspace's sync choice is above its Profile's. Correct it in Manage › Koru Cloud.", es: "La opción de sincronización de este espacio supera la de su perfil. Corrígela en Administrar › Koru Cloud.", pt_br: "A escolha de sincronização deste espaço está acima da do seu perfil. Corrija em Gerenciar › Koru Cloud.", de: "Die Synchronisierungswahl dieses Arbeitsbereichs liegt über der seines Profils. Korrigiere sie unter Verwalten › Koru Cloud.", fr: "Le choix de synchronisation de cet espace dépasse celui de son profil. Corrigez-le dans Gérer › Koru Cloud.", ar: "خيار مزامنة مساحة العمل هذه أعلى من خيار ملف التعريف. صحّحه من إدارة › Koru Cloud.", zh_hans: "此工作区的同步选择高于其配置文件的选择。请在“管理 › Koru Cloud”中更正。", ja: "このワークスペースの同期設定はプロファイルの設定を超えています。「管理 › Koru Cloud」で修正してください。" },
+    Row { key: Key::SyncHeldHint, en: "Another device is keeping part of this private; it syncs when that device allows it.", es: "Otro dispositivo mantiene parte de esto en privado; se sincronizará cuando ese dispositivo lo permita.", pt_br: "Outro dispositivo mantém parte disto privada; sincroniza quando esse dispositivo permitir.", de: "Ein anderes Gerät hält einen Teil davon privat; die Synchronisierung läuft, sobald dieses Gerät es erlaubt.", fr: "Un autre appareil garde une partie de ceci privée ; la synchronisation reprendra quand il l'autorisera.", ar: "جهاز آخر يُبقي جزءًا من هذا خاصًا؛ ستتم المزامنة عندما يسمح ذلك الجهاز.", zh_hans: "另一台设备将其中一部分保持私密；待该设备允许后再同步。", ja: "別の端末がこの一部を非公開にしています。その端末が許可すると同期されます。" },
     Row { key: Key::SyncSettingsTab, en: "Sync settings", es: "Ajustes de sincronización", pt_br: "Configurações de sincronização", de: "Synchronisierungseinstellungen", fr: "Réglages de synchronisation", ar: "إعدادات المزامنة", zh_hans: "同步设置", ja: "同期設定" },
     Row { key: Key::SyncChannelDevices, en: "Devices linked to this computer", es: "Dispositivos vinculados a este equipo", pt_br: "Dispositivos vinculados a este computador", de: "Mit diesem Computer verknüpfte Geräte", fr: "Appareils liés à cet ordinateur", ar: "الأجهزة المرتبطة بهذا الكمبيوتر", zh_hans: "与此电脑关联的设备", ja: "このコンピューターにリンクされたデバイス" },
     Row { key: Key::SyncControlDescription, en: "{}: {}. Channels: {}. Open sync settings", es: "{}: {}. Canales: {}. Abrir ajustes de sincronización", pt_br: "{}: {}. Canais: {}. Abrir configurações de sincronização", de: "{}: {}. Kanäle: {}. Synchronisierungseinstellungen öffnen", fr: "{} : {}. Canaux : {}. Ouvrir les réglages de synchronisation", ar: "{}: {}. القنوات: {}. فتح إعدادات المزامنة", zh_hans: "{}：{}。通道：{}。打开同步设置", ja: "{}：{}。チャネル：{}。同期設定を開く" },

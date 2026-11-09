@@ -465,6 +465,71 @@ pub struct ControlStatus {
     pub peers: Vec<PeerStatus>,
     #[serde(default)]
     pub sync_event: Option<SyncEvent>,
+    /// The organization (root-catalog) status per subject and peer, as the
+    /// last sync pass with each connected peer left it (root-catalog
+    /// TECHNICAL.final §4.4, §7.2, §9; Plan 2.2). Identifiers and states
+    /// only: no name, no mode row, no hidden subject.
+    #[serde(default)]
+    pub root_sync: Vec<RootSyncSubject>,
+}
+
+/// **What a person is told about one Profile's or Workspace's organization
+/// sync with one peer.** Read from the Store's receipts and admissions by
+/// the sync pass, never from a document's hydration: a Workspace whose root
+/// unit has not arrived is pending however many of its documents have.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RootSyncState {
+    /// Every eligible unit the peer advertised is applied here.
+    UpToDate,
+    /// Root units, a placement or an overlay publication are still owed:
+    /// `placement_pending`, `root_unit_pending`, a reconciled-short join, a
+    /// private overlay waiting to be published.
+    Pending,
+    /// This device's own mode row closes the peer path for the subject
+    /// (`mode_refuses_transport`): nothing moves until the person changes
+    /// the subject's sync setting here.
+    PausedBySettings,
+    /// The Workspace's stored choice is above its Profile's ceiling
+    /// (`ceiling_mismatch`): the transport is stopped until the existing
+    /// correction path changes a row.
+    BlockedByMismatch,
+    /// The peer holds the unit back for privacy (`root_unit_held`). The
+    /// subject this device asked about is named; what hides it never is.
+    Held,
+}
+
+impl RootSyncState {
+    /// Which of two readings a person should see when both are true of one
+    /// subject: a stop beats a wait, a wait beats done.
+    pub fn worse(self, other: Self) -> Self {
+        fn rank(state: RootSyncState) -> u8 {
+            match state {
+                RootSyncState::UpToDate => 0,
+                RootSyncState::Pending => 1,
+                RootSyncState::Held => 2,
+                RootSyncState::PausedBySettings => 3,
+                RootSyncState::BlockedByMismatch => 4,
+            }
+        }
+        if rank(other) > rank(self) {
+            other
+        } else {
+            self
+        }
+    }
+}
+
+/// One subject's reading with one peer. Exactly one of `profile` and
+/// `workspace` is set.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RootSyncSubject {
+    pub peer: DeviceId,
+    #[serde(default)]
+    pub profile: Option<ProfileId>,
+    #[serde(default)]
+    pub workspace: Option<WorkspaceId>,
+    pub state: RootSyncState,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1443,6 +1508,7 @@ impl ControlHost {
             desired_connections: self.desired_connections.len(),
             peers: Vec::new(),
             sync_event: None,
+            root_sync: Vec::new(),
         }
     }
 

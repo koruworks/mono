@@ -6569,3 +6569,117 @@ async fn the_selected_path_predicate_refuses_a_relayed_connection() {
     peer_endpoint.close().await;
     relay.shutdown().await.expect("relay shuts down");
 }
+
+// ------------------------------------------- the organization status (Plan 2.2)
+
+/// **A pass's readings are installed whole**: a full pass replaces what the
+/// peer said before, a retry scoped to failed Workspaces only updates what
+/// it touched, within one pass the worse reading of a subject wins, and a
+/// peer that disconnects takes its readings with it.
+#[test]
+fn root_sync_readings_are_installed_whole_and_leave_with_the_peer() {
+    let peer = DeviceId::new();
+    let profile = ProfileId::new();
+    let workspace = WorkspaceId::new();
+    let status = RwLock::new(NetworkStatus::default());
+
+    let mut pass = RootSyncPass::default();
+    pass.note(
+        protocol::CatalogUnitRef::Profile { profile },
+        RootSyncState::UpToDate,
+    );
+    pass.note_workspace(workspace, RootSyncState::UpToDate);
+    pass.note_workspace(workspace, RootSyncState::Pending);
+    pass.note_workspace(workspace, RootSyncState::UpToDate);
+    pass.install(&status, peer, true);
+    let rows = status.read().unwrap().root_sync[&peer].clone();
+    assert_eq!(rows.len(), 2);
+    assert!(
+        rows.iter()
+            .any(|row| row.profile == Some(profile) && row.state == RootSyncState::UpToDate)
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.workspace == Some(workspace) && row.state == RootSyncState::Pending),
+        "the worse reading of one subject wins within a pass"
+    );
+
+    // A retry pass touching only the Workspace keeps the Profile's reading.
+    let mut retry = RootSyncPass::default();
+    retry.note_workspace(workspace, RootSyncState::UpToDate);
+    retry.install(&status, peer, false);
+    let rows = status.read().unwrap().root_sync[&peer].clone();
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().any(|row| row.profile == Some(profile)));
+    assert!(
+        rows.iter()
+            .any(|row| row.workspace == Some(workspace) && row.state == RootSyncState::UpToDate)
+    );
+
+    // A full pass that says nothing about the Profile forgets it.
+    let mut next = RootSyncPass::default();
+    next.note_workspace(workspace, RootSyncState::Held);
+    next.install(&status, peer, true);
+    let rows = status.read().unwrap().root_sync[&peer].clone();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].state, RootSyncState::Held);
+
+    // Seeding from this device's own admissions: a closed mode row, a
+    // ceiling mismatch and a pending overlay each read as their state; an
+    // ordinary subject gets no reading from the seed.
+    let mut seeded = RootSyncPass::default();
+    let other = WorkspaceId::new();
+    seeded.seed(&[
+        protocol::RootSubjectAdmission {
+            subject: protocol::CatalogUnitRef::Profile { profile },
+            allows_peer: false,
+            ceiling_mismatch: false,
+            overlay_pending: false,
+        },
+        protocol::RootSubjectAdmission {
+            subject: protocol::CatalogUnitRef::Workspace { workspace },
+            allows_peer: true,
+            ceiling_mismatch: true,
+            overlay_pending: false,
+        },
+        protocol::RootSubjectAdmission {
+            subject: protocol::CatalogUnitRef::Workspace { workspace: other },
+            allows_peer: true,
+            ceiling_mismatch: false,
+            overlay_pending: true,
+        },
+        protocol::RootSubjectAdmission {
+            subject: protocol::CatalogUnitRef::Workspace {
+                workspace: WorkspaceId::new(),
+            },
+            allows_peer: true,
+            ceiling_mismatch: false,
+            overlay_pending: false,
+        },
+    ]);
+    assert_eq!(seeded.subjects.len(), 3);
+    assert_eq!(
+        seeded.subjects[&protocol::CatalogUnitRef::Profile { profile }],
+        RootSyncState::PausedBySettings
+    );
+    assert_eq!(
+        seeded.subjects[&protocol::CatalogUnitRef::Workspace { workspace }],
+        RootSyncState::BlockedByMismatch
+    );
+    assert_eq!(
+        seeded.subjects[&protocol::CatalogUnitRef::Workspace { workspace: other }],
+        RootSyncState::Pending
+    );
+
+    // Disconnecting the peer drops its readings; connecting keeps them.
+    set_peer(
+        &status,
+        peer,
+        PeerConnectionState::Connected {
+            path: PathKind::Direct,
+        },
+    );
+    assert!(status.read().unwrap().root_sync.contains_key(&peer));
+    set_peer(&status, peer, PeerConnectionState::Disconnected);
+    assert!(!status.read().unwrap().root_sync.contains_key(&peer));
+}

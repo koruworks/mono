@@ -536,6 +536,13 @@ impl ReplicationStore for LiveReplicationStore {
         root_exchange::publish_pending_root_overlays(&mut store)
     }
 
+    fn root_sync_admissions(
+        &self,
+    ) -> Result<Vec<koru_replication::protocol::RootSubjectAdmission>, StoreFailure> {
+        let store = self.state.store.lock().map_err(|_| failed("internal"))?;
+        root_exchange::root_sync_admissions(&store)
+    }
+
     fn root_catalog(&self, peer: &AuthenticatedPeer) -> Result<RootCatalogInventory, StoreFailure> {
         let store = self.state.store.lock().map_err(|_| failed("internal"))?;
         root_exchange::root_catalog(&store, peer)
@@ -576,14 +583,51 @@ impl ReplicationStore for LiveReplicationStore {
             let store = self.state.store.lock().map_err(|_| failed("internal"))?;
             root_exchange::stage_root_unit(&store, peer, unit, &updates)?
         };
-        let join = {
+        let (join, lifecycle_event) = {
             let mut store = self.state.store.lock().map_err(|_| failed("internal"))?;
-            root_exchange::commit_root_unit(&mut store, peer, staged, advertised)?
+            let (join, outcome) =
+                root_exchange::commit_root_unit_outcome(&mut store, peer, staged, advertised)?;
+            // A Profile deletion or restore that arrived from another device
+            // is the same fact a local batch publishes (Plan 1.3's
+            // `profile.deleted` / `profile.restored`): the windows refresh
+            // their Profile catalog on it, and the one whose open Profile
+            // just went settles into `NeedsProfile` (Plan 2.2, §6.3). The
+            // row's visibility after the commit says which it was.
+            let lifecycle_event = match (unit, &outcome) {
+                (
+                    CatalogUnitRef::Profile { profile },
+                    koru_store_core::service::RootJoinOutcome::Applied {
+                        lifecycle_changed: true,
+                        ..
+                    },
+                ) => {
+                    let active = store
+                        .profiles()
+                        .map(|profiles| profiles.iter().any(|row| row.id == profile))
+                        .unwrap_or(true);
+                    Some((profile, active))
+                }
+                _ => None,
+            };
+            (join, lifecycle_event)
         };
         if matches!(join, RootJoin::Applied { .. }) {
             // Placement or lifecycle may have moved a listing; readers
             // reconcile from the catalog, which is the only truth they read.
             self.state.notify_catalog_change();
+        }
+        if let Some((profile, active)) = lifecycle_event {
+            if active {
+                self.state
+                    .publish_catalog_event(koru_events::ProfileRestored {
+                        profile_id: profile.as_uuid(),
+                    });
+            } else {
+                self.state
+                    .publish_catalog_event(koru_events::ProfileDeleted {
+                        profile_id: profile.as_uuid(),
+                    });
+            }
         }
         Ok(join)
     }

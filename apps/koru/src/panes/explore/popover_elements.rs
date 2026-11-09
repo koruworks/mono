@@ -362,9 +362,10 @@ impl ExploreView {
         let gear = manage(id);
         let pin = pin(id);
         let (pinned, pending, reason) = self.workspace_pin_state(id);
+        let lang = crate::format::lang();
         let pin_name = koru_i18n::fill(
             koru_i18n::t(
-                crate::format::lang(),
+                lang,
                 if pinned {
                     koru_i18n::Key::UnpinNamedFromRail
                 } else {
@@ -373,6 +374,21 @@ impl ExploreView {
             ),
             &[name],
         );
+        // **The organization reading, where a row already shows state**
+        // (root-catalog Plan 2.2): a word after the name while the Workspace
+        // is pending, paused, blocked or held, and the sentence behind it in
+        // the row's accessible name. Up to date says nothing extra.
+        let organization = self.workspace_organization_status(id);
+        let row_name = match organization {
+            Some(status) => {
+                let word = koru_i18n::t(lang, status.key());
+                match status.hint() {
+                    Some(hint) => format!("{name}, {word}. {}", koru_i18n::t(lang, hint)),
+                    None => format!("{name}, {word}"),
+                }
+            }
+            None => name.to_string(),
+        };
         row(ROW)
             .min_h(metrics::ROW_MIN)
             .pad_x(alias::ROW_PLATE_INSET)
@@ -394,7 +410,7 @@ impl ExploreView {
                             .action(Action::Click)
                             .action(Action::Focus)
                             .semantics(Role::MenuItem)
-                            .name_text(name)
+                            .name_text(row_name)
                             .selected(current)
                             .child(
                                 leaf(
@@ -421,7 +437,15 @@ impl ExploreView {
                                     .fill()
                                     .truncate()
                                     .ink_centred(),
-                            ),
+                            )
+                            .children(organization.map(|status| {
+                                text(koru_i18n::t(lang, status.key()))
+                                    .named(ORGANIZATION)
+                                    .role(roles::ROW)
+                                    .ink(Ink::Hint)
+                                    .truncate()
+                                    .ink_centred()
+                            })),
                     )
                     .child(
                         leaf(GEAR, TrailingAdapter { current, key: gear })
@@ -728,6 +752,9 @@ pub(crate) fn row_rects(frame: &Frame) -> Vec<Rect> {
 
 /// The developer names the host reads geometry by.
 pub(crate) const ROW: &str = "Workspace row";
+/// The organization reading's word after a row's name (Plan 2.2), present
+/// only while the Workspace is not up to date.
+pub(crate) const ORGANIZATION: &str = "Workspace organization status";
 pub(crate) const LIST: &str = "Workspace list";
 pub(crate) const NAME: &str = "Workspace name";
 pub(crate) const TILE: &str = "Workspace tile";

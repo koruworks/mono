@@ -639,6 +639,11 @@ fn run_sync_control(
                         ));
                     }
                 }
+                if current.root_sync != status.root_sync {
+                    // The windows read the whole snapshot from the app; this
+                    // loop only says that it moved.
+                    waker.wake(crate::event::AgentEvent::RootSyncChanged);
+                }
                 if current.sync_event.as_ref().map(|event| event.sequence)
                     != status.sync_event.as_ref().map(|event| event.sequence)
                     && let Some(event) = &status.sync_event

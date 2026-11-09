@@ -35,7 +35,7 @@ use koru_store_core::{ProfileId, ProvisionedReplica, ReplicaPlacement, Workspace
 use crate::protocol::{
     AuthenticatedPeer, CatalogUnitRef, MODE_REFUSES_TRANSPORT, POLICY_CHANGED, PersonalUnitState,
     ROOT_UNIT_HELD, ROOT_UNIT_NOT_FOUND, ReplicaDescriptor, RootCatalogInventory, RootJoin,
-    RootUnitState, StoreFailure,
+    RootSubjectAdmission, RootUnitState, StoreFailure,
 };
 
 /// The grant a peer carries, as the Store's eligibility rule reads it.
@@ -258,12 +258,69 @@ pub fn commit_root_unit<C: Catalog, B: Backend>(
     staged: StagedRootUnit,
     advertised: Option<&loro::VersionVector>,
 ) -> Result<RootJoin, StoreFailure> {
+    commit_root_unit_outcome(store, peer, staged, advertised).map(|(join, _)| join)
+}
+
+/// [`commit_root_unit`] keeping the Store's own outcome beside the wire
+/// answer, for an adapter that announces what the commit changed (a Profile
+/// deletion that arrived from another device is a `profile.deleted` event on
+/// this device's bus, Plan 2.2).
+pub fn commit_root_unit_outcome<C: Catalog, B: Backend>(
+    store: &mut Store<C, B>,
+    peer: &AuthenticatedPeer,
+    staged: StagedRootUnit,
+    advertised: Option<&loro::VersionVector>,
+) -> Result<(RootJoin, RootJoinOutcome), StoreFailure> {
     peer.with_root_scope(|| {
         store
             .commit_staged_root_unit(peer.relationship_id.as_uuid(), staged, advertised)
-            .map(to_root_join)
+            .map(|outcome| (to_root_join(outcome.clone()), outcome))
             .map_err(map_root_error)
     })
+}
+
+/// **This device's reading of every subject it holds**, for
+/// [`ReplicationStore::root_sync_admissions`](crate::protocol::ReplicationStore::root_sync_admissions):
+/// the effective mode's answer for the peer path, the ceiling mismatch, and
+/// whether a private overlay is still waiting. Active Profiles and live
+/// Workspaces only; a bounded catalog read, never on a UI thread.
+pub fn root_sync_admissions<C: Catalog, B: Backend>(
+    store: &Store<C, B>,
+) -> Result<Vec<RootSubjectAdmission>, StoreFailure> {
+    let pending: std::collections::BTreeSet<CatalogUnitRef> = store
+        .pending_overlay_units()
+        .map_err(map_error)?
+        .into_iter()
+        .collect();
+    let mut out = Vec::new();
+    let mut push =
+        |subject: CatalogUnitRef, transport: TransportSubject| -> Result<(), StoreFailure> {
+            let admission = store.transport_admission(transport).map_err(map_error)?;
+            out.push(RootSubjectAdmission {
+                subject,
+                allows_peer: admission.allows_peer(),
+                ceiling_mismatch: admission.ceiling_mismatch,
+                overlay_pending: pending.contains(&subject),
+            });
+            Ok(())
+        };
+    for profile in store.profiles().map_err(map_error)? {
+        push(
+            CatalogUnitRef::Profile {
+                profile: profile.id,
+            },
+            TransportSubject::Profile(profile.id),
+        )?;
+    }
+    for workspace in store.workspaces().map_err(map_error)? {
+        push(
+            CatalogUnitRef::Workspace {
+                workspace: workspace.id,
+            },
+            TransportSubject::Workspace(workspace.id),
+        )?;
+    }
+    Ok(out)
 }
 
 pub fn stage_personal_unit<C: Catalog, B: Backend>(

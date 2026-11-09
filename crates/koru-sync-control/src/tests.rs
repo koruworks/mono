@@ -1137,3 +1137,39 @@ fn a_blob_access_value_redacts_its_token() {
     assert!(rendered.contains("<redacted>"), "{rendered}");
     assert!(!rendered.contains("an-account-bearer-token"), "{rendered}");
 }
+
+// ------------------------------------------------- root-catalog sync status
+
+/// **An older daemon says nothing about organization sync**, and a newer
+/// Agent reads that as "no reading" rather than refusing the frame.
+#[test]
+fn a_status_without_root_sync_reads_as_empty() {
+    let old = r#"{"replication_ready":false,"endpoint_id":null,"authorization_sequence":0,"authorized_peers":0,"authorized_workspaces":0,"desired_connections":0}"#;
+    let status: ControlStatus = serde_json::from_str(old).unwrap();
+    assert!(status.root_sync.is_empty());
+    let peer = DeviceId::new();
+    let subject = RootSyncSubject {
+        peer,
+        profile: Some(ProfileId::new()),
+        workspace: None,
+        state: RootSyncState::PausedBySettings,
+    };
+    let rendered = serde_json::to_string(&subject).unwrap();
+    assert!(rendered.contains("\"paused_by_settings\""), "{rendered}");
+    assert_eq!(
+        serde_json::from_str::<RootSyncSubject>(&rendered).unwrap(),
+        subject
+    );
+}
+
+/// A stop outranks a wait and a wait outranks done, whichever side it is on.
+#[test]
+fn the_worse_root_sync_reading_wins() {
+    use RootSyncState::*;
+    assert_eq!(UpToDate.worse(Pending), Pending);
+    assert_eq!(Pending.worse(UpToDate), Pending);
+    assert_eq!(Pending.worse(Held), Held);
+    assert_eq!(Held.worse(PausedBySettings), PausedBySettings);
+    assert_eq!(PausedBySettings.worse(BlockedByMismatch), BlockedByMismatch);
+    assert_eq!(BlockedByMismatch.worse(UpToDate), BlockedByMismatch);
+}

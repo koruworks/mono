@@ -207,6 +207,21 @@ impl UnassignedRow {
         self.reason == koru_api_client::UnassignedReason::ProfileDeleted
             && self.former_profile.is_some()
     }
+
+    /// The row's hint, by reason, worded once for the Workspace menu and
+    /// Manage: from a deleted Profile; *pending* when its Profile has not
+    /// arrived from another device yet (`ProfileAbsent`, root-catalog
+    /// TECHNICAL.final §7.2 — a state, not an error); plain *Unassigned*
+    /// otherwise.
+    pub fn hint_key(&self) -> koru_i18n::Key {
+        if self.from_deleted_profile() {
+            koru_i18n::Key::WorkspacesUnassignedHeading
+        } else if self.reason == koru_api_client::UnassignedReason::ProfileAbsent {
+            koru_i18n::Key::WorkspacesUnassignedProfilePending
+        } else {
+            koru_i18n::Key::WorkspacesUnassignedNoProfile
+        }
+    }
 }
 
 /// **One restorable Profile deletion** (§3.7, §6.3), as the Trash lists it:

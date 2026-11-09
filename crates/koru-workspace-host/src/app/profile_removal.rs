@@ -103,6 +103,44 @@ pub(super) struct ProfileOfflineCompletion {
     pub(super) result: Result<(), String>,
 }
 
+/// Whether a Profile that left the catalog is a shared deletion the Store
+/// can list (root-catalog Plan 2.2). `deleted: false` is a real answer —
+/// a device-local removal in another window, or a Store that could not be
+/// asked — and leaves the window alone.
+pub(super) struct RemoteDeletionCheck {
+    pub(super) profile: koru_core::ProfileId,
+    pub(super) deleted: bool,
+}
+
+/// Ask the Store whether `profile` carries an active shared deletion. Off
+/// the loop: a gateway round trip. A read, so it asks for the reading
+/// scopes only — a window the Agent will not vouch for the destructive
+/// scope still has to settle when its Profile is gone.
+fn remote_deletion_confirmed(
+    root: Option<&std::path::Path>,
+    profile: koru_core::ProfileId,
+) -> bool {
+    const SCOPES: &[&str] = &["store.read_documents", "store.manage_workspaces"];
+    let segment = koru_workspace::fromstore::segment();
+    let client = match root {
+        Some(root) => koru_api_client::Client::connect_at_first_party(segment, root, SCOPES),
+        None => koru_api_client::Client::connect_first_party(segment, SCOPES),
+    };
+    let Ok(client) = client else {
+        return false;
+    };
+    let store_profile = koru_store_core::ids::ProfileId::from_uuid(profile.as_uuid());
+    client
+        .store()
+        .profile_deletions()
+        .map(|deletions| {
+            deletions
+                .iter()
+                .any(|listing| listing.deletion.profile == store_profile)
+        })
+        .unwrap_or(false)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum HostedProfileRemovalSource {
     Origin,
@@ -286,6 +324,56 @@ impl<H: Host> App<H> {
         }
     }
 
+    /// Confirm a vanished open Profile as a shared deletion before the
+    /// window settles (root-catalog Plan 2.2, §6.3). One check per Profile
+    /// at a time; the answer arrives through
+    /// [`Self::service_remote_deletion_checks`].
+    pub(super) fn start_remote_deletion_check(&mut self, profile: koru_core::ProfileId) {
+        if !self.remote_deletion_checks_in_flight.insert(profile) {
+            return;
+        }
+        let root = self.gateway_root.clone();
+        let tx = self.remote_deletion_tx.clone();
+        let proxy = self.wake_proxy.clone();
+        let started = std::thread::Builder::new()
+            .name("koru-profile-remote-deletion".into())
+            .spawn(move || {
+                let deleted = remote_deletion_confirmed(root.as_deref(), profile);
+                let _ = tx.send(RemoteDeletionCheck { profile, deleted });
+                let _ = proxy.send_event(Wake::Profiles);
+            });
+        if started.is_err() {
+            self.remote_deletion_checks_in_flight.remove(&profile);
+        }
+    }
+
+    /// A confirmed shared deletion of the open Profile settles the window
+    /// the way a committed local batch does: the Store has already fenced
+    /// its writers and trashed its Workspaces, so what remains is this
+    /// device's cleanup and the move to another Profile or to
+    /// `NeedsProfile`. Nothing is created and nothing is recreated.
+    fn service_remote_deletion_checks(&mut self) {
+        while let Ok(check) = self.remote_deletion_rx.try_recv() {
+            self.remote_deletion_checks_in_flight.remove(&check.profile);
+            if !check.deleted {
+                continue;
+            }
+            // Still the open Profile, and still gone: a Profile that came
+            // back (a restore raced the check) is left alone.
+            if self.runtime.profile_id() != check.profile
+                || self
+                    .runtime
+                    .profile_catalog
+                    .iter()
+                    .any(|row| row.id == check.profile)
+            {
+                continue;
+            }
+            self.remote_profile_deletions.insert(check.profile);
+            self.begin_removed_profile_cleanup(check.profile);
+        }
+    }
+
     pub(super) fn start_profile_cascade(&mut self, profile: koru_core::ProfileId) {
         if !self.profile_cascades_in_flight.insert(profile) {
             return;
@@ -414,6 +502,7 @@ impl<H: Host> App<H> {
 
     pub(super) fn service_profile_removals(&mut self, event_loop: &ActiveEventLoop) {
         self.service_profile_offline();
+        self.service_remote_deletion_checks();
         while let Some((raw_profile, outcome)) = self.host.take_local_profile_removal() {
             let Some(profile) = koru_core::ProfileId::parse(&raw_profile) else {
                 continue;
@@ -552,6 +641,25 @@ impl<H: Host> App<H> {
             if hosted_source == Some(HostedProfileRemovalSource::Peer) {
                 let message = format!(
                     "\u{201c}{removed_profile_name}\u{201d} was deleted from Koru\n\nAnother trusted device deleted this Profile. It no longer syncs. Its Workspaces on this device were moved to Trash and, with its AI chats, remain recoverable for 30 days."
+                );
+                for pane in self.panes.values_mut() {
+                    let _ = if next.is_some() {
+                        pane.view.show_notice_open_another_profile(message.clone())
+                    } else {
+                        pane.view.show_notice(message.clone())
+                    };
+                    pane.window.request_redraw();
+                }
+            } else if self.remote_profile_deletions.remove(&completion.profile) {
+                // A shared deletion that arrived through the root units
+                // (Plan 2.2): the Workspaces are in the Trash by the Store's
+                // own projection and the batch is restorable from here.
+                let lang = koru_i18n::Lang::for_system(
+                    koru_window::system_locale::system_locale().as_deref(),
+                );
+                let message = koru_i18n::fill(
+                    koru_i18n::t(lang, koru_i18n::Key::ProfileDeletedOnAnotherDevice),
+                    &[&removed_profile_name],
                 );
                 for pane in self.panes.values_mut() {
                     let _ = if next.is_some() {

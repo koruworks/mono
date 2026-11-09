@@ -18,7 +18,8 @@ use iroh::{Endpoint, EndpointAddr, EndpointId, SecretKey, endpoint::presets};
 use koru_device::{BuildPayload, DeviceId, RelationshipId, ReplicationEndpointId};
 use koru_store_core::model::BlobHash;
 use koru_sync_control::{
-    AuthorizationSnapshot, AuthorizedPeer, PairingAttemptId, PairingEvent, TrustDeliveryId,
+    AuthorizationSnapshot, AuthorizedPeer, PairingAttemptId, PairingEvent, RootSyncState,
+    RootSyncSubject, TrustDeliveryId,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Semaphore, mpsc, oneshot, watch};
@@ -717,6 +718,76 @@ pub struct NetworkStatus {
     /// The relay connection, tracked event-driven from the endpoint's own
     /// home-relay watcher. See [`RelayConnectionStatus`].
     pub relay: RelayConnectionStatus,
+    /// **The organization status per peer** (root-catalog Plan 2.2): what
+    /// the last pass with each connected peer said about every Profile and
+    /// Workspace it touched, plus this device's own admissions. Replaced
+    /// whole at the end of a full pass, merged by a retry pass, dropped when
+    /// the peer disconnects. Identifiers and states only.
+    pub root_sync: BTreeMap<DeviceId, Vec<RootSyncSubject>>,
+}
+
+/// **One pass's reading of the organization**, written as the pass goes and
+/// installed into [`NetworkStatus::root_sync`] when it ends, so a status
+/// surface never sees a half-written pass. Within one pass the worse reading
+/// of a subject wins ([`RootSyncState::worse`]).
+#[derive(Default)]
+struct RootSyncPass {
+    subjects: BTreeMap<protocol::CatalogUnitRef, RootSyncState>,
+}
+
+impl RootSyncPass {
+    fn note(&mut self, subject: protocol::CatalogUnitRef, state: RootSyncState) {
+        self.subjects
+            .entry(subject)
+            .and_modify(|held| *held = held.worse(state))
+            .or_insert(state);
+    }
+
+    fn note_workspace(&mut self, workspace: koru_store_core::WorkspaceId, state: RootSyncState) {
+        self.note(protocol::CatalogUnitRef::Workspace { workspace }, state);
+    }
+
+    /// What the Store says about its own subjects before the peer says
+    /// anything: a closed mode row, a ceiling mismatch, a pending overlay.
+    fn seed(&mut self, admissions: &[protocol::RootSubjectAdmission]) {
+        for admission in admissions {
+            let state = if admission.ceiling_mismatch {
+                RootSyncState::BlockedByMismatch
+            } else if !admission.allows_peer {
+                RootSyncState::PausedBySettings
+            } else if admission.overlay_pending {
+                RootSyncState::Pending
+            } else {
+                continue;
+            };
+            self.note(admission.subject, state);
+        }
+    }
+
+    /// A full pass replaces the peer's reading; a retry scoped to failed
+    /// Workspaces only updates what it touched.
+    fn install(self, status: &RwLock<NetworkStatus>, peer: DeviceId, full: bool) {
+        let mut status = status.write().unwrap_or_else(|error| error.into_inner());
+        let entry = status.root_sync.entry(peer).or_default();
+        if full {
+            entry.clear();
+        }
+        for (subject, state) in self.subjects {
+            let row = RootSyncSubject {
+                peer,
+                profile: subject.profile(),
+                workspace: subject.workspace(),
+                state,
+            };
+            match entry
+                .iter_mut()
+                .find(|held| held.profile == row.profile && held.workspace == row.workspace)
+            {
+                Some(held) => *held = row,
+                None => entry.push(row),
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -862,6 +933,18 @@ impl RuntimeHandle {
 
     pub fn disconnect_peer(&self, device_id: DeviceId) {
         let _ = self.commands.send(Command::DisconnectPeer(device_id));
+    }
+
+    /// **Run a pass with every connected peer now** — the foreground/resume
+    /// hook (root-catalog TECHNICAL.final §7.2, §9: hosts wake on events,
+    /// foreground/resume and bounded backoff). A connection that survived
+    /// the background gets no connect event, so nothing else would ask it;
+    /// the pass itself is the same coalesced `request_sync` a connect runs,
+    /// so a pass already running simply picks the hint up. A runtime whose
+    /// sessions another process drives (the daemon behind the Agent's edge)
+    /// has no in-process connections and does nothing here.
+    pub fn resync_peers(&self) {
+        let _ = self.commands.send(Command::ResyncPeers);
     }
 
     pub fn begin_pairing(&self, invitation: koru_pairing::PairingInvitationV1) {
@@ -2212,6 +2295,9 @@ enum Command {
         exact_addr: Option<EndpointAddr>,
     },
     DisconnectPeer(DeviceId),
+    /// One pass with every live in-process connection; see
+    /// [`RuntimeHandle::resync_peers`].
+    ResyncPeers,
     RetryPeer {
         device_id: DeviceId,
         generation: u64,
@@ -2630,6 +2716,7 @@ async fn run(
                 }
             }
             Command::DisconnectPeer(device_id) => state.disconnect(device_id),
+            Command::ResyncPeers => state.resync_peers(),
             Command::RetryPeer {
                 device_id,
                 generation,
@@ -3331,6 +3418,57 @@ impl RuntimeState {
     }
 
     /// Preserve an already-live path when a reconnect repeats ConnectPeer.
+    /// The resume hook's body: the connect path's `request_sync`, once per
+    /// live connection whose peer is still authorized and speaks this
+    /// protocol. Coalesced by the per-peer coordinator, so a running pass
+    /// absorbs it as a hint.
+    fn resync_peers(&mut self) {
+        let Some(store) = self.store.clone() else {
+            return;
+        };
+        let live: Vec<(DeviceId, iroh::endpoint::Connection)> = self
+            .connections
+            .read()
+            .unwrap_or_else(|error| error.into_inner())
+            .iter()
+            .map(|(device, held)| (*device, held.connection.clone()))
+            .collect();
+        for (device_id, connection) in live {
+            let authorized = self
+                .authorization
+                .read()
+                .unwrap_or_else(|error| error.into_inner())
+                .as_ref()
+                .and_then(|snapshot| {
+                    snapshot
+                        .peers
+                        .iter()
+                        .find(|peer| peer.device_id == device_id)
+                        .cloned()
+                });
+            let Some(authorized) = authorized else {
+                continue;
+            };
+            let peer =
+                authenticated_peer(&authorized, &self.authorization_fences, &self.authorization);
+            if peer.protocol_refusal().is_some() {
+                continue;
+            }
+            tracing::debug!(
+                peer = %device_id.to_storage(),
+                "sync pass requested on resume"
+            );
+            request_sync(
+                connection,
+                peer,
+                Arc::clone(&store),
+                Arc::clone(&self.status),
+                Arc::clone(&self.sync_coordinator),
+                Arc::clone(&self.blob_directory),
+            );
+        }
+    }
+
     fn adopt_live_connection(&mut self, device_id: DeviceId) {
         if self.desired.contains_key(&device_id) {
             return;
@@ -5733,6 +5871,7 @@ async fn pull_profile_units<C: RequestTransport>(
 /// personal v2 units the peer advertised, to be pulled after content
 /// bootstrap. Only ever called for a scope-bound peer; a refusal or an
 /// invalid row ends the root part of the pass and schedules a retry.
+#[allow(clippy::too_many_arguments)]
 async fn pull_root_catalog<C: RequestTransport>(
     connection: &C,
     peer: &protocol::AuthenticatedPeer,
@@ -5740,6 +5879,7 @@ async fn pull_root_catalog<C: RequestTransport>(
     status: &Arc<RwLock<NetworkStatus>>,
     result: &mut SyncPassResult,
     changes: &mut CatalogChanges,
+    root_sync: &mut RootSyncPass,
     pass_id: u64,
 ) -> Vec<protocol::PersonalUnitState> {
     record_sync(
@@ -5844,17 +5984,27 @@ async fn pull_root_catalog<C: RequestTransport>(
             None,
             None,
         );
+        // Equal digests over exactly the eligible units: every one of them
+        // is up to date with this peer — and only those; a subject this
+        // device's own settings keep out of the digest keeps its reading.
+        for unit in &units {
+            root_sync.note(unit.unit, RootSyncState::UpToDate);
+        }
         return Vec::new();
     }
     // Profile units before Workspace units: the wire tag order puts them
     // there, so a Workspace's placement meets a Profile this device knows.
     units.sort_by_key(|unit| protocol::root_unit_sort_key(unit.unit));
     for remote in units {
-        pull_root_unit(connection, peer, store, status, remote, result, changes).await;
+        pull_root_unit(
+            connection, peer, store, status, remote, result, changes, root_sync,
+        )
+        .await;
     }
     personal
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn pull_root_unit<C: RequestTransport>(
     connection: &C,
     peer: &protocol::AuthenticatedPeer,
@@ -5863,11 +6013,13 @@ async fn pull_root_unit<C: RequestTransport>(
     remote: protocol::RootUnitState,
     result: &mut SyncPassResult,
     changes: &mut CatalogChanges,
+    root_sync: &mut RootSyncPass,
 ) {
     let unit = remote.unit;
     let Ok(remote_version) = loro::VersionVector::decode(&remote.version) else {
         result.retry_all = true;
         result.remember_error("invalid_root_version", unit.workspace());
+        root_sync.note(unit, RootSyncState::Pending);
         return;
     };
     let (local, was_missing) = match store.root_unit_version(peer, unit) {
@@ -5877,7 +6029,8 @@ async fn pull_root_unit<C: RequestTransport>(
         }
         Err(error) if error.code == protocol::MODE_REFUSES_TRANSPORT => {
             // A known Local-only subject admits no inbound metadata (§4.4).
-            // A state, not a failure.
+            // A state, not a failure — the one Q5 calls "waiting for your
+            // switch".
             record_sync(
                 status,
                 peer.device_id,
@@ -5886,18 +6039,24 @@ async fn pull_root_unit<C: RequestTransport>(
                 None,
                 Some(error.code),
             );
+            root_sync.note(unit, RootSyncState::PausedBySettings);
             return;
         }
         Err(error) => {
             result.retry_all = true;
             result.remember_error(error.code, unit.workspace());
+            root_sync.note(unit, RootSyncState::Pending);
             return;
         }
     };
     let local_version = loro::VersionVector::decode(&local).unwrap_or_default();
     if !was_missing && local_version.includes_vv(&remote_version) {
+        root_sync.note(unit, RootSyncState::UpToDate);
         return;
     }
+    // Asked for and not yet applied: pending until the commit below says
+    // otherwise. A timeout or a refusal leaves it so.
+    root_sync.note(unit, RootSyncState::Pending);
     let response = tokio::time::timeout(
         SYNC_REQUEST_TIMEOUT,
         request_frame(
@@ -5940,6 +6099,11 @@ async fn pull_root_unit<C: RequestTransport>(
                         // ask again from the new frontier next pass.
                         result.retry_all = true;
                         result.remember_error("root_unit_behind", unit.workspace());
+                    } else {
+                        // Pending was noted before the request; only a
+                        // reconciled commit lifts it (§7.2: receipts, not
+                        // hydration, decide convergence).
+                        root_sync.subjects.insert(unit, RootSyncState::UpToDate);
                     }
                     return;
                 }
@@ -5975,7 +6139,8 @@ async fn pull_root_unit<C: RequestTransport>(
         }
         Ok(Ok(protocol::PeerFrame::Error { code })) if code == protocol::ROOT_UNIT_HELD => {
             // The peer holds this unit back for this recipient. Nothing to
-            // retry from here; its policy decides when it lifts.
+            // retry from here; its policy decides when it lifts. The subject
+            // this device asked about is named; what hides it never is.
             record_sync(
                 status,
                 peer.device_id,
@@ -5984,6 +6149,7 @@ async fn pull_root_unit<C: RequestTransport>(
                 None,
                 Some(&code),
             );
+            root_sync.subjects.insert(unit, RootSyncState::Held);
             return;
         }
         Ok(Ok(protocol::PeerFrame::Error { code })) => code,
@@ -5997,6 +6163,7 @@ async fn pull_root_unit<C: RequestTransport>(
 
 /// Personal v2 units (§5.1), pulled after content bootstrap because their
 /// rows reference the Workspace row. Only a scope-bound peer advertises any.
+#[allow(clippy::too_many_arguments)]
 async fn pull_personal_units<C: RequestTransport>(
     connection: &C,
     peer: &protocol::AuthenticatedPeer,
@@ -6005,6 +6172,7 @@ async fn pull_personal_units<C: RequestTransport>(
     mut units: Vec<protocol::PersonalUnitState>,
     result: &mut SyncPassResult,
     changes: &mut CatalogChanges,
+    root_sync: &mut RootSyncPass,
 ) {
     units.sort_by_key(|unit| unit.workspace);
     for remote in units {
@@ -6012,6 +6180,7 @@ async fn pull_personal_units<C: RequestTransport>(
         let Ok(remote_version) = loro::VersionVector::decode(&remote.version) else {
             result.retry_all = true;
             result.remember_error("invalid_root_version", Some(workspace));
+            root_sync.note_workspace(workspace, RootSyncState::Pending);
             continue;
         };
         let (local, was_missing) = match store.personal_version(peer, workspace) {
@@ -6028,11 +6197,13 @@ async fn pull_personal_units<C: RequestTransport>(
                     None,
                     Some(error.code),
                 );
+                root_sync.note_workspace(workspace, RootSyncState::PausedBySettings);
                 continue;
             }
             Err(error) => {
                 result.retry_all = true;
                 result.remember_error(error.code, Some(workspace));
+                root_sync.note_workspace(workspace, RootSyncState::Pending);
                 continue;
             }
         };
@@ -6081,6 +6252,7 @@ async fn pull_personal_units<C: RequestTransport>(
                         if !reconciled {
                             result.retry_all = true;
                             result.remember_error("root_unit_behind", Some(workspace));
+                            root_sync.note_workspace(workspace, RootSyncState::Pending);
                         }
                         continue;
                     }
@@ -6097,6 +6269,7 @@ async fn pull_personal_units<C: RequestTransport>(
                     None,
                     Some(&code),
                 );
+                root_sync.note_workspace(workspace, RootSyncState::Held);
                 continue;
             }
             Ok(Ok(protocol::PeerFrame::Error { code })) => code,
@@ -6106,6 +6279,7 @@ async fn pull_personal_units<C: RequestTransport>(
         };
         result.retry_all = true;
         result.remember_error(error_code, Some(workspace));
+        root_sync.note_workspace(workspace, RootSyncState::Pending);
     }
 }
 
@@ -6151,6 +6325,20 @@ where
     // nothing and installs nothing.
     let mut personal_units = Vec::new();
     let mut catalog_changes = CatalogChanges::default();
+    // **The status a person reads** (Plan 2.2): this device's own admissions
+    // first, then what the exchange with this peer says, installed whole
+    // when the pass ends.
+    let mut root_sync = RootSyncPass::default();
+    if reconciles_catalog {
+        match store.root_sync_admissions() {
+            Ok(admissions) => root_sync.seed(&admissions),
+            Err(error) => tracing::debug!(
+                peer = %peer.device_id.to_storage(),
+                error_code = error.code,
+                "root_sync action=admissions_unavailable"
+            ),
+        }
+    }
     if retry_scope.is_none() {
         match store.bind_root_scope(&peer) {
             Ok(true) => {
@@ -6161,6 +6349,7 @@ where
                     &status,
                     &mut result,
                     &mut catalog_changes,
+                    &mut root_sync,
                     pass_id,
                 )
                 .await;
@@ -6392,6 +6581,16 @@ where
                 None,
                 Some(error.code),
             );
+            root_sync.note_workspace(
+                *workspace,
+                if error.code == protocol::MODE_REFUSES_TRANSPORT {
+                    RootSyncState::PausedBySettings
+                } else {
+                    // `admit_transport` refuses a stored choice above its
+                    // Profile's ceiling as corrupt state (§4.4).
+                    RootSyncState::BlockedByMismatch
+                },
+            );
             continue;
         }
         // Both sides of the exchange, in the same shape: a mismatch between
@@ -6585,6 +6784,7 @@ where
                     Some(inventory.documents.len()),
                     Some(error.code),
                 );
+                root_sync.note_workspace(*workspace, RootSyncState::Pending);
                 continue;
             }
             result.failed_workspaces.insert(*workspace);
@@ -6962,8 +7162,10 @@ where
         personal_units,
         &mut result,
         &mut catalog_changes,
+        &mut root_sync,
     )
     .await;
+    root_sync.install(&status, peer.device_id, reconciles_catalog);
     if reconciles_catalog && catalog_changes.total() > 0 {
         record_state_change(
             &status,
@@ -7661,6 +7863,11 @@ fn set_peer(status: &RwLock<NetworkStatus>, device: DeviceId, state: PeerConnect
     let is_connected = matches!(state, PeerConnectionState::Connected { .. });
     if is_connected || was_connected {
         status.last_seen_millis.insert(device, wall_time_millis());
+    }
+    if !is_connected {
+        // A reading from a peer that is gone is neither up to date nor
+        // pending from it; the surfaces fall back to what they knew.
+        status.root_sync.remove(&device);
     }
     status.peers.insert(device, state);
 }

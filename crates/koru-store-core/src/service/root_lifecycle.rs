@@ -256,6 +256,57 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             .transpose()
     }
 
+    /// **The batch's targets as this device can know them**: the local
+    /// application job when this device confirmed the deletion, else — for a
+    /// batch that arrived from another device through the root units
+    /// (root-catalog Plan 2.2, TECHNICAL.final §6.3) — the Workspaces whose
+    /// own units carry a deletion fact with this batch's id. The Profile unit
+    /// never lists its children (§4.2), so the per-target evidence is the
+    /// one honest source; a target whose unit has not arrived yet is not in
+    /// the list and stays in the Trash until a later restore sees it. The
+    /// derived job is `Deleted` and is written only when a restore acts on
+    /// it, as that restore's receipt.
+    fn batch_job(
+        &self,
+        batch: BatchId,
+        profile: ProfileId,
+        profile_deletion: DeletionId,
+        record: &DeletionRecord,
+    ) -> Result<Option<ProfileDeletionJob>> {
+        if let Some(job) = self.read_job(batch)? {
+            return Ok(Some(job));
+        }
+        let scope = self.catalog.local_user_scope()?;
+        let mut targets = Vec::new();
+        for (unit, _) in self
+            .catalog
+            .root_catalog_units(scope, CatalogUnitKind::Workspace)?
+        {
+            let Some(workspace) = unit.workspace() else {
+                continue;
+            };
+            let Some(unit) = self.effective_workspace_unit(workspace)? else {
+                continue;
+            };
+            if let Some((deletion, _)) = unit
+                .deletions()
+                .into_iter()
+                .find(|(_, target)| target.batch_id == Some(batch.as_uuid()))
+            {
+                targets.push((workspace, deletion));
+            }
+        }
+        Ok(Some(ProfileDeletionJob {
+            batch_id: batch,
+            profile,
+            profile_deletion,
+            at_ms: record.at_ms,
+            retention_ms: record.retention_ms,
+            targets,
+            phase: BatchPhase::Deleted,
+        }))
+    }
+
     fn job_state(job: &ProfileDeletionJob) -> Result<(String, Option<String>)> {
         let json = serde_json::to_string(job)
             .map_err(|e| Error::new(Code::Internal, format!("job is not serializable: {e}")))?;
@@ -719,9 +770,7 @@ impl<C: Catalog, B: Backend> Store<C, B> {
                 let Some(batch) = record.batch_id.map(BatchId::from_uuid) else {
                     continue;
                 };
-                let Some(job) = self.read_job(batch)? else {
-                    tracing::warn!(profile = %profile, batch = %batch,
-                        "a Profile deletion names a batch this device holds no job for");
+                let Some(job) = self.batch_job(batch, profile, deletion, record)? else {
                     continue;
                 };
                 let mut expired_or_purged = Vec::new();
@@ -793,12 +842,14 @@ impl<C: Catalog, B: Backend> Store<C, B> {
                 "that deletion belongs to no batch this device can restore",
             ));
         };
-        let mut job = self.read_job(batch)?.ok_or_else(|| {
-            Error::new(
-                Code::CorruptState,
-                "the Profile deletion batch has no local application job",
-            )
-        })?;
+        let mut job = self
+            .batch_job(batch, profile, deletion, &record)?
+            .ok_or_else(|| {
+                Error::new(
+                    Code::CorruptState,
+                    "the Profile deletion batch has no local application job",
+                )
+            })?;
         let at = Timestamp::now();
         let at_ms = at.millis();
         let restore = RestoreId::new();

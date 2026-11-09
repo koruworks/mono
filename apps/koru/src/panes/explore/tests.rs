@@ -1165,6 +1165,119 @@ fn the_sync_status_reads_the_account_state() {
     assert_eq!(v.sync_status(), SyncStatus::NotSetUp);
 }
 
+/// **The organization's reading is said before any claim of being up to
+/// date** (root-catalog Plan 2.2, §7.2): a Cloud Profile whose root units
+/// are still owed reads *Pending*; one this device keeps Local-only reads
+/// *Paused by your settings* and its control's accessible name says where
+/// to change that; a Workspace a peer holds back makes its Profile *Held*;
+/// a Profile with no cloud whose linked device reports its organization up
+/// to date is plainly *Up to date* — the surviving replica. Another
+/// Profile's readings say nothing about this one.
+#[test]
+fn the_sync_status_reads_the_organization_before_claiming_up_to_date() {
+    use koru_agent_wire::{RootSyncState, RootSyncStatus, RootSyncSubject};
+    let (mut v, profiles, workspaces) = with_context(0);
+    let open = profiles[1].id;
+    let subject =
+        |profile: Option<ProfileId>, workspace: Option<WorkspaceId>, state| RootSyncSubject {
+            peer_device_id: "laptop".into(),
+            profile_id: profile.map(|id| id.to_string()),
+            workspace_id: workspace.map(|id| id.to_string()),
+            state,
+        };
+    v.set_account_state(&syncing(&profiles[1]));
+    assert_eq!(v.sync_status(), SyncStatus::UpToDate);
+
+    assert!(v.set_root_sync(&RootSyncStatus {
+        subjects: vec![subject(Some(open), None, RootSyncState::Pending)],
+    }));
+    assert_eq!(
+        v.sync_status(),
+        SyncStatus::Pending,
+        "a Cloud that is up to date does not outrank an owed root unit"
+    );
+    let lang = crate::format::lang();
+    assert!(
+        v.sync_control_name()
+            .contains(koru_i18n::t(lang, koru_i18n::Key::SyncPending))
+    );
+    assert!(
+        v.sync_control_name()
+            .contains(koru_i18n::t(lang, koru_i18n::Key::SyncPendingHint))
+    );
+
+    v.set_root_sync(&RootSyncStatus {
+        subjects: vec![subject(Some(open), None, RootSyncState::PausedBySettings)],
+    });
+    assert_eq!(v.sync_status(), SyncStatus::PausedBySettings);
+    assert!(
+        v.sync_control_name()
+            .contains(koru_i18n::t(lang, koru_i18n::Key::SyncPausedBySettingsHint))
+    );
+    assert!(
+        v.profile_detail(&profiles[1], lang)
+            .starts_with(koru_i18n::t(lang, koru_i18n::Key::SyncPausedBySettings))
+    );
+
+    // A Workspace placed under the open Profile, held by the peer.
+    v.set_root_sync(&RootSyncStatus {
+        subjects: vec![
+            subject(Some(open), None, RootSyncState::UpToDate),
+            subject(None, Some(workspaces[0].id), RootSyncState::Held),
+        ],
+    });
+    assert_eq!(v.sync_status(), SyncStatus::Held);
+    assert_eq!(
+        v.workspace_organization_status(workspaces[0].id),
+        Some(SyncStatus::Held)
+    );
+    assert_eq!(v.workspace_organization_status(workspaces[1].id), None);
+
+    // Another Profile's reading is not this one's.
+    v.set_root_sync(&RootSyncStatus {
+        subjects: vec![subject(Some(profiles[0].id), None, RootSyncState::Pending)],
+    });
+    assert_eq!(v.sync_status(), SyncStatus::UpToDate);
+
+    // No cloud at all, and the one linked device says the organization is
+    // up to date: the surviving replica's ordinary reading.
+    v.set_account_state(&koru_agent_wire::AccountState::default());
+    assert_eq!(v.sync_status(), SyncStatus::NotSetUp);
+    v.set_root_sync(&RootSyncStatus {
+        subjects: vec![
+            subject(Some(open), None, RootSyncState::UpToDate),
+            subject(None, Some(workspaces[0].id), RootSyncState::UpToDate),
+        ],
+    });
+    assert_eq!(v.sync_status(), SyncStatus::UpToDate);
+    assert!(
+        v.sync_control_name()
+            .contains(koru_i18n::t(lang, koru_i18n::Key::SyncUpToDate))
+    );
+    // The same status twice is no change.
+    assert!(!v.set_root_sync(&RootSyncStatus {
+        subjects: vec![
+            subject(Some(open), None, RootSyncState::UpToDate),
+            subject(None, Some(workspaces[0].id), RootSyncState::UpToDate),
+        ],
+    }));
+    // Nothing said at all leaves the account's reading alone.
+    assert!(v.set_root_sync(&RootSyncStatus::default()));
+    assert_eq!(v.sync_status(), SyncStatus::NotSetUp);
+    for status in [
+        SyncStatus::Pending,
+        SyncStatus::PausedBySettings,
+        SyncStatus::BlockedByMismatch,
+        SyncStatus::Held,
+    ] {
+        assert!(
+            status.hint().is_some(),
+            "{status:?} explains itself to a reader"
+        );
+    }
+    assert!(SyncStatus::UpToDate.hint().is_none());
+}
+
 /// **Everything a popover page draws nests under its `FloatingPanel`** in
 /// the inspector (the review's note, E73): the rows' text and fills were
 /// lying beside the panel's record, as if they were the pane's own.

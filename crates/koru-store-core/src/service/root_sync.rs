@@ -1274,6 +1274,19 @@ impl<C: Catalog, B: Backend> Store<C, B> {
     /// failure is logged by address and left for the next pass; one held
     /// subject never stops the others. Run at the start of every sync pass,
     /// before the inventory is framed.
+    /// The subjects whose edits wait in a private overlay — pending
+    /// publication, for the status a person reads (Plan 2.2). A read, in
+    /// the publication job's own order.
+    pub fn pending_overlay_units(&self) -> Result<Vec<CatalogUnitRef>> {
+        let scope = self.catalog.local_user_scope()?;
+        Ok(self
+            .catalog
+            .root_catalog_overlays(scope)?
+            .into_iter()
+            .map(|(unit, _)| unit)
+            .collect())
+    }
+
     pub fn publish_pending_overlays(&mut self) -> Result<PublishedOverlays> {
         let scope = self.catalog.local_user_scope()?;
         let mut outcome = PublishedOverlays::default();
