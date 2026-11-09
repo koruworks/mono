@@ -36,6 +36,10 @@ pub struct SplitButton {
     pub menu_hot: bool,
     pub menu_focused: bool,
     pub menu_open: bool,
+    /// Animated reveal of the right lane, independent of its fixed hit area.
+    pub reveal: f32,
+    /// Animated half-turn of the menu chevron when its panel opens.
+    pub chevron_turn: f32,
 }
 
 impl SplitButton {
@@ -59,20 +63,14 @@ impl SplitButton {
         )
     }
 
-    fn show_chevron(self) -> bool {
-        self.menu_hot || self.menu_focused || self.menu_open
-    }
-
     /// The painted pill grows to the right without moving either icon.
     pub fn painted_rect(self) -> Rect {
         Rect::new(
             self.rect.x,
             self.rect.y,
-            if self.show_chevron() {
-                self.rect.w
-            } else {
-                Self::ACTION_W + Self::RESTING_MENU_W
-            },
+            Self::ACTION_W
+                + Self::RESTING_MENU_W
+                + (Self::MENU_W - Self::RESTING_MENU_W) * self.reveal.clamp(0.0, 1.0),
             self.rect.h,
         )
     }
@@ -125,6 +123,12 @@ impl SplitButton {
         scene::fill(canvas, root, fill, &shape);
         let action = self.action_rect();
         let menu = self.menu_rect();
+        let painted_menu = Rect::new(
+            menu.x,
+            menu.y,
+            (painted.x + painted.w - menu.x).max(0.0),
+            menu.h,
+        );
         if self.action_hot && self.action_enabled {
             scene::fill(
                 canvas,
@@ -147,7 +151,12 @@ impl SplitButton {
                 canvas,
                 root,
                 p.hover_tint,
-                &scene::rect(menu.x, menu.y, menu.w, menu.h),
+                &scene::rect(
+                    painted_menu.x,
+                    painted_menu.y,
+                    painted_menu.w,
+                    painted_menu.h,
+                ),
             );
         }
         if self.menu_focused {
@@ -183,7 +192,6 @@ impl SplitButton {
             Some(action_ink),
         );
         let badge_icon = engine.icon_layout(badge, 12.0);
-        let show_chevron = self.show_chevron();
         let badge_x = menu.x + 5.0;
         scene::draw_layout_first_line(
             canvas,
@@ -193,15 +201,24 @@ impl SplitButton {
             menu.y + (menu.h - badge_icon.height()) * 0.5,
             Some(ink),
         );
-        if show_chevron {
+        if self.reveal > 0.0 {
             let caret = engine.icon_layout(icons::CARET_DOWN, 11.0);
+            let x = painted.x + painted.w - caret.width() - 8.0;
+            let y = menu.y + (menu.h - caret.height()) * 0.5;
+            let cx = x + caret.width() * 0.5;
+            let cy = y + caret.height() * 0.5;
+            let turned = root
+                * Affine::rotate_about(
+                    (self.chevron_turn.clamp(0.0, 1.0) * std::f32::consts::PI) as f64,
+                    (cx as f64, cy as f64),
+                );
             scene::draw_layout_first_line(
                 canvas,
-                root,
+                turned,
                 &caret,
-                menu.x + menu.w - caret.width() - 8.0,
-                menu.y + (menu.h - caret.height()) * 0.5,
-                Some(ink),
+                x,
+                y,
+                Some(ink.with_alpha(self.reveal.clamp(0.0, 1.0))),
             );
         }
     }
@@ -222,6 +239,8 @@ mod tests {
             menu_hot: false,
             menu_focused: false,
             menu_open: false,
+            reveal: 0.0,
+            chevron_turn: 0.0,
         };
         assert_eq!(button.hit(20.0, 30.0), Some(SplitPart::Action));
         assert_eq!(button.hit(50.0, 30.0), Some(SplitPart::Menu));
@@ -246,15 +265,21 @@ mod tests {
             menu_hot: false,
             menu_focused: false,
             menu_open: false,
+            reveal: 0.0,
+            chevron_turn: 0.0,
         };
         let hot = SplitButton {
             menu_hot: true,
+            reveal: 1.0,
             ..idle
         };
+        let halfway = SplitButton { reveal: 0.5, ..hot };
         assert_eq!(idle.action_rect(), hot.action_rect());
         assert_eq!(idle.menu_rect(), hot.menu_rect());
         assert_eq!(idle.painted_rect().x, hot.painted_rect().x);
         assert!(idle.painted_rect().w < hot.painted_rect().w);
+        assert!(idle.painted_rect().w < halfway.painted_rect().w);
+        assert!(halfway.painted_rect().w < hot.painted_rect().w);
         assert_eq!(hot.painted_rect().w, SplitButton::W);
     }
 }

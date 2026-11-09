@@ -45,6 +45,7 @@ use koru_draw::geometry::Rect;
 use koru_draw::icons;
 use koru_draw::text::TextEngine;
 use koru_draw::theme::{self, Brush};
+use koru_draw::tween::Tween;
 use koru_draw::{scene, theme::role};
 use koru_ui::button::{ActionButton, ActionStyle, ButtonRole};
 use koru_ui::choice::{Choice, ChoiceOutcome};
@@ -77,6 +78,30 @@ pub(crate) fn chat_line_height() -> f32 {
 /// ([`theme::chat_stack`], the app font until a person chooses another).
 pub(crate) fn chat_text_layout(engine: &mut TextEngine, text: &str, max_w: f32) -> Layout<Brush> {
     engine.simple_layout_wrapped_in(text, role::ui(), theme::chat_stack(), max_w)
+}
+
+/// Paint only the glyph through a transform, so its button and hit area stay still.
+fn paint_turning_caret(
+    canvas: &mut Scene,
+    root: Affine,
+    engine: &mut TextEngine,
+    rect: Rect,
+    size: f32,
+    turn: f32,
+    color: vello::peniko::Color,
+) {
+    let layout = engine.icon_layout(icons::CARET_DOWN, size);
+    let x = rect.x + (rect.w - layout.width()) * 0.5;
+    let y = rect.y + (rect.h - layout.height()) * 0.5;
+    let turned = root
+        * Affine::rotate_about(
+            (turn.clamp(0.0, 1.0) * std::f32::consts::PI) as f64,
+            (
+                (x + layout.width() * 0.5) as f64,
+                (y + layout.height() * 0.5) as f64,
+            ),
+        );
+    scene::draw_layout(canvas, turned, &layout, x, y, Some(color));
 }
 
 mod agents;
@@ -605,6 +630,10 @@ pub struct ChatSurface {
     model_options_open: bool,
     model_option_offset: usize,
     chat_model_open: bool,
+    model_chevron: Tween,
+    microphone_chevron: Tween,
+    send_chevron: Tween,
+    send_chevron_reveal: Tween,
     /// The model picker's rail, query, highlight and scroll
     /// ([`model_picker`]), reset each time it opens.
     picker: model_picker::PickerState,
@@ -1018,6 +1047,10 @@ impl ChatSurface {
             model_options_open: false,
             model_option_offset: 0,
             chat_model_open: false,
+            model_chevron: Tween::new(theme::GLYPH_MORPH_MS, false),
+            microphone_chevron: Tween::new(theme::GLYPH_MORPH_MS, false),
+            send_chevron: Tween::new(theme::GLYPH_MORPH_MS, false),
+            send_chevron_reveal: Tween::new(theme::GLYPH_MORPH_MS, false),
             picker,
             picker_tooltip: Tooltip::default(),
             tool_access_open: false,
@@ -1454,6 +1487,10 @@ impl ChatSurface {
             changed = true;
         }
         changed |= self.copy_feedback.maintain(_now);
+        changed |= self.model_chevron.advance(_now);
+        changed |= self.microphone_chevron.advance(_now);
+        changed |= self.send_chevron.advance(_now);
+        changed |= self.send_chevron_reveal.advance(_now);
         changed |= self.link_card.maintain(_now);
         changed |= self.web_search_tooltip.maintain(_now);
         changed |= self.picker_tooltip.maintain(_now);
@@ -1500,6 +1537,10 @@ impl ChatSurface {
 
     pub fn animating(&self) -> bool {
         self.copy_feedback.animating(Instant::now())
+            || self.model_chevron.animating()
+            || self.microphone_chevron.animating()
+            || self.send_chevron.animating()
+            || self.send_chevron_reveal.animating()
             || self.web_search_tooltip.animating(Instant::now())
             || self.picker_tooltip.animating(Instant::now())
             || self.queue_tooltip.animating(Instant::now())
@@ -6714,13 +6755,61 @@ impl ChatSurface {
             role::row(),
             (model_button.w - ActionButton::PAD_X * 2.0 - caret_width).max(0.0),
         );
-        ActionButton::new(&shown_label, ActionStyle::Ghost, model_caret).draw(
-            canvas,
-            root,
-            &mut self.engine,
-            model_button,
-            model_button.contains(self.pointer.0, self.pointer.1),
-        );
+        let hovered = model_button.contains(self.pointer.0, self.pointer.1);
+        self.model_chevron.set(self.chat_model_open, Instant::now());
+        if model_caret.is_some() {
+            if hovered {
+                scene::fill(
+                    canvas,
+                    root,
+                    theme::p().hover_tint,
+                    &scene::rrect(
+                        model_button.x,
+                        model_button.y,
+                        model_button.w,
+                        model_button.h,
+                        ActionButton::RADIUS,
+                    ),
+                );
+            }
+            let text_w = self.engine.simple_layout(&shown_label, role::row()).width();
+            ActionButton::new(&shown_label, ActionStyle::Ghost, None).draw(
+                canvas,
+                root,
+                &mut self.engine,
+                Rect::new(
+                    model_button.x,
+                    model_button.y,
+                    model_button.w - caret_width,
+                    model_button.h,
+                ),
+                false,
+            );
+            let content_x = model_button.x + (model_button.w - text_w - caret_width) * 0.5;
+            let caret_rect = Rect::new(
+                content_x + text_w + ActionButton::GAP,
+                model_button.y,
+                caret_width - ActionButton::GAP,
+                model_button.h,
+            );
+            paint_turning_caret(
+                canvas,
+                root,
+                &mut self.engine,
+                caret_rect,
+                ActionButton::ICON_SIZE,
+                self.model_chevron.progress(),
+                theme::p().text,
+            );
+        } else {
+            ActionButton::new(&shown_label, ActionStyle::Ghost, None).draw(
+                canvas,
+                root,
+                &mut self.engine,
+                model_button,
+                hovered,
+            );
+        }
         false
     }
 
@@ -6771,11 +6860,21 @@ impl ChatSurface {
             menu_hot: false,
             menu_focused: self.focus == Focus::ModeChevron,
             menu_open: self.approval_mode_open,
+            reveal: self.send_chevron_reveal.progress(),
+            chevron_turn: self.send_chevron.progress(),
         };
         button.action_hot = button
             .action_rect()
             .contains(self.pointer.0, self.pointer.1);
         button.menu_hot = button.menu_rect().contains(self.pointer.0, self.pointer.1);
+        let now = Instant::now();
+        self.send_chevron.set(self.approval_mode_open, now);
+        self.send_chevron_reveal.set(
+            button.menu_hot || button.menu_focused || button.menu_open,
+            now,
+        );
+        button.reveal = self.send_chevron_reveal.progress();
+        button.chevron_turn = self.send_chevron.progress();
         button.draw(
             canvas,
             root,

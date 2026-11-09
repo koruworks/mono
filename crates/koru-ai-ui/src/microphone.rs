@@ -54,15 +54,16 @@
 
 use koru_draw::el::{Frame, FrameCx, Interaction};
 use koru_draw::geometry::Rect;
+use koru_draw::scene;
 use koru_draw::theme::{Profile, Space};
-use koru_draw::{icons, scene};
 use koru_i18n::{Key as Words, fill, t};
-use koru_ui::icon_button::{self, Metrics, State as IconButtonState};
+use koru_ui::icon_button::{self, Metrics};
 use vello::Scene;
 use vello::kurbo::Affine;
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 
-use crate::ChatSurface;
+use crate::{ChatSurface, paint_turning_caret};
+use std::time::Instant;
 
 mod elements;
 #[cfg(test)]
@@ -472,18 +473,40 @@ impl ChatSurface {
         if !shown {
             return;
         }
-        icon_button::draw_with(
+        let open = self.dictation.microphone.open;
+        self.microphone_chevron.set(open, Instant::now());
+        let metrics = Metrics::COMPACT;
+        let chip = icon_button::hover_chip_with(chevron, metrics);
+        let hovered = chevron.contains(self.pointer.0, self.pointer.1);
+        let palette = koru_draw::theme::p();
+        if open || hovered {
+            scene::fill(
+                canvas,
+                root,
+                if open {
+                    palette
+                        .accent
+                        .multiply_alpha(if hovered { 0.20 } else { 0.12 })
+                } else {
+                    palette.hover_tint
+                },
+                &scene::rrect(chip.x, chip.y, chip.w, chip.h, metrics.radius),
+            );
+        }
+        paint_turning_caret(
             canvas,
             root,
             &mut self.engine,
             chevron,
-            icons::CARET_DOWN,
-            IconButtonState {
-                hovered: chevron.contains(self.pointer.0, self.pointer.1),
-                active: self.dictation.microphone.open,
-                disabled: false,
+            metrics.icon_size,
+            self.microphone_chevron.progress(),
+            if open {
+                palette.accent
+            } else if hovered {
+                palette.text
+            } else {
+                palette.text_dim
             },
-            Metrics::COMPACT,
         );
     }
 
