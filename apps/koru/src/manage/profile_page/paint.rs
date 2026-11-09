@@ -26,6 +26,7 @@ impl ManageView {
             self.paint_words(canvas, root, words, &laid);
         }
         self.paint_workspaces_section(canvas, root);
+        self.paint_recovery_sections(canvas, root);
         if let Some(section) = &laid.sign_in {
             self.paint_sign_in(canvas, root, section, &laid);
         }

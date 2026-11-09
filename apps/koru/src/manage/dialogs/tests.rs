@@ -148,7 +148,7 @@ fn an_unknown_count_removes_by_the_cascade_and_cancel_is_the_default() {
     assert!(key(&mut view, NamedKey::Enter));
     assert!(key(&mut view, NamedKey::Tab));
     assert!(key(&mut view, NamedKey::Enter));
-    assert_eq!(view.c.take_remove_request(), Some((local.id, true)));
+    assert_eq!(view.c.take_remove_request(), Some((local.id, true, None)));
     assert!(view.dialog().is_none());
 }
 
@@ -178,7 +178,7 @@ fn an_empty_profile_is_removed_on_its_own() {
     assert_eq!(confirm.title(), "Remove Local from this device?");
     assert!(key(&mut view, NamedKey::Tab));
     assert!(key(&mut view, NamedKey::Enter));
-    assert_eq!(view.c.take_remove_request(), Some((local.id, false)));
+    assert_eq!(view.c.take_remove_request(), Some((local.id, false, None)));
 }
 
 #[test]

@@ -281,7 +281,19 @@ impl ProfilesController {
             }
             Intent::RemoveFromDevice { cascade } => {
                 self.remove_all_workspaces = cascade;
-                self.confirm_remove = true;
+                self.deletion_preview = None;
+                // A Profile with workspaces is deleted as the shared batch
+                // (root-catalog §6.1): the question is asked over the Store's
+                // own list of what goes, read off this thread first. An empty
+                // Profile, or a window with no Store client, keeps the
+                // device-local question.
+                let previewed = cascade
+                    && self
+                        .selected
+                        .is_some_and(|profile| self.request_deletion_preview(profile));
+                if !previewed {
+                    self.confirm_remove = true;
+                }
             }
             Intent::ConfirmRemove => {
                 // The caller performs Store mutation and settings cleanup. The

@@ -182,6 +182,65 @@ impl Row {
     }
 }
 
+/// **A live workspace no active Profile lists** (root-catalog
+/// TECHNICAL.final §3.6): placed under a deleted Profile without being a
+/// captured target of its deletion, explicitly unassigned, under a Profile
+/// this catalog has no row for, or under a legacy holder. The Workspace menu
+/// and Manage show these in one group at the top, so recovery does not
+/// depend on a hidden Holder. Moving one is the ordinary move; its deleted
+/// Profile is restored through [`crate::Action::RestoreProfile`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UnassignedRow {
+    pub id: WorkspaceId,
+    pub name: String,
+    pub icon: Option<String>,
+    pub color: Option<String>,
+    /// The Profile its placement names, when it names one.
+    pub former_profile: Option<ProfileId>,
+    pub reason: koru_api_client::UnassignedReason,
+}
+
+impl UnassignedRow {
+    /// Whether the row came from a deleted Profile — the one reason that
+    /// offers *Restore Profile* beside *Move to…*.
+    pub fn from_deleted_profile(&self) -> bool {
+        self.reason == koru_api_client::UnassignedReason::ProfileDeleted
+            && self.former_profile.is_some()
+    }
+}
+
+/// **One restorable Profile deletion** (§3.7, §6.3), as the Trash lists it:
+/// which Profile, by its retained name, when, and how many of the workspaces
+/// the deletion captured are still there to come back.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeletedProfileRow {
+    pub profile: ProfileId,
+    pub name: Option<String>,
+    pub deletion: koru_api_client::DeletionId,
+    pub at_ms: i64,
+    pub retention_ms: i64,
+    /// The captured workspaces.
+    pub targets: usize,
+    /// Of them, how many are past their retention or purged — reported, never
+    /// recreated.
+    pub expired_or_purged: usize,
+}
+
+/// What the catalog read says about recovery: the two lists above, read in
+/// the same pass as the rows so a surface never shows a group its catalog
+/// does not know about.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Recovery {
+    pub unassigned: Vec<UnassignedRow>,
+    pub deleted_profiles: Vec<DeletedProfileRow>,
+}
+
+impl Recovery {
+    pub fn is_empty(&self) -> bool {
+        self.unassigned.is_empty() && self.deleted_profiles.is_empty()
+    }
+}
+
 /// **What an action would do, as the gateway computed it.**
 ///
 /// Held while the confirmation is on screen; the token goes back with the
@@ -278,7 +337,14 @@ pub(crate) enum Answer {
         rows: Vec<Row>,
         removals:
             std::collections::BTreeMap<ProfileId, koru_store_core::profile_removal::RemovalMark>,
+        recovery: Recovery,
     },
+    /// The recovery lists alone, for a host's suite (the `fixtures`
+    /// feature): the real catalog read carries them inside `CatalogState`.
+    #[cfg(any(test, feature = "fixtures"))]
+    Recovery(Recovery),
+    /// The batch restore finished, or refused. Keyed to its command.
+    ProfileRestored(koru_store_core::errors::Result<koru_api_client::ProfileRestoreOutcome>),
     /// The profiles a workspace could be moved to.
     Profiles(Vec<ProfileRow>),
     /// The authorization probe's answer, for `workspace.destroy`.

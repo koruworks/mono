@@ -67,6 +67,9 @@ impl ProfilesController {
             Some(Action::ManageProfiles) => {
                 self.cancel_profile_creation();
             }
+            // The first-run window's recovery screen; an embedded form never
+            // offers it (Manage has its own recovery sections).
+            Some(Action::RestoreDeletedProfile { .. }) => {}
             Some(Action::Account(command)) => self.pending = Some(command),
             Some(Action::OpenCreatedProfile(profile)) => {
                 self.profile_switch_request = Some(profile);

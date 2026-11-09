@@ -2702,9 +2702,25 @@ struct OnboardingLive {
 enum OnboardingCreation {
     Opened(koru_workspace::fromstore::OpenedFromStore),
     Conflict,
-    Retryable { message: String },
-    RestoreFailed { message: String },
-    CommittedFailure { message: String },
+    Retryable {
+        message: String,
+    },
+    RestoreFailed {
+        message: String,
+    },
+    CommittedFailure {
+        message: String,
+    },
+    /// What `NeedsProfile` can recover (root-catalog §6.3), read off the
+    /// loop when the empty catalog was answered. Both empty offers nothing.
+    Recovery {
+        deleted: Vec<crate::onboarding::RecoverableProfile>,
+        unassigned: Vec<crate::onboarding::UnassignedWorkspaceRow>,
+    },
+    /// A batch restore from the recovery screen refused or did not answer.
+    RecoveryFailed {
+        message: String,
+    },
 }
 
 struct EmbeddedProfileRestore {
@@ -3008,6 +3024,21 @@ impl<H: Host> ApplicationHandler<Wake> for ContentState<H> {
             OnboardingCreation::RestoreFailed { message } => {
                 if let Self::Onboarding(app) = self {
                     app.view.restore_failed(message);
+                    app.request_redraw();
+                }
+            }
+            OnboardingCreation::Recovery {
+                deleted,
+                unassigned,
+            } => {
+                if let Self::Onboarding(app) = self {
+                    app.view.show_recovery(deleted, unassigned);
+                    app.request_redraw();
+                }
+            }
+            OnboardingCreation::RecoveryFailed { message } => {
+                if let Self::Onboarding(app) = self {
+                    app.view.recovery_failed(message);
                     app.request_redraw();
                 }
             }
@@ -3354,6 +3385,106 @@ fn bucket_label_key(bucket: koru_core::tasks::Bucket) -> koru_i18n::Key {
         koru_core::tasks::Bucket::Upcoming => koru_i18n::Key::A11yTaskBucketUpcoming,
         koru_core::tasks::Bucket::Later => koru_i18n::Key::A11yTaskBucketLater,
         koru_core::tasks::Bucket::Completed => koru_i18n::Key::A11yTaskBucketCompleted,
+    }
+}
+
+/// What an empty Profile catalog can still recover (root-catalog §6.3): the
+/// Profile deletions this device holds a batch for, and the live workspaces
+/// no Profile lists. A Store that will not answer offers nothing — the
+/// create form stands on its own — rather than a failure in place of a form.
+fn onboarding_recovery(root: Option<&Path>) -> OnboardingCreation {
+    let Ok(client) = profile_removal::cascade_client(root) else {
+        return OnboardingCreation::Recovery {
+            deleted: Vec::new(),
+            unassigned: Vec::new(),
+        };
+    };
+    let deleted = client
+        .store()
+        .profile_deletions()
+        .map(|rows| {
+            rows.into_iter()
+                .map(|row| crate::onboarding::RecoverableProfile {
+                    profile: koru_core::ProfileId::from_uuid(row.deletion.profile.as_uuid()),
+                    deletion: row.deletion.deletion,
+                    name: row.name.unwrap_or_else(|| "Profile".to_owned()),
+                    at_ms: row.deletion.at_ms,
+                    workspaces: row.deletion.targets.len(),
+                    unavailable: row.deletion.expired_or_purged.len(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let unassigned = client
+        .store()
+        .unassigned_workspaces()
+        .map(|rows| {
+            rows.into_iter()
+                .map(|row| crate::onboarding::UnassignedWorkspaceRow {
+                    workspace: WorkspaceId::from_uuid(row.workspace.id.as_uuid()),
+                    name: row.workspace.name,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    OnboardingCreation::Recovery {
+        deleted,
+        unassigned,
+    }
+}
+
+/// The batch restore from the recovery screen, then the strict open of the
+/// Profile that came back. The restore takes this process's
+/// `destroy_workspaces`, which the Agent vouches for as it does for the
+/// removal cascade; a Profile whose restore is acknowledged but which will
+/// not open is reported, never re-restored.
+fn restore_deleted_onboarding_profile(
+    root: Option<&Path>,
+    profile: koru_core::ProfileId,
+    deletion: koru_store_core::ids::DeletionId,
+) -> OnboardingCreation {
+    let client = match profile_removal::cascade_client(root) {
+        Ok(client) => client,
+        Err(_) => {
+            return OnboardingCreation::RecoveryFailed {
+                message: koru_i18n::t(
+                    koru_i18n::current(),
+                    koru_i18n::Key::WorkspacesRestoreProfileFailed,
+                )
+                .to_owned(),
+            };
+        }
+    };
+    let store_profile = koru_store_core::ids::ProfileId::from_uuid(profile.as_uuid());
+    if let Err(error) = client.store().restore_profile(store_profile, deletion) {
+        return OnboardingCreation::RecoveryFailed {
+            message: format!(
+                "{} ({error})",
+                koru_i18n::t(
+                    koru_i18n::current(),
+                    koru_i18n::Key::WorkspacesRestoreProfileFailed
+                )
+            ),
+        };
+    }
+    match koru_workspace::fromstore::open_from_store_profile_preferring_empty(
+        koru_workspace::fromstore::segment(),
+        root,
+        profile,
+        None,
+    ) {
+        Ok(koru_workspace::fromstore::StoreLaunch::Open(opened)) => {
+            OnboardingCreation::Opened(opened)
+        }
+        Ok(koru_workspace::fromstore::StoreLaunch::NeedsProfile) => {
+            OnboardingCreation::RecoveryFailed {
+                message: "Koru restored the Profile but could not open it yet. Try again or restart Koru."
+                    .into(),
+            }
+        }
+        Err(error) => OnboardingCreation::RecoveryFailed {
+            message: format!("Koru restored the Profile but could not open it: {error}"),
+        },
     }
 }
 
@@ -3713,6 +3844,22 @@ impl<H: Host> OnboardingApp<H> {
                         .name("koru-onboarding-restore".into())
                         .spawn(move || {
                             let result = restore_onboarding_profile(root.as_deref(), &profile_id);
+                            let _ = tx.send(result);
+                            let _ = proxy.send_event(Wake::Onboarding);
+                        });
+                }
+                crate::onboarding::Action::RestoreDeletedProfile { profile, deletion } => {
+                    let tx = self.creation_tx.clone();
+                    let proxy = self.proxy.clone();
+                    let root = self.gateway_root.clone();
+                    let _ = std::thread::Builder::new()
+                        .name("koru-onboarding-restore-deleted".into())
+                        .spawn(move || {
+                            let result = restore_deleted_onboarding_profile(
+                                root.as_deref(),
+                                profile,
+                                deletion,
+                            );
                             let _ = tx.send(result);
                             let _ = proxy.send_event(Wake::Onboarding);
                         });
@@ -5116,6 +5263,22 @@ impl<H: Host> App<H> {
                     // not the later Profile acknowledgement.
                     ProfileRuntime::start_events(gateway_root.clone(), proxy.clone());
                     let (creation_tx, creation_rx) = mpsc::channel();
+                    // What this empty catalog can still recover (root-catalog
+                    // §6.3): the restorable Trash and the unassigned
+                    // workspaces, read off the loop and offered from the form
+                    // once they arrive. Nothing is created by asking.
+                    {
+                        let tx = creation_tx.clone();
+                        let proxy = proxy.clone();
+                        let root = gateway_root.clone();
+                        let _ = std::thread::Builder::new()
+                            .name("koru-onboarding-recovery".into())
+                            .spawn(move || {
+                                let result = onboarding_recovery(root.as_deref());
+                                let _ = tx.send(result);
+                                let _ = proxy.send_event(Wake::Onboarding);
+                            });
+                    }
                     // Seeded before the first frame: a build with no Koru
                     // Cloud draws its welcome without the sign-in choices from
                     // the start, rather than for one frame with them.
@@ -9076,9 +9239,11 @@ Nothing was written. The store starts on demand, so this usually means it could 
             PaneRequest::RemoveLocalProfile {
                 profile,
                 delete_workspaces: _,
-            } => {
-                self.start_profile_cascade(profile);
-            }
+                preview,
+            } => match preview {
+                Some(preview) => self.start_profile_deletion(profile, preview),
+                None => self.start_profile_cascade(profile),
+            },
             PaneRequest::FinishHostedProfileDeletion {
                 profile,
                 discovered_after_offline,
@@ -13176,6 +13341,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 }
                 OnboardingCreation::Retryable { message }
                 | OnboardingCreation::RestoreFailed { message }
+                | OnboardingCreation::RecoveryFailed { message }
                 | OnboardingCreation::CommittedFailure { message } => {
                     if let Some(pane) = self.panes.get_mut(&source) {
                         let _ = pane.view.local_profile_restore_failed(&message);
@@ -13188,6 +13354,9 @@ Nothing was written. The store starts on demand, so this usually means it could 
                         pane.window.request_redraw();
                     }
                 }
+                // The first-run window's recovery lists; an embedded restore
+                // never produces them.
+                OnboardingCreation::Recovery { .. } => {}
             }
         }
     }
@@ -13276,6 +13445,10 @@ Nothing was written. The store starts on demand, so this usually means it could 
                     startup::fatal(&message);
                     event_loop.exit();
                     return;
+                }
+                // The first-run window's recovery outcomes; a connected
+                // creation never produces them.
+                OnboardingCreation::Recovery { .. } | OnboardingCreation::RecoveryFailed { .. } => {
                 }
             }
         }

@@ -111,6 +111,17 @@ pub(crate) enum Control {
     /// The controller's notice: run it again, or put it away (S24).
     NoticeRetry,
     NoticeDismiss,
+    // ---- the recovery sections (`recovery`, root-catalog §3.6, §6.3) ----
+    /// An Unassigned workspace's row; a click selects nothing and does
+    /// nothing — the row's two controls are beside it.
+    UnassignedRow(workspaces::Wid),
+    /// Its `•••`: the window's workspace menu, whose *Move to Profile ▸*
+    /// flyout is the destination picker.
+    UnassignedMore(workspaces::Wid),
+    /// *Restore Profile*: the batch restore of the Profile it came from.
+    RestoreUnassignedProfile(workspaces::Wid),
+    /// A deleted Profile's *Restore*: the same batch restore.
+    RestoreDeletedProfile(ProfileId),
     // ---- the Linked devices page (`devices`) ----
     /// *Link a device…*: the Link dialog.
     LinkDevice,
@@ -284,6 +295,8 @@ pub(crate) struct Laid {
     pub header: Header,
     pub attention: Option<Words>,
     pub workspaces: Option<workspaces::WorkspacesSection>,
+    /// The Unassigned and Deleted profiles lists, while there are any.
+    pub recovery: Option<recovery::RecoverySection>,
     pub sign_in: Option<Section>,
     pub footer: Option<Rect>,
     /// The Linked devices page, when that is the page.
@@ -354,16 +367,23 @@ impl ManageView {
         let header = self.lay_header(profile, column, &mut controls);
         let mut y = header.rect.y + header.rect.h + koru_ui::PageShell::LEAD_GAP;
         let attention = self.lay_attention(profile, column, y, &mut controls);
-        let (workspaces, sign_in, footer) = match &attention {
+        let (workspaces, recovery, sign_in, footer) = match &attention {
             // The page is the question while it is up: see the module docs.
             Some(card) => {
                 y = card.rect.y + card.rect.h;
-                (None, None, None)
+                (None, None, None, None)
             }
             None => {
                 let (workspaces, bottom) =
                     self.lay_workspaces_section(profile, column, y, &mut controls, &mut disabled);
                 y = bottom + SECTION_GAP;
+                // Recovery (root-catalog §6.3) on every Profile's page, only
+                // while there is something to recover.
+                let (recovery, bottom) =
+                    self.lay_recovery_sections(column, y, &mut controls, &mut disabled);
+                if recovery.is_some() {
+                    y = bottom + SECTION_GAP;
+                }
                 // *Sign-in and sync* is Koru Cloud's; a build that hides it
                 // has no such section (koru-features).
                 let section = koru_features::cloud_sync().then(|| {
@@ -373,7 +393,7 @@ impl ManageView {
                 });
                 let footer = self.lay_footer(column, y, &mut controls);
                 y = footer.y + footer.h;
-                (Some(workspaces), section, Some(footer))
+                (Some(workspaces), recovery, section, Some(footer))
             }
         };
         Laid {
@@ -381,6 +401,7 @@ impl ManageView {
             header,
             attention,
             workspaces,
+            recovery,
             sign_in,
             footer,
             devices: None,
@@ -702,6 +723,9 @@ impl ManageView {
         if let Some(done) = self.activate_workspace_control(control) {
             return done;
         }
+        if let Some(done) = self.activate_recovery_control(control) {
+            return done;
+        }
         match control {
             Control::Tile => self.requests.push(Request::ChangeIconAndColor(profile)),
             Control::Name => self.requests.push(Request::Rename(profile)),
@@ -755,6 +779,11 @@ impl ManageView {
             | Control::RestoreWorkspace(_)
             | Control::NoticeRetry
             | Control::NoticeDismiss => return false,
+            // The recovery sections', answered above.
+            Control::UnassignedRow(_)
+            | Control::UnassignedMore(_)
+            | Control::RestoreUnassignedProfile(_)
+            | Control::RestoreDeletedProfile(_) => return false,
             // The New profile page's, answered above.
             Control::CloseCreation => return false,
             // The Linked devices page's, answered above.

@@ -998,13 +998,23 @@ content is still arriving, Koru shows a waiting page with **Cancel** instead
 of creating an empty replacement. A damaged or unreadable workspace offers
 recovery; it is not treated as an empty Profile.
 
-Archiving, trashing or moving a Profile's last usable workspace creates its
-replacement before completing the change. Removing the whole Profile is the
-exception: that operation moves its workspaces to Trash without replacing
-them. If a local removal stops, **Resume removal** continues it and **Keep this profile**
-keeps what remains; Keep does not restore workspaces already in Trash. A
-hosted Profile deletion offers **Finish removal** because that Profile has
-already been deleted from Koru Cloud.
+**A Profile can be empty.** Archiving, trashing or moving its last workspace
+leaves it with none: the Workspace menu says *This profile has no workspaces*
+where the rows would be, the window shows the same line with **New
+workspace**, and nothing is created for you — opening the Profile again,
+restarting Koru or a change arriving from another device leaves it empty
+until you make a workspace. If a local removal stops, **Resume removal**
+continues it and **Keep this profile** keeps what remains; Keep does not
+restore workspaces already in Trash. A hosted Profile deletion offers
+**Finish removal** because that Profile has already been deleted from Koru
+Cloud.
+
+**Unassigned workspaces.** A workspace that was moved into, or created in, a
+Profile while that Profile was being deleted is kept, not deleted. It appears
+in an **Unassigned (from deleted Profile)** group at the top of the Workspace
+menu and on every Profile's Manage page. **Move to…** puts it in one of your
+Profiles; **Restore Profile** brings its deleted Profile back with everything
+that deletion moved to Trash.
 
 In the desktop **Documents** list, a document's chosen color tints its outline
 icon. A priority flag (Urgent, High, Medium or Low) appears after the icon and
@@ -1860,15 +1870,27 @@ automatic attempt. After 10 minutes Koru stops polling and asks you to try later
 or contact support; local Profiles and **Continue offline** remain available.
 
 An empty Profile offers **Remove Profile from this device**. A Profile that still owns
-Workspaces instead offers **Remove Profile and All Workspaces...**. After one
-explicit confirmation Koru closes that Profile's open Workspace sessions,
-moves every active Workspace to Trash, and removes the Profile from this
-device. This does not permanently erase the retained Profile/Workspace data,
-remove the hosted account, or change another device. Its hosted recovery
-listing remains, so signing in can show the Profile again; another trusted
-device is required when no retained local copy is available. If one Workspace cannot
-be moved, the Profile remains and trying again resumes from current Store
-state.
+Workspaces instead offers **Remove Profile and All Workspaces...**: the
+confirmation lists, by name, the workspaces that will move to Trash, and
+after one explicit confirmation the Profile and every listed workspace move
+to Trash together as one deletion. If a workspace was added or removed while
+the confirmation was open, Koru refuses and shows the list again. This does
+not permanently erase the retained Profile/Workspace data, remove the hosted
+account, or change another device. Its hosted recovery listing remains, so
+signing in can show the Profile again; another trusted device is required
+when no retained local copy is available.
+
+**Restoring a deleted Profile restores that deletion.** For 30 days the
+Profile is listed under **Deleted profiles** on any Profile's Manage page,
+with when it was deleted and how many workspaces went with it. **Restore**
+brings the Profile back together with the workspaces that deletion moved to
+Trash — a workspace you had put in Trash earlier stays there, one you have
+since moved to another Profile stays where you put it, and one whose 30 days
+have passed is reported as no longer available rather than recreated. If you
+delete your last Profile, Koru reopens on the first-run window; **Restore a
+deleted profile or find unassigned workspaces…** there offers the same
+restore, and lists any unassigned workspaces, which you can move once a
+Profile exists.
 
 Desktop native account and onboarding screens are English-only in this first release.
 There is no language picker, Apple button, or email sign-in control yet; those

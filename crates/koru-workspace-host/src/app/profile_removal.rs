@@ -25,6 +25,10 @@ pub(super) struct ProfileCascadeCompletion {
 pub(super) enum CascadeReady {
     Complete(RemovalAttemptId),
     AlreadyRemoved,
+    /// The shared deletion batch committed (root-catalog §6.1): the Profile
+    /// is hidden and its captured workspaces are in the Trash together.
+    /// What follows is the same local cleanup a removal gets.
+    Deleted,
 }
 
 /// Why a cascade stopped, as the code the Profiles page words.
@@ -40,6 +44,11 @@ pub(super) enum CascadeFailure {
     NotPermitted,
     Unsupported,
     Incomplete,
+    /// The Store refused the deletion batch because the workspaces under the
+    /// Profile changed after the preview was shown (`idempotency_conflict`,
+    /// root-catalog §6.1). Nothing moved; the page refreshes the preview and
+    /// asks again.
+    StalePreview,
 }
 
 impl CascadeFailure {
@@ -48,7 +57,44 @@ impl CascadeFailure {
             Self::NotPermitted => "profile_cascade_not_permitted",
             Self::Unsupported => "profile_cascade_unsupported",
             Self::Incomplete => "profile_cascade_incomplete",
+            Self::StalePreview => "profile_deletion_preview_stale",
         }
+    }
+}
+
+/// **Delete a Profile as the shared batch** (root-catalog §6.1, §6.3) over
+/// the preview the person confirmed. The Store commits the Profile's deletion
+/// fact, one on every captured workspace, their Trash projections and the
+/// local application job in one transaction, or refuses: a stale preview is
+/// [`CascadeFailure::StalePreview`], a Profile already gone is verified as
+/// such, and anything else is retryable. The device-local cleanup that
+/// follows (settings, the remembered Profile) is the same as a removal's.
+fn delete_profile_batch(
+    root: Option<&std::path::Path>,
+    profile: koru_core::ProfileId,
+    preview: &koru_api_client::ProfileDeletionPreview,
+) -> Result<CascadeReady, CascadeFailure> {
+    let client = cascade_client(root)?;
+    // Checked first, so an unvouched window is told so rather than refused
+    // by the Store's scope check with a less useful word.
+    if !client.catalog().may_destroy() {
+        return Err(CascadeFailure::NotPermitted);
+    }
+    let store_profile = koru_store_core::ids::ProfileId::from_uuid(profile.as_uuid());
+    match client.store().delete_profile(store_profile, preview) {
+        Ok(_batch) => Ok(CascadeReady::Deleted),
+        Err(error) if error.code() == koru_store_core::Code::IdempotencyConflict => {
+            Err(CascadeFailure::StalePreview)
+        }
+        Err(error)
+            if matches!(
+                error.code(),
+                koru_store_core::Code::ProfileNotFound | koru_store_core::Code::ProfileRemoved
+            ) =>
+        {
+            verify_removed(&client, store_profile).map(|()| CascadeReady::AlreadyRemoved)
+        }
+        Err(_) => Err(CascadeFailure::Incomplete),
     }
 }
 
@@ -134,7 +180,7 @@ fn removal_absence(
     }
 }
 
-fn cascade_client(
+pub(super) fn cascade_client(
     root: Option<&std::path::Path>,
 ) -> Result<koru_api_client::Client, CascadeFailure> {
     const SCOPES: &[&str] = &[
@@ -273,6 +319,41 @@ impl<H: Host> App<H> {
         }
     }
 
+    /// The shared deletion batch for a Profile the person confirmed over
+    /// `preview` (Manage's *Delete profile…*). Off the loop, like the cascade;
+    /// its completion takes the cascade's channel and the same cleanup.
+    pub(super) fn start_profile_deletion(
+        &mut self,
+        profile: koru_core::ProfileId,
+        preview: koru_api_client::ProfileDeletionPreview,
+    ) {
+        if !self.profile_cascades_in_flight.insert(profile) {
+            return;
+        }
+        let root = self.gateway_root.clone();
+        let tx = self.profile_cascade_tx.clone();
+        let proxy = self.wake_proxy.clone();
+        let started = std::thread::Builder::new()
+            .name("koru-profile-delete".into())
+            .spawn(move || {
+                let result = delete_profile_batch(root.as_deref(), profile, &preview);
+                let _ = tx.send(ProfileCascadeCompletion { profile, result });
+                let _ = proxy.send_event(Wake::Profiles);
+            });
+        if started.is_err() {
+            self.profile_cascades_in_flight.remove(&profile);
+            let mut changed = false;
+            for pane in self.panes.values_mut() {
+                changed |= pane
+                    .view
+                    .local_profile_remove_failed(profile, CascadeFailure::Incomplete.code());
+            }
+            if changed {
+                self.invalidate_everywhere();
+            }
+        }
+    }
+
     pub(super) fn acknowledge_profile_cleanup(
         &self,
         profile: koru_core::ProfileId,
@@ -302,7 +383,12 @@ impl<H: Host> App<H> {
                     }
                     self.host.remove_local_profile(completion.profile, attempt)
                 }
-                Ok(CascadeReady::AlreadyRemoved) => {
+                // The batch is committed and the Profile hidden; the Store
+                // has already fenced its writers. What remains is this
+                // device's own cleanup, then the window settles — onto another
+                // Profile, or by relaunching into `NeedsProfile` when none is
+                // left (root-catalog §6.3).
+                Ok(CascadeReady::AlreadyRemoved | CascadeReady::Deleted) => {
                     self.begin_removed_profile_cleanup(completion.profile);
                 }
                 Err(failure) => {

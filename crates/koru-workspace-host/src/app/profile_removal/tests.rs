@@ -23,3 +23,21 @@ fn keep_or_an_unfinished_empty_profile_cannot_be_mistaken_for_completed_removal(
     );
     assert_eq!(removal_absence(true, true), Err(CascadeFailure::Incomplete));
 }
+
+/// The Store's stale-preview refusal has a code of its own, so the page can
+/// refresh the preview and ask again rather than say "try again" for a
+/// confirmation that was about a different list (root-catalog §6.1).
+#[test]
+fn a_stale_preview_is_its_own_failure_for_the_page_to_re_ask_on() {
+    assert_eq!(
+        CascadeFailure::StalePreview.code(),
+        "profile_deletion_preview_stale"
+    );
+    for other in [
+        CascadeFailure::NotPermitted,
+        CascadeFailure::Unsupported,
+        CascadeFailure::Incomplete,
+    ] {
+        assert_ne!(CascadeFailure::StalePreview.code(), other.code());
+    }
+}

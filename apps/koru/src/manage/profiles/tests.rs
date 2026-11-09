@@ -645,6 +645,7 @@ fn effects_leave_in_the_order_the_window_asked_for_them() {
             Effect::RemoveLocalProfile {
                 profile,
                 delete_workspaces: false,
+                preview: None,
             },
             Effect::FinishHostedDeletion {
                 profile,

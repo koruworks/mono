@@ -15,7 +15,11 @@ mod tests;
 
 pub(super) enum LocalEffect {
     Bind(ProfileId, Option<String>, String),
-    Remove(ProfileId, bool),
+    Remove(
+        ProfileId,
+        bool,
+        Option<koru_api_client::ProfileDeletionPreview>,
+    ),
     HostedDelete(ProfileId, bool),
     Offline(ProfileId, String),
 }
@@ -137,6 +141,8 @@ impl AccountForm {
             current_workspace_count: _,
             workspace_counts: _,
             remove_request: _,
+            deletion_preview: _,
+            preview_request: _,
             hosted_delete_request: _,
             continue_offline_request: _,
             bind_request: _,
@@ -222,8 +228,11 @@ impl ProfilesController {
                 .push_back(LocalEffect::Bind(profile, expected, next));
         }
         if let Some((profile, cascade)) = self.remove_request.take() {
+            // The preview the confirmation was shown over travels with the
+            // request, once: a second request asks for a fresh one.
+            let preview = self.deletion_preview.take();
             self.local_effects
-                .push_back(LocalEffect::Remove(profile, cascade));
+                .push_back(LocalEffect::Remove(profile, cascade, preview));
         }
         if let Some((profile, discovered)) = self.hosted_delete_request.take() {
             self.local_effects

@@ -176,9 +176,11 @@ fn profiles_effect_request(effect: crate::manage::profiles::Effect) -> PaneReque
         Effect::RemoveLocalProfile {
             profile,
             delete_workspaces,
+            preview,
         } => PaneRequest::RemoveLocalProfile {
             profile,
             delete_workspaces,
+            preview,
         },
         Effect::FinishHostedDeletion {
             profile,
@@ -7923,6 +7925,29 @@ impl MainView {
                 self.open_manage_workspaces(owner)
             }
             Outcome::ManageWorkspaces => self.open_manage_workspaces(None),
+            // The Unassigned row's *Move to…*: the window's workspace menu,
+            // whose *Move to Profile ▸* flyout is the destination picker,
+            // anchored beside the row (root-catalog §3.6).
+            Outcome::MoveUnassigned(id) => {
+                let at = self
+                    .explore
+                    .unassigned_move_anchor(self.explore_popover_area(), self.viewport, id)
+                    .unwrap_or(self.pointer);
+                self.open_workspace_menu(id, at, true)
+            }
+            // *Restore Profile*: the batch restore, through the controller
+            // that holds the vouched client; its outcome arrives as the
+            // controller's notice (§3.7, §6.3).
+            Outcome::RestoreProfile { profile, deletion } => {
+                self.workspace_controller.borrow_mut().perform(
+                    koru_workspaces_ui::Action::RestoreProfile(
+                        crate::manage::workspaces::catalog_profile(profile),
+                        deletion,
+                    ),
+                );
+                self.arm_workspaces_poll();
+                true
+            }
             Outcome::OpenSyncSettings => self.open_sync_settings_tab(),
             Outcome::ManageProfile(profile) => {
                 self.open_manage(crate::manage::Page::Profile(profile))

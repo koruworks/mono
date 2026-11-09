@@ -777,6 +777,67 @@ pub enum Key {
     WorkspacesMoveProjectsPending,
     /// Shared heading for profile lists.
     WorkspacesProfiles,
+    // ---- the root catalog's recovery surfaces (root-catalog Plan 1.3)
+    /// The Workspace menu's and Manage's group of live workspaces that no
+    /// active Profile lists (root-catalog TECHNICAL.final §3.6). Shown only
+    /// while there is one.
+    WorkspacesUnassignedHeading,
+    /// The row's hint when the workspace is unassigned for another reason
+    /// than a deleted Profile: nothing to restore, only somewhere to move it.
+    WorkspacesUnassignedNoProfile,
+    /// Opens the destination picker for an unassigned workspace.
+    WorkspacesMoveTo,
+    /// Restores the deleted Profile an unassigned workspace came from: the
+    /// batch restore (§3.7).
+    WorkspacesRestoreProfile,
+    /// Manage's list of restorable Profile deletions.
+    WorkspacesDeletedProfiles,
+    /// A deleted Profile's line. Takes when it was deleted; `…Many` also
+    /// takes how many workspaces the deletion captured.
+    WorkspacesDeletedProfileLineOne,
+    WorkspacesDeletedProfileLineMany,
+    /// How many of a deletion's workspaces are past retention or purged,
+    /// said honestly beside the line rather than recreated on restore.
+    WorkspacesDeletedProfileExpiredOne,
+    WorkspacesDeletedProfileExpiredMany,
+    /// The deleted-Profile row's action.
+    WorkspacesRestoreDeleted,
+    /// The batch restore's notice: how many came back. The sentences below
+    /// follow it when something stayed in Trash or is gone.
+    WorkspacesProfileRestoredNone,
+    WorkspacesProfileRestoredOne,
+    WorkspacesProfileRestoredMany,
+    WorkspacesRestoreLeftInTrashOne,
+    WorkspacesRestoreLeftInTrashMany,
+    WorkspacesRestorePurgedOne,
+    WorkspacesRestorePurgedMany,
+    /// The batch restore refused or did not answer. Nothing moved.
+    WorkspacesRestoreProfileFailed,
+    /// An empty Profile (§3.10): the Workspace menu's list and the waiting
+    /// pane say so, beside the one explicit way out — *New workspace*.
+    ProfileEmptyWorkspaces,
+    /// The delete confirmation's captured list (§6.1). Takes the workspace
+    /// names; `…Many` takes the count first.
+    ProfileDeleteTargetsOne,
+    ProfileDeleteTargetsMany,
+    ProfileDeleteTargetsNone,
+    /// The Store refused the batch because the list changed since the
+    /// confirmation was shown (`idempotency_conflict`): refresh and re-ask.
+    ProfileDeletePreviewStale,
+    /// The preview could not be read, so no confirmation was shown.
+    ProfileDeletePreviewFailed,
+    /// `NeedsProfile` recovery (§6.3): the way from the create form to the
+    /// restorable Trash and the unassigned workspaces, shown only when there
+    /// is something to recover.
+    OnboardingRecoveryLink,
+    OnboardingRecoveryTitle,
+    OnboardingRestoreDeleted,
+    OnboardingNoDeletedProfiles,
+    OnboardingUnassignedWorkspaces,
+    /// Moving needs a destination, and `NeedsProfile` has none: the one line
+    /// that says what to do first.
+    OnboardingUnassignedNeedsProfile,
+    OnboardingRestoring,
     // ------------------------------------------- the Terminal's tabs and banner
     // **Nine rows, and every one of them is copy that had nowhere to live
     // before the chrome had a tab lane and a banner.**
@@ -3013,7 +3074,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2113] = [
+    pub const ALL: [Key; 2144] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -3581,6 +3642,37 @@ impl Key {
         Key::WorkspacesMovePartialFailure,
         Key::WorkspacesMoveProjectsPending,
         Key::WorkspacesProfiles,
+        Key::WorkspacesUnassignedHeading,
+        Key::WorkspacesUnassignedNoProfile,
+        Key::WorkspacesMoveTo,
+        Key::WorkspacesRestoreProfile,
+        Key::WorkspacesDeletedProfiles,
+        Key::WorkspacesDeletedProfileLineOne,
+        Key::WorkspacesDeletedProfileLineMany,
+        Key::WorkspacesDeletedProfileExpiredOne,
+        Key::WorkspacesDeletedProfileExpiredMany,
+        Key::WorkspacesRestoreDeleted,
+        Key::WorkspacesProfileRestoredNone,
+        Key::WorkspacesProfileRestoredOne,
+        Key::WorkspacesProfileRestoredMany,
+        Key::WorkspacesRestoreLeftInTrashOne,
+        Key::WorkspacesRestoreLeftInTrashMany,
+        Key::WorkspacesRestorePurgedOne,
+        Key::WorkspacesRestorePurgedMany,
+        Key::WorkspacesRestoreProfileFailed,
+        Key::ProfileEmptyWorkspaces,
+        Key::ProfileDeleteTargetsOne,
+        Key::ProfileDeleteTargetsMany,
+        Key::ProfileDeleteTargetsNone,
+        Key::ProfileDeletePreviewStale,
+        Key::ProfileDeletePreviewFailed,
+        Key::OnboardingRecoveryLink,
+        Key::OnboardingRecoveryTitle,
+        Key::OnboardingRestoreDeleted,
+        Key::OnboardingNoDeletedProfiles,
+        Key::OnboardingUnassignedWorkspaces,
+        Key::OnboardingUnassignedNeedsProfile,
+        Key::OnboardingRestoring,
         Key::TerminalWelcome,
         Key::TerminalRecentProjects,
         Key::TerminalShortcuts,
@@ -9870,6 +9962,37 @@ pub const ROWS: &[Row] = &[
     Row { key: Key::WorkspacesMovePartialFailure, en: "Its terminals were closed, but it did not move. The workspace is where it was.", es: "Sus terminales se cerraron, pero no se movió. El espacio sigue donde estaba.", pt_br: "Os terminais foram fechados, mas ele não foi movido. O espaço continua onde estava.", de: "Die Terminals wurden geschlossen, verschoben wurde er aber nicht. Der Arbeitsbereich ist unverändert.", fr: "Ses terminaux ont été fermés, mais il n'a pas été déplacé. L'espace est resté où il était.", ar: "أُغلقت طرفياتها، لكنها لم تُنقل. مساحة العمل كما كانت.", zh_hans: "它的终端已关闭，但并未移动。工作区仍在原处。", ja: "ターミナルは閉じられましたが、移動はされませんでした。ワークスペースは元のままです。" },
     Row { key: Key::WorkspacesMoveProjectsPending, en: "It moved, but its terminal projects have not caught up yet. Move it again to repair them.", es: "Se movió, pero sus proyectos de terminal aún no se han puesto al día. Muévelo otra vez para repararlos.", pt_br: "Ele foi movido, mas seus projetos de terminal ainda não acompanharam. Mova-o de novo para repará-los.", de: "Er wurde verschoben, aber seine Terminal-Projekte sind noch nicht nachgezogen. Verschiebe ihn erneut, um sie zu reparieren.", fr: "Il a été déplacé, mais ses projets de terminal n'ont pas encore suivi. Déplacez-le à nouveau pour les réparer.", ar: "تم نقلها، لكن مشاريع الطرفية الخاصة بها لم تلحق بها بعد. انقلها مرة أخرى لإصلاحها.", zh_hans: "它已移动，但终端项目还没跟上。再移动一次即可修复。", ja: "移動は完了しましたが、ターミナルのプロジェクトがまだ追いついていません。もう一度移すと修復されます。" },
     Row { key: Key::WorkspacesProfiles, en: "Profiles", es: "Perfiles", pt_br: "Perfis", de: "Profile", fr: "Profils", ar: "ملفات التعريف", zh_hans: "配置文件", ja: "プロファイル" },
+    Row { key: Key::WorkspacesUnassignedHeading, en: "Unassigned (from deleted Profile)", es: "Sin asignar (de un perfil eliminado)", pt_br: "Não atribuídos (de perfil excluído)", de: "Nicht zugeordnet (aus gelöschtem Profil)", fr: "Non attribués (d'un profil supprimé)", ar: "غير معيّن (من ملف تعريف محذوف)", zh_hans: "未分配（来自已删除的配置文件）", ja: "未割り当て（削除されたプロファイルから）" },
+    Row { key: Key::WorkspacesUnassignedNoProfile, en: "Unassigned", es: "Sin asignar", pt_br: "Não atribuído", de: "Nicht zugeordnet", fr: "Non attribué", ar: "غير معيّن", zh_hans: "未分配", ja: "未割り当て" },
+    Row { key: Key::WorkspacesMoveTo, en: "Move to…", es: "Mover a…", pt_br: "Mover para…", de: "Verschieben nach…", fr: "Déplacer vers…", ar: "نقل إلى…", zh_hans: "移动到…", ja: "移動先…" },
+    Row { key: Key::WorkspacesRestoreProfile, en: "Restore Profile", es: "Restaurar perfil", pt_br: "Restaurar perfil", de: "Profil wiederherstellen", fr: "Restaurer le profil", ar: "استعادة ملف التعريف", zh_hans: "恢复配置文件", ja: "プロファイルを復元" },
+    Row { key: Key::WorkspacesDeletedProfiles, en: "Deleted profiles", es: "Perfiles eliminados", pt_br: "Perfis excluídos", de: "Gelöschte Profile", fr: "Profils supprimés", ar: "ملفات التعريف المحذوفة", zh_hans: "已删除的配置文件", ja: "削除されたプロファイル" },
+    Row { key: Key::WorkspacesDeletedProfileLineOne, en: "Deleted {} · 1 workspace", es: "Eliminado {} · 1 espacio de trabajo", pt_br: "Excluído {} · 1 espaço de trabalho", de: "Gelöscht {} · 1 Arbeitsbereich", fr: "Supprimé {} · 1 espace de travail", ar: "حُذف {} · مساحة عمل واحدة", zh_hans: "已删除 {} · 1 个工作区", ja: "削除日時 {} · ワークスペース 1 件" },
+    Row { key: Key::WorkspacesDeletedProfileLineMany, en: "Deleted {} · {} workspaces", es: "Eliminado {} · {} espacios de trabajo", pt_br: "Excluído {} · {} espaços de trabalho", de: "Gelöscht {} · {} Arbeitsbereiche", fr: "Supprimé {} · {} espaces de travail", ar: "حُذف {} · {} مساحات عمل", zh_hans: "已删除 {} · {} 个工作区", ja: "削除日時 {} · ワークスペース {} 件" },
+    Row { key: Key::WorkspacesDeletedProfileExpiredOne, en: "1 no longer available", es: "1 ya no está disponible", pt_br: "1 não está mais disponível", de: "1 nicht mehr verfügbar", fr: "1 n'est plus disponible", ar: "1 لم تعد متاحة", zh_hans: "1 个已不可用", ja: "1 件は利用できません" },
+    Row { key: Key::WorkspacesDeletedProfileExpiredMany, en: "{} no longer available", es: "{} ya no están disponibles", pt_br: "{} não estão mais disponíveis", de: "{} nicht mehr verfügbar", fr: "{} ne sont plus disponibles", ar: "{} لم تعد متاحة", zh_hans: "{} 个已不可用", ja: "{} 件は利用できません" },
+    Row { key: Key::WorkspacesRestoreDeleted, en: "Restore", es: "Restaurar", pt_br: "Restaurar", de: "Wiederherstellen", fr: "Restaurer", ar: "استعادة", zh_hans: "恢复", ja: "復元" },
+    Row { key: Key::WorkspacesProfileRestoredNone, en: "Profile restored. No workspaces came back with it.", es: "Perfil restaurado. No volvió ningún espacio de trabajo con él.", pt_br: "Perfil restaurado. Nenhum espaço de trabalho voltou com ele.", de: "Profil wiederhergestellt. Es kamen keine Arbeitsbereiche zurück.", fr: "Profil restauré. Aucun espace de travail n'est revenu avec lui.", ar: "تمت استعادة ملف التعريف. لم تعد معه أي مساحة عمل.", zh_hans: "配置文件已恢复。没有工作区随之恢复。", ja: "プロファイルを復元しました。ワークスペースは戻りませんでした。" },
+    Row { key: Key::WorkspacesProfileRestoredOne, en: "Profile restored with 1 workspace.", es: "Perfil restaurado con 1 espacio de trabajo.", pt_br: "Perfil restaurado com 1 espaço de trabalho.", de: "Profil mit 1 Arbeitsbereich wiederhergestellt.", fr: "Profil restauré avec 1 espace de travail.", ar: "تمت استعادة ملف التعريف مع مساحة عمل واحدة.", zh_hans: "配置文件已恢复，包含 1 个工作区。", ja: "プロファイルをワークスペース 1 件とともに復元しました。" },
+    Row { key: Key::WorkspacesProfileRestoredMany, en: "Profile restored with {} workspaces.", es: "Perfil restaurado con {} espacios de trabajo.", pt_br: "Perfil restaurado com {} espaços de trabalho.", de: "Profil mit {} Arbeitsbereichen wiederhergestellt.", fr: "Profil restauré avec {} espaces de travail.", ar: "تمت استعادة ملف التعريف مع {} مساحات عمل.", zh_hans: "配置文件已恢复，包含 {} 个工作区。", ja: "プロファイルをワークスペース {} 件とともに復元しました。" },
+    Row { key: Key::WorkspacesRestoreLeftInTrashOne, en: "1 stayed in Trash: it was deleted separately.", es: "1 se quedó en la papelera: se eliminó por separado.", pt_br: "1 ficou na Lixeira: foi excluído separadamente.", de: "1 blieb im Papierkorb: er wurde separat gelöscht.", fr: "1 est resté dans la corbeille : il a été supprimé séparément.", ar: "بقيت واحدة في المهملات: حُذفت على حدة.", zh_hans: "1 个留在回收站中：它是被单独删除的。", ja: "1 件はゴミ箱に残りました。別途削除されたものです。" },
+    Row { key: Key::WorkspacesRestoreLeftInTrashMany, en: "{} stayed in Trash: they were deleted separately.", es: "{} se quedaron en la papelera: se eliminaron por separado.", pt_br: "{} ficaram na Lixeira: foram excluídos separadamente.", de: "{} blieben im Papierkorb: sie wurden separat gelöscht.", fr: "{} sont restés dans la corbeille : ils ont été supprimés séparément.", ar: "بقيت {} في المهملات: حُذفت على حدة.", zh_hans: "{} 个留在回收站中：它们是被单独删除的。", ja: "{} 件はゴミ箱に残りました。別途削除されたものです。" },
+    Row { key: Key::WorkspacesRestorePurgedOne, en: "1 is no longer available.", es: "1 ya no está disponible.", pt_br: "1 não está mais disponível.", de: "1 ist nicht mehr verfügbar.", fr: "1 n'est plus disponible.", ar: "واحدة لم تعد متاحة.", zh_hans: "1 个已不可用。", ja: "1 件は利用できません。" },
+    Row { key: Key::WorkspacesRestorePurgedMany, en: "{} are no longer available.", es: "{} ya no están disponibles.", pt_br: "{} não estão mais disponíveis.", de: "{} sind nicht mehr verfügbar.", fr: "{} ne sont plus disponibles.", ar: "{} لم تعد متاحة.", zh_hans: "{} 个已不可用。", ja: "{} 件は利用できません。" },
+    Row { key: Key::WorkspacesRestoreProfileFailed, en: "Koru couldn't restore this Profile. Nothing was changed.", es: "Koru no pudo restaurar este perfil. No se cambió nada.", pt_br: "O Koru não conseguiu restaurar este perfil. Nada foi alterado.", de: "Koru konnte dieses Profil nicht wiederherstellen. Es wurde nichts geändert.", fr: "Koru n'a pas pu restaurer ce profil. Rien n'a été modifié.", ar: "تعذّر على Koru استعادة ملف التعريف هذا. لم يتغيّر شيء.", zh_hans: "Koru 无法恢复此配置文件。未做任何更改。", ja: "Koru はこのプロファイルを復元できませんでした。何も変更されていません。" },
+    Row { key: Key::ProfileEmptyWorkspaces, en: "This profile has no workspaces", es: "Este perfil no tiene espacios de trabajo", pt_br: "Este perfil não tem espaços de trabalho", de: "Dieses Profil hat keine Arbeitsbereiche", fr: "Ce profil n'a aucun espace de travail", ar: "لا توجد مساحات عمل في ملف التعريف هذا", zh_hans: "此配置文件没有工作区", ja: "このプロファイルにはワークスペースがありません" },
+    Row { key: Key::ProfileDeleteTargetsOne, en: "This moves 1 workspace to Trash: {}", es: "Esto mueve 1 espacio de trabajo a la papelera: {}", pt_br: "Isto move 1 espaço de trabalho para a Lixeira: {}", de: "Dadurch wird 1 Arbeitsbereich in den Papierkorb verschoben: {}", fr: "Cela déplace 1 espace de travail vers la corbeille : {}", ar: "سيؤدي هذا إلى نقل مساحة عمل واحدة إلى المهملات: {}", zh_hans: "这会将 1 个工作区移到回收站：{}", ja: "ワークスペース 1 件をゴミ箱に移動します: {}" },
+    Row { key: Key::ProfileDeleteTargetsMany, en: "This moves {} workspaces to Trash: {}", es: "Esto mueve {} espacios de trabajo a la papelera: {}", pt_br: "Isto move {} espaços de trabalho para a Lixeira: {}", de: "Dadurch werden {} Arbeitsbereiche in den Papierkorb verschoben: {}", fr: "Cela déplace {} espaces de travail vers la corbeille : {}", ar: "سيؤدي هذا إلى نقل {} مساحات عمل إلى المهملات: {}", zh_hans: "这会将 {} 个工作区移到回收站：{}", ja: "ワークスペース {} 件をゴミ箱に移動します: {}" },
+    Row { key: Key::ProfileDeleteTargetsNone, en: "This Profile has no workspaces to move to Trash.", es: "Este perfil no tiene espacios de trabajo que mover a la papelera.", pt_br: "Este perfil não tem espaços de trabalho para mover para a Lixeira.", de: "Dieses Profil hat keine Arbeitsbereiche, die in den Papierkorb verschoben werden könnten.", fr: "Ce profil n'a aucun espace de travail à déplacer vers la corbeille.", ar: "لا توجد مساحات عمل في ملف التعريف هذا لنقلها إلى المهملات.", zh_hans: "此配置文件没有可移到回收站的工作区。", ja: "このプロファイルにはゴミ箱に移動するワークスペースがありません。" },
+    Row { key: Key::ProfileDeletePreviewStale, en: "This Profile's workspaces changed since you looked. Check the list and confirm again.", es: "Los espacios de trabajo de este perfil cambiaron desde que los viste. Revisa la lista y confirma de nuevo.", pt_br: "Os espaços de trabalho deste perfil mudaram desde que você os viu. Verifique a lista e confirme novamente.", de: "Die Arbeitsbereiche dieses Profils haben sich seit dem letzten Blick geändert. Prüfen Sie die Liste und bestätigen Sie erneut.", fr: "Les espaces de travail de ce profil ont changé depuis votre dernier regard. Vérifiez la liste et confirmez à nouveau.", ar: "تغيّرت مساحات عمل ملف التعريف هذا منذ آخر مرة اطّلعت عليها. راجع القائمة وأكّد مرة أخرى.", zh_hans: "此配置文件的工作区自您上次查看后已发生变化。请检查列表并再次确认。", ja: "このプロファイルのワークスペースは前回確認した後に変わりました。一覧を確認してもう一度確定してください。" },
+    Row { key: Key::ProfileDeletePreviewFailed, en: "Koru couldn't read this Profile's workspaces. Nothing was changed.", es: "Koru no pudo leer los espacios de trabajo de este perfil. No se cambió nada.", pt_br: "O Koru não conseguiu ler os espaços de trabalho deste perfil. Nada foi alterado.", de: "Koru konnte die Arbeitsbereiche dieses Profils nicht lesen. Es wurde nichts geändert.", fr: "Koru n'a pas pu lire les espaces de travail de ce profil. Rien n'a été modifié.", ar: "تعذّر على Koru قراءة مساحات عمل ملف التعريف هذا. لم يتغيّر شيء.", zh_hans: "Koru 无法读取此配置文件的工作区。未做任何更改。", ja: "Koru はこのプロファイルのワークスペースを読み取れませんでした。何も変更されていません。" },
+    Row { key: Key::OnboardingRecoveryLink, en: "Restore a deleted profile or find unassigned workspaces…", es: "Restaurar un perfil eliminado o encontrar espacios de trabajo sin asignar…", pt_br: "Restaurar um perfil excluído ou encontrar espaços de trabalho não atribuídos…", de: "Ein gelöschtes Profil wiederherstellen oder nicht zugeordnete Arbeitsbereiche finden…", fr: "Restaurer un profil supprimé ou retrouver des espaces de travail non attribués…", ar: "استعادة ملف تعريف محذوف أو العثور على مساحات عمل غير معيّنة…", zh_hans: "恢复已删除的配置文件或查找未分配的工作区…", ja: "削除されたプロファイルを復元するか、未割り当てのワークスペースを探す…" },
+    Row { key: Key::OnboardingRecoveryTitle, en: "Recover", es: "Recuperar", pt_br: "Recuperar", de: "Wiederherstellen", fr: "Récupérer", ar: "استرداد", zh_hans: "恢复", ja: "回復" },
+    Row { key: Key::OnboardingRestoreDeleted, en: "Restore a deleted profile", es: "Restaurar un perfil eliminado", pt_br: "Restaurar um perfil excluído", de: "Ein gelöschtes Profil wiederherstellen", fr: "Restaurer un profil supprimé", ar: "استعادة ملف تعريف محذوف", zh_hans: "恢复已删除的配置文件", ja: "削除されたプロファイルを復元" },
+    Row { key: Key::OnboardingNoDeletedProfiles, en: "No deleted profiles can be restored on this device.", es: "No se puede restaurar ningún perfil eliminado en este dispositivo.", pt_br: "Nenhum perfil excluído pode ser restaurado neste dispositivo.", de: "Auf diesem Gerät kann kein gelöschtes Profil wiederhergestellt werden.", fr: "Aucun profil supprimé ne peut être restauré sur cet appareil.", ar: "لا يمكن استعادة أي ملف تعريف محذوف على هذا الجهاز.", zh_hans: "此设备上没有可恢复的已删除配置文件。", ja: "このデバイスで復元できる削除済みプロファイルはありません。" },
+    Row { key: Key::OnboardingUnassignedWorkspaces, en: "Unassigned workspaces", es: "Espacios de trabajo sin asignar", pt_br: "Espaços de trabalho não atribuídos", de: "Nicht zugeordnete Arbeitsbereiche", fr: "Espaces de travail non attribués", ar: "مساحات عمل غير معيّنة", zh_hans: "未分配的工作区", ja: "未割り当てのワークスペース" },
+    Row { key: Key::OnboardingUnassignedNeedsProfile, en: "Create or restore a profile first. Then move these workspaces to it from the Workspace menu.", es: "Primero crea o restaura un perfil. Luego mueve estos espacios de trabajo a él desde el menú Espacios de trabajo.", pt_br: "Primeiro crie ou restaure um perfil. Depois mova estes espaços de trabalho para ele pelo menu Espaços de trabalho.", de: "Erstellen oder stellen Sie zuerst ein Profil wieder her. Verschieben Sie diese Arbeitsbereiche dann über das Arbeitsbereichsmenü dorthin.", fr: "Créez ou restaurez d'abord un profil. Déplacez ensuite ces espaces de travail vers lui depuis le menu Espaces de travail.", ar: "أنشئ ملف تعريف أو استعد واحدًا أولًا. ثم انقل مساحات العمل هذه إليه من قائمة مساحات العمل.", zh_hans: "请先创建或恢复一个配置文件，然后从工作区菜单将这些工作区移动到该配置文件。", ja: "まずプロファイルを作成または復元してください。その後、ワークスペースメニューからこれらのワークスペースをそこへ移動します。" },
+    Row { key: Key::OnboardingRestoring, en: "Restoring…", es: "Restaurando…", pt_br: "Restaurando…", de: "Wird wiederhergestellt…", fr: "Restauration…", ar: "جارٍ الاستعادة…", zh_hans: "正在恢复…", ja: "復元しています…" },
 
     // ------------------------------------------- the Terminal's tabs and banner
     // Not yet reviewed by a native speaker; see the note on the keys.

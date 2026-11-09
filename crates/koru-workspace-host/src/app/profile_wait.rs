@@ -273,14 +273,10 @@ impl Waits {
                 wait.presentation.reading = WaitReading::Removing { mark }
             }
             // The Profile has no live workspace and none is manufactured
-            // (root-catalog Plan 1.3). Surfaced through the existing
-            // unavailable reading with a code; the explicit Create / Trash /
-            // Unassigned recovery surface is the UI half of Plan 1.3.
-            Ok(EnsuredWorkspace::Empty) => {
-                wait.presentation.reading = WaitReading::Unavailable {
-                    cause: "profile_empty".into(),
-                }
-            }
+            // (root-catalog §3.10). Its own reading: the pane says the
+            // Profile is empty and offers *New workspace*; nothing is
+            // created and nothing is retried on a clock.
+            Ok(EnsuredWorkspace::Empty) => wait.presentation.reading = WaitReading::Empty,
             Err(error) => {
                 wait.presentation.reading = WaitReading::Unavailable {
                     cause: error.code().as_str().into(),

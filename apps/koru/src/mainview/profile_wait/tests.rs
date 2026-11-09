@@ -84,6 +84,7 @@ fn interrupted_removal_has_exact_recovery_controls_and_live_lease_has_only_cance
                         PaneRequest::RemoveLocalProfile {
                             profile: wait.attempt.profile,
                             delete_workspaces: true,
+                            preview: None,
                         }
                     } else {
                         PaneRequest::FinishHostedProfileDeletion {

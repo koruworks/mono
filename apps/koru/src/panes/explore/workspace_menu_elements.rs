@@ -72,6 +72,27 @@ impl MenuAction {
 pub(crate) const MANAGE: Key = Key::surface(popover_elements::SURFACE, "manage-workspaces");
 pub(crate) const NOTICE: Key = Key::surface(popover_elements::SURFACE, "workspace-notice");
 pub(crate) const HEADER: Key = Key::surface(popover_elements::SURFACE, "workspace-header");
+/// The empty Profile's one line (root-catalog §3.10).
+pub(crate) const EMPTY: Key = Key::surface(popover_elements::SURFACE, "workspaces-empty");
+/// The Unassigned group's heading (§3.6), and the parts of its rows: a row
+/// is keyed by its workspace, like every other workspace row.
+pub(crate) const UNASSIGNED_HEADING: Key =
+    Key::surface(popover_elements::SURFACE, "unassigned-heading");
+pub(crate) const UNASSIGNED: &str = "unassigned";
+pub(crate) const UNASSIGNED_MOVE: &str = "unassigned-move";
+pub(crate) const UNASSIGNED_RESTORE: &str = "unassigned-restore";
+
+pub(crate) fn unassigned(id: koru_core::WorkspaceId) -> Key {
+    Key::model(id.as_uuid().as_u128(), UNASSIGNED)
+}
+
+pub(crate) fn unassigned_move(id: koru_core::WorkspaceId) -> Key {
+    Key::model(id.as_uuid().as_u128(), UNASSIGNED_MOVE)
+}
+
+pub(crate) fn unassigned_restore(id: koru_core::WorkspaceId) -> Key {
+    Key::model(id.as_uuid().as_u128(), UNASSIGNED_RESTORE)
+}
 
 /// Configured channels, independent of their current connection health.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -199,6 +220,138 @@ impl ExploreView {
             self.empty_subscribe = None;
         }
         true
+    }
+
+    /// **The Unassigned group** (root-catalog §3.6), at the top of the menu
+    /// and only while there is something in it: a heading, then per
+    /// workspace its row (the existing row chrome; it opens Manage on the
+    /// workspace) and, indented under it, *Move to…* and — for a workspace
+    /// from a deleted Profile this device can restore — *Restore Profile*.
+    pub(crate) fn unassigned_group(&self) -> Option<El> {
+        let rows = self.unassigned_rows();
+        if rows.is_empty() {
+            return None;
+        }
+        let lang = crate::format::lang();
+        let mut group = col("Unassigned group").child(
+            row("Unassigned heading")
+                .pad_x(alias::NAV_PAD)
+                .min_h(metrics::ROW_MIN)
+                .child(
+                    text(t(lang, Words::WorkspacesUnassignedHeading).to_uppercase())
+                        .id(UNASSIGNED_HEADING)
+                        .semantics(Role::Heading)
+                        .name(Words::WorkspacesUnassignedHeading)
+                        .role(roles::POPOVER_HEADING)
+                        .ink(Ink::Hint)
+                        .fill(),
+                ),
+        );
+        for entry in &rows {
+            let id = crate::manage::workspaces::app_workspace(entry.id);
+            let hint = if entry.from_deleted_profile() {
+                Words::WorkspacesUnassignedHeading
+            } else {
+                Words::WorkspacesUnassignedNoProfile
+            };
+            group = group.child(
+                row("Unassigned row")
+                    .id(unassigned(id))
+                    .min_h(metrics::ROW_MIN)
+                    .pad_x(alias::NAV_PAD)
+                    .gap(Space::S2)
+                    .hit()
+                    .focusable()
+                    .action(Action::Click)
+                    .action(Action::Focus)
+                    .semantics(Role::MenuItem)
+                    .name_text(format!("{}, {}", entry.name, t(lang, hint)))
+                    .radius(Radius::M)
+                    .states(&WORKSPACE_ROW_STATES)
+                    .child(
+                        leaf(
+                            "Unassigned tile",
+                            TileLeaf {
+                                name: entry.name.clone(),
+                                icon: entry.icon.clone(),
+                                color: entry.color.clone(),
+                            },
+                        )
+                        .decorative(),
+                    )
+                    .child(text(&entry.name).role(roles::ROW).fill().truncate()),
+            );
+            let action_row = |key: Key, glyph: char, words: Words| {
+                row("Unassigned action")
+                    .id(key)
+                    .min_h(metrics::ROW_MIN)
+                    .pad_x(alias::NAV_PAD)
+                    .gap(Space::S2)
+                    .hit()
+                    .focusable()
+                    .action(Action::Click)
+                    .action(Action::Focus)
+                    .semantics(Role::MenuItem)
+                    .name_text(format!("{}: {}", t(lang, words), entry.name))
+                    .radius(Radius::M)
+                    .states(&WORKSPACE_ROW_STATES)
+                    .child(icon(glyph, IconSize::L).decorative().ink(Ink::Secondary))
+                    .child(
+                        text(t(lang, words))
+                            .role(roles::ROW)
+                            .ink(Ink::Secondary)
+                            .fill(),
+                    )
+            };
+            group = group.child(action_row(
+                unassigned_move(id),
+                koru_draw::icons::ARROW_RIGHT,
+                Words::WorkspacesMoveTo,
+            ));
+            if self.unassigned_restorable(entry).is_some() {
+                group = group.child(action_row(
+                    unassigned_restore(id),
+                    koru_draw::icons::ARROWS_CLOCKWISE,
+                    Words::WorkspacesRestoreProfile,
+                ));
+            }
+        }
+        Some(group.child(rule()))
+    }
+
+    /// Where the window's workspace menu opens for an Unassigned row's
+    /// *Move to…*: beside the page, level with the row — as the import
+    /// menu anchors.
+    pub(crate) fn unassigned_move_anchor(
+        &self,
+        area: koru_draw::geometry::Rect,
+        viewport: (f32, f32),
+        id: koru_core::WorkspaceId,
+    ) -> Option<(f32, f32)> {
+        if self.live()?.kind != super::PopoverKind::Summary {
+            return None;
+        }
+        let panel = self.settled_panel(area, viewport)?;
+        self.with_page(area, viewport, |frame| {
+            frame
+                .node(unassigned_move(id))
+                .map(|node| (panel.x + panel.w + super::POPOVER_GAP, node.rect.y))
+        })
+        .flatten()
+    }
+
+    /// The empty Profile's line (§3.10), where its rows would be.
+    pub(crate) fn workspaces_empty_line(&self) -> El {
+        let lang = crate::format::lang();
+        text(t(lang, Words::ProfileEmptyWorkspaces))
+            .id(EMPTY)
+            .semantics(Role::Group)
+            .name(Words::ProfileEmptyWorkspaces)
+            .role(roles::HINT)
+            .ink(Ink::Secondary)
+            .pad_x(alias::NAV_PAD)
+            .min_h(metrics::ROW_MIN)
+            .wrap()
     }
 
     pub(crate) fn workspace_menu_header(&self) -> El {

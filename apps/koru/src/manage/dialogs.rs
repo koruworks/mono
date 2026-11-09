@@ -293,7 +293,7 @@ impl ManageView {
                         "Remove Profile",
                     )
                 };
-                let body = if self
+                let mut body = if self
                     .c
                     .selected_profile()
                     .is_some_and(|row| row.account.is_some())
@@ -302,6 +302,41 @@ impl ManageView {
                 } else {
                     body.to_owned()
                 };
+                // The captured list (root-catalog §6.1): what the batch will
+                // trash, by name, from the Store's preview — never from a
+                // guess at the catalog.
+                if let Some(preview) = self.c.deletion_preview() {
+                    let lang = crate::format::lang();
+                    let names: Vec<String> = {
+                        let w = self.w.borrow();
+                        preview
+                            .targets
+                            .iter()
+                            .map(|id| {
+                                w.row(*id)
+                                    .map(|row| row.name.clone())
+                                    .unwrap_or_else(|| id.to_storage())
+                            })
+                            .collect()
+                    };
+                    let targets = match names.len() {
+                        0 => {
+                            koru_i18n::t(lang, koru_i18n::Key::ProfileDeleteTargetsNone).to_owned()
+                        }
+                        1 => koru_i18n::fill(
+                            koru_i18n::t(lang, koru_i18n::Key::ProfileDeleteTargetsOne),
+                            &[&names[0]],
+                        ),
+                        n => koru_i18n::fill(
+                            koru_i18n::t(lang, koru_i18n::Key::ProfileDeleteTargetsMany),
+                            &[
+                                &koru_i18n::number::decimal(lang, n as u64),
+                                &names.join(", "),
+                            ],
+                        ),
+                    };
+                    body = format!("{body}\n\n{targets}");
+                }
                 Dialog::Remove(Confirm::new(title, body, label))
             }
             Mirror::Offline => {

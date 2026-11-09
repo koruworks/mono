@@ -130,6 +130,10 @@ fn control_part(control: Control) -> ControlPart {
         Control::RestoreWorkspace(_) => "manage-restore",
         Control::NoticeRetry => "notice-retry",
         Control::NoticeDismiss => "notice-dismiss",
+        Control::UnassignedRow(_) => "unassigned-row",
+        Control::UnassignedMore(_) => "unassigned-more",
+        Control::RestoreUnassignedProfile(_) => "unassigned-restore",
+        Control::RestoreDeletedProfile(_) => "restore-deleted",
         Control::LinkDevice => "link-device",
         Control::CloseCreation => "close-creation",
         Control::ThisDevice => "this-computer",
@@ -235,9 +239,14 @@ impl Context {
             Control::WorkspaceRow(id)
             | Control::WorkspaceMore(id)
             | Control::Unarchive(id)
-            | Control::RestoreWorkspace(id) => {
+            | Control::RestoreWorkspace(id)
+            | Control::UnassignedRow(id)
+            | Control::UnassignedMore(id)
+            | Control::RestoreUnassignedProfile(id) => {
                 Occurrence::model(self.window, self.view, id.as_uuid(), part)
             }
+            // A deleted Profile's *Restore* is about that Profile.
+            Control::RestoreDeletedProfile(id) => self.profile(id, part),
             _ => self.surface(part),
         }
     }
@@ -472,6 +481,19 @@ impl ManageView {
         };
         match placed.control {
             Control::ProfileSignIn(id) => format!("Sign in to {}\u{2026}", profile_name(id)),
+            // *Restore* names the deleted Profile it brings back, since a
+            // reader may reach the button without the row.
+            Control::RestoreDeletedProfile(id) => {
+                let name = self
+                    .w
+                    .borrow()
+                    .deleted_profiles()
+                    .iter()
+                    .find(|row| row.profile == super::workspaces::catalog_profile(id))
+                    .and_then(|row| row.name.clone())
+                    .unwrap_or_else(|| profile_name(id));
+                format!("{}: {name}", placed.label)
+            }
             Control::Progress(id) => format!("{}, {}", placed.label, profile_name(id)),
             Control::ThisDevice => self
                 .laid

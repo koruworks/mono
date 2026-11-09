@@ -626,6 +626,24 @@ impl ExploreView {
             PopoverRow::WorkspaceNotice => {
                 element_occurrence(cx, super::workspace_menu_elements::NOTICE)
             }
+            PopoverRow::WorkspacesEmpty => {
+                element_occurrence(cx, super::workspace_menu_elements::EMPTY)
+            }
+            PopoverRow::Unassigned(i)
+            | PopoverRow::UnassignedMove(i)
+            | PopoverRow::UnassignedRestore(i) => match self.unassigned_rows().get(i) {
+                Some(w) => {
+                    let part = match row {
+                        PopoverRow::Unassigned(_) => super::workspace_menu_elements::UNASSIGNED,
+                        PopoverRow::UnassignedMove(_) => {
+                            super::workspace_menu_elements::UNASSIGNED_MOVE
+                        }
+                        _ => super::workspace_menu_elements::UNASSIGNED_RESTORE,
+                    };
+                    cx.model(w.id.as_uuid(), ControlPart::new(part))
+                }
+                None => cx.surface(POPOVER, parts::POPOVER),
+            },
             PopoverRow::Workspace(i) => match self.workspaces.get(i) {
                 Some(w) => cx.model(w.id.as_uuid(), ControlPart::ROOT),
                 None => cx.surface(POPOVER, parts::POPOVER),
@@ -669,6 +687,14 @@ impl ExploreView {
                 .map(|p| p.name.clone())
                 .unwrap_or_default(),
             PopoverRow::WorkspacesHeading => t(lang, Key::ManageWorkspaces).to_string(),
+            PopoverRow::WorkspacesEmpty => t(lang, Key::ProfileEmptyWorkspaces).to_string(),
+            PopoverRow::Unassigned(i) => self
+                .unassigned_rows()
+                .get(i)
+                .map(|w| w.name.clone())
+                .unwrap_or_default(),
+            PopoverRow::UnassignedMove(_) => t(lang, Key::WorkspacesMoveTo).to_string(),
+            PopoverRow::UnassignedRestore(_) => t(lang, Key::WorkspacesRestoreProfile).to_string(),
             PopoverRow::ProfilesHeading => t(lang, Key::ProfileManageProfiles).to_string(),
             PopoverRow::ProfileAction(action) => t(lang, action.words()).to_string(),
             PopoverRow::Help(action) => self.help.action_label(action),
@@ -746,7 +772,21 @@ impl ExploreView {
     fn popover_row_matches(&self, row: PopoverRow, target: Occurrence) -> bool {
         match row {
             PopoverRow::WorkspaceAction(action) => target.part.name() == action.key().part,
-            PopoverRow::WorkspaceNotice => false,
+            PopoverRow::WorkspaceNotice | PopoverRow::WorkspacesEmpty => false,
+            PopoverRow::Unassigned(i)
+            | PopoverRow::UnassignedMove(i)
+            | PopoverRow::UnassignedRestore(i) => {
+                let part = match row {
+                    PopoverRow::Unassigned(_) => super::workspace_menu_elements::UNASSIGNED,
+                    PopoverRow::UnassignedMove(_) => {
+                        super::workspace_menu_elements::UNASSIGNED_MOVE
+                    }
+                    _ => super::workspace_menu_elements::UNASSIGNED_RESTORE,
+                };
+                self.unassigned_rows().get(i).is_some_and(|w| {
+                    target.object == object_of(w.id.as_uuid()) && target.part.name() == part
+                })
+            }
             PopoverRow::Workspace(i) => self
                 .workspaces
                 .get(i)

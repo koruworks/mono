@@ -433,8 +433,18 @@ pub enum PopoverRow {
     Help(help::Action),
     WorkspaceAction(workspace_menu_elements::MenuAction),
     WorkspaceNotice,
+    /// **The Unassigned group** at the top of the Workspace menu (root-catalog
+    /// §3.6): an index into the controller's unassigned list. The row opens
+    /// Manage on it; its two actions follow it as rows of their own.
+    Unassigned(usize),
+    UnassignedMove(usize),
+    /// Only for a workspace from a deleted Profile this device can restore.
+    UnassignedRestore(usize),
     /// Workspace heading with a separate Manage workspaces target.
     WorkspacesHeading,
+    /// The one line an empty Profile's list shows (§3.10): furniture, like
+    /// the notice.
+    WorkspacesEmpty,
     /// An index into the open Profile's workspace list. The row switches; the
     /// gear that shows on hover opens the Manage tab on it.
     Workspace(usize),
@@ -454,7 +464,7 @@ impl PopoverRow {
     /// is furniture: *WORKSPACES · n* and *PROFILES · n* are skipped; the
     /// foot (its `+`) is a stop.
     fn selectable(self) -> bool {
-        !matches!(self, Self::WorkspaceNotice)
+        !matches!(self, Self::WorkspaceNotice | Self::WorkspacesEmpty)
     }
 }
 
@@ -3184,6 +3194,34 @@ impl ExploreView {
         changed
     }
 
+    /// The Unassigned group's rows, as the shared controller read them with
+    /// the catalog (root-catalog §3.6). Empty without a controller.
+    pub(crate) fn unassigned_rows(&self) -> Vec<koru_workspaces_ui::UnassignedRow> {
+        self.workspace_controller
+            .as_ref()
+            .map(|controller| controller.borrow().unassigned().to_vec())
+            .unwrap_or_default()
+    }
+
+    /// The deleted Profile an Unassigned row came from and the deletion this
+    /// device can restore it by — `None` for a row unassigned for another
+    /// reason, or whose deletion another device holds (M2).
+    pub(crate) fn unassigned_restorable(
+        &self,
+        row: &koru_workspaces_ui::UnassignedRow,
+    ) -> Option<(ProfileId, koru_store_core::ids::DeletionId)> {
+        if !row.from_deleted_profile() {
+            return None;
+        }
+        let former = row.former_profile?;
+        let deletion = self
+            .workspace_controller
+            .as_ref()?
+            .borrow()
+            .deletion_of(former)?;
+        Some((crate::manage::workspaces::app_profile(former), deletion))
+    }
+
     pub(crate) fn set_workspace_controller(&mut self, controller: crate::manage::SharedWorkspaces) {
         self.workspace_controller = Some(controller);
     }
@@ -3540,6 +3578,16 @@ impl ExploreView {
                         .into_iter()
                         .map(|(action, _)| PopoverRow::WorkspaceAction(action)),
                 );
+                // **Unassigned first** (root-catalog §3.6): a workspace no
+                // Profile lists is reachable before this Profile's own rows,
+                // and only while there is one.
+                for (i, row) in self.unassigned_rows().iter().enumerate() {
+                    out.push(PopoverRow::Unassigned(i));
+                    out.push(PopoverRow::UnassignedMove(i));
+                    if self.unassigned_restorable(row).is_some() {
+                        out.push(PopoverRow::UnassignedRestore(i));
+                    }
+                }
                 out.push(PopoverRow::WorkspacesHeading);
                 // **Pinned first, archived not at all — except the one you are
                 // in — and deleted never.** A workspace can be archived while
@@ -3558,6 +3606,9 @@ impl ExploreView {
                     })
                     .collect();
                 shown.sort_by_key(|&i| !list[i].pinned);
+                if shown.is_empty() {
+                    out.push(PopoverRow::WorkspacesEmpty);
+                }
                 out.extend(shown.into_iter().map(PopoverRow::Workspace));
                 out.extend([
                     PopoverRow::WorkspaceAction(workspace_menu_elements::MenuAction::New),
@@ -3982,7 +4033,11 @@ impl ExploreView {
             PopoverRow::WorkspaceAction(action) => {
                 action == workspace_menu_elements::MenuAction::Import
             }
-            PopoverRow::WorkspaceNotice => true,
+            PopoverRow::WorkspaceNotice | PopoverRow::WorkspacesEmpty => true,
+            // The destination flyout opens beside the page; the page stays
+            // so the row it is about stays lit.
+            PopoverRow::UnassignedMove(_) => true,
+            PopoverRow::Unassigned(_) | PopoverRow::UnassignedRestore(_) => false,
             PopoverRow::WorkspacesHeading => part != PopoverPart::Gear,
             PopoverRow::ProfilesHeading => part != PopoverPart::Gear,
             // The foot's words do nothing; each button is a destination —
@@ -4025,7 +4080,29 @@ impl ExploreView {
     fn choose(&mut self, row: PopoverRow, part: PopoverPart) -> Outcome {
         match row {
             PopoverRow::WorkspaceAction(action) => action.outcome(),
-            PopoverRow::WorkspaceNotice => Outcome::Consumed,
+            PopoverRow::WorkspaceNotice | PopoverRow::WorkspacesEmpty => Outcome::Consumed,
+            // An Unassigned row opens Manage on it, where both of its actions
+            // are too; its two sub-rows are the actions themselves.
+            PopoverRow::Unassigned(i) => match self.unassigned_rows().get(i) {
+                Some(row) => {
+                    Outcome::ManageWorkspace(crate::manage::workspaces::app_workspace(row.id))
+                }
+                None => Outcome::Consumed,
+            },
+            PopoverRow::UnassignedMove(i) => match self.unassigned_rows().get(i) {
+                Some(row) => {
+                    Outcome::MoveUnassigned(crate::manage::workspaces::app_workspace(row.id))
+                }
+                None => Outcome::Consumed,
+            },
+            PopoverRow::UnassignedRestore(i) => match self
+                .unassigned_rows()
+                .get(i)
+                .and_then(|row| self.unassigned_restorable(row))
+            {
+                Some((profile, deletion)) => Outcome::RestoreProfile { profile, deletion },
+                None => Outcome::Consumed,
+            },
             PopoverRow::Workspace(i) => {
                 let Some(id) = self.workspaces.get(i).map(|w| w.id) else {
                     return Outcome::Consumed;

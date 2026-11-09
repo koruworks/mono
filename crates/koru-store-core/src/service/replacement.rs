@@ -298,10 +298,16 @@ impl<C: Catalog, B: Backend> Store<C, B> {
     /// answer that none is needed. **Never creates one** (§6.3): a Profile
     /// about to be left empty stays empty, as a valid state.
     fn prepare_removal_replacement(&mut self, removed: &Workspace, at: Timestamp) -> Result<Ready> {
-        self.profile(removed.owner)?;
         // Whole-Profile removal has a separate, attempt-checked path. Ordinary
         // lifecycle requests must not select around that cascade.
         self.refuse_profile_removal(removed.owner)?;
+        // An unassigned source — its Profile deleted, absent or a legacy
+        // holder (root-catalog §3.6) — has no listing whose usability a
+        // replacement would keep: moving it to an active Profile is the
+        // ordinary move (§6.3), and nothing is prepared for where it left.
+        if self.catalog.profile(removed.owner)?.is_none() {
+            return Ok(Ready::NotNeeded);
+        }
         let mut rows: Vec<_> = self
             .catalog
             .workspaces_including_deleted()?

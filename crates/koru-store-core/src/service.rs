@@ -1032,6 +1032,14 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             .ok_or_else(|| Error::bare(Code::ProfileNotFound))
     }
 
+    /// The Profile row whether or not it is hidden (`removed_at`), for the
+    /// surfaces that must name a Profile in the Trash — the restorable
+    /// deletions listing. `None` when no row exists. A read only; nothing
+    /// about the row's visibility changes.
+    pub fn profile_including_removed(&self, id: ProfileId) -> Result<Option<Profile>> {
+        self.catalog.profile_including_removed(id)
+    }
+
     /// Atomically compare and set the hosted Koru Identity bound to this Profile.
     ///
     /// The Store lock serializes the comparison with every other Profile manifest

@@ -371,7 +371,7 @@ fn a_failed_deletion_is_the_page_until_it_is_answered() {
         &mut view,
         Control::Attention(Attention::RemoveAfterFailure)
     ));
-    assert_eq!(view.c.take_remove_request(), Some((synced.id, true)));
+    assert_eq!(view.c.take_remove_request(), Some((synced.id, true, None)));
 }
 
 #[test]
