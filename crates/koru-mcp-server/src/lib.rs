@@ -50,11 +50,16 @@ use koru_store_wire::tasks::{
 use koru_store_wire::{CaptureHistory, HistoryEntry, HistoryPage, HistoryQuery, Status};
 use koru_workspace::store::{StoreSession, Synced};
 
+pub mod access;
 mod attribution;
 mod capabilities;
 mod chat_tools;
 pub mod effects;
 pub mod hosted;
+pub use access::{
+    AccessResolution, AccessResolver, AccessResolverSeam, AccessRevision, PendingWorkspace,
+    ResolvedAccess,
+};
 pub use attribution::{ACTOR_V1, ActorCreate, ActorMessage, ChangeAttribution};
 pub use capabilities::{HostCapabilities, RUNG1_READ_TOOLS, RUNG1_TOOLS};
 pub use chat_tools::CHAT_TOOL_NAMES;
@@ -534,6 +539,14 @@ pub struct RequestContext {
     /// Hosted `add_image` and `replace_image` refuse until this is set. Local
     /// hosts leave it empty: a claim never blocks a device.
     pub document_claims: DocumentClaimGate,
+    /// What `workspace_access` was resolved under, when a hosted host admitted
+    /// this call (root-catalog Plan 3.3). Opaque here; the resolver reads it.
+    /// `None` on every local host.
+    pub access_revision: Option<AccessRevision>,
+    /// Re-resolves `workspace_access` between admission and execution
+    /// ([`access`]): asked before each tool that needs a content scope. Empty
+    /// on every local host, whose access is `All` and never moves.
+    pub access_resolver: AccessResolverSeam,
 }
 
 /// Optional hosted claim check. `Debug` does not print the gate.
@@ -613,6 +626,8 @@ impl RequestContext {
             capabilities: HostCapabilities::All,
             attribution: None,
             document_claims: DocumentClaimGate::default(),
+            access_revision: None,
+            access_resolver: AccessResolverSeam::default(),
         }
     }
 
@@ -635,6 +650,8 @@ impl RequestContext {
             capabilities: HostCapabilities::All,
             attribution: None,
             document_claims: DocumentClaimGate::default(),
+            access_revision: None,
+            access_resolver: AccessResolverSeam::default(),
         }
     }
 
@@ -655,6 +672,21 @@ impl RequestContext {
     /// it already runs for `edit_document`.
     pub fn with_document_claims(mut self, claims: Arc<dyn DocumentClaims>) -> Self {
         self.document_claims = DocumentClaimGate(Some(claims));
+        self
+    }
+
+    /// Install the hosted access resolver ([`access`]), with the revision
+    /// `workspace_access` was admitted under. Before each tool that needs a
+    /// content scope the executor asks `resolver` whether that access still
+    /// holds and runs the call under what it answers. A device never calls
+    /// this.
+    pub fn with_access_resolver(
+        mut self,
+        revision: AccessRevision,
+        resolver: Arc<dyn AccessResolver>,
+    ) -> Self {
+        self.access_revision = Some(revision);
+        self.access_resolver = AccessResolverSeam(Some(resolver));
         self
     }
 
@@ -996,6 +1028,20 @@ impl WorkspaceToolExecutor {
             })));
         }
 
+        // **Re-resolve between admission and execution** (root-catalog §7.4):
+        // a hosted session's set follows current placement, so the access this
+        // call runs under is asked for now, not at admission. A tool that needs
+        // no content scope — `get_documentation` — is answered without it.
+        let current = if policy.scope.is_some() {
+            context.access_resolver.current(
+                tool,
+                &context.workspace_access,
+                context.access_revision.as_ref(),
+            )?
+        } else {
+            access::CurrentAccess::admitted(&context.workspace_access)
+        };
+
         match policy.workspace {
             WorkspaceTarget::None => {}
             WorkspaceTarget::List => {}
@@ -1005,7 +1051,12 @@ impl WorkspaceToolExecutor {
                     .and_then(Value::as_str)
                     .ok_or_else(|| ToolError::invalid("workspace_id is required"))?;
                 let workspace = workspace(raw)?;
-                if !context.workspace_access.allows(workspace) {
+                // Undecided is answered before denied: a Workspace whose
+                // placement is still being projected is neither.
+                if let Some(pending) = current.pending_for(workspace) {
+                    return Err(access::pending(tool, raw, pending));
+                }
+                if !current.access.allows(workspace) {
                     return Err(ToolError::permission_denied(
                         "this chat is not allowed to access that workspace",
                     )
@@ -1029,7 +1080,7 @@ impl WorkspaceToolExecutor {
                     })
                     .collect::<Result<Vec<_>, _>>()?;
 
-                if let Some(selected) = context.workspace_access.selected_ids() {
+                if let Some(selected) = current.access.selected_ids() {
                     let authorized = if requested.is_empty() {
                         selected.iter().copied().collect::<Vec<_>>()
                     } else {
@@ -1093,7 +1144,7 @@ impl WorkspaceToolExecutor {
         };
 
         if matches!(policy.workspace, WorkspaceTarget::List) {
-            filter_workspaces(result, &context.workspace_access)
+            filter_workspaces(result, &current.access)
         } else {
             Ok(result)
         }
@@ -13500,6 +13551,312 @@ mod tests {
                 .any(|node| node["content"]["text"] == "Taken with the wide lens"),
             "the edit did not persist: {reread}"
         );
+    }
+
+    // ------------------------------------------ a move changes placement only
+    //
+    // Root-catalog Plan 3.3: a Workspace moved between Profiles keeps its
+    // UUID, replica, incarnation and every document (Plan 1.2), so hosted
+    // creation that overlaps a move writes the same histories and blobs it
+    // would have written without one. The session half — a Profile grant
+    // losing the Workspace, a UUID grant keeping it — rides on the same
+    // in-memory composition.
+
+    /// The hosted claim check, allowing: these tests are about moves, not
+    /// claims.
+    struct AllowClaims;
+
+    impl DocumentClaims for AllowClaims {
+        fn enforce(&self, _: &str, _: &str, _: &[String]) -> Result<(), ToolError> {
+            Ok(())
+        }
+    }
+
+    /// A UUID-granted connection's resolver. The set never changes; the
+    /// placement revision moves each time a device moves the Workspace.
+    struct Pinned {
+        workspace: StoreWorkspaceId,
+        placement_revision: std::sync::atomic::AtomicU64,
+    }
+
+    impl Pinned {
+        fn moved(&self) {
+            self.placement_revision
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    impl AccessResolver for Pinned {
+        fn resolve(&self, _: Option<&AccessRevision>) -> AccessResolution {
+            AccessResolution::Resolved(ResolvedAccess {
+                access: WorkspaceAccess::selected([self.workspace]),
+                pending: Vec::new(),
+                revision: AccessRevision {
+                    placement_revision: self
+                        .placement_revision
+                        .load(std::sync::atomic::Ordering::SeqCst),
+                    membership_epoch: 1,
+                    authorization_version: 1,
+                },
+            })
+        }
+    }
+
+    /// A Profile-granted connection's resolver: it holds the Workspace
+    /// while the Workspace is placed under its Profile and not after.
+    struct Following {
+        workspace: StoreWorkspaceId,
+        placed_under_grant: std::sync::atomic::AtomicBool,
+    }
+
+    impl AccessResolver for Following {
+        fn resolve(&self, _: Option<&AccessRevision>) -> AccessResolution {
+            let placed = self
+                .placed_under_grant
+                .load(std::sync::atomic::Ordering::SeqCst);
+            AccessResolution::Resolved(ResolvedAccess {
+                access: WorkspaceAccess::selected(placed.then_some(self.workspace)),
+                pending: Vec::new(),
+                revision: AccessRevision::default(),
+            })
+        }
+    }
+
+    /// The blob store behind the upload route: the content address of the
+    /// bytes, as the real stores answer it.
+    struct HashingBlobStore;
+
+    impl ImageBlobStore for HashingBlobStore {
+        fn put_image(
+            &self,
+            _: &str,
+            bytes: Vec<u8>,
+            mime: &str,
+            filename: Option<&str>,
+        ) -> Result<Blob, ToolError> {
+            Ok(Blob {
+                hash: koru_store_core::model::BlobHash::from_digest(
+                    "b3",
+                    &koru_store_core::lifecycle::checksum(&bytes),
+                )
+                .unwrap(),
+                size: bytes.len() as u64,
+                mime: mime.into(),
+                filename: filename.map(str::to_owned),
+                created_at: koru_store_core::model::Timestamp::from_millis(0),
+                attributes: Default::default(),
+            })
+        }
+    }
+
+    fn hosted_context(
+        workspace: StoreWorkspaceId,
+        principal: &str,
+        resolver: Arc<dyn AccessResolver>,
+    ) -> RequestContext {
+        RequestContext::selected(
+            "us",
+            principal,
+            [Scope::ReadDocuments, Scope::EditDocuments],
+            [workspace],
+        )
+        .with_capabilities(HostCapabilities::rung1())
+        .with_document_claims(Arc::new(AllowClaims))
+        .with_access_resolver(AccessRevision::default(), resolver)
+    }
+
+    /// **Concurrent creation and moves keep the same histories and blobs**
+    /// (ROADMAP Plan 3.3 verification; the in-repo half of the M3 incident).
+    /// A UUID-granted hosted session creates a document, the Workspace is
+    /// moved to another Profile, an image upload minted before the move is
+    /// completed and placed after it, the Workspace moves again: the
+    /// document id, the creation's history and the blob hash are the ones
+    /// the calls answered, the move wrote nothing into the document, and the
+    /// final document contains the creation's history whole. A
+    /// Profile-granted session on the same composition loses the Workspace
+    /// with the move while the pinned one continues.
+    #[test]
+    fn hosted_creation_and_image_upload_continue_unchanged_while_the_workspace_moves() {
+        let store = MemoryStore::new();
+        let uploads = ImageUploads::new();
+        let backend = store
+            .backend()
+            .with_upload_origin("http://127.0.0.1:1")
+            .with_uploads(uploads.clone());
+        let executor = WorkspaceToolExecutor::new(Arc::new(backend));
+        let pinned = Arc::new(Pinned {
+            workspace: store.workspace,
+            placement_revision: std::sync::atomic::AtomicU64::new(1),
+        });
+        let following = Arc::new(Following {
+            workspace: store.workspace,
+            placed_under_grant: std::sync::atomic::AtomicBool::new(true),
+        });
+        let by_uuid = hosted_context(store.workspace, "app-connection:pinned", pinned.clone());
+        let by_profile =
+            hosted_context(store.workspace, "app-connection:profile", following.clone());
+        let workspace_id = store.workspace.to_storage();
+
+        // Both sessions reach the Workspace before the move.
+        let made = executor
+            .invoke(
+                &by_uuid,
+                "create_document",
+                json!({
+                    "workspace_id": workspace_id,
+                    "title": "Field notes",
+                    "initial_operations": [
+                        {"op": "insert", "parent_id": "root", "kind": "paragraph",
+                         "text": "Before the move"},
+                    ],
+                }),
+            )
+            .unwrap();
+        let document_id = made["document_id"].as_str().unwrap().to_owned();
+        let document = StoreDocumentId::parse(&document_id).unwrap();
+        assert!(
+            made["idempotency_key"].is_string(),
+            "a hosted creation always answers its key: {made}"
+        );
+        assert!(made.get("history").is_none(), "history is a device's");
+        executor
+            .invoke(
+                &by_profile,
+                "read_document",
+                json!({ "workspace_id": workspace_id, "document_id": document_id }),
+            )
+            .unwrap();
+        let created_snapshot = store.snapshots.lock().unwrap()[&document].clone();
+
+        // The upload is minted, then a device moves the Workspace out of
+        // the Profile the second connection was granted.
+        let grant = executor
+            .invoke(
+                &by_uuid,
+                "create_image_upload",
+                json!({ "workspace_id": workspace_id, "name": "lens.png" }),
+            )
+            .unwrap();
+        let upload_id = grant["upload_id"].as_str().unwrap().to_owned();
+        let token = grant["upload"]["headers"]["authorization"]
+            .as_str()
+            .unwrap()
+            .strip_prefix(image_upload::UPLOAD_AUTHORIZATION_SCHEME)
+            .unwrap()
+            .trim()
+            .to_owned();
+        pinned.moved();
+        following
+            .placed_under_grant
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(
+            store.snapshots.lock().unwrap()[&document],
+            created_snapshot,
+            "a move is a placement change; it writes nothing into a document"
+        );
+
+        // The Profile-granted session loses the Workspace on its next call,
+        // with no new input and no fallback; the pinned one carries on.
+        let lost = executor
+            .invoke(
+                &by_profile,
+                "read_document",
+                json!({ "workspace_id": workspace_id, "document_id": document_id }),
+            )
+            .unwrap_err();
+        assert_eq!(lost.code, "permission_denied");
+        let listed = executor
+            .invoke(&by_profile, "list_workspaces", json!({}))
+            .unwrap();
+        assert_eq!(listed["workspaces"], json!([]));
+
+        // The upload completes and is placed after the move, and the
+        // Workspace moves once more while it is being placed.
+        let mut png = Vec::new();
+        image::RgbaImage::new(2, 3)
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        let verified = uploads
+            .complete(
+                &upload_id,
+                &token,
+                &png,
+                koru_store_core::model::Timestamp::now().millis(),
+                &HashingBlobStore,
+            )
+            .unwrap();
+        pinned.moved();
+        let placed = executor
+            .invoke(
+                &by_uuid,
+                "add_image",
+                json!({
+                    "workspace_id": workspace_id,
+                    "document_id": document_id,
+                    "base_revision": made["revision"],
+                    "upload_id": upload_id,
+                    "parent_id": made["root_node_id"],
+                    "caption": "Lens",
+                }),
+            )
+            .unwrap();
+        let expected_hash = format!("b3:{}", koru_store_core::lifecycle::checksum(&png));
+        assert_eq!(
+            placed["hash"],
+            json!(expected_hash),
+            "the blob is the bytes' address"
+        );
+        assert_eq!(verified.hash, expected_hash);
+        assert_eq!(placed["width"], 2);
+        assert_eq!(placed["height"], 3);
+
+        // The same document, under the moved placement: one id in the list,
+        // the creation's history contained whole, the paragraph and the
+        // image both present, and the revision the call answered.
+        let documents = executor
+            .invoke(
+                &by_uuid,
+                "list_documents",
+                json!({ "workspace_id": workspace_id }),
+            )
+            .unwrap();
+        let ids: Vec<&str> = documents["documents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, vec![document_id.as_str()]);
+        let read = executor
+            .invoke(
+                &by_uuid,
+                "read_document",
+                json!({ "workspace_id": workspace_id, "document_id": document_id }),
+            )
+            .unwrap();
+        assert_eq!(read["document_id"], made["document_id"]);
+        assert_eq!(read["root_node_id"], made["root_node_id"]);
+        assert_eq!(read["revision"], placed["revision"]);
+        let nodes = read["nodes"].as_array().unwrap();
+        assert!(
+            nodes
+                .iter()
+                .any(|node| node["content"]["text"] == "Before the move")
+        );
+        assert!(
+            nodes
+                .iter()
+                .any(|node| node["content"]["hash"] == json!(expected_hash))
+        );
+        let before = WorkspaceDoc::from_snapshot(&created_snapshot).unwrap();
+        let after =
+            WorkspaceDoc::from_snapshot(&store.snapshots.lock().unwrap()[&document]).unwrap();
+        assert_eq!(revision(&before), made["revision"].as_str().unwrap());
+        assert!(
+            after.doc().oplog_vv().includes_vv(&before.doc().oplog_vv()),
+            "the creation's history is a prefix of the document's, not a new lineage"
+        );
+        assert!(placed.get("history").is_none());
     }
 
     // ------------------------------------------ writes reach only what reads reach

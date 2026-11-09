@@ -135,6 +135,8 @@ define_catalogue!(
     AppConnectionAccessV1,
     ProfileAccessV1,
     AppConnectionProfileV1,
+    // Root-catalog Plan 3.3: a grant pinned to a Workspace UUID.
+    AppConnectionWorkspaceGrantV1,
     AppConnectionRevokedReasonV1,
     OAuthClientSummaryV1,
     CloudSubscriptionStateV1,
