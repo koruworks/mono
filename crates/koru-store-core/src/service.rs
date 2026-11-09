@@ -1504,6 +1504,43 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         Ok(true)
     }
 
+    /// Release a hosted in-memory replica body only when the caller supplies
+    /// Cloud's acknowledged version covering every local operation. The host
+    /// stops the workspace driver and excludes active tool calls first. The
+    /// manifest entry remains, allowing a later fetch of the same document.
+    pub fn evict_confirmed_replica_document(
+        &mut self,
+        workspace: WorkspaceId,
+        document: DocumentId,
+        cloud_confirmed: &loro::VersionVector,
+    ) -> Result<bool> {
+        self.ensure_open(workspace)?;
+        let open = self.open.get_mut(&workspace).expect("just opened");
+        if open.is_manifest(document) {
+            return Ok(false);
+        }
+        let Some(state) = open.repo.document(document)? else {
+            return Ok(false);
+        };
+        if state.kind != DocumentKind::Document {
+            return Ok(false);
+        }
+        let local = match open.documents.get(&document) {
+            Some(live) => live.version(),
+            None => return Ok(false),
+        };
+        if !cloud_confirmed.includes_vv(&local) {
+            return Ok(false);
+        }
+        open.documents.remove(&document);
+        open.windows.remove(&document);
+        open.repo.drop_document(document)?;
+        if self.catalog.locate(document)? == Some(workspace) {
+            self.catalog.forget_location(document)?;
+        }
+        Ok(true)
+    }
+
     /// List a document this Store already holds in the workspace's manifest,
     /// in one manifest commit labelled `attribution` when one is given.
     ///

@@ -460,6 +460,7 @@ async fn run_session(
             deferrals,
             permission: |_start: &transfer::Start| Decision::Accept,
             uploads: None,
+            interest: None,
             progress: move |progress| {
                 let step = match progress {
                     Progress::PassStarted => {

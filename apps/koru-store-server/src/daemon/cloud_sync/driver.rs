@@ -29,8 +29,10 @@
 //! The Store work goes through [`StoreJobs`], so the same driver runs over the
 //! Store worker's queue and over a host's per-replica executor.
 
-use std::sync::Arc;
+use koru_store_core::DocumentId;
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, RwLock};
 
 use koru_replication::cloud::{
     Refusal,
@@ -112,6 +114,9 @@ pub struct Parts<J, P, F> {
     /// Which units may be uploaded at the full stage; `None` is every unit,
     /// as on a device. The manifest stage uploads nothing whatever this says.
     pub uploads: Option<Uploads>,
+    /// A hosted replica's resident document set. `None` retains the device's
+    /// whole-workspace reconciliation. The manifest is always reconciled.
+    pub interest: Option<Arc<RwLock<HashSet<DocumentId>>>>,
 }
 
 /// A unit fetched on request.
@@ -331,6 +336,7 @@ where
         permission,
         mut progress,
         uploads,
+        interest,
     } = parts;
     let mut last: Result<Outcome, Error> = Ok(Outcome::default());
     loop {
@@ -370,7 +376,7 @@ where
         };
         // Owned or borrowed mutably, so the session is `Send` without asking
         // anything shared of the permission policy.
-        let (plan, jobs, authorize, downloads, deferrals, permission, uploads) = (
+        let (plan, jobs, authorize, downloads, deferrals, permission, uploads, interest) = (
             plan.clone(),
             jobs.clone(),
             Arc::clone(&authorize),
@@ -378,6 +384,7 @@ where
             Arc::clone(&deferrals),
             permission.clone(),
             uploads.clone(),
+            interest.clone(),
         );
         let (observed, commands) = (&mut observed, &mut commands);
         let session = async move {
@@ -398,6 +405,7 @@ where
                     stage,
                     commands: Some(commands),
                     uploads,
+                    interest,
                 },
             )
             .await

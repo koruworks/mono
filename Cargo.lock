@@ -5562,6 +5562,7 @@ dependencies = [
  "futures-util",
  "koru-account-core",
  "koru-account-session",
+ "koru-account-wire",
  "koru-blob-sync",
  "koru-cloud-blob",
  "koru-device",
@@ -5577,6 +5578,7 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]

@@ -434,6 +434,7 @@ pub(super) struct Hooks<'h> {
     pub commands: Option<&'h mut tokio::sync::mpsc::Receiver<driver::Command>>,
     /// Which units may be uploaded at the full stage; `None` is every unit.
     pub uploads: Option<Uploads>,
+    pub interest: Option<std::sync::Arc<std::sync::RwLock<std::collections::HashSet<DocumentId>>>>,
 }
 
 impl Hooks<'_> {
@@ -442,6 +443,7 @@ impl Hooks<'_> {
             stage: Stage::Full,
             commands: None,
             uploads: None,
+            interest: None,
         }
     }
 }
@@ -682,6 +684,10 @@ where
                 }))
                 .await?
                 .map_err(|_| Error::Unavailable)?;
+                if let Some(interest) = &hooks.interest {
+                    let resident = interest.read().unwrap_or_else(|e| e.into_inner());
+                    entries.retain(|id| *id == scope.manifest || resident.contains(id));
+                }
                 // Room interest is a scheduling hint, never authority. The manifest
                 // still supplies membership and every unit rechecks its permit.
                 entries.sort_by_key(|id| {

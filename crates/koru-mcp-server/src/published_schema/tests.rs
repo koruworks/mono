@@ -66,8 +66,8 @@ fn a_tagged_union_becomes_one_closed_object_that_names_every_variant() {
                         "properties": {
                             "op": {"type": "string", "enum": ["remove", "set_value", "set_flag"]},
                             "node_id": {"type": "string"},
-                            "note": {"type": ["string", "null"]},
-                            "value": {"type": ["number", "boolean"]}
+                            "note": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+                            "value": {"anyOf": [{"type": "number"}, {"type": "boolean"}]}
                         }
                     }
                 }
@@ -105,10 +105,10 @@ fn a_reference_is_inlined_with_its_default_and_defs_are_gone() {
             "properties": {
                 "sort": {"type": "string", "enum": ["due", "priority"], "default": "due"},
                 "window": {
-                    "type": ["object", "null"],
-                    "properties": {"after_ms": {"type": ["integer", "null"]}}
+                    "anyOf": [{"type": "object"}, {"type": "null"}],
+                    "properties": {"after_ms": {"anyOf": [{"type": "integer"}, {"type": "null"}]}}
                 },
-                "limit": {"type": ["integer", "null"], "minimum": 0},
+                "limit": {"anyOf": [{"type": "integer"}, {"type": "null"}], "minimum": 0},
                 "tags": {"type": "array", "items": {"type": "string"}},
                 "title": {"type": "string"}
             }
@@ -149,5 +149,62 @@ fn fields_that_differ_in_more_than_type_accept_anything_and_leave_it_to_the_serv
     assert!(
         out.get("additionalProperties").is_none(),
         "branches were open"
+    );
+}
+
+#[test]
+fn published_local_and_hosted_catalogs_never_use_type_arrays() {
+    fn check(schema: &mut schemars::Schema) {
+        assert!(
+            !schema.get("type").is_some_and(Value::is_array),
+            "{schema:?}"
+        );
+        schemars::transform::transform_subschemas(&mut check, schema);
+    }
+    for tool in crate::workspace_tool_catalog()
+        .into_iter()
+        .chain(crate::HostCapabilities::rung1().catalog())
+    {
+        let mut schema = schemars::Schema::try_from(tool.input_schema).unwrap();
+        check(&mut schema);
+    }
+}
+
+#[test]
+fn nullable_required_fields_keep_their_constraints_and_default_data() {
+    let data = json!({"type": ["string", "null"]});
+    assert_eq!(
+        compacted(json!({
+            "type": "object", "required": ["page_size"], "additionalProperties": false,
+            "properties": {
+                "page_size": {"type": ["integer", "null"], "minimum": 1, "maximum": 100},
+                "type": {"type": ["string", "null"], "enum": ["open", null]},
+                "payload": {"default": data, "enum": [data]}
+            }
+        })),
+        json!({
+            "type": "object", "required": ["page_size"], "additionalProperties": false,
+            "properties": {
+                "page_size": {"anyOf": [{"type": "integer"}, {"type": "null"}], "minimum": 1, "maximum": 100},
+                "type": {"anyOf": [{"type": "string"}, {"type": "null"}], "enum": ["open", null]},
+                "payload": {"default": data, "enum": [data]}
+            }
+        })
+    );
+}
+
+#[test]
+fn a_type_array_does_not_overwrite_existing_alternatives_or_conjunctions() {
+    let input = json!({
+        "type": ["integer", "null"],
+        "anyOf": [{"const": 3}, {"const": null}],
+        "allOf": [{"minimum": 0}]
+    });
+    assert_eq!(
+        compacted(input),
+        json!({"allOf": [
+            {"anyOf": [{"const": 3}, {"const": null}], "allOf": [{"minimum": 0}]},
+            {"anyOf": [{"type": "integer"}, {"type": "null"}]}
+        ]})
     );
 }

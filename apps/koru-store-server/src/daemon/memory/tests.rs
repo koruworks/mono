@@ -33,6 +33,70 @@ use crate::daemon::cloud_sync::{
 };
 use crate::daemon::fake_cloud::{FakeCloud, Sessions, document_unit, workspace_scope};
 
+#[test]
+fn eviction_requires_cloud_coverage_and_keeps_the_listing() {
+    let memory = MemoryStore::open("eviction").unwrap();
+    let (workspace, document, version) = memory
+        .with_store(|store| {
+            let at = Timestamp::now();
+            let profile = store.create_profile("Person", None, None, Locale::default(), at)?;
+            let workspace = store.create_workspace(profile.id, "Garden", at)?.id;
+            let (document, _) =
+                store.create_document(workspace, "Planting", "page", None, None, at)?;
+            let changed = loro::LoroDoc::new();
+            changed.get_text("probe").insert(0, "unsaved work").unwrap();
+            changed.commit();
+            store.apply_update(
+                workspace,
+                document,
+                changed.export(loro::ExportMode::all_updates()).unwrap(),
+                at,
+                UpdateOrigin::Store,
+            )?;
+            store.flush(workspace, document, at)?;
+            Ok::<_, Error>((workspace, document, store.version(workspace, document)?))
+        })
+        .unwrap()
+        .unwrap();
+    assert!(!version.is_empty());
+    let refused = memory
+        .with_store(|store| {
+            store.evict_confirmed_replica_document(
+                workspace,
+                document,
+                &loro::VersionVector::default(),
+            )
+        })
+        .unwrap()
+        .unwrap();
+    assert!(!refused, "an unconfirmed update cannot be evicted");
+    assert!(
+        memory
+            .with_store(|store| store.snapshot(workspace, document))
+            .unwrap()
+            .is_ok()
+    );
+    let evicted = memory
+        .with_store(|store| store.evict_confirmed_replica_document(workspace, document, &version))
+        .unwrap()
+        .unwrap();
+    assert!(evicted);
+    assert!(
+        memory
+            .with_store(|store| store.snapshot(workspace, document))
+            .unwrap()
+            .is_err()
+    );
+    assert!(
+        memory
+            .with_store(|store| store.documents(workspace))
+            .unwrap()
+            .unwrap()
+            .iter()
+            .any(|entry| entry.id == document)
+    );
+}
+
 /// The shared tools' port onto one composition, each call on the caller's
 /// thread — what a host's own adapter does, on its actor.
 struct Port(Arc<MemoryStore>);
@@ -271,6 +335,7 @@ fn parts(
         permission: accept,
         progress: |_| {},
         uploads: None,
+        interest: None,
     }
 }
 

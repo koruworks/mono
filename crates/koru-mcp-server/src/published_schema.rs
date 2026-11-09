@@ -34,6 +34,9 @@
 //! - **Only what constrains a value stays.** A numeric `format` names a Rust
 //!   width (`int64`, `uint`) rather than anything a caller chooses, and a
 //!   `default` of `null`, `[]` or `false` says no more than *optional* does.
+//! - **Each `type` is one name.** After compaction, type arrays become
+//!   equivalent `anyOf` branches for clients that cannot map a type array.
+//!   Null, required fields and sibling constraints retain their meaning.
 //!
 //! What is kept: every property name, every type, every enum value, every
 //! `required`, `additionalProperties: false`, `minimum`/`maximum`, and a
@@ -59,7 +62,42 @@ pub(crate) fn compact_input_schema(schema: &JsonObject) -> JsonObject {
         .unwrap_or_default();
     let mut root = schema.clone();
     root.remove("$defs");
-    compact(root, &defs)
+    let mut schema = schemars::Schema::from(compact(root, &defs));
+    portable_types(&mut schema);
+    schema.as_object().expect("an object schema").clone()
+}
+
+/// Run after compaction: tagged-union merging can itself produce type arrays.
+/// Walk schema positions only, so a property named `type` or JSON data inside
+/// a default/enum is never mistaken for a schema keyword.
+fn portable_types(schema: &mut schemars::Schema) {
+    schemars::transform::transform_subschemas(&mut portable_types, schema);
+    let Some(object) = schema.as_object_mut() else {
+        return;
+    };
+    let Some(Value::Array(types)) = object.get("type") else {
+        return;
+    };
+    let branches = Value::Array(
+        types
+            .iter()
+            .map(|name| serde_json::json!({ "type": name }))
+            .collect(),
+    );
+    object.remove("type");
+    if object.contains_key("anyOf") {
+        // Both constraints must hold. Never overwrite an existing alternative
+        // set, or distribute siblings such as enum/required only to one branch.
+        let existing = std::mem::take(object);
+        object.insert(
+            "allOf".into(),
+            serde_json::json!([
+                existing, { "anyOf": branches }
+            ]),
+        );
+    } else {
+        object.insert("anyOf".into(), branches);
+    }
 }
 
 /// Keywords whose value is itself one schema.
