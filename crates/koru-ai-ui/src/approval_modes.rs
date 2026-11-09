@@ -40,6 +40,7 @@ use koru_draw::geometry::Rect;
 use koru_draw::inspect;
 use koru_draw::{icons, scene, theme, theme::role};
 use koru_i18n::{Key as Words, fill, t};
+use koru_ui::popover::PopoverAlign;
 use koru_ui::split_button::SplitTone;
 use koru_ui::tooltip::TooltipContent;
 use vello::Scene;
@@ -575,8 +576,7 @@ impl crate::ChatSurface {
         self.composer_shell.as_ref()?.mode()
     }
 
-    /// The open list: below an empty centered composer when it fits, and
-    /// above the composer once the chat has begun.
+    /// The open list follows the split send control that opened it.
     pub(crate) fn approval_mode_panel(&self) -> Option<Rect> {
         if !self.approval_mode_open {
             return None;
@@ -585,7 +585,7 @@ impl crate::ChatSurface {
         let count = self.approval_mode_rows().len();
         let width = self.composer_hit_rect.w.min(340.0).max(1.0);
         let height = count as f32 * MODE_ROW_H + PANEL_PAD * 2.0 + FOOTER_H;
-        Some(self.toolbar_panel(chip.x + chip.w - width, width, height))
+        Some(self.toolbar_popover(chip, width, height, PopoverAlign::End))
     }
 
     fn approval_mode_footer_rect(&self) -> Option<Rect> {

@@ -51,6 +51,37 @@ fn migration_is_idempotent() {
 }
 
 #[test]
+fn v14_attempts_gain_nullable_reported_context_without_losing_rows() {
+    const V14: Schema = Schema {
+        database: crate::DATABASE_FILE,
+        understood: 14,
+        migrations: MIGRATIONS.split_at(14).0,
+    };
+    let mut connection = koru_sqlite::open_in_memory(&V14).unwrap();
+    connection
+        .execute_batch(
+            "INSERT INTO inference_attempts (
+                id, operation_id, surface, provider, requested_model,
+                prompt_template_version, status, queued_at_ms
+             ) VALUES ('old', 'operation', 'standalone', 'agent-codex',
+                       'model', 'v1', 'pending', 1)",
+        )
+        .unwrap();
+
+    prepare(&mut connection).unwrap();
+    assert_eq!(user_version(&connection).unwrap(), SCHEMA_VERSION);
+    let (used, limit): (Option<i64>, Option<i64>) = connection
+        .query_row(
+            "SELECT context_used_tokens, context_limit_tokens
+               FROM inference_attempts WHERE id = 'old'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!((used, limit), (None, None));
+}
+
+#[test]
 fn v13_attachment_rows_survive_v14_with_indexes_and_immutability() {
     const V13: Schema = Schema {
         database: crate::DATABASE_FILE,
@@ -87,7 +118,7 @@ fn v13_attachment_rows_survive_v14_with_indexes_and_immutability() {
     }
 
     prepare(&mut connection).unwrap();
-    assert_eq!(user_version(&connection).unwrap(), 14);
+    assert_eq!(user_version(&connection).unwrap(), SCHEMA_VERSION);
     let rows: Vec<(String, Option<String>, i64, Option<String>)> = connection
         .prepare(
             "SELECT id, message_id, byte_count, reference_path

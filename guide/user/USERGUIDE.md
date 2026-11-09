@@ -1386,14 +1386,16 @@ Left and Right to move the level on the strip, Space or Enter to flip a
 toggle, Esc to clear the search or close.
 
 In an open chat, the model mark at the left of the model chip opens the
-**Context window** panel. Its ring shows a percentage only when the agent
-reports both the current context used and the context limit. Otherwise the
-panel says the current usage is unavailable. The panel can still show the
+**Context window** panel. Its ring, token counts and progress bar show the
+latest used and limit pair when the agent reports both values. Otherwise the
+panel says the usage is unavailable. The panel can still show the
 last reported input tokens and the total tokens processed across replies;
 these are different from the current context window. Click the mark again,
 click outside, or press Esc to close the panel.
-The ring follows the latest report from the agent; after reopening Koru, it
-remains unavailable until the agent sends another report.
+The ring follows the latest report from the agent. After reopening Koru, the
+last reported pair for that reply appears if the chat still uses the same
+model. Older replies without a stored report remain unavailable until the
+agent sends another pair. Starting a new reply waits for its own report.
 
 When you scroll up in a chat, a round ↓ button appears above the message
 box; click it, or press `Ctrl+End`, to jump to the newest message and keep

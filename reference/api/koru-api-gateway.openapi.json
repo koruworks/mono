@@ -7087,6 +7087,13 @@
             "minimum": 0,
             "type": "integer"
           },
+          "context_limit_tokens": {
+            "default": null,
+            "format": "uint64",
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
           "context_message_block_count": {
             "format": "uint32",
             "minimum": 0,
@@ -7109,6 +7116,14 @@
                 "nullable": true
               }
             ]
+          },
+          "context_used_tokens": {
+            "default": null,
+            "description": "Latest active-context pair reported by this attempt's provider.\nIt is distinct from response usage and absent for older attempts.",
+            "format": "uint64",
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
           },
           "effective_reasoning": {
             "anyOf": [
@@ -7888,6 +7903,20 @@
       },
       "MessageUsage": {
         "properties": {
+          "context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReportedContextUsage"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "The latest active-context report from the attempt for this reply."
+          },
           "message_id": {
             "$ref": "#/components/schemas/MessageId"
           },
@@ -11156,6 +11185,25 @@
             "type": "object"
           }
         ]
+      },
+      "ReportedContextUsage": {
+        "properties": {
+          "size": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "used": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "used",
+          "size"
+        ],
+        "type": "object"
       },
       "ResizeRequest": {
         "properties": {

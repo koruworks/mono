@@ -347,8 +347,8 @@ fn the_context_is_read_only_once_the_chat_has_begun() {
         Some(t(koru_i18n::Lang::En, Key::AiModelContextLockedAfterStart))
     );
 }
-/// A centered empty chat opens the model picker below when it fits. Once
-/// the chat begins it rises above; a cramped viewport still keeps it visible.
+/// The picker follows its model chip on either side of a centered or bottom
+/// composer; a cramped viewport still keeps it visible.
 #[test]
 fn the_picker_follows_the_composers_empty_and_begun_positions() {
     let mut surface = surface();
@@ -362,11 +362,8 @@ fn the_picker_follows_the_composers_empty_and_begun_positions() {
     surface.composer_rect();
     open(&mut surface);
     let centered = surface.picker_geometry().unwrap().panel;
-    let composer = surface.composer_hit_rect;
-    assert!(
-        centered.y >= composer.y + composer.h,
-        "below an empty composer"
-    );
+    let chip = surface.chat_model_button();
+    assert!(centered.y >= chip.y + chip.h, "below the centered chip");
     assert!(centered.y + centered.h <= surface.viewport.y + surface.viewport.h);
     surface.close_picker();
 
@@ -376,8 +373,11 @@ fn the_picker_follows_the_composers_empty_and_begun_positions() {
     open(&mut surface);
     let panel = surface.picker_geometry().unwrap().panel;
     let chip = surface.chat_model_button();
-    let composer = surface.composer_hit_rect;
-    assert!(panel.y + panel.h <= composer.y, "above the composer");
+    assert!(panel.y + panel.h <= chip.y, "above the bottom chip");
+    assert!(
+        (chip.y - panel.y - panel.h - theme::overlay::popover().anchor_gap).abs() < 0.5,
+        "the panel is close to the chip"
+    );
     assert!(
         (panel.x + panel.w - (chip.x + chip.w)).abs() < 0.5,
         "end-aligned"
@@ -387,7 +387,6 @@ fn the_picker_follows_the_composers_empty_and_begun_positions() {
     // A composer near the window's top has no room above it: the picker
     // hangs from the chip instead.
     surface.composer_hit_rect = Rect::new(20.0, 60.0, 600.0, 100.0);
-    assert!(!surface.fits_above_composer(panel.h));
     open(&mut surface);
     let low = surface.picker_geometry().unwrap().panel;
     let chip = surface.chat_model_button();

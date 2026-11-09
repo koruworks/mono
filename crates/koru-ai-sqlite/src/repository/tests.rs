@@ -476,6 +476,8 @@ fn turn(chat_id: ChatId, operation_id: Uuid, offset: i64) -> PendingTurn {
             context_document_count: 0,
             context_message_block_count: 0,
             usage: AiUsage::default(),
+            context_used_tokens: None,
+            context_limit_tokens: None,
             stop_reason: None,
             error_class: None,
             provider_response_id: None,
@@ -489,6 +491,48 @@ fn repository_with_chat() -> (Repository, ChatId) {
     let chat_id = ChatId::new();
     repository.create_chat(&chat(chat_id, 0)).unwrap();
     (repository, chat_id)
+}
+
+#[test]
+fn reported_context_is_durable_and_separate_from_response_usage() {
+    let (mut repository, chat_id) = repository_with_chat();
+    let pending = turn(chat_id, Uuid::new_v4(), 1);
+    let attempt_id = pending.attempt.id;
+    repository.begin_turn(&pending).unwrap();
+    repository
+        .apply_event(
+            &AiEvent::ContextUsage {
+                attempt_id,
+                used: 173_700,
+                size: 258_400,
+            },
+            &[],
+        )
+        .unwrap();
+
+    let saved = repository.attempt(attempt_id).unwrap().unwrap();
+    assert_eq!(saved.context_used_tokens, Some(173_700));
+    assert_eq!(saved.context_limit_tokens, Some(258_400));
+    assert_eq!(saved.usage, AiUsage::default());
+
+    repository
+        .apply_event(
+            &AiEvent::Usage {
+                attempt_id,
+                usage: AiUsage {
+                    prompt_tokens: Some(56_000),
+                    total_tokens: Some(58_000),
+                    source: UsageSource::ProviderReported,
+                    ..AiUsage::default()
+                },
+            },
+            &[],
+        )
+        .unwrap();
+    let saved = repository.attempt(attempt_id).unwrap().unwrap();
+    assert_eq!(saved.context_used_tokens, Some(173_700));
+    assert_eq!(saved.context_limit_tokens, Some(258_400));
+    assert_eq!(saved.usage.prompt_tokens, Some(56_000));
 }
 
 fn complete_turn(

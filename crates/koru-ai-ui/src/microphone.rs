@@ -58,6 +58,7 @@ use koru_draw::scene;
 use koru_draw::theme::{Profile, Space};
 use koru_i18n::{Key as Words, fill, t};
 use koru_ui::icon_button::{self, Metrics};
+use koru_ui::popover::PopoverAlign;
 use vello::Scene;
 use vello::kurbo::Affine;
 use winit::keyboard::{Key, ModifiersState, NamedKey};
@@ -306,8 +307,7 @@ impl ChatSurface {
         }
     }
 
-    /// The open panel: above the composer, its right edge on the
-    /// microphone's, as tall as its rows.
+    /// The open panel follows the microphone chooser, as tall as its rows.
     pub(crate) fn microphone_panel(&self) -> Option<Rect> {
         if !self.dictation.microphone.open || self.dictating() {
             return None;
@@ -328,7 +328,7 @@ impl ChatSurface {
         let top = measured.rect_of(elements::LEVEL_ROW)?.y;
         let height = hold.y + hold.h + top;
         let anchor = self.mic_chooser_slot().unwrap_or(mic);
-        Some(self.above_composer(anchor.x + anchor.w - width, width, height))
+        Some(self.toolbar_popover(anchor, width, height, PopoverAlign::End))
     }
 
     /// **The open panel's frame**: where a press lands and which row it is

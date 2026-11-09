@@ -1520,6 +1520,40 @@ fn codex_context_uses_last_usage_and_reported_window_not_cumulative_total() {
     assert_eq!(context, Some((48, 475)));
 }
 
+#[test]
+fn codex_retains_context_from_an_unmapped_usage_turn() {
+    let mut frames = initialize_frames(false);
+    let mut replayed = usage_frame("old-turn", 10_000, 100, None);
+    replayed["params"]["tokenUsage"]["last"]["totalTokens"] = json!(48);
+    replayed["params"]["tokenUsage"]["modelContextWindow"] = json!(475);
+    frames.push(replayed);
+    frames.push(turn_started(4, "t1"));
+    let (mut control, _) = replay_control(frames, Arc::new(NoopAttachmentPathResolver));
+    control
+        .start(AgentStart::fresh(SessionId::mint(), None))
+        .unwrap();
+    control
+        .submit(AgentInput {
+            model: None,
+            turn_id: AgentTurnId::mint(),
+            text: "context".into(),
+            attachments: Vec::new(),
+            references: Vec::new(),
+            mode: None,
+            fast: None,
+            reasoning: None,
+            skills: Vec::new(),
+        })
+        .unwrap();
+    let mut context = None;
+    while let Some(event) = control.next_event(Duration::ZERO).unwrap() {
+        if let AgentEvent::ContextUsage { used, size } = event {
+            context = Some((used, size));
+        }
+    }
+    assert_eq!(context, Some((48, 475)));
+}
+
 fn turn_completed(turn: &str, status: &str) -> Value {
     json!({
         "method": "turn/completed",

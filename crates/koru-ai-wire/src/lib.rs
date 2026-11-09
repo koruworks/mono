@@ -170,9 +170,18 @@ pub struct ListChatsResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ReportedContextUsage {
+    pub used: u64,
+    pub size: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct MessageUsage {
     pub message_id: MessageId,
     pub usage: AiUsage,
+    /// The latest active-context report from the attempt for this reply.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<ReportedContextUsage>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -1160,6 +1169,29 @@ mod tests {
 
         let decoded = serde_json::from_value::<ChatTranscript>(response).unwrap();
         assert!(decoded.usage.is_empty());
+    }
+
+    #[test]
+    fn older_message_usage_without_context_still_decodes() {
+        let entry = MessageUsage {
+            message_id: MessageId::new(),
+            usage: AiUsage::default(),
+            context: None,
+        };
+        let mut value = serde_json::to_value(&entry).unwrap();
+        assert!(value.get("context").is_none());
+        let decoded = serde_json::from_value::<MessageUsage>(value.clone()).unwrap();
+        assert_eq!(decoded, entry);
+
+        value["context"] = serde_json::json!({"used": 48_000, "size": 258_400});
+        let decoded = serde_json::from_value::<MessageUsage>(value).unwrap();
+        assert_eq!(
+            decoded.context,
+            Some(ReportedContextUsage {
+                used: 48_000,
+                size: 258_400,
+            })
+        );
     }
 
     #[test]

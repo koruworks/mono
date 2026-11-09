@@ -143,7 +143,7 @@ fn near(a: f32, b: f32, what: &str) {
 
 /// **The panel**: *Default – <the system's device>* first and checked, then
 /// a row a device, a divider, and *Hold to record* with its switch. It opens
-/// above the composer, its right edge on the chooser's, and opening it
+/// next to the chooser, its right edge on the chooser's, and opening it
 /// asks the host for the list again.
 #[test]
 fn the_chevron_opens_the_devices_with_default_first() {
@@ -167,9 +167,11 @@ fn the_chevron_opens_the_devices_with_default_first() {
         chooser.x + chooser.w,
         "right edge on the chooser's",
     );
+    let gap = koru_draw::theme::overlay::popover().anchor_gap;
     assert!(
-        panel.y + panel.h < surface.composer_hit_rect.y,
-        "above the composer"
+        (panel.y - chooser.y - chooser.h - gap).abs() < 0.5
+            || (chooser.y - panel.y - panel.h - gap).abs() < 0.5,
+        "panel stays beside the chooser on the side with room"
     );
 
     let (_, _, frame) = surface.microphone_frame().unwrap();

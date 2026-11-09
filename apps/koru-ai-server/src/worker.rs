@@ -45,11 +45,11 @@ use koru_ai_wire::{
     OllamaSettingsView, OpenAiSettingsView, ProviderSettingsResponse, ProviderValidationResponse,
     ProviderValidationStatus, PublicAiEvent, PullOllamaModelAccepted, PullOllamaModelRequest,
     ReadChatToolRequest, ReadChatToolResponse, RenameChatRequest, RenameChatResponse,
-    RetryTurnRequest, SearchChatsToolRequest, SearchChatsToolResponse, SelectProviderRequest,
-    SendTurnAccepted, SendTurnRequest, StreamEvent, ToolDecisionResponse, UpdateChatModelRequest,
-    UpdateChatModelResponse, UpdateChatPrivacyRequest, UpdateChatPrivacyResponse,
-    UpdateChatToolPolicyRequest, UpdateOllamaSettingsRequest, UpdateOpenAiSettingsRequest,
-    UsageResponse,
+    ReportedContextUsage, RetryTurnRequest, SearchChatsToolRequest, SearchChatsToolResponse,
+    SelectProviderRequest, SendTurnAccepted, SendTurnRequest, StreamEvent, ToolDecisionResponse,
+    UpdateChatModelRequest, UpdateChatModelResponse, UpdateChatPrivacyRequest,
+    UpdateChatPrivacyResponse, UpdateChatToolPolicyRequest, UpdateOllamaSettingsRequest,
+    UpdateOpenAiSettingsRequest, UsageResponse,
 };
 
 pub const WORKER_COMMAND_CAPACITY: usize = 64;
@@ -1760,28 +1760,30 @@ fn transcript_usage(messages: &[Message], attempts: Vec<InferenceAttempt>) -> Ve
     let mut usage_by_message = attempts
         .into_iter()
         .filter_map(|attempt| {
+            let context = attempt
+                .context_used_tokens
+                .zip(attempt.context_limit_tokens)
+                .filter(|(_, size)| *size > 0)
+                .map(|(used, size)| ReportedContextUsage { used, size });
             let usage = attempt.usage;
             let reported = usage.prompt_tokens.is_some()
                 || usage.cached_prompt_tokens.is_some()
                 || usage.completion_tokens.is_some()
                 || usage.reasoning_tokens.is_some()
                 || usage.total_tokens.is_some();
-            attempt
-                .assistant_message_id
-                .filter(|_| reported)
-                .map(|message_id| (message_id, usage))
+            attempt.assistant_message_id.map(|message_id| {
+                let entry = (reported || context.is_some()).then_some(MessageUsage {
+                    message_id,
+                    usage,
+                    context,
+                });
+                (message_id, entry)
+            })
         })
         .collect::<HashMap<_, _>>();
     messages
         .iter()
-        .filter_map(|message| {
-            usage_by_message
-                .remove(&message.id)
-                .map(|usage| MessageUsage {
-                    message_id: message.id,
-                    usage,
-                })
-        })
+        .filter_map(|message| usage_by_message.remove(&message.id).flatten())
         .collect()
 }
 
@@ -3733,6 +3735,8 @@ impl WorkerState {
             context_document_count: 0,
             context_message_block_count: 0,
             usage: Default::default(),
+            context_used_tokens: None,
+            context_limit_tokens: None,
             stop_reason: None,
             error_class: None,
             provider_response_id: None,
@@ -3947,6 +3951,8 @@ impl WorkerState {
             context_document_count: 0,
             context_message_block_count: 0,
             usage: Default::default(),
+            context_used_tokens: None,
+            context_limit_tokens: None,
             stop_reason: None,
             error_class: None,
             provider_response_id: None,
@@ -4314,7 +4320,7 @@ impl WorkerState {
             self.apply_agent_activity(&before, activity, at);
             return;
         }
-        if matches!(event, AiEvent::Notice { .. } | AiEvent::ContextUsage { .. }) {
+        if matches!(event, AiEvent::Notice { .. }) {
             self.publish(event);
             return;
         }

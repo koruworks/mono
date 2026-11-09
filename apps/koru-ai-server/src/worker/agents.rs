@@ -1276,6 +1276,8 @@ impl WorkerState {
             context_document_count: 0,
             context_message_block_count: 0,
             usage: Default::default(),
+            context_used_tokens: None,
+            context_limit_tokens: None,
             stop_reason: None,
             error_class: None,
             provider_response_id: None,

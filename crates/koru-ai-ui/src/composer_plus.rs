@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use koru_ai_core::{AttachmentKind, ChatAttachmentId, ChatId, DocumentId, WorkspaceId};
 use koru_i18n::{Key as TextKey, t};
 use koru_ui::menu::{Anchor, MenuItem};
+use koru_ui::popover::PopoverAlign;
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 
 use crate::{
@@ -136,7 +137,13 @@ impl ChatSurface {
         } else {
             Menu::new(&mut self.engine, (button.x, button.y), items)
         };
-        menu.set_anchor((button.x, self.toolbar_panel_y(menu.height())));
+        let panel = self.toolbar_popover(
+            button,
+            menu.panel(self.menu_viewport()).w,
+            menu.height(),
+            PopoverAlign::Start,
+        );
+        menu.set_anchor((panel.x, panel.y));
         self.plus_menu = Some(menu);
     }
 

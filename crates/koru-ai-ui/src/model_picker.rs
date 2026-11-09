@@ -58,7 +58,7 @@ use koru_draw::text::TextEngine;
 use koru_draw::{brand, icons, scene, theme};
 use koru_i18n::{Key, Lang, t};
 use koru_ui::Typed;
-use koru_ui::popover::{PopoverAlign, PopoverShell};
+use koru_ui::popover::PopoverAlign;
 use koru_ui::text_input::{InputStyle, TextInput};
 use koru_ui::tooltip::TooltipContent;
 use vello::Scene;
@@ -1345,8 +1345,7 @@ impl crate::ChatSurface {
         }
     }
 
-    /// The picker's parts: below an empty centered composer when it fits,
-    /// otherwise above it. A cramped viewport falls back to the chip anchor.
+    /// The picker follows the model chip and flips to the side with room.
     pub(crate) fn picker_geometry(&self) -> Option<Geometry> {
         if !self.chat_model_open {
             return None;
@@ -1361,13 +1360,7 @@ impl crate::ChatSurface {
         let rail_h = rail_height(marks, rail_dividers(&rail).len());
         let (w, h) = size(self.composer_hit_rect.w, rail_h);
         let chip = self.chat_model_button();
-        let panel = if self.chat_is_empty() && self.fits_below_composer(h) {
-            self.toolbar_panel(chip.x + chip.w - w, w, h)
-        } else if self.fits_above_composer(h) {
-            self.above_composer(chip.x + chip.w - w, w, h)
-        } else {
-            PopoverShell::anchored(chip, self.viewport, w, h, PopoverAlign::End).rect
-        };
+        let panel = self.toolbar_popover(chip, w, h, PopoverAlign::End);
         // The footer as it is drawn: its pills are as wide as their words.
         Some(geometry_with(panel, self.picker_footer(), hide_rail))
     }

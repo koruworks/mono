@@ -6,6 +6,7 @@ use koru_ai_core::ProfileId;
 use koru_ai_wire::UpdateChatPrivacyRequest;
 use koru_draw::el::{Frame, FrameCx, Interaction};
 use koru_i18n::Key;
+use koru_ui::popover::PopoverAlign;
 
 use super::*;
 use crate::model_picker::SearchPaint;
@@ -38,9 +39,7 @@ impl ChatSurface {
         ))
     }
 
-    /// The upward anchor, clear of the composer box and clamped horizontally
-    /// to the window. Reference pickers always use this side; toolbar panels
-    /// use it after a chat begins or when there is no room below.
+    /// The upward anchor used by inline reference and skill pickers.
     pub(super) fn above_composer(&self, x: f32, width: f32, height: f32) -> Rect {
         let x = x
             .min(self.viewport.x + self.viewport.w - width - COMPOSER_PANEL_GAP)
@@ -53,42 +52,6 @@ impl ChatSurface {
         )
     }
 
-    /// Whether a panel `height` tall fits above the composer, below the
-    /// chat's top.
-    pub(super) fn fits_above_composer(&self, height: f32) -> bool {
-        self.composer_hit_rect.y - height - COMPOSER_PANEL_GAP >= self.chat_top()
-    }
-
-    /// Room below the whole composer block, including its quiet footer row.
-    /// Only an empty chat uses this side for toolbar panels.
-    pub(super) fn fits_below_composer(&self, height: f32) -> bool {
-        self.composer_hit_rect.y
-            + self.composer_hit_rect.h
-            + self.composer_footer_h()
-            + COMPOSER_PANEL_GAP
-            + height
-            <= self.viewport.y + self.viewport.h - PAD
-    }
-
-    /// The toolbar panel side. Reference pickers use `above_composer`
-    /// directly, so @, / and $ always rise from the composer.
-    pub(super) fn toolbar_panel_y(&self, height: f32) -> f32 {
-        if self.chat_is_empty() && self.fits_below_composer(height) {
-            self.composer_hit_rect.y
-                + self.composer_hit_rect.h
-                + self.composer_footer_h()
-                + COMPOSER_PANEL_GAP
-        } else {
-            (self.composer_hit_rect.y - height - COMPOSER_PANEL_GAP)
-                .max(self.viewport.y + COMPOSER_PANEL_GAP)
-        }
-    }
-
-    pub(super) fn toolbar_panel(&self, x: f32, width: f32, height: f32) -> Rect {
-        let above = self.above_composer(x, width, height);
-        Rect::new(above.x, self.toolbar_panel_y(height), width, height)
-    }
-
     pub(super) fn tool_access_panel(&self) -> Option<Rect> {
         if !self.tool_access_open || self.transcript.is_none() {
             return None;
@@ -97,7 +60,7 @@ impl ChatSurface {
         let rows = self.tool_access_visible_rows();
         let height = self.tool_access_fixed_height() + rows as f32 * TOOL_ACCESS_WORKSPACE_ROW_H;
         let width = self.composer_hit_rect.w.min(360.0).max(1.0);
-        Some(self.toolbar_panel(button.x, width, height))
+        Some(self.toolbar_popover(button, width, height, PopoverAlign::Start))
     }
 
     pub(super) fn tool_access_visible_rows(&self) -> usize {
@@ -324,7 +287,7 @@ impl ChatSurface {
         }
         let button = self.tool_mode_button()?;
         let width = self.composer_hit_rect.w.min(320.0).max(1.0);
-        Some(self.toolbar_panel(button.x + button.w - width, width, MODE_PANEL_H))
+        Some(self.toolbar_popover(button, width, MODE_PANEL_H, PopoverAlign::End))
     }
 
     pub(super) fn tool_mode_buttons(&self) -> Option<[Rect; 2]> {

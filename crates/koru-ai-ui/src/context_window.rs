@@ -5,10 +5,10 @@
 
 use std::time::Instant;
 
-use koru_draw::el::{El, ElState, FrameCx, Leaf, col, leaf, text};
+use koru_draw::el::{El, ElState, FrameCx, Leaf, col, leaf, row, spacer, text};
 use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
-use koru_draw::theme::{Ink, Metric, Space, roles};
+use koru_draw::theme::{self, Ink, Metric, Space, roles};
 use koru_i18n::{Key, Lang, fill, t};
 use koru_ui::popover::{PopoverAlign, PopoverShell};
 use koru_ui::progress_bar::{ProgressBar, ProgressMode};
@@ -19,7 +19,7 @@ use crate::{ChatSurface, usage};
 
 const PANEL_W: Metric = Metric::new("CONTEXT_WINDOW_W", 330.0);
 const PANEL_H: Metric = Metric::new("CONTEXT_WINDOW_H", 174.0);
-const BAR_H: Metric = Metric::new("CONTEXT_WINDOW_BAR_H", 4.0);
+const BAR_H: Metric = Metric::new("CONTEXT_WINDOW_BAR_H", 6.0);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Snapshot {
@@ -58,6 +58,25 @@ impl Snapshot {
             _ => format!("{} · {}", t(lang, Key::AiContextWindowUnknown), self.model),
         }
     }
+
+    fn counts(&self) -> String {
+        match (self.used, self.size) {
+            (Some(used), Some(size)) if size > 0 => {
+                format!("{}/{}", precise_count(used), precise_count(size))
+            }
+            _ => "—".into(),
+        }
+    }
+}
+
+fn precise_count(tokens: u64) -> String {
+    if tokens >= 1_000_000 {
+        format!("{:.1}M", tokens as f64 / 1_000_000.0)
+    } else if tokens >= 1_000 {
+        format!("{:.1}k", tokens as f64 / 1_000.0)
+    } else {
+        tokens.to_string()
+    }
 }
 
 struct Bar(Option<f32>);
@@ -91,22 +110,32 @@ fn tree(snapshot: &Snapshot, lang: Lang) -> El {
         .pad_bottom(Space::S3)
         .gap(Space::S2)
         .child(
-            text(t(lang, Key::AiContextWindowTitle))
-                .named("Context heading")
-                .role(roles::META)
-                .ink(Ink::Secondary),
-        )
-        .child(
-            text(snapshot.summary(lang))
-                .named("Context usage")
-                .role(roles::ROW)
-                .ink(Ink::Primary)
-                .truncate(),
+            row("Context summary")
+                .child(
+                    text(t(lang, Key::AiContextWindowTitle))
+                        .named("Context heading")
+                        .role(roles::ROW)
+                        .ink(Ink::Primary),
+                )
+                .child(spacer())
+                .child(
+                    text(snapshot.counts())
+                        .named("Context counts")
+                        .role(roles::META)
+                        .ink(Ink::Secondary),
+                ),
         )
         .child(
             leaf("Context progress", Bar(snapshot.fraction()))
                 .decorative()
                 .h(BAR_H),
+        )
+        .child(
+            text(snapshot.summary(lang))
+                .named("Context usage")
+                .role(roles::META)
+                .ink(Ink::Secondary)
+                .truncate(),
         );
     if let Some(size) = snapshot.size {
         panel = panel.child(
@@ -153,14 +182,44 @@ fn tree(snapshot: &Snapshot, lang: Lang) -> El {
 }
 
 impl ChatSurface {
+    pub(crate) fn reported_context_usage(&self) -> Option<(u64, u64)> {
+        let transcript = self.transcript.as_ref()?;
+        if let Some(&(used, size)) = self.context_window_usage.get(&transcript.chat.id)
+            && size > 0
+        {
+            return Some((used, size));
+        }
+        // A running attempt cannot inherit the previous reply's context.
+        if self.attempt.is_some() {
+            return None;
+        }
+        let last_reply = transcript
+            .messages
+            .iter()
+            .rev()
+            .find(|message| message.role == koru_ai_core::ChatRole::Assistant)?;
+        if last_reply.provider.as_ref() != Some(&transcript.chat.current_model.provider)
+            || last_reply.requested_model.as_deref()
+                != Some(transcript.chat.current_model.requested_model.as_str())
+        {
+            return None;
+        }
+        transcript
+            .usage
+            .iter()
+            .find(|entry| entry.message_id == last_reply.id)?
+            .context
+            .as_ref()
+            .filter(|context| context.size > 0)
+            .map(|context| (context.used, context.size))
+    }
+
     pub(crate) fn context_window_snapshot(&self) -> Option<Snapshot> {
         let transcript = self.transcript.as_ref()?;
         let chat = transcript.chat.id;
         let (used, size) = self
-            .context_window_usage
-            .get(&chat)
-            .filter(|(_, size)| *size > 0)
-            .map_or((None, None), |&(used, size)| (Some(used), Some(size)));
+            .reported_context_usage()
+            .map_or((None, None), |(used, size)| (Some(used), Some(size)));
         let last_input = transcript
             .usage
             .iter()
@@ -188,12 +247,17 @@ impl ChatSurface {
         if !self.context_window_open {
             return None;
         }
+        let indicator = self.context_indicator_button()?;
+        let recipe = theme::overlay::popover();
+        let width = PANEL_W
+            .value
+            .min((self.viewport.w - recipe.viewport_inset * 2.0).max(1.0));
         Some(PopoverShell::anchored(
-            self.context_indicator_button()?,
+            indicator,
             self.viewport,
-            PANEL_W.value,
+            width,
             PANEL_H.value,
-            PopoverAlign::End,
+            PopoverAlign::Start,
         ))
     }
 
@@ -230,5 +294,29 @@ mod tests {
         snapshot.size = Some(475_000);
         assert!((snapshot.fraction().unwrap() - 0.101).abs() < 0.001);
         assert!(snapshot.summary(Lang::En).contains("10%"));
+    }
+
+    #[test]
+    fn the_reported_counts_and_progress_fill_the_context_header() {
+        let snapshot = Snapshot {
+            used: Some(173_700),
+            size: Some(258_400),
+            last_input: Some(48_000),
+            total_processed: Some(365_000),
+            attached: 3,
+            model: "6.1 Terra".into(),
+        };
+        assert_eq!(snapshot.counts(), "173.7k/258.4k");
+        let tree = tree(&snapshot, Lang::En);
+        let frame = crate::model_picker::layout_elements(
+            &tree,
+            Rect::new(0.0, 0.0, PANEL_W.value, PANEL_H.value),
+            FrameCx::root(),
+        );
+        let bar = frame.rect_of("Context progress").expect("progress bar");
+        assert!(bar.w >= PANEL_W.value - 2.0 * Space::S3.px(theme::Profile::Desktop) - 1.0);
+        assert_eq!(bar.h, BAR_H.value);
+        let attached = frame.rect_of("Attached items").expect("attached items");
+        assert!(attached.y + attached.h <= PANEL_H.value);
     }
 }

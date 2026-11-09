@@ -330,14 +330,35 @@ impl CodexControl {
     /// lower total is a correction, and one arriving after the turn ended
     /// still names the turn it belongs to (§17.2).
     fn handle_usage(&mut self, params: &Value) -> Result<(), ProviderFailure> {
-        let Some(turn_id) = self.koru_turn(params.get("turnId")) else {
+        if params.get("threadId").and_then(Value::as_str) != self.thread_id.as_deref() {
             self.mark_unknown();
             return Ok(());
-        };
+        }
         let Some(total) = normalize::usage_totals(params) else {
             return Err(malformed_read());
         };
         self.thread_usage = total;
+        // `total` is cumulative spending. Codex's `last` and the reported
+        // window size describe the latest active context (its own TUI uses
+        // this pair); never divide the cumulative total by that window.
+        let context = params
+            .pointer("/tokenUsage/last/totalTokens")
+            .and_then(Value::as_u64)
+            .zip(
+                params
+                    .pointer("/tokenUsage/modelContextWindow")
+                    .and_then(Value::as_u64),
+            )
+            .filter(|(_, size)| *size > 0);
+        if let Some((used, size)) = context {
+            self.context_usage = Some((used, size));
+        }
+        // A resumed thread can replay usage for a turn Koru did not start.
+        // Retain its context and cumulative baseline for the next turn.
+        let Some(turn_id) = self.koru_turn(params.get("turnId")) else {
+            self.mark_unknown();
+            return Ok(());
+        };
         let baseline = self
             .usage_baselines
             .get(&turn_id)
@@ -355,20 +376,7 @@ impl CodexControl {
             turn_id,
             usage: normalize::turn_usage(total, baseline, model),
         })?;
-        // `total` is cumulative spending. Codex's `last` and the reported
-        // window size describe the latest active context (its own TUI uses
-        // this pair); never divide the cumulative total by that window.
-        let context = params
-            .pointer("/tokenUsage/last/totalTokens")
-            .and_then(Value::as_u64)
-            .zip(
-                params
-                    .pointer("/tokenUsage/modelContextWindow")
-                    .and_then(Value::as_u64),
-            )
-            .filter(|(_, size)| *size > 0);
         if let Some((used, size)) = context {
-            self.context_usage = Some((used, size));
             self.queue(AgentEvent::ContextUsage { used, size })?;
         }
         Ok(())

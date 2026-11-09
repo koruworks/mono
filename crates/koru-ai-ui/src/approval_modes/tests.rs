@@ -259,7 +259,7 @@ fn the_at_picker_keeps_shift_tab() {
     assert_eq!(mode_of(&surface).as_deref(), Some("default"));
 }
 
-/// The chip opens the list above the composer; a row chooses its mode and
+/// The chip opens the list beside its toolbar position; a row chooses its mode and
 /// closes the list; Escape closes it too; Full access is only ever chosen
 /// by a press.
 #[test]
@@ -273,8 +273,8 @@ fn the_list_opens_upward_and_a_press_chooses() {
     );
     let panel = surface.approval_mode_panel().expect("open");
     assert!(
-        panel.y + panel.h <= surface.composer_hit_rect.y,
-        "it opens upward"
+        panel.y + panel.h <= chip.y,
+        "it opens above the clicked control"
     );
     let full_access = surface
         .approval_mode_rows()
@@ -811,18 +811,28 @@ fn open_list() -> ChatSurface {
 }
 
 #[test]
-fn permission_list_opens_below_an_empty_chat_and_above_a_begun_one() {
+fn permission_list_follows_the_control_as_the_composer_moves() {
     let (mut surface, _commands) = surface();
     surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 1100.0));
     surface.composer_rect();
     surface.approval_mode_open = true;
     let empty_panel = surface.approval_mode_panel().unwrap();
-    assert!(empty_panel.y >= surface.composer_hit_rect.y + surface.composer_hit_rect.h);
+    let empty_chip = surface.approval_mode_button().unwrap();
+    assert!(empty_panel.y >= empty_chip.y + empty_chip.h);
 
     surface.pending_user = Some("Plan the launch".into());
     surface.composer_rect();
     let begun_panel = surface.approval_mode_panel().unwrap();
-    assert!(begun_panel.y + begun_panel.h <= surface.composer_hit_rect.y);
+    let begun_chip = surface.approval_mode_button().unwrap();
+    assert!(begun_panel.y + begun_panel.h <= begun_chip.y);
+    assert!(
+        (begun_chip.y
+            - begun_panel.y
+            - begun_panel.h
+            - koru_draw::theme::overlay::popover().anchor_gap)
+            .abs()
+            < 0.5
+    );
 }
 
 /// The frame node at `index`'s first descendant named `name`.

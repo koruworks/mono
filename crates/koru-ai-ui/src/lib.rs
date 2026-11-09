@@ -53,6 +53,7 @@ use koru_ui::confirm::{Confirm, Outcome as ConfirmOutcome};
 use koru_ui::context_chip::{ContextChip, ContextState};
 use koru_ui::icon_button::{IconButton, State as IconButtonState};
 use koru_ui::logo::KoruLogo;
+use koru_ui::popover::{PopoverAlign, PopoverShell};
 use koru_ui::split_button::SplitButton;
 use koru_ui::text_input::{InputStyle, TextInput};
 use koru_ui::tooltip::{Tooltip, TooltipContent};
@@ -2499,7 +2500,7 @@ impl ChatSurface {
                 return true;
             }
         }
-        if self.chat_model_button().contains(x, y) {
+        if self.chat_model_selector_button().contains(x, y) {
             if self.chat_model_open {
                 self.tool_access_open = false;
                 self.tool_mode_open = false;
@@ -3492,6 +3493,9 @@ impl ChatSurface {
                 self.refuse_chat_elsewhere(&transcript.chat);
             }
             Update::Transcript(transcript) => {
+                // The transcript is authoritative after a read; discard an
+                // in-memory pair from a prior turn of this chat.
+                self.context_window_usage.remove(&transcript.chat.id);
                 self.sent_inputs.retain(|sent| {
                     sent.chat != transcript.chat.id
                         || sent.message_id.is_none_or(|id| {
@@ -3842,6 +3846,9 @@ impl ChatSurface {
                 }
             }
             Update::Accepted(accepted) => {
+                if let Some(chat) = self.current_chat_id() {
+                    self.context_window_usage.remove(&chat);
+                }
                 if let Some(sent) = self
                     .sent_inputs
                     .iter_mut()
@@ -6050,15 +6057,25 @@ impl ChatSurface {
         self.context_indicator_rect(self.chat_model_button())
     }
 
+    fn chat_model_selector_button(&self) -> Rect {
+        self.model_selector_rect(self.chat_model_button())
+    }
+
+    fn model_selector_rect(&self, model: Rect) -> Rect {
+        let lead_width = self
+            .context_indicator_rect(model)
+            .map_or(0.0, |rect| rect.w + 2.0);
+        Rect::new(model.x + lead_width, model.y, model.w - lead_width, model.h)
+    }
+
     fn context_indicator_rect(&self, model: Rect) -> Option<Rect> {
         self.transcript.as_ref()?;
         Some(Rect::new(model.x, model.y, BUTTON_H, model.h))
     }
 
     fn context_progress(&self) -> Option<f32> {
-        let chat = self.current_chat_id()?;
-        let &(used, size) = self.context_window_usage.get(&chat)?;
-        (size > 0).then_some(used as f32 / size as f32)
+        let (used, size) = self.reported_context_usage()?;
+        Some(used as f32 / size as f32)
     }
 
     /// Whether the composer has its quiet row below: an agent chat's folder
@@ -6274,6 +6291,12 @@ impl ChatSurface {
             (send.x - x - 6.0).max(1.0),
             COMPOSER_TOOLBAR_H,
         )
+    }
+
+    /// A toolbar menu follows the control that opened it, including when
+    /// the composer grows taller or moves between the center and the foot.
+    fn toolbar_popover(&self, anchor: Rect, width: f32, height: f32, align: PopoverAlign) -> Rect {
+        PopoverShell::anchored(anchor, self.viewport, width, height, align).rect
     }
 
     fn plus_button(&self) -> Rect {
@@ -6686,7 +6709,13 @@ impl ChatSurface {
             {
                 return Some((5, 8));
             }
-            if self.chat_model_button().contains(x, y) {
+            if self
+                .context_indicator_button()
+                .is_some_and(|button| button.contains(x, y))
+            {
+                return Some((5, 12));
+            }
+            if self.chat_model_selector_button().contains(x, y) {
                 return Some((5, 5));
             }
             if self
@@ -6879,13 +6908,14 @@ impl ChatSurface {
         // The shell is taken while its frame paints. Recomputing the model
         // button here would use fallback send geometry and shift the ring.
         let indicator = self.context_indicator_rect(model_button);
-        let lead_width = indicator.map_or(0.0, |rect| rect.w + 2.0);
+        let selector = self.model_selector_rect(model_button);
+        let lead_width = selector.x - model_button.x;
         let shown_label = self.engine.elided(
             &model_label,
             role::row(),
             (model_button.w - lead_width - ActionButton::PAD_X * 2.0 - caret_width).max(0.0),
         );
-        let hovered = model_button.contains(self.pointer.0, self.pointer.1);
+        let hovered = selector.contains(self.pointer.0, self.pointer.1);
         self.model_chevron.set(self.chat_model_open, Instant::now());
         if model_caret.is_some() {
             if hovered {
@@ -6894,10 +6924,10 @@ impl ChatSurface {
                     root,
                     theme::p().hover_tint,
                     &scene::rrect(
-                        model_button.x,
-                        model_button.y,
-                        model_button.w,
-                        model_button.h,
+                        selector.x,
+                        selector.y,
+                        selector.w,
+                        selector.h,
                         ActionButton::RADIUS,
                     ),
                 );
@@ -14629,6 +14659,45 @@ mod tests {
     }
 
     #[test]
+    fn context_logo_and_model_selector_have_separate_hover_targets() {
+        let mut surface = ChatSurface::new();
+        surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 600.0));
+        surface.transcript = Some(transcript());
+        surface.composer_rect();
+
+        let logo = surface.context_indicator_button().unwrap();
+        let model = surface.chat_model_selector_button();
+        assert!(logo.x + logo.w < model.x);
+        assert_eq!(
+            surface.control_hover_at(logo.x + 2.0, logo.y + 2.0),
+            Some((5, 12))
+        );
+        assert_eq!(
+            surface.control_hover_at(model.x + 2.0, model.y + 2.0),
+            Some((5, 5))
+        );
+        assert!(!model.contains(logo.x + 2.0, logo.y + 2.0));
+    }
+
+    #[test]
+    fn the_context_popover_starts_at_the_icon_and_stays_in_view() {
+        let mut surface = ChatSurface::new();
+        surface.set_viewport(Rect::new(0.0, 0.0, 2000.0, 700.0));
+        surface.transcript = Some(transcript());
+        surface.composer_rect();
+        surface.context_window_open = true;
+
+        let indicator = surface.context_indicator_button().unwrap();
+        let panel = surface.context_window_panel().unwrap().rect;
+        let gap = theme::overlay::popover().anchor_gap;
+        assert!((panel.x - indicator.x).abs() < 0.5);
+        assert!(
+            (panel.y - indicator.y - indicator.h - gap).abs() < 0.5
+                || (indicator.y - panel.y - panel.h - gap).abs() < 0.5
+        );
+    }
+
+    #[test]
     fn the_chip_reads_the_effort_and_a_stop_sets_the_chats_default() {
         let mut surface = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
@@ -15695,7 +15764,8 @@ mod tests {
             .as_ref()
             .unwrap()
             .panel(surface.menu_viewport());
-        assert!(empty_panel.y >= surface.composer_hit_rect.y + surface.composer_hit_rect.h);
+        let empty_button = surface.plus_button();
+        assert!(empty_panel.y >= empty_button.y + empty_button.h);
 
         surface.pending_user = Some("Plan the launch".into());
         surface.composer_rect();
@@ -15705,7 +15775,13 @@ mod tests {
             .as_ref()
             .unwrap()
             .panel(surface.menu_viewport());
-        assert!(begun_panel.y + begun_panel.h <= surface.composer_hit_rect.y);
+        let begun_button = surface.plus_button();
+        assert!(begun_panel.y + begun_panel.h <= begun_button.y);
+        assert!(
+            (begun_button.y - begun_panel.y - begun_panel.h - theme::overlay::popover().anchor_gap)
+                .abs()
+                < 0.5
+        );
     }
 
     /// **The composer starts in the middle, then moves to the bottom.** While

@@ -621,16 +621,31 @@ fn mock_provider_completes_through_bounded_worker_and_real_database() {
     unavailable_duplicate.usage = AiUsage::default();
     let mut latest_reported_duplicate = persisted_attempt.clone();
     latest_reported_duplicate.usage.completion_tokens = Some(999);
+    latest_reported_duplicate.context_used_tokens = Some(173_700);
+    latest_reported_duplicate.context_limit_tokens = Some(258_400);
     let resolved = transcript_usage(
         &transcript.messages,
         vec![
             persisted_attempt,
-            unavailable_duplicate,
+            unavailable_duplicate.clone(),
             latest_reported_duplicate.clone(),
         ],
     );
     assert_eq!(resolved.len(), 1);
     assert_eq!(resolved[0].usage, latest_reported_duplicate.usage);
+    assert_eq!(
+        resolved[0].context,
+        Some(ReportedContextUsage {
+            used: 173_700,
+            size: 258_400,
+        })
+    );
+
+    let superseded = transcript_usage(
+        &transcript.messages,
+        vec![latest_reported_duplicate, unavailable_duplicate],
+    );
+    assert!(superseded.is_empty());
 
     let replay = send(&client, chat_id, operation_id);
     assert!(replay.accepted.replayed);

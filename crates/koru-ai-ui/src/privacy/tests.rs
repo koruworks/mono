@@ -44,23 +44,26 @@ fn open_panel(count: usize) -> ChatSurface {
 }
 
 #[test]
-fn permission_panels_follow_the_centered_and_bottom_composer() {
+fn permission_panels_follow_their_toolbar_controls() {
     let mut surface = open_panel(3);
     surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 1000.0));
     surface.composer_rect();
     surface.tool_mode_open = true;
     let access = surface.tool_access_panel().unwrap();
     let mode = surface.tool_mode_panel().unwrap();
-    let composer = surface.composer_hit_rect;
-    assert!(access.y >= composer.y + composer.h);
-    assert!(mode.y >= composer.y + composer.h);
+    let access_button = surface.tool_access_button();
+    let mode_button = surface.tool_mode_button().unwrap();
+    assert!(access.y >= access_button.y + access_button.h);
+    assert!(mode.y >= mode_button.y + mode_button.h);
 
     surface.pending_user = Some("Plan the launch".into());
     surface.composer_rect();
     let access = surface.tool_access_panel().unwrap();
     let mode = surface.tool_mode_panel().unwrap();
-    assert!(access.y + access.h <= surface.composer_hit_rect.y);
-    assert!(mode.y + mode.h <= surface.composer_hit_rect.y);
+    let access_button = surface.tool_access_button();
+    let mode_button = surface.tool_mode_button().unwrap();
+    assert!(access.y + access.h <= access_button.y);
+    assert!(mode.y + mode.h <= mode_button.y);
 }
 
 /// A chat in two profiles' worth of workspaces — *Private*'s Travel and
