@@ -59,7 +59,7 @@ use crate::root_catalog::{
     CatalogUnitKind, CatalogUnitRef, Derived, ExportScope, ExportSubject, Placement, PolicyCapture,
     ProfileCatalogUnit, Staged, WorkspaceCatalogUnit, derive,
 };
-use crate::transport::TransportSubject;
+use crate::transport::{TransportPath, TransportSubject};
 use loro::VersionVector;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -71,14 +71,38 @@ use uuid::Uuid;
 /// is applied. Never replicated.
 pub const K_PEER_SCOPE_PREFIX: &str = "root_catalog.peer_scope.";
 
+/// The `store_state` key that binds this device's user scope to its Koru
+/// account's one catalog (root-catalog TECHNICAL.final §4.1; Plan 3.1):
+/// JSON of [`AccountScopeBinding`]. One key, not one per account, because
+/// the rule it enforces is about the *scope* — this catalog is bound to at
+/// most one account, and a second account is refused rather than merged —
+/// and that question is asked by scope, not by account. Written once by
+/// [`Store::bind_account_scope`] from the service's verified
+/// `CloudCatalogBindingV2`; read before any root frame of the account path
+/// is applied. Never replicated. The account path's join receipts sit under
+/// [`K_JOIN_RECEIPT_PREFIX`] with the account id as the relationship.
+pub const K_ACCOUNT_SCOPE: &str = "root_catalog.account_scope";
+
 /// Prefix of the `store_state` key of one join receipt:
 /// `root_catalog.join.<relationship id>.<kind>.<subject id>`, JSON of
 /// [`RootJoinReceipt`]. `kind` is `profile_catalog`, `workspace_catalog` or
-/// `personal_v2`.
+/// `personal_v2`. On the account path the relationship id is the account id.
 pub const K_JOIN_RECEIPT_PREFIX: &str = "root_catalog.join.";
 
 pub fn peer_scope_key(relationship: Uuid) -> String {
     format!("{K_PEER_SCOPE_PREFIX}{relationship}")
+}
+
+/// This device's account-scope binding, as [`K_ACCOUNT_SCOPE`] holds it:
+/// the account, the account's one catalog scope as the service minted it,
+/// the local scope it is bound to, and when. The catalog scope id is the
+/// service's row key and never enters a Loro document or a frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AccountScopeBinding {
+    pub account_id: Uuid,
+    pub catalog_scope_id: Uuid,
+    pub scope: UserScopeId,
+    pub bound_at_ms: i64,
 }
 
 pub fn join_receipt_key(relationship: Uuid, unit: JoinUnit) -> String {
@@ -165,11 +189,33 @@ impl RootJoinReceipt {
 /// the same person's device and sees every exportable subject; a Profile
 /// grant sees its Profiles and the Workspaces *currently placed* under them;
 /// a Workspace grant sees that Workspace's unit and no Profile.
+///
+/// `path` is the transport the grant is exercised over: eligibility asks
+/// the subject's device-local mode about exactly that path (`allows_peer`
+/// for a paired device, `allows_cloud` for the account's Cloud), so a
+/// P2P-only Profile is visible to a peer and hidden from Cloud (§4.4).
 #[derive(Debug, Clone, Copy)]
 pub struct RootGrant<'a> {
     pub all_data: bool,
     pub profiles: &'a BTreeSet<ProfileId>,
     pub workspaces: &'a BTreeSet<WorkspaceId>,
+    pub path: TransportPath,
+}
+
+impl RootGrant<'static> {
+    /// The account's own grant over the Cloud path (Plan 3.1): the same
+    /// person, so every Cloud-exportable subject, as an `all_data` peer sees
+    /// every peer-exportable one.
+    pub fn account() -> Self {
+        static NONE_PROFILES: BTreeSet<ProfileId> = BTreeSet::new();
+        static NONE_WORKSPACES: BTreeSet<WorkspaceId> = BTreeSet::new();
+        Self {
+            all_data: true,
+            profiles: &NONE_PROFILES,
+            workspaces: &NONE_WORKSPACES,
+            path: TransportPath::Cloud,
+        }
+    }
 }
 
 /// The eligible root inventory for one recipient: every unit this device
@@ -398,13 +444,98 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             .transpose()
     }
 
-    fn require_peer_scope(&self, relationship: Uuid) -> Result<UserScopeId> {
+    /// Bind this device's user scope to its account's one catalog, once
+    /// (§4.1 "Account bootstrap atomically gets/creates the account's
+    /// catalog binding. A third linked device does not rename that
+    /// binding"). The caller has verified `CloudCatalogBindingV2` from the
+    /// service; nothing here talks to it. The same binding again is a
+    /// no-op; a different account refuses (§4.1 "Two already-bound
+    /// different accounts cannot join through ordinary sign-in/pairing" —
+    /// separate, with local work preserved); the same account under a
+    /// different catalog scope refuses too, because the device never
+    /// renames what the service minted and the service never re-mints.
+    pub fn bind_account_scope(
+        &mut self,
+        account_id: Uuid,
+        catalog_scope_id: Uuid,
+        now_ms: i64,
+    ) -> Result<UserScopeId> {
+        let scope = self.catalog.local_user_scope()?;
+        match self.account_binding()? {
+            Some(bound) if bound.account_id != account_id => Err(Error::new(
+                Code::Forbidden,
+                "this device's catalog is bound to another account; accounts are never merged",
+            )),
+            Some(bound) if bound.catalog_scope_id != catalog_scope_id => Err(Error::new(
+                Code::Forbidden,
+                "this account's catalog scope is already bound under another id; a binding is never renamed",
+            )),
+            Some(bound) if bound.scope != scope => Err(Error::new(
+                Code::CorruptState,
+                "the account binding names a user scope this device does not hold",
+            )),
+            Some(_) => Ok(scope),
+            None => {
+                let binding = AccountScopeBinding {
+                    account_id,
+                    catalog_scope_id,
+                    scope,
+                    bound_at_ms: now_ms,
+                };
+                self.catalog.set_state(K_ACCOUNT_SCOPE, &json(&binding)?)?;
+                tracing::info!(account = %account_id, "root_sync action=account_scope_bound");
+                Ok(scope)
+            }
+        }
+    }
+
+    /// This device's account binding, if sign-in has bound one.
+    pub fn account_binding(&self) -> Result<Option<AccountScopeBinding>> {
+        self.catalog
+            .state(K_ACCOUNT_SCOPE)?
+            .map(|stored| {
+                serde_json::from_str(&stored).map_err(|_| {
+                    Error::new(
+                        Code::CorruptState,
+                        "the account scope binding is not readable",
+                    )
+                })
+            })
+            .transpose()
+    }
+
+    /// The scope `account_id` is bound to on this device: the local scope
+    /// iff the binding names that account, else `None` — the mirror of
+    /// [`Self::peer_scope`] for the account path.
+    pub fn account_scope(&self, account_id: Uuid) -> Result<Option<UserScopeId>> {
+        Ok(self
+            .account_binding()?
+            .filter(|binding| binding.account_id == account_id)
+            .map(|binding| binding.scope))
+    }
+
+    /// The scope a relationship is bound to and the path it comes over: a
+    /// paired relationship over the peer path, the account (its id as the
+    /// relationship) over the Cloud path. The path decides which mode
+    /// question (`allows_peer` or `allows_cloud`) inbound frames of that
+    /// relationship are gated by. Anything else is refused.
+    fn bound_scope(&self, relationship: Uuid) -> Result<(UserScopeId, TransportPath)> {
         let scope = self.catalog.local_user_scope()?;
         match self.peer_scope(relationship)? {
-            Some(bound) if bound == scope => Ok(scope),
+            Some(bound) if bound == scope => return Ok((scope, TransportPath::Peer)),
+            Some(_) => {
+                return Err(Error::new(
+                    Code::Forbidden,
+                    "this relationship is bound to another user scope",
+                ));
+            }
+            None => {}
+        }
+        match self.account_scope(relationship)? {
+            Some(bound) if bound == scope => Ok((scope, TransportPath::Cloud)),
             Some(_) => Err(Error::new(
                 Code::Forbidden,
-                "this relationship is bound to another user scope",
+                "this account is bound to another user scope",
             )),
             None => Err(Error::new(
                 Code::Forbidden,
@@ -430,25 +561,29 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             .map(|row| row.owner))
     }
 
-    /// Whether `subject` has a mode row that admits the peer path. A subject
-    /// with no row yet (a Workspace this device has not provisioned) is
-    /// neither admitted nor refused here; callers decide which direction the
-    /// absence falls (inbound discovery admits, export holds).
-    fn peer_admission(&self, subject: TransportSubject) -> Option<bool> {
+    /// Whether `subject` has a mode row that admits `path`. A subject with
+    /// no row yet (a Workspace this device has not provisioned) is neither
+    /// admitted nor refused here; callers decide which direction the absence
+    /// falls (inbound discovery admits, export holds).
+    fn path_admission(&self, subject: TransportSubject, path: TransportPath) -> Option<bool> {
         self.transport_admission(subject)
             .ok()
-            .map(|admission| admission.allows_peer())
+            .map(|admission| match path {
+                TransportPath::Peer => admission.allows_peer(),
+                TransportPath::Cloud => admission.allows_cloud(),
+            })
     }
 
     /// §4.4 "For known LocalOnly subjects, block inbound metadata as well as
-    /// outbound payloads": a subject whose mode row closes the peer path
-    /// admits no root or personal frame. An unknown subject is discovery and
-    /// is admitted; content download for it is gated separately.
-    fn refuse_blocked_inbound(&self, subject: TransportSubject) -> Result<()> {
-        match self.peer_admission(subject) {
+    /// outbound payloads": a subject whose mode row closes `path` admits no
+    /// root or personal frame over it — Local-only closes both paths, P2P
+    /// closes Cloud. An unknown subject is discovery and is admitted;
+    /// content download for it is gated separately.
+    fn refuse_blocked_inbound(&self, subject: TransportSubject, path: TransportPath) -> Result<()> {
+        match self.path_admission(subject, path) {
             Some(false) => Err(Error::new(
                 Code::Forbidden,
-                "this device's transport mode is Local-only here; inbound root metadata is refused",
+                "this device's transport mode closes this path here; inbound root metadata is refused",
             )),
             _ => Ok(()),
         }
@@ -456,9 +591,13 @@ impl<C: Catalog, B: Backend> Store<C, B> {
 
     /// The durable unit's version — what remote frames merge into and what a
     /// request carries. `None` when this device holds no unit for the
-    /// subject; a refusal when its mode blocks inbound metadata.
-    pub fn root_unit_frontier(&self, unit: CatalogUnitRef) -> Result<Option<VersionVector>> {
-        self.refuse_blocked_inbound(transport_subject(unit))?;
+    /// subject; a refusal when its mode blocks inbound metadata over `path`.
+    pub fn root_unit_frontier(
+        &self,
+        unit: CatalogUnitRef,
+        path: TransportPath,
+    ) -> Result<Option<VersionVector>> {
+        self.refuse_blocked_inbound(transport_subject(unit), path)?;
         let scope = self.catalog.local_user_scope()?;
         let Some(row) = self.catalog.root_catalog_unit(scope, unit)? else {
             return Ok(None);
@@ -474,9 +613,14 @@ impl<C: Catalog, B: Backend> Store<C, B> {
     }
 
     /// The personal v2 unit's version for `workspace`, or `None` when this
-    /// scope holds none; refused when the Workspace's mode blocks inbound.
-    pub fn personal_frontier(&self, workspace: WorkspaceId) -> Result<Option<VersionVector>> {
-        self.refuse_blocked_inbound(TransportSubject::Workspace(workspace))?;
+    /// scope holds none; refused when the Workspace's mode blocks inbound
+    /// over `path`.
+    pub fn personal_frontier(
+        &self,
+        workspace: WorkspaceId,
+        path: TransportPath,
+    ) -> Result<Option<VersionVector>> {
+        self.refuse_blocked_inbound(TransportSubject::Workspace(workspace), path)?;
         let scope = self.catalog.local_user_scope()?;
         let Some(state) = self.catalog.workspace_personal_unit(scope, workspace)? else {
             return Ok(None);
@@ -504,10 +648,13 @@ impl<C: Catalog, B: Backend> Store<C, B> {
     // --------------------------------------------------------- the sender
 
     /// The Profiles `grant` may know: every Profile whose mode admits the
-    /// peer path for the same person's device, the granted ones (when
+    /// grant's path for the same person's device, the granted ones (when
     /// exportable) for a Profile grant, none for a Workspace grant. This is
     /// the `visible` set of every export for that recipient; a Profile id
-    /// this device does not hold at all is not in it and is redacted.
+    /// this device does not hold at all is not in it and is redacted. Over
+    /// the Cloud path (`RootGrant::account`) a P2P-only Profile is not in
+    /// it either: the account's visibility set is exactly the Profiles whose
+    /// mode is Cloud.
     pub fn exportable_profiles(&self, grant: &RootGrant<'_>) -> Result<BTreeSet<ProfileId>> {
         let mut visible = BTreeSet::new();
         if !grant.all_data && grant.profiles.is_empty() {
@@ -517,19 +664,24 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             if !grant.all_data && !grant.profiles.contains(&profile.id) {
                 continue;
             }
-            if self.peer_admission(TransportSubject::Profile(profile.id)) == Some(true) {
+            if self.path_admission(TransportSubject::Profile(profile.id), grant.path) == Some(true)
+            {
                 visible.insert(profile.id);
             }
         }
         Ok(visible)
     }
 
-    /// The authoritative durable snapshot of `unit` if it may leave now, as
-    /// [`Self::eligible_export_source`] answers it — with a missing or
-    /// inconsistent mode row read as a hold rather than a failure of the
-    /// whole inventory. Nothing leaves either way.
-    fn export_source_or_hold(&self, unit: CatalogUnitRef) -> Result<Option<Vec<u8>>> {
-        match self.eligible_export_source(unit) {
+    /// The authoritative durable snapshot of `unit` if it may leave over
+    /// `path` now, as [`Self::eligible_export_source`] answers it — with a
+    /// missing or inconsistent mode row read as a hold rather than a failure
+    /// of the whole inventory. Nothing leaves either way.
+    fn export_source_or_hold(
+        &self,
+        unit: CatalogUnitRef,
+        path: TransportPath,
+    ) -> Result<Option<Vec<u8>>> {
+        match self.eligible_export_source(unit, path) {
             Ok(source) => Ok(source),
             Err(error) if error.code() == Code::CorruptState => Ok(None),
             Err(error) => Err(error),
@@ -556,7 +708,7 @@ impl<C: Catalog, B: Backend> Store<C, B> {
                 // a count. A Workspace-granted peer sees no Profile unit.
                 continue;
             }
-            match self.export_source_or_hold(unit)? {
+            match self.export_source_or_hold(unit, grant.path)? {
                 Some(snapshot) => {
                     let version =
                         ProfileCatalogUnit::open(&snapshot, unit, self.peer_id)?.version();
@@ -573,7 +725,7 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             let Some(workspace) = unit.workspace() else {
                 continue;
             };
-            let Some(snapshot) = self.export_source_or_hold(unit)? else {
+            let Some(snapshot) = self.export_source_or_hold(unit, grant.path)? else {
                 // Held or not exportable. Counted only when the recipient
                 // could have known the subject, so a hidden Workspace is not
                 // even a number in the answer.
@@ -633,14 +785,17 @@ impl<C: Catalog, B: Backend> Store<C, B> {
                 if !visible.contains(&profile) {
                     return Err(not_eligible());
                 }
-                self.export_source_or_hold(unit)?.ok_or_else(not_eligible)?
+                self.export_source_or_hold(unit, grant.path)?
+                    .ok_or_else(not_eligible)?
             }
             ExportSubject::WorkspaceCatalog(workspace) => {
                 let unit = CatalogUnitRef::Workspace { workspace };
                 if self.catalog.root_catalog_unit(scope, unit)?.is_none() {
                     return Ok(None);
                 }
-                let snapshot = self.export_source_or_hold(unit)?.ok_or_else(not_eligible)?;
+                let snapshot = self
+                    .export_source_or_hold(unit, grant.path)?
+                    .ok_or_else(not_eligible)?;
                 let placement = WorkspaceCatalogUnit::open(&snapshot, unit, self.peer_id)?
                     .placement()
                     .and_then(|placement| placement.profile);
@@ -660,7 +815,7 @@ impl<C: Catalog, B: Backend> Store<C, B> {
                 // Workspace's own unit must be exportable for its personal
                 // unit to be.
                 let unit = CatalogUnitRef::Workspace { workspace };
-                if self.export_source_or_hold(unit)?.is_none() {
+                if self.export_source_or_hold(unit, grant.path)?.is_none() {
                     return Err(not_eligible());
                 }
                 state.snapshot
@@ -688,12 +843,12 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         unit: CatalogUnitRef,
         frames: &[Vec<u8>],
     ) -> Result<StagedRootUnit> {
-        let scope = self.require_peer_scope(relationship)?;
-        self.refuse_blocked_inbound(transport_subject(unit))?;
+        let (scope, path) = self.bound_scope(relationship)?;
+        self.refuse_blocked_inbound(transport_subject(unit), path)?;
         let generation = self.policy_generation();
         let durable = self.catalog.root_catalog_unit(scope, unit)?;
         let overlay = self.catalog.root_catalog_overlay(scope, unit)?;
-        let admitted = self.peer_admission(transport_subject(unit)) == Some(true);
+        let admitted = self.path_admission(transport_subject(unit), path) == Some(true);
         match unit {
             CatalogUnitRef::Workspace { .. } => self.stage_root_frames::<WorkspaceCatalogUnit>(
                 unit,
@@ -773,9 +928,9 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         staged: StagedRootUnit,
         advertised: Option<&VersionVector>,
     ) -> Result<RootJoinOutcome> {
-        let scope = self.require_peer_scope(relationship)?;
+        let (scope, path) = self.bound_scope(relationship)?;
         let unit = staged.unit;
-        self.refuse_blocked_inbound(transport_subject(unit))?;
+        self.refuse_blocked_inbound(transport_subject(unit), path)?;
         if self.policy_generation() != staged.generation {
             return Err(policy_changed());
         }
@@ -1099,8 +1254,8 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         workspace: WorkspaceId,
         frames: &[Vec<u8>],
     ) -> Result<StagedPersonalUnit> {
-        let scope = self.require_peer_scope(relationship)?;
-        self.refuse_blocked_inbound(TransportSubject::Workspace(workspace))?;
+        let (scope, path) = self.bound_scope(relationship)?;
+        self.refuse_blocked_inbound(TransportSubject::Workspace(workspace), path)?;
         if self.workspace_including_deleted(workspace).is_err() {
             return Err(Error::bare(Code::WorkspaceNotFound));
         }
@@ -1197,9 +1352,9 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         staged: StagedPersonalUnit,
         advertised: Option<&VersionVector>,
     ) -> Result<RootJoinOutcome> {
-        let scope = self.require_peer_scope(relationship)?;
+        let (scope, path) = self.bound_scope(relationship)?;
         let workspace = staged.workspace;
-        self.refuse_blocked_inbound(TransportSubject::Workspace(workspace))?;
+        self.refuse_blocked_inbound(TransportSubject::Workspace(workspace), path)?;
         if self.policy_generation() != staged.generation {
             return Err(policy_changed());
         }

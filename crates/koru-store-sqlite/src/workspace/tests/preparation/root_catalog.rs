@@ -443,7 +443,10 @@ fn a_move_into_a_private_profile_waits_in_an_overlay_and_is_published_when_both_
     // Nothing about the new placement may leave: the seam answers nothing.
     assert_eq!(
         f.store
-            .eligible_export_source(CatalogUnitRef::Workspace { workspace: w })
+            .eligible_export_source(
+                CatalogUnitRef::Workspace { workspace: w },
+                TransportPath::Peer
+            )
             .unwrap(),
         None
     );
@@ -507,7 +510,10 @@ fn a_move_into_a_private_profile_waits_in_an_overlay_and_is_published_when_both_
     assert_eq!(f.store.root_placement(w).unwrap(), Some(private));
     assert_eq!(
         f.store
-            .eligible_export_source(CatalogUnitRef::Workspace { workspace: w })
+            .eligible_export_source(
+                CatalogUnitRef::Workspace { workspace: w },
+                TransportPath::Peer
+            )
             .unwrap(),
         Some(published.snapshot)
     );
@@ -741,4 +747,205 @@ fn a_restore_meets_root_deletion_evidence_but_a_duplicate_mints_a_new_unit() {
     assert_eq!(lineage.len(), 1);
     assert_eq!(lineage[0].kind, LineageKind::Duplicate);
     assert_eq!(lineage[0].derived_from, w);
+}
+
+// ------------------------------------------- Plan 3.1: the account path
+
+/// The Store half of the account binding (root-catalog TECHNICAL.final
+/// §4.1) and the Cloud variant of the export gate (§4.4): one account per
+/// catalog, never merged; a P2P-only subject leaves for a peer and not for
+/// Cloud; the account relationship stages and commits through the same join
+/// as a peer, gated by the Cloud question.
+#[test]
+fn the_account_scope_binds_once_refuses_a_second_account_and_gates_export_by_path() {
+    use koru_store_core::root_catalog::{DeletionRecord, ProfileCatalogUnit};
+    use koru_store_core::service::{AccountScopeBinding, RootGrant, RootJoinOutcome};
+    use koru_store_core::{Code, DeletionId};
+
+    let mut f = Root::new();
+    let (cloud_profile, cloud_workspace) = f.cloud_pair();
+    // A second Profile the person keeps between paired devices only.
+    let p2p_profile = f.profile("B");
+    f.set(
+        TransportSubject::Profile(p2p_profile),
+        1,
+        TransportMode::P2p,
+    );
+    let p2p_workspace = f.store.create_workspace(p2p_profile, "V", at()).unwrap().id;
+    f.set(
+        TransportSubject::Workspace(p2p_workspace),
+        1,
+        TransportMode::P2p,
+    );
+
+    // The binding: idempotent for the same account and scope, refused for
+    // another account or a renamed scope, and durable across a restart.
+    let (account, scope_id) = (UserScopeId::new().as_uuid(), UserScopeId::new().as_uuid());
+    assert_eq!(f.store.account_binding().unwrap(), None);
+    assert_eq!(f.store.account_scope(account).unwrap(), None);
+    let bound = f.store.bind_account_scope(account, scope_id, 5).unwrap();
+    assert_eq!(bound, f.scope());
+    assert_eq!(
+        f.store.bind_account_scope(account, scope_id, 9).unwrap(),
+        bound
+    );
+    assert_eq!(
+        f.store.account_binding().unwrap(),
+        Some(AccountScopeBinding {
+            account_id: account,
+            catalog_scope_id: scope_id,
+            scope: bound,
+            bound_at_ms: 5,
+        }),
+        "the second bind rewrote nothing"
+    );
+    let other = UserScopeId::new().as_uuid();
+    assert_eq!(
+        f.store
+            .bind_account_scope(other, UserScopeId::new().as_uuid(), 9)
+            .unwrap_err()
+            .code(),
+        Code::Forbidden
+    );
+    assert_eq!(
+        f.store
+            .bind_account_scope(account, UserScopeId::new().as_uuid(), 9)
+            .unwrap_err()
+            .code(),
+        Code::Forbidden
+    );
+    assert_eq!(f.store.account_scope(account).unwrap(), Some(bound));
+    assert_eq!(f.store.account_scope(other).unwrap(), None);
+    f.restart();
+    assert_eq!(f.store.account_scope(account).unwrap(), Some(bound));
+
+    // The export gate by path: the Cloud pair leaves on both paths, the P2P
+    // pair on the peer path only, and nothing of the P2P Profile is visible
+    // to the account's Cloud grant.
+    let cloud_unit = CatalogUnitRef::Workspace {
+        workspace: cloud_workspace,
+    };
+    let p2p_unit = CatalogUnitRef::Workspace {
+        workspace: p2p_workspace,
+    };
+    for path in [TransportPath::Peer, TransportPath::Cloud] {
+        assert!(
+            f.store
+                .eligible_export_source(cloud_unit, path)
+                .unwrap()
+                .is_some()
+        );
+    }
+    assert!(
+        f.store
+            .eligible_export_source(p2p_unit, TransportPath::Peer)
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(
+        f.store
+            .eligible_export_source(p2p_unit, TransportPath::Cloud)
+            .unwrap(),
+        None
+    );
+    let account_grant = RootGrant::account();
+    let visible = f.store.exportable_profiles(&account_grant).unwrap();
+    assert!(visible.contains(&cloud_profile));
+    assert!(!visible.contains(&p2p_profile));
+    let inventory = f.store.root_export_inventory(&account_grant).unwrap();
+    let listed: Vec<_> = inventory.units.iter().map(|(unit, _)| *unit).collect();
+    assert!(listed.contains(&cloud_unit));
+    assert!(listed.contains(&CatalogUnitRef::Profile {
+        profile: cloud_profile
+    }));
+    assert!(!listed.contains(&p2p_unit));
+    assert!(!listed.contains(&CatalogUnitRef::Profile {
+        profile: p2p_profile
+    }));
+    assert_eq!(inventory.held, 0, "a hidden subject is not even a number");
+    let peer_grant = RootGrant {
+        path: TransportPath::Peer,
+        ..RootGrant::account()
+    };
+    let peer_listed: Vec<_> = f
+        .store
+        .root_export_inventory(&peer_grant)
+        .unwrap()
+        .units
+        .iter()
+        .map(|(unit, _)| *unit)
+        .collect();
+    assert!(peer_listed.contains(&p2p_unit));
+
+    // The account relationship joins through the same stage/commit as a
+    // peer: a trash fact for the Cloud Workspace, authored elsewhere, lands
+    // on this device's unit.
+    let row = f.unit(cloud_workspace).unwrap();
+    let remote =
+        WorkspaceCatalogUnit::from_snapshot(&row.snapshot, cloud_workspace, 4_242).unwrap();
+    let before = remote.version();
+    remote
+        .record_deletion(DeletionId::new(), &DeletionRecord::new(10, None))
+        .unwrap();
+    let update = remote.updates_since(&before).unwrap();
+    assert_eq!(
+        f.store
+            .root_unit_frontier(cloud_unit, TransportPath::Cloud)
+            .unwrap(),
+        Some(before.clone())
+    );
+    let staged = f
+        .store
+        .stage_root_unit(account, cloud_unit, &[update])
+        .unwrap();
+    assert!(!staged.is_pending());
+    let outcome = f
+        .store
+        .commit_staged_root_unit(account, staged, None)
+        .unwrap();
+    assert!(matches!(
+        outcome,
+        RootJoinOutcome::Applied {
+            lifecycle_changed: true,
+            ..
+        }
+    ));
+    assert!(
+        f.store
+            .workspace_including_deleted(cloud_workspace)
+            .unwrap()
+            .deleted_at
+            .is_some()
+    );
+    // A P2P subject refuses inbound root metadata over the Cloud path
+    // (§4.4: the mode closes the path in both directions) ...
+    assert_eq!(
+        f.store
+            .root_unit_frontier(p2p_unit, TransportPath::Cloud)
+            .unwrap_err()
+            .code(),
+        Code::Forbidden
+    );
+    assert_eq!(
+        f.store
+            .stage_root_unit(account, p2p_unit, &[Vec::new()])
+            .unwrap_err()
+            .code(),
+        Code::Forbidden
+    );
+    // ... and an unbound relationship stages nothing at all.
+    let p2p_profile_unit = ProfileCatalogUnit::create(p2p_profile, 1).unwrap();
+    assert_eq!(
+        f.store
+            .stage_root_unit(
+                other,
+                CatalogUnitRef::Profile {
+                    profile: p2p_profile
+                },
+                &[p2p_profile_unit.snapshot().unwrap()]
+            )
+            .unwrap_err()
+            .code(),
+        Code::Forbidden
+    );
 }

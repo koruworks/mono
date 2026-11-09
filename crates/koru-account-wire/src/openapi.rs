@@ -134,6 +134,31 @@ pub fn extend_openapi(document: &mut serde_json::Value) {
                     }));
                 }
             }
+            if route.id == RouteId::DiscoverCloudCatalog {
+                parameters.push(serde_json::json!({
+                    "name": "scope",
+                    "in": "query",
+                    "required": true,
+                    "description": "Which discovery to answer: the Profiles with the Workspaces placed under each, or the Workspaces the account may sync.",
+                    "schema": {"type": "string", "enum": ["user_catalog", "workspaces"]}
+                }));
+                parameters.push(serde_json::json!({
+                    "name": "after_workspace_id",
+                    "in": "query",
+                    "required": false,
+                    "description": "Discovery cursor from the previous receipt's next value.",
+                    "schema": {"type": "string", "format": "uuid", "minLength": 36, "maxLength": 36}
+                }));
+            }
+            if route.id == RouteId::ReadCloudRootCatalog {
+                parameters.push(serde_json::json!({
+                    "name": "after",
+                    "in": "query",
+                    "required": false,
+                    "description": "The previous page's next unit as `kind:subject_id`; absent for the first page.",
+                    "schema": {"type": "string", "maxLength": 64}
+                }));
+            }
             for name in ["profile_id", "device_id", "workspace_id", "connection_id"] {
                 if route.path.contains(&format!("{{{name}}}")) {
                     parameters.push(serde_json::json!({

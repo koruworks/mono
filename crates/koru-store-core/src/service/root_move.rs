@@ -54,7 +54,7 @@ use crate::ports::{RootCatalogOverlay, RootCatalogUnitCommit, RootCatalogUnitRow
 use crate::root_catalog::{
     CatalogUnitKind, CatalogUnitRef, Placement, ProfileCatalogUnit, Staged, WorkspaceCatalogUnit,
 };
-use crate::transport::TransportSubject;
+use crate::transport::{TransportPath, TransportSubject};
 use loro::VersionVector;
 
 /// The two unit families as the planner sees them: something that can be
@@ -556,18 +556,27 @@ impl<C: Catalog, B: Backend> Store<C, B> {
 
     /// **The export projection's seam** (§4.3 "Safe history export"): the
     /// authoritative durable snapshot of `unit`, only while the subject's
-    /// effective admission allows a transport. `None` when it does not, when
-    /// no unit exists yet, or while a private overlay is pending — the
-    /// overlay is published first ([`Self::publish_pending_overlay`]) so the
-    /// export never carries a placement the device has already superseded.
+    /// effective admission allows `path` — `allows_peer` for a paired
+    /// device, `allows_cloud` for the account's Cloud (Plan 3.1), so a
+    /// P2P-only subject leaves for a peer and never for Cloud. `None` when
+    /// it does not, when no unit exists yet, or while a private overlay is
+    /// pending — the overlay is published first
+    /// ([`Self::publish_pending_overlay`]) so the export never carries a
+    /// placement the device has already superseded.
     ///
     /// Redaction of historical Profile references is the export module's
     /// business, not this method's: these are the bytes it starts from.
-    pub fn eligible_export_source(&self, unit: CatalogUnitRef) -> Result<Option<Vec<u8>>> {
-        if !self
-            .transport_admission(transport_subject(unit))?
-            .allows_peer()
-        {
+    pub fn eligible_export_source(
+        &self,
+        unit: CatalogUnitRef,
+        path: TransportPath,
+    ) -> Result<Option<Vec<u8>>> {
+        let admission = self.transport_admission(transport_subject(unit))?;
+        let allowed = match path {
+            TransportPath::Peer => admission.allows_peer(),
+            TransportPath::Cloud => admission.allows_cloud(),
+        };
+        if !allowed {
             return Ok(None);
         }
         let scope = self.catalog.local_user_scope()?;

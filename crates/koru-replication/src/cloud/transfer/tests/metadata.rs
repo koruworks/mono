@@ -294,3 +294,151 @@ fn owner_receives_metadata_without_payload_clones_and_original_deadlines_remain_
     assert_eq!(sender.next_deadline(), sender.outgoing_deadline().unwrap());
     assert_eq!(sender.check(sender.next_deadline()), Err(Error::Timeout));
 }
+
+// ------------------------------------- root frames on the carrier (3.1)
+
+#[test]
+fn root_and_personal_frames_are_admitted_by_permit_scope_and_refused_on_content_sessions() {
+    use crate::protocol::{CatalogUnitRef, PersonalUnitState, RootUnitState};
+    use metadata::{CarrierAdmission, RootMetadata, decode_root};
+
+    let workspace = ws();
+    let unit = CatalogUnitRef::Workspace { workspace };
+    let empty = transfer::empty_version();
+    let root_frames = [
+        PeerFrame::RootCatalogRequest,
+        PeerFrame::RootCatalog {
+            digest: vec![1],
+            units: vec![RootUnitState {
+                unit,
+                version: empty.clone(),
+            }],
+            personal: vec![PersonalUnitState {
+                workspace,
+                version: empty.clone(),
+            }],
+        },
+        PeerFrame::RootUnitRequest {
+            unit,
+            version: Vec::new(),
+        },
+        PeerFrame::RootUnitUpdates {
+            unit,
+            updates: vec![vec![9]],
+        },
+    ];
+    let personal_frames = [
+        PeerFrame::PersonalRequest {
+            workspace,
+            version: empty.clone(),
+        },
+        PeerFrame::PersonalUpdates {
+            workspace,
+            updates: vec![vec![9]],
+        },
+    ];
+    let refused = |result: Result<Option<RootMetadata>, transfer::Error>| {
+        matches!(
+            result,
+            Err(transfer::Error::Authority(
+                crate::cloud::Refusal::PrincipalNotAllowed
+            ))
+        )
+    };
+    // A Workspace dataset session and a Profile dataset session admit
+    // neither family: the v1 decoder refuses them typed.
+    let profile_scope = Scope {
+        principal: CloudReplicaPrincipalV1::Profile {
+            profile_id: id(5),
+            lineage_id: id(6),
+            logical_replica_id: id(7),
+        },
+        ..scope()
+    };
+    for frame in root_frames.iter().chain(personal_frames.iter()) {
+        for session in [scope(), profile_scope] {
+            let admission = CarrierAdmission::of(session.principal);
+            assert!(!admission.admits_root_frames());
+            assert!(!admission.admits_personal_frames());
+            assert!(refused(decode_root(admission, frame)));
+            assert!(
+                matches!(
+                    metadata::decode(session, frame.clone(), 4),
+                    Err(transfer::Error::Authority(
+                        crate::cloud::Refusal::PrincipalNotAllowed
+                    ))
+                ),
+                "{frame:?}"
+            );
+        }
+    }
+    // A user-catalog permit admits root frames and not personal ones; a
+    // user-personal permit the reverse.
+    for frame in &root_frames {
+        assert!(matches!(
+            decode_root(CarrierAdmission::UserCatalog, frame),
+            Ok(Some(_))
+        ));
+        assert!(refused(decode_root(CarrierAdmission::UserPersonal, frame)));
+    }
+    for frame in &personal_frames {
+        assert!(matches!(
+            decode_root(CarrierAdmission::UserPersonal, frame),
+            Ok(Some(_))
+        ));
+        assert!(refused(decode_root(CarrierAdmission::UserCatalog, frame)));
+    }
+    assert!(matches!(
+        decode_root(
+            CarrierAdmission::UserCatalog,
+            &PeerFrame::RootUnitRequest {
+                unit,
+                version: Vec::new()
+            }
+        ),
+        Ok(Some(RootMetadata::RootUnitRequest { unit: got, version })) if got == unit && version.is_empty()
+    ));
+    // A content frame is not a root frame: `decode_root` leaves it alone.
+    assert_eq!(
+        decode_root(CarrierAdmission::UserCatalog, &PeerFrame::SyncRequest).unwrap(),
+        None
+    );
+    // Malformed root frames are invalid, not refused: a version that is not
+    // a version vector, an empty update list, an empty frame.
+    assert!(matches!(
+        decode_root(
+            CarrierAdmission::UserCatalog,
+            &PeerFrame::RootUnitRequest {
+                unit,
+                version: vec![0xff, 0xff, 0xff]
+            }
+        ),
+        Err(transfer::Error::Invalid)
+    ));
+    assert!(matches!(
+        decode_root(
+            CarrierAdmission::UserCatalog,
+            &PeerFrame::RootUnitUpdates {
+                unit,
+                updates: Vec::new()
+            }
+        ),
+        Err(transfer::Error::Invalid)
+    ));
+    assert!(matches!(
+        decode_root(
+            CarrierAdmission::UserPersonal,
+            &PeerFrame::PersonalUpdates {
+                workspace,
+                updates: vec![Vec::new()]
+            }
+        ),
+        Err(transfer::Error::Invalid)
+    ));
+    // The peer-mesh content catalog is still unavailable on every Cloud
+    // session: root admission did not open it.
+    assert!(matches!(
+        metadata::decode(scope(), PeerFrame::CatalogRequest, 4),
+        Err(transfer::Error::Unavailable)
+    ));
+}

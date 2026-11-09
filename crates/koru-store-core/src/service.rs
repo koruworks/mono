@@ -88,9 +88,10 @@ pub use preparation::{CreateProfileWithWorkspace, CreatedProfile, FirstWorkspace
 mod profile_units;
 mod root_sync;
 pub use root_sync::{
-    JoinPhase, JoinUnit, K_JOIN_RECEIPT_PREFIX, K_PEER_SCOPE_PREFIX, PublishedOverlays,
-    RootExportSource, RootGrant, RootInventory, RootJoinOutcome, RootJoinReceipt,
-    StagedPersonalUnit, StagedRootUnit, grant_covers_workspace, join_receipt_key, peer_scope_key,
+    AccountScopeBinding, JoinPhase, JoinUnit, K_ACCOUNT_SCOPE, K_JOIN_RECEIPT_PREFIX,
+    K_PEER_SCOPE_PREFIX, PublishedOverlays, RootExportSource, RootGrant, RootInventory,
+    RootJoinOutcome, RootJoinReceipt, StagedPersonalUnit, StagedRootUnit, grant_covers_workspace,
+    join_receipt_key, peer_scope_key,
 };
 mod transport_modes;
 pub use transport_modes::TransportModeChoice;

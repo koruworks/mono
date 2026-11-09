@@ -4889,6 +4889,7 @@ version = "0.0.3"
 dependencies = [
  "koru-device",
  "koru-store-core",
+ "loro",
  "pollster",
  "schemars 1.2.2",
  "serde",
