@@ -156,7 +156,10 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         // refusal, because that is what "this Profile has nothing here"
         // means to a reader, and it is what the route answered when the unit
         // was addressed by Profile.
-        if !self.placed_workspaces(profile)?.contains(&entity.workspace()) {
+        if !self
+            .placed_workspaces(profile)?
+            .contains(&entity.workspace())
+        {
             return Ok(PersonalAttributes::new());
         }
         let Some(state) = self
