@@ -6483,9 +6483,9 @@ into the chat before sending, so it remains available if the workspace file
 moves.
 
 When you send, each document you mentioned goes with the message and stays
-pinned to the chat, and your message shows it by its title as a link; click it
-to open the document. Up to 16 documents go with one message; Koru says so if
-you mention more. Everything else in the box is plain text: Shift+Enter or
+pinned to the chat, and your message shows its document icon and title as a
+link; click it to open the document. Up to 16 documents go with one message;
+Koru says so if you mention more. Everything else in the box is plain text: Shift+Enter or
 Ctrl+J starts a new line, `#` and `-` at the start of a line stay characters,
 and a paste of several lines goes in where the caret is.
 

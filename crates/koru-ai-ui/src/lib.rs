@@ -7223,7 +7223,7 @@ impl ChatSurface {
                     // The person's own message carries its chips as
                     // `[[koru://doc/…]]`; they read as titled links.
                     let (mut display, links) = if message.role == ChatRole::User {
-                        doc_links::titled(
+                        doc_links::titled_for_message(
                             &quote_pills::quote_bars(&display),
                             &self.document_titles,
                             untitled,
@@ -7590,7 +7590,7 @@ impl ChatSurface {
     ) -> MessageLayout {
         let untitled = koru_i18n::t(self.lang, koru_i18n::Key::AiDocumentLinkUntitled);
         let user_width = message_wrap_width(ChatRole::User, width);
-        let (display, links) = doc_links::titled(
+        let (display, links) = doc_links::titled_for_message(
             &quote_pills::quote_bars(markdown),
             &self.document_titles,
             untitled,
@@ -7874,6 +7874,16 @@ impl ChatSurface {
                             card.y + PAD,
                             Some(p.text),
                         );
+                        if message.role == ChatRole::User {
+                            draw_user_document_icons(
+                                canvas,
+                                root,
+                                &mut self.engine,
+                                message,
+                                card.x + PAD,
+                                card.y + PAD,
+                            );
+                        }
                     }
                 } else {
                     let mut block_y = card.y + PAD;
@@ -9691,6 +9701,42 @@ fn message_card(area: Rect, y: f32, h: f32, message: &MessageLayout) -> Rect {
     let width =
         (message_content_width(message) + PAD * 2.0).clamp(72.0_f32.min(max_width), max_width);
     Rect::new(area.x + area.w - width, y, width, h)
+}
+
+fn draw_user_document_icons(
+    canvas: &mut Scene,
+    root: Affine,
+    engine: &mut TextEngine,
+    message: &MessageLayout,
+    ox: f32,
+    oy: f32,
+) {
+    let icon = engine.icon_layout(icons::DOCUMENT, 13.0);
+    for link in &message.links {
+        let end = link.range.start + doc_links::CHIP_LEAD.len();
+        if message.display.get(link.range.start..end) != Some(doc_links::CHIP_LEAD) {
+            continue;
+        }
+        let selection = Selection::new(
+            Cursor::from_byte_index(&message.layout, link.range.start, Affinity::Downstream),
+            Cursor::from_byte_index(&message.layout, end, Affinity::Upstream),
+        );
+        let mut drawn = false;
+        selection.geometry_with(&message.layout, |box_, _| {
+            if drawn {
+                return;
+            }
+            drawn = true;
+            scene::draw_layout(
+                canvas,
+                root,
+                &icon,
+                ox + box_.x0 as f32 + ((box_.x1 - box_.x0) as f32 - icon.width()) * 0.5,
+                oy + box_.y0 as f32 + ((box_.y1 - box_.y0) as f32 - icon.height()) * 0.5,
+                Some(theme::p().accent),
+            );
+        });
+    }
 }
 
 fn tool_activity_action_rects(row: Rect) -> [Rect; 2] {
@@ -13095,7 +13141,7 @@ mod tests {
     }
 
     #[test]
-    fn the_sent_message_reads_the_chip_as_a_titled_link() {
+    fn the_sent_message_keeps_a_document_icon_and_titled_link() {
         let mut surface = ChatSurface::new();
         let (reader, commands, updates) = Reader::test_pair();
         surface.reader = Some(reader);
@@ -13115,12 +13161,26 @@ mod tests {
             .iter()
             .find(|message| message.role == ChatRole::User)
             .expect("the optimistic card");
-        assert_eq!(pending.display, "Summarise Budget 2026");
+        assert_eq!(
+            pending.display,
+            format!("Summarise {}Budget 2026", doc_links::CHIP_LEAD)
+        );
         assert_eq!(
             &pending.display[pending.links[0].range.clone()],
-            "Budget 2026"
+            format!("{}Budget 2026", doc_links::CHIP_LEAD)
         );
         assert_eq!(pending.links[0].url, format!("koru://doc/{document}"));
+        let icon_start = pending.links[0].range.start;
+        let icon_end = icon_start + doc_links::CHIP_LEAD.len();
+        let selection = Selection::new(
+            Cursor::from_byte_index(&pending.layout, icon_start, Affinity::Downstream),
+            Cursor::from_byte_index(&pending.layout, icon_end, Affinity::Upstream),
+        );
+        let mut icon_widths = Vec::new();
+        selection.geometry_with(&pending.layout, |box_, _| {
+            icon_widths.push(box_.x1 - box_.x0);
+        });
+        assert!(icon_widths.iter().any(|width| *width >= 12.0));
 
         // The durable card in another window, which never saw the chip: the
         // fallback word, then the title once the reader finds it.
@@ -13134,7 +13194,10 @@ mod tests {
         other.transcript = Some(transcript);
         other.rebuild_messages(400.0);
         let durable = &other.message_layouts[0];
-        assert_eq!(durable.display, "Summarise Document");
+        assert_eq!(
+            durable.display,
+            format!("Summarise {}Document", doc_links::CHIP_LEAD)
+        );
         match commands.recv_timeout(Duration::from_millis(50)).unwrap() {
             Command::DocumentTitles(asked) => assert_eq!(asked, vec![document]),
             _ => panic!("the title is asked of the reader thread"),
@@ -13146,7 +13209,10 @@ mod tests {
             )])) || other.messages_dirty
         );
         other.rebuild_messages(400.0);
-        assert_eq!(other.message_layouts[0].display, "Summarise Budget 2026");
+        assert_eq!(
+            other.message_layouts[0].display,
+            format!("Summarise {}Budget 2026", doc_links::CHIP_LEAD)
+        );
         let _ = updates;
     }
 
