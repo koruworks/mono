@@ -31,6 +31,7 @@ fn qualify_failure(provider: &Provider) {
         sessions,
         mut request,
         directory,
+        version,
     } = live_fixture(provider);
     request.objective = Objective::new(FAILURE_OBJECTIVE).unwrap();
     let run = request.run;
@@ -126,10 +127,20 @@ fn qualify_failure(provider: &Provider) {
         summary.active_turn_id.is_none(),
         "missing-file result cannot hide a resubmitted turn"
     );
+    assert!(summary.origin.chat().is_none());
     // Capture the real nonterminal failure shape before cleanup changes state.
     eprintln!(
-        "live_failure_parity provider={} pin={} state=running attention=finished_needing_attention turns=1 tool_calls={} failed_tools={} artifacts=0 endpoint_file_not_found={}",
-        provider.kind, provider.version, calls, failed, endpoint_refusals
+        "live_failure_parity provider={} version={} version_source={} state=running attention=finished_needing_attention turns=1 tool_calls={} failed_tools={} artifacts=0 endpoint_file_not_found={}",
+        provider.kind,
+        version,
+        if provider.package.is_empty() {
+            "qualification_pin"
+        } else {
+            "installed_package"
+        },
+        calls,
+        failed,
+        endpoint_refusals
     );
     client
         .runs()

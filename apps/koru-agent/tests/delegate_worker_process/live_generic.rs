@@ -5,8 +5,8 @@
 use super::*;
 use koru_session_client::SessionClient;
 use koru_session_protocol::{
-    AgentEvent, CapabilitySet, ProcessState, ProtocolOffer, ProtocolRange, SessionId, SessionMode,
-    capability,
+    AgentEvent, CapabilitySet, MAX_PROTOCOL_VERSION, ProcessState, ProtocolOffer, ProtocolRange,
+    SessionId, SessionMode, capability,
 };
 const CONTENT: &[u8] = b"KORU_GENERIC_QUALIFICATION";
 const OBJECTIVE: &str = "Use only the tool metadata discovery needed to locate the Koru run MCP create tool, then call create exactly once with path fixture.txt, title Generic qualification, and mime text/plain. The fixture file is already staged in this run's artifact folder. Use no other actions, no shell, no file reads or edits, and no child agents. Then finish.";
@@ -17,28 +17,30 @@ struct Provider {
     kind: &'static str,
     executable: &'static str,
     package: &'static str,
-    version: &'static str,
+    qualification_pin: Option<&'static str>,
     maximum_discovery_calls: u64,
 }
 const CLAUDE: Provider = Provider {
     kind: "claude",
     executable: "claude-agent-acp",
     package: "@agentclientprotocol/claude-agent-acp",
-    version: "0.76.0",
+    qualification_pin: Some("0.76.0"),
     maximum_discovery_calls: 1,
 };
 const GROK: Provider = Provider {
     kind: "grok",
     executable: "grok",
     package: "",
-    version: "1.0.25",
+    qualification_pin: Some("1.0.25"),
     maximum_discovery_calls: 1,
 };
 const CODEX: Provider = Provider {
     kind: "codex",
     executable: "codex",
     package: "@openai/codex",
-    version: "0.154.0",
+    // The production adapter accepts reviewed versions and the maintained
+    // minimum version. Exercise that installed route, not a historical npm pin.
+    qualification_pin: None,
     maximum_discovery_calls: 0,
 };
 
@@ -55,11 +57,11 @@ fn live_registered_codex_run_and_cancel_when_opted_in() {
     qualify(&CODEX);
 }
 
-fn runtime_path(provider: &Provider) -> std::ffi::OsString {
+fn runtime_path(provider: &Provider) -> (std::ffi::OsString, String) {
     let executable = koru_session_profiles::resolve_executable(provider.executable)
         .expect("install pinned provider on PATH before opting in");
     let bin = executable.parent().unwrap();
-    if !provider.package.is_empty() {
+    let version = if !provider.package.is_empty() {
         // Local npm shims live in node_modules/.bin; global Windows npm
         // shims live beside node_modules. Qualification must exercise the
         // executable the normal app finds in either installation layout.
@@ -74,12 +76,33 @@ fn runtime_path(provider: &Provider) -> std::ffi::OsString {
             &std::fs::read(package.join("package.json")).expect("pinned npm package"),
         )
         .unwrap();
-        assert_eq!(
-            pin["version"].as_str(),
-            Some(provider.version),
-            "only the qualification pin is accepted"
-        );
-    }
+        let version = pin["version"].as_str().expect("provider package version");
+        // Validate before reporting metadata; never print arbitrary package
+        // contents. Factory startup still verifies the executable and handshake.
+        let version: koru_session_runtime::providers::ProviderVersion =
+            version.parse().expect("valid provider version");
+        if let Some(pin) = provider.qualification_pin {
+            assert_eq!(
+                version.as_str(),
+                pin,
+                "only the qualification pin is accepted"
+            );
+        } else {
+            assert!(
+                provider.kind == "codex"
+                    && koru_session_runtime::providers::codex_version_supported(version.as_str()),
+                "installed provider version must pass the production gate"
+            );
+        }
+        version.as_str().to_owned()
+    } else {
+        // The native factory checks Grok's full version/revision. This label
+        // remains its existing qualification pin, not a new-version claim.
+        provider
+            .qualification_pin
+            .expect("native qualification pin")
+            .to_owned()
+    };
     // Native Grok's complete version/revision is checked by its registered
     // factory. No npm layout or provider configuration is assumed for it.
     let node = koru_session_profiles::resolve_executable("node").expect("Node installed");
@@ -95,7 +118,7 @@ fn runtime_path(provider: &Provider) -> std::ffi::OsString {
     }
     #[cfg(not(windows))]
     directories.extend([PathBuf::from("/usr/bin"), PathBuf::from("/bin")]);
-    std::env::join_paths(directories).unwrap()
+    (std::env::join_paths(directories).unwrap(), version)
 }
 
 fn session_client(agent: &Agent) -> SessionClient {
@@ -103,7 +126,10 @@ fn session_client(agent: &Agent) -> SessionClient {
         &koru_session_host::endpoint(segment(), Some(agent.root())).unwrap(),
         "koru-live-qualification",
         ProtocolOffer {
-            versions: ProtocolRange { min: 14, max: 14 },
+            versions: ProtocolRange {
+                min: MAX_PROTOCOL_VERSION,
+                max: MAX_PROTOCOL_VERSION,
+            },
             capabilities: CapabilitySet::new(
                 capability::ALL.iter().map(|name| name.parse().unwrap()),
             ),
@@ -163,6 +189,7 @@ struct LiveFixture {
     sessions: SessionClient,
     request: CreateRunRequest,
     directory: PathBuf,
+    version: String,
 }
 
 fn live_fixture(provider: &Provider) -> LiveFixture {
@@ -189,7 +216,7 @@ fn live_fixture(provider: &Provider) -> LiveFixture {
             "live fixture refuses environment override {key}"
         );
     }
-    let path = runtime_path(provider);
+    let (path, version) = runtime_path(provider);
     let tree = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
@@ -229,6 +256,7 @@ fn live_fixture(provider: &Provider) -> LiveFixture {
         sessions,
         request,
         directory,
+        version,
     }
 }
 
@@ -242,6 +270,7 @@ fn qualify(provider: &Provider) {
         sessions,
         mut request,
         directory,
+        version,
     } = live_fixture(provider);
     request.objective = Objective::new(OBJECTIVE).unwrap();
     let run = request.run;
@@ -255,11 +284,23 @@ fn qualify(provider: &Provider) {
     let mut completed = None;
     let phase_started = Instant::now();
     let mut diagnosed = false;
+    let mut non_chat_origin_observed = false;
     let mut answered = std::collections::BTreeSet::new();
     wait_until(
         "registered provider artifact completion",
         LIVE_DEADLINE,
         || {
+            if !non_chat_origin_observed
+                && let Some(session) = session_for(&agent, run)
+                && let Some(summary) = sessions
+                    .list()
+                    .unwrap()
+                    .into_iter()
+                    .find(|row| row.id == session)
+            {
+                assert!(summary.origin.chat().is_none());
+                non_chat_origin_observed = true;
+            }
             let view = client.runs().run(run, None, 0, 500).unwrap();
             let needs_diagnostic = matches!(&view.header.status,
                 RunStatus::Running { attention, .. }
@@ -289,6 +330,10 @@ fn qualify(provider: &Provider) {
                 false
             }
         },
+    );
+    assert!(
+        non_chat_origin_observed,
+        "successful result requires observed origin without automatic desktop-bridge injection"
     );
     let view = completed.unwrap();
     assert_eq!(view.header.artifacts.len(), 1);
@@ -399,6 +444,10 @@ fn qualify(provider: &Provider) {
         }
     );
     assert!(
+        summary.origin.chat().is_none(),
+        "the live run must use an origin that excludes automatic desktop-bridge injection"
+    );
+    assert!(
         summary.active_turn_id == observed_turn
             && observed_turn.is_some()
             && summary.managed == Some(koru_session_protocol::ManagedState::Running),
@@ -436,24 +485,50 @@ fn qualify(provider: &Provider) {
         );
     }
     eprintln!(
-        "live_qualification provider={} pin={} artifact_bytes={} completed_tools={} provenance=first_generation lifecycle=completed cancellation=landed authority=revoked",
+        "live_qualification provider={} version={} version_source={} artifact_bytes={} completed_tools={} provenance=first_generation lifecycle=completed cancellation=landed authority=revoked native_page=unverified live_web=unverified",
         provider.kind,
-        provider.version,
+        version,
+        if provider.package.is_empty() {
+            "qualification_pin"
+        } else {
+            "installed_package"
+        },
         CONTENT.len(),
         completed_calls
     );
 }
 
 /// This matcher is deliberately a fixture allowlist, not product policy.
-/// Wrapper 0.76.0's presentation.js/tools.js gives default MCP calls their
-/// exact native tool name and Other kind. Never infer from prose or labels.
+/// Wrapper 0.76.0's tools.js gives default MCP calls their exact native
+/// tool name. Current adapters retain that title; older ones used Other.
+/// Either label still needs the exact synthetic input, never inferred prose.
+fn known_fixture_tool(label: &str, input: Option<&str>) -> bool {
+    if !matches!(label, "other" | "mcp__koru_run__create") {
+        return false;
+    }
+    let Some(input) = input.and_then(|input| serde_json::from_str::<serde_json::Value>(input).ok())
+    else {
+        return false;
+    };
+    let Some(fields) = input.as_object() else {
+        return false;
+    };
+    fields.len() == 3
+        && matches!(
+            input["path"].as_str(),
+            Some("fixture.txt" | "missing-fixture.txt")
+        )
+        && input["title"] == "Generic qualification"
+        && input["mime"] == "text/plain"
+}
+
 fn known_fixture_choice(
     provider: &str,
     summary: &str,
-    latest_tool_is_other: bool,
+    latest_tool_is_fixture: bool,
     choices: &[koru_session_protocol::ApprovalChoice],
 ) -> Option<koru_session_protocol::ApprovalChoiceId> {
-    if provider != "claude" || summary != "mcp__koru_run__create" || !latest_tool_is_other {
+    if provider != "claude" || summary != "mcp__koru_run__create" || !latest_tool_is_fixture {
         return None;
     }
     let mut one_time = choices
@@ -461,6 +536,110 @@ fn known_fixture_choice(
         .filter(|choice| choice.intent == koru_session_protocol::ApprovalIntent::Allow);
     let selected = one_time.next()?;
     one_time.next().is_none().then_some(selected.id)
+}
+
+/// Approval events do not carry a tool-call id. Only one outstanding,
+/// unconsumed call in that turn can identify this fixture without guessing.
+fn pending_fixture_approvals<'a>(
+    provider: &str,
+    events: impl IntoIterator<Item = &'a AgentEvent>,
+) -> std::collections::BTreeMap<
+    koru_session_protocol::ApprovalId,
+    Option<koru_session_protocol::ApprovalChoiceId>,
+> {
+    let mut outstanding = std::collections::BTreeMap::<
+        _,
+        std::collections::BTreeMap<koru_session_protocol::ToolCallId, bool>,
+    >::new();
+    let mut consumed = std::collections::BTreeSet::new();
+    let mut pending = std::collections::BTreeMap::<
+        koru_session_protocol::ApprovalId,
+        (
+            koru_session_protocol::AgentTurnId,
+            Option<koru_session_protocol::ApprovalChoiceId>,
+            Option<koru_session_protocol::ToolCallId>,
+        ),
+    >::new();
+    for event in events {
+        match event {
+            AgentEvent::ToolStarted {
+                turn_id,
+                tool_call_id,
+                label,
+                input,
+            } => {
+                for (owner, choice, _) in pending.values_mut() {
+                    if *owner == *turn_id {
+                        *choice = None;
+                    }
+                }
+                outstanding.entry(*turn_id).or_default().insert(
+                    *tool_call_id,
+                    !consumed.contains(tool_call_id) && known_fixture_tool(label, input.as_deref()),
+                );
+            }
+            AgentEvent::ToolCompleted {
+                turn_id,
+                tool_call_id,
+                ..
+            } => {
+                if let Some(calls) = outstanding.get_mut(turn_id) {
+                    calls.remove(tool_call_id);
+                }
+                for (owner, choice, matched) in pending.values_mut() {
+                    if *owner == *turn_id && *matched == Some(*tool_call_id) {
+                        *choice = None;
+                    }
+                }
+            }
+            AgentEvent::ApprovalRequired {
+                turn_id,
+                approval_id,
+                summary,
+                choices,
+            } => {
+                let candidate = outstanding
+                    .get(turn_id)
+                    .and_then(|calls| (calls.len() == 1).then(|| calls.iter().next()).flatten());
+                let choice = known_fixture_choice(
+                    provider,
+                    summary,
+                    candidate.is_some_and(|(_, known)| *known),
+                    choices,
+                );
+                let matched = candidate
+                    .filter(|_| choice.is_some())
+                    .map(|(tool, _)| *tool);
+                if let Some(tool) = matched {
+                    consumed.insert(tool);
+                    outstanding.get_mut(turn_id).unwrap().insert(tool, false);
+                }
+                // More than one approval without a tool-id binding is ambiguous
+                // even when one appeared identifiable earlier in the stream.
+                for (owner, earlier, _) in pending.values_mut() {
+                    if *owner == *turn_id {
+                        *earlier = None;
+                    }
+                }
+                pending.insert(*approval_id, (*turn_id, choice, matched));
+            }
+            AgentEvent::ApprovalResolved { approval_id, .. }
+            | AgentEvent::ApprovalExpired { approval_id, .. } => {
+                pending.remove(approval_id);
+            }
+            AgentEvent::TurnCompleted { turn_id, .. }
+            | AgentEvent::TurnCancelled { turn_id, .. }
+            | AgentEvent::TurnFailed { turn_id, .. } => {
+                outstanding.remove(turn_id);
+                pending.retain(|_, (owner, _, _)| *owner != *turn_id);
+            }
+            _ => {}
+        }
+    }
+    pending
+        .into_iter()
+        .map(|(id, (_, choice, _))| (id, choice))
+        .collect()
 }
 
 fn answer_known_fixture_approval(
@@ -491,36 +670,14 @@ fn answer_known_fixture_approval(
         !observation.earlier_truncated,
         "approval fixture requires complete retained evidence"
     );
-    let mut latest_other = std::collections::BTreeMap::new();
-    let mut pending = std::collections::BTreeMap::new();
-    for item in &observation.events {
-        match &item.event {
-            AgentEvent::ToolStarted { turn_id, label, .. } => {
-                latest_other.insert(*turn_id, label == "other");
-            }
-            AgentEvent::ApprovalRequired {
-                turn_id,
-                approval_id,
-                summary,
-                choices,
-            } => {
-                pending.insert(
-                    *approval_id,
-                    known_fixture_choice(
-                        provider.kind,
-                        summary,
-                        latest_other.get(turn_id).copied().unwrap_or(false),
-                        choices,
-                    ),
-                );
-            }
-            AgentEvent::ApprovalResolved { approval_id, .. }
-            | AgentEvent::ApprovalExpired { approval_id, .. } => {
-                pending.remove(approval_id);
-            }
-            _ => {}
-        }
-    }
+    let pending = pending_fixture_approvals(
+        provider.kind,
+        observation.events.iter().map(|item| &item.event),
+    );
+    assert!(
+        pending.len() <= 1 && pending.values().all(Option::is_some),
+        "unidentified or ambiguous approval set refused before any action"
+    );
     for (approval, choice) in pending {
         if answered.contains(&approval) {
             continue;
@@ -560,6 +717,149 @@ fn answer_known_fixture_approval(
         eprintln!(
             "live_fixture_approval: known_create=true, one_time=true, controller_returned=true"
         );
+    }
+}
+
+#[test]
+fn fixture_approval_requires_one_current_unconsumed_tool() {
+    use koru_session_protocol::{
+        AgentTurnId, ApprovalChoice, ApprovalChoiceId, ApprovalId, ApprovalIntent, ToolCallId,
+    };
+    let turn = AgentTurnId::mint();
+    let tool = ToolCallId::mint();
+    let approval = ApprovalId::mint();
+    let choice = ApprovalChoice {
+        id: ApprovalChoiceId::mint(),
+        intent: ApprovalIntent::Allow,
+        label: "<label>".into(),
+    };
+    let start = |turn_id, tool_call_id| {
+        AgentEvent::ToolStarted {
+        turn_id, tool_call_id, label: "mcp__koru_run__create".into(),
+        input: Some(serde_json::json!({"path":"fixture.txt","title":"Generic qualification","mime":"text/plain"}).to_string()),
+    }
+    };
+    let required = |turn_id, approval_id| AgentEvent::ApprovalRequired {
+        turn_id,
+        approval_id,
+        summary: "mcp__koru_run__create".into(),
+        choices: vec![choice.clone()],
+    };
+    let pending = |events: &[AgentEvent]| pending_fixture_approvals("claude", events.iter());
+    assert_eq!(
+        pending(&[start(turn, tool), required(turn, approval)])[&approval],
+        Some(choice.id)
+    );
+    let completed = AgentEvent::ToolCompleted {
+        turn_id: turn,
+        tool_call_id: tool,
+        succeeded: true,
+        tool: None,
+        failure: None,
+        detail: None,
+        output: None,
+    };
+    for events in [
+        vec![required(turn, approval)],
+        vec![start(AgentTurnId::mint(), tool), required(turn, approval)],
+        vec![
+            start(turn, tool),
+            completed.clone(),
+            required(turn, approval),
+        ],
+        vec![
+            start(turn, tool),
+            start(turn, ToolCallId::mint()),
+            required(turn, approval),
+        ],
+        vec![
+            start(turn, tool),
+            AgentEvent::TurnCompleted { turn_id: turn },
+            required(turn, approval),
+        ],
+    ] {
+        assert_eq!(pending(&events)[&approval], None);
+    }
+    let second = ApprovalId::mint();
+    for tail in [completed, start(turn, ToolCallId::mint())] {
+        assert_eq!(
+            pending(&[start(turn, tool), required(turn, approval), tail])[&approval],
+            None
+        );
+    }
+    assert!(
+        pending(&[
+            start(turn, tool),
+            required(turn, approval),
+            AgentEvent::TurnCompleted { turn_id: turn },
+        ])
+        .is_empty()
+    );
+    assert_eq!(
+        pending(&[
+            start(turn, tool),
+            required(turn, approval),
+            required(turn, second)
+        ])[&second],
+        None
+    );
+    assert_eq!(
+        pending(&[
+            start(turn, tool),
+            required(turn, approval),
+            start(turn, tool),
+            required(turn, second)
+        ])[&second],
+        None
+    );
+    assert!(
+        pending(&[
+            start(turn, tool),
+            required(turn, approval),
+            AgentEvent::ApprovalExpired {
+                turn_id: turn,
+                approval_id: approval
+            },
+        ])
+        .is_empty()
+    );
+}
+
+#[test]
+fn fixture_approval_requires_exact_tool_and_synthetic_payload() {
+    let input = serde_json::json!({
+        "path": "fixture.txt", "title": "Generic qualification", "mime": "text/plain"
+    });
+    for label in ["other", "mcp__koru_run__create"] {
+        assert!(known_fixture_tool(label, Some(&input.to_string())));
+        let mut missing_file = input.clone();
+        missing_file["path"] = "missing-fixture.txt".into();
+        assert!(known_fixture_tool(label, Some(&missing_file.to_string())));
+    }
+    for label in [
+        "shell",
+        "mcp__koru__create",
+        "mcp__koru_run__create_version",
+        "other ",
+    ] {
+        assert!(!known_fixture_tool(label, Some(&input.to_string())));
+    }
+    for (field, value) in [
+        ("path", "../fixture.txt"),
+        ("path", "different.txt"),
+        ("title", "Different title"),
+        ("mime", "text/html"),
+        ("extra", "unexpected"),
+    ] {
+        let mut changed = input.clone();
+        changed[field] = value.into();
+        assert!(!known_fixture_tool(
+            "mcp__koru_run__create",
+            Some(&changed.to_string())
+        ));
+    }
+    for malformed in [None, Some("not-json"), Some("[]"), Some("{}"), Some("null")] {
+        assert!(!known_fixture_tool("mcp__koru_run__create", malformed));
     }
 }
 
@@ -662,3 +962,6 @@ fn print_diagnostic(
 
 #[path = "live_generic/failure.rs"]
 mod failure;
+
+#[path = "live_generic/boundaries.rs"]
+mod boundaries;
