@@ -453,8 +453,17 @@ impl Shell {
         let out = loop {
             match koru_ipc::frame::read_raw(&mut read) {
                 Ok((_, raw)) => match koru_ipc::frame::decode::<FromAgent>(&raw) {
+                    // The ambient pushes a connection earns whatever it
+                    // asked for: a Shortcut per Hello (protocol 11),
+                    // reminder diagnostics, and the organization sync
+                    // status, which is broadcast to every window whenever
+                    // it changes (root-catalog Plan 2.2). A test waiting
+                    // for *its* push must not be answered by one of these.
                     Ok(FromAgent::Push {
-                        body: Push::Shortcut { .. } | Push::ReminderDiagnostics { .. },
+                        body:
+                            Push::Shortcut { .. }
+                            | Push::ReminderDiagnostics { .. }
+                            | Push::RootSync { .. },
                     }) => continue,
                     Ok(FromAgent::Push { body }) => break Some(body),
                     _ => break None,
@@ -2099,14 +2108,20 @@ fn the_shell_that_was_active_last_receives_the_target() {
     // with a channel deadline the standard library guarantees.
     let (sent, received) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        // Skip the ambient Shortcut push every Hello earns (protocol 11);
-        // silence here means "no *delivery*", not "no frame of any kind".
+        // Skip the ambient pushes a connection earns regardless of routing:
+        // the Shortcut every Hello earns (protocol 11), reminder
+        // diagnostics, and the organization sync status, which is broadcast
+        // to every window by design (root-catalog Plan 2.2). Silence here
+        // means "no *delivery*", not "no frame of any kind", so anything
+        // else arriving — a `Push::Open` above all — still fails this.
         loop {
             let frame = second.next_frame();
             if matches!(
                 frame,
                 FromAgent::Push {
-                    body: Push::Shortcut { .. } | Push::ReminderDiagnostics { .. }
+                    body: Push::Shortcut { .. }
+                        | Push::ReminderDiagnostics { .. }
+                        | Push::RootSync { .. }
                 }
             ) {
                 continue;

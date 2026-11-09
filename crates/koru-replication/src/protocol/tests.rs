@@ -1565,7 +1565,7 @@ fn root_catalog_and_personal_requests_are_admitted_by_scope() {
             &scoped,
             PeerFrame::PersonalRequest {
                 workspace,
-                version: Vec::new(),
+                version: loro::VersionVector::new().encode(),
             }
         ),
         vec![PeerFrame::Error {
@@ -1583,8 +1583,14 @@ fn root_catalog_and_personal_requests_are_admitted_by_scope() {
             &store,
             &all,
             PeerFrame::PersonalRequest {
+                // "I hold nothing of this unit" is the empty vector
+                // *encoded*, which is what every sender writes
+                // (`root_unit_version`/`personal_version` answer
+                // `VersionVector::new().encode()` for a missing unit). An
+                // empty byte string is not a version vector at all and the
+                // receiver refuses it as `invalid_root_version`.
                 workspace,
-                version: Vec::new(),
+                version: loro::VersionVector::new().encode(),
             }
         ),
         vec![PeerFrame::PersonalUpdates {
@@ -1681,9 +1687,34 @@ fn default_workspace_authorization_matches_the_legacy_owner_rule() {
         "unauthorized_workspace",
         "unknown and unrelated are indistinguishable to a scoped peer"
     );
+    // Holding a grant for one Workspace does not entitle a peer to learn
+    // whether another id exists: `by_uuid` is "granted *this* workspace by
+    // uuid", so a Workspace it was never granted is hidden from it exactly
+    // as it is from `other`. Only a peer actually entitled to the Workspace
+    // — an exact grant for that id, or all-data — is told it is missing,
+    // which is the actionable answer and leaks nothing.
     assert_eq!(
         store
             .authorize_workspace(&by_uuid, WorkspaceId::new())
+            .unwrap_err()
+            .code,
+        "unauthorized_workspace"
+    );
+    let missing = WorkspaceId::new();
+    let mut granted_missing = peer(missing);
+    granted_missing.authorized_workspaces = [missing].into_iter().collect();
+    assert_eq!(
+        store
+            .authorize_workspace(&granted_missing, missing)
+            .unwrap_err()
+            .code,
+        "workspace_not_found"
+    );
+    let mut everything = peer(workspace);
+    everything.all_data = true;
+    assert_eq!(
+        store
+            .authorize_workspace(&everything, missing)
             .unwrap_err()
             .code,
         "workspace_not_found"

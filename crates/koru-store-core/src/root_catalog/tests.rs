@@ -40,12 +40,10 @@ fn tampered(
 /// reports `0@0` and an assertion about which peer authored something reads
 /// the table's indexes rather than the ids.
 fn history(doc: &LoroDoc) -> serde_json::Value {
-    serde_json::to_value(
-        doc.export_json_updates_without_peer_compression(
-            &loro::VersionVector::default(),
-            &doc.oplog_vv(),
-        ),
-    )
+    serde_json::to_value(doc.export_json_updates_without_peer_compression(
+        &loro::VersionVector::default(),
+        &doc.oplog_vv(),
+    ))
     .unwrap()
 }
 

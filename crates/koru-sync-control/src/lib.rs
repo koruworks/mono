@@ -343,7 +343,13 @@ pub enum ControlRequest {
         /// The v2 permits (root-catalog Plan 3.2): one scope each, every one
         /// with a dataset — the two catalog scopes never reach the host,
         /// because no bridged stream runs under them.
-        #[serde(default)]
+        ///
+        /// Absent and empty are the same message, and the field is omitted
+        /// when it is empty so that a frozen v1 request re-encodes
+        /// byte-for-byte: a v1 sender never writes the key, and the frozen
+        /// vectors of `host-control-v1` are the contract for what a v1
+        /// request is.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
         permits_v2: Vec<CloudPermitV2>,
     },
     /// The explicit barrier before any content stream attaches. Two IPC
@@ -513,8 +519,11 @@ pub enum ControlResponse {
         manifest_document_id: Option<CloudId>,
         /// Whether this device's own transport policy for the Workspace
         /// admits the Cloud path (`ReadCloudBootstrapV2` only; `None` for a
-        /// v1 read, or when the Store holds no mode row for it).
-        #[serde(default)]
+        /// v1 read, or when the Store holds no mode row for it). Absent is
+        /// that `None`, and the key is omitted when it is absent so that a
+        /// v1 `cloud_bootstrap` answer re-encodes exactly as the frozen
+        /// `host-control-v1` sequences froze it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         allows_cloud: Option<bool>,
     },
     CloudAccountScopeBound {

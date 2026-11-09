@@ -80,7 +80,10 @@ fn old_control_is_refused_before_any_state_change_and_peer_framing_is_unchanged(
     use crate::*;
     assert_eq!(CONTROL_PROTOCOL_VERSION, 7);
     assert_eq!(CONTROL_FRAME_VERSION, 1);
-    assert_eq!(PEER_PROTOCOL_VERSION, 5);
+    // The peer number is pinned here so that a control change cannot move it
+    // unnoticed; it is 6 since the root-catalog exchange, and the control
+    // protocol's own 7 is unrelated to it.
+    assert_eq!(PEER_PROTOCOL_VERSION, 6);
     let mut host = ControlHost::default();
     let old = ControlHello {
         protocol_version: 6,
@@ -305,8 +308,11 @@ fn v2_permits_are_one_scope_each_and_need_no_profile_pair() {
 /// Root-catalog Plan 3.2's compatibility window: a v1 permit pair is read
 /// as a v2 Workspace permit whose placement is the v1 membership Profile,
 /// and a v2 Profile-units permit over Identity and Private only; the v1
-/// Personal unit is the Workspace-keyed scope and is dropped, and a Profile
-/// permit that carried nothing else is refused rather than admitted empty.
+/// Personal unit is the Workspace-keyed scope and is dropped. A v1 permit
+/// left with nothing after the drop is still **applied**: a v1 shape keeps
+/// its v1 meaning for the window, the dropped entry simply authorizes
+/// nothing, and refusing the permit would refuse the whole page and take the
+/// Identity and Private sync it also authorizes down with it.
 #[test]
 fn a_v1_pair_is_read_as_two_v2_scopes_and_personal_is_not_one_of_them() {
     let profile = v4(5);
@@ -382,15 +388,41 @@ fn a_v1_pair_is_read_as_two_v2_scopes_and_personal_is_not_one_of_them() {
     );
     assert_eq!(converted.placement_profile(), Some(profile));
 
-    let personal_only = CloudPermitV1 {
-        allowed_profile_units: vec![ProfileUnitRef::Personal {
+    // The dead entry on its own, and no entries at all, are the same
+    // authority — none — and both are applied rather than refused.
+    for allowed in [
+        vec![ProfileUnitRef::Personal {
             owner: profile_id(profile),
             workspace: koru_store_core::WorkspaceId::from_uuid(v4(1).as_uuid()),
         }],
+        Vec::new(),
+    ] {
+        let nothing_left = CloudPermitV1 {
+            allowed_profile_units: allowed,
+            ..units.clone()
+        };
+        let converted = CloudPermitV2::from_v1(&nothing_left).unwrap();
+        let CloudPermitScopeV2::ProfileUnits {
+            allowed_profile_units,
+            ..
+        } = &converted.scope
+        else {
+            panic!("a Profile permit reads as the Profile-units scope");
+        };
+        assert!(allowed_profile_units.is_empty());
+        assert_eq!(converted.catalog_scope_id, None, "the v1 window's marker");
+    }
+
+    // The exception belongs to the window, not to v2: a permit a v2 service
+    // minted still may not authorize nothing.
+    let mut minted_empty = CloudPermitV2::from_v1(&CloudPermitV1 {
+        allowed_profile_units: Vec::new(),
         ..units
-    };
+    })
+    .unwrap();
+    minted_empty.catalog_scope_id = Some(v4(6));
     assert_eq!(
-        CloudPermitV2::from_v1(&personal_only).unwrap_err(),
-        HostCloudError::PermitProfileUnits
+        minted_empty.validate(),
+        Err(HostCloudError::PermitProfileUnits)
     );
 }

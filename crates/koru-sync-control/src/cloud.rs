@@ -334,7 +334,20 @@ impl CloudPermitV2 {
                 if !profile_id.is_v4() {
                     return Err(HostCloudError::PermitIdentity);
                 }
-                if allowed_profile_units.is_empty() || allowed_profile_units.len() > 2 {
+                // A v2 service never mints a permit that authorizes nothing,
+                // so an empty list is not a v2 permit. A permit read from
+                // the v1 shape is the one exception, and it is marked by the
+                // missing catalog scope: v1's list is "limited further by the
+                // actual grant", so an empty one is legal v1 and the frozen
+                // `host-control-v1` sequences freeze it as applied. Its
+                // Personal entry addresses nothing since catalog 13, which
+                // leaves the same empty set. Refusing it would refuse the
+                // whole page and withdraw the Identity and Private sync the
+                // v1 permit legitimately authorizes.
+                let v1_window = self.catalog_scope_id.is_none();
+                if (allowed_profile_units.is_empty() && !v1_window)
+                    || allowed_profile_units.len() > 2
+                {
                     return Err(HostCloudError::PermitProfileUnits);
                 }
                 let mut seen = allowed_profile_units.clone();
@@ -436,9 +449,10 @@ impl CloudPermitV2 {
                     })
                     .cloned()
                     .collect();
-                if allowed_profile_units.is_empty() {
-                    return Err(HostCloudError::PermitProfileUnits);
-                }
+                // An entry this device cannot serve any more authorizes
+                // nothing; it does not take the permit down with it, and a
+                // permit left with nothing is still the standing admission
+                // record v1 meant — see `validate`.
                 CloudPermitScopeV2::ProfileUnits {
                     dataset,
                     allowed_profile_units,

@@ -6149,7 +6149,14 @@ async fn pull_root_unit<C: RequestTransport>(
                 None,
                 Some(&code),
             );
-            root_sync.subjects.insert(unit, RootSyncState::Held);
+            // Through `note`, like every other reading: held outranks the
+            // `Pending` noted above, but it must not overwrite this device's
+            // own `PausedBySettings` or `BlockedByMismatch`. Both can be true
+            // of one subject, and `worse` ranks them higher deliberately —
+            // "paused by your settings" names something the person can change
+            // here, while "held" names a decision taken on the other machine
+            // that they cannot act on at all.
+            root_sync.note(unit, RootSyncState::Held);
             return;
         }
         Ok(Ok(protocol::PeerFrame::Error { code })) => code,

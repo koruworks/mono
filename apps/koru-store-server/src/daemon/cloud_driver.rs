@@ -745,9 +745,10 @@ pub fn plan_for(permit: &CloudPermitV2) -> Result<(Plan, Scope), &'static str> {
 /// HOST-CONTROL §3.1 step 3 for a Workspace permit: provision the replica
 /// under the placement its **root unit** holds here, with the descriptor's
 /// manifest id. The descriptor's placement is a hint and seeds nothing
-/// (root-catalog TECHNICAL.final §7.2–7.3); a placement this Store cannot
-/// list the Workspace under yet is `placement_pending`, retried by the
-/// Agent after the next root join.
+/// (root-catalog TECHNICAL.final §7.2–7.3) — in the v1 window it places the
+/// row and publishes no unit, see [`bootstrap_placement`]; a placement this
+/// Store cannot list the Workspace under yet is `placement_pending`, retried
+/// by the Agent after the next root join.
 async fn bootstrap(store: &StoreWorkerClient, permit: &CloudPermitV2) -> Result<(), &'static str> {
     let CloudPermitScopeV2::Workspace { descriptor } = &permit.scope else {
         return Ok(());
@@ -763,10 +764,21 @@ async fn bootstrap(store: &StoreWorkerClient, permit: &CloudPermitV2) -> Result<
 
 /// How a Workspace permit's replica is placed when this Store does not hold
 /// it yet: by its root unit only (`KnownOnly`) under the v2 contract, whose
-/// root units arrive before content; by the descriptor's Profile as a hint
-/// for a permit of the v1 window (`catalog_scope_id: None`), whose service
-/// has no root units to join — the pre-M3 bootstrap, kept exactly as long
-/// as the window is. Shared with the Android host.
+/// root units arrive before content; by the descriptor's Profile for a
+/// permit of the **v1 window** (`catalog_scope_id: None`, which only a
+/// v1-window permit has), whose service has no root units to join.
+///
+/// In that window the hint places the row and **nothing else**
+/// (`HintWithoutUnit`, root-catalog QUESTIONS.md Q7, decided 2026-11-09):
+/// the descriptor's placement is the legacy owner column no client writes
+/// any more, so a Workspace unit published from it would race the first real
+/// unit from a linked device by Loro's map ordering and could win over a
+/// move the person already made. Provisioning the content and publishing no
+/// unit leaves the Workspace in the one state the placement reads already
+/// tolerate, and the first real unit to arrive becomes its only placement.
+/// Kept exactly as long as the window is; outside it, and on every peer
+/// path, a provisioned replica publishes its unit as before. Shared with the
+/// Android host.
 pub fn bootstrap_placement(permit: &CloudPermitV2) -> ReplicaPlacement {
     match (&permit.scope, permit.catalog_scope_id) {
         (
@@ -778,7 +790,7 @@ pub fn bootstrap_placement(permit: &CloudPermitV2) -> ReplicaPlacement {
                     },
             },
             None,
-        ) => ReplicaPlacement::Hint(ProfileId::from_uuid(profile.as_uuid())),
+        ) => ReplicaPlacement::HintWithoutUnit(ProfileId::from_uuid(profile.as_uuid())),
         _ => ReplicaPlacement::KnownOnly,
     }
 }
@@ -786,9 +798,9 @@ pub fn bootstrap_placement(permit: &CloudPermitV2) -> ReplicaPlacement {
 /// The identity-only Workspace bootstrap itself, on whichever host owns the
 /// Store worker: present and mapped to this manifest is fine, absent is
 /// provisioned under `placement` (its known root placement, or the v1
-/// window's hint — see [`bootstrap_placement`]), present under another
-/// manifest is refused, and a Workspace whose placement is not known here
-/// yet is `placement_pending`. Names and appearance are left for the
+/// window's unit-less hint — see [`bootstrap_placement`]), present under
+/// another manifest is refused, and a Workspace whose placement is not known
+/// here yet is `placement_pending`. Names and appearance are left for the
 /// manifest's first import.
 pub async fn ensure_workspace(
     store: &StoreWorkerClient,

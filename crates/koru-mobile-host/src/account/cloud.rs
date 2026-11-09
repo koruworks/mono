@@ -327,8 +327,12 @@ impl Host for MobileCloudHost {
     /// gateway runs at installation. A placement this Store cannot list the
     /// Workspace under yet is `placement_pending`, which the coordinator
     /// retries after the next root join; the descriptor's placement seeds
-    /// nothing — except for a permit of the v1 window, whose service has no
-    /// root units to join, where it is the hint it was before M3.
+    /// nothing — and for a permit of the v1 window, whose service has no root
+    /// units to join, it places the row alone and **no Workspace unit is
+    /// published** (root-catalog QUESTIONS.md Q7), so the first real unit
+    /// from a linked device is the only placement. The phone takes that from
+    /// the same `bootstrap_placement` the desktop driver uses rather than
+    /// having a second idea of what the window is.
     fn ensure_workspace_presence(&self, permit: &CloudPermitV2) -> Result<(), Failure> {
         let CloudPermitScopeV2::Workspace { descriptor } = &permit.scope else {
             return Err(Failure::DatasetMismatch);
