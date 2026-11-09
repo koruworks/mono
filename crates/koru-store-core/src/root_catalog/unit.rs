@@ -63,6 +63,26 @@ fn load(
     Ok(inner)
 }
 
+/// A first arrival: frames for a unit this device does not hold yet. They
+/// are imported into an empty document — not merged into a fresh header, so
+/// this replica authors nothing into a history it only received — and
+/// handed back as the complete snapshot the address constructor then
+/// validates (header, kind, subject, placement). A frame whose ancestors
+/// are missing is [`Staged::Pending`]: the sender needs the empty version.
+fn fresh_from_frames(frames: &[Vec<u8>]) -> Result<Staged<Vec<u8>>, Refusal> {
+    let doc = LoroDoc::new();
+    for frame in frames {
+        let status = doc.import(frame).map_err(|_| Refusal::UndecodableFrame)?;
+        if status.pending.is_some() {
+            return Ok(Staged::Pending);
+        }
+    }
+    Ok(Staged::Applied(
+        doc.export(loro::ExportMode::snapshot())
+            .map_err(|_| Refusal::Crdt)?,
+    ))
+}
+
 // Both families share the staging boundary, the lifecycle facts and the
 // reducers. Only the Workspace unit has a placement.
 macro_rules! catalog_unit_methods {
@@ -202,6 +222,24 @@ impl ProfileCatalogUnit {
             .expect("a Profile catalog unit is addressed by a Profile")
     }
 
+    /// A unit this device did not hold, from a peer's frames (see
+    /// [`fresh_from_frames`]); validated as `profile`'s unit before it is
+    /// returned, so a frame whose header names another subject is refused.
+    pub fn from_frames(
+        frames: &[Vec<u8>],
+        profile: ProfileId,
+        writer_peer: u64,
+    ) -> Result<Staged<Self>, Refusal> {
+        match fresh_from_frames(frames)? {
+            Staged::Pending => Ok(Staged::Pending),
+            Staged::Applied(bytes) => Ok(Staged::Applied(Self::from_snapshot(
+                &bytes,
+                profile,
+                writer_peer,
+            )?)),
+        }
+    }
+
     catalog_unit_methods!();
 }
 
@@ -246,6 +284,24 @@ impl WorkspaceCatalogUnit {
             .unit
             .workspace()
             .expect("a Workspace catalog unit is addressed by a Workspace")
+    }
+
+    /// A unit this device did not hold, from a peer's frames (see
+    /// [`fresh_from_frames`]); validated as `workspace`'s unit — header,
+    /// kind, subject and a committed placement — before it is returned.
+    pub fn from_frames(
+        frames: &[Vec<u8>],
+        workspace: WorkspaceId,
+        writer_peer: u64,
+    ) -> Result<Staged<Self>, Refusal> {
+        match fresh_from_frames(frames)? {
+            Staged::Pending => Ok(Staged::Pending),
+            Staged::Applied(bytes) => Ok(Staged::Applied(Self::from_snapshot(
+                &bytes,
+                workspace,
+                writer_peer,
+            )?)),
+        }
     }
 
     /// The current register, or `None` while placement is pending.

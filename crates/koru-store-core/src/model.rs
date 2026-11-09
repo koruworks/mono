@@ -281,10 +281,10 @@ pub struct Workspace {
     /// Workspace's root catalog unit (`placement.current`, read through
     /// `Store::root_placement`) says where this user has placed it, and a
     /// *move* writes this field only through that root operation, in the
-    /// same catalog transaction as the unit. Creation and replica
-    /// provisioning still write it directly until Plan 1.3 and M2 make those
-    /// root operations too, which is why a Workspace without a unit yet is
-    /// read from here.
+    /// same catalog transaction as the unit. Creation (Plan 1.3) and replica
+    /// provisioning (Plan 2.1) publish the unit with the row; a remote root
+    /// unit re-projects this field when it lands. A Workspace without a unit
+    /// is read from here, as the only evidence there is.
     pub owner: ProfileId,
     pub name: String,
     pub created_at: Timestamp,

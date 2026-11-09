@@ -41,11 +41,13 @@
 //! lifecycle fact too — trash, restore, purge evidence and a Profile
 //! deletion's markers live in `root_lifecycle.rs` and differ from a move only
 //! in the closure they hand it — and creation publishes a unit with the row.
-//! What is *not* root-authoritative yet: a replica a peer provisions
-//! (`Store::provision_replica`, M2) still writes the `workspaces` projection
-//! directly and has no unit until M2 gives it one, so a Workspace with no
-//! unit is read from the projection, as the only evidence there is, and
-//! gains its unit on its first move or lifecycle write.
+//! Since Plan 2.1 a replica a peer provisions does too
+//! (`Store::provision_replica_placed`: the root unit received from the peer
+//! places it, or a fresh unit is published with the row), and remote root
+//! units are joined through `root_sync.rs`. A Workspace with no unit is a
+//! row from before catalog 13's seed or a bundle staged and never published;
+//! it is read from the projection, as the only evidence there is, and gains
+//! its unit on its first move or lifecycle write.
 
 use super::*;
 use crate::ports::{RootCatalogOverlay, RootCatalogUnitCommit, RootCatalogUnitRow, RootUnitWrite};
@@ -64,6 +66,13 @@ use loro::VersionVector;
 pub(super) trait RootUnit: Sized {
     fn open(bytes: &[u8], unit: CatalogUnitRef, writer_peer: u64) -> Result<Self>;
     fn fresh(unit: CatalogUnitRef, writer_peer: u64) -> Result<Self>;
+    /// A unit this device did not hold, from a peer's frames: validated as
+    /// `unit` before it is returned, pending when ancestors are missing.
+    fn from_frames(
+        frames: &[Vec<u8>],
+        unit: CatalogUnitRef,
+        writer_peer: u64,
+    ) -> Result<Staged<Self>>;
     fn snapshot(&self) -> Result<Vec<u8>>;
     fn version(&self) -> VersionVector;
     fn updates_since(&self, from: &VersionVector) -> Result<Vec<u8>>;
@@ -89,6 +98,14 @@ impl RootUnit for WorkspaceCatalogUnit {
         let workspace = unit.workspace().ok_or_else(|| wrong_family(unit))?;
         Ok(Self::create(workspace, writer_peer)?)
     }
+    fn from_frames(
+        frames: &[Vec<u8>],
+        unit: CatalogUnitRef,
+        writer_peer: u64,
+    ) -> Result<Staged<Self>> {
+        let workspace = unit.workspace().ok_or_else(|| wrong_family(unit))?;
+        Ok(Self::from_frames(frames, workspace, writer_peer)?)
+    }
     fn snapshot(&self) -> Result<Vec<u8>> {
         Ok(Self::snapshot(self)?)
     }
@@ -111,6 +128,14 @@ impl RootUnit for ProfileCatalogUnit {
     fn fresh(unit: CatalogUnitRef, writer_peer: u64) -> Result<Self> {
         let profile = unit.profile().ok_or_else(|| wrong_family(unit))?;
         Ok(Self::create(profile, writer_peer)?)
+    }
+    fn from_frames(
+        frames: &[Vec<u8>],
+        unit: CatalogUnitRef,
+        writer_peer: u64,
+    ) -> Result<Staged<Self>> {
+        let profile = unit.profile().ok_or_else(|| wrong_family(unit))?;
+        Ok(Self::from_frames(frames, profile, writer_peer)?)
     }
     fn snapshot(&self) -> Result<Vec<u8>> {
         Ok(Self::snapshot(self)?)
@@ -292,7 +317,7 @@ fn placement_of(snapshot: &[u8], workspace: WorkspaceId, writer: u64) -> Result<
     Ok(WorkspaceCatalogUnit::from_snapshot(snapshot, workspace, writer)?.placement())
 }
 
-fn transport_subject(unit: CatalogUnitRef) -> TransportSubject {
+pub(super) fn transport_subject(unit: CatalogUnitRef) -> TransportSubject {
     match unit {
         CatalogUnitRef::Profile { profile } => TransportSubject::Profile(profile),
         CatalogUnitRef::Workspace { workspace } => TransportSubject::Workspace(workspace),
@@ -302,8 +327,7 @@ fn transport_subject(unit: CatalogUnitRef) -> TransportSubject {
 impl<C: Catalog, B: Backend> Store<C, B> {
     /// This user's current placement of `workspace`: the private overlay's
     /// register when an overlay is held, else the durable unit's. `None` is
-    /// *pending* — no unit yet, as for a Workspace created or provisioned
-    /// before the root wrote it — and never an invented Profile.
+    /// *pending* — no unit yet — and never an invented Profile.
     ///
     /// A placement under a `ProfileKind::Holder` Profile reads as
     /// **unassigned**: the migration seeded such placements from the legacy
@@ -366,7 +390,7 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             .is_some_and(|row| row.is_holder()))
     }
 
-    fn holder_reads_unassigned(&self, placement: Placement) -> Result<Placement> {
+    pub(super) fn holder_reads_unassigned(&self, placement: Placement) -> Result<Placement> {
         match placement.profile {
             Some(profile) if self.profile_is_holder(profile)? => Ok(Placement {
                 profile: None,

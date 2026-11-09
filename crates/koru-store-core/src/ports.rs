@@ -465,6 +465,13 @@ pub trait Catalog {
         scope: UserScopeId,
         unit: CatalogUnitRef,
     ) -> Result<()>;
+    /// Every `root_catalog_overlays` row under one scope — the publication
+    /// job's worklist (root-catalog TECHNICAL.final §4.3, §4.4): each is a
+    /// subject whose edits are waiting for its admission to allow export.
+    fn root_catalog_overlays(
+        &self,
+        scope: UserScopeId,
+    ) -> Result<Vec<(CatalogUnitRef, RootCatalogOverlay)>>;
     /// **The durable root operation** (TECHNICAL.final §6.1, §7.1), in one
     /// `IMMEDIATE` transaction: every unit's [`RootUnitWrite`] (compare-and-set
     /// commit or overlay row), every one-way [`RootProjection`] in the order
@@ -562,6 +569,21 @@ pub trait Catalog {
         scope: UserScopeId,
         unit: &RootCatalogUnitCommit,
     ) -> Result<()>;
+    /// Publish a replica a peer or the Cloud provisions (root-catalog
+    /// TECHNICAL.final §7.2): the `workspaces` row exactly as given —
+    /// `deleted_at` included, the manifest's routing location only for a
+    /// live row — and, when this device holds no root unit for it yet,
+    /// the unit that seeds its placement, in one `IMMEDIATE` transaction.
+    /// `unit` is `None` when the root already holds the Workspace's unit and
+    /// the row is the projection of that unit's placement. A row already
+    /// present refuses with `WorkspaceExists`.
+    fn publish_replica(
+        &mut self,
+        workspace: &Workspace,
+        manifest: DocumentId,
+        scope: UserScopeId,
+        unit: Option<&RootCatalogUnitCommit>,
+    ) -> Result<()>;
     /// Publish lifecycle projection and its prepared replacement atomically.
     /// Delete also removes routing; move/archive preserve existing routing.
     fn publish_removal(
@@ -625,9 +647,10 @@ pub trait Catalog {
     /// its scope — the retirement job runs first.
     fn purge_workspace(&mut self, id: WorkspaceId) -> Result<()>;
     /// The legacy lifecycle projection write, for a Workspace that has **no
-    /// root unit** — a replica a peer provisioned (M2) and the manifest
-    /// fallback for it. Every Workspace with a unit is trashed and restored
-    /// through [`Self::publish_root`]; see `Store::delete_workspace`.
+    /// root unit** — the manifest fallback for a row no creation or
+    /// provisioning path produces any more. Every Workspace with a unit is
+    /// trashed and restored through [`Self::publish_root`]; see
+    /// `Store::delete_workspace`.
     fn set_workspace_deleted(
         &mut self,
         id: WorkspaceId,

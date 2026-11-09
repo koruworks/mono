@@ -15,6 +15,7 @@ use crate::hydration::{BLOB_CHUNK_BYTES, MAX_BLOB_HYDRATION_BYTES};
 
 mod profile_units;
 mod redial;
+mod root_catalog;
 use profile_units::profile_identity;
 
 struct EchoEnrollmentHandler {
@@ -345,6 +346,18 @@ struct InventoryStore {
     /// This device's transport mode, as §6's second point reads it. Armed
     /// rather than asserted: a closed Workspace is a state, not a failure.
     peer_blobs_closed: AtomicBool,
+    /// Protocol 6: the root units this device frames (address → version
+    /// bytes, as `unit_versions` does for Profile units), its personal v2
+    /// units, and the switches a test arms.
+    root_units: Mutex<BTreeMap<protocol::CatalogUnitRef, Vec<u8>>>,
+    personal_units: Mutex<BTreeMap<WorkspaceId, Vec<u8>>>,
+    /// Whether a root placement is known here: provisioning for the same
+    /// person's device is pending until a Workspace unit has been applied.
+    placement_known: AtomicBool,
+    /// The export boundary holds every root unit back.
+    root_held: AtomicBool,
+    /// This device's mode closes the peer path for the Workspace.
+    peer_subject_blocked: AtomicBool,
 }
 
 impl InventoryStore {
@@ -364,6 +377,11 @@ impl InventoryStore {
             workspace_ready: AtomicBool::new(true),
             stall_units: AtomicBool::new(false),
             peer_blobs_closed: AtomicBool::new(false),
+            root_units: Mutex::new(BTreeMap::new()),
+            personal_units: Mutex::new(BTreeMap::new()),
+            placement_known: AtomicBool::new(true),
+            root_held: AtomicBool::new(false),
+            peer_subject_blocked: AtomicBool::new(false),
         }
     }
 
@@ -584,12 +602,199 @@ impl protocol::ReplicationStore for InventoryStore {
 
     fn provision_replica(
         &self,
-        _: &protocol::AuthenticatedPeer,
+        peer: &protocol::AuthenticatedPeer,
         _: &protocol::ReplicaDescriptor,
     ) -> Result<(), protocol::StoreFailure> {
+        // The same person's device provisions under a known root placement
+        // only; a descriptor's Profile never stands in (§7.2).
+        if peer.all_data && !self.placement_known.load(Ordering::SeqCst) {
+            return Err(protocol::StoreFailure::new(protocol::PLACEMENT_PENDING));
+        }
         self.workspace_ready.store(true, Ordering::SeqCst);
         self.unit_events.lock().unwrap().push("workspace");
         Ok(())
+    }
+
+    fn admit_peer_subject(&self, _: WorkspaceId) -> Result<(), protocol::StoreFailure> {
+        if self.peer_subject_blocked.load(Ordering::SeqCst) {
+            return Err(protocol::StoreFailure::new(
+                protocol::MODE_REFUSES_TRANSPORT,
+            ));
+        }
+        Ok(())
+    }
+
+    // ---- protocol 6
+
+    fn bind_root_scope(
+        &self,
+        peer: &protocol::AuthenticatedPeer,
+    ) -> Result<bool, protocol::StoreFailure> {
+        Ok(peer.binds_root_scope())
+    }
+
+    fn publish_pending_root_overlays(&self) -> Result<usize, protocol::StoreFailure> {
+        self.unit_events.lock().unwrap().push("publication_job");
+        Ok(0)
+    }
+
+    fn root_catalog(
+        &self,
+        peer: &protocol::AuthenticatedPeer,
+    ) -> Result<protocol::RootCatalogInventory, protocol::StoreFailure> {
+        peer.with_catalog_scope(|| {
+            let units = self
+                .root_units
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(unit, _)| match unit {
+                    protocol::CatalogUnitRef::Profile { profile } => {
+                        peer.all_data || peer.authorized_profiles.contains(profile)
+                    }
+                    protocol::CatalogUnitRef::Workspace { workspace } => {
+                        peer.all_data
+                            || peer.authorized_workspaces.contains(workspace)
+                            || peer
+                                .authorized_profiles
+                                .contains(&ProfileId::from_uuid(workspace.as_uuid()))
+                    }
+                })
+                .map(|(unit, version)| protocol::RootUnitState {
+                    unit: *unit,
+                    version: version.clone(),
+                })
+                .collect();
+            let personal = if peer.binds_root_scope() {
+                self.personal_units
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .map(|(workspace, version)| protocol::PersonalUnitState {
+                        workspace: *workspace,
+                        version: version.clone(),
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            Ok(protocol::RootCatalogInventory { units, personal })
+        })
+    }
+
+    fn root_unit_version(
+        &self,
+        peer: &protocol::AuthenticatedPeer,
+        unit: protocol::CatalogUnitRef,
+    ) -> Result<Vec<u8>, protocol::StoreFailure> {
+        peer.with_root_scope(|| {
+            self.root_units
+                .lock()
+                .unwrap()
+                .get(&unit)
+                .cloned()
+                .ok_or_else(|| protocol::StoreFailure::new(protocol::ROOT_UNIT_NOT_FOUND))
+        })
+    }
+
+    fn root_unit_updates_since(
+        &self,
+        peer: &protocol::AuthenticatedPeer,
+        unit: protocol::CatalogUnitRef,
+        _: &loro::VersionVector,
+    ) -> Result<Vec<u8>, protocol::StoreFailure> {
+        peer.with_catalog_scope(|| {
+            if self.root_held.load(Ordering::SeqCst) {
+                return Err(protocol::StoreFailure::new(protocol::ROOT_UNIT_HELD));
+            }
+            self.root_units
+                .lock()
+                .unwrap()
+                .get(&unit)
+                .cloned()
+                .ok_or_else(|| protocol::StoreFailure::new(protocol::ROOT_UNIT_NOT_FOUND))
+        })
+    }
+
+    fn apply_remote_root_updates(
+        &self,
+        peer: &protocol::AuthenticatedPeer,
+        unit: protocol::CatalogUnitRef,
+        updates: Vec<Vec<u8>>,
+        advertised: Option<&loro::VersionVector>,
+    ) -> Result<protocol::RootJoin, protocol::StoreFailure> {
+        peer.with_root_scope(|| {
+            self.unit_events.lock().unwrap().push(match unit {
+                protocol::CatalogUnitRef::Profile { .. } => "root_profile",
+                protocol::CatalogUnitRef::Workspace { .. } => {
+                    self.placement_known.store(true, Ordering::SeqCst);
+                    "root_workspace"
+                }
+            });
+            let frontier = updates[0].clone();
+            self.root_units
+                .lock()
+                .unwrap()
+                .insert(unit, frontier.clone());
+            let reconciled = advertised.is_none_or(|advertised| {
+                loro::VersionVector::decode(&frontier)
+                    .is_ok_and(|frontier| frontier.includes_vv(advertised))
+            });
+            Ok(protocol::RootJoin::Applied {
+                frontier,
+                reconciled,
+            })
+        })
+    }
+
+    fn personal_version(
+        &self,
+        peer: &protocol::AuthenticatedPeer,
+        workspace: WorkspaceId,
+    ) -> Result<Vec<u8>, protocol::StoreFailure> {
+        peer.with_root_scope(|| {
+            self.personal_units
+                .lock()
+                .unwrap()
+                .get(&workspace)
+                .cloned()
+                .ok_or_else(|| protocol::StoreFailure::new(protocol::ROOT_UNIT_NOT_FOUND))
+        })
+    }
+
+    fn personal_updates_since(
+        &self,
+        peer: &protocol::AuthenticatedPeer,
+        workspace: WorkspaceId,
+        _: &loro::VersionVector,
+    ) -> Result<Vec<u8>, protocol::StoreFailure> {
+        self.personal_version(peer, workspace)
+    }
+
+    fn apply_remote_personal_updates(
+        &self,
+        peer: &protocol::AuthenticatedPeer,
+        workspace: WorkspaceId,
+        updates: Vec<Vec<u8>>,
+        _: Option<&loro::VersionVector>,
+    ) -> Result<protocol::RootJoin, protocol::StoreFailure> {
+        peer.with_root_scope(|| {
+            // Personal rows reference the Workspace row; the real Store
+            // answers `workspace_not_found` until content bootstrap.
+            if !self.workspace_ready.load(Ordering::SeqCst) {
+                return Err(protocol::StoreFailure::new("workspace_not_found"));
+            }
+            self.unit_events.lock().unwrap().push("personal_v2");
+            let frontier = updates[0].clone();
+            self.personal_units
+                .lock()
+                .unwrap()
+                .insert(workspace, frontier.clone());
+            Ok(protocol::RootJoin::Applied {
+                frontier,
+                reconciled: true,
+            })
+        })
     }
 
     fn provision_document(
@@ -2510,14 +2715,15 @@ fn a_history_write_failure_does_not_hide_the_applied_state_change() {
 #[test]
 fn catalog_change_detail_names_each_changed_category() {
     let changes = CatalogChanges {
+        root: 1,
         profiles: 1,
         workspaces: 2,
         documents: 3,
     };
-    assert_eq!(changes.total(), 6);
+    assert_eq!(changes.total(), 7);
     assert_eq!(
         changes.summary(),
-        "1 profile change, 2 workspace changes, 3 document changes"
+        "1 placement change, 1 profile change, 2 workspace changes, 3 document changes"
     );
 }
 

@@ -212,8 +212,9 @@ impl<C: Catalog, B: Backend> Store<C, B> {
     /// The root's answer to "is this Workspace in the Trash": `Some(Some(at))`
     /// while a deletion is active (`at` is the earliest active one),
     /// `Some(None)` when the unit holds none, `None` when the Workspace has
-    /// no unit yet and only the manifest/projection can answer (a replica
-    /// provisioned by a peer, M2). The seam at which an incoming manifest's
+    /// no unit and only the manifest/projection can answer (a row without
+    /// one, which no creation or provisioning path produces any more). The
+    /// seam at which an incoming manifest's
     /// `deleted_at` becomes a hint: every projection of lifecycle asks here
     /// first.
     pub(super) fn root_deleted_at(
@@ -264,9 +265,9 @@ impl<C: Catalog, B: Backend> Store<C, B> {
     // ------------------------------------------------------ the planner
 
     /// Plan one Workspace unit's write under its **current owner's**
-    /// ceiling. A unit-less Workspace (a replica, M2) gains its unit here,
-    /// placed where the projection says it is — the only evidence there is,
-    /// as on a first move.
+    /// ceiling. A unit-less Workspace gains its unit here, placed where the
+    /// projection says it is — the only evidence there is, as on a first
+    /// move.
     fn plan_workspace_write(
         &self,
         row: &Workspace,
@@ -366,7 +367,10 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         }
     }
 
-    fn workspace_documents(&mut self, workspace: WorkspaceId) -> Result<Vec<DocumentId>> {
+    pub(super) fn workspace_documents(
+        &mut self,
+        workspace: WorkspaceId,
+    ) -> Result<Vec<DocumentId>> {
         Ok(match self.open.get(&workspace) {
             Some(open) => open.repo.documents()?,
             None => self.backend.open_workspace(workspace)?.documents()?,
@@ -411,8 +415,8 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         let at = Timestamp::now();
         match self.effective_workspace_unit(id)? {
             None => {
-                // A replica with no unit (M2): the legacy projection path is
-                // the only lifecycle it has until M2 gives it a unit.
+                // A row with no unit: the legacy projection path is the only
+                // lifecycle it has until a root write gives it one.
                 if row.deleted_at.is_none() {
                     return Ok(row);
                 }
@@ -1124,7 +1128,7 @@ pub fn expires_at(record: &DeletionRecord) -> i64 {
 }
 
 /// The earliest active deletion's time, or `None` for a live unit.
-fn earliest_active_deletion(unit: &WorkspaceCatalogUnit) -> Option<Timestamp> {
+pub(super) fn earliest_active_deletion(unit: &WorkspaceCatalogUnit) -> Option<Timestamp> {
     let deletions = unit.deletions();
     unit.active_deletions()
         .into_iter()

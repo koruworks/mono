@@ -13,6 +13,7 @@ use koru_device::DeviceId;
 pub mod cloud;
 pub mod protocol;
 pub mod reconcile;
+pub mod root_exchange;
 
 pub use protocol::PEER_PROTOCOL_VERSION;
 

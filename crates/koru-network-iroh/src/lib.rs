@@ -5556,6 +5556,8 @@ fn sync_connection_is_current(
 
 #[derive(Default)]
 struct CatalogChanges {
+    /// Root catalog and personal v2 units committed this pass (protocol 6).
+    root: usize,
     profiles: usize,
     workspaces: usize,
     documents: usize,
@@ -5563,12 +5565,13 @@ struct CatalogChanges {
 
 impl CatalogChanges {
     fn total(&self) -> usize {
-        self.profiles + self.workspaces + self.documents
+        self.root + self.profiles + self.workspaces + self.documents
     }
 
     fn summary(&self) -> String {
         let mut parts = Vec::new();
         for (count, singular) in [
+            (self.root, "placement change"),
             (self.profiles, "profile change"),
             (self.workspaces, "workspace change"),
             (self.documents, "document change"),
@@ -5723,6 +5726,389 @@ async fn pull_profile_units<C: RequestTransport>(
     }
 }
 
+/// **The root exchange** (root-catalog TECHNICAL.final §7.2): the eligible
+/// root inventory is compared by digest, and every unit the peer holds ahead
+/// of this device's receipt is pulled from the receipt's frontier, staged,
+/// validated and locally committed with its projections. Answers the
+/// personal v2 units the peer advertised, to be pulled after content
+/// bootstrap. Only ever called for a scope-bound peer; a refusal or an
+/// invalid row ends the root part of the pass and schedules a retry.
+async fn pull_root_catalog<C: RequestTransport>(
+    connection: &C,
+    peer: &protocol::AuthenticatedPeer,
+    store: &dyn protocol::ReplicationStore,
+    status: &Arc<RwLock<NetworkStatus>>,
+    result: &mut SyncPassResult,
+    changes: &mut CatalogChanges,
+    pass_id: u64,
+) -> Vec<protocol::PersonalUnitState> {
+    record_sync(
+        status,
+        peer.device_id,
+        "root_catalog_request",
+        None,
+        None,
+        None,
+    );
+    let local = store.root_catalog(peer);
+    let local_digest = local.as_ref().ok().and_then(|inventory| {
+        protocol::root_catalog_digest(peer, &inventory.units, &inventory.personal)
+    });
+    let response = tokio::time::timeout(
+        SYNC_REQUEST_TIMEOUT,
+        request_frame(connection, &protocol::PeerFrame::RootCatalogRequest),
+    )
+    .await;
+    let (digest, mut units, personal) = match response {
+        Ok(Ok(protocol::PeerFrame::RootCatalog {
+            digest,
+            units,
+            personal,
+        })) => (digest, units, personal),
+        error => {
+            let error_code = match &error {
+                Ok(Ok(protocol::PeerFrame::Error { code })) => code.clone(),
+                Ok(Err(error)) => error.stage.to_owned(),
+                Err(_) => "timeout".to_owned(),
+                Ok(Ok(_)) => "unexpected_root_catalog_frame".to_owned(),
+            };
+            record_sync(
+                status,
+                peer.device_id,
+                "root_catalog_failed",
+                None,
+                None,
+                Some(&error_code),
+            );
+            tracing::warn!(
+                peer = %peer.device_id.to_storage(),
+                peer_name = %peer.label(),
+                connection_id = connection.stable_id(),
+                pass_id,
+                outcome = %timed_frame_result_summary(&error),
+                "sync request failed request=root_catalog"
+            );
+            result.retry_all = true;
+            result.remember_error(error_code, None);
+            return Vec::new();
+        }
+    };
+    let distinct_units = units.iter().map(|unit| unit.unit).collect::<BTreeSet<_>>();
+    let distinct_personal = personal
+        .iter()
+        .map(|unit| unit.workspace)
+        .collect::<BTreeSet<_>>();
+    if units.iter().any(|unit| unit.validate().is_err())
+        || personal.iter().any(|unit| unit.validate().is_err())
+        || distinct_units.len() != units.len()
+        || distinct_personal.len() != personal.len()
+        || (!personal.is_empty() && !peer.binds_root_scope())
+    {
+        result.retry_all = true;
+        result.remember_error("unauthorized_root_row", None);
+        tracing::warn!(
+            peer = %peer.device_id.to_storage(),
+            peer_name = %peer.label(),
+            connection_id = connection.stable_id(),
+            pass_id,
+            "sync root catalog refused: malformed or out-of-scope rows"
+        );
+        return Vec::new();
+    }
+    let digests_equal = local_digest.as_deref() == Some(digest.as_slice())
+        && protocol::root_catalog_digest(peer, &units, &personal).as_deref()
+            == Some(digest.as_slice());
+    tracing::info!(
+        peer = %peer.device_id.to_storage(),
+        peer_name = %peer.label(),
+        action = "root_catalog_recv",
+        units = units.len(),
+        personal = personal.len(),
+        equal = digests_equal,
+        "root_sync"
+    );
+    record_sync(
+        status,
+        peer.device_id,
+        "root_catalog_received",
+        None,
+        Some(units.len()),
+        None,
+    );
+    if local.is_ok() && digests_equal {
+        record_sync(
+            status,
+            peer.device_id,
+            "root_catalog_equal",
+            None,
+            None,
+            None,
+        );
+        return Vec::new();
+    }
+    // Profile units before Workspace units: the wire tag order puts them
+    // there, so a Workspace's placement meets a Profile this device knows.
+    units.sort_by_key(|unit| protocol::root_unit_sort_key(unit.unit));
+    for remote in units {
+        pull_root_unit(connection, peer, store, status, remote, result, changes).await;
+    }
+    personal
+}
+
+async fn pull_root_unit<C: RequestTransport>(
+    connection: &C,
+    peer: &protocol::AuthenticatedPeer,
+    store: &dyn protocol::ReplicationStore,
+    status: &Arc<RwLock<NetworkStatus>>,
+    remote: protocol::RootUnitState,
+    result: &mut SyncPassResult,
+    changes: &mut CatalogChanges,
+) {
+    let unit = remote.unit;
+    let Ok(remote_version) = loro::VersionVector::decode(&remote.version) else {
+        result.retry_all = true;
+        result.remember_error("invalid_root_version", unit.workspace());
+        return;
+    };
+    let (local, was_missing) = match store.root_unit_version(peer, unit) {
+        Ok(version) => (version, false),
+        Err(error) if error.code == protocol::ROOT_UNIT_NOT_FOUND => {
+            (loro::VersionVector::new().encode(), true)
+        }
+        Err(error) if error.code == protocol::MODE_REFUSES_TRANSPORT => {
+            // A known Local-only subject admits no inbound metadata (§4.4).
+            // A state, not a failure.
+            record_sync(
+                status,
+                peer.device_id,
+                "root_unit_blocked",
+                unit.workspace(),
+                None,
+                Some(error.code),
+            );
+            return;
+        }
+        Err(error) => {
+            result.retry_all = true;
+            result.remember_error(error.code, unit.workspace());
+            return;
+        }
+    };
+    let local_version = loro::VersionVector::decode(&local).unwrap_or_default();
+    if !was_missing && local_version.includes_vv(&remote_version) {
+        return;
+    }
+    let response = tokio::time::timeout(
+        SYNC_REQUEST_TIMEOUT,
+        request_frame(
+            connection,
+            &protocol::PeerFrame::RootUnitRequest {
+                unit,
+                version: local,
+            },
+        ),
+    )
+    .await;
+    let error_code = match response {
+        Ok(Ok(protocol::PeerFrame::RootUnitUpdates {
+            unit: received,
+            updates,
+        })) if received == unit => {
+            let update_count = updates.len();
+            match store.apply_remote_root_updates(peer, unit, updates, Some(&remote_version)) {
+                Ok(protocol::RootJoin::Applied { reconciled, .. }) => {
+                    changes.root += 1;
+                    record_state_change(
+                        status,
+                        Some(store),
+                        peer.device_id,
+                        if was_missing {
+                            "root_unit_received"
+                        } else {
+                            "root_unit_updated"
+                        },
+                        unit.profile(),
+                        unit.workspace(),
+                        None,
+                        None,
+                        None,
+                        None,
+                        Some(update_count),
+                    );
+                    if !reconciled {
+                        // Locally committed short of what the peer advertised:
+                        // ask again from the new frontier next pass.
+                        result.retry_all = true;
+                        result.remember_error("root_unit_behind", unit.workspace());
+                    }
+                    return;
+                }
+                Ok(protocol::RootJoin::Pending { .. }) => {
+                    tracing::info!(
+                        peer = %peer.device_id.to_storage(),
+                        peer_name = %peer.label(),
+                        unit = ?unit,
+                        "root_sync direction=peer_to_local phase=staged pending=missing_ancestors"
+                    );
+                    record_sync(
+                        status,
+                        peer.device_id,
+                        "root_unit_pending",
+                        unit.workspace(),
+                        Some(update_count),
+                        Some("root_unit_pending"),
+                    );
+                    "root_unit_pending".to_owned()
+                }
+                Err(error) => {
+                    if error.code == protocol::POLICY_CHANGED {
+                        tracing::info!(
+                            peer = %peer.device_id.to_storage(),
+                            peer_name = %peer.label(),
+                            unit = ?unit,
+                            "root_sync direction=peer_to_local action=candidate_discarded reason=policy_changed"
+                        );
+                    }
+                    error.code.to_owned()
+                }
+            }
+        }
+        Ok(Ok(protocol::PeerFrame::Error { code })) if code == protocol::ROOT_UNIT_HELD => {
+            // The peer holds this unit back for this recipient. Nothing to
+            // retry from here; its policy decides when it lifts.
+            record_sync(
+                status,
+                peer.device_id,
+                "root_unit_held",
+                unit.workspace(),
+                None,
+                Some(&code),
+            );
+            return;
+        }
+        Ok(Ok(protocol::PeerFrame::Error { code })) => code,
+        Ok(Err(error)) => error.stage.to_owned(),
+        Err(_) => "timeout".to_owned(),
+        Ok(Ok(_)) => "unexpected_root_unit_frame".to_owned(),
+    };
+    result.retry_all = true;
+    result.remember_error(error_code, unit.workspace());
+}
+
+/// Personal v2 units (§5.1), pulled after content bootstrap because their
+/// rows reference the Workspace row. Only a scope-bound peer advertises any.
+async fn pull_personal_units<C: RequestTransport>(
+    connection: &C,
+    peer: &protocol::AuthenticatedPeer,
+    store: &dyn protocol::ReplicationStore,
+    status: &Arc<RwLock<NetworkStatus>>,
+    mut units: Vec<protocol::PersonalUnitState>,
+    result: &mut SyncPassResult,
+    changes: &mut CatalogChanges,
+) {
+    units.sort_by_key(|unit| unit.workspace);
+    for remote in units {
+        let workspace = remote.workspace;
+        let Ok(remote_version) = loro::VersionVector::decode(&remote.version) else {
+            result.retry_all = true;
+            result.remember_error("invalid_root_version", Some(workspace));
+            continue;
+        };
+        let (local, was_missing) = match store.personal_version(peer, workspace) {
+            Ok(version) => (version, false),
+            Err(error) if error.code == protocol::ROOT_UNIT_NOT_FOUND => {
+                (loro::VersionVector::new().encode(), true)
+            }
+            Err(error) if error.code == protocol::MODE_REFUSES_TRANSPORT => {
+                record_sync(
+                    status,
+                    peer.device_id,
+                    "personal_unit_blocked",
+                    Some(workspace),
+                    None,
+                    Some(error.code),
+                );
+                continue;
+            }
+            Err(error) => {
+                result.retry_all = true;
+                result.remember_error(error.code, Some(workspace));
+                continue;
+            }
+        };
+        let local_version = loro::VersionVector::decode(&local).unwrap_or_default();
+        if !was_missing && local_version.includes_vv(&remote_version) {
+            continue;
+        }
+        let response = tokio::time::timeout(
+            SYNC_REQUEST_TIMEOUT,
+            request_frame(
+                connection,
+                &protocol::PeerFrame::PersonalRequest {
+                    workspace,
+                    version: local,
+                },
+            ),
+        )
+        .await;
+        let error_code = match response {
+            Ok(Ok(protocol::PeerFrame::PersonalUpdates {
+                workspace: received,
+                updates,
+            })) if received == workspace => {
+                let update_count = updates.len();
+                match store.apply_remote_personal_updates(
+                    peer,
+                    workspace,
+                    updates,
+                    Some(&remote_version),
+                ) {
+                    Ok(protocol::RootJoin::Applied { reconciled, .. }) => {
+                        changes.root += 1;
+                        record_state_change(
+                            status,
+                            Some(store),
+                            peer.device_id,
+                            "personal_updated",
+                            None,
+                            Some(workspace),
+                            None,
+                            None,
+                            None,
+                            None,
+                            Some(update_count),
+                        );
+                        if !reconciled {
+                            result.retry_all = true;
+                            result.remember_error("root_unit_behind", Some(workspace));
+                        }
+                        continue;
+                    }
+                    Ok(protocol::RootJoin::Pending { .. }) => "root_unit_pending".to_owned(),
+                    Err(error) => error.code.to_owned(),
+                }
+            }
+            Ok(Ok(protocol::PeerFrame::Error { code })) if code == protocol::ROOT_UNIT_HELD => {
+                record_sync(
+                    status,
+                    peer.device_id,
+                    "root_unit_held",
+                    Some(workspace),
+                    None,
+                    Some(&code),
+                );
+                continue;
+            }
+            Ok(Ok(protocol::PeerFrame::Error { code })) => code,
+            Ok(Err(error)) => error.stage.to_owned(),
+            Err(_) => "timeout".to_owned(),
+            Ok(Ok(_)) => "unexpected_personal_frame".to_owned(),
+        };
+        result.retry_all = true;
+        result.remember_error(error_code, Some(workspace));
+    }
+}
+
 /// Pull every room whose remote version is ahead. The peer runs the same loop,
 /// so a single authenticated connection exchanges missing changes in both
 /// directions without assigning either device a server role.
@@ -5745,12 +6131,59 @@ where
     }
     let scoped_catalog = peer.all_data || !peer.authorized_profiles.is_empty();
     let reconciles_catalog = retry_scope.is_none() && scoped_catalog;
+    // **The publication job** (root-catalog TECHNICAL.final §4.3, §4.4): a
+    // placement or lifecycle fact written while its subject could not export
+    // waits in a private overlay; every pass folds the ones whose admission
+    // now allows export into their durable unit before the inventory is
+    // framed. Failures are logged by the Store and left for the next pass.
+    if let Err(error) = store.publish_pending_root_overlays() {
+        tracing::warn!(
+            peer = %peer.device_id.to_storage(),
+            peer_name = %peer.label(),
+            error_code = error.code,
+            "root_sync action=publication_job_failed"
+        );
+    }
+    // **Root units before Workspace inventories** (§7.2): placement is known
+    // before content is provisioned, so a descriptor's Profile never has to
+    // stand in for it. Only a scope-bound relationship — the same person's
+    // device — exchanges root units; a Profile or Workspace grant is asked
+    // nothing and installs nothing.
+    let mut personal_units = Vec::new();
+    let mut catalog_changes = CatalogChanges::default();
+    if retry_scope.is_none() {
+        match store.bind_root_scope(&peer) {
+            Ok(true) => {
+                personal_units = pull_root_catalog(
+                    &connection,
+                    &peer,
+                    store.as_ref(),
+                    &status,
+                    &mut result,
+                    &mut catalog_changes,
+                    pass_id,
+                )
+                .await;
+            }
+            Ok(false) => {}
+            Err(error) => {
+                result.retry_all = true;
+                result.remember_error(error.code, None);
+                tracing::warn!(
+                    peer = %peer.device_id.to_storage(),
+                    peer_name = %peer.label(),
+                    error_code = error.code,
+                    "root_sync action=scope_binding_refused"
+                );
+                return result;
+            }
+        }
+    }
     // A Profile-scoped retry must re-establish the catalog's immutable owner
     // binding. Retrying a bare WorkspaceId would let an inventory response
     // choose a different authorized Profile after the first pass failed.
     let direct_retry_scope =
         retry_scope.filter(|_| peer.all_data || peer.authorized_profiles.is_empty());
-    let mut catalog_changes = CatalogChanges::default();
     let mut catalog_profiles_by_workspace = BTreeMap::new();
     let (profiles, workspaces): (Vec<protocol::ProfileReplicaState>, BTreeSet<_>) = if let Some(
         scope,
@@ -5927,7 +6360,7 @@ where
     };
     // Materialize Profile identity/private first; personal rows need their
     // referenced Workspace catalog row and are pulled after workspace bootstrap.
-    let (personal_units, profile_units): (Vec<_>, Vec<_>) = profiles
+    let (legacy_personal_units, profile_units): (Vec<_>, Vec<_>) = profiles
         .into_iter()
         .partition(|remote| matches!(remote.unit, protocol::ProfileUnitRef::Personal { .. }));
     pull_profile_units(
@@ -5941,6 +6374,26 @@ where
     )
     .await;
     for workspace in &workspaces {
+        // §4.4: a Workspace this device holds Local-only is not asked of a
+        // peer at all. A state, not a failure — nothing is retried for it.
+        if let Err(error) = store.admit_peer_subject(*workspace) {
+            tracing::info!(
+                peer = %peer.device_id.to_storage(),
+                peer_name = %peer.label(),
+                workspace = %workspace.to_storage(),
+                error_code = error.code,
+                "workspace_sync action=skipped reason=mode_blocks_peer_path"
+            );
+            record_sync(
+                &status,
+                peer.device_id,
+                "workspace_blocked",
+                Some(*workspace),
+                None,
+                Some(error.code),
+            );
+            continue;
+        }
         // Both sides of the exchange, in the same shape: a mismatch between
         // what we think this workspace is and what the peer serves is the
         // whole story of a workspace that will not converge.
@@ -6111,6 +6564,29 @@ where
             }
         }
         if let Err(error) = store.provision_replica(&peer, &inventory.replica) {
+            if error.code == protocol::PLACEMENT_PENDING {
+                // Not a fault: no root placement is known here yet, and the
+                // descriptor's Profile may not stand in for one (§7.2). The
+                // whole pass retries, so the root exchange runs again before
+                // this inventory is asked for.
+                result.retry_all = true;
+                result.remember_error(error.code, Some(*workspace));
+                tracing::info!(
+                    peer = %peer.device_id.to_storage(),
+                    peer_name = %peer.label(),
+                    workspace = %workspace.to_storage(),
+                    "root_sync direction=peer_to_local action=workspace_pending reason=no_root_placement"
+                );
+                record_sync(
+                    &status,
+                    peer.device_id,
+                    "workspace_pending",
+                    Some(*workspace),
+                    Some(inventory.documents.len()),
+                    Some(error.code),
+                );
+                continue;
+            }
             result.failed_workspaces.insert(*workspace);
             result.remember_error(error.code, Some(*workspace));
             tracing::warn!(
@@ -6471,6 +6947,18 @@ where
         &peer,
         store.as_ref(),
         &status,
+        legacy_personal_units,
+        &mut result,
+        &mut catalog_changes,
+    )
+    .await;
+    // Personal v2 units after content bootstrap: their rows reference the
+    // Workspace row, which provisioning above may just have created.
+    pull_personal_units(
+        &connection,
+        &peer,
+        store.as_ref(),
+        &status,
         personal_units,
         &mut result,
         &mut catalog_changes,
@@ -6744,6 +7232,12 @@ fn frame_kind(frame: &protocol::PeerFrame) -> &'static str {
         protocol::PeerFrame::Catalog { .. } => "catalog",
         protocol::PeerFrame::ProfileRequest { .. } => "profile_request",
         protocol::PeerFrame::ProfileUpdates { .. } => "profile_updates",
+        protocol::PeerFrame::RootCatalogRequest => "root_catalog_request",
+        protocol::PeerFrame::RootCatalog { .. } => "root_catalog",
+        protocol::PeerFrame::RootUnitRequest { .. } => "root_unit_request",
+        protocol::PeerFrame::RootUnitUpdates { .. } => "root_unit_updates",
+        protocol::PeerFrame::PersonalRequest { .. } => "personal_request",
+        protocol::PeerFrame::PersonalUpdates { .. } => "personal_updates",
         protocol::PeerFrame::InventoryRequest { .. } => "inventory_request",
         protocol::PeerFrame::Inventory(_) => "inventory",
         protocol::PeerFrame::CloudCompare { .. } => "cloud_compare",

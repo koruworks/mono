@@ -492,6 +492,39 @@ pub(super) fn root_catalog_overlay(
         .map_err(sql_failed)
 }
 
+pub(super) fn root_catalog_overlays(
+    connection: &Connection,
+    scope: UserScopeId,
+) -> Result<Vec<(CatalogUnitRef, RootCatalogOverlay)>> {
+    let mut statement = connection
+        .prepare(
+            "SELECT unit_kind, subject_id, base_vv, private_snapshot, writer_peer_id
+             FROM root_catalog_overlays
+             WHERE user_scope_id = ?1 ORDER BY unit_kind, subject_id",
+        )
+        .map_err(sql_failed)?;
+    let rows = statement
+        .query_map(params![scope.to_storage()], |row| {
+            let kind: String = row.get(0)?;
+            let subject: String = row.get(1)?;
+            let overlay = RootCatalogOverlay {
+                base_vv: row.get(2)?,
+                private_snapshot: row.get(3)?,
+                writer_peer_id: peer_from_i64(row.get(4)?),
+            };
+            Ok(CatalogUnitRef::parse(&kind, &subject)
+                .ok_or_else(|| {
+                    Error::new(
+                        Code::CorruptState,
+                        "root catalog overlay subject is not a canonical UUID",
+                    )
+                })
+                .map(|address| (address, overlay)))
+        })
+        .map_err(sql_failed)?;
+    collect(rows)
+}
+
 pub(super) fn commit_root_catalog_overlay(
     connection: &Connection,
     scope: UserScopeId,
