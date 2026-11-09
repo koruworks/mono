@@ -296,6 +296,51 @@ fn inactive_missing_or_offline_credential_never_blocks_active_account() {
     }
 }
 
+/// Restore's inspection presents the *stored* refresh token and the server
+/// keeps only the newest one current, so a rotation that never reached the
+/// vault is refused here. That refusal is not proof the session is gone, and
+/// restore must hand the bytes on rather than return an error: only `refresh`,
+/// which replays the rotation under a key derived from these same old bytes,
+/// can tell the two apart. The refusal is still recorded as the repair code.
+#[test]
+fn a_refused_selected_slot_is_handed_on_for_the_refresh_to_judge() {
+    let directory = Arc::new(MemoryAccountDirectory::new());
+    let vault = Arc::new(SessionCredentialStore::default());
+    let legacy = legacy();
+    let namespace = legacy.namespace();
+    directory.retire_legacy(&namespace).unwrap();
+    let mut writer =
+        CredentialPersistence::new(vault.clone(), legacy.clone(), Some(directory.clone()));
+    writer
+        .replace(
+            &credential("old"),
+            &mut PendingCredentialWrite::default(),
+            &mut inspector(),
+        )
+        .unwrap();
+    let slot = legacy
+        .for_account(&owner(1, 1).account.to_string())
+        .unwrap();
+    vault
+        .store(&slot, credential("rejected").encode().unwrap())
+        .unwrap();
+    let mut restarted = CredentialPersistence::new(vault.clone(), legacy, Some(directory));
+    let restored = restarted
+        .restore(&mut inspector())
+        .expect("a refused inspection must not end the start")
+        .expect("the refused bytes are what the refresh has to replay");
+    assert_eq!(restored.session_id, "rejected");
+    assert_eq!(
+        restarted.repair_code(),
+        Some("account_credential_rejected"),
+        "the refusal is still recorded for diagnosis"
+    );
+    assert!(
+        saved(&vault, &slot).is_some(),
+        "nothing is erased on a refusal the refresh has not judged yet"
+    );
+}
+
 #[test]
 fn restore_logs_which_stored_slot_was_refused_without_a_value() {
     let directory = Arc::new(MemoryAccountDirectory::new());
@@ -1197,12 +1242,29 @@ fn rejected_legacy_and_missing_or_rejected_ready_slot_allow_fresh_signin() {
         wait_stage(
             &control,
             &events,
-            if situation.starts_with("legacy_") {
-                koru_agent_wire::AccountStage::SignedOut
-            } else {
-                koru_agent_wire::AccountStage::Failed
+            match situation {
+                _ if situation.starts_with("legacy_") => koru_agent_wire::AccountStage::SignedOut,
+                // A refused inspection no longer ends the start. The bytes go
+                // to the scheduled retry, whose refresh is the only call that
+                // can tell a revoked session from a rotation that never
+                // reached the vault, and this fixture's refresh answers.
+                "ready_rejected" => koru_agent_wire::AccountStage::SignedIn,
+                _ => koru_agent_wire::AccountStage::Failed,
             },
         );
+        if situation == "ready_rejected" {
+            // The refusal is still recorded, as the repair code beside a
+            // signed-in stage that the host's `actionable_failure_code`
+            // deliberately does not act on. What must not happen is a
+            // `Failed`/`SignedOut` stage carrying it, which is the sign-in
+            // surface.
+            let state = control.state();
+            assert_eq!(state.stage, koru_agent_wire::AccountStage::SignedIn);
+            assert_eq!(
+                state.failure_code.as_deref(),
+                Some("account_credential_rejected")
+            );
+        }
         assert!(directory.snapshot(&namespace).unwrap().legacy_retired);
         if situation == "ready_unavailable" {
             control.enqueue(7, AccountCommand::Retry).unwrap();

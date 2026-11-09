@@ -33,7 +33,7 @@ fn retry_noise_is_suppressed_per_route_until_failure_changes_or_recovers() {
 }
 
 #[test]
-fn malformed_api_response_preserves_http_status_without_body() {
+fn a_refusal_that_is_not_an_envelope_keeps_its_status_and_never_its_body() {
     struct Response;
     impl super::super::Transport for Response {
         fn send(
@@ -49,10 +49,12 @@ fn malformed_api_response_preserves_http_status_without_body() {
     let client = super::super::AccountClient::with_transport(std::sync::Arc::new(Response));
     let result: Result<serde_json::Value, _> =
         client.execute(RouteId::GoogleWebStart, vec![], None, false, None);
-    assert_eq!(result, Err(ClientError::InvalidResponse));
+    // The error value carries the status too, not only the log line: a
+    // caller deciding whether a route exists cannot read a `tracing` field.
+    assert_eq!(result, Err(ClientError::ApiWithoutCode { status: 502 }));
     let failures = client.diagnostics.failures.lock().unwrap();
     let observed = failures.get(&RouteId::GoogleWebStart).unwrap();
     assert_eq!(observed.status, Some(502));
-    assert_eq!(observed.code, "invalid_response");
+    assert_eq!(observed.code, "api_without_code");
     assert!(!format!("{observed:?}").contains("sentinel"));
 }

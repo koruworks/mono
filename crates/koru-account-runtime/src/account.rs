@@ -3554,12 +3554,22 @@ fn map_client_error(error: ClientError) -> ServiceError {
         {
             ServiceError::terminal(koru_account_wire::ErrorCode::FRESH_AUTHENTICATION_REQUIRED)
         }
+        // A refusal the service did not word keeps the reading its status
+        // earns, now that the status survives. Only the transient statuses
+        // are listed: a codeless 401 or 403 deliberately does **not** join
+        // the `authentication_required` arm below, because a bare 401 from a
+        // proxy, a CDN or a captive portal is not the service saying the
+        // credential is dead, and reading it as one would sign a person out
+        // on somebody else's say-so.
         ClientError::Transport(_)
         | ClientError::InvalidResponse
         | ClientError::RateLimited { .. }
         | ClientError::Api {
             status: 408 | 429 | 500..=599,
             ..
+        }
+        | ClientError::ApiWithoutCode {
+            status: 408 | 429 | 500..=599,
         } => ServiceError::retryable("account_unavailable"),
         ClientError::Api {
             status: 401 | 403, ..
