@@ -8,9 +8,7 @@
 
 use super::*;
 use koru_store_core::bundle::ImportMode;
-use koru_store_core::ids::{
-    ActionId, DeletionId, DocumentId, ReminderId, RuleRevisionId, UserScopeId,
-};
+use koru_store_core::ids::{ActionId, DocumentId, ReminderId, RuleRevisionId, UserScopeId};
 use koru_store_core::model::{LineageKind, Profile};
 use koru_store_core::personal_attributes::{EntityRef, PersonalAttributeValue};
 use koru_store_core::ports::{
@@ -22,24 +20,22 @@ use koru_store_core::reminders::{
     OneTimeSchedule, ReminderRule, RuleStatus,
 };
 use koru_store_core::root_catalog::seed::{seed_workspace_unit, seeded_move_id};
-use koru_store_core::root_catalog::{
-    CatalogUnitRef, DeletionRecord, Placement, WorkspaceCatalogUnit,
-};
+use koru_store_core::root_catalog::{CatalogUnitRef, Placement, WorkspaceCatalogUnit};
 use koru_store_core::service::build_reminder_index;
 use koru_store_core::temporal::FloatingDateTime;
 use koru_store_core::transport::{
     SetTransportMode, TransportMode, TransportPath, TransportSubject,
 };
 
-struct Root {
-    store: Store<SqliteCatalog, FaultBackend>,
-    backend: FaultBackend,
-    catalog: koru_sqlite::MemoryName,
-    control: Connection,
+pub(super) struct Root {
+    pub(super) store: Store<SqliteCatalog, FaultBackend>,
+    pub(super) backend: FaultBackend,
+    pub(super) catalog: koru_sqlite::MemoryName,
+    pub(super) control: Connection,
 }
 
 impl Root {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let backend = FaultBackend::new(None, false);
         let catalog = koru_sqlite::MemoryName::fresh("root-catalog");
         let control = koru_sqlite::open_memory(&catalog).unwrap();
@@ -58,7 +54,7 @@ impl Root {
 
     /// A Store restart over the same bytes: the named memory outlives the
     /// handle, as a file would.
-    fn restart(&mut self) {
+    pub(super) fn restart(&mut self) {
         self.store = Store::open(
             SqliteCatalog::in_named_memory(&self.catalog).unwrap(),
             self.backend.clone(),
@@ -68,22 +64,22 @@ impl Root {
 
     /// A second handle on the same catalog, for the root rows the Store
     /// keeps to itself.
-    fn catalog(&self) -> SqliteCatalog {
+    pub(super) fn catalog(&self) -> SqliteCatalog {
         SqliteCatalog::in_named_memory(&self.catalog).unwrap()
     }
 
-    fn scope(&self) -> UserScopeId {
+    pub(super) fn scope(&self) -> UserScopeId {
         self.catalog().local_user_scope().unwrap()
     }
 
-    fn profile(&mut self, name: &str) -> ProfileId {
+    pub(super) fn profile(&mut self, name: &str) -> ProfileId {
         self.store
             .create_profile(name, None, None, Locale::default(), at())
             .unwrap()
             .id
     }
 
-    fn set(&mut self, subject: TransportSubject, expected: i64, mode: TransportMode) {
+    pub(super) fn set(&mut self, subject: TransportSubject, expected: i64, mode: TransportMode) {
         self.store
             .set_transport_modes(&[SetTransportMode {
                 subject,
@@ -94,7 +90,7 @@ impl Root {
     }
 
     /// A Cloud Profile, which admits export for anything placed under it.
-    fn cloud_profile(&mut self, name: &str) -> ProfileId {
+    pub(super) fn cloud_profile(&mut self, name: &str) -> ProfileId {
         let profile = self.profile(name);
         self.set(TransportSubject::Profile(profile), 1, TransportMode::Cloud);
         profile
@@ -102,7 +98,7 @@ impl Root {
 
     /// A Cloud Profile holding one Workspace whose own explicit choice is
     /// Cloud too: the shape every ceiling question starts from.
-    fn cloud_pair(&mut self) -> (ProfileId, WorkspaceId) {
+    pub(super) fn cloud_pair(&mut self) -> (ProfileId, WorkspaceId) {
         let profile = self.cloud_profile("A");
         let workspace = self.store.create_workspace(profile, "W", at()).unwrap().id;
         self.set(
@@ -113,19 +109,19 @@ impl Root {
         (profile, workspace)
     }
 
-    fn unit(&self, workspace: WorkspaceId) -> Option<RootCatalogUnitRow> {
+    pub(super) fn unit(&self, workspace: WorkspaceId) -> Option<RootCatalogUnitRow> {
         self.catalog()
             .root_catalog_unit(self.scope(), CatalogUnitRef::Workspace { workspace })
             .unwrap()
     }
 
-    fn overlay(&self, workspace: WorkspaceId) -> Option<RootCatalogOverlay> {
+    pub(super) fn overlay(&self, workspace: WorkspaceId) -> Option<RootCatalogOverlay> {
         self.catalog()
             .root_catalog_overlay(self.scope(), CatalogUnitRef::Workspace { workspace })
             .unwrap()
     }
 
-    fn durable_placement(&self, workspace: WorkspaceId) -> Option<Placement> {
+    pub(super) fn durable_placement(&self, workspace: WorkspaceId) -> Option<Placement> {
         self.unit(workspace).and_then(|row| {
             WorkspaceCatalogUnit::from_snapshot(&row.snapshot, workspace, 1)
                 .unwrap()
@@ -133,7 +129,7 @@ impl Root {
         })
     }
 
-    fn fail_on(&self, sql: &str) {
+    pub(super) fn fail_on(&self, sql: &str) {
         self.control
             .execute_batch(&format!(
                 "CREATE TRIGGER fail {sql} BEGIN SELECT RAISE(ABORT, 'injected fault'); END;"
@@ -141,11 +137,11 @@ impl Root {
             .unwrap();
     }
 
-    fn recover(&self) {
+    pub(super) fn recover(&self) {
         self.control.execute_batch("DROP TRIGGER fail;").unwrap();
     }
 
-    fn count(&self, sql: &str) -> i64 {
+    pub(super) fn count(&self, sql: &str) -> i64 {
         self.control.query_row(sql, [], |row| row.get(0)).unwrap()
     }
 }
@@ -156,7 +152,7 @@ fn text(value: &str) -> PersonalAttributeValue {
     }
 }
 
-fn reminder_in(workspace: WorkspaceId) -> (EntityRef, ReminderRule) {
+pub(super) fn reminder_in(workspace: WorkspaceId) -> (EntityRef, ReminderRule) {
     let entity = EntityRef::new(
         "node",
         workspace,
@@ -709,24 +705,13 @@ fn a_restore_meets_root_deletion_evidence_but_a_duplicate_mints_a_new_unit() {
     f.store.move_workspace(w, a2).unwrap();
     let bundle = f.store.export_workspace(w, at()).unwrap();
 
-    // A deletion fact on the root unit, as Plan 1.3's lifecycle writer will
-    // record it, then the retention purge removes every content row.
-    let row = f.unit(w).unwrap();
-    let unit = WorkspaceCatalogUnit::from_snapshot(&row.snapshot, w, f.store.peer_id()).unwrap();
-    unit.record_deletion(DeletionId::new(), &DeletionRecord::new(at().millis(), None))
-        .unwrap();
-    f.catalog()
-        .commit_root_catalog_units(
-            f.scope(),
-            &[RootCatalogUnitCommit {
-                unit: CatalogUnitRef::Workspace { workspace: w },
-                snapshot: unit.snapshot().unwrap(),
-                expected_revision: Some(row.revision),
-            }],
-        )
-        .unwrap();
+    // The lifecycle writer records the deletion fact on the root unit (Plan
+    // 1.3), then the retention purge removes every content row.
     f.store.delete_workspace(w, at()).unwrap();
-    assert_eq!(f.store.purge_deleted(at()).unwrap(), 1);
+    let deleted = WorkspaceCatalogUnit::from_snapshot(&f.unit(w).unwrap().snapshot, w, 1).unwrap();
+    assert_eq!(deleted.active_deletions().len(), 1);
+    let expiry = Timestamp::from_millis(at().millis() + koru_store_core::TRASH_RETENTION_MS);
+    assert_eq!(f.store.purge_deleted(expiry).unwrap().purged, vec![w]);
     assert!(
         f.store.workspace_including_deleted(w).is_err(),
         "the row is gone"

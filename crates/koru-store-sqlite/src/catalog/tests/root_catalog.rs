@@ -386,9 +386,19 @@ fn a_twelve_upgrade_seeds_units_merges_personal_histories_and_drops_the_legacy_t
         text("kept")
     );
     assert_eq!(c.workspace_personal_units(scope).unwrap().len(), 2);
-    assert!(c.workspace_has_personal_units(live.id).unwrap());
-    assert!(c.workspace_has_personal_units(orphaned.id).unwrap());
-    assert!(!c.workspace_has_personal_units(trashed.id).unwrap());
+    assert!(c.workspace_personal_unit(scope, live.id).unwrap().is_some());
+    assert!(
+        c.workspace_personal_unit(scope, orphaned.id)
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        c.workspace_personal_unit(scope, trashed.id)
+            .unwrap()
+            .is_none()
+    );
+    // This scope's own rows are no purge hold: the retirement job is theirs.
+    assert_eq!(c.personal_unit_hold(scope, live.id).unwrap(), None);
     // The v1 address answers absence, not an error.
     assert_eq!(
         c.profile_unit(ProfileUnitRef::Personal {
@@ -564,9 +574,39 @@ fn two_scopes_never_see_each_others_rows() {
             .unwrap()
             .is_none()
     );
-    // One scope's rows are a different user's rows: the Workspace is still
-    // in use by both, and neither can be purged around the other.
-    assert!(c.workspace_has_personal_units(workspace).unwrap());
+    // One scope's rows are a different user's rows: each scope's purge may
+    // retire only its own row, and the other's is a hold it reports rather
+    // than deletes around. With both rows present, each side sees the other.
+    assert_eq!(
+        c.personal_unit_hold(mine, workspace).unwrap(),
+        Some(PurgeHold::ForeignScope)
+    );
+    assert_eq!(
+        c.personal_unit_hold(theirs, workspace).unwrap(),
+        Some(PurgeHold::ForeignScope)
+    );
+    // Retiring mine touches exactly mine; theirs still holds.
+    assert!(c.retire_workspace_personal_unit(mine, workspace).unwrap());
+    assert!(
+        c.workspace_personal_unit(mine, workspace)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        c.workspace_personal_unit(theirs, workspace)
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(
+        c.personal_unit_hold(mine, workspace).unwrap(),
+        Some(PurgeHold::ForeignScope)
+    );
+    assert_eq!(c.personal_unit_hold(theirs, workspace).unwrap(), None);
+    assert_eq!(
+        c.purge_workspace(workspace).unwrap_err().code,
+        Code::WorkspaceInUse,
+        "the RESTRICT guard stands while any scope's row remains"
+    );
 }
 
 #[test]
@@ -840,8 +880,16 @@ fn a_retained_personal_v2_row_still_blocks_workspace_purge_and_forget() {
     let attempt = super::begin_removal(&mut c, profile.id);
     c.remove_profile_local(profile.id, Some(attempt), at())
         .unwrap();
-    assert!(c.workspace_has_personal_units(workspace).unwrap());
-    assert!(!c.workspace_has_personal_units(WorkspaceId::new()).unwrap());
+    assert!(
+        c.workspace_personal_unit(scope, workspace)
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        c.workspace_personal_unit(scope, WorkspaceId::new())
+            .unwrap()
+            .is_none()
+    );
     let retained = c.workspace_personal_unit(scope, workspace).unwrap();
     // The §5.3 guard: RESTRICT until Plan 1.3's retirement job.
     assert_eq!(
@@ -902,7 +950,8 @@ fn empty_or_unknown_workspace_personal_rows_are_refused() {
             .unwrap()
             .is_none()
     );
-    assert!(!c.workspace_has_personal_units(workspace).unwrap());
+    assert_eq!(c.personal_unit_hold(scope, workspace).unwrap(), None);
+    assert!(!c.retire_workspace_personal_unit(scope, workspace).unwrap());
     // A large writer id round-trips through the i64 column with its bits.
     c.commit_workspace_personal_unit(scope, workspace, b"snapshot", u64::MAX - 1)
         .unwrap();

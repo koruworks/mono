@@ -184,6 +184,14 @@ id_type!(
     RestoreId,
     "restore"
 );
+id_type!(
+    /// One Profile-deletion operation: the opaque `batch_id` every deletion
+    /// fact it cascaded carries, and the key of its local application job
+    /// (`docs/features/root-catalog/TECHNICAL.final.md` §4.2, §6.1). Never a
+    /// Profile or Workspace id. Stored in the unit as a bare UUID.
+    BatchId,
+    "batch"
+);
 
 /// Reminder identity is new storage, so it starts with the repository's full
 /// canonical contract: version 4 and lowercase hyphenated spelling on read as

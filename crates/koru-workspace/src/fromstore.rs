@@ -540,6 +540,10 @@ fn open_from_store_with_policy(
                 | koru_store_core::service::EnsuredWorkspace::Created { workspace } => {
                     Some(workspace)
                 }
+                // An empty Profile is a valid state (root-catalog Plan 1.3):
+                // nothing is created here, and the host's waiting pane shows
+                // the explicit create path (the UI half of Plan 1.3).
+                koru_store_core::service::EnsuredWorkspace::Empty => None,
                 _ => None,
             }
         }

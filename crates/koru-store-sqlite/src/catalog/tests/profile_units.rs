@@ -268,8 +268,9 @@ fn profile_addressed_units_stay_distinct_and_the_v1_personal_address_is_honest()
     );
     assert!(c.profile_reminder_due(profile.id).unwrap().is_empty());
     assert!(
-        !c.workspace_has_personal_units(unit.workspace().unwrap())
+        c.workspace_personal_unit(c.local_user_scope().unwrap(), unit.workspace().unwrap())
             .unwrap()
+            .is_none()
     );
     assert_eq!(
         c.commit_profile_unit(
@@ -450,9 +451,12 @@ fn failed_private_commit_keeps_live_cache_and_restart_on_the_committed_lineage()
     control
         .execute_batch("DROP TRIGGER reject_identity;")
         .unwrap();
+    // The trashed row was written by the legacy projection alone and has no
+    // root unit: the purge is driven by unit facts (Plan 1.3), so it finds
+    // no candidate, touches no backend bytes and retires no personal row.
     assert_eq!(
-        store.purge_deleted(at()).unwrap_err().code,
-        Code::WorkspaceInUse
+        store.purge_deleted(at()).unwrap(),
+        koru_store_core::service::PurgeOutcome::default()
     );
     drop(store);
     let mut reopened = Store::open(

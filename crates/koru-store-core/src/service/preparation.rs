@@ -96,6 +96,23 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             request.workspace.color.as_deref(),
             at,
         )?;
+        // Both root units travel in the publication (Plan 1.3): the Profile's
+        // and the first Workspace's, placed under it.
+        let units = match (|| -> Result<_> {
+            Ok((
+                self.catalog.local_user_scope()?,
+                [
+                    self.fresh_profile_unit(profile.id)?,
+                    self.fresh_workspace_unit(&prepared.workspace)?,
+                ],
+            ))
+        })() {
+            Ok(units) => units,
+            Err(error) => {
+                self.discard_prepared(prepared);
+                return Err(error);
+            }
+        };
         if let Err(error) = self.catalog.publish_profile_with_workspace(
             &profile,
             &identity_bytes,
@@ -103,6 +120,8 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             (&profile_origin_key(profile.id), ORIGIN_CREATED_HERE),
             &prepared.workspace,
             prepared.open.manifest_id,
+            units.0,
+            &units.1,
         ) {
             self.discard_prepared(prepared);
             return Err(error);

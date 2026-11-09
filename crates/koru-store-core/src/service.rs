@@ -74,9 +74,15 @@ mod pins;
 mod preparation;
 mod removal;
 mod replacement;
+mod root_lifecycle;
 mod root_move;
 pub use pins::PinnedWorkspace;
 pub use replacement::{ListingState, MovedWorkspace, RemovedWorkspace, Replacement};
+pub use root_lifecycle::{
+    BatchPhase, DeletedProfile, K_ROOT_CATALOG_BATCH_PREFIX, ProfileDeletionBatch,
+    ProfileDeletionJob, ProfileDeletionPreview, ProfileRestoreOutcome, PurgeOutcome,
+    UnassignedReason, UnassignedWorkspace, batch_job_key, expires_at,
+};
 mod profile_projection;
 pub use preparation::{CreateProfileWithWorkspace, CreatedProfile, FirstWorkspace};
 mod profile_units;
@@ -516,9 +522,11 @@ pub struct DocumentReport {
 }
 
 /// How long a soft-deleted Workspace stays in the Trash before
-/// [`Store::purge_deleted`] removes it — 30 days. A Profile removed from
-/// this installation longer ago than this is past recovering its
-/// Workspaces, so its removal is final for what is kept beside it too
+/// [`Store::purge_deleted`] removes it — 30 days, recorded per deletion
+/// fact as `DeletionRecord::retention_ms` (root-catalog TECHNICAL.final
+/// §3.8, §6.4; no settings control). A Profile removed from this
+/// installation longer ago than this is past recovering its Workspaces, so
+/// its removal is final for what is kept beside it too
 /// ([`Store::profiles_removed_before`]).
 pub const TRASH_RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1_000;
 
@@ -810,17 +818,22 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         let private = PrivateManifest::create(profile.id)?;
         manifest.set_peer_id(self.peer_id)?;
         private.set_peer_id(self.peer_id)?;
-        // Record the origin before authoring the bytes. This is the one path
-        // on which a person actually creates a Profile here, and therefore the
-        // only place the marker is written from knowledge rather than
-        // assumption. `provision_account_profile` deliberately does not write
-        // it: being told a Profile exists is receipt, not origin.
-        self.catalog
-            .set_state(&profile_origin_key(profile.id), ORIGIN_CREATED_HERE)?;
-        self.catalog.initialize_profile_units(
+        // The origin marker travels in the same transaction as the bytes.
+        // This is the one path on which a person actually creates a Profile
+        // here (with `create_profile_with_workspace`), and therefore the only
+        // place the marker is written from knowledge rather than assumption.
+        // `provision_account_profile` deliberately does not write it: being
+        // told a Profile exists is receipt, not origin. The root Profile unit
+        // is published with the row (Plan 1.3).
+        let scope = self.catalog.local_user_scope()?;
+        let unit = self.fresh_profile_unit(profile.id)?;
+        self.catalog.publish_profile(
             &profile,
             &manifest.export_snapshot()?,
             &private.export_snapshot()?,
+            (&profile_origin_key(profile.id), ORIGIN_CREATED_HERE),
+            scope,
+            &unit,
         )?;
         self.open_profiles.insert(profile.id, manifest);
         self.private_profiles.insert(profile.id, private);
@@ -863,7 +876,10 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         // **No origin marker is written here**, and that omission is the whole
         // point: this device was told the Profile exists, so it is a receiver,
         // and `profile.created_at` above is this device's clock — a fact about
-        // this device, never the Profile's creation time.
+        // this device, never the Profile's creation time. No root Profile unit
+        // either: the account's own unit arrives through M3's negotiated
+        // exchange, and a lifecycle write before then mints one here
+        // (`root_lifecycle::plan_profile_write`).
         self.catalog.put_profile(&profile)?;
         Ok(profile)
     }
@@ -935,6 +951,17 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             return Err(Error::new(
                 Code::ProfileReserved,
                 "the No-profile holder cannot be restored",
+            ));
+        }
+        // `removed_at` is also the visibility projection of a *shared*
+        // deletion (root_lifecycle.rs). The device-local inverse cannot clear
+        // it: the root fact stays active and the Profile would reappear while
+        // every other device still has it in the Trash. That deletion is
+        // restored by `restore_profile`, which observes it.
+        if self.profile_is_deleted(id)? {
+            return Err(Error::new(
+                Code::ProfileRemoved,
+                "this Profile is in the Trash by a shared deletion; restore that deletion instead",
             ));
         }
         let manifest = match self
@@ -1231,14 +1258,57 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         }
         self.ensure_profile_manifest(owner)?;
         let prepared = self.prepare_workspace(owner, name, None, None, at)?;
-        if let Err(error) = self
-            .catalog
-            .publish_workspace(&prepared.workspace, prepared.open.manifest_id)
-        {
+        // The root Workspace unit is published with the row (Plan 1.3): no
+        // live Workspace lacks one except a replica a peer provisions (M2).
+        let scope = self.catalog.local_user_scope()?;
+        let unit = match self.fresh_workspace_unit(&prepared.workspace) {
+            Ok(unit) => unit,
+            Err(error) => {
+                self.discard_prepared(prepared);
+                return Err(error);
+            }
+        };
+        if let Err(error) = self.catalog.publish_workspace(
+            &prepared.workspace,
+            prepared.open.manifest_id,
+            scope,
+            &unit,
+        ) {
             self.discard_prepared(prepared);
             return Err(error);
         }
         Ok(self.adopt_prepared(prepared))
+    }
+
+    /// The root Workspace unit a creation publishes beside its row: placed
+    /// under the owner by a fresh move id, under the Store's writer, at
+    /// `None` revision (a row that must not exist yet). Pure.
+    pub(super) fn fresh_workspace_unit(
+        &self,
+        workspace: &Workspace,
+    ) -> Result<crate::ports::RootCatalogUnitCommit> {
+        let unit = crate::root_catalog::WorkspaceCatalogUnit::create(workspace.id, self.peer_id)?;
+        unit.set_placement(Some(workspace.owner), uuid::Uuid::new_v4())?;
+        Ok(crate::ports::RootCatalogUnitCommit {
+            unit: crate::root_catalog::CatalogUnitRef::Workspace {
+                workspace: workspace.id,
+            },
+            snapshot: unit.snapshot()?,
+            expected_revision: None,
+        })
+    }
+
+    /// The root Profile unit a creation publishes beside its row. Pure.
+    pub(super) fn fresh_profile_unit(
+        &self,
+        profile: ProfileId,
+    ) -> Result<crate::ports::RootCatalogUnitCommit> {
+        Ok(crate::ports::RootCatalogUnitCommit {
+            unit: crate::root_catalog::CatalogUnitRef::Profile { profile },
+            snapshot: crate::root_catalog::ProfileCatalogUnit::create(profile, self.peer_id)?
+                .snapshot()?,
+            expected_revision: None,
+        })
     }
 
     /// Provision the identity rows for a workspace being replicated for the
@@ -1330,6 +1400,12 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         // Ordering and last-opened state are local. Shared appearance and
         // lifecycle arrive in the descriptor for bootstrap, then the manifest
         // CRDT becomes authoritative as soon as its updates are imported.
+        //
+        // **No root unit is published here** (M2). A replica's placement and
+        // lifecycle belong to the root Workspace unit the owning user's
+        // devices exchange once the peer protocol carries units; until then
+        // this row is the only evidence, `Store::root_placement` reads it as
+        // pending, and the first local move or lifecycle write mints the unit.
         let mut record = workspace.clone();
         record.last_opened_at = None;
         let deleted_at = record.deleted_at.take();
@@ -1840,116 +1916,9 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             .saturating_add(1))
     }
 
-    pub fn delete_workspace(&mut self, id: WorkspaceId, at: Timestamp) -> Result<Workspace> {
-        let mut workspace = self.workspace_including_deleted(id)?;
-        self.refuse_profile_removal(workspace.owner)?;
-        if workspace.deleted_at.is_some() {
-            return Ok(workspace);
-        }
-        self.ensure_open_including_deleted(id)?;
-        if let Some(open) = self.open.get_mut(&id) {
-            let before = open.manifest.version();
-            open.manifest.set_workspace_deleted_at(Some(at))?;
-            let update = open.manifest.export_updates_since(&before)?;
-            let manifest_id = open.manifest_id;
-            commit_one(
-                open,
-                id,
-                &mut self.committed,
-                &mut self.sync_dirty,
-                manifest_id,
-                update,
-                at,
-                crate::ports::UpdateOrigin::Store,
-            )?;
-        }
-        let documents: Vec<_> = match self.open.get(&id) {
-            Some(open) => open.repo.documents()?,
-            None => self.backend.open_workspace(id)?.documents()?,
-        }
-        .into_iter()
-        .map(|document| document.id)
-        .collect();
-        self.catalog
-            .set_workspace_deleted(id, Some(at), &documents)?;
-        workspace.deleted_at = Some(at);
-        self.open.remove(&id);
-        Ok(workspace)
-    }
-
-    pub fn restore_workspace(&mut self, id: WorkspaceId) -> Result<Workspace> {
-        let mut workspace = self.workspace_including_deleted(id)?;
-        self.refuse_profile_removal(workspace.owner)?;
-        if workspace.deleted_at.is_none() {
-            return Ok(workspace);
-        }
-        // A locally removed owner can be recovered only by an explicit future
-        // Profile operation. Refuse before changing the retained manifest.
-        self.profile(workspace.owner)?;
-        self.ensure_open_including_deleted(id)?;
-        let at = Timestamp::now();
-        if let Some(open) = self.open.get_mut(&id) {
-            let before = open.manifest.version();
-            open.manifest.set_workspace_deleted_at(None)?;
-            let update = open.manifest.export_updates_since(&before)?;
-            let manifest_id = open.manifest_id;
-            commit_one(
-                open,
-                id,
-                &mut self.committed,
-                &mut self.sync_dirty,
-                manifest_id,
-                update,
-                at,
-                crate::ports::UpdateOrigin::Store,
-            )?;
-        }
-        let documents: Vec<_> = self.open[&id]
-            .repo
-            .documents()?
-            .into_iter()
-            .map(|document| document.id)
-            .collect();
-        self.catalog.set_workspace_deleted(id, None, &documents)?;
-        workspace.deleted_at = None;
-        Ok(workspace)
-    }
-
-    /// Permanently remove soft-deleted workspaces whose retention window has
-    /// elapsed. Backend bytes go first; a failed filesystem removal therefore
-    /// leaves the catalog row available for a later retry.
-    ///
-    /// The Store's start-up calls this with [`TRASH_RETENTION_MS`] ago.
-    pub fn purge_deleted(&mut self, before: Timestamp) -> Result<usize> {
-        let expired: Vec<_> = self
-            .catalog
-            .workspaces_including_deleted()?
-            .into_iter()
-            .filter(|workspace| {
-                workspace
-                    .deleted_at
-                    .is_some_and(|at| at.millis() <= before.millis())
-            })
-            .map(|workspace| workspace.id)
-            .collect();
-        for id in &expired {
-            // The catalog's RESTRICT fence must be checked before removing
-            // backend bytes. Retained personal units have their own explicit
-            // deletion boundary; expiry is not authority to destroy them.
-            if self.catalog.workspace_has_personal_units(*id)? {
-                return Err(Error::new(
-                    Code::WorkspaceInUse,
-                    "retained personal units prevent workspace purge",
-                ));
-            }
-        }
-        for id in &expired {
-            self.open.remove(id);
-            self.backend.delete_workspace(*id)?;
-            self.catalog.purge_workspace(*id)?;
-        }
-        Ok(expired.len())
-    }
+    // Trash, restore and purge are root operations since Plan 1.3:
+    // `root_lifecycle.rs` (`delete_workspace`, `restore_workspace`,
+    // `purge_deleted`, the Profile deletion batch and its restore).
 
     pub fn workspace(&self, id: WorkspaceId) -> Result<Workspace> {
         let workspace = self.workspace_including_deleted(id)?;
@@ -4839,7 +4808,25 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         if changed {
             self.catalog.put_workspace(&workspace)?;
         }
-        let deleted_projection = projection.deleted_at;
+        // **The manifest's deletion state is a hint, not an authority**
+        // (root-catalog TECHNICAL.final §6.1). For a Workspace that has a
+        // root unit the unit's deletion/restore facts decide `deleted_at`,
+        // and an incoming manifest value — however new — produces no root
+        // mutation and cannot restore or re-delete the row. Only a Workspace
+        // with no unit yet (a replica a peer provisioned, M2) is still
+        // projected from its manifest, as the only lifecycle evidence it has.
+        let deleted_projection = match self.root_deleted_at(id)? {
+            Some(root) => {
+                if let Some(hint) = projection.deleted_at
+                    && hint != root
+                {
+                    tracing::debug!(workspace = %id,
+                        "manifest deletion hint disagrees with the root fact; the root stands");
+                }
+                Some(root)
+            }
+            None => projection.deleted_at,
+        };
         let needs_deleted_change = match deleted_projection {
             Some(deleted_at) => workspace.deleted_at != deleted_at,
             // The manifest never recorded a deletion, so this workspace is

@@ -600,10 +600,14 @@ impl WorkspacesController {
                         self.removals.insert(owner, mark.clone());
                         self.links.fetch_catalog();
                     }
+                    // `Empty` refreshes too: the listing is current and holds
+                    // no live workspace, which the surface shows as the
+                    // needs-a-workspace state (UI half of Plan 1.3).
                     if matches!(
                         result,
                         Ok(koru_api_client::EnsuredWorkspace::Active { .. }
-                            | koru_api_client::EnsuredWorkspace::Created { .. })
+                            | koru_api_client::EnsuredWorkspace::Created { .. }
+                            | koru_api_client::EnsuredWorkspace::Empty)
                     ) {
                         self.links.fetch_catalog();
                     }

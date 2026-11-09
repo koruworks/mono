@@ -37,52 +37,127 @@
 //!   compare-and-set revision and nothing else is computed under it (§7.2's
 //!   discipline, applied to a local operation).
 //!
-//! What is *not* root-authoritative yet: Workspace creation, replica
-//! provisioning and the lifecycle markers (trash, restore, purge) still write
-//! the `workspaces` projection directly — Plan 1.3 and M2. A Workspace that
-//! has no unit yet is therefore read from the projection, as the only
-//! evidence there is, and gains its unit on its first move.
+//! Since Plan 1.3 the same planner ([`plan_unit_write`]) authors every
+//! lifecycle fact too — trash, restore, purge evidence and a Profile
+//! deletion's markers live in `root_lifecycle.rs` and differ from a move only
+//! in the closure they hand it — and creation publishes a unit with the row.
+//! What is *not* root-authoritative yet: a replica a peer provisions
+//! (`Store::provision_replica`, M2) still writes the `workspaces` projection
+//! directly and has no unit until M2 gives it one, so a Workspace with no
+//! unit is read from the projection, as the only evidence there is, and
+//! gains its unit on its first move or lifecycle write.
 
 use super::*;
 use crate::ports::{RootCatalogOverlay, RootCatalogUnitCommit, RootCatalogUnitRow, RootUnitWrite};
 use crate::root_catalog::{
-    CatalogUnitKind, CatalogUnitRef, Placement, Staged, WorkspaceCatalogUnit,
+    CatalogUnitKind, CatalogUnitRef, Placement, ProfileCatalogUnit, Staged, WorkspaceCatalogUnit,
 };
 use crate::transport::TransportSubject;
 use loro::VersionVector;
 
-/// Author the placement write for one move, deciding between the durable
-/// unit and the private overlay from what the catalog holds and whether the
-/// subject may export under its destination. Pure: in-memory Loro only.
+/// The two unit families as the planner sees them: something that can be
+/// opened from durable bytes or authored fresh for an address, snapshotted,
+/// and staged. Move and lifecycle share one planner
+/// ([`plan_unit_write`]), and the planner must not care whether the subject
+/// is a Workspace or a Profile — only which bytes it starts from and which
+/// writer stream it may use.
+pub(super) trait RootUnit: Sized {
+    fn open(bytes: &[u8], unit: CatalogUnitRef, writer_peer: u64) -> Result<Self>;
+    fn fresh(unit: CatalogUnitRef, writer_peer: u64) -> Result<Self>;
+    fn snapshot(&self) -> Result<Vec<u8>>;
+    fn version(&self) -> VersionVector;
+    fn updates_since(&self, from: &VersionVector) -> Result<Vec<u8>>;
+    fn staged_import(&self, frames: &[Vec<u8>]) -> Result<Staged<Self>>;
+}
+
+fn wrong_family(unit: CatalogUnitRef) -> Error {
+    Error::new(
+        Code::InvalidRequest,
+        format!(
+            "a root unit write names a {:?} address for the other family",
+            unit.kind()
+        ),
+    )
+}
+
+impl RootUnit for WorkspaceCatalogUnit {
+    fn open(bytes: &[u8], unit: CatalogUnitRef, writer_peer: u64) -> Result<Self> {
+        let workspace = unit.workspace().ok_or_else(|| wrong_family(unit))?;
+        Ok(Self::from_snapshot(bytes, workspace, writer_peer)?)
+    }
+    fn fresh(unit: CatalogUnitRef, writer_peer: u64) -> Result<Self> {
+        let workspace = unit.workspace().ok_or_else(|| wrong_family(unit))?;
+        Ok(Self::create(workspace, writer_peer)?)
+    }
+    fn snapshot(&self) -> Result<Vec<u8>> {
+        Ok(Self::snapshot(self)?)
+    }
+    fn version(&self) -> VersionVector {
+        Self::version(self)
+    }
+    fn updates_since(&self, from: &VersionVector) -> Result<Vec<u8>> {
+        Ok(Self::updates_since(self, from)?)
+    }
+    fn staged_import(&self, frames: &[Vec<u8>]) -> Result<Staged<Self>> {
+        Ok(Self::staged_import(self, frames)?)
+    }
+}
+
+impl RootUnit for ProfileCatalogUnit {
+    fn open(bytes: &[u8], unit: CatalogUnitRef, writer_peer: u64) -> Result<Self> {
+        let profile = unit.profile().ok_or_else(|| wrong_family(unit))?;
+        Ok(Self::from_snapshot(bytes, profile, writer_peer)?)
+    }
+    fn fresh(unit: CatalogUnitRef, writer_peer: u64) -> Result<Self> {
+        let profile = unit.profile().ok_or_else(|| wrong_family(unit))?;
+        Ok(Self::create(profile, writer_peer)?)
+    }
+    fn snapshot(&self) -> Result<Vec<u8>> {
+        Ok(Self::snapshot(self)?)
+    }
+    fn version(&self) -> VersionVector {
+        Self::version(self)
+    }
+    fn updates_since(&self, from: &VersionVector) -> Result<Vec<u8>> {
+        Ok(Self::updates_since(self, from)?)
+    }
+    fn staged_import(&self, frames: &[Vec<u8>]) -> Result<Staged<Self>> {
+        Ok(Self::staged_import(self, frames)?)
+    }
+}
+
+/// **The one planner every root write goes through** — a move's placement,
+/// a trash or restore fact, purge evidence, a Profile deletion's marker.
+/// `mutate` edits a copy of the unit in memory; this function decides which
+/// copy, from what the catalog holds and whether the subject may export.
+/// Pure: in-memory Loro only, nothing is written.
 ///
 /// | overlay held | export admitted | result |
 /// | --- | --- | --- |
 /// | no  | yes | durable unit (loaded or fresh) under the Store's writer |
 /// | no  | no  | a new overlay forked at the durable unit's version, fresh writer; the durable bytes are untouched |
-/// | yes | no  | the same overlay, same writer and base, with the new placement |
-/// | yes | yes | the overlay's operations staged into the durable unit, then the new placement; the overlay is cleared with the commit |
+/// | yes | no  | the same overlay, same writer and base, with the new edit |
+/// | yes | yes | the overlay's operations staged into the durable unit, then the edit; the overlay is cleared with the commit |
 ///
 /// A subject with no durable unit and no admission exists only in its
 /// overlay (`base_vv` empty) until it is enabled — §4.3's "entirely
-/// LocalOnly subject".
-pub(super) fn plan_placement_write(
-    workspace: WorkspaceId,
+/// LocalOnly subject". A lifecycle fact written to an overlay is as real as
+/// one in the durable unit: `Store::root_placement` and the lifecycle
+/// readers prefer the overlay, so the device acts on it at once and nothing
+/// about it leaves until the subject may export (§4.3, §6.1).
+pub(super) fn plan_unit_write<U: RootUnit>(
+    unit: CatalogUnitRef,
     durable: Option<&RootCatalogUnitRow>,
     overlay: Option<&RootCatalogOverlay>,
     export_admitted: bool,
     store_peer: u64,
-    placement: Placement,
+    mutate: impl Fn(&U) -> Result<()>,
 ) -> Result<RootUnitWrite> {
-    let unit = CatalogUnitRef::Workspace { workspace };
     match (overlay, export_admitted) {
         (Some(overlay), false) => {
             // The private fork keeps receiving edits until it is published.
-            let fork = WorkspaceCatalogUnit::from_snapshot(
-                &overlay.private_snapshot,
-                workspace,
-                overlay.writer_peer_id,
-            )?;
-            fork.set_placement(placement.profile, placement.move_id)?;
+            let fork = U::open(&overlay.private_snapshot, unit, overlay.writer_peer_id)?;
+            mutate(&fork)?;
             Ok(RootUnitWrite::Overlay(RootCatalogOverlay {
                 base_vv: overlay.base_vv.clone(),
                 private_snapshot: fork.snapshot()?,
@@ -96,17 +171,13 @@ pub(super) fn plan_placement_write(
             let writer = mint_peer_id();
             let (fork, base_vv) = match durable {
                 Some(row) => {
-                    let fork =
-                        WorkspaceCatalogUnit::from_snapshot(&row.snapshot, workspace, writer)?;
+                    let fork = U::open(&row.snapshot, unit, writer)?;
                     let base_vv = fork.version().encode();
                     (fork, base_vv)
                 }
-                None => (
-                    WorkspaceCatalogUnit::create(workspace, writer)?,
-                    VersionVector::new().encode(),
-                ),
+                None => (U::fresh(unit, writer)?, VersionVector::new().encode()),
             };
-            fork.set_placement(placement.profile, placement.move_id)?;
+            mutate(&fork)?;
             Ok(RootUnitWrite::Overlay(RootCatalogOverlay {
                 base_vv,
                 private_snapshot: fork.snapshot()?,
@@ -114,8 +185,8 @@ pub(super) fn plan_placement_write(
             }))
         }
         (Some(overlay), true) => {
-            let candidate = fold_overlay(workspace, durable, overlay, store_peer)?;
-            candidate.set_placement(placement.profile, placement.move_id)?;
+            let candidate = fold_overlay::<U>(unit, durable, overlay, store_peer)?;
+            mutate(&candidate)?;
             Ok(RootUnitWrite::Durable {
                 commit: RootCatalogUnitCommit {
                     unit,
@@ -127,12 +198,10 @@ pub(super) fn plan_placement_write(
         }
         (None, true) => {
             let candidate = match durable {
-                Some(row) => {
-                    WorkspaceCatalogUnit::from_snapshot(&row.snapshot, workspace, store_peer)?
-                }
-                None => WorkspaceCatalogUnit::create(workspace, store_peer)?,
+                Some(row) => U::open(&row.snapshot, unit, store_peer)?,
+                None => U::fresh(unit, store_peer)?,
             };
-            candidate.set_placement(placement.profile, placement.move_id)?;
+            mutate(&candidate)?;
             Ok(RootUnitWrite::Durable {
                 commit: RootCatalogUnitCommit {
                     unit,
@@ -145,27 +214,39 @@ pub(super) fn plan_placement_write(
     }
 }
 
+/// [`plan_unit_write`] for a move: `set_placement(profile, move_id)` on a
+/// Workspace unit.
+pub(super) fn plan_placement_write(
+    workspace: WorkspaceId,
+    durable: Option<&RootCatalogUnitRow>,
+    overlay: Option<&RootCatalogOverlay>,
+    export_admitted: bool,
+    store_peer: u64,
+    placement: Placement,
+) -> Result<RootUnitWrite> {
+    plan_unit_write::<WorkspaceCatalogUnit>(
+        CatalogUnitRef::Workspace { workspace },
+        durable,
+        overlay,
+        export_admitted,
+        store_peer,
+        |unit| Ok(unit.set_placement(placement.profile, placement.move_id)?),
+    )
+}
+
 /// Stage an overlay's operations since its `base_vv` into the durable unit
 /// and hand back the validated candidate under the Store's writer. With no
 /// durable unit the overlay's whole history *is* the candidate: the subject
 /// existed only privately until now. Pure.
-pub(super) fn fold_overlay(
-    workspace: WorkspaceId,
+pub(super) fn fold_overlay<U: RootUnit>(
+    unit: CatalogUnitRef,
     durable: Option<&RootCatalogUnitRow>,
     overlay: &RootCatalogOverlay,
     store_peer: u64,
-) -> Result<WorkspaceCatalogUnit> {
-    let private = WorkspaceCatalogUnit::from_snapshot(
-        &overlay.private_snapshot,
-        workspace,
-        overlay.writer_peer_id,
-    )?;
+) -> Result<U> {
+    let private = U::open(&overlay.private_snapshot, unit, overlay.writer_peer_id)?;
     let Some(row) = durable else {
-        return Ok(WorkspaceCatalogUnit::from_snapshot(
-            &private.snapshot()?,
-            workspace,
-            store_peer,
-        )?);
+        return U::open(&private.snapshot()?, unit, store_peer);
     };
     let base = VersionVector::decode(&overlay.base_vv).map_err(|_| {
         Error::new(
@@ -174,8 +255,8 @@ pub(super) fn fold_overlay(
         )
     })?;
     let frames = private.updates_since(&base)?;
-    let unit = WorkspaceCatalogUnit::from_snapshot(&row.snapshot, workspace, store_peer)?;
-    match unit.staged_import(&[frames])? {
+    let held = U::open(&row.snapshot, unit, store_peer)?;
+    match held.staged_import(&[frames])? {
         Staged::Applied(candidate) => Ok(candidate),
         // Unreachable for a fork of this very unit; said out loud rather than
         // adopted, because an `Ok` with pending ancestors is not applied state.
@@ -183,6 +264,27 @@ pub(super) fn fold_overlay(
             Code::CorruptState,
             "a root overlay's operations do not follow from the unit it was forked from",
         )),
+    }
+}
+
+/// The effective unit of a subject as this device reads it: the private
+/// overlay when one is held, else the durable row, else `None` (no unit
+/// yet). The one reading rule for placement and lifecycle alike; a fact in
+/// the overlay is as live here as one in the durable unit.
+pub(super) fn effective_unit<U: RootUnit>(
+    unit: CatalogUnitRef,
+    durable: Option<&RootCatalogUnitRow>,
+    overlay: Option<&RootCatalogOverlay>,
+    store_peer: u64,
+) -> Result<Option<U>> {
+    match (overlay, durable) {
+        (Some(overlay), _) => Ok(Some(U::open(
+            &overlay.private_snapshot,
+            unit,
+            overlay.writer_peer_id,
+        )?)),
+        (None, Some(row)) => Ok(Some(U::open(&row.snapshot, unit, store_peer)?)),
+        (None, None) => Ok(None),
     }
 }
 
@@ -210,23 +312,54 @@ impl<C: Catalog, B: Backend> Store<C, B> {
     /// destination. The stored register is left as it is; only the reading
     /// resolves it to `profile: None`.
     pub fn root_placement(&self, workspace: WorkspaceId) -> Result<Option<Placement>> {
-        let scope = self.catalog.local_user_scope()?;
-        let unit = CatalogUnitRef::Workspace { workspace };
-        let placement = match self.catalog.root_catalog_overlay(scope, unit)? {
-            Some(overlay) => {
-                placement_of(&overlay.private_snapshot, workspace, overlay.writer_peer_id)?
-            }
-            None => match self.catalog.root_catalog_unit(scope, unit)? {
-                Some(row) => placement_of(&row.snapshot, workspace, self.peer_id)?,
-                None => None,
-            },
-        };
-        placement
+        self.root_placement_raw(workspace)?
             .map(|placement| self.holder_reads_unassigned(placement))
             .transpose()
     }
 
-    fn profile_is_holder(&self, profile: ProfileId) -> Result<bool> {
+    /// [`Self::root_placement`] without the Holder resolution: the register
+    /// exactly as written. For the readers that must say *why* a Workspace
+    /// is unassigned (`Store::unassigned_workspaces`).
+    pub(super) fn root_placement_raw(&self, workspace: WorkspaceId) -> Result<Option<Placement>> {
+        Ok(self
+            .effective_workspace_unit(workspace)?
+            .and_then(|unit| unit.placement()))
+    }
+
+    /// The Workspace unit as this device reads it (overlay first), or `None`
+    /// for a Workspace that has no unit yet.
+    pub(super) fn effective_workspace_unit(
+        &self,
+        workspace: WorkspaceId,
+    ) -> Result<Option<WorkspaceCatalogUnit>> {
+        let scope = self.catalog.local_user_scope()?;
+        let unit = CatalogUnitRef::Workspace { workspace };
+        effective_unit(
+            unit,
+            self.catalog.root_catalog_unit(scope, unit)?.as_ref(),
+            self.catalog.root_catalog_overlay(scope, unit)?.as_ref(),
+            self.peer_id,
+        )
+    }
+
+    /// The Profile unit as this device reads it (overlay first), or `None`
+    /// for a Profile that has no unit (a Holder, or a row provisioned by an
+    /// account adapter before M3 publishes units for it).
+    pub(super) fn effective_profile_unit(
+        &self,
+        profile: ProfileId,
+    ) -> Result<Option<ProfileCatalogUnit>> {
+        let scope = self.catalog.local_user_scope()?;
+        let unit = CatalogUnitRef::Profile { profile };
+        effective_unit(
+            unit,
+            self.catalog.root_catalog_unit(scope, unit)?.as_ref(),
+            self.catalog.root_catalog_overlay(scope, unit)?.as_ref(),
+            self.peer_id,
+        )
+    }
+
+    pub(super) fn profile_is_holder(&self, profile: ProfileId) -> Result<bool> {
         Ok(self
             .catalog
             .profile_including_removed(profile)?
@@ -344,28 +477,38 @@ impl<C: Catalog, B: Backend> Store<C, B> {
     ///
     /// Called from the transport-mode commit path when a subject's admission
     /// turns from no-export to export, and folded into a move whose
-    /// destination admits export. Profile units carry no overlay in this
-    /// plan (their lifecycle writer is Plan 1.3) and answer `Ok(false)`.
+    /// destination admits export. A Profile unit gains an overlay only
+    /// through a lifecycle fact written while the Profile was Local-only
+    /// (`root_lifecycle.rs`); it is published the same way.
     pub fn publish_pending_overlay(&mut self, unit: CatalogUnitRef) -> Result<bool> {
-        let CatalogUnitRef::Workspace { workspace } = unit else {
-            return Ok(false);
-        };
         let scope = self.catalog.local_user_scope()?;
         let Some(overlay) = self.catalog.root_catalog_overlay(scope, unit)? else {
             return Ok(false);
         };
         let generation = self.policy_generation();
         if !self
-            .transport_admission(TransportSubject::Workspace(workspace))?
+            .transport_admission(transport_subject(unit))?
             .allows_peer()
         {
             return Ok(false);
         }
         let durable = self.catalog.root_catalog_unit(scope, unit)?;
-        let candidate = fold_overlay(workspace, durable.as_ref(), &overlay, self.peer_id)?;
+        let snapshot = match unit {
+            CatalogUnitRef::Workspace { .. } => fold_overlay::<WorkspaceCatalogUnit>(
+                unit,
+                durable.as_ref(),
+                &overlay,
+                self.peer_id,
+            )?
+            .snapshot()?,
+            CatalogUnitRef::Profile { .. } => {
+                fold_overlay::<ProfileCatalogUnit>(unit, durable.as_ref(), &overlay, self.peer_id)?
+                    .snapshot()?
+            }
+        };
         let commit = RootCatalogUnitCommit {
             unit,
-            snapshot: candidate.snapshot()?,
+            snapshot,
             expected_revision: durable.map(|row| row.revision),
         };
         // §4.4: a late publication rechecks the policy generation before it
@@ -383,7 +526,7 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             },
             None,
         )?;
-        tracing::info!(workspace = %workspace, "pending root overlay published");
+        tracing::info!(unit = ?unit, "pending root overlay published");
         Ok(true)
     }
 

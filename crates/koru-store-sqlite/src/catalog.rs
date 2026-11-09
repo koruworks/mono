@@ -28,9 +28,10 @@ use koru_store_core::model::{
 };
 use koru_store_core::ports::{
     Catalog, LocalProfileRemoval, LocalProfileRestoration, ProfileCatalogState, ProfileCrdtState,
-    ProfileLifecycleInventoryItem, ProfileUnitState, ReminderDue, Removal, RootCatalogOverlay,
-    RootCatalogUnitCommit, RootCatalogUnitRow, SyncDocumentDigest, SyncStateEvent,
-    WorkspacePersonalUnitState, WorkspaceReminderDue,
+    ProfileLifecycleInventoryItem, ProfileUnitState, PurgeHold, ReminderDue, Removal,
+    RootCatalogOverlay, RootCatalogUnitCommit, RootCatalogUnitRow, RootProjection, RootPublication,
+    RootUnitWrite, SyncDocumentDigest, SyncStateEvent, WorkspacePersonalUnitState,
+    WorkspaceReminderDue,
 };
 use koru_store_core::profile_units::ProfileUnitRef;
 use koru_store_core::root_catalog::{CatalogUnitKind, CatalogUnitRef};
@@ -610,8 +611,26 @@ impl Catalog for SqliteCatalog {
         Ok(units)
     }
 
-    fn workspace_has_personal_units(&self, workspace: WorkspaceId) -> Result<bool> {
-        root_catalog::workspace_has_personal_units(&self.connection, workspace)
+    fn personal_unit_hold(
+        &self,
+        scope: UserScopeId,
+        workspace: WorkspaceId,
+    ) -> Result<Option<PurgeHold>> {
+        root_catalog::personal_unit_hold(&self.connection, scope, workspace)
+    }
+
+    fn retire_workspace_personal_unit(
+        &mut self,
+        scope: UserScopeId,
+        workspace: WorkspaceId,
+    ) -> Result<bool> {
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_failed)?;
+        let retired = root_catalog::retire_workspace_personal_unit(&tx, scope, workspace)?;
+        tx.commit().map_err(sql_failed)?;
+        Ok(retired)
     }
 
     fn commit_profile_identity(&mut self, profile: &Profile, snapshot: &[u8]) -> Result<()> {
@@ -806,12 +825,29 @@ impl Catalog for SqliteCatalog {
 
     // ------------------------------------------------------------ workspaces
 
-    fn publish_workspace(&mut self, workspace: &Workspace, manifest: DocumentId) -> Result<()> {
+    fn publish_workspace(
+        &mut self,
+        workspace: &Workspace,
+        manifest: DocumentId,
+        scope: UserScopeId,
+        unit: &RootCatalogUnitCommit,
+    ) -> Result<()> {
+        if unit.unit
+            != (CatalogUnitRef::Workspace {
+                workspace: workspace.id,
+            })
+        {
+            return Err(Error::new(
+                Code::InvalidRequest,
+                "a workspace publication names another unit than its row",
+            ));
+        }
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sql_failed)?;
         publish_workspace(&tx, workspace, manifest)?;
+        root_catalog::commit_root_catalog_unit(&tx, scope, unit)?;
         tx.commit().map_err(sql_failed)
     }
 
@@ -849,58 +885,121 @@ impl Catalog for SqliteCatalog {
         tx.commit().map_err(sql_failed)
     }
 
-    fn publish_root_unit(
+    fn publish_root(
         &mut self,
         scope: UserScopeId,
-        unit: CatalogUnitRef,
-        write: koru_store_core::ports::RootUnitWrite,
-        projection: Option<&Workspace>,
+        publication: &RootPublication<'_>,
     ) -> Result<()> {
-        use koru_store_core::ports::RootUnitWrite;
-        // IMMEDIATE: the unit's compare-and-set, the overlay row and the
-        // owner projection are one write-serialized step, and a stale
-        // revision rolls every one of them back.
+        // IMMEDIATE: every unit's compare-and-set or overlay row, every
+        // projection and the operation's state rows are one write-serialized
+        // step, and a stale revision rolls all of them back.
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sql_failed)?;
-        match &write {
-            RootUnitWrite::Durable {
-                commit,
-                clear_overlay,
-            } => {
-                if commit.unit != unit {
-                    return Err(Error::new(
-                        Code::InvalidRequest,
-                        "a root unit write names a different unit than its address",
-                    ));
+        for (unit, write) in &publication.units {
+            match write {
+                RootUnitWrite::Durable {
+                    commit,
+                    clear_overlay,
+                } => {
+                    if commit.unit != *unit {
+                        return Err(Error::new(
+                            Code::InvalidRequest,
+                            "a root unit write names a different unit than its address",
+                        ));
+                    }
+                    root_catalog::commit_root_catalog_unit(&tx, scope, commit)?;
+                    if *clear_overlay {
+                        root_catalog::clear_root_catalog_overlay(&tx, scope, *unit)?;
+                    }
                 }
-                root_catalog::commit_root_catalog_unit(&tx, scope, commit)?;
-                if *clear_overlay {
-                    root_catalog::clear_root_catalog_overlay(&tx, scope, unit)?;
+                RootUnitWrite::Overlay(overlay) => {
+                    root_catalog::commit_root_catalog_overlay(&tx, scope, *unit, overlay)?;
                 }
-            }
-            RootUnitWrite::Overlay(overlay) => {
-                root_catalog::commit_root_catalog_overlay(&tx, scope, unit, overlay)?;
             }
         }
-        if let Some(workspace) = projection {
-            let exists: bool = tx
-                .query_row(
-                    "SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = ?1)",
-                    [workspace.id.to_storage()],
-                    |row| row.get(0),
-                )
-                .map_err(sql_failed)?;
-            if !exists {
-                return Err(Error::bare(Code::WorkspaceNotFound));
+        for projection in &publication.projections {
+            match projection {
+                // Owner and position, and the Workspace's
+                // `local_transport_modes` row re-keyed to the new owner with
+                // its `mode`, `explicit_choice` and `revision` exactly as they
+                // were: a stored choice above the new Profile's ceiling is
+                // reported by the effective read, never repaired here.
+                RootProjection::Placement(workspace) => {
+                    require_workspace_row(&tx, workspace.id)?;
+                    write_workspace_projection(&tx, workspace)?;
+                }
+                // `deleted_at` from the row and routing removed, as a delete
+                // always did (`publish_removal(Delete)`).
+                RootProjection::WorkspaceDeleted(workspace) => {
+                    require_workspace_row(&tx, workspace.id)?;
+                    write_workspace_projection(&tx, workspace)?;
+                    tx.execute(
+                        "DELETE FROM document_locations WHERE workspace_id = ?1",
+                        [workspace.id.to_storage()],
+                    )
+                    .map_err(sql_failed)?;
+                }
+                RootProjection::WorkspaceRestored {
+                    workspace,
+                    documents,
+                } => {
+                    require_workspace_row(&tx, workspace.id)?;
+                    write_workspace_projection(&tx, workspace)?;
+                    tx.execute(
+                        "DELETE FROM document_locations WHERE workspace_id = ?1",
+                        [workspace.id.to_storage()],
+                    )
+                    .map_err(sql_failed)?;
+                    for document in *documents {
+                        tx.execute(
+                            "INSERT OR REPLACE INTO document_locations (document_id, workspace_id) VALUES (?1, ?2)",
+                            params![document.to_storage(), workspace.id.to_storage()],
+                        )
+                        .map_err(sql_failed)?;
+                    }
+                }
+                // The row is kept; it leaves the ordinary listings through the
+                // same column a device-local removal uses. The unit says which.
+                RootProjection::ProfileHidden { profile, at } => {
+                    let changed = tx
+                        .execute(
+                            "UPDATE profiles SET removed_at = COALESCE(removed_at, ?2) WHERE id = ?1",
+                            params![profile.to_storage(), at.millis()],
+                        )
+                        .map_err(sql_failed)?;
+                    if changed == 0 {
+                        return Err(Error::bare(Code::ProfileNotFound));
+                    }
+                    profile_removal::clear(&tx, *profile)?;
+                }
+                RootProjection::ProfileVisible { profile } => {
+                    let changed = tx
+                        .execute(
+                            "UPDATE profiles SET removed_at = NULL WHERE id = ?1",
+                            params![profile.to_storage()],
+                        )
+                        .map_err(sql_failed)?;
+                    if changed == 0 {
+                        return Err(Error::bare(Code::ProfileNotFound));
+                    }
+                }
             }
-            // Owner and position, and the Workspace's `local_transport_modes`
-            // row re-keyed to the new owner with its `mode`, `explicit_choice`
-            // and `revision` exactly as they were: a stored choice above the
-            // new Profile's ceiling is reported by the effective read, never
-            // repaired here.
-            write_workspace_projection(&tx, workspace)?;
+        }
+        for (key, value) in &publication.state {
+            match value {
+                Some(value) => tx
+                    .execute(
+                        "INSERT INTO store_state (key, value) VALUES (?1, ?2)
+                         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                        params![key, value],
+                    )
+                    .map_err(sql_failed)?,
+                None => tx
+                    .execute("DELETE FROM store_state WHERE key = ?1", params![key])
+                    .map_err(sql_failed)?,
+            };
         }
         tx.commit().map_err(sql_failed)
     }
@@ -990,6 +1089,35 @@ impl Catalog for SqliteCatalog {
         tx.commit().map_err(sql_failed)
     }
 
+    fn publish_profile(
+        &mut self,
+        profile: &Profile,
+        identity: &[u8],
+        private: &[u8],
+        origin_marker: (&str, &str),
+        scope: UserScopeId,
+        unit: &RootCatalogUnitCommit,
+    ) -> Result<()> {
+        if unit.unit
+            != (CatalogUnitRef::Profile {
+                profile: profile.id,
+            })
+        {
+            return Err(Error::new(
+                Code::InvalidRequest,
+                "a profile publication names another unit than its row",
+            ));
+        }
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_failed)?;
+        publish_fresh_profile(&tx, profile, identity, private, origin_marker)?;
+        root_catalog::commit_root_catalog_unit(&tx, scope, unit)?;
+        tx.commit().map_err(sql_failed)
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn publish_profile_with_workspace(
         &mut self,
         profile: &Profile,
@@ -998,42 +1126,35 @@ impl Catalog for SqliteCatalog {
         origin_marker: (&str, &str),
         workspace: &Workspace,
         manifest: DocumentId,
+        scope: UserScopeId,
+        units: &[RootCatalogUnitCommit],
     ) -> Result<()> {
+        if workspace.owner != profile.id {
+            return Err(Error::bare(Code::InvalidRequest));
+        }
+        let expected = [
+            CatalogUnitRef::Profile {
+                profile: profile.id,
+            },
+            CatalogUnitRef::Workspace {
+                workspace: workspace.id,
+            },
+        ];
+        if units.len() != 2 || units.iter().any(|unit| !expected.contains(&unit.unit)) {
+            return Err(Error::new(
+                Code::InvalidRequest,
+                "a profile-with-workspace publication carries exactly its two root units",
+            ));
+        }
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sql_failed)?;
-        let exists: bool = tx
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM profiles WHERE id = ?1)
-                OR EXISTS(SELECT 1 FROM profile_identity_crdts WHERE profile_id = ?1)",
-                params![profile.id.to_storage()],
-                |row| row.get(0),
-            )
-            .map_err(sql_failed)?;
-        if exists {
-            return Err(Error::bare(Code::ProfileExists));
-        }
-        if workspace.owner != profile.id || identity.is_empty() || private.is_empty() {
-            return Err(Error::bare(Code::InvalidRequest));
-        }
-        write_identity_projection(&tx, profile)?;
-        tx.execute(
-            "INSERT INTO profile_identity_crdts (profile_id, snapshot) VALUES (?1, ?2)",
-            params![profile.id.to_storage(), identity],
-        )
-        .map_err(sql_failed)?;
-        tx.execute(
-            "INSERT INTO profile_private_crdts (profile_id, snapshot) VALUES (?1, ?2)",
-            params![profile.id.to_storage(), private],
-        )
-        .map_err(sql_failed)?;
-        tx.execute(
-            "INSERT INTO store_state (key, value) VALUES (?1, ?2)",
-            params![origin_marker.0, origin_marker.1],
-        )
-        .map_err(sql_failed)?;
+        publish_fresh_profile(&tx, profile, identity, private, origin_marker)?;
         publish_workspace(&tx, workspace, manifest)?;
+        for unit in units {
+            root_catalog::commit_root_catalog_unit(&tx, scope, unit)?;
+        }
         tx.commit().map_err(sql_failed)
     }
 
@@ -1118,7 +1239,7 @@ impl Catalog for SqliteCatalog {
     }
 
     fn forget_workspace(&mut self, id: WorkspaceId) -> Result<()> {
-        if self.workspace_has_personal_units(id)? {
+        if root_catalog::any_personal_unit(&self.connection, id)? {
             return Err(Error::new(
                 Code::WorkspaceInUse,
                 "retained personal units prevent workspace forget",
@@ -1144,12 +1265,17 @@ impl Catalog for SqliteCatalog {
     }
 
     fn purge_workspace(&mut self, id: WorkspaceId) -> Result<()> {
-        if self.workspace_has_personal_units(id)? {
+        // The §5.3 guard, kept: whatever scope a remaining personal row is
+        // under, the content is not purged around it. The Store's
+        // `retire_workspace_personal_unit` is the only path that clears one.
+        if root_catalog::any_personal_unit(&self.connection, id)? {
             return Err(Error::new(
                 Code::WorkspaceInUse,
                 "retained personal units prevent workspace purge",
             ));
         }
+        // The root unit row is deliberately not touched: it keeps the purge
+        // evidence after every content row is gone (TECHNICAL.final §6.4).
         let tx = self.connection.transaction().map_err(sql_failed)?;
         delete_workspace_transport_mode(&tx, id)?;
         tx.execute(
@@ -2049,6 +2175,63 @@ pub(crate) fn collect<T>(
         out.push(row.map_err(sql_failed)??);
     }
     Ok(out)
+}
+
+fn require_workspace_row(tx: &Connection, workspace: WorkspaceId) -> Result<()> {
+    let exists: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = ?1)",
+            [workspace.to_storage()],
+            |row| row.get(0),
+        )
+        .map_err(sql_failed)?;
+    if !exists {
+        return Err(Error::bare(Code::WorkspaceNotFound));
+    }
+    Ok(())
+}
+
+/// A fresh Profile's listing row, both authority units and its origin
+/// marker, inside the caller's transaction. Any retained Profile id refuses,
+/// including a removed or provisioned row.
+fn publish_fresh_profile(
+    tx: &Connection,
+    profile: &Profile,
+    identity: &[u8],
+    private: &[u8],
+    origin_marker: (&str, &str),
+) -> Result<()> {
+    let exists: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM profiles WHERE id = ?1)
+            OR EXISTS(SELECT 1 FROM profile_identity_crdts WHERE profile_id = ?1)",
+            params![profile.id.to_storage()],
+            |row| row.get(0),
+        )
+        .map_err(sql_failed)?;
+    if exists {
+        return Err(Error::bare(Code::ProfileExists));
+    }
+    if identity.is_empty() || private.is_empty() {
+        return Err(Error::bare(Code::InvalidRequest));
+    }
+    write_identity_projection(tx, profile)?;
+    tx.execute(
+        "INSERT INTO profile_identity_crdts (profile_id, snapshot) VALUES (?1, ?2)",
+        params![profile.id.to_storage(), identity],
+    )
+    .map_err(sql_failed)?;
+    tx.execute(
+        "INSERT INTO profile_private_crdts (profile_id, snapshot) VALUES (?1, ?2)",
+        params![profile.id.to_storage(), private],
+    )
+    .map_err(sql_failed)?;
+    tx.execute(
+        "INSERT INTO store_state (key, value) VALUES (?1, ?2)",
+        params![origin_marker.0, origin_marker.1],
+    )
+    .map_err(sql_failed)?;
+    Ok(())
 }
 
 fn publish_workspace(tx: &Connection, workspace: &Workspace, manifest: DocumentId) -> Result<()> {

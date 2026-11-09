@@ -10,11 +10,19 @@
 //! §3.10 and §6.3 (D17; ADR-000-rootcatalog) settle that an empty Profile
 //! stays empty until the person creates a Workspace, so the replacing routes
 //! may *select* another verified live Workspace of the source Profile and
-//! otherwise answer [`Replacement::NotNeeded`]. `EnsureLive`'s own creation
-//! and the `NeedsProfile` host flow are Plan 1.3's.
+//! otherwise answer [`Replacement::NotNeeded`].
+//!
+//! **Which authority each route writes.** Since Plan 1.3 a *delete* is the
+//! root operation of `root_lifecycle.rs` — a deletion fact on the Workspace
+//! unit, published with its one-way projection in one catalog transaction —
+//! and the manifest's own deletion state is written afterwards as a
+//! compatibility hint with no authority. An *archive* is not lifecycle: it
+//! stays manifest-owned (switcher appearance) and still goes through
+//! `commit_removal` + `Catalog::publish_removal`.
 
 use super::*;
 use crate::ports::Removal;
+use crate::root_catalog::DeletionRecord;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -124,6 +132,7 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         let row = self.workspace_including_deleted(workspace)?;
         let authority = self.verified_removal_authority(workspace)?;
         let mut projected = availability::project(&row, &authority)?;
+        projected.deleted_at = self.effective_deleted_at(workspace, authority.deleted_at)?;
         if projected.deleted_at.is_some() {
             return Err(Error::bare(Code::WorkspaceNotFound));
         }
@@ -164,38 +173,44 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         self.flush_workspace_manifest(workspace, at)?;
         let row = self.workspace_including_deleted(workspace)?;
         let authority = self.verified_removal_authority(workspace)?;
-        if matches!(lifecycle, Lifecycle::Archive) && authority.deleted_at.is_some() {
+        // The root decides whether the Workspace is in the Trash; the
+        // manifest's value is the hint for a Workspace without a unit.
+        let deleted_at = self.effective_deleted_at(workspace, authority.deleted_at)?;
+        if matches!(lifecycle, Lifecycle::Archive) && deleted_at.is_some() {
             return Err(Error::bare(Code::WorkspaceNotFound));
         }
         let mut projected = availability::project(&row, &authority)?;
+        projected.deleted_at = deleted_at;
         let ready = if removal_attempt.is_some() {
             Ready::NotNeeded
         } else {
             self.prepare_removal_replacement(&row, at)?
         };
-        let already_committed = match lifecycle {
-            Lifecycle::Archive => authority.archived,
-            Lifecycle::Delete => authority.deleted_at.is_some(),
-        };
-        if !already_committed {
-            self.commit_removal(workspace, lifecycle, at)?;
-            match lifecycle {
-                Lifecycle::Archive => projected.archived = true,
-                Lifecycle::Delete => projected.deleted_at = Some(at),
+        if let Lifecycle::Delete = lifecycle {
+            // The root operation: fact and projection in one transaction,
+            // then the hint, then the eviction. A failure here is a refusal —
+            // nothing was deleted — rather than a pending listing.
+            if deleted_at.is_none() {
+                projected.deleted_at = Some(at);
+                self.delete_workspace_root(&projected, at)?;
             }
+            self.open.remove(&workspace);
+            return Ok(RemovedWorkspace {
+                workspace: projected,
+                authority_committed: true,
+                listing: ListingState::Applied,
+                replacement: adopt_replacement(ready),
+            });
         }
-        let removal = match lifecycle {
-            Lifecycle::Archive => Removal::Archive(&projected),
-            Lifecycle::Delete => Removal::Delete(&projected),
-        };
+        if !authority.archived {
+            self.commit_removal(workspace, at)?;
+            projected.archived = true;
+        }
         // No prepared replacement travels with the removal any more: a
         // selected Workspace is already listed, and nothing is created.
-        let publication = self.catalog.publish_removal(removal, None);
-        // Never leave a durably deleted open document usable, including when
-        // catalog publication fails. Its commit notification remains queued.
-        if projected.deleted_at.is_some() {
-            self.open.remove(&workspace);
-        }
+        let publication = self
+            .catalog
+            .publish_removal(Removal::Archive(&projected), None);
         match publication {
             Ok(()) => Ok(RemovedWorkspace {
                 workspace: projected,
@@ -216,12 +231,21 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         }
     }
 
-    fn commit_removal(
-        &mut self,
-        workspace: WorkspaceId,
-        lifecycle: Lifecycle,
-        at: Timestamp,
-    ) -> Result<()> {
+    /// The replacing delete's root half: `Store::delete_workspace`'s
+    /// commit for an already-validated, already-projected row.
+    fn delete_workspace_root(&mut self, projected: &Workspace, at: Timestamp) -> Result<()> {
+        self.commit_workspace_deletion(projected, |unit| {
+            Ok(unit.record_deletion(
+                crate::ids::DeletionId::new(),
+                &DeletionRecord::new(at.millis(), None),
+            )?)
+        })?;
+        self.hint_manifest_deletion(projected.id, Some(at), at);
+        Ok(())
+    }
+
+    /// The manifest-owned archive flag, committed to the manifest.
+    fn commit_removal(&mut self, workspace: WorkspaceId, at: Timestamp) -> Result<()> {
         self.ensure_open_including_deleted(workspace)?;
         let open = self
             .open
@@ -231,10 +255,7 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         let peer = open.manifest.peer_id();
         let before = open.manifest.version();
         let result = (|| {
-            match lifecycle {
-                Lifecycle::Archive => open.manifest.set_archived(true)?,
-                Lifecycle::Delete => open.manifest.set_workspace_deleted_at(Some(at))?,
-            }
+            open.manifest.set_archived(true)?;
             let update = open.manifest.export_updates_since(&before)?;
             commit_one(
                 open,
@@ -296,7 +317,11 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             let row = self.workspace_including_deleted(old.id)?;
             match self.verified_removal_authority(row.id) {
                 Ok(authority) => {
-                    if !authority.archived && authority.deleted_at.is_none() {
+                    if !authority.archived
+                        && self
+                            .effective_deleted_at(row.id, authority.deleted_at)?
+                            .is_none()
+                    {
                         match self.reconcile_verified_workspace(&row, &authority, at) {
                             Ok(workspace) => return Ok(Ready::Existing(workspace)),
                             Err(error) => unresolved = Some(error),

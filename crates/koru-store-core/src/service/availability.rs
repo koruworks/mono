@@ -23,9 +23,18 @@ pub enum EnsuredWorkspace {
         workspace: Workspace,
         issues: Vec<WorkspaceAvailabilityIssue>,
     },
+    /// A Workspace manufactured for an empty Profile. **Never produced since
+    /// Plan 1.3 of the root catalog**: `EnsureLive` is a non-creating query
+    /// and answers [`Self::Empty`] instead. Kept on the wire for the
+    /// generated schemas and older decoders.
     Created {
         workspace: Workspace,
     },
+    /// **A valid state**: this Profile has no live workspace; create one
+    /// explicitly (root-catalog TECHNICAL.final §3.10, §6.3). Nothing was
+    /// created, and opening, restarting or receiving a remote update over an
+    /// empty Profile keeps answering this without minting a workspace.
+    Empty,
     Pending {
         workspaces: Vec<WorkspaceId>,
     },
@@ -94,6 +103,9 @@ pub struct VerifiedWorkspaceManifest {
 pub struct WorkspaceAuthorityRead {
     workspace: Workspace,
     current: BTreeSet<DocumentId>,
+    /// The root's `deleted_at` captured under the lock, `None` for a
+    /// Workspace with no unit. It outranks the manifest's value below.
+    root_deleted_at: Option<Option<Timestamp>>,
     inspect: Box<dyn FnOnce() -> WorkspaceManifestInspection + Send>,
 }
 
@@ -102,12 +114,18 @@ impl WorkspaceAuthorityRead {
         let Self {
             workspace,
             current,
+            root_deleted_at,
             inspect,
         } = self;
         let (authority, listing_differs) = match inspect() {
             WorkspaceManifestInspection::Verified(verified) => {
-                let projected = project(&workspace, &verified)?;
-                let desired: BTreeSet<_> = if verified.deleted_at.is_some() {
+                let mut projected = project(&workspace, &verified)?;
+                // The manifest's deletion is a hint once the Workspace has a
+                // root unit (TECHNICAL.final §6.1): what a controller treats
+                // as the verified lifecycle fact is the root's answer.
+                let deleted_at = root_deleted_at.unwrap_or(verified.deleted_at);
+                projected.deleted_at = deleted_at;
+                let desired: BTreeSet<_> = if deleted_at.is_some() {
                     BTreeSet::new()
                 } else {
                     verified.documents.into_iter().collect()
@@ -115,7 +133,7 @@ impl WorkspaceAuthorityRead {
                 (
                     WorkspaceAuthorityState::Read {
                         archived: verified.archived,
-                        deleted_at: verified.deleted_at,
+                        deleted_at,
                         pinned: verified.pinned,
                         applied: true,
                     },
@@ -189,10 +207,12 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             return Err(Error::bare(Code::WorkspaceNotFound));
         }
         let current = self.catalog.workspace_locations(id)?.into_iter().collect();
+        let root_deleted_at = self.root_deleted_at(id)?;
         let inspect = self.backend.prepare_workspace_manifest_inspection(id);
         Ok(WorkspaceAuthorityRead {
             workspace,
             current,
+            root_deleted_at,
             inspect,
         })
     }
@@ -217,10 +237,16 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         Ok(self.backend.inspect_workspace_manifest(workspace))
     }
 
+    /// Select a live Workspace of `owner`, repairing listings on the way.
+    /// **Never creates one** since Plan 1.3 (root-catalog TECHNICAL.final
+    /// §3.10, §6.3): a Profile with no live Workspace answers
+    /// [`EnsuredWorkspace::Empty`], on open, on restart and after a local or
+    /// remote move or delete alike. `name` was the manufactured default's
+    /// name; it is accepted for wire compatibility and unused.
     pub fn ensure_live_workspace(
         &mut self,
         owner: ProfileId,
-        name: &str,
+        _name: &str,
         at: Timestamp,
     ) -> Result<EnsuredWorkspace> {
         // Removal wins even for an already-hidden owner; opening never clears it.
@@ -288,14 +314,10 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         if !listing.is_empty() {
             return Ok(EnsuredWorkspace::ListingPending { issues: listing });
         }
-        // Plan 1.3 of the root catalog (`TECHNICAL.final.md` §6.3, D17):
-        // `EnsureLive` becomes a non-creating query and answers Empty here.
-        // Plan 1.2 removed the manufacture of a replacement from the replacing
-        // routes only; this arm and the `NeedsProfile` host flow that relies
-        // on it are deliberately unchanged until then.
-        Ok(EnsuredWorkspace::Created {
-            workspace: self.create_workspace(owner, name, at)?,
-        })
+        // Nothing live, nothing pending, nothing uncertain: the Profile is
+        // empty, and that is a valid state the person leaves by creating a
+        // workspace explicitly. No default is manufactured here any more.
+        Ok(EnsuredWorkspace::Empty)
     }
 
     pub(super) fn flush_workspace_manifest(
@@ -329,13 +351,20 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         }
     }
 
+    /// Repair the listing from the verified manifest — name, appearance,
+    /// archive flag and routing — with `deleted_at` taken from the **root**
+    /// when the Workspace has a unit. An incoming manifest cannot restore or
+    /// re-delete a unit-holding Workspace through this path (TECHNICAL.final
+    /// §6.1); only a unit-less replica (M2) is still projected from its
+    /// manifest's deletion state.
     pub(super) fn reconcile_verified_workspace(
         &mut self,
         row: &Workspace,
         authority: &VerifiedWorkspaceManifest,
         at: Timestamp,
     ) -> Result<Workspace> {
-        let projected = project(row, authority)?;
+        let mut projected = project(row, authority)?;
+        projected.deleted_at = self.effective_deleted_at(row.id, authority.deleted_at)?;
         let desired: BTreeSet<_> = if projected.deleted_at.is_some() {
             BTreeSet::new()
         } else {
@@ -381,6 +410,9 @@ impl<C: Catalog, B: Backend> Store<C, B> {
     }
 }
 
+/// The manifest's projection of a row. `deleted_at` here is the manifest's
+/// **hint**; every caller that has the Store overrides it with
+/// `Store::effective_deleted_at` before writing or deciding on it.
 pub(super) fn project(row: &Workspace, authority: &VerifiedWorkspaceManifest) -> Result<Workspace> {
     let mut projected = row.clone();
     projected.rename(&authority.name)?;

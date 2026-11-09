@@ -1541,7 +1541,13 @@ fn purge_removes_only_deleted_workspaces_at_or_before_the_cutoff() {
     let expired_dir = f.dir.path().join("workspaces").join(expired.to_storage());
     let recent_dir = f.dir.path().join("workspaces").join(recent.to_storage());
 
-    assert_eq!(f.store.purge_deleted(at(10)).unwrap(), 1);
+    // Retention is per deletion fact: a cutoff of `at(10)` plus the default
+    // retention expires the deletion at `at(2)` and not the one at `at(20)`.
+    let cutoff = Timestamp::from_millis(at(10).millis() + koru_store_core::TRASH_RETENTION_MS);
+    let outcome = f.store.purge_deleted(cutoff).unwrap();
+    assert_eq!(outcome.purged, vec![expired]);
+    assert!(outcome.held.is_empty());
+    assert!(outcome.pending.is_empty());
     assert!(!expired_dir.exists());
     assert!(recent_dir.exists());
     assert_eq!(

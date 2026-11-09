@@ -11,6 +11,7 @@ use std::{
     rc::Rc,
 };
 
+mod lifecycle;
 mod pins;
 mod replacement;
 mod root_catalog;

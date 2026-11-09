@@ -23,8 +23,8 @@ use koru_store_core::errors::{Code, Error, Result};
 use koru_store_core::ids::{ProfileId, ReminderId, UserScopeId, WorkspaceId};
 use koru_store_core::model::{ProfileKind, Timestamp};
 use koru_store_core::ports::{
-    RootCatalogOverlay, RootCatalogUnitCommit, RootCatalogUnitRow, WorkspacePersonalUnitState,
-    WorkspaceReminderDue,
+    PurgeHold, RootCatalogOverlay, RootCatalogUnitCommit, RootCatalogUnitRow,
+    WorkspacePersonalUnitState, WorkspaceReminderDue,
 };
 use koru_store_core::profile_units::{LegacyPersonalSource, migrate_personal_sources};
 use koru_store_core::root_catalog::seed::{
@@ -710,10 +710,9 @@ pub(super) fn workspace_reminder_due(
     collect(rows)
 }
 
-pub(super) fn workspace_has_personal_units(
-    connection: &Connection,
-    workspace: WorkspaceId,
-) -> Result<bool> {
+/// Whether any personal row of `workspace` remains, under any scope: the
+/// `RESTRICT` guard `purge_workspace` and `forget_workspace` keep (§5.3).
+pub(super) fn any_personal_unit(connection: &Connection, workspace: WorkspaceId) -> Result<bool> {
     connection
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM workspace_personal_crdts WHERE workspace_id = ?1)",
@@ -721,4 +720,49 @@ pub(super) fn workspace_has_personal_units(
             |row| row.get(0),
         )
         .map_err(sql_failed)
+}
+
+/// A personal row of `workspace` under a scope other than `scope` holds the
+/// content: this purge is not authorized to retire another user's unit.
+/// Rows under `scope` itself are no hold — `retire_workspace_personal_unit`
+/// is their authorized job. In a single-scope local catalog the hold case
+/// is another `user_scope_id`, which nothing writes yet; it is answered
+/// honestly all the same.
+pub(super) fn personal_unit_hold(
+    connection: &Connection,
+    scope: UserScopeId,
+    workspace: WorkspaceId,
+) -> Result<Option<PurgeHold>> {
+    let foreign: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM workspace_personal_crdts
+                           WHERE workspace_id = ?1 AND user_scope_id != ?2)",
+            params![workspace.to_storage(), scope.to_storage()],
+            |row| row.get(0),
+        )
+        .map_err(sql_failed)?;
+    Ok(foreign.then_some(PurgeHold::ForeignScope))
+}
+
+/// The authorized retirement (§5.3): exactly one scope's personal row of
+/// one Workspace, with its due rows. The due rows go first and explicitly
+/// rather than by cascade, so the statement says what it drops. Inside the
+/// caller's transaction.
+pub(super) fn retire_workspace_personal_unit(
+    tx: &Connection,
+    scope: UserScopeId,
+    workspace: WorkspaceId,
+) -> Result<bool> {
+    tx.execute(
+        "DELETE FROM workspace_reminder_due WHERE user_scope_id = ?1 AND workspace_id = ?2",
+        params![scope.to_storage(), workspace.to_storage()],
+    )
+    .map_err(sql_failed)?;
+    let retired = tx
+        .execute(
+            "DELETE FROM workspace_personal_crdts WHERE user_scope_id = ?1 AND workspace_id = ?2",
+            params![scope.to_storage(), workspace.to_storage()],
+        )
+        .map_err(sql_failed)?;
+    Ok(retired == 1)
 }

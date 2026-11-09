@@ -165,7 +165,13 @@ fn an_entirely_private_subject_lives_only_in_its_overlay_until_enabled() {
 
     // Enabled later: its whole history becomes the durable unit, written by
     // the Store from here on.
-    let candidate = fold_overlay(workspace, None, &overlay, STORE).unwrap();
+    let candidate = fold_overlay::<WorkspaceCatalogUnit>(
+        CatalogUnitRef::Workspace { workspace },
+        None,
+        &overlay,
+        STORE,
+    )
+    .unwrap();
     assert_eq!(candidate.placement(), Some(placement));
     assert_eq!(candidate.writer_peer(), STORE);
     assert!(candidate.version().get(&overlay.writer_peer_id).is_some());
@@ -213,7 +219,13 @@ fn publishing_an_overlay_without_a_new_move_keeps_its_placement() {
     );
     let private = read(&pending.private_snapshot, workspace).placement();
 
-    let candidate = fold_overlay(workspace, Some(&held), &pending, STORE).unwrap();
+    let candidate = fold_overlay::<WorkspaceCatalogUnit>(
+        CatalogUnitRef::Workspace { workspace },
+        Some(&held),
+        &pending,
+        STORE,
+    )
+    .unwrap();
 
     assert_eq!(candidate.placement(), private);
     assert_eq!(candidate.writer_peer(), STORE);
@@ -237,9 +249,14 @@ fn an_undecodable_overlay_base_is_refused_rather_than_guessed() {
     pending.base_vv = b"not a version vector".to_vec();
 
     assert_eq!(
-        fold_overlay(workspace, Some(&held), &pending, STORE)
-            .unwrap_err()
-            .code(),
+        fold_overlay::<WorkspaceCatalogUnit>(
+            CatalogUnitRef::Workspace { workspace },
+            Some(&held),
+            &pending,
+            STORE
+        )
+        .unwrap_err()
+        .code(),
         Code::CorruptState
     );
 }
