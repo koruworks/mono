@@ -32,6 +32,7 @@ impl Shell {
         self.frame.rect_of("ComposerText").expect("composer text")
     }
 
+    #[cfg(test)]
     pub(crate) fn toolbar(&self) -> Rect {
         self.frame
             .rect_of("ComposerToolbar")

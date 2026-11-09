@@ -101,6 +101,7 @@ pub(crate) struct SkillList {
 /// into `skills` whose name or display name starts with it (ignoring case),
 /// then those that contain it, each group in the agent's order. Every skill
 /// for an empty query.
+#[cfg(test)]
 pub(crate) fn matches(skills: &[AgentCommandView], query: &str) -> Vec<usize> {
     matches_for(skills, query, '$')
 }

@@ -140,10 +140,12 @@ fn name_char(character: char) -> bool {
 /// the line or after a space, then name characters up to the caret. Its
 /// byte offset and what follows it; `None` when the caret is not in one —
 /// `a$b`, `$$`, or a price like `5$` is not a token.
+#[cfg(test)]
 pub(crate) fn dollar_before(text: &str, caret: usize) -> Option<(usize, &str)> {
     trigger_before(text, caret, '$')
 }
 
+#[cfg(test)]
 pub(crate) fn slash_before(text: &str, caret: usize) -> Option<(usize, &str)> {
     trigger_before(text, caret, '/')
 }

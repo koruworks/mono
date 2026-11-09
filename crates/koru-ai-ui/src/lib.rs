@@ -5915,6 +5915,7 @@ impl ChatSurface {
     /// left-aligned with it. Derived from the box ([`Self::composer_rect`]),
     /// which leaves room for it, so drawing, hit-testing and the hover
     /// cursor all read the same place.
+    #[cfg(test)]
     fn composer_footer_rect(&self) -> Option<Rect> {
         if !self.shows_composer_footer() {
             return None;
@@ -5935,6 +5936,7 @@ impl ChatSurface {
     /// with that message, and from then on a chosen folder stays named here,
     /// unpressable. A chat left in the home folder, the default, shows
     /// nothing here once it has begun.
+    #[cfg(test)]
     fn folder_button(&self) -> Option<Rect> {
         let row = self.composer_footer_rect()?;
         Some(Rect::new(
