@@ -306,14 +306,15 @@ fn a_move_to_the_same_owner_leaves_the_unit_alone_two_moves_advance_it_and_a_sta
     let (a, w) = f.cloud_pair();
     let a2 = f.cloud_profile("A2");
     let a3 = f.cloud_profile("A3");
-    assert!(
-        f.unit(w).is_none(),
-        "creation publishes no root unit yet (Plan 1.3); the first move does"
-    );
+    let created = f
+        .unit(w)
+        .expect("creation publishes the unit with its row (Plan 1.3)");
+    assert_eq!(created.revision, 1);
+    assert_eq!(f.durable_placement(w).unwrap().profile, Some(a));
 
     f.store.move_workspace(w, a2).unwrap();
     let first = f.unit(w).unwrap();
-    assert_eq!(first.revision, 1);
+    assert_eq!(first.revision, 2);
     assert_eq!(f.durable_placement(w).unwrap().profile, Some(a2));
     assert!(
         f.overlay(w).is_none(),
@@ -327,12 +328,13 @@ fn a_move_to_the_same_owner_leaves_the_unit_alone_two_moves_advance_it_and_a_sta
 
     f.store.move_workspace(w, a3).unwrap();
     let second = f.unit(w).unwrap();
-    assert_eq!(second.revision, 2);
+    assert_eq!(second.revision, 3);
     assert_ne!(second.snapshot, first.snapshot);
     assert_eq!(f.durable_placement(w).unwrap().profile, Some(a3));
 
-    // The compare-and-set: a write that read revision 1 cannot land on 2,
-    // and the projection it carried does not land either.
+    // The compare-and-set: a write that read the revision `first` had cannot
+    // land on the one after it, and the projection it carried does not land
+    // either.
     let mut stale_row = f.store.workspace(w).unwrap();
     stale_row.owner = a;
     let refused = f
@@ -344,7 +346,7 @@ fn a_move_to_the_same_owner_leaves_the_unit_alone_two_moves_advance_it_and_a_sta
                 commit: RootCatalogUnitCommit {
                     unit: CatalogUnitRef::Workspace { workspace: w },
                     snapshot: first.snapshot.clone(),
-                    expected_revision: Some(1),
+                    expected_revision: Some(first.revision),
                 },
                 clear_overlay: false,
             },
@@ -363,8 +365,12 @@ fn a_failed_root_publication_leaves_owner_unit_overlay_and_generation_untouched(
     let a2 = f.cloud_profile("A2");
     let generation = f.store.policy_generation();
 
+    // The unit exists from creation (Plan 1.3), so the placement write is the
+    // compare-and-set *update* of that row: arming `BEFORE INSERT` here would
+    // inject no fault at all.
+    let created = f.unit(w).expect("creation published the unit");
     for fault in [
-        "BEFORE INSERT ON root_catalog_units",
+        "BEFORE UPDATE ON root_catalog_units",
         "BEFORE UPDATE ON workspaces",
     ] {
         f.fail_on(fault);
@@ -375,7 +381,12 @@ fn a_failed_root_publication_leaves_owner_unit_overlay_and_generation_untouched(
         );
         f.recover();
         assert_eq!(f.store.workspace(w).unwrap().owner, a, "{fault}");
-        assert!(f.unit(w).is_none(), "{fault}: the unit insert rolled back");
+        assert_eq!(
+            f.unit(w).unwrap(),
+            created,
+            "{fault}: the placement write rolled back"
+        );
+        assert_eq!(f.durable_placement(w).unwrap().profile, Some(a), "{fault}");
         assert!(f.overlay(w).is_none(), "{fault}");
         assert_eq!(
             f.store.policy_generation(),
@@ -393,7 +404,7 @@ fn a_failed_root_publication_leaves_owner_unit_overlay_and_generation_untouched(
     }
 
     f.store.move_workspace(w, a2).unwrap();
-    assert_eq!(f.unit(w).unwrap().revision, 1);
+    assert_eq!(f.unit(w).unwrap().revision, 2);
     assert_ne!(f.store.policy_generation(), generation);
 
     // The overlay path fails the same way: the private row is the only
@@ -404,7 +415,7 @@ fn a_failed_root_publication_leaves_owner_unit_overlay_and_generation_untouched(
     f.recover();
     assert_eq!(f.store.workspace(w).unwrap().owner, a2);
     assert!(f.overlay(w).is_none());
-    assert_eq!(f.unit(w).unwrap().revision, 1);
+    assert_eq!(f.unit(w).unwrap().revision, 2);
 }
 
 // ---------------------------------------------------- the private overlay
@@ -501,7 +512,10 @@ fn a_move_into_a_private_profile_waits_in_an_overlay_and_is_published_when_both_
         .unwrap();
     assert!(f.overlay(w).is_none(), "cleared with the publication");
     let published = f.unit(w).unwrap();
-    assert_eq!(published.revision, 2);
+    assert_eq!(
+        published.revision, 3,
+        "creation, the first move, then the overlay's publication"
+    );
     assert_eq!(
         f.durable_placement(w),
         Some(private),
@@ -530,6 +544,16 @@ fn a_workspace_with_no_unit_moved_into_a_private_profile_exists_only_in_its_over
  {
     let mut f = Root::new();
     let (_a, w) = f.cloud_pair();
+    // A Workspace from before catalog 13 that the seed never reached: the one
+    // unit-less state STORE.md still tolerates. Creation publishes a unit
+    // since Plan 1.3, so the state is made here by removing that row.
+    f.control
+        .execute(
+            "DELETE FROM root_catalog_units WHERE unit_kind = 'workspace_catalog'",
+            [],
+        )
+        .unwrap();
+    assert!(f.unit(w).is_none());
     let b = f.profile("B");
     f.store.move_workspace(w, b).unwrap();
     assert!(f.unit(w).is_none());
@@ -566,8 +590,11 @@ fn a_placement_under_a_holder_reads_as_unassigned() {
     f.store.create_reminder(a, &rule).unwrap();
     assert_eq!(f.store.reminders(a).unwrap().len(), 1);
 
-    // What the migration seeds for a legacy Workspace owned by a Holder row.
+    // What the migration seeds for a legacy Workspace owned by a Holder row,
+    // written over the unit creation published (Plan 1.3) as the migration
+    // would have written it in its place.
     let holder = Profile::holder(Locale::default(), at()).unwrap();
+    let created = f.unit(w).expect("creation published the unit").revision;
     let mut catalog = f.catalog();
     catalog.put_profile(&holder).unwrap();
     catalog
@@ -576,7 +603,7 @@ fn a_placement_under_a_holder_reads_as_unassigned() {
             &[RootCatalogUnitCommit {
                 unit: CatalogUnitRef::Workspace { workspace: w },
                 snapshot: seed_workspace_unit(w, holder.id, None, f.store.peer_id()).unwrap(),
-                expected_revision: None,
+                expected_revision: Some(created),
             }],
         )
         .unwrap();
@@ -864,7 +891,14 @@ fn the_account_scope_binds_once_refuses_a_second_account_and_gates_export_by_pat
     assert!(!listed.contains(&CatalogUnitRef::Profile {
         profile: p2p_profile
     }));
-    assert_eq!(inventory.held, 0, "a hidden subject is not even a number");
+    // `held` counts only what the recipient could have known: the P2P-only
+    // Workspace is one the account grant covers and the mode withholds, so it
+    // is a number; the Profile the grant cannot see — and therefore its unit —
+    // is not even that. Two would mean the hidden Profile had been counted.
+    assert_eq!(
+        inventory.held, 1,
+        "the hidden Profile's unit was counted as well"
+    );
     let peer_grant = RootGrant {
         path: TransportPath::Peer,
         ..RootGrant::account()

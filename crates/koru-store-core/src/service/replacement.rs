@@ -137,7 +137,7 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             return Err(Error::bare(Code::WorkspaceNotFound));
         }
         let from = row.owner;
-        if from == to {
+        if self.already_placed_under(workspace, from, to)? {
             return Ok(MovedWorkspace {
                 workspace: projected,
                 from,

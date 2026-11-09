@@ -2095,13 +2095,35 @@ impl<C: Catalog, B: Backend> Store<C, B> {
                 "that workspace is in the trash; restore it before moving it",
             ));
         }
-        if workspace.owner == to {
+        if self.already_placed_under(id, workspace.owner, to)? {
             return Ok(workspace);
         }
         workspace.owner = to;
         workspace.position = self.next_workspace_position(to)?;
         self.commit_root_move(&workspace)?;
         Ok(workspace)
+    }
+
+    /// **Whether a move to `to` has nothing to do.** The `workspaces.owner`
+    /// projection alone cannot answer it: a placement that named a Profile
+    /// this device cannot see — a deleted one, a hidden one, a Holder — is
+    /// projected late, so an Unassigned Workspace can carry a row that
+    /// already names the destination while the root says otherwise. Asking
+    /// the root placement too is what makes "moving one is the ordinary
+    /// move" true for the recovery routes (root-catalog TECHNICAL.final §6.2,
+    /// §6.3). A Workspace with no unit has only the projection, and keeps
+    /// answering from it.
+    fn already_placed_under(
+        &self,
+        workspace: WorkspaceId,
+        owner: ProfileId,
+        to: ProfileId,
+    ) -> Result<bool> {
+        let root_agrees = match self.root_placement(workspace)? {
+            Some(placement) => placement.profile == Some(to),
+            None => true,
+        };
+        Ok(root_agrees && owner == to)
     }
 
     fn next_workspace_position(&self, owner: ProfileId) -> Result<i64> {

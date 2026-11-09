@@ -47,9 +47,20 @@ fn count(f: &Root, sql: &str) -> i64 {
     f.control.query_row(sql, [], |row| row.get(0)).unwrap()
 }
 
+/// The unit as every Store read sees it: **the private overlay first**, then
+/// the durable row. A fact written while the subject may not export lives in
+/// the overlay until it is published, and asking only the durable row would
+/// report that fact as missing.
 fn unit(f: &Root, workspace: WorkspaceId) -> WorkspaceCatalogUnit {
-    let row = f.unit(workspace).expect("the unit row exists");
-    WorkspaceCatalogUnit::from_snapshot(&row.snapshot, workspace, 1).unwrap()
+    match f.overlay(workspace) {
+        Some(overlay) => {
+            WorkspaceCatalogUnit::from_snapshot(&overlay.private_snapshot, workspace, 1).unwrap()
+        }
+        None => {
+            let row = f.unit(workspace).expect("the unit row exists");
+            WorkspaceCatalogUnit::from_snapshot(&row.snapshot, workspace, 1).unwrap()
+        }
+    }
 }
 
 /// A move, a trash and a personal reminder written after the migration

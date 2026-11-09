@@ -63,8 +63,22 @@ fn dump(f: &Root) -> BTreeMap<&'static str, Vec<String>> {
             .query_map([], |row| {
                 let mut text = String::new();
                 for index in 0..columns {
-                    let value = row.get_ref(index)?;
-                    text.push_str(&format!("{value:?}|"));
+                    // Readable for the id and enum columns a drift is usually
+                    // about; exact, so a changed blob still fails.
+                    match row.get_ref(index)? {
+                        rusqlite::types::ValueRef::Null => text.push_str("null"),
+                        rusqlite::types::ValueRef::Integer(value) => {
+                            text.push_str(&value.to_string())
+                        }
+                        rusqlite::types::ValueRef::Real(value) => text.push_str(&value.to_string()),
+                        rusqlite::types::ValueRef::Text(value) => {
+                            text.push_str(&String::from_utf8_lossy(value))
+                        }
+                        rusqlite::types::ValueRef::Blob(value) => {
+                            text.push_str(&format!("blob:{value:?}"))
+                        }
+                    }
+                    text.push('|');
                 }
                 Ok(text)
             })
@@ -82,11 +96,23 @@ fn dump(f: &Root) -> BTreeMap<&'static str, Vec<String>> {
 fn faulted(f: &mut Root, faults: &[&str], mut operation: impl FnMut(&mut Root) -> Result<()>) {
     for fault in faults {
         let before = dump(f);
+        // Only this operation's acknowledgements are the question, so the
+        // queue starts empty: the fixture's own setup (creation, a document)
+        // acknowledges writes of its own.
+        f.store.take_committed();
         f.fail_on(fault);
         let error = operation(f).expect_err(fault);
         assert_eq!(error.code(), Code::StorageFailed, "{fault}");
         f.recover();
-        assert_eq!(dump(f), before, "{fault}: the pre-state is intact");
+        // Table by table, so a drift says which table it is rather than
+        // printing nine of them.
+        let after = dump(f);
+        for table in ROOT_TABLES {
+            assert_eq!(
+                after[table], before[table],
+                "{fault}: {table} is not the pre-state"
+            );
+        }
         assert!(
             f.store.take_committed().is_empty(),
             "{fault}: a failed root operation acknowledged something"
@@ -277,12 +303,27 @@ fn seam_publish_root_trash_and_restore_faults_leave_one_fact_each_after_the_retr
     assert_eq!(f.store.locate(document).unwrap(), Some(w));
     assert_eq!(
         f.store.workspace_manifest_deletion(w).unwrap(),
-        None,
-        "no hint before a commit"
+        Some(None),
+        "no hint before a commit: the manifest records no deletion"
     );
     f.store.delete_workspace(w, at()).unwrap();
     assert_eq!(workspace_unit(&f, w).deletions().len(), 1);
     assert_eq!(f.store.locate(document).unwrap(), None);
+    // Opening a trashed Workspace — which every lifecycle write does before
+    // it plans anything — repairs the **disposable** location index
+    // (`reconcile_document_locations`). That repair is not part of the root
+    // transaction and is not what the seam below is about, so it is settled
+    // here rather than counted as drift.
+    assert_eq!(
+        f.store.workspace_manifest_deletion(w).unwrap(),
+        Some(Some(at())),
+        "the hint followed the commit"
+    );
+    assert_eq!(
+        f.store.locate(document).unwrap(),
+        Some(w),
+        "the open repaired the route it had removed"
+    );
 
     faulted(
         &mut f,
@@ -340,6 +381,14 @@ fn seam_publish_root_batch_delete_and_batch_restore_faults_roll_back_every_unit_
     );
     for (workspace, _) in &batch.targets {
         assert_eq!(workspace_unit(&f, *workspace).deletions().len(), 1);
+        // As in the trash seam: opening a trashed target repairs its
+        // disposable location index outside any root transaction, so it is
+        // settled before the restore seam compares the pre-state.
+        assert_eq!(
+            f.store.workspace_manifest_deletion(*workspace).unwrap(),
+            Some(Some(at())),
+            "the batch wrote each target's hint"
+        );
     }
 
     faulted(
@@ -1576,9 +1625,13 @@ fn a_batch_restore_reports_a_target_whose_unit_is_absent_and_invents_nothing() {
 
 /// A manifest `deleted_at` written by a pre-13 writer has no authority in
 /// either direction. `lifecycle.rs` covers a "deleted" hint on a live
-/// Workspace; here a "live" hint meets a Workspace the root has trashed:
-/// the document path refuses to open a durably deleted Workspace at all,
-/// the root fact and its projection stand, and a restart reads them.
+/// Workspace; here a "live" hint meets a Workspace the root has trashed.
+/// The manifest of a trashed Workspace stays writable on purpose — it is
+/// the channel a peer's lifecycle tombstone arrives on (`ensure_document`
+/// admits the manifest of a deleted Workspace and refuses every other
+/// document of it) — so what is held here is that the frame undeletes
+/// nothing: no durable row moves, the root fact and its projection stand,
+/// and a restart reads them with the hint the root wrote.
 #[test]
 fn an_old_lifecycle_writer_cannot_undelete_a_unit_holding_workspace() {
     let mut f = Root::new();
@@ -1599,11 +1652,14 @@ fn an_old_lifecycle_writer_cannot_undelete_a_unit_holding_workspace() {
     f.store.delete_workspace(w, at()).unwrap();
     assert_eq!(
         f.store.workspace_manifest_deletion(w).unwrap(),
-        Some(Some(at()))
+        Some(Some(at())),
+        "the hint followed the commit"
     );
+    // That read opened the trashed Workspace, which repairs its disposable
+    // location index; the pre-state is taken after it, so the frame below is
+    // the only thing the comparison is about.
     let dumped = dump(&f);
-    let error = f
-        .store
+    f.store
         .apply_update(
             w,
             manifest,
@@ -1611,27 +1667,37 @@ fn an_old_lifecycle_writer_cannot_undelete_a_unit_holding_workspace() {
             at(),
             koru_store_core::ports::UpdateOrigin::Store,
         )
-        .unwrap_err();
+        .unwrap();
     assert_eq!(
-        error.code(),
-        Code::WorkspaceNotFound,
-        "a durably deleted Workspace is usable by no writer here"
+        f.store
+            .apply_update(
+                w,
+                DocumentId::new(),
+                Vec::new(),
+                at(),
+                koru_store_core::ports::UpdateOrigin::Store,
+            )
+            .unwrap_err()
+            .code(),
+        Code::DocumentNotFound,
+        "nothing but the manifest of a trashed Workspace is writable"
     );
-    assert_eq!(dump(&f), dumped, "nothing changed");
+    assert_eq!(dump(&f), dumped, "nothing durable changed");
     assert!(workspace_unit(&f, w).is_deleted(), "the root fact stands");
     assert_eq!(
         f.store.workspace_including_deleted(w).unwrap().deleted_at,
         Some(at()),
         "and so does the projection"
     );
-    assert_eq!(
-        f.store.workspace_manifest_deletion(w).unwrap(),
-        Some(Some(at())),
-        "the hint is what the root wrote"
-    );
+    assert!(f.store.workspace(w).is_err(), "still in the Trash");
     f.restart();
     assert!(f.store.workspace(w).is_err());
     assert!(workspace_unit(&f, w).is_deleted());
+    assert_eq!(
+        f.store.workspace_manifest_deletion(w).unwrap(),
+        Some(Some(at())),
+        "the hint on disk is still what the root wrote"
+    );
 }
 
 // ------------------------------------------------- duplicate reminders

@@ -205,77 +205,141 @@ fn a_creation_fault_cannot_touch_a_removal_because_nothing_is_created() {
     }
 }
 
+/// The archive is still manifest-authoritative, so a failed manifest commit
+/// refuses it and rolls back nothing else.
 #[test]
 fn failed_manifest_commit_rolls_back_only_the_manifest() {
-    for delete in [false, true] {
-        let mut f = Fixture::new();
-        let manifest = f.store.manifest_id(f.source.id).unwrap();
-        let before = f.store.snapshot(f.source.id, manifest).unwrap();
-        let version = Manifest::from_snapshot(&before).unwrap().version();
-        let repo = f.backend.open_workspace(f.source.id).unwrap();
-        repo.connection.execute_batch("CREATE TRIGGER fail BEFORE UPDATE OF version_vector ON loro_documents BEGIN SELECT RAISE(ABORT, 'source commit fault'); END;").unwrap();
-        assert_eq!(f.remove(delete).unwrap_err().code(), Code::StorageFailed);
-        f.assert_live();
-        let after = f.store.snapshot(f.source.id, manifest).unwrap();
-        assert_eq!(Manifest::from_snapshot(&after).unwrap().version(), version);
-        assert!(f.store.take_committed().is_empty());
-        assert!(
-            f.backend.0.deleted.borrow().is_empty(),
-            "nothing was prepared, so nothing is cleaned up"
-        );
-        repo.connection.execute_batch("DROP TRIGGER fail;").unwrap();
-        assert_eq!(
-            f.remove(delete).unwrap().replacement,
-            Replacement::NotNeeded
-        );
-    }
+    let mut f = Fixture::new();
+    let manifest = f.store.manifest_id(f.source.id).unwrap();
+    let before = f.store.snapshot(f.source.id, manifest).unwrap();
+    let version = Manifest::from_snapshot(&before).unwrap().version();
+    let repo = f.backend.open_workspace(f.source.id).unwrap();
+    repo.connection.execute_batch("CREATE TRIGGER fail BEFORE UPDATE OF version_vector ON loro_documents BEGIN SELECT RAISE(ABORT, 'source commit fault'); END;").unwrap();
+    assert_eq!(f.remove(false).unwrap_err().code(), Code::StorageFailed);
+    f.assert_live();
+    let after = f.store.snapshot(f.source.id, manifest).unwrap();
+    assert_eq!(Manifest::from_snapshot(&after).unwrap().version(), version);
+    assert!(f.store.take_committed().is_empty());
+    assert!(
+        f.backend.0.deleted.borrow().is_empty(),
+        "nothing was prepared, so nothing is cleaned up"
+    );
+    repo.connection.execute_batch("DROP TRIGGER fail;").unwrap();
+    assert_eq!(f.remove(false).unwrap().replacement, Replacement::NotNeeded);
+}
+
+/// **The delete is a root fact since Plan 1.3** (root-catalog
+/// TECHNICAL.final §6): the fact and its projections commit first, and the
+/// manifest's `deleted_at` is a compatibility hint written *after* that
+/// commit, best-effort. A repository that cannot take the hint therefore
+/// changes nothing — the deletion stands, the manifest keeps saying live,
+/// and no replacement is manufactured.
+#[test]
+fn a_deletion_whose_manifest_hint_cannot_be_written_stands_on_its_root_fact() {
+    let mut f = Fixture::new();
+    let manifest = f.store.manifest_id(f.source.id).unwrap();
+    let before = f.store.snapshot(f.source.id, manifest).unwrap();
+    let version = Manifest::from_snapshot(&before).unwrap().version();
+    let repo = f.backend.open_workspace(f.source.id).unwrap();
+    repo.connection.execute_batch("CREATE TRIGGER fail BEFORE UPDATE OF version_vector ON loro_documents BEGIN SELECT RAISE(ABORT, 'source commit fault'); END;").unwrap();
+
+    let result = f.remove(true).unwrap();
+    assert!(result.authority_committed);
+    assert_eq!(result.listing, ListingState::Applied);
+    assert_eq!(result.replacement, Replacement::NotNeeded);
+    assert_eq!(result.workspace.deleted_at, Some(at()));
+    assert_eq!(
+        f.store
+            .workspace_including_deleted(f.source.id)
+            .unwrap()
+            .deleted_at,
+        Some(at()),
+        "the root fact was projected"
+    );
+    let after = f.store.snapshot(f.source.id, manifest).unwrap();
+    assert_eq!(
+        Manifest::from_snapshot(&after).unwrap().version(),
+        version,
+        "the hint was written anyway"
+    );
+    assert!(f.verified().deleted_at.is_none(), "the hint is only a hint");
+    assert_eq!(f.repositories(), 1);
+    assert!(f.backend.0.deleted.borrow().is_empty());
+    repo.connection.execute_batch("DROP TRIGGER fail;").unwrap();
 }
 
 #[test]
-fn publication_failure_retains_the_committed_removal_and_a_cold_retry_repairs_the_listing() {
-    for delete in [false, true] {
-        for table in ["workspaces", "local_transport_modes"] {
-            let mut f = Fixture::new();
-            f.control.execute_batch(&format!("CREATE TRIGGER fail BEFORE INSERT ON {table} BEGIN SELECT RAISE(ABORT, 'publication fault'); END;")).unwrap();
-            let result = f.remove(delete).unwrap();
-            assert!(result.authority_committed);
-            assert_eq!(
-                result.listing,
-                ListingState::Pending {
-                    cause: "storage_failed".into()
-                }
-            );
-            assert_eq!(result.replacement, Replacement::Unknown);
-            assert_eq!(
-                f.store.workspace(f.source.id).unwrap(),
-                f.source,
-                "catalog transaction rolled back"
-            );
-            assert_eq!(f.store.workspaces_including_deleted().unwrap().len(), 1);
-            assert_eq!(
-                f.store.take_committed().len(),
-                1,
-                "only source commit is published"
-            );
-            assert_eq!(
-                f.repositories(),
-                1,
-                "{table}: no unlisted repository exists"
-            );
-            assert!(f.backend.0.deleted.borrow().is_empty());
-            assert_eq!(f.verified().deleted_at.is_some(), delete);
-            assert_eq!(f.verified().archived, !delete);
-            f.control.execute_batch("DROP TRIGGER fail;").unwrap();
-            f.reopen();
-            let overlay = f.store.workspace_authority(f.source.owner).unwrap();
-            assert!(overlay[0].listing_differs);
-            let result = f.remove(delete).unwrap();
-            assert_eq!(result.listing, ListingState::Applied);
-            assert_eq!(result.replacement, Replacement::NotNeeded);
-            assert_eq!(f.store.workspaces_including_deleted().unwrap().len(), 1);
-            assert_eq!(f.repositories(), 1);
-        }
+fn archive_publication_failure_retains_the_committed_removal_and_a_cold_retry_repairs_the_listing()
+{
+    for table in ["workspaces", "local_transport_modes"] {
+        let mut f = Fixture::new();
+        f.control.execute_batch(&format!("CREATE TRIGGER fail BEFORE INSERT ON {table} BEGIN SELECT RAISE(ABORT, 'publication fault'); END;")).unwrap();
+        let result = f.remove(false).unwrap();
+        assert!(result.authority_committed);
+        assert_eq!(
+            result.listing,
+            ListingState::Pending {
+                cause: "storage_failed".into()
+            }
+        );
+        assert_eq!(result.replacement, Replacement::Unknown);
+        assert_eq!(
+            f.store.workspace(f.source.id).unwrap(),
+            f.source,
+            "catalog transaction rolled back"
+        );
+        assert_eq!(f.store.workspaces_including_deleted().unwrap().len(), 1);
+        assert_eq!(
+            f.store.take_committed().len(),
+            1,
+            "only source commit is published"
+        );
+        assert_eq!(
+            f.repositories(),
+            1,
+            "{table}: no unlisted repository exists"
+        );
+        assert!(f.backend.0.deleted.borrow().is_empty());
+        assert!(f.verified().deleted_at.is_none());
+        assert!(f.verified().archived);
+        f.control.execute_batch("DROP TRIGGER fail;").unwrap();
+        f.reopen();
+        let overlay = f.store.workspace_authority(f.source.owner).unwrap();
+        assert!(overlay[0].listing_differs);
+        let result = f.remove(false).unwrap();
+        assert_eq!(result.listing, ListingState::Applied);
+        assert_eq!(result.replacement, Replacement::NotNeeded);
+        assert_eq!(f.store.workspaces_including_deleted().unwrap().len(), 1);
+        assert_eq!(f.repositories(), 1);
     }
+}
+
+/// The delete's own publication is the root transaction, so a failure in it
+/// is a **refusal** — nothing was deleted — rather than a committed removal
+/// with a pending listing (`service::replacement`'s `delete_workspace_root`).
+#[test]
+fn a_delete_publication_failure_refuses_and_deletes_nothing() {
+    let mut f = Fixture::new();
+    f.control.execute_batch("CREATE TRIGGER fail BEFORE INSERT ON workspaces BEGIN SELECT RAISE(ABORT, 'publication fault'); END;").unwrap();
+    assert_eq!(f.remove(true).unwrap_err().code(), Code::StorageFailed);
+    f.assert_live();
+    assert!(f.verified().deleted_at.is_none());
+    assert_eq!(f.store.workspaces_including_deleted().unwrap().len(), 1);
+    assert_eq!(f.repositories(), 1);
+    assert!(f.backend.0.deleted.borrow().is_empty());
+
+    f.control.execute_batch("DROP TRIGGER fail;").unwrap();
+    let result = f.remove(true).unwrap();
+    assert_eq!(result.listing, ListingState::Applied);
+    assert_eq!(result.replacement, Replacement::NotNeeded);
+    assert_eq!(
+        f.store
+            .workspace_including_deleted(f.source.id)
+            .unwrap()
+            .deleted_at,
+        Some(at())
+    );
+    assert_eq!(f.repositories(), 1);
 }
 
 #[test]
@@ -317,18 +381,26 @@ fn a_repaired_source_projection_still_lists_the_removal_and_creates_nothing() {
     assert_eq!(f.remove(false).unwrap().replacement, Replacement::NotNeeded);
     assert_eq!(f.store.workspaces_including_deleted().unwrap().len(), 1);
     assert_eq!(f.repositories(), 1);
-    // `EnsureLive` still creates: that arm is Plan 1.3's (availability.rs).
+    // `EnsureLive` creates nothing either since Plan 1.3: a Profile whose
+    // only Workspace is archived is empty, and stays that way (the full arm
+    // is in `workspace::tests::availability`).
     assert!(matches!(
         f.store
             .ensure_live_workspace(f.source.owner, "Replacement", at())
             .unwrap(),
-        koru_store_core::service::EnsuredWorkspace::Created { .. }
+        koru_store_core::service::EnsuredWorkspace::Empty
     ));
-    assert_eq!(f.store.workspaces_including_deleted().unwrap().len(), 2);
+    assert_eq!(f.store.workspaces_including_deleted().unwrap().len(), 1);
 }
 
+/// The destination here is a Profile nobody has spoken about, so it is
+/// Local-only and the new placement waits in the private overlay (the
+/// exportable destination is `preparation::root_catalog`'s move tests). What
+/// is held here is that the placement write and the projection are **one**
+/// transaction: a failure in the projection leaves the unit creation
+/// published with the row (Plan 1.3) exactly as it was, with no overlay.
 #[test]
-fn a_move_commits_its_root_unit_and_projection_together_and_a_retry_changes_nothing() {
+fn a_move_commits_its_placement_and_projection_together_and_a_retry_changes_nothing() {
     for fail in [false, true] {
         let mut f = Fixture::new();
         let target = f
@@ -336,7 +408,7 @@ fn a_move_commits_its_root_unit_and_projection_together_and_a_retry_changes_noth
             .create_profile("Target", None, None, Locale::default(), at())
             .unwrap();
         if fail {
-            // Fail on the projection, after the unit INSERT in the same
+            // Fail on the projection, after the placement write in the same
             // transaction.
             f.control.execute_batch("CREATE TRIGGER fail BEFORE UPDATE ON workspaces BEGIN SELECT RAISE(ABORT, 'move publication fault'); END;").unwrap();
         }
@@ -351,12 +423,23 @@ fn a_move_commits_its_root_unit_and_projection_together_and_a_retry_changes_noth
             assert!(result.is_err());
             f.assert_live();
             assert_eq!(f.store.workspaces_including_deleted().unwrap().len(), 1);
+            let row = f
+                .store_catalog()
+                .root_catalog_unit(scope, unit)
+                .unwrap()
+                .expect("creation published the Workspace unit with its row");
+            assert_eq!(row.revision, 1, "the placement write was not rolled back");
+            assert_eq!(
+                placed_under(&row, f.source.id),
+                Some(f.source.owner),
+                "the rolled-back move moved the placement anyway"
+            );
             assert!(
                 f.store_catalog()
-                    .root_catalog_unit(scope, unit)
+                    .root_catalog_overlay(scope, unit)
                     .unwrap()
                     .is_none(),
-                "the unit insert rolled back with the projection"
+                "a private fork survived the rollback"
             );
             assert!(f.backend.0.deleted.borrow().is_empty());
             assert!(f.store.take_committed().is_empty());
@@ -376,7 +459,18 @@ fn a_move_commits_its_root_unit_and_projection_together_and_a_retry_changes_noth
             .root_catalog_unit(scope, unit)
             .unwrap()
             .unwrap();
-        assert_eq!(row.revision, 1);
+        assert_eq!(
+            row.revision, 1,
+            "a Local-only destination writes the placement to the overlay"
+        );
+        assert_eq!(placed_under(&row, f.source.id), Some(f.source.owner));
+        assert!(
+            f.store_catalog()
+                .root_catalog_overlay(scope, unit)
+                .unwrap()
+                .is_some(),
+            "the new placement has to be somewhere"
+        );
         f.reopen();
         let retry = f
             .store
@@ -403,6 +497,21 @@ impl Fixture {
     fn store_catalog(&self) -> SqliteCatalog {
         SqliteCatalog::in_named_memory(&self.catalog).unwrap()
     }
+}
+
+/// The Profile a durable unit row places a Workspace under.
+fn placed_under(
+    row: &koru_store_core::ports::RootCatalogUnitRow,
+    workspace: WorkspaceId,
+) -> Option<ProfileId> {
+    koru_store_core::root_catalog::WorkspaceCatalogUnit::from_snapshot(
+        &row.snapshot,
+        workspace,
+        row.revision.try_into().unwrap(),
+    )
+    .unwrap()
+    .placement()
+    .and_then(|placement| placement.profile)
 }
 
 #[test]
