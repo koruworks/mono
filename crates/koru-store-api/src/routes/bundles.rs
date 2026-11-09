@@ -8,7 +8,7 @@ use axum::Json;
 use axum::extract::rejection::BytesRejection;
 use axum::extract::{Extension, Path, Query, State};
 use axum::response::IntoResponse;
-use koru_store_core::bundle::ImportMode;
+use koru_store_core::bundle::{ImportMode, ImportPublication};
 use koru_store_core::errors::{Code, Error};
 use koru_store_core::ids::WorkspaceId;
 use koru_store_core::model::{Scope, Timestamp, Workspace};
@@ -64,8 +64,15 @@ pub async fn import(
 
     let workspace = {
         let mut store = lock(&state)?;
-        let id = store.import_workspace(&bundle, mode, query.owner, Timestamp::now())?;
-        store.workspace(id)?
+        let imported = store.import_workspace(&bundle, mode, query.owner, Timestamp::now())?;
+        // The wire answers the Workspace and nothing else, so the one fact the
+        // response cannot carry is said here: this Restore resumed the staging
+        // an interrupted one left behind rather than starting over.
+        if imported.publication == ImportPublication::Resumed {
+            tracing::info!(workspace = %imported.workspace,
+                "the import resumed the staged repository an interrupted Restore left behind");
+        }
+        store.workspace(imported.workspace)?
     };
     // After the commit, and named for what happened: a restored workspace keeps
     // the bundle's ids and is not a new one, which is why this is not

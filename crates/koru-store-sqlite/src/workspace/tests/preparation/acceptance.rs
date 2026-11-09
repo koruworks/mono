@@ -17,9 +17,12 @@
 
 use super::root_catalog::{Root, reminder_in};
 use super::*;
-use koru_store_core::bundle::ImportMode;
+use koru_store_core::bundle::{Bundle, ImportMode, ImportPublication, ImportedWorkspace};
 use koru_store_core::ids::{DeletionId, DocumentId, UserScopeId};
-use koru_store_core::ports::{PurgeHold, RootCatalogUnitCommit};
+use koru_store_core::model::{DocumentKind, LineageKind};
+use koru_store_core::ports::{
+    HistoryReason, PurgeHold, RootCatalogUnitCommit, UpdateBatch, UpdateOrigin, WorkspaceRepo,
+};
 use koru_store_core::profile_units::PersonalManifest;
 use koru_store_core::root_catalog::{
     CatalogUnitRef, DeletionRecord, Derived, ExportSubject, ProfileCatalogUnit,
@@ -786,23 +789,100 @@ fn seam_account_scope_binding_fault_leaves_the_device_unbound_and_the_retry_bind
 
 // ---------------------------------------------------------- bundle import
 
+/// What a Restore that crashed mid-staging leaves behind: the bundle's
+/// repository claimed under its origin's id, holding `complete` of the
+/// bundle's documents with their one update and `bare` of them as rows
+/// without it (a crash between `create_document` and `commit_updates`), and
+/// nothing in the catalog. Written through the inner backend, so the
+/// `FaultBackend`'s `created` ledger stays empty and a test can see whether
+/// the import claimed anything itself.
+fn stage_by_hand(f: &Root, bundle: &Bundle, complete: &[DocumentId], bare: &[DocumentId]) {
+    let mut repo = f
+        .backend
+        .0
+        .backend
+        .create_workspace(bundle.manifest.workspace)
+        .unwrap();
+    for document in &bundle.manifest.documents {
+        if !complete.contains(&document.id) && !bare.contains(&document.id) {
+            continue;
+        }
+        repo.create_document(document.id, document.kind, at())
+            .unwrap();
+        if complete.contains(&document.id) {
+            repo.commit_updates(&UpdateBatch {
+                document: document.id,
+                updates: vec![bundle.snapshot_of(document.id).unwrap().to_vec()],
+                version_vector: Vec::new(),
+                frontiers: Vec::new(),
+                received_at: at(),
+                origins: vec![UpdateOrigin::Store],
+            })
+            .unwrap();
+        }
+    }
+}
+
+/// Every document row of the repository under `workspace` with its journal
+/// head, read through the Store's own backend: what was actually written.
+/// (An in-memory backend opens a missing repository as an empty one, so an
+/// empty map is also what "no repository" looks like.)
+fn staged_documents(f: &Root, workspace: WorkspaceId) -> BTreeMap<DocumentId, Option<u64>> {
+    let repo = f.backend.open_workspace(workspace).unwrap();
+    repo.documents()
+        .unwrap()
+        .into_iter()
+        .map(|state| {
+            let head = repo.journal_since(state.id, None).unwrap().head;
+            (state.id, head)
+        })
+        .collect()
+}
+
+/// A Workspace with the given pages and one history marker on the first,
+/// exported: the bundle every staging test below restores.
+fn exported_bundle(f: &mut Root, titles: &[&str]) -> (WorkspaceId, Vec<DocumentId>, Bundle) {
+    let a = f.profile("A");
+    let w = f.store.create_workspace(a, "W", at()).unwrap().id;
+    let mut pages = Vec::new();
+    for title in titles {
+        pages.push(
+            f.store
+                .create_document(w, title, "page", None, None, at())
+                .unwrap()
+                .0,
+        );
+    }
+    f.store
+        .capture_history(
+            w,
+            pages[0],
+            None,
+            HistoryReason::Manual,
+            at(),
+            Some("Milestone"),
+            None,
+            None,
+        )
+        .unwrap();
+    let bundle = f.store.export_workspace(w, at()).unwrap();
+    assert_eq!(bundle.manifest.history_entries.len(), 1);
+    (w, pages, bundle)
+}
+
 /// Seam: the bundle publication. The existing Plan 1.2 test faults the
 /// publication's first and last statements and a staging write; this one
 /// faults the `workspaces` and `document_locations` statements and then
-/// the case EXECUTION.md carried forward — a crash between staging and
-/// publication leaves the staged repository behind, and a Restore retry
-/// meets it. Today that retry is refused with `WorkspaceExists` until the
-/// repository is removed; this test pins that honestly and shows the
-/// cleanup step `VERIFICATION.md` procedure 5 names.
+/// the case EXECUTION.md carried forward and QUESTIONS.md Q6 settled — a
+/// crash between staging and publication leaves the staged repository
+/// behind, and the Restore retry meets it. The retry adopts it as its own
+/// interrupted staging (same id, the bundle's manifest, no row, no routing),
+/// writes nothing twice, publishes once and says so; a further retry is the
+/// ordinary `WorkspaceExists`, because the row now exists.
 #[test]
-fn seam_bundle_publication_faults_and_the_staged_repository_retry_known_limitation() {
+fn seam_bundle_publication_faults_and_the_retry_resumes_the_staged_repository() {
     let mut f = Root::new();
-    let a = f.profile("A");
-    let w = f.store.create_workspace(a, "W", at()).unwrap().id;
-    f.store
-        .create_document(w, "One", "page", None, None, at())
-        .unwrap();
-    let bundle = f.store.export_workspace(w, at()).unwrap();
+    let (w, pages, bundle) = exported_bundle(&mut f, &["One"]);
 
     for fault in [
         "BEFORE INSERT ON workspaces",
@@ -832,22 +912,25 @@ fn seam_bundle_publication_faults_and_the_staged_repository_retry_known_limitati
             &[w],
             "{fault}: cleaned up"
         );
-        // The retry after a clean failure lists exactly one Workspace.
+        // The retry after a clean failure claims afresh and lists exactly one
+        // Workspace.
         assert_eq!(
             there
                 .store
                 .import_workspace(&bundle, ImportMode::Restore, b, at())
                 .unwrap(),
-            w
+            ImportedWorkspace {
+                workspace: w,
+                publication: ImportPublication::Fresh,
+            },
+            "{fault}"
         );
         assert_eq!(there.store.workspaces_including_deleted().unwrap().len(), 1);
     }
 
     // The crash case: the publication fails and the repository cannot be
     // cleaned (as when the process dies between the two). Nothing lists the
-    // staged repository; the Restore retry is refused because the backend
-    // refuses to claim an existing repository (the guard that keeps a stale
-    // leftover from being written over).
+    // staged repository, and every content row of it was written.
     let mut there = Root::new();
     let b = there.profile("B");
     there.backend.0.cleanup_fails.set(true);
@@ -864,30 +947,302 @@ fn seam_bundle_publication_faults_and_the_staged_repository_retry_known_limitati
     there.backend.0.cleanup_fails.set(false);
     assert!(there.store.workspace_including_deleted(w).is_err());
     assert!(there.unit(w).is_none());
-    assert_eq!(
-        there
-            .store
-            .import_workspace(&bundle, ImportMode::Restore, b, at())
-            .unwrap_err()
-            .code(),
-        Code::WorkspaceExists,
-        "known limitation: the retry meets the staged repository"
-    );
-    assert!(
-        there.store.workspace_including_deleted(w).is_err(),
-        "and lists nothing"
-    );
-    // The cleanup step: remove the unlisted repository, then retry.
-    Backend::delete_workspace(&there.backend, w).unwrap();
+    let left_behind = staged_documents(&there, w);
+    assert_eq!(left_behind.len(), bundle.manifest.documents.len());
+    assert!(left_behind.values().all(|head| *head == Some(1)));
+
+    // The retry adopts the leftover and publishes once.
     assert_eq!(
         there
             .store
             .import_workspace(&bundle, ImportMode::Restore, b, at())
             .unwrap(),
-        w
+        ImportedWorkspace {
+            workspace: w,
+            publication: ImportPublication::Resumed,
+        }
+    );
+    assert_eq!(
+        there.backend.0.created.borrow().as_slice(),
+        &[w],
+        "claimed once, by the crashed attempt"
+    );
+    assert_eq!(
+        there.backend.0.deleted.borrow().as_slice(),
+        &[w],
+        "the failed cleanup, and nothing deleted since"
     );
     assert_eq!(there.store.workspaces_including_deleted().unwrap().len(), 1);
+    assert_eq!(there.store.workspace(w).unwrap().owner, b);
     assert_eq!(there.unit(w).unwrap().revision, 1);
+    let receipt = there.store.lineage(w).unwrap();
+    assert_eq!(receipt.len(), 1);
+    assert_eq!(receipt[0].kind, LineageKind::Restore);
+    for document in &bundle.manifest.documents {
+        assert_eq!(there.store.locate(document.id).unwrap(), Some(w));
+    }
+    // Nothing was written twice: one update per document, one marker.
+    assert_eq!(staged_documents(&there, w), left_behind);
+    assert_eq!(
+        there
+            .store
+            .history_entries(w, pages[0], None, 50)
+            .unwrap()
+            .len(),
+        1
+    );
+    let titles: Vec<String> = there
+        .store
+        .documents(w)
+        .unwrap()
+        .into_iter()
+        .map(|entry| entry.title)
+        .collect();
+    assert_eq!(titles, ["One"]);
+
+    // Published once: the row now exists, so a further retry is the ordinary
+    // refusal and changes nothing.
+    let again = there
+        .store
+        .import_workspace(&bundle, ImportMode::Restore, b, at())
+        .unwrap_err();
+    assert_eq!(again.code(), Code::WorkspaceExists);
+    assert!(
+        again.message().contains("already in the store"),
+        "{}",
+        again.message()
+    );
+    assert_eq!(there.store.workspaces_including_deleted().unwrap().len(), 1);
+    assert_eq!(there.store.lineage(w).unwrap().len(), 1);
+}
+
+/// A repository under the origin's id that is not the bundle's own staging
+/// — its manifest document is another, or it holds a document the bundle
+/// does not name — is somebody's, and the Restore keeps today's refusal
+/// without writing into it, claiming or deleting anything.
+#[test]
+fn a_leftover_with_another_manifest_identity_or_a_stranger_document_is_refused_and_untouched() {
+    let mut f = Root::new();
+    let (w, _, bundle) = exported_bundle(&mut f, &["One"]);
+    let every: Vec<DocumentId> = bundle.manifest.documents.iter().map(|d| d.id).collect();
+
+    for (case, staged, stranger) in [
+        ("another manifest identity", &[][..], DocumentKind::Manifest),
+        ("a stranger document", &every[..], DocumentKind::Document),
+    ] {
+        let mut there = Root::new();
+        let b = there.profile("B");
+        stage_by_hand(&there, &bundle, staged, &[]);
+        there
+            .backend
+            .0
+            .backend
+            .open_workspace(w)
+            .unwrap()
+            .create_document(DocumentId::new(), stranger, at())
+            .unwrap();
+        let before = staged_documents(&there, w);
+
+        let refused = there
+            .store
+            .import_workspace(&bundle, ImportMode::Restore, b, at())
+            .unwrap_err();
+        assert_eq!(refused.code(), Code::WorkspaceExists, "{case}");
+        assert!(
+            there.store.workspace_including_deleted(w).is_err(),
+            "{case}"
+        );
+        assert!(there.unit(w).is_none(), "{case}");
+        assert_eq!(
+            there.count("SELECT COUNT(*) FROM document_locations"),
+            0,
+            "{case}"
+        );
+        assert_eq!(
+            there.count("SELECT COUNT(*) FROM workspace_lineage"),
+            0,
+            "{case}"
+        );
+        assert!(
+            there.backend.0.created.borrow().is_empty(),
+            "{case}: nothing claimed"
+        );
+        assert!(
+            there.backend.0.deleted.borrow().is_empty(),
+            "{case}: nothing deleted"
+        );
+        assert_eq!(
+            staged_documents(&there, w),
+            before,
+            "{case}: not written into"
+        );
+    }
+}
+
+/// A repository whose id has a `workspaces` row — here a tombstoned one, the
+/// Workspace in the Trash with its routing already dropped — is a Workspace,
+/// not staging: the Restore is refused, the row stands, and the repository
+/// is not touched.
+#[test]
+fn a_leftover_whose_id_has_a_row_even_tombstoned_is_refused() {
+    let mut f = Root::new();
+    let (w, _, bundle) = exported_bundle(&mut f, &["One"]);
+
+    let mut there = Root::new();
+    let b = there.profile("B");
+    assert_eq!(
+        there
+            .store
+            .import_workspace(&bundle, ImportMode::Restore, b, at())
+            .unwrap()
+            .publication,
+        ImportPublication::Fresh
+    );
+    there.store.delete_workspace(w, at()).unwrap();
+    assert!(
+        there
+            .store
+            .workspace_including_deleted(w)
+            .unwrap()
+            .deleted_at
+            .is_some(),
+        "tombstoned: the row stays"
+    );
+    assert_eq!(there.count("SELECT COUNT(*) FROM document_locations"), 0);
+    let before = staged_documents(&there, w);
+
+    let refused = there
+        .store
+        .import_workspace(&bundle, ImportMode::Restore, b, at())
+        .unwrap_err();
+    assert_eq!(refused.code(), Code::WorkspaceExists);
+    assert_eq!(there.store.workspaces_including_deleted().unwrap().len(), 1);
+    assert!(
+        there
+            .store
+            .workspace_including_deleted(w)
+            .unwrap()
+            .deleted_at
+            .is_some()
+    );
+    assert_eq!(
+        there.store.lineage(w).unwrap().len(),
+        1,
+        "no second receipt"
+    );
+    assert_eq!(there.backend.0.created.borrow().as_slice(), &[w]);
+    assert!(there.backend.0.deleted.borrow().is_empty());
+    assert_eq!(staged_documents(&there, w), before);
+}
+
+/// A repository with document routing in the catalog but no `workspaces`
+/// row is not staging either — staging publishes the row and the routing
+/// together or not at all — so the Restore is refused and nothing is
+/// written.
+#[test]
+fn a_leftover_with_document_routing_is_refused() {
+    let mut f = Root::new();
+    let (w, pages, bundle) = exported_bundle(&mut f, &["One"]);
+    let every: Vec<DocumentId> = bundle.manifest.documents.iter().map(|d| d.id).collect();
+
+    let mut there = Root::new();
+    let b = there.profile("B");
+    stage_by_hand(&there, &bundle, &every, &[]);
+    there
+        .control
+        .execute(
+            "INSERT INTO document_locations (document_id, workspace_id) VALUES (?1, ?2)",
+            params![pages[0].to_storage(), w.to_storage()],
+        )
+        .unwrap();
+    let before = staged_documents(&there, w);
+
+    let refused = there
+        .store
+        .import_workspace(&bundle, ImportMode::Restore, b, at())
+        .unwrap_err();
+    assert_eq!(refused.code(), Code::WorkspaceExists);
+    assert!(there.store.workspace_including_deleted(w).is_err());
+    assert!(there.unit(w).is_none());
+    assert_eq!(
+        there.count("SELECT COUNT(*) FROM document_locations"),
+        1,
+        "the routing is as it was"
+    );
+    assert_eq!(there.count("SELECT COUNT(*) FROM workspace_lineage"), 0);
+    assert!(there.backend.0.created.borrow().is_empty());
+    assert!(there.backend.0.deleted.borrow().is_empty());
+    assert_eq!(staged_documents(&there, w), before);
+}
+
+/// A crash in the middle of staging: the manifest and one page were written
+/// with their update, a second page's row exists without it, the third was
+/// never reached and neither was the marker. The retry writes exactly what
+/// is missing, and the published Workspace holds the bundle's document set
+/// — one update each — and its one marker.
+#[test]
+fn a_partially_staged_repository_is_completed_to_the_bundles_document_set() {
+    let mut f = Root::new();
+    let (w, pages, bundle) = exported_bundle(&mut f, &["One", "Two", "Three"]);
+    let manifest = bundle.manifest_document().unwrap();
+    assert_eq!(bundle.manifest.documents.len(), 4);
+
+    let mut there = Root::new();
+    let b = there.profile("B");
+    stage_by_hand(&there, &bundle, &[manifest, pages[0]], &[pages[1]]);
+    let before = staged_documents(&there, w);
+    assert_eq!(before.len(), 3);
+    assert_eq!(before[&pages[1]], None, "a row without its update");
+
+    assert_eq!(
+        there
+            .store
+            .import_workspace(&bundle, ImportMode::Restore, b, at())
+            .unwrap(),
+        ImportedWorkspace {
+            workspace: w,
+            publication: ImportPublication::Resumed,
+        }
+    );
+    let expected: BTreeMap<DocumentId, Option<u64>> = bundle
+        .manifest
+        .documents
+        .iter()
+        .map(|document| (document.id, Some(1)))
+        .collect();
+    assert_eq!(
+        staged_documents(&there, w),
+        expected,
+        "every document of the bundle once, with exactly one update"
+    );
+    assert!(
+        there.backend.0.created.borrow().is_empty(),
+        "nothing claimed afresh"
+    );
+    assert!(there.backend.0.deleted.borrow().is_empty());
+    let mut titles: Vec<String> = there
+        .store
+        .documents(w)
+        .unwrap()
+        .into_iter()
+        .map(|entry| entry.title)
+        .collect();
+    titles.sort();
+    assert_eq!(titles, ["One", "Three", "Two"]);
+    assert_eq!(
+        there
+            .store
+            .history_entries(w, pages[0], None, 50)
+            .unwrap()
+            .len(),
+        1
+    );
+    for document in &bundle.manifest.documents {
+        assert_eq!(there.store.locate(document.id).unwrap(), Some(w));
+    }
+    assert_eq!(there.unit(w).unwrap().revision, 1);
+    assert_eq!(there.store.lineage(w).unwrap().len(), 1);
+    assert_eq!(there.store.workspaces_including_deleted().unwrap().len(), 1);
 }
 
 /// Bundles across root evidence: a Restore is refused while the origin's
@@ -910,7 +1265,8 @@ fn bundle_restore_is_refused_across_an_active_deletion_and_a_purge_while_duplica
     let copy = f
         .store
         .import_workspace(&bundle, ImportMode::Duplicate, a2, at())
-        .unwrap();
+        .unwrap()
+        .workspace;
     assert_ne!(copy, w);
     assert!(workspace_unit(&f, copy).is_live());
     assert!(
@@ -936,7 +1292,8 @@ fn bundle_restore_is_refused_across_an_active_deletion_and_a_purge_while_duplica
     let second = f
         .store
         .import_workspace(&bundle, ImportMode::Duplicate, a2, at())
-        .unwrap();
+        .unwrap()
+        .workspace;
     assert_ne!(second, copy);
     assert_eq!(f.store.workspaces_including_deleted().unwrap().len(), 2);
 }
