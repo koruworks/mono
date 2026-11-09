@@ -44,10 +44,16 @@
 //! Since Plan 2.1 a replica a peer provisions does too
 //! (`Store::provision_replica_placed`: the root unit received from the peer
 //! places it, or a fresh unit is published with the row), and remote root
-//! units are joined through `root_sync.rs`. A Workspace with no unit is a
-//! row from before catalog 13's seed or a bundle staged and never published;
-//! it is read from the projection, as the only evidence there is, and gains
-//! its unit on its first move or lifecycle write.
+//! units are joined through `root_sync.rs`. A Workspace with no unit is one
+//! the Cloud bootstrap of the v1 window provisioned under
+//! `ReplicaPlacement::HintWithoutUnit` (QUESTIONS.md Q7); the 12 to 13
+//! migration seeds a unit for every row that exists when it runs, and a
+//! bundle staged and never published has no catalog row at all, so neither
+//! is in this state. Such a row is read from the projection, as the only
+//! evidence there is, and gains its unit on a move that places it under a
+//! different Profile, or on a lifecycle write. A move to the Profile it
+//! already reads as writes nothing (`already_placed_under`), so nothing
+//! repairs it on its own — see QUESTIONS.md Q10.
 
 use super::*;
 use crate::ports::{RootCatalogOverlay, RootCatalogUnitCommit, RootCatalogUnitRow, RootUnitWrite};

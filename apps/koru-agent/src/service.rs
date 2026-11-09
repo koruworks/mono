@@ -143,6 +143,29 @@ enum PairingCommand {
 }
 
 impl SyncControl {
+    /// A handle holding exactly the status a test hands it, with no worker
+    /// behind it.
+    ///
+    /// **The status is the daemon's, and a test has no daemon.** It arrives
+    /// over the control stream in [`run_sync_control`], which needs a
+    /// network runtime, a gateway and — for any subject at all — a second
+    /// machine. What the Agent does with that reading is nonetheless its own
+    /// code: the wire mapping in `root_sync_push` and the broadcast in
+    /// `broadcast_root_sync`. This is the seam that lets those be asserted
+    /// without the machine. `#[cfg(test)]`, so no shipped build has it; the
+    /// command channel is dropped at once, which is what every send on it
+    /// already tolerates.
+    #[cfg(test)]
+    pub(crate) fn for_test(status: koru_sync_control::ControlStatus) -> Self {
+        let (commands, _) = std::sync::mpsc::channel();
+        Self {
+            commands,
+            events: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            status: std::sync::Arc::new(std::sync::Mutex::new(status)),
+            session: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        }
+    }
+
     /// Wake the existing trust reread -> Store authorization replacement -> dial path.
     pub fn refresh_authorization(&self) {
         let _ = self.commands.send(PairingCommand::RefreshAuthorization);
