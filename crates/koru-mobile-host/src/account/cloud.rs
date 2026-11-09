@@ -26,8 +26,8 @@ use koru_account_core::workspace_authorization::Region;
 use koru_account_core::{KoruIdentityId, ProfileId};
 use koru_account_runtime::cloud::{
     self, CloudAccountBindingRef, CloudPermitScopeV2, CloudPermitV2, CloudRootExport,
-    CloudRootJoin, CloudRootUnitState, Failure, Host, LocalBootstrap, RootInventory, SessionReport,
-    Stage,
+    CloudRootJoin, CloudRootUnitState, Failure, Host, LocalBootstrap, RootInventory,
+    RootRepairOutcome, SessionReport, Stage,
 };
 use koru_account_wire::cloud_sync::SyncCredential;
 use koru_account_wire::{CloudCatalogBindingV2, CloudSyncRouteV1, JwksResponseV1};
@@ -38,7 +38,7 @@ use koru_store_core::errors::Code;
 use koru_store_core::root_catalog::{CatalogUnitRef, Derived, ExportSubject};
 use koru_store_core::service::{JoinUnit, RootGrant, RootJoinOutcome};
 use koru_store_core::transport::{TransportPath, TransportSubject};
-use koru_store_core::{DocumentId, WorkspaceId};
+use koru_store_core::{DocumentId, Timestamp, WorkspaceId};
 use koru_store_server::cloud_sync::{self, Progress};
 use uuid::Uuid;
 
@@ -223,6 +223,44 @@ fn route_of(route: &CloudSyncRouteV1) -> Result<CloudRoute, Failure> {
 }
 
 /// A Store refusal of a root or personal operation as the wire names it.
+/// The publication job, then the eligible root inventory over the account's
+/// Cloud grant. One function because the ordinary read and Q10's repair both
+/// end in it, and the two must not drift (STORE.md: the job runs first so a
+/// pending overlay has had its chance).
+fn read_root_inventory(
+    store: &mut koru_store_server::WorkerStore,
+) -> Result<RootInventory, &'static str> {
+    if let Err(error) = store.publish_pending_overlays() {
+        tracing::info!(
+            code = store_code(&error),
+            "cloud host: publication job did not run"
+        );
+    }
+    let inventory = store
+        .root_export_inventory(&RootGrant::account())
+        .map_err(|error| store_code(&error))?;
+    Ok(RootInventory {
+        units: inventory
+            .units
+            .into_iter()
+            .map(|(unit, version)| CloudRootUnitState {
+                unit: JoinUnit::catalog(unit),
+                frontier: version.encode(),
+            })
+            .chain(
+                inventory
+                    .personal
+                    .into_iter()
+                    .map(|(workspace, version)| CloudRootUnitState {
+                        unit: JoinUnit::PersonalV2 { workspace },
+                        frontier: version.encode(),
+                    }),
+            )
+            .collect(),
+        held: u32::try_from(inventory.held).unwrap_or(u32::MAX),
+    })
+}
+
 fn store_code(error: &koru_store_core::Error) -> &'static str {
     match error.code() {
         Code::Forbidden => "mode_refuses_transport",
@@ -769,34 +807,28 @@ impl Host for MobileCloudHost {
     }
 
     fn root_inventory(&self) -> Result<RootInventory, Failure> {
+        self.with_store(|store| read_root_inventory(store))
+    }
+
+    fn repair_bootstrap_units(&self) -> Result<RootRepairOutcome, Failure> {
         self.with_store(|store| {
-            // The publication job first, so a pending overlay has had its
-            // chance before the inventory is read (STORE.md).
-            if let Err(error) = store.publish_pending_overlays() {
-                tracing::info!(
-                    code = store_code(&error),
-                    "cloud host: publication job did not run"
-                );
-            }
-            let inventory = store
-                .root_export_inventory(&RootGrant::account())
-                .map_err(|error| store_code(&error))?;
-            Ok(RootInventory {
-                units: inventory
-                    .units
-                    .into_iter()
-                    .map(|(unit, version)| CloudRootUnitState {
-                        unit: JoinUnit::catalog(unit),
-                        frontier: version.encode(),
-                    })
-                    .chain(inventory.personal.into_iter().map(|(workspace, version)| {
-                        CloudRootUnitState {
-                            unit: JoinUnit::PersonalV2 { workspace },
-                            frontier: version.encode(),
-                        }
-                    }))
-                    .collect(),
-                held: u32::try_from(inventory.held).unwrap_or(u32::MAX),
+            // Q10's repair, in the same turn as the read that follows it, so
+            // the pass pushes what it just created. The phone reaches the same
+            // Store port in process that the desktop reaches over control's
+            // one additive field; the *decision* is the coordinator's on both.
+            let repaired = match store.repair_bootstrap_units(Timestamp::now()) {
+                Ok(done) => u32::try_from(done.len()).unwrap_or(u32::MAX),
+                Err(error) => {
+                    tracing::info!(
+                        code = store_code(&error),
+                        "cloud host: the withheld-unit repair did not run"
+                    );
+                    0
+                }
+            };
+            Ok(RootRepairOutcome {
+                repaired,
+                inventory: read_root_inventory(store)?,
             })
         })
     }

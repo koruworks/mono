@@ -138,6 +138,11 @@ struct Probe {
     refresh_unavailable_once: AtomicBool,
     list_calls: AtomicUsize,
     rejected_refresh: Mutex<Option<String>>,
+    /// The refresh token whose *refresh* is answered as revoked. Distinct from
+    /// `rejected_refresh`, which only refuses the inspection probe: the two
+    /// together are a genuinely dead session, and `rejected_refresh` alone is
+    /// a rotation that was answered but never reached the vault.
+    revoked_refresh: Mutex<Option<String>>,
 }
 struct Service {
     probe: Arc<Probe>,
@@ -218,6 +223,12 @@ impl AccountService for Service {
             &fallback
         });
         let account = account_of(restored);
+        if matches!(command, AccountCommand::Retry)
+            && self.probe.revoked_refresh.lock().unwrap().as_deref()
+                == Some(restored.refresh_token.as_str())
+        {
+            return Err(ServiceError::revoked());
+        }
         if matches!(command, AccountCommand::Retry)
             && self.probe.refresh_deadlines.load(Ordering::Acquire)
         {
@@ -1007,14 +1018,83 @@ fn stale_old_owner_clear_refuses_before_touching_recreated_ready_slot() {
     assert_eq!(after.legacy_retired, before.legacy_retired);
 }
 
+/// The maintainer's recurring "sign in again on every launch": the stored
+/// slot's inspection is refused because the rotation the server answered never
+/// reached the vault, so the stored refresh token is no longer the newest one.
+/// The refusal must not end the start. The credential goes to the scheduled
+/// retry, whose refresh replays the rotation under the key
+/// `refresh_retry_key` derives from these same old bytes, and the person ends
+/// signed in without ever being shown a sign-in prompt.
+#[test]
+fn a_refused_inspection_is_replayed_by_the_refresh_instead_of_asking_for_a_sign_in() {
+    let probe = Arc::new(Probe::default());
+    *probe.rejected_refresh.lock().unwrap() = Some("refresh-1-0".into());
+    let mut h = Harness::with_environment(None, false, probe, Arc::new(FixedClock(Instant::now())));
+    let stored = h.bytes(1).unwrap();
+    h.control.set_foreground(true);
+    let deadline = Instant::now() + WAIT;
+    let mut stages = vec![h.control.state().stage];
+    while h.control.state().stage != AccountStage::SignedIn {
+        h.receive(deadline);
+        stages.push(h.control.state().stage);
+    }
+    assert!(
+        !stages
+            .iter()
+            .any(|stage| matches!(stage, AccountStage::Failed | AccountStage::SignedOut)),
+        "a refused inspection must not flash a sign-in surface: {stages:?}"
+    );
+    let state = h.control.state();
+    assert_eq!(state.stage, AccountStage::SignedIn);
+    assert_eq!(
+        state.failure_code, None,
+        "the replayed rotation repaired the slot, so no code survives it"
+    );
+    assert_ne!(
+        h.bytes(1).unwrap().expose(),
+        stored.expose(),
+        "the refreshed credential replaced the superseded bytes in the vault"
+    );
+}
+
+/// The same refusal, but the session really is gone: the refresh route refuses
+/// it too. That is the only proof this code accepts, and it must still land
+/// the person on the re-authenticate surface — one round trip later — with the
+/// vault erased so the next launch does not present the dead slot again.
+#[test]
+fn a_session_the_refresh_route_refuses_ends_signed_out_with_the_vault_cleared() {
+    let probe = Arc::new(Probe::default());
+    *probe.rejected_refresh.lock().unwrap() = Some("refresh-1-0".into());
+    *probe.revoked_refresh.lock().unwrap() = Some("refresh-1-0".into());
+    let mut h = Harness::with_environment(None, false, probe, Arc::new(FixedClock(Instant::now())));
+    h.control.set_foreground(true);
+    let deadline = Instant::now() + WAIT;
+    while h.control.state().stage != AccountStage::SignedOut {
+        h.receive(deadline);
+    }
+    assert_eq!(
+        h.control.state().failure_code.as_deref(),
+        Some("session_revoked"),
+        "the re-authenticate surface is reached through the refresh route's refusal"
+    );
+    assert!(
+        h.bytes(1).is_none(),
+        "a revoked session's bytes must not survive to be refused again"
+    );
+}
+
 #[test]
 fn signing_in_again_after_a_rejected_slot_clears_the_repair_code() {
     let probe = Arc::new(Probe::default());
     *probe.rejected_refresh.lock().unwrap() = Some("refresh-1-0".into());
+    *probe.revoked_refresh.lock().unwrap() = Some("refresh-1-0".into());
     let mut h = Harness::with_environment(None, false, probe, Arc::new(FixedClock(Instant::now())));
     h.control.set_foreground(true);
     let deadline = Instant::now() + WAIT;
-    while h.control.state().failure_code.as_deref() != Some("account_credential_rejected") {
+    // The inspection refusal left a repair code behind; the refresh route then
+    // proved the session dead. The code outlives the sign-out, so the sign-in
+    // that repairs the slot is what has to clear it.
+    while h.control.state().stage != AccountStage::SignedOut {
         h.receive(deadline);
     }
 

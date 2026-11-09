@@ -28,7 +28,7 @@ use koru_account_core::{KoruIdentityId, ProfileId};
 use koru_account_runtime::account::lifecycle::LocalProfileInventory;
 use koru_account_runtime::cloud::{
     self, CloudAccountBindingRef, CloudPermitV2, CloudRootExport, CloudRootJoin, Failure, Host,
-    LocalBootstrap, RootInventory, SessionReport, Stage,
+    LocalBootstrap, RootInventory, RootRepairOutcome, SessionReport, Stage,
 };
 use koru_account_wire::CloudCatalogBindingV2;
 use koru_account_wire::JwksResponseV1;
@@ -651,10 +651,31 @@ impl Host for DesktopCloudHost {
     fn root_inventory(&self) -> Result<RootInventory, Failure> {
         match self.ask(ControlRequest::ReadCloudRootInventory {
             control_session_id: self.session()?,
+            repair_unitless: false,
         })? {
             ControlResponse::CloudRootInventory { units, held, .. } => {
                 Ok(RootInventory { units, held })
             }
+            _ => Err(Failure::Unavailable),
+        }
+    }
+
+    fn repair_bootstrap_units(&self) -> Result<RootRepairOutcome, Failure> {
+        // The same request, with the one additive field set: the repair and
+        // the read are one answer, so the pass can push what it just created.
+        match self.ask(ControlRequest::ReadCloudRootInventory {
+            control_session_id: self.session()?,
+            repair_unitless: true,
+        })? {
+            ControlResponse::CloudRootInventory {
+                units,
+                held,
+                repaired,
+                ..
+            } => Ok(RootRepairOutcome {
+                repaired,
+                inventory: RootInventory { units, held },
+            }),
             _ => Err(Failure::Unavailable),
         }
     }

@@ -77,6 +77,7 @@ mod removal;
 mod replacement;
 mod root_lifecycle;
 mod root_move;
+mod root_repair;
 pub use pins::PinnedWorkspace;
 pub use replacement::{ListingState, MovedWorkspace, RemovedWorkspace, Replacement};
 pub use root_lifecycle::{
@@ -84,6 +85,9 @@ pub use root_lifecycle::{
     ProfileDeletionBatch, ProfileDeletionJob, ProfileDeletionPreview, ProfileRestoreOutcome,
     PurgeOutcome, PurgedSubjectExport, UnassignedReason, UnassignedWorkspace, batch_job_key,
     expires_at, purged_subject_export_key,
+};
+pub use root_repair::{
+    BootstrapRepair, K_BOOTSTRAP_REPAIR_PREFIX, RepairedWorkspace, bootstrap_repair_key,
 };
 mod profile_projection;
 pub use preparation::{CreateProfileWithWorkspace, CreatedProfile, FirstWorkspace};
@@ -540,6 +544,18 @@ pub enum ReplicaPlacement {
     /// `placed_workspaces` falls back to the projection — so the first real
     /// unit to arrive becomes the only placement, by the ordinary join. A
     /// later local move creates the unit as a first move does.
+    ///
+    /// **Withholding is not forever, and only one thing may end it.**
+    /// `Store::repair_bootstrap_units` publishes this unit — Q10's correction
+    /// of Q7, because otherwise an account whose only reachable device
+    /// bootstrapped this way keeps the Workspace out of
+    /// `root_export_inventory` permanently. It is allowed to because its
+    /// caller has established the one fact that makes republishing the hint
+    /// honest: a Cloud pass ran under the v2 contract, read the service's
+    /// **full** inventory and finished its pulls, so no unit exists anywhere
+    /// to race. Any other "repair units for rows that have none" job would
+    /// undo this decision by republishing the legacy owner column against a
+    /// unit still in flight. Nothing enforces that but this paragraph.
     HintWithoutUnit(ProfileId),
     /// Only an already-known root placement may place it; otherwise the
     /// provisioning is pending until a root unit arrives — the rule for the

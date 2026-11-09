@@ -332,6 +332,24 @@ impl CredentialPersistence {
                         );
                     }
                     Err(error) => {
+                        // A refusal here is not proof the session is gone.
+                        // The inspection presents the *stored* refresh token
+                        // and the server keeps only the newest one current,
+                        // so a rotation that was answered but never reached
+                        // the vault is refused here while `refresh` can still
+                        // replay it under the idempotency key
+                        // `refresh_retry_key` derives from these same old
+                        // bytes. Hand the selected slot through and let the
+                        // refresh route conclude: it is the one call that
+                        // tells a revoked session apart from a superseded
+                        // token, and it clears the vault and publishes
+                        // signed-out itself when the session really is gone.
+                        // The refusal is still recorded — the inspection log
+                        // line and the repair code both stand — it just no
+                        // longer decides the outcome.
+                        if selected_slot && error.code == "credential_rejected" {
+                            selected = Some(credential);
+                        }
                         failures.insert(Some(record.owner.account), error);
                     }
                 },
@@ -644,6 +662,14 @@ impl CredentialPersistence {
 /// inspection presents the stored refresh token, and the server accepts only
 /// the newest one there, so a rotation that never reached the vault is
 /// refused here as `credential_rejected`. Version `0` is the legacy slot.
+///
+/// This line is the whole reason the refusal is still recorded: a
+/// `credential_rejected` on the selected slot no longer ends the start — the
+/// bytes go to `refresh`, which is the only call that can tell a revoked
+/// session from a superseded token — so the log is what says a refusal
+/// happened at all, and pairing it with the next line ("credential refresh
+/// answered", "credential persisted") is how a lost rotation is read off a
+/// log afterwards.
 fn log_inspection(
     inspected: Result<AccountOwner, ServiceError>,
     selected: bool,

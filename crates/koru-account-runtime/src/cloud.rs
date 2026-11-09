@@ -334,6 +334,22 @@ pub struct RootInventory {
     pub held: u32,
 }
 
+/// What [`Host::repair_bootstrap_units`] did, and the inventory as it reads
+/// afterwards (root-catalog QUESTIONS.md Q10, case 1).
+///
+/// The two arrive together because the repair and the read are one control
+/// answer: the Store publishes the withheld units and then builds the
+/// inventory, so the pass that triggered the repair can push what it just
+/// created without a second round trip.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RootRepairOutcome {
+    /// How many Workspaces gained the unit the v1 window withheld. A count,
+    /// never an id — this module logs ids only for the units it moves.
+    pub repaired: u32,
+    /// The eligible inventory read after the repair, in the same answer.
+    pub inventory: RootInventory,
+}
+
 /// The hosted account reads a Cloud pass makes. Every one is bounded, uses
 /// the existing native bearer and returns `no-store` metadata; none of them
 /// carries content, names or worker secrets.
@@ -567,6 +583,30 @@ pub trait Host: Send + Sync + 'static {
     /// The publication job, then `Store::root_export_inventory` over the
     /// account's Cloud grant.
     fn root_inventory(&self) -> Result<RootInventory, Failure>;
+
+    /// **Q10's repair**: `Store::repair_bootstrap_units`, then the
+    /// publication job and [`Self::root_inventory`] again, in one answer.
+    ///
+    /// Publishes the Workspace unit the v1 Cloud window withheld
+    /// (`ReplicaPlacement::HintWithoutUnit`, QUESTIONS.md Q7) for every live
+    /// Workspace this device holds with no unit at all, placed by the hint the
+    /// row still projects, with a **fresh** move id.
+    ///
+    /// **The caller owns the precondition and it is not negotiable**: this is
+    /// asked only once the pass has run under [`CloudContract::V2`], read the
+    /// service's **full** inventory — the pagination loop ended on an absent
+    /// cursor, not on a cancellation — and finished its pulls. Only then does
+    /// a still-unit-less row prove no unit exists on the service or here.
+    /// Asked earlier it would publish a placement that a real unit still in
+    /// flight could race, which is the hazard Q7 was decided to remove. The
+    /// account-scope binding is **not** a substitute for the contract: it is
+    /// never unset by a 404, so a bound device can still run the v1 path for a
+    /// generation (ROLLOUT.md).
+    ///
+    /// It is carried to the Store as an optional field on the control request
+    /// the inventory read already uses, not as a new request variant an older
+    /// gateway would refuse.
+    fn repair_bootstrap_units(&self) -> Result<RootRepairOutcome, Failure>;
 
     /// The frontier this device holds for one unit (`Store::root_unit_frontier`
     /// / `personal_frontier` over the Cloud path), or `None` when it holds
