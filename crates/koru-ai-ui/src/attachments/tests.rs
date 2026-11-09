@@ -307,10 +307,9 @@ fn a_failed_draft_is_red_blocks_the_send_and_comes_out_with_its_cross() {
         )
         .unwrap();
     let draft = &surface.strip()[0];
-    let secondary = surface.attachment_chip_secondary(draft);
     let cross = koru_ui::context_chip::ContextChip {
         label: &draft.file_name,
-        secondary: &secondary,
+        secondary: "",
         icon: surface.attachment_chip_icon(draft),
         state: surface.attachment_chip_state(draft),
     }
@@ -747,10 +746,9 @@ fn a_draft_picture_opens_from_its_own_bytes() {
         Some(true)
     );
     assert_eq!(surface.attachment_work.viewer_fetched, vec![draft.id]);
-    let secondary = surface.attachment_chip_secondary(&draft);
     let cross = koru_ui::context_chip::ContextChip {
         label: &draft.file_name,
-        secondary: &secondary,
+        secondary: "",
         icon: surface.attachment_chip_icon(&draft),
         state: surface.attachment_chip_state(&draft),
     }

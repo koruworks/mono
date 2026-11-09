@@ -1641,6 +1641,12 @@ impl ChatSurface {
                 CursorIcon::Text
             };
         }
+        if !self.showing_setup()
+            && self.composer_text_rect().contains(p.0, p.1)
+            && self.composer.over_inline_pill()
+        {
+            return CursorIcon::Default;
+        }
         if self
             .tool_access_search_rect()
             .is_some_and(|rect| rect.contains(p.0, p.1))
@@ -5650,7 +5656,7 @@ impl ChatSurface {
             chip_widths.push(
                 ContextChip {
                     label: title,
-                    secondary: "Koru",
+                    secondary: "",
                     icon: icons::DOCUMENT,
                     state: ContextState::Ready,
                 }
@@ -5659,12 +5665,11 @@ impl ChatSurface {
         }
         let drafts = self.strip().to_vec();
         for draft in &drafts {
-            let secondary = self.attachment_chip_secondary(draft);
             let label = draft.chip_label();
             chip_widths.push(
                 ContextChip {
                     label: &label,
-                    secondary: &secondary,
+                    secondary: "",
                     icon: self.attachment_chip_icon(draft),
                     state: self.attachment_chip_state(draft),
                 }
@@ -15307,7 +15312,7 @@ mod tests {
             .unwrap();
         let doc_chip = ContextChip {
             label: "Planning",
-            secondary: "Koru",
+            secondary: "",
             icon: icons::DOCUMENT,
             state: ContextState::Ready,
         };

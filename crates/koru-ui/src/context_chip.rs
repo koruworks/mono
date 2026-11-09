@@ -29,9 +29,13 @@ pub struct ContextChip<'a> {
 
 impl<'a> ContextChip<'a> {
     fn label_chip(self) -> LabelChip<'a> {
-        LabelChip::new(self.label)
-            .secondary(self.secondary)
-            .size(Size::Regular)
+        let chip = LabelChip::new(self.label);
+        let chip = if self.secondary.is_empty() {
+            chip
+        } else {
+            chip.secondary(self.secondary)
+        };
+        chip.size(Size::Regular)
             .lead(Lead::Glyph(self.icon))
             .trail(Trail::Remove)
             .tone(match self.state {
@@ -72,7 +76,7 @@ impl<'a> ContextChip<'a> {
             |r| {
                 r.property("state", format!("{:?}", self.state), "instance");
                 r.property("remove lane", true, "shared label-chip geometry");
-                r.property("secondary", true, "instance");
+                r.property("secondary", !self.secondary.is_empty(), "instance");
                 r.property("ink", "chip tokens", "theme");
             },
         );
@@ -108,5 +112,16 @@ mod tests {
         let remove = chip.remove_rect(rect);
         assert!(remove.x >= rect.x && remove.x + remove.w <= rect.x + rect.w);
         assert_eq!(remove.h, rect.h);
+    }
+
+    #[test]
+    fn an_empty_secondary_keeps_the_chip_on_one_line() {
+        let chip = ContextChip {
+            label: "notes.pdf",
+            secondary: "",
+            icon: koru_draw::icons::FILE,
+            state: ContextState::Ready,
+        };
+        assert_eq!(chip.height(), crate::label_chip::Size::Regular.height());
     }
 }

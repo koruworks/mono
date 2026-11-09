@@ -910,6 +910,13 @@ impl ChatComposer {
         self.editor.mouse_move(vx, vy)
     }
 
+    pub(crate) fn over_inline_pill(&self) -> bool {
+        matches!(
+            self.editor.view.hover,
+            Some(koru_editor::view_state::Hover::Pill { .. })
+        )
+    }
+
     pub(crate) fn mouse_up(&mut self) -> bool {
         let changed = self.editor.mouse_up(&mut self.ws);
         self.sync();

@@ -1242,20 +1242,6 @@ impl ChatSurface {
         }
     }
 
-    pub(super) fn attachment_chip_secondary(&self, draft: &Draft) -> String {
-        match draft.state {
-            DraftState::Storing => koru_i18n::t(self.lang, Key::AiAttachmentAddingOne).into(),
-            DraftState::Failed { .. } => koru_i18n::t(self.lang, Key::AiAttachmentFailed).into(),
-            DraftState::Stored if draft.source == AttachmentSource::Path => {
-                koru_i18n::t(self.lang, Key::AiComposerFilesAndFolders).into()
-            }
-            DraftState::Stored if draft.byte_count > 0 => {
-                koru_i18n::number::bytes(self.lang, draft.byte_count)
-            }
-            DraftState::Stored => String::new(),
-        }
-    }
-
     pub(super) fn attachment_chip_icon(&self, draft: &Draft) -> char {
         match draft.kind {
             AttachmentKind::Image => icons::IMAGE,
@@ -1458,7 +1444,7 @@ impl ChatSurface {
             let (_, title) = self.context_document.as_ref()?;
             let chip = koru_ui::context_chip::ContextChip {
                 label: title,
-                secondary: "Koru",
+                secondary: "",
                 icon: icons::DOCUMENT,
                 state: koru_ui::context_chip::ContextState::Ready,
             };
@@ -1471,10 +1457,9 @@ impl ChatSurface {
         let index = index - usize::from(self.context_document.is_some());
         let draft = &self.strips.get(chat)[index];
         let id = draft.id;
-        let secondary = self.attachment_chip_secondary(draft);
         let chip = koru_ui::context_chip::ContextChip {
             label: &draft.file_name,
-            secondary: &secondary,
+            secondary: "",
             icon: self.attachment_chip_icon(draft),
             state: self.attachment_chip_state(draft),
         };
@@ -1977,7 +1962,7 @@ impl ChatSurface {
             if let Some(rect) = self.chip_band.chip_rect(index, origin_x, origin_y) {
                 koru_ui::context_chip::ContextChip {
                     label: title,
-                    secondary: "Koru",
+                    secondary: "",
                     icon: icons::DOCUMENT,
                     state: koru_ui::context_chip::ContextState::Ready,
                 }
@@ -1989,11 +1974,10 @@ impl ChatSurface {
             let Some(rect) = self.chip_band.chip_rect(index, origin_x, origin_y) else {
                 break;
             };
-            let secondary = self.attachment_chip_secondary(draft);
             let label = draft.chip_label();
             koru_ui::context_chip::ContextChip {
                 label: &label,
-                secondary: &secondary,
+                secondary: "",
                 icon: self.attachment_chip_icon(draft),
                 state: self.attachment_chip_state(draft),
             }

@@ -123,12 +123,6 @@ impl SplitButton {
         scene::fill(canvas, root, fill, &shape);
         let action = self.action_rect();
         let menu = self.menu_rect();
-        let painted_menu = Rect::new(
-            menu.x,
-            menu.y,
-            (painted.x + painted.w - menu.x).max(0.0),
-            menu.h,
-        );
         if self.action_hot && self.action_enabled {
             scene::fill(
                 canvas,
@@ -144,19 +138,6 @@ impl SplitButton {
                 p.focus_ring,
                 theme::BORDER_W * 2.0,
                 &scene::rrect(action.x, action.y, action.w, action.h, action.h * 0.5),
-            );
-        }
-        if self.menu_hot || self.menu_open {
-            scene::fill(
-                canvas,
-                root,
-                p.hover_tint,
-                &scene::rect(
-                    painted_menu.x,
-                    painted_menu.y,
-                    painted_menu.w,
-                    painted_menu.h,
-                ),
             );
         }
         if self.menu_focused {

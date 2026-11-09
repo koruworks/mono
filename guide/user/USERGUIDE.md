@@ -1407,7 +1407,7 @@ that pictures go to local agents only.
 **Send a file.** Copy files in Explorer or Finder and paste them into the
 chat: a PDF, a Word, Excel or PowerPoint file, an OpenDocument or EPUB, RTF,
 an MP4 or MOV, text, Markdown, CSV, JSON and the like, or source code. Each
-shows as a chip with its icon, name and size, and the agent is told where it
+shows as a one-line chip with its icon and name, and the agent is told where it
 is. Click a sent file tile to open a preview over the Koru window. Plain text
 and source code appear there, with **Save as…** to keep a copy. PDFs, Office
 files and other types without an in-app preview offer **Save as…** and

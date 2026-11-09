@@ -59,6 +59,39 @@ fn a_chosen_document_sits_in_the_text_as_a_chip_and_leaves_as_its_link() {
 }
 
 #[test]
+fn an_inline_document_pill_is_a_control_under_the_pointer() {
+    let mut composer = ChatComposer::new(None);
+    assert!(composer.insert_document(DocumentId::new(), "Top Priorities"));
+    let text = Rect::new(20.0, 80.0, 400.0, 50.0);
+    composer.text_height(text.w - 2.0 * PAD_X, 1, 8);
+    composer.place(text, Rect::new(0.0, 0.0, 500.0, 500.0));
+    let row = &composer.editor.body.rows[0];
+    let step = row.type_step();
+    let style = koru_draw::pill::PillTextStyle::new(step.size, step.size * step.line_height)
+        .with_stack(row.font_choice().stack());
+    assert_eq!(style.size, koru_draw::theme::role::ui().metrics.size);
+    assert_eq!(style.stack, koru_draw::theme::chat_stack());
+    let info = row.pills.values().next().expect("document pill");
+    assert!(
+        composer
+            .editor
+            .view
+            .engine
+            .pills
+            .get_with_style(info.kind, &info.label, info.url.as_deref(), style)
+            .is_some()
+    );
+    let x = composer.origin.0 + composer.editor.view.content_x + row.text_x() + 6.0;
+    let y = composer.origin.1 + row.y - composer.editor.view.scroll + row.height * 0.5;
+    composer.mouse_move(x, y);
+    assert!(
+        composer.over_inline_pill(),
+        "{:?}",
+        composer.editor.view.hover
+    );
+}
+
+#[test]
 fn selected_task_keeps_its_node_link_and_containing_document_context() {
     let document = DocumentId::new();
     let node = NodeId::new();
