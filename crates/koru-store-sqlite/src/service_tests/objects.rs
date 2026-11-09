@@ -381,7 +381,8 @@ fn a_bundle_carries_the_image_out_of_a_legacy_layout_and_back_in() {
         .unwrap();
     let restored = target
         .import_workspace(&bundle, ImportMode::Restore, owner.id, at())
-        .unwrap();
+        .unwrap()
+        .workspace;
 
     assert_eq!(
         target.get_blob(restored, &blob.hash).unwrap(),

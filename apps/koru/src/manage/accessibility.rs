@@ -120,6 +120,8 @@ fn control_part(control: Control) -> ControlPart {
         Control::CloudSync => "cloud-sync",
         Control::GetCloud => "get-cloud",
         Control::Delete => "delete-profile",
+        Control::RemoveFromDevice => "remove-from-device",
+        Control::DeleteFromKoru => "delete-from-koru",
         Control::ImportWorkspaces => "import",
         Control::NewWorkspace => "new-workspace",
         Control::WorkspaceRow(_) => "manage-row",

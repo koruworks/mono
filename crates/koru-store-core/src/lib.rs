@@ -71,7 +71,7 @@ pub mod transport;
 pub(crate) mod unit_doc;
 pub mod version;
 
-pub use bundle::{Bundle, ImportMode};
+pub use bundle::{Bundle, ImportMode, ImportPublication, ImportedWorkspace};
 pub use errors::{Class, Code, Error, Result};
 pub use ids::{
     ActionId, ClientId, DeletionId, DocumentId, ProfileId, ReminderId, RestoreId, RuleRevisionId,

@@ -12,13 +12,13 @@
 //!   merge the moment they meet — which is exactly what somebody asking for a
 //!   copy did not want.
 
-use koru_store_core::bundle::ImportMode;
+use koru_store_core::bundle::{ImportMode, ImportPublication, ImportedWorkspace};
 use koru_store_core::errors::Code;
 use koru_store_core::fixtures::{BIDI_LINE, SAMPLES, UNICODE_FILENAME};
 use koru_store_core::ids::{ProfileId, WorkspaceId};
 use koru_store_core::model::Timestamp;
-use koru_store_core::ports::HistoryReason;
-use koru_store_core::service::Store;
+use koru_store_core::ports::{BlobStore, HistoryReason, UpdateBatch, UpdateOrigin, WorkspaceRepo};
+use koru_store_core::service::{Backend, Store};
 use koru_store_core::text::Locale;
 use koru_store_sqlite::{SqliteBackend, SqliteCatalog};
 
@@ -156,7 +156,8 @@ fn history_survives_export_and_restore() {
     let (_dir, mut there, owner) = Fixture::elsewhere();
     let restored = there
         .import_workspace(&bundle, ImportMode::Restore, owner, at(200))
-        .unwrap();
+        .unwrap()
+        .workspace;
     let entries = there.history_entries(restored, document, None, 50).unwrap();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].label.as_deref(), Some("Milestone"));
@@ -196,7 +197,8 @@ fn a_restore_preserves_the_workspace_and_document_ids() {
     let (_dir, mut there, owner) = Fixture::elsewhere();
     let restored = there
         .import_workspace(&bundle, ImportMode::Restore, owner, at(200))
-        .unwrap();
+        .unwrap()
+        .workspace;
 
     assert_eq!(restored, ws, "a restore minted a new workspace id");
     assert_eq!(
@@ -236,7 +238,8 @@ fn a_restore_records_its_import_receipt_and_nothing_it_was_derived_from() {
     let (_dir, mut there, owner) = Fixture::elsewhere();
     let restored = there
         .import_workspace(&bundle, ImportMode::Restore, owner, at(200))
-        .unwrap();
+        .unwrap()
+        .workspace;
     let lineage = there.lineage(restored).unwrap();
     assert_eq!(lineage.len(), 1);
     assert_eq!(lineage[0].workspace, restored);
@@ -257,7 +260,8 @@ fn a_duplicate_mints_new_ids_and_records_where_it_came_from() {
     let copy = f
         .store
         .import_workspace(&bundle, ImportMode::Duplicate, f.owner, at(200))
-        .unwrap();
+        .unwrap()
+        .workspace;
 
     assert_ne!(copy, ws, "a duplicate kept its origin's workspace id");
     assert_ne!(
@@ -294,11 +298,13 @@ fn a_duplicate_can_live_beside_its_origin_in_one_store() {
     let a = f
         .store
         .import_workspace(&bundle, ImportMode::Duplicate, f.owner, at(200))
-        .unwrap();
+        .unwrap()
+        .workspace;
     let b = f
         .store
         .import_workspace(&bundle, ImportMode::Duplicate, f.owner, at(300))
-        .unwrap();
+        .unwrap()
+        .workspace;
 
     assert_ne!(a, b);
     assert_ne!(
@@ -322,7 +328,8 @@ fn a_duplicate_still_resolves_its_reminted_documents_after_a_restart() {
     let copy = f
         .store
         .import_workspace(&bundle, ImportMode::Duplicate, f.owner, at(200))
-        .unwrap();
+        .unwrap()
+        .workspace;
     let document_ids: Vec<_> = f
         .store
         .documents(copy)
@@ -352,7 +359,8 @@ fn edits_after_a_duplicate_do_not_reach_the_original() {
     let copy = f
         .store
         .import_workspace(&bundle, ImportMode::Duplicate, f.owner, at(200))
-        .unwrap();
+        .unwrap()
+        .workspace;
 
     f.store
         .create_document(copy, "Only in the copy", "page", None, None, at(300))
@@ -389,7 +397,8 @@ fn a_workspace_survives_a_round_trip_through_another_store() {
     let (_dir, mut there, owner) = Fixture::elsewhere();
     let restored = there
         .import_workspace(&bundle, ImportMode::Restore, owner, at(200))
-        .unwrap();
+        .unwrap()
+        .workspace;
 
     let mut expected: Vec<String> = titles_in.iter().map(|t| t.to_string()).collect();
     expected.push(BIDI_LINE.to_string());
@@ -424,7 +433,8 @@ fn an_imported_workspace_survives_a_restart() {
     let (dir, mut there, other) = Fixture::elsewhere();
     let restored = there
         .import_workspace(&bundle, ImportMode::Restore, other, at(200))
-        .unwrap();
+        .unwrap()
+        .workspace;
     drop(there);
 
     let mut reopened = open_in(dir.path());
@@ -469,4 +479,91 @@ fn a_damaged_bundle_is_refused_before_anything_is_written() {
         there.workspaces().unwrap().is_empty(),
         "a half-imported workspace was left behind"
     );
+}
+
+// ---------------------------------------------- resumed staging and blobs
+
+/// A Restore that crashed after installing its blob and before publishing
+/// (root-catalog QUESTIONS.md Q6), retried against real storage: the retry
+/// adopts the staged repository, re-puts the blob into the content-addressed
+/// object store, and the result is one object on disk and one `blobs` row.
+#[test]
+fn a_resumed_restore_does_not_duplicate_the_blob_its_crashed_attempt_installed() {
+    let mut f = Fixture::new();
+    let ws = f.a_workspace(&["One"]);
+    let blob = f
+        .store
+        .put_blob(
+            ws,
+            b"exported pixels",
+            "image/png",
+            Some("pixels.png"),
+            at(10),
+            None,
+        )
+        .unwrap();
+    let bundle = f.store.export_workspace(ws, at(100)).unwrap();
+    assert_eq!(bundle.blobs.len(), 1);
+    assert_eq!(bundle.manifest.blobs.len(), 1);
+
+    let (dir, mut there, owner) = Fixture::elsewhere();
+    // The crashed attempt's staging, by hand through the same backend: every
+    // document, the object and its association, and nothing in the catalog.
+    let backend = SqliteBackend::new(dir.path());
+    {
+        let mut repo = backend.create_workspace(ws).unwrap();
+        for document in &bundle.manifest.documents {
+            repo.create_document(document.id, document.kind, at(150))
+                .unwrap();
+            repo.commit_updates(&UpdateBatch {
+                document: document.id,
+                updates: vec![bundle.snapshot_of(document.id).unwrap().to_vec()],
+                version_vector: Vec::new(),
+                frontiers: Vec::new(),
+                received_at: at(150),
+                origins: vec![UpdateOrigin::Store],
+            })
+            .unwrap();
+        }
+        assert_eq!(
+            backend.objects().put(&bundle.blobs[0].1).unwrap(),
+            blob.hash
+        );
+        repo.put_blob(&bundle.manifest.blobs[0]).unwrap();
+    }
+    let objects_on_disk = || -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(backend.objects().objects_dir())
+            .unwrap()
+            .map(|entry| entry.unwrap())
+            .filter(|entry| entry.file_type().unwrap().is_file())
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    };
+    assert_eq!(objects_on_disk(), vec![blob.hash.file_name()]);
+    assert!(there.workspaces_including_deleted().unwrap().is_empty());
+
+    assert_eq!(
+        there
+            .import_workspace(&bundle, ImportMode::Restore, owner, at(200))
+            .unwrap(),
+        ImportedWorkspace {
+            workspace: ws,
+            publication: ImportPublication::Resumed,
+        }
+    );
+    assert_eq!(
+        objects_on_disk(),
+        vec![blob.hash.file_name()],
+        "one object, not two"
+    );
+    let rows = there.blobs(ws).unwrap();
+    assert_eq!(rows.len(), 1, "one association, not two");
+    assert_eq!(rows[0].hash, blob.hash);
+    assert_eq!(rows[0].filename.as_deref(), Some("pixels.png"));
+    assert_eq!(there.get_blob(ws, &blob.hash).unwrap(), b"exported pixels");
+    assert_eq!(titles(&mut there, ws), ["One"]);
+    assert_eq!(there.workspaces_including_deleted().unwrap().len(), 1);
+    assert_eq!(there.lineage(ws).unwrap().len(), 1);
 }

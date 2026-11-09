@@ -422,12 +422,14 @@ impl ProfilesController {
     pub fn confirming_offline(&self) -> bool {
         self.confirm_offline
     }
-    /// `Some(cascade)` while the remove-from-this-device question is up.
+    /// `Some(cascade)` while a deletion or remove-from-this-device question
+    /// is up; [`Self::deletion_preview`] says which of the two it is.
     pub fn confirming_remove(&self) -> Option<bool> {
         self.confirm_remove.then_some(self.remove_all_workspaces)
     }
-    /// The deletion preview the open remove question is about, when the
-    /// removal is the shared batch: its targets are what the dialog lists.
+    /// The deletion preview the open question is about, when it is the
+    /// shared batch: its targets are what the dialog lists. `None` under an
+    /// open question means the device-local removal.
     pub fn deletion_preview(&self) -> Option<&koru_api_client::ProfileDeletionPreview> {
         self.deletion_preview.as_ref()
     }
@@ -473,12 +475,7 @@ impl ProfilesController {
             return true;
         }
         match answer {
-            Ok(preview) => {
-                self.deletion_preview = Some(preview);
-                self.remove_all_workspaces = true;
-                self.confirm_remove = true;
-                self.hints.reset_focus = true;
-            }
+            Ok(preview) => self.open_deletion_question(preview),
             Err(_) => {
                 self.notice = Some(
                     koru_i18n::t(
@@ -491,6 +488,17 @@ impl ProfilesController {
         }
         true
     }
+
+    /// The preview is in: raise the shared deletion's question over it. The
+    /// request that follows carries this preview, which is what tells the
+    /// host the removal is the batch and not the device-local one.
+    fn open_deletion_question(&mut self, preview: koru_api_client::ProfileDeletionPreview) {
+        self.deletion_preview = Some(preview);
+        self.remove_all_workspaces = true;
+        self.confirm_remove = true;
+        self.hints.reset_focus = true;
+    }
+
     /// The hosted deletion in flight: its Profile and stage.
     pub fn hosted_delete(&self) -> Option<(ProfileId, HostedDeleteStage)> {
         self.pending_hosted_delete
@@ -637,6 +645,13 @@ impl ProfilesController {
     }
     pub(crate) fn set_account_profiles_loaded(&mut self, loaded: bool) {
         self.account_profiles_loaded = loaded;
+    }
+    /// What the worker would have delivered: a test has no Store to ask.
+    pub(crate) fn deletion_preview_arrived(
+        &mut self,
+        preview: koru_api_client::ProfileDeletionPreview,
+    ) {
+        self.open_deletion_question(preview);
     }
     pub(crate) fn start_hosted_delete(
         &mut self,

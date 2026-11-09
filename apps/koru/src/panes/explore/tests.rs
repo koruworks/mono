@@ -1239,9 +1239,14 @@ fn the_sync_status_reads_the_organization_before_claiming_up_to_date() {
     });
     assert_eq!(v.sync_status(), SyncStatus::UpToDate);
 
-    // No cloud at all, and the one linked device says the organization is
-    // up to date: the surviving replica's ordinary reading.
-    v.set_account_state(&koru_agent_wire::AccountState::default());
+    // No cloud row for this Profile (a default `AccountState` is an
+    // *unavailable* Agent, which is Offline, not this), and the one linked
+    // device says the organization is up to date: the surviving replica's
+    // ordinary reading.
+    v.set_account_state(&koru_agent_wire::AccountState {
+        stage: koru_agent_wire::AccountStage::SignedIn,
+        ..Default::default()
+    });
     assert_eq!(v.sync_status(), SyncStatus::NotSetUp);
     v.set_root_sync(&RootSyncStatus {
         subjects: vec![

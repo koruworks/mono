@@ -37,6 +37,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::bundle::{
     Bundle, BundleDocument, BundleHistoryEntry, BundleHistoryVersion, BundleManifest, ImportMode,
+    ImportPublication, ImportedWorkspace,
 };
 use crate::errors::{Code, Error, Result};
 use crate::ids::{
@@ -99,6 +100,54 @@ mod updates;
 mod welcome_progress;
 pub use profile_units::{build_reminder_index, read_personal_reminder_inputs};
 pub use welcome_progress::{WELCOME_QUERY_MAX, valid_welcome_row};
+
+/// A staged repository a Restore resumes: open, with the document rows it
+/// already holds.
+type ResumedStaging<W> = (W, HashMap<DocumentId, crate::ports::DocumentState>);
+
+/// The page size `WorkspaceRepo::history_entries` clamps to.
+const HISTORY_PAGE: usize = 200;
+
+/// Whether a resumed import staging already holds this history marker: an
+/// entry on the document at the same moment with the same reason, label,
+/// message and boundary, naming a version with the bundle's frontiers. The
+/// document's markers are read once into `markers`; the version — a snapshot
+/// read — only for a marker whose other fields match.
+fn history_marker_present<R: WorkspaceRepo>(
+    repo: &R,
+    markers: &mut HashMap<DocumentId, Vec<HistoryEntry>>,
+    document: DocumentId,
+    entry: &BundleHistoryEntry,
+    source: &BundleHistoryVersion,
+) -> Result<bool> {
+    if !markers.contains_key(&document) {
+        let mut all = Vec::new();
+        let mut before = None;
+        loop {
+            let page = repo.history_entries(document, before, HISTORY_PAGE)?;
+            let full = page.len() >= HISTORY_PAGE;
+            before = page.last().map(|last| (last.recorded_at, last.id));
+            all.extend(page);
+            if !full {
+                break;
+            }
+        }
+        markers.insert(document, all);
+    }
+    for existing in &markers[&document] {
+        if existing.recorded_at == entry.recorded_at
+            && existing.reason == entry.reason
+            && existing.label == entry.label
+            && existing.message == entry.message
+            && existing.boundary == entry.boundary
+            && let Some(version) = repo.document_version(existing.version)?
+            && version.frontiers == source.frontiers
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
 
 /// Where a workspace's own storage comes from.
 ///
@@ -3973,11 +4022,18 @@ impl<C: Catalog, B: Backend> Store<C, B> {
     /// `WorkspaceExists` and can never list a second Workspace; a Duplicate
     /// mints a new id every time and cannot collide. A Restore retried after
     /// a *crash* mid-staging meets the leftover repository at
-    /// `Backend::create_workspace` and is refused with `WorkspaceExists` too:
-    /// the import never deletes a repository it did not claim in this call,
-    /// because a repository with no catalog row is also what
-    /// `forget_workspace` deliberately leaves recoverable. Removing it is the
-    /// existing cleanup's job, by somebody who has looked at it.
+    /// `Backend::create_workspace`. When that repository can be shown to be
+    /// this import's own interrupted staging (`adopt_staged_repository`: no
+    /// `workspaces` row of any kind, no document routing, the bundle's
+    /// manifest document and nothing the bundle does not name) the retry
+    /// resumes it — rows already written are kept, the missing ones are
+    /// written, the blobs are re-put into the content-addressed store — and
+    /// publishes exactly as a first import does, answering
+    /// [`ImportPublication::Resumed`] (root-catalog QUESTIONS.md Q6).
+    /// Anything else keeps the refusal: the import never writes into, and
+    /// never deletes, a repository it cannot show to be its own, because a
+    /// repository with no catalog row is also what `forget_workspace`
+    /// deliberately leaves recoverable.
     ///
     /// Restore consults **root evidence first**: a Workspace unit for the
     /// origin that holds an active deletion or purge evidence refuses the
@@ -3990,7 +4046,7 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         mode: ImportMode,
         owner: ProfileId,
         at: Timestamp,
-    ) -> Result<WorkspaceId> {
+    ) -> Result<ImportedWorkspace> {
         bundle.validate()?;
         if self.catalog.profile(owner)?.is_none() {
             return Err(Error::bare(Code::ProfileNotFound));
@@ -4106,8 +4162,22 @@ impl<C: Catalog, B: Backend> Store<C, B> {
 
         // ---- staging: every content row, into a repository nothing lists.
         // `create_workspace` refuses an existing repository, which is what
-        // keeps a stale leftover from being written over.
-        let mut repo = self.backend.create_workspace(workspace)?;
+        // keeps a stale leftover from being written over. A Restore that
+        // meets one asks whether it is its own interrupted staging and
+        // resumes it if so; anything else keeps the backend's refusal.
+        let (mut repo, staged_before, publication) = match self.backend.create_workspace(workspace)
+        {
+            Ok(repo) => (repo, HashMap::new(), ImportPublication::Fresh),
+            Err(refusal)
+                if refusal.code() == Code::WorkspaceExists && mode == ImportMode::Restore =>
+            {
+                match self.adopt_staged_repository(bundle, workspace)? {
+                    Some((repo, documents)) => (repo, documents, ImportPublication::Resumed),
+                    None => return Err(refusal),
+                }
+            }
+            Err(error) => return Err(error),
+        };
         let staged = (|| -> Result<Vec<DocumentId>> {
             let mut locations = Vec::with_capacity(bundle.manifest.documents.len());
             for document in &bundle.manifest.documents {
@@ -4119,19 +4189,31 @@ impl<C: Catalog, B: Backend> Store<C, B> {
                     })?,
                 };
 
-                repo.create_document(id, document.kind, at)?;
-                // The snapshot becomes the document's whole history, written as
-                // one update from nothing. A delta would name ancestors that do
-                // not exist here, and Loro would park it as pending — applying
-                // nothing and reporting nothing.
-                repo.commit_updates(&crate::ports::UpdateBatch {
-                    document: id,
-                    updates: vec![bytes.to_vec()],
-                    version_vector: Vec::new(),
-                    frontiers: Vec::new(),
-                    received_at: at,
-                    origins: vec![crate::ports::UpdateOrigin::Store],
-                })?;
+                // A resumed staging may hold the row already, with or without
+                // its one update (a crash between the two). Its kind was
+                // compared at adoption; here only the journal's presence is,
+                // never the bytes.
+                let written = match staged_before.get(&id) {
+                    None => {
+                        repo.create_document(id, document.kind, at)?;
+                        false
+                    }
+                    Some(_) => repo.journal_since(id, None)?.head.is_some(),
+                };
+                if !written {
+                    // The snapshot becomes the document's whole history, written
+                    // as one update from nothing. A delta would name ancestors
+                    // that do not exist here, and Loro would park it as pending
+                    // — applying nothing and reporting nothing.
+                    repo.commit_updates(&crate::ports::UpdateBatch {
+                        document: id,
+                        updates: vec![bytes.to_vec()],
+                        version_vector: Vec::new(),
+                        frontiers: Vec::new(),
+                        received_at: at,
+                        origins: vec![crate::ports::UpdateOrigin::Store],
+                    })?;
+                }
                 locations.push(id);
             }
 
@@ -4140,7 +4222,10 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             // deduplicating identical frontiers: a duplicated workspace must
             // not share external identities with its origin, and callers
             // address the imported entries from the returned timeline rather
-            // than carrying stale ids across stores.
+            // than carrying stale ids across stores. On a resumed staging a
+            // marker already there is not appended twice; `capture_history`
+            // deduplicates the version it names by itself.
+            let mut markers = HashMap::new();
             for entry in bundle.manifest.history_entries.iter().rev() {
                 let source = bundle
                     .manifest
@@ -4154,6 +4239,11 @@ impl<C: Catalog, B: Backend> Store<C, B> {
                     Error::new(Code::InvalidRequest, "a history snapshot went missing")
                 })?;
                 let document = remap[&entry.document];
+                if publication == ImportPublication::Resumed
+                    && history_marker_present(&repo, &mut markers, document, entry, source)?
+                {
+                    continue;
+                }
                 repo.capture_history(&HistoryCapture {
                     document,
                     snapshot,
@@ -4174,7 +4264,9 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             // object nothing references — which this rung keeps — rather than
             // a row naming bytes that are not there. A bundle without blobs
             // asks the object store for nothing, so a Store kept in memory
-            // can import one.
+            // can import one. The object store is content-addressed and
+            // `put_blob` upserts, so a resumed staging re-puts what the
+            // crashed attempt installed without duplicating any of it.
             if !bundle.blobs.is_empty() {
                 let blobs = self.backend.objects()?;
                 for (hash, bytes) in &bundle.blobs {
@@ -4198,7 +4290,7 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         let locations = match staged {
             Ok(locations) => locations,
             Err(error) => {
-                self.cleanup_fresh_repository(workspace);
+                self.abandon_staging(workspace, publication);
                 return Err(error);
             }
         };
@@ -4211,14 +4303,15 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             &locations,
             &receipt,
         ) {
-            // The repository is this call's own and nothing names it; an
-            // object already installed stays, as above.
-            self.cleanup_fresh_repository(workspace);
+            // Nothing names the repository; an object already installed
+            // stays, as above.
+            self.abandon_staging(workspace, publication);
             return Err(error);
         }
         tracing::info!(
             workspace = %workspace,
             mode = mode.as_str(),
+            publication = publication.as_str(),
             documents = locations.len(),
             "imported workspace published"
         );
@@ -4232,7 +4325,96 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             .expect("just opened")
             .repo
             .reindex(&entries)?;
-        Ok(workspace)
+        Ok(ImportedWorkspace {
+            workspace,
+            publication,
+        })
+    }
+
+    /// A Restore that met an existing repository under its origin's id asks
+    /// whether it is this import's own interrupted staging: a crash between
+    /// staging and publication leaves one that nothing lists (root-catalog
+    /// QUESTIONS.md Q6). Three facts, read under the Store lock, must all
+    /// hold — the catalog has no `workspaces` row for the id, tombstoned rows
+    /// included, because a row of any kind means somebody's Workspace;
+    /// `document_locations` routes nothing to it; and the repository's one
+    /// manifest document is the bundle's. Stricter still, every document the
+    /// repository holds must be one the bundle names, with the bundle's kind,
+    /// because staging writes nothing else. Anything short of that answers
+    /// `None` and the caller keeps the backend's refusal: a repository that
+    /// cannot be shown to be this import's is never written into and never
+    /// deleted here — `forget_workspace` leaves exactly such a repository
+    /// recoverable on purpose. On `Some` the repository is open and its
+    /// documents are returned, so the staging can skip what is already there.
+    fn adopt_staged_repository(
+        &self,
+        bundle: &Bundle,
+        workspace: WorkspaceId,
+    ) -> Result<Option<ResumedStaging<B::Workspace>>> {
+        if self.catalog.workspace(workspace)?.is_some() {
+            return Ok(None);
+        }
+        if !self.catalog.workspace_locations(workspace)?.is_empty() {
+            return Ok(None);
+        }
+        let Some(manifest) = bundle.manifest_document() else {
+            return Ok(None);
+        };
+        let repo = match self.backend.open_workspace(workspace) {
+            Ok(repo) => repo,
+            Err(error) => {
+                tracing::warn!(workspace = %workspace, error = %error,
+                    "an unlisted repository under a Restore's origin id could not be opened; the import keeps the refusal");
+                return Ok(None);
+            }
+        };
+        let documents: HashMap<DocumentId, crate::ports::DocumentState> = repo
+            .documents()?
+            .into_iter()
+            .map(|state| (state.id, state))
+            .collect();
+        let manifests: Vec<DocumentId> = documents
+            .values()
+            .filter(|state| state.kind == DocumentKind::Manifest)
+            .map(|state| state.id)
+            .collect();
+        if manifests.len() != 1 || manifests[0] != manifest {
+            return Ok(None);
+        }
+        let named: HashMap<DocumentId, DocumentKind> = bundle
+            .manifest
+            .documents
+            .iter()
+            .map(|document| (document.id, document.kind))
+            .collect();
+        if documents
+            .values()
+            .any(|state| named.get(&state.id) != Some(&state.kind))
+        {
+            return Ok(None);
+        }
+        tracing::info!(
+            workspace = %workspace,
+            manifest = %manifest,
+            staged = documents.len(),
+            "resuming the staged repository an interrupted Restore left behind"
+        );
+        Ok(Some((repo, documents)))
+    }
+
+    /// A staging that will not be published, after a failure: a repository
+    /// this call claimed is deleted, as the preparation path does; a resumed
+    /// one is left where it was, for the next retry to adopt again. Deleting
+    /// it would be deleting on the adoption's reading of it, and nothing is
+    /// deleted on a reading.
+    fn abandon_staging(&self, workspace: WorkspaceId, publication: ImportPublication) {
+        match publication {
+            ImportPublication::Fresh => self.cleanup_fresh_repository(workspace),
+            ImportPublication::Resumed => tracing::info!(
+                workspace = %workspace,
+                "the resumed staging is left in place for the next retry"
+            ),
+        }
     }
 
     fn duplicate_manifest_snapshot(

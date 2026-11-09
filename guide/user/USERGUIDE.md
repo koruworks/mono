@@ -1905,16 +1905,20 @@ stable and retries in the background after 1, 2, and 4 minutes, then at the
 automatic attempt. After 10 minutes Koru stops polling and asks you to try later
 or contact support; local Profiles and **Continue offline** remain available.
 
-An empty Profile offers **Remove Profile from this device**. A Profile that still owns
-Workspaces instead offers **Remove Profile and All Workspaces...**: the
+A Profile's page in Manage ends with two actions that say what they do.
+**Delete profile and its workspaces...** is the shared deletion: the
 confirmation lists, by name, the workspaces that will move to Trash, and
 after one explicit confirmation the Profile and every listed workspace move
-to Trash together as one deletion. If a workspace was added or removed while
-the confirmation was open, Koru refuses and shows the list again. This does
-not permanently erase the retained Profile/Workspace data, remove the hosted
-account, or change another device. Its hosted recovery listing remains, so
-signing in can show the Profile again; another trusted device is required
-when no retained local copy is available.
+to Trash together as one deletion, restorable for 30 days under **Deleted
+profiles**. If a workspace was added or removed while the confirmation was
+open, Koru refuses and shows the list again. Devices that sync the Profile
+see the same deletion; a device that keeps it **Local only** is not told.
+**Remove from this device...** is the device-local removal: the Profile
+leaves this device's lists only and other devices keep it; its workspaces,
+if it has any, move to Trash for 30 days. Neither permanently erases the
+retained Profile/Workspace data or removes the hosted account. Its hosted
+recovery listing remains, so signing in can show the Profile again; another
+trusted device is required when no retained local copy is available.
 
 **Restoring a deleted Profile restores that deletion.** For 30 days the
 Profile is listed under **Deleted profiles** on any Profile's Manage page,
@@ -5808,14 +5812,15 @@ warning first, requires fresh Google authentication, and changes the local
 `koru:` binding only after the server acknowledges the exact Profile. A live
 identity mismatch is never overwritten and an email match never reconnects a
 Profile.
-**Remove Profile from this device** removes an empty Profile and its settings.
-When it still owns Workspaces, **Remove Profile and All Workspaces...** asks once
-and moves the Profile and those Workspaces to Trash together as one deletion,
-restorable for 30 days under **Deleted profiles**; your other linked devices
-that sync the Profile see the same deletion. It does not erase hosted account
-metadata, so the hosted recovery listing can appear again after sign-in.
-Removing the last local Profile returns to onboarding, where the deletion can
-be restored.
+**Delete profile and its workspaces...** asks once and moves the Profile and
+its Workspaces to Trash together as one deletion, restorable for 30 days
+under **Deleted profiles**; your other linked devices that sync the Profile
+see the same deletion. **Remove from this device...** removes the Profile and
+its settings from this device only — other devices keep it — and moves its
+Workspaces, if it has any, to Trash for 30 days. Neither erases hosted
+account metadata, so the hosted recovery listing can appear again after
+sign-in. Removing the last local Profile returns to onboarding, where the
+deletion can be restored.
 
 A connected Profile separately offers **Delete from Koru...**. After a
 Cancel-default confirmation and, when needed, a fresh Google sign-in, Koru
@@ -5971,16 +5976,18 @@ account question or success screen. The download buttons remain available if
 your browser blocks the automatic download. An interrupted account request offers
 Retry sign-in, which continues the same request.
 
-A Profile can be removed directly when it has no active Workspace. If it still
-owns Workspaces, **Remove Profile and All Workspaces...** asks once and moves
-the Profile and every listed workspace to Trash together as one deletion,
-restorable for 30 days under **Deleted profiles** (see *Restoring a deleted
-Profile restores that deletion*, above). Koru keeps the Profile record, its
-CRDT, deleted Workspace tombstones, and Workspace databases. Your other linked
-devices that sync this Profile see the same deletion and list it under their
-own **Deleted profiles**; a device that keeps the Profile **Local only** is
-not told. The hosted recovery listing is unchanged, so signing in may list the
-Profile again even when no current device can supply content. Removing the
+A Profile's page offers two removals. **Delete profile and its
+workspaces...** asks once and moves the Profile and every listed workspace to
+Trash together as one deletion, restorable for 30 days under **Deleted
+profiles** (see *Restoring a deleted Profile restores that deletion*, above).
+Koru keeps the Profile record, its CRDT, deleted Workspace tombstones, and
+Workspace databases. Your other linked devices that sync this Profile see the
+same deletion and list it under their own **Deleted profiles**; a device that
+keeps the Profile **Local only** is not told. **Remove from this device...**
+hides the Profile on this device only — other devices keep it — and moves its
+Workspaces, if it has any, to Trash for 30 days. The hosted recovery listing
+is unchanged by either, so signing in may list the Profile again even when no
+current device can supply content. Removing the
 last visible Profile does not leave you on a profile-less Manage page. The
 next launch enters the same **NeedsProfile** onboarding used by a new
 installation, where you can restore a deleted profile, find unassigned
