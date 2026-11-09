@@ -57,8 +57,13 @@ fn plus_menu_shows_trigger_hints_on_the_matching_rows() {
     let mut surface = ChatSurface::new();
     surface.open_plus_menu();
     let items = surface.plus_menu.as_ref().unwrap().items();
-    assert_eq!(items.len(), 2, "trigger hints replace the old footer row");
+    assert_eq!(
+        items.len(),
+        3,
+        "the file action sits beside the trigger doors"
+    );
     assert_eq!(items[1].shortcut().as_deref(), Some("@"));
+    assert!(matches!(items[2], PlusItem::UploadFiles(_)));
     assert_eq!(
         PlusItem::Commands("Commands").shortcut().as_deref(),
         Some("/")

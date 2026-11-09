@@ -16654,7 +16654,10 @@ impl MainView {
         };
         self.ai_computer_ask = Some((source, kind));
         let key = match kind {
-            koru_ai_ui::ComputerPickerKind::File => koru_i18n::Key::AiComputerFileChoiceTitle,
+            koru_ai_ui::ComputerPickerKind::File
+            | koru_ai_ui::ComputerPickerKind::WorkspaceFile => {
+                koru_i18n::Key::AiComputerFileChoiceTitle
+            }
             koru_ai_ui::ComputerPickerKind::Folder => koru_i18n::Key::AiComposerComputerFolder,
         };
         self.ask_pane(koru_workspace_host::PaneRequest::ChooseAiComputer {

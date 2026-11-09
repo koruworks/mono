@@ -1445,6 +1445,11 @@ or **+ → Koru context** to open the same document picker as `@`. The band wrap
 up to three lines and then scrolls. When you send from a workspace or mention
 another workspace's document, Koru grants the needed workspace before it sends
 the message. A refused grant leaves the draft and its attachments in place.
+**+ → Upload or add files** opens the file picker directly; after choosing a
+file, choose whether to add it to the current workspace or attach a reference.
+When a workspace is open, **+ → Add to project → Add file to this workspace**
+imports a file there directly.
+
 Type `@` to find a document or a task by name. A selected task links to its
 place in the document; when you send it to AI, the containing document supplies
 context. The picker opens above the message box with recent documents. If this
@@ -6339,7 +6344,7 @@ restart.
 
 Press **New chat** and open the model chip. Under **Local agents** are the
 coding agents installed on this computer — Codex, OpenCode, Claude, Kimi,
-Grok, Antigravity, Devin — each with a word when it is not ready (*Not installed*,
+Grok, GitHub Copilot, Qwen Code, Antigravity, Muse and Devin — each with a word when it is not ready (*Not installed*,
 *Signed out*, *Needs a supported version*). Pick one and the chip reads its
 name. Codex, OpenCode and Antigravity can also list their models: the small
 arrow at the end of the row expands them (OpenCode groups them by provider),
@@ -6379,17 +6384,18 @@ stopped, the chat stays and says so, and you can delete it again. If the agent
 had gone by the time you write again, Koru starts it fresh, hands it the
 conversation so far, and tells you.
 
-Before your first message, the folder under the composer, at its left edge
-(it reads *Home folder* until you choose), opens a picker for the folder the
-agent works in; the chosen folder stays named there, and a chat branched from
-this one keeps it. Once the first message is sent the folder is fixed — start
-a new chat to work somewhere else.
+Before your first message, **+ → Work in a project** opens a folder picker for
+where the agent works. A chat branched from this one keeps that folder. Once
+the first message is sent the folder is fixed — start a new chat to work
+somewhere else.
 
 **Effort.** For a model that offers levels — OpenAI's, the Koru model's
 thinking, an Ollama model — the chip reads the model and its effort
 (*gpt-5.6 · Medium*). Open the chip and pick a level on the effort strip; the chat keeps that level and the next message uses
 it. A coding agent's level is set the same way, on the strip at the foot
-of its model picker.
+of its model picker. When there are more agents than the picker's rail can
+show, use its chevrons to page through them; the remaining agents, including
+Muse and Devin when available, stay reachable without enlarging the panel.
 
 In Settings, the **Local agents** card lists the same agents; saving one makes
 it the default for new chats.

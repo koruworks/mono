@@ -10441,6 +10441,106 @@ mod tests {
     }
 
     #[test]
+    fn plus_menu_opens_file_and_working_folder_pickers_directly() {
+        let mut surface = ChatSurface::new();
+        let mut chat = transcript();
+        chat.chat.current_model.provider = AiProviderId::parse("agent-claude").unwrap();
+        let chat_id = chat.chat.id;
+        surface.transcript = Some(chat);
+        surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 700.0));
+        surface.composer_rect();
+
+        surface.open_plus_menu();
+        assert_eq!(
+            surface
+                .plus_menu
+                .as_ref()
+                .unwrap()
+                .panel(surface.menu_viewport())
+                .w,
+            430.0
+        );
+        let items = surface.plus_menu.as_ref().unwrap().items();
+        assert!(
+            items
+                .iter()
+                .all(|item| !koru_ui::menu::MenuItem::has_submenu(item)
+                    || matches!(item, composer_plus::PlusItem::Recent(_)))
+        );
+        let file = items
+            .iter()
+            .position(|item| matches!(item, composer_plus::PlusItem::UploadFiles(_)))
+            .unwrap();
+        assert!(surface.choose_plus_item(file));
+        assert_eq!(
+            surface.take_computer_picker_request(),
+            Some(ComputerPickerKind::File)
+        );
+
+        surface.open_plus_menu();
+        let folder = surface
+            .plus_menu
+            .as_ref()
+            .unwrap()
+            .items()
+            .iter()
+            .position(|item| matches!(item, composer_plus::PlusItem::WorkInProject(..)))
+            .unwrap();
+        assert!(surface.choose_plus_item(folder));
+        assert_eq!(
+            surface.take_working_folder_request(),
+            Some(WorkingFolderRequest {
+                chat: chat_id,
+                start: None
+            })
+        );
+        assert!(surface.take_computer_picker_request().is_none());
+    }
+
+    #[test]
+    fn plus_project_submenu_imports_to_the_current_workspace() {
+        let mut surface = ChatSurface::new();
+        let (reader, commands, _updates) = Reader::test_pair();
+        surface.reader = Some(reader);
+        let mut chat = transcript();
+        chat.chat.current_model.provider = AiProviderId::parse("agent-claude").unwrap();
+        let chat_id = chat.chat.id;
+        surface.transcript = Some(chat);
+        let workspace = WorkspaceId::new();
+        surface.context_workspace = Some(workspace);
+        surface.composer_rect();
+
+        surface.open_plus_menu();
+        let project = surface
+            .plus_menu
+            .as_ref()
+            .unwrap()
+            .items()
+            .iter()
+            .position(|item| matches!(item, composer_plus::PlusItem::AddToProject(_)))
+            .unwrap();
+        assert!(surface.choose_plus_item(project));
+        assert!(matches!(
+            surface.plus_menu.as_ref().unwrap().items()[1],
+            composer_plus::PlusItem::ImportToWorkspace(_)
+        ));
+        assert!(surface.choose_plus_item(1));
+        assert_eq!(
+            surface.take_computer_picker_request(),
+            Some(ComputerPickerKind::WorkspaceFile)
+        );
+        assert!(surface.computer_path_chosen(
+            ComputerPickerKind::WorkspaceFile,
+            PathBuf::from("C:/fixture.pdf"),
+        ));
+        assert!(surface.computer_file_choice.is_none());
+        assert!(matches!(
+            commands.recv_timeout(Duration::from_millis(50)).unwrap(),
+            Command::AddGrants(chat, Some(granted), _, _) if chat == chat_id && granted == workspace
+        ));
+    }
+
+    #[test]
     fn folder_reference_is_attachment_only_and_recall_mints_a_fresh_path_row() {
         let mut surface = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();

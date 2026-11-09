@@ -8,16 +8,20 @@ use std::path::PathBuf;
 
 use koru_ai_core::{AttachmentKind, ChatAttachmentId, ChatId, DocumentId, WorkspaceId};
 use koru_i18n::{Key as TextKey, t};
-use koru_ui::menu::MenuItem;
+use koru_ui::menu::{Anchor, MenuItem};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 
-use crate::{ChatSurface, Choice, ChoiceOutcome, Focus, Menu, attachments, icons, reader::Command};
+use crate::{
+    ChatSurface, Choice, ChoiceOutcome, Focus, Menu, WorkingFolderRequest, attachments, icons,
+    reader::Command,
+};
 
 /// Which native picker the containing window should show for Files and folders.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ComputerPickerKind {
     File,
     Folder,
+    WorkspaceFile,
 }
 
 /// One file import tied to the chat and attachment id selected before the
@@ -35,11 +39,12 @@ pub struct WorkspaceImportRequest {
 pub(super) enum PlusItem {
     Recent(&'static str),
     KoruContext(&'static str),
-    ThisComputer(&'static str),
+    UploadFiles(&'static str),
+    AddToProject(&'static str),
+    ImportToWorkspace(&'static str),
+    WorkInProject(&'static str, &'static str),
     Commands(&'static str),
     Skills(&'static str),
-    ComputerFile(&'static str),
-    ComputerFolder(&'static str),
     SearchWeb(&'static str, bool),
     Back(&'static str),
     Document(DocumentId, String),
@@ -51,14 +56,15 @@ impl MenuItem for PlusItem {
         match self {
             Self::Recent(label)
             | Self::KoruContext(label)
-            | Self::ThisComputer(label)
+            | Self::UploadFiles(label)
+            | Self::AddToProject(label)
+            | Self::ImportToWorkspace(label)
             | Self::Commands(label)
             | Self::Skills(label)
-            | Self::ComputerFile(label)
-            | Self::ComputerFolder(label)
             | Self::SearchWeb(label, _)
             | Self::Back(label)
             | Self::Empty(label) => Cow::Borrowed(label),
+            Self::WorkInProject(label, _) => Cow::Borrowed(label),
             Self::Document(_, title) => Cow::Borrowed(title),
         }
     }
@@ -66,10 +72,11 @@ impl MenuItem for PlusItem {
     fn icon(&self) -> Option<char> {
         match self {
             Self::Recent(_) => Some(icons::CLOCK),
-            Self::KoruContext(_) | Self::Document(_, _) | Self::ComputerFile(_) => {
-                Some(icons::DOCUMENT)
-            }
-            Self::ThisComputer(_) | Self::ComputerFolder(_) => Some(icons::FOLDER),
+            Self::KoruContext(_) | Self::Document(_, _) => Some(icons::DOCUMENT),
+            Self::UploadFiles(_) => Some(icons::PAPERCLIP),
+            Self::AddToProject(_) => Some(icons::FOLDER),
+            Self::ImportToWorkspace(_) => Some(icons::PAPERCLIP),
+            Self::WorkInProject(..) => Some(icons::FOLDER),
             Self::Commands(_) | Self::Skills(_) => Some(icons::SPARKLE),
             Self::SearchWeb(_, on) => Some(if *on { icons::CHECK } else { icons::GLOBE }),
             Self::Back(_) | Self::Empty(_) => None,
@@ -77,7 +84,7 @@ impl MenuItem for PlusItem {
     }
 
     fn has_submenu(&self) -> bool {
-        matches!(self, Self::Recent(_) | Self::ThisComputer(_))
+        matches!(self, Self::Recent(_) | Self::AddToProject(_))
     }
 
     fn shortcut(&self) -> Option<String> {
@@ -85,6 +92,7 @@ impl MenuItem for PlusItem {
             Self::KoruContext(_) => Some("@".into()),
             Self::Commands(_) => Some("/".into()),
             Self::Skills(_) => Some("$".into()),
+            Self::WorkInProject(_, hint) if !hint.is_empty() => Some((*hint).into()),
             _ => None,
         }
     }
@@ -118,7 +126,19 @@ impl ChatSurface {
 
     fn plus_menu_at(&mut self, items: Vec<PlusItem>) {
         let button = self.plus_button();
-        let mut menu = Menu::new(&mut self.engine, (button.x, button.y), items);
+        let wide = items
+            .iter()
+            .any(|item| matches!(item, PlusItem::WorkInProject(_, hint) if !hint.is_empty()));
+        let mut menu = if wide {
+            Menu::at_width(
+                (button.x, button.y),
+                items,
+                Anchor::Cursor,
+                (self.viewport.w - 16.0).min(430.0),
+            )
+        } else {
+            Menu::new(&mut self.engine, (button.x, button.y), items)
+        };
         menu.set_anchor((button.x, self.toolbar_panel_y(menu.height())));
         self.plus_menu = Some(menu);
     }
@@ -128,14 +148,31 @@ impl ChatSurface {
         let mut items = vec![
             PlusItem::Recent(t(self.lang, TextKey::HomeRecent)),
             PlusItem::KoruContext(t(self.lang, TextKey::AiComposerKoruContext)),
+            PlusItem::UploadFiles(t(self.lang, TextKey::AiComposerUploadFiles)),
         ];
+        if self.context_workspace.is_some() {
+            items.push(PlusItem::AddToProject(t(
+                self.lang,
+                TextKey::AiComposerAddToProject,
+            )));
+        }
         if self.transcript.as_ref().is_some_and(|transcript| {
             crate::agents::is_agent_provider(&transcript.chat.current_model.provider)
         }) {
-            items.push(PlusItem::ThisComputer(t(
-                self.lang,
-                TextKey::AiComposerFilesAndFolders,
-            )));
+            if self
+                .transcript
+                .as_ref()
+                .is_some_and(|transcript| transcript.messages.is_empty())
+            {
+                items.push(PlusItem::WorkInProject(
+                    t(self.lang, TextKey::AiComposerWorkInProject),
+                    if self.viewport.w >= 446.0 {
+                        t(self.lang, TextKey::AiComposerWorkInProjectHint)
+                    } else {
+                        ""
+                    },
+                ));
+            }
             items.push(PlusItem::Commands(t(
                 self.lang,
                 TextKey::AiComposerCommands,
@@ -149,14 +186,6 @@ impl ChatSurface {
             ));
         }
         self.plus_menu_at(items);
-    }
-
-    fn open_computer_plus_menu(&mut self) {
-        self.plus_menu_at(vec![
-            PlusItem::Back(t(self.lang, TextKey::Back)),
-            PlusItem::ComputerFile(t(self.lang, TextKey::AiComposerComputerFile)),
-            PlusItem::ComputerFolder(t(self.lang, TextKey::AiComposerComputerFolder)),
-        ]);
     }
 
     fn open_recent_plus_menu(&mut self) {
@@ -173,6 +202,13 @@ impl ChatSurface {
         self.plus_menu_at(items);
     }
 
+    fn open_project_plus_menu(&mut self) {
+        self.plus_menu_at(vec![
+            PlusItem::Back(t(self.lang, TextKey::Back)),
+            PlusItem::ImportToWorkspace(t(self.lang, TextKey::AiComposerImportToWorkspace)),
+        ]);
+    }
+
     pub(super) fn choose_plus_item(&mut self, index: usize) -> bool {
         let Some(item) = self
             .plus_menu
@@ -184,15 +220,28 @@ impl ChatSurface {
         };
         match item {
             PlusItem::Recent(_) => self.open_recent_plus_menu(),
-            PlusItem::ThisComputer(_) => self.open_computer_plus_menu(),
+            PlusItem::AddToProject(_) => self.open_project_plus_menu(),
             PlusItem::Back(_) => self.open_plus_menu(),
-            PlusItem::ComputerFile(_) => {
+            PlusItem::UploadFiles(_) => {
                 self.plus_menu = None;
                 self.computer_picker_request = Some(ComputerPickerKind::File);
             }
-            PlusItem::ComputerFolder(_) => {
+            PlusItem::ImportToWorkspace(_) => {
                 self.plus_menu = None;
-                self.computer_picker_request = Some(ComputerPickerKind::Folder);
+                self.computer_picker_request = Some(ComputerPickerKind::WorkspaceFile);
+            }
+            PlusItem::WorkInProject(..) => {
+                self.plus_menu = None;
+                if let Some(transcript) = &self.transcript {
+                    self.working_folder_request = Some(WorkingFolderRequest {
+                        chat: transcript.chat.id,
+                        start: transcript
+                            .chat
+                            .agent_working_folder
+                            .as_ref()
+                            .map(PathBuf::from),
+                    });
+                }
             }
             PlusItem::SearchWeb(_, _) => {
                 self.web_search_armed = !self.web_search_armed;
@@ -296,6 +345,7 @@ impl ChatSurface {
         }
         match kind {
             ComputerPickerKind::Folder => self.attach_reference_path(path, AttachmentKind::Folder),
+            ComputerPickerKind::WorkspaceFile => self.begin_workspace_import(path),
             ComputerPickerKind::File => {
                 let dialog = Choice::new(
                     t(self.lang, TextKey::AiComputerFileChoiceTitle),

@@ -99,6 +99,9 @@ const RAIL_BUTTON: f32 = 32.0;
 const RAIL_GAP: f32 = 6.0;
 /// The room a divider takes after the chat's own built-in provider (S1).
 const RAIL_DIVIDER: f32 = 9.0;
+/// Keep the rail shorter than the model list panel; the chevrons page through
+/// further agents without letting the popover grow past the viewport.
+const RAIL_PAGE: usize = 6;
 /// The search row, with ↻ at its end.
 pub(crate) const SEARCH_H: f32 = 40.0;
 /// A row of the list: a heading, a note or a model, one line each. A
@@ -206,6 +209,8 @@ pub(crate) enum PickerFocus {
 pub(crate) struct PickerState {
     /// The rail's selected entry: whose models the list shows.
     pub(crate) rail: Option<RailEntry>,
+    /// First agent mark on the visible rail page.
+    pub(crate) rail_offset: usize,
     pub(crate) query: SharedInput,
     /// The row the keyboard is on, by index into the rows.
     pub(crate) highlight: Option<usize>,
@@ -224,6 +229,7 @@ impl PickerState {
     pub(crate) fn new(engine: &mut TextEngine) -> Self {
         Self {
             rail: None,
+            rail_offset: 0,
             query: SharedInput::new(engine),
             highlight: None,
             offset: 0,
@@ -565,16 +571,13 @@ impl crate::ChatSurface {
         std::mem::take(&mut self.agent_settings_request)
     }
 
-    /// The **+** at the rail's end, while the host offers it: one more
-    /// square after the last mark.
-    pub(crate) fn picker_manage_rect(&self, geometry: &Geometry) -> Option<Rect> {
-        if !self.agent_settings_offered || self.picker_rail_hidden() {
-            return None;
-        }
-        let rail = self.picker_rail();
-        rail_rects(geometry.rail, rail.len() + 1, &rail_dividers(&rail))
-            .last()
-            .copied()
+    /// The **+** at the rail's end, on the last page while the host offers it.
+    #[cfg(test)]
+    pub(crate) fn picker_manage_rect(&self, _geometry: &Geometry) -> Option<Rect> {
+        self.picker_frame()?
+            .2
+            .node(elements::MANAGE_KEY)
+            .map(|node| node.rect)
     }
 
     /// **The favorite models** (D46), as the host's roaming setting holds
@@ -764,6 +767,36 @@ impl crate::ChatSurface {
         } else {
             self.picker_rail()
         }
+    }
+
+    fn rail_page_start(&self, count: usize) -> usize {
+        self.picker
+            .rail_offset
+            .min(count.saturating_sub(1) / RAIL_PAGE * RAIL_PAGE)
+    }
+
+    /// Only these marks enter the panel's element tree and hit targets.
+    pub(crate) fn picker_visible_rail(&self) -> Vec<RailEntry> {
+        let rail = self.picker_marks();
+        let start = self.rail_page_start(rail.len());
+        rail.into_iter().skip(start).take(RAIL_PAGE).collect()
+    }
+
+    pub(crate) fn picker_rail_pages(&self) -> (bool, bool) {
+        let count = self.picker_marks().len();
+        let start = self.rail_page_start(count);
+        (start > 0, start + RAIL_PAGE < count)
+    }
+
+    fn page_rail(&mut self, down: bool) {
+        let count = self.picker_marks().len();
+        let start = self.rail_page_start(count);
+        self.picker.rail_offset = if down {
+            (start + RAIL_PAGE).min(count.saturating_sub(1) / RAIL_PAGE * RAIL_PAGE)
+        } else {
+            start.saturating_sub(RAIL_PAGE)
+        };
+        self.picker.focus = PickerFocus::Rail;
     }
 
     /// **The rail's entry on open** (§9.1): *Favorites*, while there are
@@ -1319,8 +1352,12 @@ impl crate::ChatSurface {
             return None;
         }
         let hide_rail = self.picker_rail_hidden();
-        let rail = self.picker_marks();
-        let marks = rail.len() + usize::from(self.agent_settings_offered && !hide_rail);
+        let rail = self.picker_visible_rail();
+        let (previous, next) = self.picker_rail_pages();
+        let marks = rail.len()
+            + usize::from(previous)
+            + usize::from(next)
+            + usize::from(self.agent_settings_offered && !hide_rail && !next);
         let rail_h = rail_height(marks, rail_dividers(&rail).len());
         let (w, h) = size(self.composer_hit_rect.w, rail_h);
         let chip = self.chat_model_button();
@@ -1355,6 +1392,16 @@ impl crate::ChatSurface {
     /// search field focused and the current model in view.
     pub(crate) fn reset_picker(&mut self) {
         self.picker.rail = self.picker_initial_entry();
+        self.picker.rail_offset = self
+            .picker
+            .rail
+            .as_ref()
+            .and_then(|selected| {
+                self.picker_marks()
+                    .iter()
+                    .position(|entry| entry == selected)
+            })
+            .map_or(0, |index| index / RAIL_PAGE * RAIL_PAGE);
         self.picker.legacy_open = self
             .picker
             .rail
@@ -1394,6 +1441,9 @@ impl crate::ChatSurface {
     /// from it. A query is cleared, as its results span every entry (D67)
     /// and would hide the list asked for.
     fn select_rail_entry(&mut self, entry: RailEntry) {
+        if let Some(index) = self.picker_marks().iter().position(|mark| mark == &entry) {
+            self.picker.rail_offset = index / RAIL_PAGE * RAIL_PAGE;
+        }
         self.picker.legacy_open = self.current_is_legacy(&entry);
         if !self.picker.query.raw_text().is_empty() {
             self.picker.query.set_text(&mut self.engine, "");
@@ -1528,19 +1578,25 @@ impl crate::ChatSurface {
             }
             return Some(true);
         }
-        let rail = self.picker_marks();
-        if let Some(index) = rail_rects(geometry.rail, rail.len(), &rail_dividers(&rail))
+        let hit = frame.hit_at(x, y);
+        if hit == Some(elements::RAIL_PREVIOUS_KEY) {
+            self.page_rail(false);
+            return Some(true);
+        }
+        if hit == Some(elements::RAIL_NEXT_KEY) {
+            self.page_rail(true);
+            return Some(true);
+        }
+        let rail = self.picker_visible_rail();
+        if let Some(index) = rail
             .iter()
-            .position(|rect| rect.contains(x, y))
+            .position(|entry| hit == Some(elements::mark_key(entry)))
         {
             self.picker.focus = PickerFocus::Rail;
             self.select_rail_entry(rail[index].clone());
             return Some(true);
         }
-        if self
-            .picker_manage_rect(&geometry)
-            .is_some_and(|rect| rect.contains(x, y))
-        {
+        if hit == Some(elements::MANAGE_KEY) {
             self.ask_for_agent_settings();
             return Some(true);
         }

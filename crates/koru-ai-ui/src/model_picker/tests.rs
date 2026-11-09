@@ -1069,6 +1069,69 @@ fn the_rail_is_hidden_once_the_chat_has_begun() {
     );
 }
 
+#[test]
+fn long_agent_rail_pages_to_the_last_agents_inside_the_panel() {
+    let mut surface = picker_with_everything();
+    let agents = [
+        ("agent-claude", "Claude"),
+        ("agent-opencode", "OpenCode"),
+        ("agent-grok", "Grok"),
+        ("agent-kimi", "Kimi"),
+        ("agent-codex", "Codex"),
+        ("agent-copilot", "Copilot"),
+        ("agent-qwen", "Qwen"),
+        ("agent-antigravity", "Antigravity"),
+        ("agent-muse", "Muse"),
+        ("agent-devin", "Devin"),
+    ];
+    surface.settings = Some(settings(&agents, Some("agent-claude")));
+    for (id, _) in agents {
+        surface.agent_status.insert(agent(id), AgentStatus::Ready);
+    }
+    surface.picker.rail_offset = 0;
+    let all = surface.picker_marks();
+    assert!(all.len() > RAIL_PAGE);
+    let first = surface.picker_spec();
+    assert_eq!(first.marks.len(), RAIL_PAGE);
+    assert!(!first.rail_previous && first.rail_next && !first.manage);
+    let first_geometry = surface.picker_geometry().unwrap();
+    assert!(first_geometry.panel.h < 350.0);
+    let next = surface
+        .picker_frame()
+        .unwrap()
+        .2
+        .node(elements::RAIL_NEXT_KEY)
+        .unwrap()
+        .rect;
+    assert!(
+        first_geometry
+            .panel
+            .contains(next.x + next.w / 2.0, next.y + next.h / 2.0)
+    );
+    surface.picker_mouse_down(next.x + next.w / 2.0, next.y + next.h / 2.0);
+    let last = surface.picker_spec();
+    assert!(last.rail_previous && !last.rail_next && last.manage);
+    assert!(
+        surface
+            .picker_visible_rail()
+            .contains(&RailEntry::Agent(agent("agent-muse")))
+    );
+    assert!(
+        surface
+            .picker_visible_rail()
+            .contains(&RailEntry::Agent(agent("agent-devin")))
+    );
+    let previous = surface
+        .picker_frame()
+        .unwrap()
+        .2
+        .node(elements::RAIL_PREVIOUS_KEY)
+        .unwrap()
+        .rect;
+    surface.picker_mouse_down(previous.x + previous.w / 2.0, previous.y + previous.h / 2.0);
+    assert_eq!(surface.picker_visible_rail(), all[..RAIL_PAGE]);
+}
+
 /// **A begun chat on a built-in provider keeps its own models, and may
 /// move between them** (S1): no rail — so no agent to switch to — its
 /// models choosable as before, and a search finding only them.

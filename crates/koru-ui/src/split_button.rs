@@ -42,7 +42,7 @@ impl SplitButton {
     pub const ACTION_W: f32 = crate::button::ActionButton::H;
     pub const MENU_W: f32 = 36.0;
     /// The mode badge's resting lane; the chevron occupies the reserved right end on hover.
-    pub const RESTING_MENU_W: f32 = 22.0;
+    pub const RESTING_MENU_W: f32 = 25.0;
     pub const H: f32 = crate::button::ActionButton::H;
     pub const W: f32 = Self::ACTION_W + Self::MENU_W;
 
@@ -199,7 +199,7 @@ impl SplitButton {
                 canvas,
                 root,
                 &caret,
-                menu.x + menu.w - caret.width() - 4.0,
+                menu.x + menu.w - caret.width() - 8.0,
                 menu.y + (menu.h - caret.height()) * 0.5,
                 Some(ink),
             );
