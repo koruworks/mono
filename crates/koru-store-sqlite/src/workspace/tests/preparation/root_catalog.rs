@@ -621,7 +621,8 @@ fn an_import_publishes_unit_row_locations_and_receipt_together_after_the_content
     let restored = there
         .store
         .import_workspace(&bundle, ImportMode::Restore, b, at())
-        .unwrap();
+        .unwrap()
+        .workspace;
     assert_eq!(restored, w);
     let unit = there.unit(w).unwrap();
     assert_eq!(unit.revision, 1);
@@ -739,7 +740,8 @@ fn a_restore_meets_root_deletion_evidence_but_a_duplicate_mints_a_new_unit() {
     let copy = f
         .store
         .import_workspace(&bundle, ImportMode::Duplicate, a2, at())
-        .unwrap();
+        .unwrap()
+        .workspace;
     assert_ne!(copy, w);
     assert_eq!(f.unit(copy).unwrap().revision, 1);
     assert_eq!(f.durable_placement(copy).unwrap().profile, Some(a2));
