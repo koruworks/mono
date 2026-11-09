@@ -83,6 +83,19 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         if self.catalog.workspace(workspace)?.is_none() {
             return Err(Error::bare(Code::WorkspaceNotFound));
         }
+        // **The Profile in the call still has to hold the Workspace.** The
+        // unit itself is addressed by `(user scope, workspace)` so that
+        // personal data follows a move (§5.1), and every Profile on one
+        // device shares that scope — so without this check any active
+        // Profile could read and overwrite the personal state of a Workspace
+        // placed under another one. §5.1 is explicit that the
+        // Profile-oriented facade "resolves the user's workspace personal
+        // unit using current placement"; the list-shaped reads
+        // (`personal_documents`, `reminders`) always did, and these addressed
+        // ones did not until a `personal_attributes` test caught it.
+        if !self.placed_workspaces(owner)?.contains(&workspace) {
+            return Err(Error::bare(Code::WorkspaceNotFound));
+        }
         match self
             .catalog
             .workspace_personal_unit(self.user_scope()?, workspace)?
@@ -137,6 +150,15 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         entity: &EntityRef,
     ) -> Result<PersonalAttributes> {
         self.require_profile(profile)?;
+        // Placement decides, as it does for `personal_candidate` and for
+        // every list-shaped read: a Profile that does not hold this Workspace
+        // has no personal state for it. An empty answer rather than a
+        // refusal, because that is what "this Profile has nothing here"
+        // means to a reader, and it is what the route answered when the unit
+        // was addressed by Profile.
+        if !self.placed_workspaces(profile)?.contains(&entity.workspace()) {
+            return Ok(PersonalAttributes::new());
+        }
         let Some(state) = self
             .catalog
             .workspace_personal_unit(self.user_scope()?, entity.workspace())?
