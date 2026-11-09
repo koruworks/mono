@@ -811,6 +811,8 @@ fn a_local_only_profile_leaks_nothing_through_frames_digests_or_logs() {
     );
 }
 
+mod acceptance;
+
 impl Device {
     /// Arm one Profile's group, children included.
     fn arm_all_profile(&self, profile: ProfileId, mode: TransportMode) {

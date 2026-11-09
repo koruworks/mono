@@ -824,3 +824,113 @@ fn unit_refs_round_trip_as_kind_and_subject_and_nothing_else() {
         .is_err()
     );
 }
+
+// ------------------------------------ Plan 4.1: the derived storage seam
+
+/// The admission's derived-snapshot storage seam (root-catalog Plan 4.1,
+/// A1). Admission is a pure function of the held row and the frames, so a
+/// commit the repository refuses — a compare-and-set that lost to another
+/// device — is retried by admitting the same frames against the row that
+/// won: the same frames derive the same bytes, `expected_revision` names
+/// exactly the row a `Stored` replaces, frames the row already holds are
+/// `Unchanged`, and a pending or held answer carries no bytes at all.
+#[test]
+fn admission_is_deterministic_so_a_refused_commit_retries_byte_for_byte_and_holds_store_nothing() {
+    let (visible, hidden) = (ProfileId::new(), ProfileId::new());
+    let workspace = WorkspaceId::new();
+    let address = CatalogUnitRef::Workspace { workspace };
+    let unit = workspace_unit(workspace, &[Some(hidden), Some(visible)]);
+    let raw = unit.snapshot().unwrap();
+    let catalog = Catalog::new(&[visible, hidden], &[visible]);
+
+    // The same frames twice: the same derived bytes and frontier.
+    let first = admit_root_unit(&catalog.ctx(), address, None, std::slice::from_ref(&raw)).unwrap();
+    let second =
+        admit_root_unit(&catalog.ctx(), address, None, std::slice::from_ref(&raw)).unwrap();
+    assert_eq!(first, second, "derivation is deterministic");
+    let Admitted::Stored {
+        snapshot,
+        frontier,
+        expected_revision,
+        ..
+    } = &first
+    else {
+        panic!("expected Stored, got {first:?}");
+    };
+    assert_eq!(
+        *expected_revision, None,
+        "a first arrival inserts a row that must not exist"
+    );
+
+    // The insert lost: another device's identical admission committed first
+    // at revision 1. Retrying the same frames against that row is Unchanged.
+    let held = HeldUnit {
+        snapshot,
+        revision: 1,
+    };
+    let retry = admit_root_unit(
+        &catalog.ctx(),
+        address,
+        Some(held),
+        std::slice::from_ref(&raw),
+    )
+    .unwrap();
+    assert!(
+        matches!(retry, Admitted::Unchanged { .. }),
+        "the row already holds every operation: {retry:?}"
+    );
+
+    // New frames against the held row name the revision they replace, and
+    // twice over they are the same bytes again.
+    let held_frontier = loro::VersionVector::decode(frontier).unwrap();
+    unit.set_placement(Some(visible), Uuid::new_v4()).unwrap();
+    let update = unit.updates_since(&held_frontier).unwrap();
+    let next = admit_root_unit(
+        &catalog.ctx(),
+        address,
+        Some(held),
+        std::slice::from_ref(&update),
+    )
+    .unwrap();
+    let again = admit_root_unit(
+        &catalog.ctx(),
+        address,
+        Some(held),
+        std::slice::from_ref(&update),
+    )
+    .unwrap();
+    assert_eq!(next, again);
+    let Admitted::Stored {
+        expected_revision: Some(1),
+        snapshot: next_snapshot,
+        ..
+    } = &next
+    else {
+        panic!("expected Stored replacing revision 1, got {next:?}");
+    };
+    let derived = WorkspaceCatalogUnit::from_snapshot(next_snapshot, workspace, 9).unwrap();
+    assert_eq!(
+        derived.version(),
+        unit.version(),
+        "every operation id is kept"
+    );
+    assert!(!String::from_utf8_lossy(next_snapshot).contains(&hidden.to_storage()));
+
+    // A delta whose ancestors the scope does not hold is Pending with no
+    // bytes; a unit currently placed under a hidden Profile is Held with
+    // no bytes. Neither is a row.
+    let pending =
+        admit_root_unit(&catalog.ctx(), address, None, std::slice::from_ref(&update)).unwrap();
+    assert!(matches!(pending, Admitted::Pending { .. }), "{pending:?}");
+    let under_hidden = workspace_unit(WorkspaceId::new(), &[Some(hidden)]);
+    let held_back = admit_root_unit(
+        &catalog.ctx(),
+        CatalogUnitRef::Workspace {
+            workspace: under_hidden.workspace(),
+        },
+        None,
+        &[under_hidden.snapshot().unwrap()],
+    )
+    .unwrap();
+    assert!(matches!(held_back, Admitted::Held { .. }), "{held_back:?}");
+}

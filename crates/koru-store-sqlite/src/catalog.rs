@@ -47,6 +47,9 @@ use crate::db::{self, Migration, sql_failed};
 
 mod profile_removal;
 mod root_catalog;
+pub use root_catalog::inspection::{
+    RootCatalogInventoryReport, inspect_file as inspect_root_catalog_file,
+};
 
 /// Crate-visible so a fixture elsewhere can stamp a catalog at an **older**
 /// version and then let the ordinary open migrate it — the only honest way to
