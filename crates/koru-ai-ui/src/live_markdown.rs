@@ -90,12 +90,14 @@ pub(crate) fn plain_block(
     text: &str,
     width: f32,
 ) -> BlockLayout {
+    let shown = crate::file_citations::project(text, true);
+    let layout = crate::chat_text_layout(engine, &shown, width);
     BlockLayout {
         id,
         markdown: text.to_owned(),
         wrap_width: width,
-        text: text.to_owned(),
-        layout: crate::chat_text_layout(engine, text, width),
+        text: shown.into_owned(),
+        layout,
         links: Vec::new(),
         table: None,
         image: None,

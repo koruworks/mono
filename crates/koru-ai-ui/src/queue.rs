@@ -45,7 +45,8 @@ use crate::reader::Command;
 use crate::{ChatSurface, attachments, composer, doc_links};
 
 /// One row of the pending list.
-pub(crate) const ROW_H: f32 = 28.0;
+pub(crate) const ROW_H: f32 = 38.0;
+const HEADER_H: f32 = 34.0;
 /// Between the list and what is under it (the document pill, the composer).
 const GAP: f32 = 6.0;
 /// The items shown; the rest are counted on a line of their own.
@@ -53,6 +54,7 @@ const SHOWN: usize = 3;
 /// A row's icon buttons: their square and the gap between them.
 const ICON: f32 = 22.0;
 const ICON_GAP: f32 = 2.0;
+const STEER_W: f32 = 70.0;
 /// The tooltip keys of the row icons and the send button.
 const TOOLTIP_BASE: u64 = 0x5155_0000;
 
@@ -83,6 +85,8 @@ pub(crate) struct ChatQueue {
     pub(crate) items: VecDeque<Queued>,
     /// Waiting for *Send next* or a send by hand, after a Stop or a failure.
     pub(crate) paused: bool,
+    /// The visible card keeps its header while its rows are folded.
+    pub(crate) collapsed: bool,
 }
 
 /// Every chat's queue, by chat.
@@ -176,6 +180,7 @@ pub(crate) enum SendMode {
 /// A press on the pending list.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum QueueHit {
+    Toggle,
     SendNext,
     Steer(usize),
     Edit(usize),
@@ -378,6 +383,13 @@ impl ChatSurface {
             return false;
         };
         match hit {
+            QueueHit::Toggle => {
+                if let Some(queue) = self.queues.by_chat.get_mut(&chat) {
+                    queue.collapsed = !queue.collapsed;
+                }
+                self.queue_tooltip.clear();
+                true
+            }
             QueueHit::SendNext => {
                 self.queues.resume(chat);
                 self.send_queue_head()
@@ -528,8 +540,11 @@ impl ChatSurface {
         let Some(queue) = self.shown_queue() else {
             return 0;
         };
+        if queue.collapsed {
+            return 1;
+        }
         let items = queue.items.len();
-        usize::from(queue.paused) + items.min(SHOWN) + usize::from(items > SHOWN)
+        1 + usize::from(queue.paused) + items.min(SHOWN) + usize::from(items > SHOWN)
     }
 
     /// The height the pending list takes above the composer, its gap
@@ -537,7 +552,7 @@ impl ChatSurface {
     pub(crate) fn queue_band_h(&self) -> f32 {
         match self.queue_rows() {
             0 => 0.0,
-            rows => rows as f32 * ROW_H + GAP,
+            rows => HEADER_H + (rows - 1) as f32 * ROW_H + GAP,
         }
     }
 
@@ -548,7 +563,7 @@ impl ChatSurface {
             return None;
         }
         let composer = self.composer_rect();
-        let h = rows as f32 * ROW_H;
+        let h = HEADER_H + (rows - 1) as f32 * ROW_H;
         Some(Rect::new(composer.x, composer.y - GAP - h, composer.w, h))
     }
 
@@ -560,35 +575,41 @@ impl ChatSurface {
         let Some(queue) = self.shown_queue() else {
             return Vec::new();
         };
+        if queue.collapsed {
+            return Vec::new();
+        }
         let first = usize::from(queue.paused);
         (0..queue.items.len().min(SHOWN))
             .map(|index| {
-                let y = band.y + (first + index) as f32 * ROW_H;
+                let y = band.y + HEADER_H + (first + index) as f32 * ROW_H;
                 (index, Rect::new(band.x, y, band.w, ROW_H))
             })
             .collect()
     }
 
-    /// A row's three icons, right to left: Remove, Edit, Steer.
+    /// A row's three actions, right to left: Remove, Edit, Steer.
     fn row_icons(row: Rect) -> [Rect; 3] {
         let y = row.y + (row.h - ICON) * 0.5;
-        let remove = Rect::new(row.x + row.w - ICON - 4.0, y, ICON, ICON);
+        let remove = Rect::new(row.x + row.w - ICON - 8.0, y, ICON, ICON);
         let edit = Rect::new(remove.x - ICON_GAP - ICON, y, ICON, ICON);
-        let steer = Rect::new(edit.x - ICON_GAP - ICON, y, ICON, ICON);
+        let steer = Rect::new(edit.x - ICON_GAP - STEER_W, y, STEER_W, ICON);
         [steer, edit, remove]
     }
 
     /// *Send next*, at the paused line's end.
     fn send_next_rect(&mut self) -> Option<Rect> {
         let band = self.queue_band_rect()?;
-        if !self.shown_queue().is_some_and(|queue| queue.paused) {
+        if !self
+            .shown_queue()
+            .is_some_and(|queue| queue.paused && !queue.collapsed)
+        {
             return None;
         }
         let label = t(self.lang, Key::AiQueueSendNext);
         let w = self.engine.simple_layout(label, role::meta()).width() + 20.0;
         Some(Rect::new(
             band.x + band.w - w - 4.0,
-            band.y + 2.0,
+            band.y + HEADER_H + 2.0,
             w,
             ROW_H - 4.0,
         ))
@@ -599,6 +620,9 @@ impl ChatSurface {
         if !band.contains(x, y) {
             return None;
         }
+        if y < band.y + HEADER_H {
+            return Some(QueueHit::Toggle);
+        }
         if self
             .send_next_rect()
             .is_some_and(|rect| rect.contains(x, y))
@@ -606,6 +630,9 @@ impl ChatSurface {
             return Some(QueueHit::SendNext);
         }
         for (index, row) in self.item_rows() {
+            if !row.contains(x, y) {
+                continue;
+            }
             let [steer, edit, remove] = Self::row_icons(row);
             if steer.contains(x, y) {
                 return Some(QueueHit::Steer(index));
@@ -616,6 +643,7 @@ impl ChatSurface {
             if remove.contains(x, y) {
                 return Some(QueueHit::Remove(index));
             }
+            return Some(QueueHit::Edit(index));
         }
         None
     }
@@ -638,6 +666,7 @@ impl ChatSurface {
             self.lang,
             match hit {
                 QueueHit::SendNext => Key::AiQueueSendNext,
+                QueueHit::Toggle => Key::AiQueueTitle,
                 QueueHit::Steer(_) => steer_key,
                 QueueHit::Edit(_) => Key::AiQueueEdit,
                 QueueHit::Remove(_) => Key::AiQueueRemove,
@@ -666,7 +695,7 @@ impl ChatSurface {
                     QueueHit::Steer(index) => (index, 0),
                     QueueHit::Edit(index) => (index, 1),
                     QueueHit::Remove(index) => (index, 2),
-                    QueueHit::SendNext => unreachable!("matched above"),
+                    QueueHit::SendNext | QueueHit::Toggle => unreachable!("matched above"),
                 };
                 rows.iter()
                     .find(|(row_index, _)| *row_index == index)
@@ -707,6 +736,57 @@ impl ChatSurface {
         let Some(chat) = self.shown_chat_id() else {
             return;
         };
+        let count = self.queues.len(chat);
+        let collapsed = self.shown_queue().is_some_and(|queue| queue.collapsed);
+        scene::floating_panel(
+            canvas,
+            root,
+            band.x,
+            band.y,
+            band.w,
+            band.h,
+            &scene::Panel::popover(9.0),
+        );
+        let heading = format!("{} · {count}", t(self.lang, Key::AiQueueTitle));
+        let heading = self.engine.simple_layout(&heading, role::meta());
+        scene::draw_layout(
+            canvas,
+            root,
+            &heading,
+            band.x + 14.0,
+            band.y + (HEADER_H - heading.height()) * 0.5,
+            Some(p.text),
+        );
+        let caret = self.engine.icon_layout(
+            if collapsed {
+                icons::CARET_RIGHT
+            } else {
+                icons::CARET_DOWN
+            },
+            13.0,
+        );
+        scene::draw_layout(
+            canvas,
+            root,
+            &caret,
+            band.x + band.w - 22.0,
+            band.y + (HEADER_H - caret.height()) * 0.5,
+            Some(p.text_dim),
+        );
+        if collapsed {
+            return;
+        }
+        scene::fill(
+            canvas,
+            root,
+            p.panel_border,
+            &scene::rect(
+                band.x + 1.0,
+                band.y + HEADER_H,
+                band.w - 2.0,
+                theme::BORDER_W as f32,
+            ),
+        );
         let paused = self.queues.is_paused(chat);
         if paused {
             let line = format!("{} \u{00B7}", t(self.lang, Key::AiQueuePaused));
@@ -715,8 +795,8 @@ impl ChatSurface {
                 canvas,
                 root,
                 &layout,
-                band.x + 6.0,
-                band.y + (ROW_H - layout.height()) * 0.5,
+                band.x + 14.0,
+                band.y + HEADER_H + (ROW_H - layout.height()) * 0.5,
                 Some(p.text_dim),
             );
             if let Some(rect) = self.send_next_rect() {
@@ -758,40 +838,76 @@ impl ChatSurface {
             .unwrap_or_default();
         for ((index, row), line) in self.item_rows().into_iter().zip(lines) {
             let hovered = row.contains(self.pointer.0, self.pointer.1);
+            if hovered {
+                scene::fill(
+                    canvas,
+                    root,
+                    p.hover_tint,
+                    &scene::rect(row.x + 1.0, row.y + 1.0, row.w - 2.0, row.h - 2.0),
+                );
+            }
             scene::fill(
                 canvas,
                 root,
-                if hovered { p.hover_tint } else { p.panel_bg },
-                &scene::rrect(row.x, row.y + 1.0, row.w, row.h - 2.0, 6.0),
-            );
-            scene::stroke(
-                canvas,
-                root,
                 p.panel_border,
-                theme::BORDER_W,
-                &scene::rrect(row.x, row.y + 1.0, row.w, row.h - 2.0, 6.0),
+                &scene::rect(
+                    row.x + 12.0,
+                    row.y + row.h - 1.0,
+                    row.w - 24.0,
+                    theme::BORDER_W as f32,
+                ),
             );
             let icons_at = Self::row_icons(row);
-            let room = (icons_at[0].x - row.x - 16.0).max(1.0);
+            let attachment_count = self
+                .shown_queue()
+                .and_then(|queue| queue.items.get(index))
+                .map_or(0, |item| item.attachments.len());
+            let badge_w = if attachment_count > 0 { 34.0 } else { 0.0 };
+            let row_icon = self.engine.icon_layout(icons::LIST, 14.0);
+            scene::draw_layout(
+                canvas,
+                root,
+                &row_icon,
+                row.x + 13.0,
+                row.y + (row.h - row_icon.height()) * 0.5,
+                Some(p.text_dim),
+            );
+            let text_x = row.x + 34.0;
+            let room = (icons_at[0].x - text_x - 8.0 - badge_w).max(1.0);
             let shown = self.engine.elided(&line, role::meta(), room);
             let layout = self.engine.simple_layout(&shown, role::meta());
             scene::draw_layout(
                 canvas,
                 root,
                 &layout,
-                row.x + 10.0,
+                text_x,
                 row.y + (row.h - layout.height()) * 0.5,
                 Some(p.text),
             );
-            for (slot, (rect, glyph)) in icons_at
-                .into_iter()
-                .zip([
-                    icons::CARET_DOUBLE_RIGHT,
-                    icons::PENCIL,
-                    icons::WINDOW_CLOSE,
-                ])
-                .enumerate()
-            {
+            if attachment_count > 0 {
+                let count = self
+                    .engine
+                    .simple_layout(&attachment_count.to_string(), role::meta());
+                let icon = self.engine.icon_layout(icons::IMAGE, 12.0);
+                let badge_x = icons_at[0].x - 34.0;
+                scene::draw_layout(
+                    canvas,
+                    root,
+                    &icon,
+                    badge_x,
+                    row.y + (row.h - icon.height()) * 0.5,
+                    Some(p.text_dim),
+                );
+                scene::draw_layout(
+                    canvas,
+                    root,
+                    &count,
+                    badge_x + 15.0,
+                    row.y + (row.h - count.height()) * 0.5,
+                    Some(p.text_dim),
+                );
+            }
+            for (slot, rect) in icons_at.into_iter().enumerate() {
                 let hit = match slot {
                     0 => QueueHit::Steer(index),
                     1 => QueueHit::Edit(index),
@@ -805,13 +921,35 @@ impl ChatSurface {
                     scene::rect(rect.x, rect.y, rect.w, rect.h),
                     |r| r.property("accessible name", name, "caller label"),
                 );
-                IconButton::new(glyph, rect)
+                if slot == 0 {
+                    ActionButton::new(
+                        t(self.lang, Key::AiQueueSteerAction),
+                        ActionStyle::Ghost,
+                        None,
+                    )
+                    .draw(
+                        canvas,
+                        root,
+                        &mut self.engine,
+                        rect,
+                        rect.contains(self.pointer.0, self.pointer.1),
+                    );
+                } else {
+                    IconButton::new(
+                        if slot == 1 {
+                            icons::PENCIL
+                        } else {
+                            icons::TRASH
+                        },
+                        rect,
+                    )
                     .with_state(IconButtonState {
                         hovered: rect.contains(self.pointer.0, self.pointer.1),
                         active: false,
                         disabled: false,
                     })
                     .draw(canvas, root, &mut self.engine);
+                }
             }
         }
         let more = self.queues.len(chat).saturating_sub(SHOWN);

@@ -116,6 +116,7 @@ mod composer_shell;
 mod dictation;
 mod doc_links;
 mod effort;
+mod file_citations;
 mod layout_cache;
 mod link_card;
 mod live_markdown;
@@ -1913,6 +1914,12 @@ impl ChatSurface {
                 return self.composer.insert_break();
             }
             if !koru_keys::is_chord(mods) && !mods.alt_key() {
+                if !self.composer.composing()
+                    && !self.composer_has_content()
+                    && self.shown_queue().is_some()
+                {
+                    return self.queue_action(queue::QueueHit::Steer(0));
+                }
                 return self.send_composer();
             }
         }
@@ -2523,6 +2530,13 @@ impl ChatSurface {
     /// Follow a link the person clicked in the conversation: a Koru document
     /// goes to the host to open, a web address to the browser.
     fn follow_link(&mut self, url: &str) -> bool {
+        if let Some(path) = file_citations::path_from_link(url) {
+            if let Some(chat) = self.shown_chat_id() {
+                self.attachment_open_request =
+                    Some(attachments::AttachmentOpenRequest::local_file(chat, path));
+            }
+            return true;
+        }
         match koru_link::parse(url) {
             Ok(link @ koru_link::KoruLink::Document { .. }) => {
                 self.open_document_request = Some(link);
@@ -2610,10 +2624,11 @@ impl ChatSurface {
                 self.link_card.hide();
                 // `koru_ui`'s own test guard does not reach this crate's
                 // tests, which must not write the real clipboard.
+                let address = file_citations::address_for_card(&url);
                 #[cfg(test)]
-                tests::COPIED.with(|copied| copied.borrow_mut().push(url.clone()));
+                tests::COPIED.with(|copied| copied.borrow_mut().push(address.clone()));
                 #[cfg(not(test))]
-                koru_ui::clipboard::put_plain(&url);
+                koru_ui::clipboard::put_plain(&address);
                 self.show_copy_feedback(koru_i18n::t(self.lang, koru_i18n::Key::AiLinkCopied));
             }
             LinkCardHit::Action => {
@@ -9803,6 +9818,8 @@ fn render_chat_block(
     markdown: &str,
     max_w: f32,
 ) -> BlockLayout {
+    let projected = file_citations::project(markdown, false);
+    let shown_markdown = projected.as_ref();
     if let Some(image) = generated_image_spec(markdown) {
         return BlockLayout {
             id,
@@ -9818,7 +9835,7 @@ fn render_chat_block(
     // A bare `https://…` in a reply is a link (D95): the chat follows
     // what it draws as one.
     let styles = koru_markdown::Styles::chat().with_bare_links();
-    match koru_markdown::render_block(engine, markdown, max_w, &styles) {
+    match koru_markdown::render_block(engine, shown_markdown, max_w, &styles) {
         koru_markdown::Rendered::Text {
             text,
             layout,
@@ -12129,6 +12146,39 @@ mod tests {
         let block = render_chat_block(&mut engine, MessageBlockId::new(), source, 300.0);
         assert!(block.table.is_none());
         assert_eq!(block.text, source);
+    }
+
+    #[test]
+    fn a_codex_file_citation_renders_as_a_link_without_changing_its_source() {
+        let source =
+            "See :codex-file-citation{path=\"C:/Users/Ada/Letter.txt\" purpose=\"source\"}.";
+        let mut engine = TextEngine::new();
+        let block = render_chat_block(&mut engine, MessageBlockId::new(), source, 500.0);
+        assert_eq!(block.markdown, source);
+        assert_eq!(block.text, "See Source: Letter.txt.");
+        assert_eq!(block.links.len(), 1);
+        assert_eq!(
+            file_citations::path_from_link(&block.links[0].url),
+            Some(std::path::PathBuf::from("C:/Users/Ada/Letter.txt"))
+        );
+    }
+
+    #[test]
+    fn clicking_a_local_citation_asks_the_host_for_an_in_window_preview() {
+        let mut surface = ChatSurface::new();
+        surface.transcript = Some(transcript());
+        let shown = file_citations::project(
+            ":codex-file-citation{path=\"C:/Users/Ada/Letter.txt\" purpose=\"source\"}",
+            false,
+        );
+        let url = shown.split("](").nth(1).unwrap().split(')').next().unwrap();
+        assert!(surface.follow_link(url));
+        let request = surface.take_attachment_open_request().unwrap();
+        assert_eq!(
+            request.reference_path,
+            Some(std::path::PathBuf::from("C:/Users/Ada/Letter.txt"))
+        );
+        assert_eq!(request.preview, AttachmentPreview::Text);
     }
 
     #[test]

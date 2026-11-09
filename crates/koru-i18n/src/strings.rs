@@ -385,6 +385,8 @@ pub enum Key {
     AiComposerQueue,
     AiComposerStop,
     AiQueuePaused,
+    AiQueueTitle,
+    AiQueueSteerAction,
     AiQueueSendNext,
     AiQueueSteer,
     AiQueueSteerStops,
@@ -3050,7 +3052,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2150] = [
+    pub const ALL: [Key; 2152] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -3327,6 +3329,8 @@ impl Key {
         Key::AiComposerQueue,
         Key::AiComposerStop,
         Key::AiQueuePaused,
+        Key::AiQueueTitle,
+        Key::AiQueueSteerAction,
         Key::AiQueueSendNext,
         Key::AiQueueSteer,
         Key::AiQueueSteerStops,
@@ -8040,6 +8044,28 @@ pub const ROWS: &[Row] = &[
         ar: "قائمة الانتظار متوقفة مؤقتًا",
         zh_hans: "队列已暂停",
         ja: "キューは一時停止中",
+    },
+    Row {
+        key: Key::AiQueueTitle,
+        en: "Queued",
+        es: "En cola",
+        pt_br: "Na fila",
+        de: "In Warteschlange",
+        fr: "En attente",
+        ar: "في قائمة الانتظار",
+        zh_hans: "已排队",
+        ja: "キュー済み",
+    },
+    Row {
+        key: Key::AiQueueSteerAction,
+        en: "Steer",
+        es: "Dirigir",
+        pt_br: "Direcionar",
+        de: "Lenken",
+        fr: "Orienter",
+        ar: "توجيه",
+        zh_hans: "引导",
+        ja: "誘導",
     },
     Row {
         key: Key::AiQueueSendNext,

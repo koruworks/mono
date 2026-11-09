@@ -424,6 +424,60 @@ fn steer_is_native_for_an_agent_that_steers() {
     assert_eq!(surface.steered_shown(), ["also this"]);
 }
 
+#[test]
+fn enter_in_an_empty_composer_steers_the_first_queued_message() {
+    let (mut surface, _transcript, commands) =
+        agent_surface("agent-codex", &[("agent-codex", true)]);
+    let attempt = send_and_accept(&mut surface, &commands, "first");
+    type_into(&mut surface, "steer first");
+    assert!(press(&mut surface, NamedKey::Enter));
+    type_into(&mut surface, "send later");
+    assert!(press(&mut surface, NamedKey::Enter));
+    assert_eq!(surface.shown_queue().unwrap().items.len(), 2);
+
+    assert!(press(&mut surface, NamedKey::Enter));
+    let steered = drain(&commands)
+        .into_iter()
+        .find_map(|command| match command {
+            Command::Steer(to, request) => Some((to, request.markdown)),
+            _ => None,
+        });
+    assert_eq!(steered, Some((attempt, "steer first".into())));
+    assert_eq!(
+        surface
+            .shown_queue()
+            .unwrap()
+            .items
+            .front()
+            .unwrap()
+            .markdown,
+        "send later"
+    );
+}
+
+#[test]
+fn queued_card_header_folds_rows_without_losing_messages() {
+    let (mut surface, _transcript, commands) =
+        agent_surface("agent-codex", &[("agent-codex", true)]);
+    send_and_accept(&mut surface, &commands, "first");
+    type_into(&mut surface, "waiting");
+    assert!(press(&mut surface, NamedKey::Enter));
+    assert_eq!(surface.item_rows().len(), 1);
+    let expanded_height = surface.queue_band_h();
+    let band = surface.queue_band_rect().unwrap();
+    assert_eq!(
+        surface.queue_hit_at(band.x + 12.0, band.y + 12.0),
+        Some(QueueHit::Toggle)
+    );
+
+    assert!(surface.queue_action(QueueHit::Toggle));
+    assert!(surface.item_rows().is_empty());
+    assert!(surface.queue_band_h() < expanded_height);
+    assert_eq!(surface.shown_queue().unwrap().items.len(), 1);
+    assert!(surface.queue_action(QueueHit::Toggle));
+    assert_eq!(surface.item_rows().len(), 1);
+}
+
 /// The conversation as laid out: each card's role and what it says.
 fn cards(surface: &mut ChatSurface) -> Vec<(ChatRole, String)> {
     surface.viewport = koru_draw::geometry::Rect::new(0.0, 0.0, 480.0, 640.0);

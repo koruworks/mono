@@ -1506,15 +1506,18 @@ whatever the composer holds.
 the send button, which reads **Queue** while a reply runs and you have typed
 something, and **Stop** when the composer is empty) and the message is queued:
 the composer clears for the next one, and the message waits in a **pending**
-list above the composer, one line each, with everything it carries — document
+card above the composer, one line each, with everything it carries — document
 chips, quotes and attachments. When the reply finishes, the first queued
 message is sent, then the next after its reply, and so on. If you stop a reply,
 or it fails, the queue pauses and says *Queue paused · Send next*: **Send next**
 sends the first one, and so does sending a message yourself. A queued message
 the chat would not take goes back to the front of the queue rather than into
-the composer. Each queued message has three buttons: **Edit** puts it back in
+the composer. The card header shows the queue count and folds or unfolds its
+rows. Each queued message has three actions: **Edit** puts it back in
 the composer (anything you were typing takes its place in the queue),
 **Remove ×** drops it, and **Steer** sends it into the running reply right now.
+With an empty composer and queued messages, `Enter` steers the first queued
+message.
 With Codex and Claude, Steer hands your text to the agent mid-reply and the
 reply carries on with it; your message moves up under your question, above the
 reply's work and answer, and stays there when you reopen the chat. With every other agent — and for a message with attachments or
@@ -1550,7 +1553,10 @@ line returns after reopening the chat; unavailable usage is left blank rather
 than estimated. Markdown tables in responses use the same presentation as
 document tables: headers are bold, columns follow their content, delimiter
 alignment is honored, and inline emphasis, code, and links are rendered inside
-cells. If Koru cannot
+cells. A Codex file citation in an answer appears as a source or file link
+with its filename. Clicking a local file citation opens Koru's file preview;
+the link card shows and copies its path. Plain text files can be read there,
+while other file types offer Save As and Open externally. If Koru cannot
 load the available-workspace catalog, the composer access popover reports that
 failure instead of presenting an empty list; restart the local stack and try
 again. An empty list with no failure means this profile currently contains no

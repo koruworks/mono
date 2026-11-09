@@ -327,6 +327,24 @@ pub enum AttachmentPreview {
 }
 
 impl AttachmentOpenRequest {
+    pub(crate) fn local_file(chat: ChatId, path: PathBuf) -> Self {
+        let name = path.file_name().map_or_else(
+            || path.to_string_lossy().into_owned(),
+            |name| name.to_string_lossy().into_owned(),
+        );
+        let preview = match allowed_type(&name).map(|allowed| allowed.family) {
+            Some(AttachmentFamily::Text | AttachmentFamily::SourceCode) => AttachmentPreview::Text,
+            _ => AttachmentPreview::Unsupported,
+        };
+        Self {
+            chat,
+            id: ChatAttachmentId::new(),
+            name,
+            reference_path: Some(path),
+            preview,
+        }
+    }
+
     fn from_tile(chat: ChatId, tile: &Tile) -> Self {
         let preview = match allowed_type(&tile.name).map(|allowed| allowed.family) {
             Some(AttachmentFamily::Text | AttachmentFamily::SourceCode) => AttachmentPreview::Text,
