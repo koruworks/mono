@@ -20,7 +20,9 @@
 
 use std::fmt;
 
-use loro::{ExportMode, LoroDoc, LoroValue, ValueOrContainer, VersionVector};
+use loro::{
+    ContainerID, ExportMode, JsonOpContent, LoroDoc, LoroValue, ValueOrContainer, VersionVector,
+};
 
 use crate::errors::{Code, Error};
 use crate::version::Compatibility;
@@ -270,4 +272,35 @@ pub(crate) fn entries(map: &loro::LoroMap) -> Vec<(String, ValueOrContainer)> {
     let mut out = Vec::new();
     map.for_each(|key, value| out.push((key.to_string(), value)));
     out
+}
+
+// ------------------------------------------------- typed JSON history helpers
+//
+// Shared by every walker of Loro's typed JSON history (the personal
+// migration's namespace transcoder and the root-catalog export redaction),
+// so each refuses the same shapes by the same names.
+
+/// The kind of an operation, for a refusal message. A unit built of maps
+/// holds only `map` operations; every other name here is a refusal.
+pub(crate) fn op_kind(content: &JsonOpContent) -> &'static str {
+    match content {
+        JsonOpContent::Map(_) => "map",
+        JsonOpContent::List(_) => "list",
+        JsonOpContent::MovableList(_) => "movable list",
+        JsonOpContent::Text(_) => "text",
+        JsonOpContent::Tree(_) => "tree",
+        JsonOpContent::Future(_) => "future",
+    }
+}
+
+/// The nearest non-mergeable ancestor of a container: a named root for a
+/// root or for a chain of `ensure_mergeable_map` children under one, or the
+/// ordinary (op-id) container the chain hangs from. A mergeable id encodes
+/// its parent and key, so this needs no document.
+pub(crate) fn non_mergeable_ancestor(container: &ContainerID) -> ContainerID {
+    let mut current = container.clone();
+    while let Some((parent, _, _)) = current.parse_mergeable() {
+        current = parent;
+    }
+    current
 }

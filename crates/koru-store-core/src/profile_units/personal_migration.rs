@@ -52,7 +52,7 @@ use super::{PersonalManifest, PersonalScope, PersonalUnitRef};
 use crate::errors::{Code, Error};
 use crate::ids::{ProfileId, WorkspaceId};
 use crate::ports::WorkspaceReminderDue;
-use crate::unit_doc::{UnitAddress, entries};
+use crate::unit_doc::{UnitAddress, entries, op_kind};
 use crate::version::PERSONAL_V2_CRDT_SCHEMA_VERSION;
 
 /// The fixed domain string of the PeerID digest (§5.2 step 2). Recorded in
@@ -578,34 +578,10 @@ fn transcode(
                 JsonOpContent::Map(JsonMapOp::Delete { key }) => {
                     JsonOpContent::Map(JsonMapOp::Delete { key })
                 }
-                JsonOpContent::List(_) => {
+                other => {
                     return Err(R::UnsupportedOp {
                         owner,
-                        kind: "list",
-                    });
-                }
-                JsonOpContent::MovableList(_) => {
-                    return Err(R::UnsupportedOp {
-                        owner,
-                        kind: "movable list",
-                    });
-                }
-                JsonOpContent::Text(_) => {
-                    return Err(R::UnsupportedOp {
-                        owner,
-                        kind: "text",
-                    });
-                }
-                JsonOpContent::Tree(_) => {
-                    return Err(R::UnsupportedOp {
-                        owner,
-                        kind: "tree",
-                    });
-                }
-                JsonOpContent::Future(_) => {
-                    return Err(R::UnsupportedOp {
-                        owner,
-                        kind: "future",
+                        kind: op_kind(&other),
                     });
                 }
             };

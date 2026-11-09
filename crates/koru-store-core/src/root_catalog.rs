@@ -42,8 +42,9 @@
 //!   without a placement are all refused, with a typed
 //!   [`CatalogUnitRefusal`], before any byte reaches a row or a peer.
 //!
-//! Export redaction (§4.3) and the SQLite rows (§4.2 "Approved SQLite
-//! shapes") are not here: the former is Plan 1.2, the latter is the
+//! The export boundary of §4.3 — native history redaction of hidden Profile
+//! references before any unit leaves the device — is [`export`]. The SQLite
+//! rows (§4.2 "Approved SQLite shapes") are the
 //! [`Catalog`](crate::ports::Catalog) port's business.
 
 use std::fmt;
@@ -55,12 +56,17 @@ use crate::errors::{Code, Error};
 use crate::ids::{ProfileId, RestoreId, WorkspaceId};
 use crate::unit_doc::UnitFailure;
 
+pub mod export;
 mod lifecycle;
 pub mod seed;
 mod unit;
 mod validation;
 
 pub use crate::unit_doc::Staged;
+pub use export::{
+    Derived, DerivedKey, ExportRefusal, ExportScope, ExportSubject, HoldReason, PayloadKind,
+    PolicyCapture, Publication, derive,
+};
 pub use lifecycle::{DeletionRecord, Placement, PurgeRecord, RestoreRecord};
 pub use seed::{ROOT_SEED_NAMESPACE, RootSeedReceipt, seed_profile_unit, seed_workspace_unit};
 pub use unit::{ProfileCatalogUnit, WorkspaceCatalogUnit};
