@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Refresh credentials through their issuer, keeping permits and routes from
-//! the same admission. No credential is extended or patched in place.
+//! Refresh credentials through their issuer, keeping the admission's shape.
+//! No credential is extended or patched in place: a Workspace is re-admitted
+//! through the same `admit`, a Profile's units through the same
+//! `admit_profile_units`, and the old permit is fenced before the new one is
+//! installed.
 use super::*;
 
 impl<A: Api, H: Host> Coordinator<A, H> {
@@ -23,73 +26,100 @@ impl<A: Api, H: Host> Coordinator<A, H> {
         result
     }
 
-    fn renew_admission(&mut self, admission: &mut Admission) -> Result<(), Failure> {
+    /// Re-admit one session's scope and replace its permit on the host.
+    fn renew_session(&mut self, session: &mut Session) -> Result<(), Failure> {
         let authority = self.current_authority()?;
-        tracing::info!(workspace = ?admission.candidate.workspace_id,
-            "cloud session: renewing worker admission");
-        let replacement = self
-            .admit(&authority, admission.candidate.clone())?
-            .ok_or(Failure::SessionExpired)?;
-        self.current_authority()?;
-        let old = [
-            admission.workspace_permit.permit_id,
-            admission.profile_permit.permit_id,
-        ];
-        self.host.fence(&old)?;
-        self.live.retain(|permit| !old.contains(&permit.permit_id));
-        self.sequence = self.sequence.saturating_add(1);
-        let permits = [
-            replacement.workspace_permit.clone(),
-            replacement.profile_permit.clone(),
-        ];
-        // Retain ownership even if the host applied the context but its reply
-        // was lost. The next pass must fence these ids before admitting more.
-        self.live.extend(permits.iter().cloned());
-        for (previous, permit) in old.into_iter().zip(&permits) {
-            if let Some(mut record) = self.records.remove(&previous) {
-                record.permit_id = permit.permit_id;
-                record.dataset = permit.dataset;
-                self.records.insert(permit.permit_id, record);
+        tracing::info!(owner = ?session.owner, "cloud session: renewing worker admission");
+        let replacement = match session.owner {
+            Owner::Workspace(workspace) => {
+                let candidate = self
+                    .admissions
+                    .get(&workspace)
+                    .map(|admission| admission.candidate.clone())
+                    .ok_or(Failure::SessionExpired)?;
+                let admission = self
+                    .admit(&authority, candidate)?
+                    .ok_or(Failure::SessionExpired)?;
+                let content = admission.content.clone();
+                self.admissions.insert(workspace, admission);
+                content
             }
+            Owner::Profile(profile) => {
+                let scoped = match self.contract {
+                    Some(CloudContract::V2) => self.admit_profile_units(&authority, profile)?,
+                    // The v1 pair's Profile dataset is renewed with the
+                    // Workspace that lent it; re-admit that Workspace and
+                    // take its Profile half.
+                    _ => {
+                        let lender = self
+                            .admissions
+                            .values()
+                            .find(|admission| admission.candidate.legacy_profile == Some(profile))
+                            .map(|admission| admission.candidate.clone())
+                            .ok_or(Failure::SessionExpired)?;
+                        let admission = self
+                            .admit(&authority, lender)?
+                            .ok_or(Failure::SessionExpired)?;
+                        let scoped = admission
+                            .legacy_profile_units
+                            .clone()
+                            .ok_or(Failure::SessionExpired)?;
+                        self.admissions
+                            .insert(admission.candidate.workspace_id, admission);
+                        scoped
+                    }
+                };
+                self.profile_units.insert(profile, scoped.clone());
+                scoped
+            }
+        };
+        self.current_authority()?;
+        let old = session.scoped.permit.permit_id;
+        self.host.fence(&[old])?;
+        self.live.retain(|permit| permit.permit_id != old);
+        self.sequence = self.sequence.saturating_add(1);
+        let permit = replacement.permit.clone();
+        // Retain ownership even if the host applied the context but its reply
+        // was lost. The next pass must fence this id before admitting more.
+        self.live.push(permit.clone());
+        if let Some(mut record) = self.records.remove(&old) {
+            record.permit_id = permit.permit_id;
+            record.profile_id = permit
+                .placement_profile()
+                .map(|profile| ProfileId::from_uuid(profile.as_uuid()));
+            if let Some(dataset) = permit.dataset() {
+                record.dataset = dataset;
+            }
+            self.records.insert(permit.permit_id, record);
         }
-        *admission = replacement;
+        session.scoped = replacement;
         // Retain the replacement in the lane before a fallible acknowledgement.
-        // Retrying with its old IDs would leak a pair per uncertain renewal.
+        // Retrying with its old id would leak a permit per uncertain renewal.
         self.host.replace_context(
             self.sequence,
             authority.owner.account,
             self.account_generation,
-            &permits,
+            std::slice::from_ref(&permit),
         )?;
         Ok(())
     }
 
     pub(super) fn prepare_session(
         &mut self,
-        admission: &mut Admission,
-        workspace: bool,
+        session: &mut Session,
         attempt: u8,
         clock: &dyn Clock,
     ) -> Result<(), Failure> {
         self.current_authority()?;
         let now = clock.now_millis().ok_or(Failure::Unavailable)? / 1000;
-        if attempt > 0
-            || admission.token.expires_at_seconds().saturating_sub(now)
-                <= SESSION_RENEW_BEFORE_SECONDS
-        {
-            self.renew_admission(admission)?;
+        if attempt > 0 || !session.scoped.fresh(now) {
+            self.renew_session(session)?;
         }
         let now = clock.now_millis().ok_or(Failure::Unavailable)? / 1000;
-        if admission.token.expires_at_seconds().saturating_sub(now) <= SESSION_RENEW_BEFORE_SECONDS
-        {
+        if !session.scoped.fresh(now) {
             return Err(Failure::CredentialExpired);
         }
-        let permit = if workspace {
-            &admission.workspace_permit
-        } else {
-            &admission.profile_permit
-        };
-        if let Some(record) = self.records.get_mut(&permit.permit_id) {
+        if let Some(record) = self.records.get_mut(&session.scoped.permit.permit_id) {
             record.stage = Stage::Reconciling;
             record.error_code = None;
         }

@@ -7,7 +7,9 @@
 //! the gateway process. It reaches the Store only through the authenticated
 //! control channel the Agent already holds — `read_cloud_bootstrap`,
 //! `replace_cloud_context`, `install_cloud_session`, `fence_cloud`,
-//! `cloud_status` — and it owns the network side in this process: the dial
+//! `cloud_status`, and since root-catalog Plan 3.2 the Store half of the
+//! account path (the binding, the root inventory, the export boundary and
+//! the staged join) — and it owns the network side in this process: the dial
 //! on the Cloud ALPN, the four-message handshake, and the bridge that hands
 //! the authenticated stream to the gateway under its Cloud principal.
 //!
@@ -25,15 +27,18 @@ use koru_account_core::workspace_authorization::Region;
 use koru_account_core::{KoruIdentityId, ProfileId};
 use koru_account_runtime::account::lifecycle::LocalProfileInventory;
 use koru_account_runtime::cloud::{
-    self, CloudPermitV1, Failure, Host, LocalBootstrap, SessionReport, Stage,
+    self, CloudAccountBindingRef, CloudPermitV2, CloudRootExport, CloudRootJoin, Failure, Host,
+    LocalBootstrap, RootInventory, SessionReport, Stage,
 };
+use koru_account_wire::CloudCatalogBindingV2;
+use koru_account_wire::JwksResponseV1;
 use koru_account_wire::cloud_sync::SyncCredential;
 use koru_account_wire::regional_bootstrap::CloudSyncRouteV1;
-use koru_account_wire::{CloudWorkspaceDescriptorV1, JwksResponseV1};
 use koru_device::cloud::{CloudId, CloudReplicaPrincipalV1};
 use koru_device::{DeviceSigningKey, ReplicationEndpointId};
 use koru_network_iroh::{CloudRoute, RuntimeHandle, cloud::dial};
 use koru_store_core::WorkspaceId;
+use koru_store_core::service::JoinUnit;
 use koru_sync_control::cloud::CloudStage;
 use koru_sync_control::{ControlRequest, ControlResponse, ControlSessionId};
 use uuid::Uuid;
@@ -137,9 +142,14 @@ impl DesktopCloudHost {
                 // Every refusal here is retried by the coordinator's backoff:
                 // a stale session heals on the next control connection, a
                 // sequence conflict on the next context, a capacity refusal
-                // on the next cohort.
+                // on the next cohort. The root-catalog codes that mean
+                // something to the coordinator keep their word.
                 tracing::warn!(code, "cloud host: the gateway refused a control request");
-                Err(Failure::Unavailable)
+                Err(match code.as_str() {
+                    cloud::CATALOG_BINDING_CONFLICT => Failure::CatalogBindingConflict,
+                    cloud::PLACEMENT_PENDING => Failure::PlacementPending,
+                    _ => Failure::Unavailable,
+                })
             }
             Ok(response) => Ok(response),
             Err(error) => {
@@ -194,37 +204,37 @@ impl Host for DesktopCloudHost {
     fn local_workspace(
         &self,
         account: KoruIdentityId,
-        profile: ProfileId,
         dataset: CloudReplicaPrincipalV1,
     ) -> Result<Option<LocalBootstrap>, Failure> {
         let CloudReplicaPrincipalV1::Workspace { workspace_id, .. } = dataset else {
             return Err(Failure::DatasetMismatch);
         };
-        let response = self.ask(ControlRequest::ReadCloudBootstrap {
+        let response = self.ask(ControlRequest::ReadCloudBootstrapV2 {
             control_session_id: self.session()?,
             account_id: cloud(account.as_uuid()),
-            profile_id: cloud(profile.as_uuid()),
             dataset,
         })?;
         let ControlResponse::CloudBootstrap {
             manifest_document_id,
+            allows_cloud,
             ..
         } = response
         else {
             return Err(Failure::Unavailable);
         };
         Ok(manifest_document_id.map(|manifest| LocalBootstrap {
-            profile_id: profile,
             workspace_id: WorkspaceId::from_uuid(workspace_id.as_uuid()),
             manifest_document_id: manifest.as_uuid(),
+            allows_cloud,
         }))
     }
 
-    /// HOST-CONTROL §3.1 step 1 is the selection path's provisioning
-    /// (TECHNICAL §7.4), which already runs when a Profile is selected on
-    /// this device. Here the presence is only checked, through the same
-    /// inventory the account runtime uses; an absent Profile is a bootstrap
-    /// refusal the coordinator retries after selection has landed it.
+    /// The Profile whose Identity/Private units are about to sync must be
+    /// present here (the selection path's provisioning, TECHNICAL §7.4,
+    /// already ran when a Profile was selected on this device). Checked
+    /// through the same inventory the account runtime uses; an absent
+    /// Profile is a bootstrap refusal the coordinator retries after
+    /// selection has landed it. Never asked before a Workspace's content.
     fn ensure_profile_presence(
         &self,
         profile: ProfileId,
@@ -239,12 +249,9 @@ impl Host for DesktopCloudHost {
 
     /// Step 3 runs in the gateway at installation, where the Store is: the
     /// Workspace permit carries the descriptor, and the gateway provisions
-    /// the replica with the Profile read back from its Store before it opens
-    /// the stream. Nothing to do on this side of the bridge.
-    fn ensure_workspace_presence(
-        &self,
-        _descriptor: &CloudWorkspaceDescriptorV1,
-    ) -> Result<(), Failure> {
+    /// the replica under its root placement before it opens the stream.
+    /// Nothing to do on this side of the bridge.
+    fn ensure_workspace_presence(&self, _permit: &CloudPermitV2) -> Result<(), Failure> {
         Ok(())
     }
 
@@ -253,7 +260,7 @@ impl Host for DesktopCloudHost {
         _sequence: u64,
         account: KoruIdentityId,
         account_generation: u64,
-        permits: &[CloudPermitV1],
+        permits: &[CloudPermitV2],
     ) -> Result<(), Failure> {
         if permits.len() > koru_sync_control::cloud::MAX_CLOUD_PERMIT_PAGE {
             for page in permits.chunks(koru_sync_control::cloud::MAX_CLOUD_PERMIT_PAGE) {
@@ -270,7 +277,8 @@ impl Host for DesktopCloudHost {
             sequence,
             account_id,
             account_generation,
-            permits: permits.iter().map(cloud::control_permit).collect(),
+            permits: Vec::new(),
+            permits_v2: permits.to_vec(),
         })?;
         match response {
             ControlResponse::CloudContextApplied {
@@ -282,8 +290,8 @@ impl Host for DesktopCloudHost {
                 for permit in permits {
                     tracing::info!(
                         permit_id = %permit.permit_id,
-                        profile = %permit.profile_id.as_uuid(),
-                        dataset = ?permit.dataset,
+                        placement = ?permit.placement_profile(),
+                        dataset = ?permit.dataset(),
                         account_generation,
                         sequence,
                         "cloud host: gateway acknowledged installed permit"
@@ -388,7 +396,7 @@ impl Host for DesktopCloudHost {
 
     fn open_dataset(
         &self,
-        permit: &CloudPermitV1,
+        permit: &CloudPermitV2,
         credential: &SyncCredential,
         route: &CloudSyncRouteV1,
         dataset: CloudReplicaPrincipalV1,
@@ -404,6 +412,7 @@ impl Host for DesktopCloudHost {
         {
             return Err(Failure::CredentialExpired);
         }
+        let account = KoruIdentityId::from_str_lossy(permit.account_id)?;
         let control_session_id = self.session()?;
         let verifier = cloud::capability_verifier(self.region, &self.issuer, keys)?;
         let retained = self
@@ -541,11 +550,9 @@ impl Host for DesktopCloudHost {
             if current_access.0 != account_access.0 || access_renewed.elapsed() >= HEARTBEAT {
                 // Keep the file engine's short local grant alive independently
                 // of document completion, using the account's newest bearer.
-                if let Err(error) = self.replace_blob_access(
-                    permit.account_id,
-                    permit.account_generation,
-                    &current_access,
-                ) {
+                if let Err(error) =
+                    self.replace_blob_access(account, permit.account_generation, &current_access)
+                {
                     tracing::warn!(
                         code = error.code(),
                         "cloud session: file access renewal failed"
@@ -616,6 +623,101 @@ impl Host for DesktopCloudHost {
             let _ = self.fence(&[permit.permit_id]);
         }
         Ok(report)
+    }
+
+    // ----- The Store half of the account path, over control --------------
+
+    fn account_binding(&self) -> Result<Option<CloudAccountBindingRef>, Failure> {
+        match self.ask(ControlRequest::ReadCloudAccountBinding {
+            control_session_id: self.session()?,
+        })? {
+            ControlResponse::CloudAccountBinding { binding, .. } => Ok(binding),
+            _ => Err(Failure::Unavailable),
+        }
+    }
+
+    fn bind_account_scope(&self, binding: &CloudCatalogBindingV2) -> Result<(), Failure> {
+        match self.ask(ControlRequest::BindCloudAccountScope {
+            control_session_id: self.session()?,
+            account_id: cloud(binding.account_id.as_uuid()),
+            catalog_scope_id: cloud(binding.catalog_scope_id.as_uuid()),
+            bound_at_ms: binding.bound_at_ms.max(1),
+        })? {
+            ControlResponse::CloudAccountScopeBound { .. } => Ok(()),
+            _ => Err(Failure::Unavailable),
+        }
+    }
+
+    fn root_inventory(&self) -> Result<RootInventory, Failure> {
+        match self.ask(ControlRequest::ReadCloudRootInventory {
+            control_session_id: self.session()?,
+        })? {
+            ControlResponse::CloudRootInventory { units, held, .. } => {
+                Ok(RootInventory { units, held })
+            }
+            _ => Err(Failure::Unavailable),
+        }
+    }
+
+    fn root_unit_frontier(&self, unit: JoinUnit) -> Result<Option<Vec<u8>>, Failure> {
+        match self.ask(ControlRequest::ReadCloudRootFrontier {
+            control_session_id: self.session()?,
+            unit,
+        })? {
+            ControlResponse::CloudRootFrontier { frontier, .. } => Ok(frontier),
+            _ => Err(Failure::Unavailable),
+        }
+    }
+
+    fn export_root_unit(
+        &self,
+        unit: JoinUnit,
+        recipient_frontier: Option<&[u8]>,
+    ) -> Result<CloudRootExport, Failure> {
+        match self.ask(ControlRequest::ExportCloudRootUnit {
+            control_session_id: self.session()?,
+            unit,
+            recipient_frontier: recipient_frontier.map(<[u8]>::to_vec),
+        })? {
+            ControlResponse::CloudRootUnitExport { export, .. } => Ok(export),
+            _ => Err(Failure::Unavailable),
+        }
+    }
+
+    fn join_root_unit(
+        &self,
+        account: KoruIdentityId,
+        unit: JoinUnit,
+        frames: &[Vec<u8>],
+        advertised: Option<&[u8]>,
+    ) -> Result<CloudRootJoin, Failure> {
+        match self.ask(ControlRequest::JoinCloudRootUnit {
+            control_session_id: self.session()?,
+            account_id: cloud(account.as_uuid()),
+            unit,
+            frames: frames.to_vec(),
+            advertised: advertised.map(<[u8]>::to_vec),
+        })? {
+            ControlResponse::CloudRootUnitJoined { join, .. } => Ok(join),
+            _ => Err(Failure::Unavailable),
+        }
+    }
+}
+
+/// The permit's account as the runtime's account id. A permit's account is a
+/// canonical v4 by validation, so this cannot fail for a permit the
+/// coordinator built; a value that does is not a permit to open anything
+/// under.
+trait AccountFromCloud: Sized {
+    fn from_str_lossy(id: CloudId) -> Result<Self, Failure>;
+}
+
+impl AccountFromCloud for KoruIdentityId {
+    fn from_str_lossy(id: CloudId) -> Result<Self, Failure> {
+        id.as_uuid()
+            .to_string()
+            .parse()
+            .map_err(|_| Failure::DatasetMismatch)
     }
 }
 

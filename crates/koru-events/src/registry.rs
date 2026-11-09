@@ -490,6 +490,9 @@ pub const MCP_TOOL_TOKENS: &[&str] = &[
     "read_document",
     "create_document",
     "edit_document",
+    "create_image_upload",
+    "add_image",
+    "replace_image",
     "extract_to_document",
     "list_tasks",
     "claim_document",
@@ -1842,6 +1845,38 @@ pub const REGISTRY: &[EventSpec] = &[
             "The Profile whose local removal coordination changed.",
         )],
         doc: "A Profile removal attempt began, stopped, was abandoned, or completed. Emitted after durable catalog commit. Receivers read the current mark; no attempt, names or content cross this local wake.",
+    },
+    EventSpec {
+        name: "profile.deleted",
+        version: 1,
+        class: EventClass::Domain,
+        telemetry: TelemetryPolicy::Never,
+        attrs: &[reference_attr(
+            "profile",
+            "The Profile whose shared deletion batch committed.",
+        )],
+        doc: "The Store committed a shared Profile deletion: a root deletion \
+              fact on the Profile and on every Workspace captured as a target, \
+              all in one catalog transaction (root-catalog TECHNICAL.final \
+              §6.1). Distinct from `profile.removal_changed`, which is the \
+              device-local removal attempt. Each target also emits \
+              `workspace.catalog.deleted`; a surface listing restorable \
+              Profiles refetches on this one. Ids only.",
+    },
+    EventSpec {
+        name: "profile.restored",
+        version: 1,
+        class: EventClass::Domain,
+        telemetry: TelemetryPolicy::Never,
+        attrs: &[reference_attr(
+            "profile",
+            "The Profile whose deletion batch was restored.",
+        )],
+        doc: "A Profile deletion batch was restored: the Profile is visible \
+              again and the targets that nothing else held in the Trash came \
+              back with it, each also emitting `workspace.catalog.restored`. \
+              Targets left in the Trash, moved elsewhere or purged are in the \
+              operation's response, not on the bus.",
     },
     EventSpec {
         name: "workspace.catalog.created",

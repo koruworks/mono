@@ -51,6 +51,10 @@ pub enum WaitReading {
     Removing {
         mark: RemovalMark,
     },
+    /// The Profile has no live workspace and none is manufactured
+    /// (root-catalog §3.10): a valid state on open, restart and after a
+    /// move or delete. The pane says so and offers *New workspace*.
+    Empty,
     Unavailable {
         cause: String,
     },

@@ -6,11 +6,21 @@
 //! rule that resolves a connection's Workspaces (Cloud MCP TECHNICAL.final
 //! §6.1; the schema is `docs/cloud-platform/contracts/app-connections-v1.md`).
 //!
+//! Since the root catalog (root-catalog TECHNICAL.final §3.9, §7.4) that rule
+//! is [`grants`]: a Profile grant follows the Profile's **current placement**
+//! in the committed discovery projection, a Workspace grant is pinned to its
+//! UUID, and the evaluation answers a cache key and a typed pending result
+//! for projection lag. The candidate's `profile_id` is a projection hint for
+//! the v1 wire, not an input to any grant.
+//!
 //! No secret crosses this port: codes and refresh tokens are SHA-256 digests,
 //! minted and compared by the caller. Document claims, which hold a
 //! connection's leases on documents, are [`claims`].
 
 pub mod claims;
+pub mod grants;
+
+pub use grants::*;
 
 use koru_store_core::{ProfileId, WorkspaceId};
 use serde::{Deserialize, Serialize};
@@ -38,7 +48,8 @@ pub enum AppConnectionError {
     /// The row named does not exist for this caller.
     NotFound,
     /// A decision names a Profile the account does not hold, or omits one of
-    /// its Cloud-syncing Profiles at approval.
+    /// its Cloud-syncing Profiles at approval; or a Workspace decision names
+    /// a Workspace the account has no live membership of.
     ProfilesChanged,
     /// The client is not registered.
     ClientUnknown,
@@ -70,7 +81,9 @@ pub struct OAuthClientRecord {
     pub last_used_at_millis: i64,
 }
 
-/// What the person decided for one Profile.
+/// What the person decided for one grant scope: a Profile, or since the root
+/// catalog a Workspace pinned to its UUID ([`WorkspaceDecision`]). The name
+/// is the v1 wire's and stays.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProfileAccess {
@@ -99,7 +112,8 @@ pub enum RevokedReason {
     AccountDeleted,
 }
 
-/// One connection as stored, with its client and its Profile decisions.
+/// One connection as stored, with its client, its Profile decisions and its
+/// Workspace decisions.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AppConnectionRecord {
     pub connection_id: AppConnectionId,
@@ -109,6 +123,9 @@ pub struct AppConnectionRecord {
     pub access: AppConnectionAccess,
     pub allow_profiles_enabled_later: bool,
     pub profiles: Vec<ProfileDecisionRecord>,
+    /// Grants pinned to a Workspace UUID (root-catalog §3.9). Empty for every
+    /// connection approved before the root catalog.
+    pub workspaces: Vec<WorkspaceDecisionRecord>,
     pub created_at_millis: i64,
     pub last_used_at_millis: i64,
     pub revoked_at_millis: Option<i64>,
@@ -119,15 +136,53 @@ impl AppConnectionRecord {
     pub fn is_live(&self) -> bool {
         self.revoked_at_millis.is_none()
     }
+
+    /// Every decision of the connection, Profile and Workspace alike.
+    pub fn grants(&self) -> Vec<GrantDecision> {
+        let profiles: Vec<ProfileDecision> = self
+            .profiles
+            .iter()
+            .map(|decision| ProfileDecision {
+                profile_id: decision.profile_id,
+                access: decision.access,
+            })
+            .collect();
+        let workspaces: Vec<WorkspaceDecision> = self
+            .workspaces
+            .iter()
+            .map(|decision| WorkspaceDecision {
+                workspace_id: decision.workspace_id,
+                access: decision.access,
+            })
+            .collect();
+        grant_decisions(&profiles, &workspaces)
+    }
+
+    /// What this connection brings to [`resolve_workspaces`].
+    pub fn grant_request(&self) -> GrantRequest {
+        GrantRequest {
+            grants: self.grants(),
+            allow_profiles_enabled_later: self.allow_profiles_enabled_later,
+            live: self.is_live(),
+        }
+    }
 }
 
-/// A Workspace the account may reach now: Cloud-enabled, in the US, in an
-/// active Profile of the account, under an active membership that reads and
-/// syncs. The input to [`resolve_workspaces`].
+/// A Workspace the account may reach now: Cloud-enabled, in the US, under an
+/// active membership of the account that reads and syncs. The input to
+/// [`resolve_workspaces`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CloudWorkspaceCandidate {
+    /// **A projection hint, not an input to any grant** (root-catalog §7.3,
+    /// §7.4): where the Workspace was placed when the candidate was read,
+    /// as the v1 wire carries it. Grant evaluation reads placement from the
+    /// committed projection; [`resolve_workspaces`] rewrites this to the
+    /// projected placement on the candidates it answers.
     pub profile_id: ProfileId,
     pub workspace_id: WorkspaceId,
+    /// The live membership also grants document writes. A read/sync
+    /// candidate may still be listed without it.
+    pub documents_write: bool,
     pub workspace_incarnation_id: Uuid,
     pub authorization_version: i64,
     pub membership_epoch: i64,
@@ -138,38 +193,12 @@ pub struct CloudWorkspaceCandidate {
     pub manifest_document_id: Option<Uuid>,
 }
 
-/// **The resolved Workspace set** (TECHNICAL.final §6.1): Workspaces
-/// Cloud-enabled now, in Profiles where the connection has `allowed`, **or**,
-/// when `allow_profiles_enabled_later` is set, in Cloud Profiles that have no
-/// row. A Profile decided `not_allowed` never comes back through the flag.
-///
-/// `candidates` is already the account's current authorization (every
-/// candidate is Cloud-enabled under a live membership), so the intersection
-/// with current authorization is the candidates themselves. A Profile is a
-/// Cloud Profile exactly when it has a candidate. The order of `candidates`
-/// is kept.
-pub fn resolve_workspaces(
-    candidates: Vec<CloudWorkspaceCandidate>,
-    decisions: &[ProfileDecision],
-    allow_profiles_enabled_later: bool,
-) -> Vec<CloudWorkspaceCandidate> {
-    candidates
-        .into_iter()
-        .filter(|candidate| {
-            match decisions
-                .iter()
-                .find(|decision| decision.profile_id == candidate.profile_id)
-            {
-                Some(decision) => decision.access == ProfileAccess::Allowed,
-                None => allow_profiles_enabled_later,
-            }
-        })
-        .collect()
-}
-
 /// A Profile as the consent page and the connections list show it, before
 /// any replica exists: the account's `name_snapshot` (C17) and whether it
-/// syncs with Cloud now.
+/// syncs with Cloud now. `cloud_syncing` is [`cloud_syncing_profiles`]'s
+/// answer: the committed projection places at least one Cloud-enabled
+/// Workspace under the Profile. An empty Cloud-mode Profile is listed with
+/// `cloud_syncing: false`, not left out.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConsentProfile {
     pub profile_id: ProfileId,
@@ -190,7 +219,7 @@ pub struct NewAuthorizationCode {
 }
 
 /// Everything one approval writes, in one transaction: the connection, a row
-/// for every Profile decided, and the code.
+/// for every Profile and every Workspace decided, and the code.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Approval {
     pub connection_id: AppConnectionId,
@@ -200,6 +229,8 @@ pub struct Approval {
     pub access: AppConnectionAccess,
     pub allow_profiles_enabled_later: bool,
     pub decisions: Vec<ProfileDecision>,
+    /// Grants pinned to a Workspace UUID; empty on a v1 consent.
+    pub workspace_decisions: Vec<WorkspaceDecision>,
     pub code: NewAuthorizationCode,
     pub now_millis: i64,
 }
@@ -278,15 +309,22 @@ pub struct ConnectionUpdate {
     pub allow_profiles_enabled_later: Option<bool>,
     /// Writes a row for every Profile it names; the others keep theirs.
     pub decisions: Vec<ProfileDecision>,
+    /// Writes a row for every Workspace it names; the others keep theirs.
+    pub workspace_decisions: Vec<WorkspaceDecision>,
     pub now_millis: i64,
 }
 
 /// A connection-state read: the stored connection and its resolved
-/// Workspaces, computed now.
+/// Workspaces, computed now by [`resolve_workspaces`] against the committed
+/// projection, with the Workspaces that cannot be decided yet and the key
+/// the host caches the read under.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AppConnectionState {
     pub connection: AppConnectionRecord,
     pub workspaces: Vec<CloudWorkspaceCandidate>,
+    /// Projection lag: neither granted nor refused, ask again.
+    pub pending: Vec<GrantPending>,
+    pub evaluation: GrantEvaluation,
 }
 
 pub trait AppConnectionRepository: Send + Sync {
@@ -303,7 +341,8 @@ pub trait AppConnectionRepository: Send + Sync {
     ) -> PortFuture<'a, Result<(), AppConnectionError>>;
 
     /// Every active Profile of the account, for the consent page and the
-    /// connections list.
+    /// connections list, `cloud_syncing` answered by
+    /// [`cloud_syncing_profiles`] over the committed projection.
     fn consent_profiles<'a>(
         &'a self,
         koru_identity_id: KoruIdentityId,
@@ -368,8 +407,10 @@ pub trait AppConnectionRepository: Send + Sync {
         now_millis: i64,
     ) -> PortFuture<'a, Result<AppConnectionRecord, AppConnectionError>>;
 
-    /// The connection and its resolved Workspaces, read now. Also records the
-    /// use (at most hourly) when the connection is live.
+    /// The connection and its resolved Workspaces, read now through
+    /// [`resolve_workspaces`] against the committed projection and the
+    /// admitted frontiers. Also records the use (at most hourly) when the
+    /// connection is live.
     fn connection_state<'a>(
         &'a self,
         connection_id: AppConnectionId,
@@ -377,8 +418,10 @@ pub trait AppConnectionRepository: Send + Sync {
     ) -> PortFuture<'a, Result<Option<AppConnectionState>, AppConnectionError>>;
 
     /// The dataset authority a connection's sync credential is signed from:
-    /// the connection is live, `workspace` is in its resolved set under
-    /// `profile`, and both datasets are assigned. The device issuer's
+    /// the connection is live, `workspace` is in its resolved set, and both
+    /// datasets are assigned. `profile` is the placement the v1 credential
+    /// carries, checked against the projected placement; it is not what
+    /// authorizes the Workspace (root-catalog §7.3). The device issuer's
     /// refusals, so the two credentials fail alike.
     fn sync_authority<'a>(
         &'a self,

@@ -42,6 +42,7 @@ mod new_profile;
 mod page;
 mod profile_page;
 pub mod profiles;
+mod recovery;
 mod sign_in;
 #[cfg(test)]
 mod tests;

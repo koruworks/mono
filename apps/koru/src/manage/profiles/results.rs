@@ -272,6 +272,22 @@ impl ProfilesController {
             self.notice = None;
             return true;
         }
+        // The Store refused the batch over a list that changed since the
+        // confirmation (root-catalog §6.1): say so, and ask again over a
+        // fresh preview, which reopens the question when it arrives.
+        if code == "profile_deletion_preview_stale" {
+            self.notice = Some(
+                koru_i18n::t(
+                    crate::format::lang(),
+                    koru_i18n::Key::ProfileDeletePreviewStale,
+                )
+                .into(),
+            );
+            if let Some(profile) = self.selected {
+                self.request_deletion_preview(profile);
+            }
+            return true;
+        }
         self.notice = Some(match code {
             "profile_cascade_unsupported" => koru_i18n::t(
                 crate::format::lang(),

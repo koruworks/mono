@@ -140,6 +140,17 @@ pub struct ProfilesController {
     lifecycle_reconciled_generation: Option<u64>,
     pending: Option<AccountCommand>,
     remove_request: Option<(ProfileId, bool)>,
+    /// The deletion preview the remove confirmation is shown over, when the
+    /// removal is the shared batch (root-catalog §6.1): what the dialog
+    /// lists, and what the Store checks against when the person confirms.
+    deletion_preview: Option<koru_api_client::ProfileDeletionPreview>,
+    /// A preview being read on a worker, for `profile`.
+    preview_request: Option<(
+        ProfileId,
+        std::sync::mpsc::Receiver<
+            koru_store_core::errors::Result<koru_api_client::ProfileDeletionPreview>,
+        >,
+    )>,
     hosted_delete_request: Option<(ProfileId, bool)>,
     continue_offline_request: Option<(ProfileId, String)>,
     remove_all_workspaces: bool,
@@ -208,6 +219,8 @@ impl ProfilesController {
             // opened. Signed-in completion then requests the targeted identity.
             pending: Some(AccountCommand::Status),
             remove_request: None,
+            deletion_preview: None,
+            preview_request: None,
             hosted_delete_request: None,
             continue_offline_request: None,
             remove_all_workspaces: false,
@@ -409,10 +422,83 @@ impl ProfilesController {
     pub fn confirming_offline(&self) -> bool {
         self.confirm_offline
     }
-    /// `Some(cascade)` while the remove-from-this-device question is up.
+    /// `Some(cascade)` while a deletion or remove-from-this-device question
+    /// is up; [`Self::deletion_preview`] says which of the two it is.
     pub fn confirming_remove(&self) -> Option<bool> {
         self.confirm_remove.then_some(self.remove_all_workspaces)
     }
+    /// The deletion preview the open question is about, when it is the
+    /// shared batch: its targets are what the dialog lists. `None` under an
+    /// open question means the device-local removal.
+    pub fn deletion_preview(&self) -> Option<&koru_api_client::ProfileDeletionPreview> {
+        self.deletion_preview.as_ref()
+    }
+
+    /// Read what deleting `profile` would trash, off this thread, and raise
+    /// the remove question over it when it arrives (root-catalog §6.1: the
+    /// confirmation is about the captured list, and a stale one is refused).
+    pub(crate) fn request_deletion_preview(&mut self, profile: ProfileId) -> bool {
+        let Some(client) = self.client.clone() else {
+            return false;
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        let started = std::thread::Builder::new()
+            .name("koru-profile-deletion-preview".into())
+            .spawn(move || {
+                let store_profile = koru_store_core::ids::ProfileId::from_uuid(profile.as_uuid());
+                let _ = tx.send(client.store().profile_deletion_preview(store_profile));
+            });
+        if started.is_err() {
+            return false;
+        }
+        self.deletion_preview = None;
+        self.preview_request = Some((profile, rx));
+        true
+    }
+
+    fn drain_deletion_preview(&mut self) -> bool {
+        let Some((profile, receiver)) = &self.preview_request else {
+            return false;
+        };
+        let profile = *profile;
+        let answer = match receiver.try_recv() {
+            Ok(answer) => answer,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return false,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => Err(koru_store_core::Error::bare(
+                koru_store_core::Code::StorageFailed,
+            )),
+        };
+        self.preview_request = None;
+        // The person moved on; what the preview says is about a Profile no
+        // longer under the question.
+        if self.selected != Some(profile) {
+            return true;
+        }
+        match answer {
+            Ok(preview) => self.open_deletion_question(preview),
+            Err(_) => {
+                self.notice = Some(
+                    koru_i18n::t(
+                        crate::format::lang(),
+                        koru_i18n::Key::ProfileDeletePreviewFailed,
+                    )
+                    .into(),
+                );
+            }
+        }
+        true
+    }
+
+    /// The preview is in: raise the shared deletion's question over it. The
+    /// request that follows carries this preview, which is what tells the
+    /// host the removal is the batch and not the device-local one.
+    fn open_deletion_question(&mut self, preview: koru_api_client::ProfileDeletionPreview) {
+        self.deletion_preview = Some(preview);
+        self.remove_all_workspaces = true;
+        self.confirm_remove = true;
+        self.hints.reset_focus = true;
+    }
+
     /// The hosted deletion in flight: its Profile and stage.
     pub fn hosted_delete(&self) -> Option<(ProfileId, HostedDeleteStage)> {
         self.pending_hosted_delete
@@ -508,8 +594,7 @@ impl ProfilesController {
     /// transport mode write it started is unanswered or the Cloud progress
     /// section is showing.
     pub fn maintenance_deadline(&self) -> Option<std::time::Instant> {
-        let transport = self
-            .cloud_move_pending()
+        let transport = (self.cloud_move_pending() || self.preview_request.is_some())
             .then(|| std::time::Instant::now() + std::time::Duration::from_millis(16));
         match (transport, self.progress.deadline()) {
             (Some(a), Some(b)) => Some(a.min(b)),
@@ -518,7 +603,9 @@ impl ProfilesController {
     }
 
     pub fn maintain(&mut self, now: std::time::Instant) -> bool {
-        self.drain_transport_answer() | self.maintain_cloud_progress(now)
+        self.drain_transport_answer()
+            | self.drain_deletion_preview()
+            | self.maintain_cloud_progress(now)
     }
 }
 
@@ -558,6 +645,13 @@ impl ProfilesController {
     }
     pub(crate) fn set_account_profiles_loaded(&mut self, loaded: bool) {
         self.account_profiles_loaded = loaded;
+    }
+    /// What the worker would have delivered: a test has no Store to ask.
+    pub(crate) fn deletion_preview_arrived(
+        &mut self,
+        preview: koru_api_client::ProfileDeletionPreview,
+    ) {
+        self.open_deletion_question(preview);
     }
     pub(crate) fn start_hosted_delete(
         &mut self,

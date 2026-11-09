@@ -166,7 +166,8 @@ impl ProfileModel {
         let (unit, writable) = match self {
             Self::Identity(m) => (m.unit(), m.compatibility().writable()),
             Self::Private(m) => (m.unit(), m.compatibility().writable()),
-            Self::Personal(m) => (m.unit(), m.compatibility().writable()),
+            // A v2 personal unit has no v1 address; this path carries v1 only.
+            Self::Personal(m) => (m.unit().ok_or(Error::Scope)?, m.compatibility().writable()),
         };
         if unit != metadata.unit.profile_unit(metadata.dataset)? {
             return Err(Error::Scope);

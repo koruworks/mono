@@ -2454,11 +2454,17 @@ pub enum PaneRequest {
     RestoreLocalProfile {
         profile: ProfileId,
     },
-    /// Remove one local Profile through Agent/Store, optionally moving all of
-    /// its active Workspaces to Trash first.
+    /// Remove one local Profile. With `preview` — the deletion preview the
+    /// person confirmed over — this is the **shared Profile deletion batch**
+    /// (root-catalog §6.1): the Profile and every captured workspace go to
+    /// Trash in one Store transaction, restorable together. Without it, the
+    /// device-local removal: an empty Profile's row is hidden here, or a
+    /// resumed removal attempt soft-deletes each workspace first when
+    /// `delete_workspaces`.
     RemoveLocalProfile {
         profile: ProfileId,
         delete_workspaces: bool,
+        preview: Option<koru_api_client::ProfileDeletionPreview>,
     },
     /// Finish the recoverable local cascade only after Agent has durably
     /// acknowledged hosted deletion for this exact Profile.

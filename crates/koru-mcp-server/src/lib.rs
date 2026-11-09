@@ -21,7 +21,7 @@ use rmcp::{
     model::{
         Annotations, CallToolResult, ErrorData, ListResourceTemplatesResult, ListResourcesResult,
         ReadResourceRequestParams, ReadResourceResponse, Resource, ResourceTemplate, Role,
-        ServerCapabilities, ServerInfo,
+        ServerCapabilities, ServerConfig,
     },
     schemars, tool, tool_handler, tool_router,
 };
@@ -50,17 +50,23 @@ use koru_store_wire::tasks::{
 use koru_store_wire::{CaptureHistory, HistoryEntry, HistoryPage, HistoryQuery, Status};
 use koru_workspace::store::{StoreSession, Synced};
 
+pub mod access;
 mod attribution;
 mod capabilities;
 mod chat_tools;
 pub mod effects;
 pub mod hosted;
+pub use access::{
+    AccessResolution, AccessResolver, AccessResolverSeam, AccessRevision, PendingWorkspace,
+    ResolvedAccess,
+};
 pub use attribution::{ACTOR_V1, ActorCreate, ActorMessage, ChangeAttribution};
 pub use capabilities::{HostCapabilities, RUNG1_READ_TOOLS, RUNG1_TOOLS};
 pub use chat_tools::CHAT_TOOL_NAMES;
 use chat_tools::{ListChatsToolRequest, ReadChatToolRequest, SearchChatsToolRequest};
 use effects::{EffectKind, Ledger, Recovery};
 
+mod image_upload;
 mod local_ids;
 mod published_schema;
 mod shared_surface;
@@ -71,6 +77,10 @@ pub use shared_surface::{
 pub mod tasks;
 mod tool_pages;
 mod toolsets;
+pub use image_upload::{
+    DocumentClaims, ImageBlobStore, ImageUploadGrant, ImageUploads, UploadScope, VerifiedImage,
+    bind_loopback, spawn_upload_server,
+};
 pub use toolsets::{Toolset, Toolsets};
 
 pub const MODEL_RESOURCE_URI: &str = "koru://docs/model";
@@ -526,6 +536,45 @@ pub struct RequestContext {
     /// (`contracts/connector-attribution-v1.md`). `None` on every local host,
     /// whose commits carry no message.
     pub attribution: Option<ChangeAttribution>,
+    /// Hosted `add_image` and `replace_image` refuse until this is set. Local
+    /// hosts leave it empty: a claim never blocks a device.
+    pub document_claims: DocumentClaimGate,
+    /// What `workspace_access` was resolved under, when a hosted host admitted
+    /// this call (root-catalog Plan 3.3). Opaque here; the resolver reads it.
+    /// `None` on every local host.
+    pub access_revision: Option<AccessRevision>,
+    /// Re-resolves `workspace_access` between admission and execution
+    /// ([`access`]): asked before each tool that needs a content scope. Empty
+    /// on every local host, whose access is `All` and never moves.
+    pub access_resolver: AccessResolverSeam,
+}
+
+/// Optional hosted claim check. `Debug` does not print the gate.
+#[derive(Clone, Default)]
+pub struct DocumentClaimGate(Option<Arc<dyn DocumentClaims>>);
+
+impl std::fmt::Debug for DocumentClaimGate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(if self.0.is_some() {
+            "DocumentClaimGate(set)"
+        } else {
+            "DocumentClaimGate(none)"
+        })
+    }
+}
+
+impl DocumentClaimGate {
+    fn enforce(
+        &self,
+        workspace_id: &str,
+        document_id: &str,
+        claim_ids: &[String],
+    ) -> Result<(), ToolError> {
+        match &self.0 {
+            Some(gate) => gate.enforce(workspace_id, document_id, claim_ids),
+            None => Err(image_upload::claims_unavailable()),
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -576,6 +625,9 @@ impl RequestContext {
             chat_tools: ChatToolAccess::Bridge,
             capabilities: HostCapabilities::All,
             attribution: None,
+            document_claims: DocumentClaimGate::default(),
+            access_revision: None,
+            access_resolver: AccessResolverSeam::default(),
         }
     }
 
@@ -597,6 +649,9 @@ impl RequestContext {
             chat_tools: ChatToolAccess::Denied,
             capabilities: HostCapabilities::All,
             attribution: None,
+            document_claims: DocumentClaimGate::default(),
+            access_revision: None,
+            access_resolver: AccessResolverSeam::default(),
         }
     }
 
@@ -609,6 +664,29 @@ impl RequestContext {
     /// The same context, attributing every commit it makes to `attribution`.
     pub fn with_attribution(mut self, attribution: ChangeAttribution) -> Self {
         self.attribution = Some(attribution);
+        self
+    }
+
+    /// Install the hosted claim check `add_image` and `replace_image` require.
+    /// A device never calls it. The hosted worker sets this to the same check
+    /// it already runs for `edit_document`.
+    pub fn with_document_claims(mut self, claims: Arc<dyn DocumentClaims>) -> Self {
+        self.document_claims = DocumentClaimGate(Some(claims));
+        self
+    }
+
+    /// Install the hosted access resolver ([`access`]), with the revision
+    /// `workspace_access` was admitted under. Before each tool that needs a
+    /// content scope the executor asks `resolver` whether that access still
+    /// holds and runs the call under what it answers. A device never calls
+    /// this.
+    pub fn with_access_resolver(
+        mut self,
+        revision: AccessRevision,
+        resolver: Arc<dyn AccessResolver>,
+    ) -> Self {
+        self.access_revision = Some(revision);
+        self.access_resolver = AccessResolverSeam(Some(resolver));
         self
     }
 
@@ -725,6 +803,29 @@ pub trait EmbeddedStore: Send + Sync {
         Err(ToolError::invalid(
             "this store cannot keep image bytes; use the desktop bridge",
         ))
+    }
+    /// Mint an image upload whose bytes will be `PUT` out of band. The default
+    /// is the hosted gap: this crate does not accept those bytes for an
+    /// in-process replica. The hosted worker overrides it and returns a URL on
+    /// its own origin.
+    fn create_image_upload(
+        &self,
+        _workspace: StoreWorkspaceId,
+        _tenant: &str,
+        _principal: &str,
+        _filename: Option<&str>,
+    ) -> Result<ImageUploadGrant, ToolError> {
+        Err(image_upload::image_upload_unavailable())
+    }
+    /// The completed upload for this tenant, principal and workspace.
+    fn verified_image_upload(
+        &self,
+        _workspace: StoreWorkspaceId,
+        _tenant: &str,
+        _principal: &str,
+        _upload_id: &str,
+    ) -> Result<VerifiedImage, ToolError> {
+        Err(image_upload::image_upload_unavailable())
     }
     fn status(&self) -> Result<Status, ToolError>;
 }
@@ -858,7 +959,9 @@ fn tool_policy(name: &str) -> Option<ToolPolicy> {
         "create_document"
         | "edit_document"
         | "update_task"
+        | "create_image_upload"
         | "add_image"
+        | "replace_image"
         | "ensure_file_note"
         | "extract_to_document"
         | "save_document_version"
@@ -925,6 +1028,20 @@ impl WorkspaceToolExecutor {
             })));
         }
 
+        // **Re-resolve between admission and execution** (root-catalog §7.4):
+        // a hosted session's set follows current placement, so the access this
+        // call runs under is asked for now, not at admission. A tool that needs
+        // no content scope — `get_documentation` — is answered without it.
+        let current = if policy.scope.is_some() {
+            context.access_resolver.current(
+                tool,
+                &context.workspace_access,
+                context.access_revision.as_ref(),
+            )?
+        } else {
+            access::CurrentAccess::admitted(&context.workspace_access)
+        };
+
         match policy.workspace {
             WorkspaceTarget::None => {}
             WorkspaceTarget::List => {}
@@ -934,7 +1051,12 @@ impl WorkspaceToolExecutor {
                     .and_then(Value::as_str)
                     .ok_or_else(|| ToolError::invalid("workspace_id is required"))?;
                 let workspace = workspace(raw)?;
-                if !context.workspace_access.allows(workspace) {
+                // Undecided is answered before denied: a Workspace whose
+                // placement is still being projected is neither.
+                if let Some(pending) = current.pending_for(workspace) {
+                    return Err(access::pending(tool, raw, pending));
+                }
+                if !current.access.allows(workspace) {
                     return Err(ToolError::permission_denied(
                         "this chat is not allowed to access that workspace",
                     )
@@ -958,7 +1080,7 @@ impl WorkspaceToolExecutor {
                     })
                     .collect::<Result<Vec<_>, _>>()?;
 
-                if let Some(selected) = context.workspace_access.selected_ids() {
+                if let Some(selected) = current.access.selected_ids() {
                     let authorized = if requested.is_empty() {
                         selected.iter().copied().collect::<Vec<_>>()
                     } else {
@@ -989,6 +1111,31 @@ impl WorkspaceToolExecutor {
             }
         }
 
+        if matches!(tool, "add_image" | "replace_image") && !context.capabilities.is_device() {
+            let claim_ids = claim_id_list(&arguments);
+            let workspace_id = arguments
+                .get("workspace_id")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let document_id = arguments
+                .get("document_id")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            if workspace_id.is_empty() || document_id.is_empty() {
+                return Err(ToolError::invalid(
+                    "workspace_id and document_id are required",
+                ));
+            }
+            context
+                .document_claims
+                .enforce(workspace_id, document_id, &claim_ids)?;
+        }
+        if context.capabilities.is_device() || !hosted::CLAIMING_TOOLS.contains(&tool) {
+            if let Some(object) = arguments.as_object_mut() {
+                object.remove("claim_ids");
+            }
+        }
+
         let result = if tool == "get_documentation" {
             let request: DocumentationRequest = from(arguments)?;
             documentation(request.uri(), request.section.as_deref())?
@@ -997,7 +1144,7 @@ impl WorkspaceToolExecutor {
         };
 
         if matches!(policy.workspace, WorkspaceTarget::List) {
-            filter_workspaces(result, &context.workspace_access)
+            filter_workspaces(result, &current.access)
         } else {
             Ok(result)
         }
@@ -1040,6 +1187,19 @@ fn empty_search_result() -> Value {
 /// **`restarted` is `false` and not absent.** A caller paging with a cursor
 /// branches on it, and a missing boolean is a third state nobody wrote a branch
 /// for.
+fn claim_id_list(arguments: &Value) -> Vec<String> {
+    arguments
+        .get("claim_ids")
+        .and_then(Value::as_array)
+        .map(|ids| {
+            ids.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn empty_task_page() -> Value {
     json!({
         "tasks": [],
@@ -1219,6 +1379,13 @@ pub struct LocalBackend {
     client: Arc<Mutex<Option<Client>>>,
     dialer: Option<koru_workspace::store::ClientFactory>,
     embedded: Option<Arc<dyn EmbeddedStore>>,
+    /// Completed and pending image uploads for this process. The loopback
+    /// listener and the tool handlers share it. An embedded host that
+    /// implements the trait methods does not read this map.
+    uploads: ImageUploads,
+    /// `http://127.0.0.1:port` once the loopback listener is bound. Absent
+    /// until then, and absent on a host that has not mounted an upload route.
+    upload_origin: Option<String>,
 }
 
 enum DocumentSession {
@@ -1367,6 +1534,8 @@ impl LocalBackend {
             client: Arc::new(Mutex::new(None)),
             dialer: None,
             embedded: None,
+            uploads: ImageUploads::new(),
+            upload_origin: None,
         };
         if let Err(error) = backend.connected() {
             tracing::warn!(
@@ -1386,7 +1555,28 @@ impl LocalBackend {
             client: Arc::new(Mutex::new(None)),
             dialer: Some(dialer),
             embedded: None,
+            uploads: ImageUploads::new(),
+            upload_origin: None,
         }
+    }
+
+    /// Publish the loopback origin the image `PUT` is served on. The listener
+    /// must use [`LocalBackend::uploads`].
+    pub fn with_upload_origin(mut self, origin: impl Into<String>) -> Self {
+        self.upload_origin = Some(origin.into());
+        self
+    }
+
+    /// Share a bounded upload registry across hosted tool calls. The host
+    /// serves the byte route and installs an origin; its embedded Store still
+    /// owns document writes.
+    pub fn with_uploads(mut self, uploads: ImageUploads) -> Self {
+        self.uploads = uploads;
+        self
+    }
+
+    pub fn uploads(&self) -> ImageUploads {
+        self.uploads.clone()
     }
 
     /// Use the same semantic backend over an in-process bounded Store worker.
@@ -1397,6 +1587,8 @@ impl LocalBackend {
             client: Arc::new(Mutex::new(None)),
             dialer: None,
             embedded: Some(store),
+            uploads: ImageUploads::new(),
+            upload_origin: None,
         }
     }
 
@@ -2370,22 +2562,79 @@ impl LocalBackend {
         Ok(answer)
     }
 
-    /// Keep an image's bytes and put it in a document, as one tool call. The
-    /// bytes go to the workspace's blob store (addressed by their hash, never
-    /// inside the document), then an image block that holds only that hash,
-    /// its type and its size is inserted through the same pipeline
-    /// `edit_document` uses: the base revision, the precondition and the
-    /// history markers are the edit's own.
-    fn add_image(&self, call: &Call, a: AddImageRequest) -> Result<Value, ToolError> {
-        use base64::Engine as _;
+    /// Mint a scoped upload. The bytes travel in a later `PUT`, not here.
+    fn create_image_upload(
+        &self,
+        context: &RequestContext,
+        a: CreateImageUploadRequest,
+    ) -> Result<Value, ToolError> {
+        let ws = workspace(&a.workspace_id)?;
+        if self.upload_origin.is_none() {
+            let Some(store) = &self.embedded else {
+                return Err(image_upload::image_upload_unavailable());
+            };
+            let grant = store.create_image_upload(
+                ws,
+                &context.tenant,
+                &context.principal,
+                a.name.as_deref(),
+            )?;
+            let Some(origin) = grant
+                .url_origin
+                .clone()
+                .or_else(|| self.upload_origin.clone())
+            else {
+                return Err(image_upload::image_upload_unavailable());
+            };
+            return Ok(image_upload::grant_json(&grant, &origin));
+        }
+        let Some(origin) = &self.upload_origin else {
+            return Err(image_upload::image_upload_unavailable());
+        };
+        let grant = self.uploads.create(
+            image_upload::UploadScope {
+                workspace_id: a.workspace_id,
+                tenant: context.tenant.clone(),
+                principal: context.principal.clone(),
+            },
+            a.name,
+            koru_store_core::model::Timestamp::now().millis(),
+        )?;
+        Ok(image_upload::grant_json(&grant, origin))
+    }
+
+    /// Place a verified upload as a new image, or replace one image's bytes.
+    ///
+    /// A lost response is a replay: the same node already showing this hash
+    /// returns the current revision and does not insert another block. A stale
+    /// revision is refused only when the document does not already show that
+    /// image. Claims for a hosted caller were enforced before this runs.
+    fn add_image(
+        &self,
+        call: &Call,
+        context: &RequestContext,
+        a: AddImageRequest,
+    ) -> Result<Value, ToolError> {
+        let image = self.verified_upload(context, &a.workspace_id, &a.upload_id)?;
         let (node_id, created) = local_ids::resolve_single(a.node_id)?;
         let ws = workspace(&a.workspace_id)?;
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(a.data_base64.trim())
-            .map_err(|_| ToolError::invalid("data_base64 is not standard base64"))?;
-        let sniffed = sniff_image(&bytes)?;
-        let blob = self.put_blob(ws, bytes, sniffed.mime, a.name.as_deref())?;
-        let hash = blob.hash.as_str().to_owned();
+        let doc_id = document(&a.document_id)?;
+        self.ensure_readable(ws, doc_id, "document_id")?;
+        let (_, doc) = self.join(ws, doc_id)?;
+        if image_upload::decide_insert(
+            &doc,
+            &a.base_revision,
+            &node_id,
+            &image,
+            a.caption.as_deref(),
+        )? == image_upload::PlaceDecision::Replay
+        {
+            let mut answer = image_upload::image_result(&doc, &node_id, &image, true);
+            if !created.is_empty() {
+                answer["created"] = Value::Object(created);
+            }
+            return Ok(answer);
+        }
         let mut answer = self.edit_document(
             call,
             EditDocumentRequest {
@@ -2396,25 +2645,91 @@ impl LocalBackend {
                     node_id: node_id.clone(),
                     parent_id: a.parent_id,
                     after_node_id: a.after_node_id,
-                    hash: hash.clone(),
-                    mime: sniffed.mime.to_owned(),
-                    width: sniffed.width,
-                    height: sniffed.height,
+                    hash: image.hash.clone(),
+                    mime: image.mime.clone(),
+                    width: image.width,
+                    height: image.height,
+                    caption: a.caption.clone(),
                 }],
             },
         )?;
-        if let Some(object) = answer.as_object_mut() {
-            object.insert("node_id".into(), json!(node_id));
-            if !created.is_empty() {
-                object.insert("created".into(), Value::Object(created));
-            }
-            object.insert("hash".into(), json!(hash));
-            object.insert("mime".into(), json!(sniffed.mime));
-            object.insert("width".into(), json!(sniffed.width));
-            object.insert("height".into(), json!(sniffed.height));
-            object.insert("size".into(), json!(blob.size));
+        stamp_image_fields(&mut answer, &node_id, &image, a.caption.as_deref(), false);
+        if let Some(object) = answer.as_object_mut()
+            && !created.is_empty()
+        {
+            object.insert("created".into(), Value::Object(created));
         }
         Ok(answer)
+    }
+
+    fn replace_image(
+        &self,
+        call: &Call,
+        context: &RequestContext,
+        a: ReplaceImageRequest,
+    ) -> Result<Value, ToolError> {
+        let image = self.verified_upload(context, &a.workspace_id, &a.upload_id)?;
+        let ws = workspace(&a.workspace_id)?;
+        let doc_id = document(&a.document_id)?;
+        self.ensure_readable(ws, doc_id, "document_id")?;
+        let (_, doc) = self.join(ws, doc_id)?;
+        if image_upload::decide_replace(
+            &doc,
+            &a.base_revision,
+            &a.node_id,
+            &image,
+            a.caption.as_deref(),
+        )? == image_upload::PlaceDecision::Replay
+        {
+            return Ok(image_upload::image_result(&doc, &a.node_id, &image, true));
+        }
+        let caption = a.caption.clone().or_else(|| {
+            node(&a.node_id)
+                .ok()
+                .and_then(|id| doc.read(id).ok())
+                .and_then(|node| node.meta.name)
+        });
+        let mut answer = self.edit_document(
+            call,
+            EditDocumentRequest {
+                workspace_id: a.workspace_id,
+                document_id: a.document_id,
+                base_revision: a.base_revision,
+                operations: vec![EditOperation::ReplaceImage {
+                    node_id: a.node_id.clone(),
+                    hash: image.hash.clone(),
+                    mime: image.mime.clone(),
+                    width: image.width,
+                    height: image.height,
+                    caption: a.caption.clone(),
+                }],
+            },
+        )?;
+        stamp_image_fields(&mut answer, &a.node_id, &image, caption.as_deref(), false);
+        Ok(answer)
+    }
+
+    fn verified_upload(
+        &self,
+        context: &RequestContext,
+        workspace_id: &str,
+        upload_id: &str,
+    ) -> Result<VerifiedImage, ToolError> {
+        let ws = workspace(workspace_id)?;
+        if self.upload_origin.is_none()
+            && let Some(store) = &self.embedded
+        {
+            return store.verified_image_upload(ws, &context.tenant, &context.principal, upload_id);
+        }
+        self.uploads.verified(
+            &image_upload::UploadScope {
+                workspace_id: workspace_id.to_owned(),
+                tenant: context.tenant.clone(),
+                principal: context.principal.clone(),
+            },
+            upload_id,
+            koru_store_core::model::Timestamp::now().millis(),
+        )
     }
 
     /// Move blocks into another document, leaving a link pill behind.
@@ -2997,6 +3312,38 @@ fn readable_kind(kind: &str) -> bool {
     kind == koru_core::explore::KIND_DOCUMENT || kind == koru_core::explore::KIND_NOTE
 }
 
+fn stamp_image_fields(
+    answer: &mut Value,
+    node_id: &str,
+    image: &VerifiedImage,
+    caption: Option<&str>,
+    replayed: bool,
+) {
+    let Some(object) = answer.as_object_mut() else {
+        return;
+    };
+    object.insert("node_id".into(), json!(node_id));
+    object.insert("hash".into(), json!(image.hash));
+    object.insert("mime".into(), json!(image.mime));
+    object.insert("width".into(), json!(image.width));
+    object.insert("height".into(), json!(image.height));
+    object.insert("size".into(), json!(image.size));
+    object.insert("caption".into(), json!(caption));
+    object.insert("replayed".into(), json!(replayed));
+}
+
+impl ImageBlobStore for LocalBackend {
+    fn put_image(
+        &self,
+        workspace_id: &str,
+        bytes: Vec<u8>,
+        mime: &str,
+        filename: Option<&str>,
+    ) -> Result<Blob, ToolError> {
+        self.put_blob(workspace(workspace_id)?, bytes, mime, filename)
+    }
+}
+
 impl Backend for LocalBackend {
     fn invoke(
         &self,
@@ -3206,9 +3553,17 @@ impl Backend for LocalBackend {
                 let a: UpdateTaskRequest = from(arguments)?;
                 self.update_task(&call, a)
             }
+            "create_image_upload" => {
+                let a: CreateImageUploadRequest = from(arguments)?;
+                self.create_image_upload(context, a)
+            }
             "add_image" => {
                 let a: AddImageRequest = from(arguments)?;
-                self.add_image(&call, a)
+                self.add_image(&call, context, a)
+            }
+            "replace_image" => {
+                let a: ReplaceImageRequest = from(arguments)?;
+                self.replace_image(&call, context, a)
             }
             "extract_to_document" => {
                 let a: ExtractToDocumentRequest = from(arguments)?;
@@ -3669,10 +4024,19 @@ struct EditDocumentRequest {
     operations: Vec<EditOperation>,
 }
 
-/// The most image bytes one call takes. The bytes ride in the request as
-/// base64, in the agent's context, so this is a ceiling on what is sensible
-/// to send, not on what the store could keep.
+/// The most image bytes one upload accepts, decoded. The bytes travel on the
+/// upload `PUT`, not in a tool argument.
 const MAX_IMAGE_BYTES: usize = 8 * 1024 * 1024;
+
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct CreateImageUploadRequest {
+    /// UUID of the workspace returned by `list_workspaces`.
+    workspace_id: String,
+    /// Blob filename metadata. Not the caption, and not a path.
+    #[serde(default)]
+    name: Option<String>,
+}
 
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -3683,20 +4047,35 @@ struct AddImageRequest {
     document_id: String,
     /// The opaque `revision` of the latest `read_document`.
     base_revision: String,
+    /// The completed upload from `create_image_upload`. Not a hash and not bytes.
+    upload_id: String,
     /// The new image block's id: a fresh UUID, or absent for the server to
-    /// mint one, which the answer's `node_id` carries. A local name is
-    /// minted too and reported in `created`.
+    /// mint one, which the answer's `node_id` carries. Send a UUID when a
+    /// lost response must not insert the image twice.
     #[serde(default)]
     node_id: Option<String>,
     /// The document-title node, or the block the image nests under.
     parent_id: String,
     /// A sibling to place it after; null means first.
     after_node_id: Option<String>,
-    /// The image file's bytes, standard base64: PNG, JPEG, GIF or WebP, at
-    /// most 8 MiB decoded.
-    data_base64: String,
-    /// The file's name, kept as metadata with the bytes.
-    name: Option<String>,
+    /// The image node's `metadata.name`. Omit for no name.
+    #[serde(default)]
+    caption: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct ReplaceImageRequest {
+    workspace_id: String,
+    document_id: String,
+    base_revision: String,
+    /// The completed upload that replaces the image's bytes.
+    upload_id: String,
+    /// The existing image block.
+    node_id: String,
+    /// Sets `metadata.name` when present. Omit to leave the name.
+    #[serde(default)]
+    caption: Option<String>,
 }
 
 /// What an image's bytes are, read from their header.
@@ -4093,6 +4472,18 @@ enum EditOperation {
         mime: String,
         width: u32,
         height: u32,
+        caption: Option<String>,
+    },
+    /// **Not part of the published vocabulary** (`serde(skip)`): `replace_image`
+    /// builds this from a verified upload. A caller cannot name a hash.
+    #[serde(skip)]
+    ReplaceImage {
+        node_id: String,
+        hash: String,
+        mime: String,
+        width: u32,
+        height: u32,
+        caption: Option<String>,
     },
     /// Align a block's lines: `start`, `center` or `end`. A paragraph, a
     /// heading, a quote or an image; `expected` is the block's current text
@@ -5171,18 +5562,49 @@ fn apply_ops(
                 mime,
                 width,
                 height,
+                caption,
             } => {
-                let mut value = Node::image(
-                    koru_core::BlobHash(hash.clone()),
-                    mime.clone(),
-                    Some(*width),
-                    Some(*height),
+                image_upload::write_insert(
+                    doc,
+                    node_id,
+                    parent_id,
+                    after_node_id.as_deref(),
+                    &image_upload::VerifiedImage {
+                        upload_id: String::new(),
+                        hash: hash.clone(),
+                        mime: mime.clone(),
+                        width: *width,
+                        height: *height,
+                        size: 0,
+                        filename: None,
+                        expires_at_ms: 0,
+                    },
+                    caption.as_deref(),
                 )?;
-                value.id = node(node_id)?;
-                let parent = parent(parent_id)?;
-                let index = after_index(doc, parent, after_node_id.as_deref())?;
-                let id = doc.insert(parent, value)?;
-                doc.move_node(id, parent, index)?;
+            }
+            EditOperation::ReplaceImage {
+                node_id,
+                hash,
+                mime,
+                width,
+                height,
+                caption,
+            } => {
+                image_upload::write_replace(
+                    doc,
+                    node_id,
+                    &image_upload::VerifiedImage {
+                        upload_id: String::new(),
+                        hash: hash.clone(),
+                        mime: mime.clone(),
+                        width: *width,
+                        height: *height,
+                        size: 0,
+                        filename: None,
+                        expires_at_ms: 0,
+                    },
+                    caption.as_deref(),
+                )?;
             }
             EditOperation::SetAlign {
                 node_id,
@@ -5803,6 +6225,19 @@ fn move_after_index(
 }
 
 fn document_json(document: StoreDocumentId, doc: &WorkspaceDoc) -> Result<Value, ToolError> {
+    // **The revision is taken before the nodes are read, not after.**
+    // `WorkspaceDoc::runs` reaches a node's text through
+    // `ensure_mergeable_text`, which *creates* that container when the node
+    // has none — an image, an empty root — so walking a document mints Loro
+    // operations in whichever peer this reader happens to be. Nothing
+    // persists them, which is exactly why they must not be published:
+    // answering the version measured after the walk hands a caller a
+    // revision no replica has ever heard of, and the `edit_document` it
+    // sends back with it is refused as `revision_conflict` against a
+    // document that never saw those operations — the hazard
+    // [`WorkspaceToolExecutor::join_for_edit`] keeps stamps off the read
+    // path for. So `revision` is the document as it was joined.
+    let revision = revision(doc);
     let mut nodes = Vec::new();
     let mut root_node_id = None;
     for (id, depth) in doc.walk_all()? {
@@ -5824,7 +6259,7 @@ fn document_json(document: StoreDocumentId, doc: &WorkspaceDoc) -> Result<Value,
     Ok(json!({
         "document_id": document.to_storage(),
         "root_node_id": root_node_id,
-        "revision":revision(doc),
+        "revision":revision,
         // **The effective version, never the recorded one.** A document the
         // store made carries no marker — `WorkspaceDoc::create` is the only
         // thing that wrote one and it never ran for it — so the recorded value
@@ -6374,7 +6809,7 @@ impl KoruMcp {
 
     #[tool(
         title = "Search Koru documents",
-        description = "Search titles, blocks and attribute values in workspace_ids (empty: all). tags are tag names and a parent matches its children; a #tag in query becomes a tag filter. An attributes filter names a key, an op (is, one_of, before, after, between, exists, missing) and every kind it covers (date, datetime_floating, datetime_zoned, number, bool, ref, url, text, select): a window over date alone misses a timed datetime_zoned deadline, so give numeric_values in epoch ms beside values. page_size is at most 200; pass next_offset back as offset. Read koru://docs/model before building a filter.",
+        description = "Search titles, blocks and attribute values in workspace_ids (empty: all). On hosted Cloud MCP, titles cover listed documents, while content covers only documents opened through MCP; search_coverage reports the counts. tags are tag names and a parent matches its children; a #tag in query becomes a tag filter. An attributes filter names a key, an op (is, one_of, before, after, between, exists, missing) and every kind it covers (date, datetime_floating, datetime_zoned, number, bool, ref, url, text, select): a window over date alone misses a timed datetime_zoned deadline, so give numeric_values in epoch ms beside values. page_size is at most 200; pass next_offset back as offset. Read koru://docs/model before building a filter.",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
     fn search_documents(
@@ -6401,7 +6836,7 @@ impl KoruMcp {
     }
     #[tool(
         title = "List Koru tasks",
-        description = "List tasks (nodes with the task marker or a deadline) in workspace_ids (empty: all) from the store's read model: open by default, soonest due first. A row carries its task: reference, the workspace_id, document_id and node_id to edit it by, title, breadcrumb, lifecycle, due, priority and list. due filters per temporal type: dates {after, before} for days and wall clocks, instants {after_ms, before_ms} for zoned deadlines; naming one leaves the other out. min_priority orders low < medium < high < urgent; list is a list id; limit is at most 500. Page with cursor = next_after; restarted means the cursor's row stopped matching and this is page one again; updating_workspaces may be behind. Change a task with update_task.",
+        description = "List tasks in workspace_ids (empty: all): open by default, soonest due first. Hosted Cloud MCP returns task_index_incomplete when document bodies are unopened. Rows contain task reference, workspace_id, document_id, node_id, title, breadcrumb, lifecycle, due, priority and list. Filter due with dates {after, before} for days and wall clocks or instants {after_ms, before_ms} for zoned deadlines; either excludes the other. min_priority orders low < medium < high < urgent; list is a list id; limit is at most 500. Page with cursor = next_after; restarted means the cursor row stopped matching and this is page one; updating_workspaces may be behind. Change a task with update_task.",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
     fn list_tasks(&self, Parameters(a): Parameters<ListTasksRequest>) -> CallToolResult {
@@ -6500,8 +6935,24 @@ impl KoruMcp {
         self.call("edit_document", a)
     }
     #[tool(
+        title = "Begin an image upload",
+        description = "Mint a short-lived upload for one workspace. PUT the raw PNG, JPEG, GIF or WebP (at most 8 MiB) to upload.url with upload.headers.authorization. Do not send the bytes to a tool. The token expires at expires_at and is not a store or account credential. Then add_image or replace_image with upload_id. Read koru://docs/essentials before the first mutation.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    fn create_image_upload(
+        &self,
+        Parameters(a): Parameters<CreateImageUploadRequest>,
+    ) -> CallToolResult {
+        self.call("create_image_upload", a)
+    }
+    #[tool(
         title = "Add an image to a document",
-        description = "Store an image's bytes and place it as a block in one call, at base_revision from the latest read_document. data_base64 is a PNG, JPEG, GIF or WebP of at most 8 MiB; node_id is optional; parent_id is the document-title node or a block; after_node_id is a sibling, null meaning first. Answers the edit's revision and history with node_id, hash, mime, width and height. Read koru://docs/essentials before the first mutation.",
+        description = "Insert a completed image upload as one block at base_revision from the latest read_document. upload_id comes from create_image_upload after the PUT; do not send bytes. node_id is a UUID you choose so a lost response is not a second image, or omit it. parent_id is the title node or a block; after_node_id is a sibling, null for first. caption sets metadata.name. Answers revision, node_id, hash, mime, width, height, size and caption. Read koru://docs/essentials before the first mutation.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -6511,6 +6962,19 @@ impl KoruMcp {
     )]
     fn add_image(&self, Parameters(a): Parameters<AddImageRequest>) -> CallToolResult {
         self.call("add_image", a)
+    }
+    #[tool(
+        title = "Replace an image's bytes",
+        description = "Replace one existing image block's bytes with a completed upload, keeping its node_id and place. caption, when sent, sets metadata.name; omit it to leave the name. A lost response with the same upload and node returns replayed and does not insert another block. A stale base_revision is refused when the image is not already this upload. Read koru://docs/essentials before the first mutation.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    fn replace_image(&self, Parameters(a): Parameters<ReplaceImageRequest>) -> CallToolResult {
+        self.call("replace_image", a)
     }
     #[tool(
         title = "Extract blocks to a document",
@@ -6685,13 +7149,13 @@ impl ServerHandler for KoruMcp {
         Ok(result)
     }
 
-    fn get_info(&self) -> ServerInfo {
+    fn get_info(&self) -> ServerConfig {
         let mut instructions = String::from(SERVER_INSTRUCTIONS);
         if let Some(note) = self.toolsets.note() {
             instructions.push(' ');
             instructions.push_str(&note);
         }
-        ServerInfo::new(
+        ServerConfig::new(
             ServerCapabilities::builder()
                 .enable_tools()
                 .enable_resources()
@@ -6954,7 +7418,7 @@ mod tests {
     }
 
     #[test]
-    fn the_official_sdk_exposes_all_twenty_three_tools() {
+    fn the_official_sdk_exposes_every_tool() {
         let server = KoruMcp::new(Arc::new(Fake), RequestContext::local());
         let names: std::collections::HashSet<_> = server
             .tool_router
@@ -6977,6 +7441,9 @@ mod tests {
             "create_document",
             "ensure_file_note",
             "edit_document",
+            "create_image_upload",
+            "add_image",
+            "replace_image",
             "extract_to_document",
             "save_document_version",
             "list_document_versions",
@@ -6988,7 +7455,7 @@ mod tests {
         ] {
             assert!(names.contains(expected), "missing MCP tool {expected}");
         }
-        assert_eq!(names.len(), 23);
+        assert_eq!(names.len(), 25);
     }
 
     fn an_arg(key: &str, op: &str, values: &[&str], kinds: &[&str]) -> AttrFilterArg {
@@ -7123,6 +7590,8 @@ mod tests {
         ];
         let non_idempotent = [
             "add_image",
+            "create_image_upload",
+            "replace_image",
             "create_document",
             "extract_to_document",
             "save_document_version",
@@ -7225,7 +7694,7 @@ mod tests {
             .expect("tools/list over stdio");
         server_task.abort();
 
-        assert_eq!(listed.tools.len(), 23);
+        assert_eq!(listed.tools.len(), 25);
         assert!(listed.next_cursor.is_none(), "one page when paging is off");
         let line = serde_json::to_string(&json!({"jsonrpc": "2.0", "id": 2, "result": &listed}))
             .expect("reply JSON");
@@ -7343,7 +7812,7 @@ mod tests {
             .into_iter()
             .map(|tool| tool.name.to_string())
             .collect();
-        assert_eq!(expected.len(), 23);
+        assert_eq!(expected.len(), 25);
         assert_eq!(seen, expected, "each tool once, in the router's order");
     }
 
@@ -7519,7 +7988,7 @@ mod tests {
             .into_iter()
             .map(|tool| tool.name)
             .collect();
-        assert_eq!(names.len(), 23);
+        assert_eq!(names.len(), 25);
         let routed: HashSet<String> = KoruMcp::new(Arc::new(Fake), RequestContext::local())
             .tool_router
             .list_all()
@@ -8767,6 +9236,7 @@ mod tests {
                 mime: "image/png".into(),
                 width: 640,
                 height: 480,
+                caption: None,
             }],
             &context,
         )
@@ -8799,6 +9269,7 @@ mod tests {
                 mime: "image/png".into(),
                 width: 1,
                 height: 1,
+                caption: None,
             }],
             &context,
         )
@@ -8825,14 +9296,19 @@ mod tests {
             .expect("add_image");
         let schema = serde_json::to_string(&add.input_schema).unwrap();
         for field in [
-            "data_base64",
+            "upload_id",
             "base_revision",
             "node_id",
             "parent_id",
             "after_node_id",
+            "caption",
         ] {
             assert!(schema.contains(field), "{field}");
         }
+        assert!(
+            !schema.contains("data_base64"),
+            "bytes do not ride in the tool"
+        );
         assert!(!schema.contains("\"hash\""), "a caller never sends a hash");
     }
 
@@ -11439,7 +11915,8 @@ mod tests {
                     json_type(value)
                 ));
             }
-            return;
+            // Sibling constraints still apply when a type union is spelled
+            // with anyOf rather than an array-valued type.
         }
         if let Some(declared) = schema.get("type") {
             let allowed: Vec<&str> = match declared {
@@ -11481,6 +11958,25 @@ mod tests {
             for (index, item) in items.iter().enumerate() {
                 violations(schema_for_items, item, &format!("{path}/{index}"), out);
             }
+        }
+    }
+
+    #[test]
+    fn schema_validation_checks_constraints_beside_a_type_union() {
+        let schema = json!({
+            "anyOf": [{"type": "object"}, {"type": "null"}],
+            "properties": {"value": {"type": "string"}},
+            "required": ["value"]
+        });
+        for (value, valid) in [
+            (Value::Null, true),
+            (json!({"value": "text"}), true),
+            (json!({}), false),
+            (json!({"value": 3}), false),
+        ] {
+            let mut errors = Vec::new();
+            violations(&schema, &value, "$", &mut errors);
+            assert_eq!(errors.is_empty(), valid, "{value}: {errors:?}");
         }
     }
 
@@ -12049,7 +12545,7 @@ mod tests {
             .await
             .expect("tools/list over stdio");
 
-        assert_eq!(tools.len(), 23);
+        assert_eq!(tools.len(), 25);
         assert!(
             tools
                 .iter()
@@ -13069,6 +13565,312 @@ mod tests {
                 .any(|node| node["content"]["text"] == "Taken with the wide lens"),
             "the edit did not persist: {reread}"
         );
+    }
+
+    // ------------------------------------------ a move changes placement only
+    //
+    // Root-catalog Plan 3.3: a Workspace moved between Profiles keeps its
+    // UUID, replica, incarnation and every document (Plan 1.2), so hosted
+    // creation that overlaps a move writes the same histories and blobs it
+    // would have written without one. The session half — a Profile grant
+    // losing the Workspace, a UUID grant keeping it — rides on the same
+    // in-memory composition.
+
+    /// The hosted claim check, allowing: these tests are about moves, not
+    /// claims.
+    struct AllowClaims;
+
+    impl DocumentClaims for AllowClaims {
+        fn enforce(&self, _: &str, _: &str, _: &[String]) -> Result<(), ToolError> {
+            Ok(())
+        }
+    }
+
+    /// A UUID-granted connection's resolver. The set never changes; the
+    /// placement revision moves each time a device moves the Workspace.
+    struct Pinned {
+        workspace: StoreWorkspaceId,
+        placement_revision: std::sync::atomic::AtomicU64,
+    }
+
+    impl Pinned {
+        fn moved(&self) {
+            self.placement_revision
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    impl AccessResolver for Pinned {
+        fn resolve(&self, _: Option<&AccessRevision>) -> AccessResolution {
+            AccessResolution::Resolved(ResolvedAccess {
+                access: WorkspaceAccess::selected([self.workspace]),
+                pending: Vec::new(),
+                revision: AccessRevision {
+                    placement_revision: self
+                        .placement_revision
+                        .load(std::sync::atomic::Ordering::SeqCst),
+                    membership_epoch: 1,
+                    authorization_version: 1,
+                },
+            })
+        }
+    }
+
+    /// A Profile-granted connection's resolver: it holds the Workspace
+    /// while the Workspace is placed under its Profile and not after.
+    struct Following {
+        workspace: StoreWorkspaceId,
+        placed_under_grant: std::sync::atomic::AtomicBool,
+    }
+
+    impl AccessResolver for Following {
+        fn resolve(&self, _: Option<&AccessRevision>) -> AccessResolution {
+            let placed = self
+                .placed_under_grant
+                .load(std::sync::atomic::Ordering::SeqCst);
+            AccessResolution::Resolved(ResolvedAccess {
+                access: WorkspaceAccess::selected(placed.then_some(self.workspace)),
+                pending: Vec::new(),
+                revision: AccessRevision::default(),
+            })
+        }
+    }
+
+    /// The blob store behind the upload route: the content address of the
+    /// bytes, as the real stores answer it.
+    struct HashingBlobStore;
+
+    impl ImageBlobStore for HashingBlobStore {
+        fn put_image(
+            &self,
+            _: &str,
+            bytes: Vec<u8>,
+            mime: &str,
+            filename: Option<&str>,
+        ) -> Result<Blob, ToolError> {
+            Ok(Blob {
+                hash: koru_store_core::model::BlobHash::from_digest(
+                    "b3",
+                    &koru_store_core::lifecycle::checksum(&bytes),
+                )
+                .unwrap(),
+                size: bytes.len() as u64,
+                mime: mime.into(),
+                filename: filename.map(str::to_owned),
+                created_at: koru_store_core::model::Timestamp::from_millis(0),
+                attributes: Default::default(),
+            })
+        }
+    }
+
+    fn hosted_context(
+        workspace: StoreWorkspaceId,
+        principal: &str,
+        resolver: Arc<dyn AccessResolver>,
+    ) -> RequestContext {
+        RequestContext::selected(
+            "us",
+            principal,
+            [Scope::ReadDocuments, Scope::EditDocuments],
+            [workspace],
+        )
+        .with_capabilities(HostCapabilities::rung1())
+        .with_document_claims(Arc::new(AllowClaims))
+        .with_access_resolver(AccessRevision::default(), resolver)
+    }
+
+    /// **Concurrent creation and moves keep the same histories and blobs**
+    /// (ROADMAP Plan 3.3 verification; the in-repo half of the M3 incident).
+    /// A UUID-granted hosted session creates a document, the Workspace is
+    /// moved to another Profile, an image upload minted before the move is
+    /// completed and placed after it, the Workspace moves again: the
+    /// document id, the creation's history and the blob hash are the ones
+    /// the calls answered, the move wrote nothing into the document, and the
+    /// final document contains the creation's history whole. A
+    /// Profile-granted session on the same composition loses the Workspace
+    /// with the move while the pinned one continues.
+    #[test]
+    fn hosted_creation_and_image_upload_continue_unchanged_while_the_workspace_moves() {
+        let store = MemoryStore::new();
+        let uploads = ImageUploads::new();
+        let backend = store
+            .backend()
+            .with_upload_origin("http://127.0.0.1:1")
+            .with_uploads(uploads.clone());
+        let executor = WorkspaceToolExecutor::new(Arc::new(backend));
+        let pinned = Arc::new(Pinned {
+            workspace: store.workspace,
+            placement_revision: std::sync::atomic::AtomicU64::new(1),
+        });
+        let following = Arc::new(Following {
+            workspace: store.workspace,
+            placed_under_grant: std::sync::atomic::AtomicBool::new(true),
+        });
+        let by_uuid = hosted_context(store.workspace, "app-connection:pinned", pinned.clone());
+        let by_profile =
+            hosted_context(store.workspace, "app-connection:profile", following.clone());
+        let workspace_id = store.workspace.to_storage();
+
+        // Both sessions reach the Workspace before the move.
+        let made = executor
+            .invoke(
+                &by_uuid,
+                "create_document",
+                json!({
+                    "workspace_id": workspace_id,
+                    "title": "Field notes",
+                    "initial_operations": [
+                        {"op": "insert", "parent_id": "root", "kind": "paragraph",
+                         "text": "Before the move"},
+                    ],
+                }),
+            )
+            .unwrap();
+        let document_id = made["document_id"].as_str().unwrap().to_owned();
+        let document = StoreDocumentId::parse(&document_id).unwrap();
+        assert!(
+            made["idempotency_key"].is_string(),
+            "a hosted creation always answers its key: {made}"
+        );
+        assert!(made.get("history").is_none(), "history is a device's");
+        executor
+            .invoke(
+                &by_profile,
+                "read_document",
+                json!({ "workspace_id": workspace_id, "document_id": document_id }),
+            )
+            .unwrap();
+        let created_snapshot = store.snapshots.lock().unwrap()[&document].clone();
+
+        // The upload is minted, then a device moves the Workspace out of
+        // the Profile the second connection was granted.
+        let grant = executor
+            .invoke(
+                &by_uuid,
+                "create_image_upload",
+                json!({ "workspace_id": workspace_id, "name": "lens.png" }),
+            )
+            .unwrap();
+        let upload_id = grant["upload_id"].as_str().unwrap().to_owned();
+        let token = grant["upload"]["headers"]["authorization"]
+            .as_str()
+            .unwrap()
+            .strip_prefix(image_upload::UPLOAD_AUTHORIZATION_SCHEME)
+            .unwrap()
+            .trim()
+            .to_owned();
+        pinned.moved();
+        following
+            .placed_under_grant
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(
+            store.snapshots.lock().unwrap()[&document],
+            created_snapshot,
+            "a move is a placement change; it writes nothing into a document"
+        );
+
+        // The Profile-granted session loses the Workspace on its next call,
+        // with no new input and no fallback; the pinned one carries on.
+        let lost = executor
+            .invoke(
+                &by_profile,
+                "read_document",
+                json!({ "workspace_id": workspace_id, "document_id": document_id }),
+            )
+            .unwrap_err();
+        assert_eq!(lost.code, "permission_denied");
+        let listed = executor
+            .invoke(&by_profile, "list_workspaces", json!({}))
+            .unwrap();
+        assert_eq!(listed["workspaces"], json!([]));
+
+        // The upload completes and is placed after the move, and the
+        // Workspace moves once more while it is being placed.
+        let mut png = Vec::new();
+        image::RgbaImage::new(2, 3)
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        let verified = uploads
+            .complete(
+                &upload_id,
+                &token,
+                &png,
+                koru_store_core::model::Timestamp::now().millis(),
+                &HashingBlobStore,
+            )
+            .unwrap();
+        pinned.moved();
+        let placed = executor
+            .invoke(
+                &by_uuid,
+                "add_image",
+                json!({
+                    "workspace_id": workspace_id,
+                    "document_id": document_id,
+                    "base_revision": made["revision"],
+                    "upload_id": upload_id,
+                    "parent_id": made["root_node_id"],
+                    "caption": "Lens",
+                }),
+            )
+            .unwrap();
+        let expected_hash = format!("b3:{}", koru_store_core::lifecycle::checksum(&png));
+        assert_eq!(
+            placed["hash"],
+            json!(expected_hash),
+            "the blob is the bytes' address"
+        );
+        assert_eq!(verified.hash, expected_hash);
+        assert_eq!(placed["width"], 2);
+        assert_eq!(placed["height"], 3);
+
+        // The same document, under the moved placement: one id in the list,
+        // the creation's history contained whole, the paragraph and the
+        // image both present, and the revision the call answered.
+        let documents = executor
+            .invoke(
+                &by_uuid,
+                "list_documents",
+                json!({ "workspace_id": workspace_id }),
+            )
+            .unwrap();
+        let ids: Vec<&str> = documents["documents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, vec![document_id.as_str()]);
+        let read = executor
+            .invoke(
+                &by_uuid,
+                "read_document",
+                json!({ "workspace_id": workspace_id, "document_id": document_id }),
+            )
+            .unwrap();
+        assert_eq!(read["document_id"], made["document_id"]);
+        assert_eq!(read["root_node_id"], made["root_node_id"]);
+        assert_eq!(read["revision"], placed["revision"]);
+        let nodes = read["nodes"].as_array().unwrap();
+        assert!(
+            nodes
+                .iter()
+                .any(|node| node["content"]["text"] == "Before the move")
+        );
+        assert!(
+            nodes
+                .iter()
+                .any(|node| node["content"]["hash"] == json!(expected_hash))
+        );
+        let before = WorkspaceDoc::from_snapshot(&created_snapshot).unwrap();
+        let after =
+            WorkspaceDoc::from_snapshot(&store.snapshots.lock().unwrap()[&document]).unwrap();
+        assert_eq!(revision(&before), made["revision"].as_str().unwrap());
+        assert!(
+            after.doc().oplog_vv().includes_vv(&before.doc().oplog_vv()),
+            "the creation's history is a prefix of the document's, not a new lineage"
+        );
+        assert!(placed.get("history").is_none());
     }
 
     // ------------------------------------------ writes reach only what reads reach

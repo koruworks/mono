@@ -52,6 +52,14 @@ pub enum WorkspaceCloudChangeKind {
 pub struct WorkspaceCloudRecord {
     pub workspace_id: WorkspaceId,
     pub region: Region,
+    /// **A transition projection since root-catalog Plan 3.1**, not
+    /// ownership and not placement (TECHNICAL.final §3.2, §7.3). The
+    /// account that owns the Workspace is `owner_account_id`; where the
+    /// Workspace is placed is the account catalog's Workspace unit, read
+    /// through [`crate::root_catalog::DiscoveryProjection`]. This column
+    /// keeps the Profile the Workspace was enabled under so v1 readers and
+    /// the v1 descriptor keep working during the compatibility window; no
+    /// v2 admission decision reads it, and a move never rewrites it.
     pub owner_profile_id: ProfileId,
     pub owner_account_id: KoruIdentityId,
     pub state: WorkspaceCloudState,

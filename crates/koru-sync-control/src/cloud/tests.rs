@@ -80,7 +80,10 @@ fn old_control_is_refused_before_any_state_change_and_peer_framing_is_unchanged(
     use crate::*;
     assert_eq!(CONTROL_PROTOCOL_VERSION, 7);
     assert_eq!(CONTROL_FRAME_VERSION, 1);
-    assert_eq!(PEER_PROTOCOL_VERSION, 5);
+    // The peer number is pinned here so that a control change cannot move it
+    // unnoticed; it is 6 since the root-catalog exchange, and the control
+    // protocol's own 7 is unrelated to it.
+    assert_eq!(PEER_PROTOCOL_VERSION, 6);
     let mut host = ControlHost::default();
     let old = ControlHello {
         protocol_version: 6,
@@ -117,4 +120,309 @@ fn expired_drain_does_not_block_next_acknowledgement() {
     }
     assert_eq!(state.active(101).unwrap().generation, 3);
     assert_eq!(state.draining(101).unwrap().generation, 2);
+}
+
+// ------------------------------------------------- v2 permits (Plan 3.1)
+
+fn v4(n: u8) -> CloudId {
+    let mut bytes = [n; 16];
+    bytes[6] = 0x40 | (n & 0x0f);
+    bytes[8] = 0x80 | (n & 0x3f);
+    CloudId::from_bytes(bytes)
+}
+
+fn descriptor_v2(placement: Option<CloudId>) -> CloudWorkspaceDescriptorV2 {
+    CloudWorkspaceDescriptorV2 {
+        version: CLOUD_WORKSPACE_DESCRIPTOR_VERSION_V2,
+        workspace_id: v4(1),
+        workspace_incarnation_id: v4(2),
+        logical_replica_id: v4(3),
+        lineage_id: v4(2),
+        manifest_document_id: v4(4),
+        authorization_version: 1,
+        membership_epoch: 1,
+        cloud_access_epoch: 1,
+        placement,
+        placement_revision: 0,
+    }
+}
+
+fn permit_v2(scope: CloudPermitScopeV2) -> CloudPermitV2 {
+    CloudPermitV2 {
+        version: CLOUD_PERMIT_VERSION_V2,
+        permit_id: Uuid::new_v4(),
+        account_id: v4(5),
+        catalog_scope_id: Some(v4(6)),
+        scope,
+        account_generation: 1,
+        authority_generation: 1,
+        expires_at_seconds: 100,
+    }
+}
+
+fn profile_id(id: CloudId) -> koru_store_core::ProfileId {
+    koru_store_core::ProfileId::from_uuid(uuid::Uuid::from_bytes(*id.as_bytes()))
+}
+
+#[test]
+fn v2_descriptor_places_without_a_profile_and_may_be_unassigned() {
+    descriptor_v2(None).validate().unwrap();
+    descriptor_v2(Some(v4(7))).validate().unwrap();
+    assert_eq!(descriptor_v2(None).dataset().logical_replica_id(), v4(3));
+    let mut not_v4 = descriptor_v2(Some(CloudId::from_bytes([9; 16])));
+    assert_eq!(not_v4.validate(), Err(HostCloudError::DescriptorIdentity));
+    not_v4.placement = None;
+    not_v4.lineage_id = v4(3);
+    assert_eq!(not_v4.validate(), Err(HostCloudError::DescriptorLineage));
+    let mut negative = descriptor_v2(None);
+    negative.placement_revision = -1;
+    assert_eq!(negative.validate(), Err(HostCloudError::DescriptorEpoch));
+    let mut v1 = descriptor_v2(None);
+    v1.version = 1;
+    assert_eq!(v1.validate(), Err(HostCloudError::DescriptorVersion));
+    // The v1 descriptor's shape is untouched: it still needs its Profile.
+    assert!(
+        serde_json::from_str::<CloudWorkspaceDescriptorV1>(
+            &serde_json::to_string(&descriptor_v2(None)).unwrap()
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn v2_permits_are_one_scope_each_and_need_no_profile_pair() {
+    // A Workspace is admitted on its own descriptor: no Profile permit
+    // beside it, no Profile in it.
+    let workspace = permit_v2(CloudPermitScopeV2::Workspace {
+        descriptor: descriptor_v2(None),
+    });
+    workspace.validate().unwrap();
+    assert!(matches!(
+        workspace.dataset(),
+        Some(CloudReplicaPrincipalV1::Workspace { workspace_id, .. }) if workspace_id == v4(1)
+    ));
+    assert!(
+        !serde_json::to_string(&workspace)
+            .unwrap()
+            .contains("profile_id")
+    );
+
+    let catalog = permit_v2(CloudPermitScopeV2::UserCatalog);
+    catalog.validate().unwrap();
+    assert_eq!(catalog.dataset(), None);
+    let personal = permit_v2(CloudPermitScopeV2::UserPersonal {
+        workspace_id: v4(1),
+    });
+    personal.validate().unwrap();
+    assert_eq!(personal.dataset(), None);
+    assert_eq!(
+        permit_v2(CloudPermitScopeV2::UserPersonal {
+            workspace_id: CloudId::from_bytes([1; 16])
+        })
+        .validate(),
+        Err(HostCloudError::PermitIdentity)
+    );
+
+    let profile = v4(8);
+    let dataset = CloudReplicaPrincipalV1::Profile {
+        profile_id: profile,
+        lineage_id: v4(9),
+        logical_replica_id: v4(10),
+    };
+    let units = permit_v2(CloudPermitScopeV2::ProfileUnits {
+        dataset,
+        allowed_profile_units: vec![
+            ProfileUnitRef::Identity {
+                profile: profile_id(profile),
+            },
+            ProfileUnitRef::Private {
+                profile: profile_id(profile),
+            },
+        ],
+    });
+    units.validate().unwrap();
+    assert_eq!(units.dataset(), Some(dataset));
+    // Personal is never a Profile unit here, another Profile's unit is
+    // refused, the legacy private unit is refused, and an empty list is
+    // not a permit.
+    for allowed in [
+        vec![ProfileUnitRef::Personal {
+            owner: profile_id(profile),
+            workspace: koru_store_core::WorkspaceId::from_uuid(uuid::Uuid::from_bytes(
+                *v4(1).as_bytes(),
+            )),
+        }],
+        vec![ProfileUnitRef::Identity {
+            profile: profile_id(v4(11)),
+        }],
+        vec![ProfileUnitRef::LegacyPrivate {
+            profile: profile_id(profile),
+        }],
+        Vec::new(),
+        vec![
+            ProfileUnitRef::Identity {
+                profile: profile_id(profile),
+            },
+            ProfileUnitRef::Identity {
+                profile: profile_id(profile),
+            },
+        ],
+    ] {
+        assert_eq!(
+            permit_v2(CloudPermitScopeV2::ProfileUnits {
+                dataset,
+                allowed_profile_units: allowed,
+            })
+            .validate(),
+            Err(HostCloudError::PermitProfileUnits)
+        );
+    }
+    // A Profile-units scope over a Workspace dataset is a scope error.
+    assert_eq!(
+        permit_v2(CloudPermitScopeV2::ProfileUnits {
+            dataset: descriptor_v2(None).dataset(),
+            allowed_profile_units: vec![ProfileUnitRef::Identity {
+                profile: profile_id(profile),
+            }],
+        })
+        .validate(),
+        Err(HostCloudError::PermitScope)
+    );
+    assert_eq!(HostCloudError::PermitScope.code(), "cloud_permit_scope");
+
+    // Generations fence separately; a v1 number is refused.
+    let mut stale = permit_v2(CloudPermitScopeV2::UserCatalog);
+    stale.authority_generation = 0;
+    assert_eq!(stale.validate(), Err(HostCloudError::PermitGeneration));
+    let mut v1 = permit_v2(CloudPermitScopeV2::UserCatalog);
+    v1.version = CLOUD_PERMIT_VERSION;
+    assert_eq!(v1.validate(), Err(HostCloudError::PermitVersion));
+    // Strict on the wire, and the scope is tagged.
+    let json = serde_json::to_value(&units).unwrap();
+    assert_eq!(json["scope"]["scope"], "profile_units");
+    let mut extra = json;
+    extra["profile_id"] = serde_json::json!("leak");
+    assert!(serde_json::from_value::<CloudPermitV2>(extra).is_err());
+}
+
+/// Root-catalog Plan 3.2's compatibility window: a v1 permit pair is read
+/// as a v2 Workspace permit whose placement is the v1 membership Profile,
+/// and a v2 Profile-units permit over Identity and Private only; the v1
+/// Personal unit is the Workspace-keyed scope and is dropped. A v1 permit
+/// left with nothing after the drop is still **applied**: a v1 shape keeps
+/// its v1 meaning for the window, the dropped entry simply authorizes
+/// nothing, and refusing the permit would refuse the whole page and take the
+/// Identity and Private sync it also authorizes down with it.
+#[test]
+fn a_v1_pair_is_read_as_two_v2_scopes_and_personal_is_not_one_of_them() {
+    let profile = v4(5);
+    let descriptor = CloudWorkspaceDescriptorV1 {
+        version: CLOUD_WORKSPACE_DESCRIPTOR_VERSION,
+        profile_id: profile,
+        workspace_id: v4(1),
+        workspace_incarnation_id: v4(2),
+        logical_replica_id: v4(3),
+        lineage_id: v4(2),
+        manifest_document_id: v4(4),
+        authorization_version: 1,
+        membership_epoch: 1,
+        cloud_access_epoch: 1,
+    };
+    let workspace = CloudPermitV1 {
+        version: CLOUD_PERMIT_VERSION,
+        permit_id: Uuid::new_v4(),
+        dataset: descriptor_v2(None).dataset(),
+        account_id: v4(9),
+        profile_id: profile,
+        authority_workspace_id: v4(1),
+        authority_workspace_incarnation_id: v4(2),
+        account_generation: 3,
+        expires_at_seconds: 100,
+        allowed_profile_units: Vec::new(),
+        workspace_descriptor: Some(descriptor),
+    };
+    let converted = CloudPermitV2::from_v1(&workspace).unwrap();
+    assert_eq!(converted.permit_id, workspace.permit_id);
+    assert_eq!(converted.account_generation, 3);
+    assert_eq!(converted.authority_generation, 1);
+    assert_eq!(converted.catalog_scope_id, None);
+    assert_eq!(converted.placement_profile(), Some(profile));
+    assert_eq!(converted.dataset(), Some(workspace.dataset));
+    let CloudPermitScopeV2::Workspace { descriptor: v2 } = &converted.scope else {
+        panic!("a Workspace permit reads as the Workspace scope");
+    };
+    assert_eq!(v2.placement_revision, 0);
+    assert_eq!(v2.manifest_document_id, v4(4));
+
+    let units = CloudPermitV1 {
+        dataset: CloudReplicaPrincipalV1::Profile {
+            profile_id: profile,
+            lineage_id: v4(6),
+            logical_replica_id: v4(7),
+        },
+        allowed_profile_units: vec![
+            ProfileUnitRef::Identity {
+                profile: profile_id(profile),
+            },
+            ProfileUnitRef::Personal {
+                owner: profile_id(profile),
+                workspace: koru_store_core::WorkspaceId::from_uuid(v4(1).as_uuid()),
+            },
+        ],
+        workspace_descriptor: None,
+        ..workspace.clone()
+    };
+    let converted = CloudPermitV2::from_v1(&units).unwrap();
+    let CloudPermitScopeV2::ProfileUnits {
+        allowed_profile_units,
+        ..
+    } = &converted.scope
+    else {
+        panic!("a Profile permit reads as the Profile-units scope");
+    };
+    assert_eq!(
+        allowed_profile_units,
+        &vec![ProfileUnitRef::Identity {
+            profile: profile_id(profile),
+        }]
+    );
+    assert_eq!(converted.placement_profile(), Some(profile));
+
+    // The dead entry on its own, and no entries at all, are the same
+    // authority — none — and both are applied rather than refused.
+    for allowed in [
+        vec![ProfileUnitRef::Personal {
+            owner: profile_id(profile),
+            workspace: koru_store_core::WorkspaceId::from_uuid(v4(1).as_uuid()),
+        }],
+        Vec::new(),
+    ] {
+        let nothing_left = CloudPermitV1 {
+            allowed_profile_units: allowed,
+            ..units.clone()
+        };
+        let converted = CloudPermitV2::from_v1(&nothing_left).unwrap();
+        let CloudPermitScopeV2::ProfileUnits {
+            allowed_profile_units,
+            ..
+        } = &converted.scope
+        else {
+            panic!("a Profile permit reads as the Profile-units scope");
+        };
+        assert!(allowed_profile_units.is_empty());
+        assert_eq!(converted.catalog_scope_id, None, "the v1 window's marker");
+    }
+
+    // The exception belongs to the window, not to v2: a permit a v2 service
+    // minted still may not authorize nothing.
+    let mut minted_empty = CloudPermitV2::from_v1(&CloudPermitV1 {
+        allowed_profile_units: Vec::new(),
+        ..units
+    })
+    .unwrap();
+    minted_empty.catalog_scope_id = Some(v4(6));
+    assert_eq!(
+        minted_empty.validate(),
+        Err(HostCloudError::PermitProfileUnits)
+    );
 }

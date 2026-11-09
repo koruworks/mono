@@ -499,7 +499,9 @@ fn host_on(session_id: ControlSessionId) -> ControlHost {
 fn the_control_protocol_is_seven_and_the_greeting_refuses_every_other_number() {
     assert_eq!(CONTROL_PROTOCOL_VERSION, 7);
     assert_eq!(CONTROL_FRAME_VERSION, 1);
-    assert_eq!(PEER_PROTOCOL_VERSION, 5);
+    // A different number, and its own: the peer protocol went 5 -> 6 for the
+    // root-catalog exchange while the control protocol stayed 7.
+    assert_eq!(PEER_PROTOCOL_VERSION, 6);
     let mut host = ControlHost::default();
     assert_eq!(
         host.begin_session(&ControlHello {
@@ -689,6 +691,7 @@ fn context(
         account_id: account,
         account_generation,
         permits,
+        permits_v2: Vec::new(),
     }
 }
 
@@ -814,6 +817,105 @@ fn a_session_generation_is_replayed_only_within_its_own_connection() {
             code: "cloud_session_replay".into()
         }
     );
+}
+
+/// The v1 compatibility window, at the boundary the whole window runs
+/// through. A v1 Profile permit lists Identity, Private and Personal; the v1
+/// Personal address exports nothing on a catalog-13 device, so the window's
+/// reading has to drop that entry — and dropping it must not cost the
+/// Identity and Private sync the same permit authorizes, nor the rest of the
+/// page, nor the Workspace permit beside it. Every variant of "the unit list
+/// is dead on arrival" is applied, and a content stream still installs under
+/// the permit afterwards.
+///
+/// This is the whole v1 window's guarantee in one test on purpose: the
+/// device that would be refused here builds this context itself, so a refusal
+/// is not a remote incompatibility but this build locking its own Cloud sync
+/// out.
+#[test]
+fn a_v1_permit_keeps_its_v1_meaning_and_a_dead_personal_entry_costs_nothing() {
+    use koru_store_core::profile_units::ProfileUnitRef;
+
+    let session = ControlSessionId::new();
+    let account = cloud_id(0x22);
+    let profile = koru_store_core::ProfileId::from_uuid(cloud_id(0x33).as_uuid());
+    let workspace = koru_store_core::WorkspaceId::from_uuid(cloud_id(0x88).as_uuid());
+    let identity = ProfileUnitRef::Identity { profile };
+    let private = ProfileUnitRef::Private { profile };
+    let personal = ProfileUnitRef::Personal {
+        owner: profile,
+        workspace,
+    };
+
+    // What a v1-window pass lists, and the two ways that list can end up
+    // authorizing nothing: the grant narrowed it to nothing, or everything in
+    // it is the dead v1 Personal address.
+    for (case, units, expected) in [
+        (
+            "the full v1 list",
+            vec![identity, private, personal],
+            vec![identity, private],
+        ),
+        ("personal alone", vec![personal], Vec::new()),
+        ("narrowed to nothing", Vec::new(), Vec::new()),
+    ] {
+        let mut held = permit(1, account, 1);
+        held.allowed_profile_units = units;
+        let mut host = host_on(session);
+
+        // The page is applied whole, not refused whole.
+        assert_eq!(
+            host.handle(session, context(session, 1, account, 1, vec![held.clone()])),
+            ControlResponse::CloudContextApplied {
+                control_session_id: session,
+                sequence: 1,
+            },
+            "{case}"
+        );
+        let status = host.cloud_status(session);
+        assert_eq!(status.records.len(), 1, "{case}");
+        assert_eq!(status.records[0].permit_id, held.permit_id, "{case}");
+        assert_eq!(status.records[0].dataset, held.dataset, "{case}");
+
+        // And the permit the host now holds authorizes exactly the units
+        // this device can still serve. The Personal entry is not an error,
+        // it simply is not in the set.
+        let converted = CloudPermitV2::from_v1(&held).expect(case);
+        assert_eq!(converted.catalog_scope_id, None, "{case}: the v1 window");
+        let CloudPermitScopeV2::ProfileUnits {
+            allowed_profile_units,
+            dataset,
+        } = &converted.scope
+        else {
+            panic!("{case}: a v1 Profile permit is the Profile-units scope");
+        };
+        assert_eq!(dataset, &held.dataset, "{case}");
+        assert_eq!(allowed_profile_units, &expected, "{case}");
+        assert!(
+            !allowed_profile_units.contains(&personal),
+            "{case}: the v1 personal address exports nothing since catalog 13"
+        );
+
+        // The point of applying it: the Profile's content stream still
+        // attaches, which is the Identity and Private sync a refusal would
+        // have taken away.
+        assert_eq!(
+            host.handle(
+                session,
+                ControlRequest::InstallCloudSession {
+                    principal: Box::new(principal(&held, session, 1)),
+                    connection_id: 7,
+                    stream_session_id: 1,
+                }
+            ),
+            ControlResponse::CloudSessionInstalled {
+                permit_id: held.permit_id,
+                session_generation: 1,
+            },
+            "{case}"
+        );
+        host.end_session(session);
+    }
 }
 
 /// A Workspace dataset needs the identity-only descriptor; a Profile dataset
@@ -1136,4 +1238,40 @@ fn a_blob_access_value_redacts_its_token() {
     let rendered = format!("{:?}", blob_access(7));
     assert!(rendered.contains("<redacted>"), "{rendered}");
     assert!(!rendered.contains("an-account-bearer-token"), "{rendered}");
+}
+
+// ------------------------------------------------- root-catalog sync status
+
+/// **An older daemon says nothing about organization sync**, and a newer
+/// Agent reads that as "no reading" rather than refusing the frame.
+#[test]
+fn a_status_without_root_sync_reads_as_empty() {
+    let old = r#"{"replication_ready":false,"endpoint_id":null,"authorization_sequence":0,"authorized_peers":0,"authorized_workspaces":0,"desired_connections":0}"#;
+    let status: ControlStatus = serde_json::from_str(old).unwrap();
+    assert!(status.root_sync.is_empty());
+    let peer = DeviceId::new();
+    let subject = RootSyncSubject {
+        peer,
+        profile: Some(ProfileId::new()),
+        workspace: None,
+        state: RootSyncState::PausedBySettings,
+    };
+    let rendered = serde_json::to_string(&subject).unwrap();
+    assert!(rendered.contains("\"paused_by_settings\""), "{rendered}");
+    assert_eq!(
+        serde_json::from_str::<RootSyncSubject>(&rendered).unwrap(),
+        subject
+    );
+}
+
+/// A stop outranks a wait and a wait outranks done, whichever side it is on.
+#[test]
+fn the_worse_root_sync_reading_wins() {
+    use RootSyncState::*;
+    assert_eq!(UpToDate.worse(Pending), Pending);
+    assert_eq!(Pending.worse(UpToDate), Pending);
+    assert_eq!(Pending.worse(Held), Held);
+    assert_eq!(Held.worse(PausedBySettings), PausedBySettings);
+    assert_eq!(PausedBySettings.worse(BlockedByMismatch), BlockedByMismatch);
+    assert_eq!(BlockedByMismatch.worse(UpToDate), BlockedByMismatch);
 }

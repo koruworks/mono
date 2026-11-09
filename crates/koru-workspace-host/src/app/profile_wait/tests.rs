@@ -234,3 +234,25 @@ fn authority_change_discards_inflight_reply_and_dead_worker_exposes_retry() {
     waits.retry(attempt);
     assert!(waits.request(target).is_some());
 }
+
+/// An empty Profile is a reading of its own (root-catalog §3.10): the pane
+/// says so and offers *New workspace*; nothing lands, nothing is created and
+/// nothing is retried on a clock.
+#[test]
+fn an_empty_profile_is_its_own_reading_and_never_lands() {
+    let mut waits = Waits::default();
+    let target = window(1);
+    waits.begin(target, ProfileId::new(), None);
+    waits.observe(target, ProfileDelivery::Delivered);
+    let (_, reply) = waits.request(target).unwrap();
+    reply.send(Ok(EnsuredWorkspace::Empty)).unwrap();
+    assert!(waits.poll(target).is_none());
+    assert_eq!(
+        waits.get(target).unwrap().presentation.reading,
+        WaitReading::Empty
+    );
+    assert!(
+        waits.request(target).is_none(),
+        "empty is settled, not pending: no second command"
+    );
+}

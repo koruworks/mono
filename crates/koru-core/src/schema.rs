@@ -2675,6 +2675,43 @@ impl WorkspaceDoc {
         Ok(())
     }
 
+    /// Replace the bytes an existing image shows, keeping its id, place, name
+    /// and attributes.
+    ///
+    /// [`set_image`](Self::set_image) turns any node into an image and drops
+    /// its text. A replacement of a picture must not do that: the node is
+    /// already an image, and a due or a caption on it has to survive the new
+    /// bytes.
+    pub fn replace_image_bytes(
+        &mut self,
+        target: NodeId,
+        hash: BlobHash,
+        mime: &str,
+        width: u32,
+        height: u32,
+    ) -> Result<()> {
+        let node = self.read(target)?;
+        if node.kind != Kind::Image {
+            return Err(StoreError::Malformed(
+                "replace_image_bytes target is not an image",
+            ));
+        }
+        Node::check(
+            Kind::Image,
+            &Content::blob(hash.clone(), mime, Some(width), Some(height)),
+        )?;
+        let meta = self.nodes().get_meta(self.tree_id(target)?)?;
+        meta.insert(K_BLOB, hash.0.as_str())?;
+        meta.insert(K_MIME, mime)?;
+        meta.insert(K_WIDTH, i64::from(width))?;
+        meta.insert(K_HEIGHT, i64::from(height))?;
+        self.doc.commit();
+        if let Some(locator) = self.index.get_mut(&target) {
+            locator.blob_hash = Some(hash.0);
+        }
+        Ok(())
+    }
+
     /// Rewrite only the address of migrated blob content. Unlike `set_image`,
     /// this preserves the node kind (notably Canvas), dimensions and MIME type.
     pub fn rewrite_blob_hash(&mut self, target: NodeId, hash: BlobHash) -> Result<()> {

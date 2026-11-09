@@ -59,7 +59,7 @@ fn every_tool_outside_rung_one_is_refused_before_backend_work() {
         .collect();
     assert!(
         outside.len() >= 10,
-        "files, versions, chats, add_image and update_task are all outside: {outside:?}"
+        "files, versions, chats and update_task are all outside: {outside:?}"
     );
     for tool in &outside {
         // Arguments that would pass every later check, so the refusal can
@@ -293,4 +293,50 @@ fn the_claim_tools_need_read_and_edit_and_the_workspace() {
         *backend.0.lock().unwrap(),
         vec![hosted::CLAIM_DOCUMENT, hosted::RELEASE_DOCUMENT]
     );
+}
+
+struct RefuseClaim;
+
+impl crate::DocumentClaims for RefuseClaim {
+    fn enforce(
+        &self,
+        _workspace_id: &str,
+        _document_id: &str,
+        _claim_ids: &[String],
+    ) -> Result<(), ToolError> {
+        Err(ToolError {
+            code: "document_claimed".into(),
+            message: "claimed".into(),
+            details: None,
+        })
+    }
+}
+
+/// Hosted image edits write nothing until the worker installs the claim check,
+/// and a refusing check stops them before the backend.
+#[test]
+fn hosted_image_edits_fail_closed_without_a_claim_gate() {
+    let backend = Arc::new(Recording::default());
+    let executor = WorkspaceToolExecutor::new(backend.clone());
+    let (context, workspace) = hosted(HostCapabilities::rung1());
+    let arguments = json!({
+        "workspace_id": workspace,
+        "document_id": WorkspaceId::new(),
+        "base_revision": "00",
+        "upload_id": "upload",
+        "node_id": WorkspaceId::new(),
+        "parent_id": WorkspaceId::new(),
+    });
+    for tool in ["add_image", "replace_image"] {
+        let refused = executor
+            .invoke(&context, tool, arguments.clone())
+            .unwrap_err();
+        assert_eq!(refused.code, "claims_unavailable", "{tool}");
+    }
+    let claimed = context.with_document_claims(Arc::new(RefuseClaim));
+    let refused = executor
+        .invoke(&claimed, "add_image", arguments)
+        .unwrap_err();
+    assert_eq!(refused.code, "document_claimed");
+    assert!(backend.0.lock().unwrap().is_empty());
 }

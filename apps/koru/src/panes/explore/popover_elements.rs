@@ -321,14 +321,22 @@ impl ExploreView {
                 }
             }
         }
-        col("Workspaces page")
+        // An empty Profile (root-catalog §3.10) says so where its rows would
+        // be; *New workspace* in the foot is the one way out of it.
+        if list.is_empty() {
+            list.push(self.workspaces_empty_line());
+        }
+        let mut page = col("Workspaces page")
             .id(PAGE)
             .semantics(Role::Menu)
             .name(koru_i18n::Key::Workspaces)
             .pad_y(alias::PANEL_PAD)
             .child(self.workspace_menu_header())
-            .child(super::workspace_menu_elements::rule())
-            .child(self.workspace_menu_heading())
+            .child(super::workspace_menu_elements::rule());
+        if let Some(group) = self.unassigned_group() {
+            page = page.child(group);
+        }
+        page.child(self.workspace_menu_heading())
             .child(
                 scroll_y(LIST)
                     .fill()
@@ -354,9 +362,10 @@ impl ExploreView {
         let gear = manage(id);
         let pin = pin(id);
         let (pinned, pending, reason) = self.workspace_pin_state(id);
+        let lang = crate::format::lang();
         let pin_name = koru_i18n::fill(
             koru_i18n::t(
-                crate::format::lang(),
+                lang,
                 if pinned {
                     koru_i18n::Key::UnpinNamedFromRail
                 } else {
@@ -365,6 +374,21 @@ impl ExploreView {
             ),
             &[name],
         );
+        // **The organization reading, where a row already shows state**
+        // (root-catalog Plan 2.2): a word after the name while the Workspace
+        // is pending, paused, blocked or held, and the sentence behind it in
+        // the row's accessible name. Up to date says nothing extra.
+        let organization = self.workspace_organization_status(id);
+        let row_name = match organization {
+            Some(status) => {
+                let word = koru_i18n::t(lang, status.key());
+                match status.hint() {
+                    Some(hint) => format!("{name}, {word}. {}", koru_i18n::t(lang, hint)),
+                    None => format!("{name}, {word}"),
+                }
+            }
+            None => name.to_string(),
+        };
         row(ROW)
             .min_h(metrics::ROW_MIN)
             .pad_x(alias::ROW_PLATE_INSET)
@@ -386,7 +410,7 @@ impl ExploreView {
                             .action(Action::Click)
                             .action(Action::Focus)
                             .semantics(Role::MenuItem)
-                            .name_text(name)
+                            .name_text(row_name)
                             .selected(current)
                             .child(
                                 leaf(
@@ -413,7 +437,15 @@ impl ExploreView {
                                     .fill()
                                     .truncate()
                                     .ink_centred(),
-                            ),
+                            )
+                            .children(organization.map(|status| {
+                                text(koru_i18n::t(lang, status.key()))
+                                    .named(ORGANIZATION)
+                                    .role(roles::ROW)
+                                    .ink(Ink::Hint)
+                                    .truncate()
+                                    .ink_centred()
+                            })),
                     )
                     .child(
                         leaf(GEAR, TrailingAdapter { current, key: gear })
@@ -606,6 +638,7 @@ impl ExploreView {
         };
         let mut workspaces = row_rects(frame).into_iter();
         let mut profiles = frame.named(profiles::ROW).map(|node| node.rect);
+        let unassigned = self.unassigned_rows();
         self.rows_for(kind)
             .into_iter()
             .filter_map(|row| match row {
@@ -615,6 +648,22 @@ impl ExploreView {
                 PopoverRow::WorkspaceNotice => frame
                     .node(super::workspace_menu_elements::NOTICE)
                     .map(|node| (row, node.rect)),
+                PopoverRow::WorkspacesEmpty => frame
+                    .node(super::workspace_menu_elements::EMPTY)
+                    .map(|node| (row, node.rect)),
+                PopoverRow::Unassigned(i)
+                | PopoverRow::UnassignedMove(i)
+                | PopoverRow::UnassignedRestore(i) => {
+                    let id = crate::manage::workspaces::app_workspace(unassigned.get(i)?.id);
+                    let key = match row {
+                        PopoverRow::Unassigned(_) => super::workspace_menu_elements::unassigned(id),
+                        PopoverRow::UnassignedMove(_) => {
+                            super::workspace_menu_elements::unassigned_move(id)
+                        }
+                        _ => super::workspace_menu_elements::unassigned_restore(id),
+                    };
+                    frame.node(key).map(|node| (row, node.rect))
+                }
                 PopoverRow::WorkspacesHeading | PopoverRow::ProfilesHeading => {
                     frame.node(HEADING).map(|n| (row, n.rect))
                 }
@@ -703,6 +752,9 @@ pub(crate) fn row_rects(frame: &Frame) -> Vec<Rect> {
 
 /// The developer names the host reads geometry by.
 pub(crate) const ROW: &str = "Workspace row";
+/// The organization reading's word after a row's name (Plan 2.2), present
+/// only while the Workspace is not up to date.
+pub(crate) const ORGANIZATION: &str = "Workspace organization status";
 pub(crate) const LIST: &str = "Workspace list";
 pub(crate) const NAME: &str = "Workspace name";
 pub(crate) const TILE: &str = "Workspace tile";
@@ -729,6 +781,20 @@ pub(crate) fn row_part_of(view: &ExploreView, key: Key) -> Option<(PopoverRow, P
     let el::Object::Model(id) = key.object else {
         return None;
     };
+    // The Unassigned group's rows and their two actions, keyed by workspace.
+    if let Some(i) = view
+        .unassigned_rows()
+        .iter()
+        .position(|row| row.id.as_uuid().as_u128() == id)
+    {
+        let row = match key.part {
+            super::workspace_menu_elements::UNASSIGNED => PopoverRow::Unassigned(i),
+            super::workspace_menu_elements::UNASSIGNED_MOVE => PopoverRow::UnassignedMove(i),
+            super::workspace_menu_elements::UNASSIGNED_RESTORE => PopoverRow::UnassignedRestore(i),
+            _ => return None,
+        };
+        return Some((row, PopoverPart::Row));
+    }
     let part = match key.part {
         MANAGE => PopoverPart::Gear,
         PIN => PopoverPart::Pin,

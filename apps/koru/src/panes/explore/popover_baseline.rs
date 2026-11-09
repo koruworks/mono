@@ -425,6 +425,22 @@ fn row_key(v: &ExploreView, row: PopoverRow) -> String {
         PopoverRow::Help(action) => format!("help:{}", action.key().part),
         PopoverRow::WorkspaceAction(action) => format!("workspace-action:{}", action.key().part),
         PopoverRow::WorkspaceNotice => "workspace-notice".into(),
+        PopoverRow::WorkspacesEmpty => "workspaces-empty".into(),
+        PopoverRow::Unassigned(i) => {
+            format!("unassigned:{}", key(v.unassigned_rows()[i].id.as_uuid()))
+        }
+        PopoverRow::UnassignedMove(i) => {
+            format!(
+                "unassigned-move:{}",
+                key(v.unassigned_rows()[i].id.as_uuid())
+            )
+        }
+        PopoverRow::UnassignedRestore(i) => {
+            format!(
+                "unassigned-restore:{}",
+                key(v.unassigned_rows()[i].id.as_uuid())
+            )
+        }
         PopoverRow::Workspace(i) => format!("ws:{}", key(v.workspaces[i].id.as_uuid())),
         PopoverRow::Profile(i) => format!("profile:{}", key(v.profiles[i].id.as_uuid())),
         PopoverRow::WorkspacesHeading => "heading".into(),

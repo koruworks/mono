@@ -26,6 +26,7 @@ impl ManageView {
             self.paint_words(canvas, root, words, &laid);
         }
         self.paint_workspaces_section(canvas, root);
+        self.paint_recovery_sections(canvas, root);
         if let Some(section) = &laid.sign_in {
             self.paint_sign_in(canvas, root, section, &laid);
         }
@@ -35,10 +36,22 @@ impl ManageView {
                 "part",
                 root,
                 scene::rect(footer.x, footer.y, footer.w, footer.h),
-                |r| r.property("opens", "the delete dialog", "dialogs::Dialog::Delete"),
+                |r| {
+                    r.property(
+                        "offers",
+                        "the shared deletion, the device-local removal, Delete from Koru where allowed",
+                        "dialogs (QUESTIONS Q4)",
+                    )
+                },
             );
-            if let Some(placed) = laid.placed(Control::Delete) {
-                self.paint_control(canvas, root, placed);
+            for control in [
+                Control::Delete,
+                Control::RemoveFromDevice,
+                Control::DeleteFromKoru,
+            ] {
+                if let Some(placed) = laid.placed(control) {
+                    self.paint_control(canvas, root, placed);
+                }
             }
         }
     }

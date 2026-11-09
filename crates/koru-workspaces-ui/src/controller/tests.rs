@@ -1098,6 +1098,7 @@ fn removal_marks_survive_transport_loss_and_block_previously_drawn_navigation() 
     controller.receive(Answer::CatalogState {
         rows: vec![row("Notes", 'a')],
         removals: [(owner(), mark.clone())].into(),
+        recovery: Default::default(),
     });
     assert_eq!(
         controller.profile_removal_state(owner()),
@@ -1115,6 +1116,7 @@ fn removal_marks_survive_transport_loss_and_block_previously_drawn_navigation() 
     controller.receive(Answer::CatalogState {
         rows: vec![row("Notes", 'a')],
         removals: Default::default(),
+        recovery: Default::default(),
     });
     assert_eq!(controller.profile_removal_state(owner()), Some(None));
     controller.perform(Action::Open(id('a')));
@@ -1191,4 +1193,194 @@ fn only_the_things_that_need_a_window_become_requests() {
     }
     assert!(controller.rename_selected());
     assert_eq!(controller.take_requests(), vec![Request::Rename(id('a'))]);
+}
+
+// --------------------------------------------- recovery (root catalog Plan 1.3)
+
+fn deletion() -> koru_api_client::DeletionId {
+    koru_api_client::DeletionId::parse("44444444-4444-4444-8444-444444444444")
+        .expect("a deletion id")
+}
+
+fn recovery() -> Recovery {
+    Recovery {
+        unassigned: vec![
+            UnassignedRow {
+                id: id('a'),
+                name: "Orphan".into(),
+                icon: None,
+                color: None,
+                former_profile: Some(elsewhere()),
+                reason: koru_api_client::UnassignedReason::ProfileDeleted,
+            },
+            UnassignedRow {
+                id: id('b'),
+                name: "Loose".into(),
+                icon: None,
+                color: None,
+                former_profile: None,
+                reason: koru_api_client::UnassignedReason::ExplicitlyUnassigned,
+            },
+        ],
+        deleted_profiles: vec![DeletedProfileRow {
+            profile: elsewhere(),
+            name: Some("Work".into()),
+            deletion: deletion(),
+            at_ms: 1_000,
+            retention_ms: 30,
+            targets: 3,
+            expired_or_purged: 1,
+        }],
+    }
+}
+
+#[test]
+fn recovery_arrives_with_the_catalog_and_is_empty_until_then() {
+    let mut c = controller();
+    assert!(!c.has_recovery());
+    assert!(c.unassigned().is_empty() && c.deleted_profiles().is_empty());
+    assert!(c.receive(Answer::CatalogState {
+        rows: vec![row("Orphan", 'a'), row("Loose", 'b')],
+        removals: Default::default(),
+        recovery: recovery(),
+    }));
+    assert!(c.has_recovery());
+    assert_eq!(c.unassigned().len(), 2);
+    assert_eq!(c.unassigned()[0].name, "Orphan");
+    assert!(c.unassigned()[0].from_deleted_profile());
+    assert!(
+        !c.unassigned()[1].from_deleted_profile(),
+        "nothing to restore"
+    );
+    assert_eq!(c.deletion_of(elsewhere()), Some(deletion()));
+    assert_eq!(c.deletion_of(owner()), None);
+    assert_eq!(
+        c.unassigned_row(id('b')).map(|row| row.name.as_str()),
+        Some("Loose")
+    );
+    // The same answer again moves nothing.
+    assert!(!c.receive(Answer::CatalogState {
+        rows: vec![row("Orphan", 'a'), row("Loose", 'b')],
+        removals: Default::default(),
+        recovery: recovery(),
+    }));
+    // An empty recovery is a real answer: the group is gone.
+    assert!(c.receive(Answer::Recovery(Recovery::default())));
+    assert!(!c.has_recovery());
+}
+
+#[test]
+fn restore_profile_takes_the_destructive_scope_and_words_its_outcome() {
+    let mut c = controller();
+    c.receive(Answer::Recovery(recovery()));
+    // Unvouched: refused with the same sentence a workspace's restore gets.
+    c.set_authorization(Authorization::Refused);
+    assert_eq!(
+        c.reason_for(
+            &Action::RestoreProfile(elsewhere(), deletion()),
+            &Row::default()
+        ),
+        word(Lang::En, Key::WorkspacesNotPermitted)
+    );
+    c.set_authorization(Authorization::Vouched);
+    assert!(
+        c.reason_for(
+            &Action::RestoreProfile(elsewhere(), deletion()),
+            &Row::default()
+        )
+        .is_none()
+    );
+
+    c.perform(Action::RestoreProfile(elsewhere(), deletion()));
+    assert!(c.has_pending());
+    // Pressed twice while it runs: one command, not two restores.
+    c.perform(Action::RestoreProfile(elsewhere(), deletion()));
+    assert_eq!(c.pending.len(), 1);
+    assert!(c.take_requests().is_empty(), "no window is needed");
+    let command = *c.pending.keys().next().unwrap();
+    assert!(c.receive(Answer::Settled(
+        command,
+        Box::new(Answer::ProfileRestored(Ok(
+            koru_api_client::ProfileRestoreOutcome {
+                restored: vec![id('a'), id('b')],
+                left_in_trash: vec![id('c')],
+                moved_elsewhere: vec![id('d')],
+                purged: vec![],
+            }
+        ))),
+    )));
+    assert!(!c.has_pending());
+    let notice = c.notice().expect("the outcome is said");
+    assert_eq!(
+        notice.text(),
+        "Profile restored with 2 workspaces. 1 stayed in Trash: it was deleted separately."
+    );
+    assert!(!notice.is_retryable());
+    assert!(
+        c.notice_for(elsewhere()).is_some(),
+        "it is about the restored Profile"
+    );
+    assert!(c.notice_for(owner()).is_none());
+
+    // One back, one gone: both counted; a moved one is neither.
+    let one = WorkspacesController::restore_sentence(
+        Lang::En,
+        &koru_api_client::ProfileRestoreOutcome {
+            restored: vec![id('a')],
+            left_in_trash: vec![],
+            moved_elsewhere: vec![id('d')],
+            purged: vec![id('e'), id('f')],
+        },
+    );
+    assert_eq!(
+        one,
+        "Profile restored with 1 workspace. 2 are no longer available."
+    );
+    let none = WorkspacesController::restore_sentence(
+        Lang::En,
+        &koru_api_client::ProfileRestoreOutcome::default(),
+    );
+    assert_eq!(none, "Profile restored. No workspaces came back with it.");
+}
+
+#[test]
+fn a_refused_restore_says_so_and_changes_nothing() {
+    let mut c = controller();
+    c.set_authorization(Authorization::Vouched);
+    c.perform(Action::RestoreProfile(elsewhere(), deletion()));
+    let command = *c.pending.keys().next().unwrap();
+    c.receive(Answer::Settled(
+        command,
+        Box::new(Answer::ProfileRestored(Err(koru_store_core::Error::bare(
+            koru_store_core::Code::StorageFailed,
+        )))),
+    ));
+    assert_eq!(
+        c.notice().map(Notice::text),
+        word(Lang::En, Key::WorkspacesRestoreProfileFailed).as_deref()
+    );
+}
+
+#[test]
+fn an_empty_profile_answer_issues_no_create_request() {
+    let mut c = WorkspacesController::with_links(WorkspaceLinks::inert());
+    let (reply, answer) = std::sync::mpsc::channel();
+    c.ensure_live(owner(), "First".into(), 7, reply);
+    let command = *c.pending.keys().next().unwrap();
+    c.receive(Answer::Settled(
+        command,
+        Box::new(Answer::WorkspaceEnsured {
+            attempt: 7,
+            result: Ok(koru_api_client::EnsuredWorkspace::Empty),
+        }),
+    ));
+    assert!(matches!(
+        answer.try_recv().unwrap(),
+        Ok(koru_api_client::EnsuredWorkspace::Empty)
+    ));
+    assert!(
+        c.take_requests().is_empty(),
+        "Empty is a state, never a Create"
+    );
+    assert!(!c.has_pending());
 }

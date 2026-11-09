@@ -163,6 +163,13 @@ pub mod parts {
     /// The action row both steps share.
     pub const PRIMARY: ControlPart = ControlPart::new("primary");
     pub const BACK: ControlPart = ControlPart::new("back");
+    /// The Profile form's way to `NeedsProfile` recovery, and that screen's
+    /// two lists. A restorable Profile's row is keyed by the Profile itself
+    /// (`ObjectKey::Model`), as a workspace row is elsewhere.
+    pub const RECOVERY: ControlPart = ControlPart::new("recovery");
+    pub const DELETED_PROFILES: ControlPart = ControlPart::new("deleted-profiles");
+    pub const RESTORE: ControlPart = ControlPart::new("restore");
+    pub const UNASSIGNED: ControlPart = ControlPart::new("unassigned");
 
     /// The icon-and-colour chooser, and the Google route's screens.
     pub const APPEARANCE: ControlPart = ControlPart::new("appearance");
@@ -197,6 +204,8 @@ fn part_of(screen: Screen, hit: Hit) -> Option<ControlPart> {
         (Screen::Profile, Hit::Purpose(Purpose::Personal)) => p::PURPOSE_PERSONAL,
         (Screen::Profile, Hit::ProfileAppearance) => p::PROFILE_ICON,
         (Screen::Profile, Hit::ProfileName) => p::PROFILE_NAME,
+        (Screen::Profile, Hit::Recovery) => p::RECOVERY,
+        (Screen::Recovery, Hit::Back) => p::BACK,
         (Screen::Workspace | Screen::Finishing, Hit::Name) => p::WORKSPACE_NAME,
         (Screen::Workspace | Screen::Finishing, Hit::WorkspaceAppearance) => p::WORKSPACE_ICON,
         (Screen::Workspace | Screen::Finishing, Hit::Template(index)) => *p::TEMPLATE.get(index)?,
@@ -244,6 +253,13 @@ fn hit_of(screen: Screen, part: ControlPart) -> Option<Hit> {
             x if x == p::PROFILE_ICON => Hit::ProfileAppearance,
             x if x == p::PROFILE_NAME => Hit::ProfileName,
             x if x == p::PRIMARY => Hit::Primary,
+            x if x == p::BACK => Hit::Back,
+            x if x == p::RECOVERY => Hit::Recovery,
+            _ => return None,
+        },
+        // The rows are model-keyed and routed by `accessibility_action`
+        // itself; only *Back* is a form part here.
+        Screen::Recovery => match part {
             x if x == p::BACK => Hit::Back,
             _ => return None,
         },
@@ -339,11 +355,25 @@ impl OnboardingView {
             Screen::AccountStatus => "account",
             Screen::ExistingProfiles => "existing",
             Screen::RestoringProfile => "restoring",
+            Screen::Recovery => "recovery",
             Screen::Profile => "profile",
             Screen::Workspace => "workspace",
             Screen::Finishing => "finishing",
         });
         rev.str(self.language.tag());
+        // The recovery lists change the Profile form (its link) and the
+        // recovery screen (its rows).
+        rev.u64(self.recovery_deleted().len() as u64);
+        for row in self.recovery_deleted() {
+            rev.str(&row.profile.to_storage());
+            rev.str(&row.name);
+            rev.u64(row.workspaces as u64);
+            rev.u64(row.unavailable as u64);
+        }
+        rev.u64(self.recovery_unassigned().len() as u64);
+        for row in self.recovery_unassigned() {
+            rev.str(&row.name);
+        }
         rev.f32(self.viewport.0);
         rev.f32(self.viewport.1);
         rev.bool(self.custom_caption);
@@ -439,6 +469,7 @@ impl OnboardingView {
             Screen::EmailCode => vec![self.email_code_semantics(&cx)],
             Screen::EmailPassword => vec![self.email_password_semantics(&cx)],
             Screen::Profile => vec![self.profile_semantics(&cx)],
+            Screen::Recovery => vec![self.recovery_semantics(&cx)],
             Screen::Workspace | Screen::Finishing => vec![self.workspace_semantics(&cx)],
             // The Google route, and the wait between the welcome form and
             // whichever screen follows it: named, and left to a later plan.
@@ -475,6 +506,15 @@ impl OnboardingView {
             );
         }
         let hit = self.controls().get(self.focus).copied()?;
+        if let (Screen::Recovery, Hit::RestoreDeleted(index)) = (self.screen, hit) {
+            let row = self.recovery_deleted().get(index)?;
+            return Some(Occurrence::model(
+                window,
+                view,
+                row.profile.as_uuid(),
+                parts::RESTORE,
+            ));
+        }
         let part = part_of(self.screen, hit)?;
         Some(Occurrence::instance(
             window,
@@ -514,14 +554,30 @@ impl OnboardingView {
         if self.profile_appearance.is_some() || self.workspace_appearance.is_some() {
             return false;
         }
-        let ObjectKey::Instance { kind, id } = target.object else {
-            return false;
-        };
-        if kind != FORM || id != self.screen_instance {
-            return false;
-        }
-        let Some(hit) = hit_of(self.screen, target.part) else {
-            return false;
+        let hit = match target.object {
+            // A restorable Profile's row is the Profile itself.
+            ObjectKey::Model(profile)
+                if self.screen == Screen::Recovery && target.part == parts::RESTORE =>
+            {
+                let Some(index) = self
+                    .recovery_deleted()
+                    .iter()
+                    .position(|row| row.profile.as_uuid() == profile)
+                else {
+                    return false;
+                };
+                Hit::RestoreDeleted(index)
+            }
+            ObjectKey::Instance { kind, id } => {
+                if kind != FORM || id != self.screen_instance {
+                    return false;
+                }
+                let Some(hit) = hit_of(self.screen, target.part) else {
+                    return false;
+                };
+                hit
+            }
+            _ => return false,
         };
         if action == Action::SetValue {
             let Some(ActionData::Value(value)) = data else {
@@ -930,6 +986,105 @@ impl OnboardingView {
     }
 
     // ----------------------------------------------------- the Workspace step
+
+    /// **The recovery screen** (root-catalog §6.3): a heading, the
+    /// restorable Profiles as a list whose options are the Profiles
+    /// themselves — each with its *Restore* as a child button — the
+    /// unassigned workspaces as a second list, the one line under them, and
+    /// *Back*.
+    fn recovery_semantics(&mut self, cx: &Context) -> SemanticNode {
+        let layout = self.recovery_layout();
+        let lang = cx.lang;
+        let mut children = vec![label(
+            cx.at(parts::STEP),
+            t(lang, Key::OnboardingRecoveryTitle),
+            layout.title,
+        )];
+        let deleted: Vec<SemanticNode> = self
+            .recovery_deleted()
+            .iter()
+            .zip(&layout.deleted)
+            .enumerate()
+            .map(|(index, (row, (rect, button_rect)))| {
+                let line = self.recovery_deleted_line(row);
+                SemanticNode::new(
+                    Occurrence::model(cx.window, cx.view, row.profile.as_uuid(), parts::FORM),
+                    Role::ListBoxOption,
+                )
+                .with_label(format!("{}, {line}", row.name))
+                .with_bounds(*rect)
+                .with_position(index)
+                .with_children(vec![button(
+                    Occurrence::model(cx.window, cx.view, row.profile.as_uuid(), parts::RESTORE),
+                    t(lang, Key::WorkspacesRestoreDeleted),
+                    *button_rect,
+                )])
+            })
+            .collect();
+        let deleted_bounds = if deleted.is_empty() {
+            layout.deleted_heading
+        } else {
+            band(&deleted)
+        };
+        children.push(
+            SemanticNode::new(cx.at(parts::DELETED_PROFILES), Role::ListBox)
+                .with_label(t(lang, Key::OnboardingRestoreDeleted))
+                .with_bounds(deleted_bounds)
+                .with_size_of_set(deleted.len())
+                .with_children(deleted),
+        );
+        if let Some(none) = layout.none {
+            children.push(label(
+                cx.at(parts::NOTE),
+                t(lang, Key::OnboardingNoDeletedProfiles),
+                none,
+            ));
+        }
+        if let Some(heading) = layout.unassigned_heading {
+            let rows: Vec<SemanticNode> = self
+                .recovery_unassigned()
+                .iter()
+                .zip(&layout.unassigned)
+                .enumerate()
+                .map(|(index, (row, rect))| {
+                    SemanticNode::new(
+                        Occurrence::model(cx.window, cx.view, row.workspace.as_uuid(), parts::FORM),
+                        Role::ListBoxOption,
+                    )
+                    .with_label(row.name.clone())
+                    .with_bounds(*rect)
+                    .with_position(index)
+                })
+                .collect();
+            let bounds = if rows.is_empty() {
+                heading
+            } else {
+                band(&rows)
+            };
+            children.push(
+                SemanticNode::new(cx.at(parts::UNASSIGNED), Role::ListBox)
+                    .with_label(t(lang, Key::OnboardingUnassignedWorkspaces))
+                    .with_bounds(bounds)
+                    .with_size_of_set(rows.len())
+                    .with_children(rows),
+            );
+            if let Some(note) = layout.note {
+                children.push(label(
+                    cx.at(parts::BLURB),
+                    t(lang, Key::OnboardingUnassignedNeedsProfile),
+                    note,
+                ));
+            }
+        }
+        if let (Some(rect), Some(message)) = (layout.error, self.error.as_deref()) {
+            children.push(label(cx.at(parts::STATUS), message, rect).with_live(Live::Polite));
+        }
+        children.push(button(cx.at(parts::BACK), "Back", layout.back));
+        SemanticNode::new(cx.at(parts::FORM), Role::Group)
+            .with_label(t(lang, Key::OnboardingRecoveryTitle))
+            .with_bounds(self.content())
+            .with_children(children)
+    }
 
     fn workspace_semantics(&mut self, cx: &Context) -> SemanticNode {
         let c = self.content();

@@ -2501,6 +2501,14 @@ struct App<H: Host> {
     profile_offline_tx: mpsc::Sender<ProfileOfflineCompletion>,
     profile_offline_rx: mpsc::Receiver<ProfileOfflineCompletion>,
     profile_offline_in_flight: HashSet<koru_core::ProfileId>,
+    /// The open Profile left the Store's catalog without this window asking
+    /// (root-catalog Plan 2.2, §6.3): a bounded worker confirms it is a
+    /// shared deletion before the window settles, and the Profiles it
+    /// confirmed word their notice as a deletion from another device.
+    remote_deletion_tx: mpsc::Sender<profile_removal::RemoteDeletionCheck>,
+    remote_deletion_rx: mpsc::Receiver<profile_removal::RemoteDeletionCheck>,
+    remote_deletion_checks_in_flight: HashSet<koru_core::ProfileId>,
+    remote_profile_deletions: HashSet<koru_core::ProfileId>,
     profile_bindings_in_flight: HashSet<koru_core::ProfileId>,
     connected_profile_creation_tx: mpsc::Sender<OnboardingCreation>,
     connected_profile_creation_rx: mpsc::Receiver<OnboardingCreation>,
@@ -2718,9 +2726,25 @@ struct OnboardingLive {
 enum OnboardingCreation {
     Opened(koru_workspace::fromstore::OpenedFromStore),
     Conflict,
-    Retryable { message: String },
-    RestoreFailed { message: String },
-    CommittedFailure { message: String },
+    Retryable {
+        message: String,
+    },
+    RestoreFailed {
+        message: String,
+    },
+    CommittedFailure {
+        message: String,
+    },
+    /// What `NeedsProfile` can recover (root-catalog §6.3), read off the
+    /// loop when the empty catalog was answered. Both empty offers nothing.
+    Recovery {
+        deleted: Vec<crate::onboarding::RecoverableProfile>,
+        unassigned: Vec<crate::onboarding::UnassignedWorkspaceRow>,
+    },
+    /// A batch restore from the recovery screen refused or did not answer.
+    RecoveryFailed {
+        message: String,
+    },
 }
 
 struct EmbeddedProfileRestore {
@@ -3024,6 +3048,21 @@ impl<H: Host> ApplicationHandler<Wake> for ContentState<H> {
             OnboardingCreation::RestoreFailed { message } => {
                 if let Self::Onboarding(app) = self {
                     app.view.restore_failed(message);
+                    app.request_redraw();
+                }
+            }
+            OnboardingCreation::Recovery {
+                deleted,
+                unassigned,
+            } => {
+                if let Self::Onboarding(app) = self {
+                    app.view.show_recovery(deleted, unassigned);
+                    app.request_redraw();
+                }
+            }
+            OnboardingCreation::RecoveryFailed { message } => {
+                if let Self::Onboarding(app) = self {
+                    app.view.recovery_failed(message);
                     app.request_redraw();
                 }
             }
@@ -3344,7 +3383,14 @@ fn create_onboarding_profile(
 fn profile_catalog_event(name: &str) -> bool {
     matches!(
         name,
-        "profile.created" | "profile.renamed" | "profile.appearance_changed"
+        "profile.created"
+            | "profile.renamed"
+            | "profile.appearance_changed"
+            // A shared deletion or its restore, whether this device confirmed
+            // it or another device's root units carried it here (root-catalog
+            // Plan 2.2): the Profile left or rejoined the list.
+            | "profile.deleted"
+            | "profile.restored"
     )
 }
 
@@ -3370,6 +3416,106 @@ fn bucket_label_key(bucket: koru_core::tasks::Bucket) -> koru_i18n::Key {
         koru_core::tasks::Bucket::Upcoming => koru_i18n::Key::A11yTaskBucketUpcoming,
         koru_core::tasks::Bucket::Later => koru_i18n::Key::A11yTaskBucketLater,
         koru_core::tasks::Bucket::Completed => koru_i18n::Key::A11yTaskBucketCompleted,
+    }
+}
+
+/// What an empty Profile catalog can still recover (root-catalog §6.3): the
+/// Profile deletions this device holds a batch for, and the live workspaces
+/// no Profile lists. A Store that will not answer offers nothing — the
+/// create form stands on its own — rather than a failure in place of a form.
+fn onboarding_recovery(root: Option<&Path>) -> OnboardingCreation {
+    let Ok(client) = profile_removal::cascade_client(root) else {
+        return OnboardingCreation::Recovery {
+            deleted: Vec::new(),
+            unassigned: Vec::new(),
+        };
+    };
+    let deleted = client
+        .store()
+        .profile_deletions()
+        .map(|rows| {
+            rows.into_iter()
+                .map(|row| crate::onboarding::RecoverableProfile {
+                    profile: koru_core::ProfileId::from_uuid(row.deletion.profile.as_uuid()),
+                    deletion: row.deletion.deletion,
+                    name: row.name.unwrap_or_else(|| "Profile".to_owned()),
+                    at_ms: row.deletion.at_ms,
+                    workspaces: row.deletion.targets.len(),
+                    unavailable: row.deletion.expired_or_purged.len(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let unassigned = client
+        .store()
+        .unassigned_workspaces()
+        .map(|rows| {
+            rows.into_iter()
+                .map(|row| crate::onboarding::UnassignedWorkspaceRow {
+                    workspace: WorkspaceId::from_uuid(row.workspace.id.as_uuid()),
+                    name: row.workspace.name,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    OnboardingCreation::Recovery {
+        deleted,
+        unassigned,
+    }
+}
+
+/// The batch restore from the recovery screen, then the strict open of the
+/// Profile that came back. The restore takes this process's
+/// `destroy_workspaces`, which the Agent vouches for as it does for the
+/// removal cascade; a Profile whose restore is acknowledged but which will
+/// not open is reported, never re-restored.
+fn restore_deleted_onboarding_profile(
+    root: Option<&Path>,
+    profile: koru_core::ProfileId,
+    deletion: koru_store_core::ids::DeletionId,
+) -> OnboardingCreation {
+    let client = match profile_removal::cascade_client(root) {
+        Ok(client) => client,
+        Err(_) => {
+            return OnboardingCreation::RecoveryFailed {
+                message: koru_i18n::t(
+                    koru_i18n::current(),
+                    koru_i18n::Key::WorkspacesRestoreProfileFailed,
+                )
+                .to_owned(),
+            };
+        }
+    };
+    let store_profile = koru_store_core::ids::ProfileId::from_uuid(profile.as_uuid());
+    if let Err(error) = client.store().restore_profile(store_profile, deletion) {
+        return OnboardingCreation::RecoveryFailed {
+            message: format!(
+                "{} ({error})",
+                koru_i18n::t(
+                    koru_i18n::current(),
+                    koru_i18n::Key::WorkspacesRestoreProfileFailed
+                )
+            ),
+        };
+    }
+    match koru_workspace::fromstore::open_from_store_profile_preferring_empty(
+        koru_workspace::fromstore::segment(),
+        root,
+        profile,
+        None,
+    ) {
+        Ok(koru_workspace::fromstore::StoreLaunch::Open(opened)) => {
+            OnboardingCreation::Opened(opened)
+        }
+        Ok(koru_workspace::fromstore::StoreLaunch::NeedsProfile) => {
+            OnboardingCreation::RecoveryFailed {
+                message: "Koru restored the Profile but could not open it yet. Try again or restart Koru."
+                    .into(),
+            }
+        }
+        Err(error) => OnboardingCreation::RecoveryFailed {
+            message: format!("Koru restored the Profile but could not open it: {error}"),
+        },
     }
 }
 
@@ -3729,6 +3875,22 @@ impl<H: Host> OnboardingApp<H> {
                         .name("koru-onboarding-restore".into())
                         .spawn(move || {
                             let result = restore_onboarding_profile(root.as_deref(), &profile_id);
+                            let _ = tx.send(result);
+                            let _ = proxy.send_event(Wake::Onboarding);
+                        });
+                }
+                crate::onboarding::Action::RestoreDeletedProfile { profile, deletion } => {
+                    let tx = self.creation_tx.clone();
+                    let proxy = self.proxy.clone();
+                    let root = self.gateway_root.clone();
+                    let _ = std::thread::Builder::new()
+                        .name("koru-onboarding-restore-deleted".into())
+                        .spawn(move || {
+                            let result = restore_deleted_onboarding_profile(
+                                root.as_deref(),
+                                profile,
+                                deletion,
+                            );
                             let _ = tx.send(result);
                             let _ = proxy.send_event(Wake::Onboarding);
                         });
@@ -5132,6 +5294,22 @@ impl<H: Host> App<H> {
                     // not the later Profile acknowledgement.
                     ProfileRuntime::start_events(gateway_root.clone(), proxy.clone());
                     let (creation_tx, creation_rx) = mpsc::channel();
+                    // What this empty catalog can still recover (root-catalog
+                    // §6.3): the restorable Trash and the unassigned
+                    // workspaces, read off the loop and offered from the form
+                    // once they arrive. Nothing is created by asking.
+                    {
+                        let tx = creation_tx.clone();
+                        let proxy = proxy.clone();
+                        let root = gateway_root.clone();
+                        let _ = std::thread::Builder::new()
+                            .name("koru-onboarding-recovery".into())
+                            .spawn(move || {
+                                let result = onboarding_recovery(root.as_deref());
+                                let _ = tx.send(result);
+                                let _ = proxy.send_event(Wake::Onboarding);
+                            });
+                    }
                     // Seeded before the first frame: a build with no Koru
                     // Cloud draws its welcome without the sign-in choices from
                     // the start, rather than for one frame with them.
@@ -5439,6 +5617,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
         let (profile_cascade_tx, profile_cascade_rx) = mpsc::channel();
         let (profile_removal_tx, profile_removal_rx) = mpsc::channel();
         let (profile_offline_tx, profile_offline_rx) = mpsc::channel();
+        let (remote_deletion_tx, remote_deletion_rx) = mpsc::channel();
         let (connected_profile_creation_tx, connected_profile_creation_rx) = mpsc::channel();
         let (profile_publication_tx, profile_publication_rx) = mpsc::channel();
         let (embedded_profile_restore_tx, embedded_profile_restore_rx) = mpsc::channel();
@@ -5586,6 +5765,10 @@ Nothing was written. The store starts on demand, so this usually means it could 
             profile_offline_tx,
             profile_offline_rx,
             profile_offline_in_flight: HashSet::new(),
+            remote_deletion_tx,
+            remote_deletion_rx,
+            remote_deletion_checks_in_flight: HashSet::new(),
+            remote_profile_deletions: HashSet::new(),
             profile_bindings_in_flight: HashSet::new(),
             connected_profile_creation_tx,
             connected_profile_creation_rx,
@@ -7841,7 +8024,35 @@ Nothing was written. The store starts on demand, so this usually means it could 
             // service_profile_waits closes retired content after their answers
             // have drained; a stale catalog alone does not choose a replacement.
             self.sync_pane_context();
+            self.notice_open_profile_gone();
         }
+    }
+
+    /// **The open Profile is no longer in the Store's catalog and nothing in
+    /// this window removed it** (root-catalog Plan 2.2, TECHNICAL.final
+    /// §6.3): another device's root units carried a deletion here, or a
+    /// device-local removal ran elsewhere. Neither is acted on from a
+    /// catalog listing alone — a bounded worker confirms a shared deletion
+    /// from the Store's restorable deletions first, off this thread, and the
+    /// settled window then takes the same path a local removal does: its
+    /// editors are already fenced by the Store, its settings are cleaned up,
+    /// and it moves to another Profile or relaunches into `NeedsProfile`,
+    /// where restore, create and Unassigned are offered.
+    fn notice_open_profile_gone(&mut self) {
+        let open = self.runtime.profile_id();
+        if self
+            .runtime
+            .profile_catalog
+            .iter()
+            .any(|row| row.id == open)
+            || self.profile_removals_in_flight.contains(&open)
+            || self.profile_cascades_in_flight.contains(&open)
+            || self.profile_removal_attempts.contains_key(&open)
+            || self.hosted_profile_removals.contains_key(&open)
+        {
+            return;
+        }
+        self.start_remote_deletion_check(open);
     }
 
     /// Record the one-time reminder startup answer through the one settings
@@ -9093,9 +9304,11 @@ Nothing was written. The store starts on demand, so this usually means it could 
             PaneRequest::RemoveLocalProfile {
                 profile,
                 delete_workspaces: _,
-            } => {
-                self.start_profile_cascade(profile);
-            }
+                preview,
+            } => match preview {
+                Some(preview) => self.start_profile_deletion(profile, preview),
+                None => self.start_profile_cascade(profile),
+            },
             PaneRequest::FinishHostedProfileDeletion {
                 profile,
                 discovered_after_offline,
@@ -13274,6 +13487,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 }
                 OnboardingCreation::Retryable { message }
                 | OnboardingCreation::RestoreFailed { message }
+                | OnboardingCreation::RecoveryFailed { message }
                 | OnboardingCreation::CommittedFailure { message } => {
                     if let Some(pane) = self.panes.get_mut(&source) {
                         let _ = pane.view.local_profile_restore_failed(&message);
@@ -13286,6 +13500,9 @@ Nothing was written. The store starts on demand, so this usually means it could 
                         pane.window.request_redraw();
                     }
                 }
+                // The first-run window's recovery lists; an embedded restore
+                // never produces them.
+                OnboardingCreation::Recovery { .. } => {}
             }
         }
     }
@@ -13374,6 +13591,10 @@ Nothing was written. The store starts on demand, so this usually means it could 
                     startup::fatal(&message);
                     event_loop.exit();
                     return;
+                }
+                // The first-run window's recovery outcomes; a connected
+                // creation never produces them.
+                OnboardingCreation::Recovery { .. } | OnboardingCreation::RecoveryFailed { .. } => {
                 }
             }
         }
@@ -19612,6 +19833,10 @@ mod tests {
         assert!(profile_catalog_event("profile.created"));
         assert!(profile_catalog_event("profile.renamed"));
         assert!(profile_catalog_event("profile.appearance_changed"));
+        // A shared deletion or restore, local or from another device
+        // (root-catalog Plan 2.2), changes what the catalog lists.
+        assert!(profile_catalog_event("profile.deleted"));
+        assert!(profile_catalog_event("profile.restored"));
         assert!(!profile_catalog_event("profile.dictionary.changed"));
         assert!(!profile_catalog_event("workspace.catalog.renamed"));
         assert!(!profile_catalog_event("profile"));

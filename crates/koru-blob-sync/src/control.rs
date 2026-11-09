@@ -86,6 +86,7 @@ pub trait BlobControlPlane: Send + Sync {
 /// The real one.
 pub struct HttpControlPlane {
     client: reqwest::Client,
+    internal_token: Option<zeroize::Zeroizing<String>>,
 }
 
 impl HttpControlPlane {
@@ -99,11 +100,25 @@ impl HttpControlPlane {
             .timeout(CONTROL_TIMEOUT)
             .build()
             .map_err(|_| TransferError::Unreachable)?;
-        Ok(Self { client })
+        Ok(Self {
+            client,
+            internal_token: None,
+        })
     }
 
     pub fn with_client(client: reqwest::Client) -> Self {
-        Self { client }
+        Self {
+            client,
+            internal_token: None,
+        }
+    }
+
+    /// The MCP worker calls the same control routes through the API's private
+    /// listener. Its service token is required in addition to the user's MCP
+    /// bearer and is never sent to the object worker.
+    pub fn with_internal_token(mut self, token: zeroize::Zeroizing<String>) -> Self {
+        self.internal_token = Some(token);
+        self
     }
 
     fn url(access: &CloudAccessFacts, path: &str) -> Result<url::Url, TransferError> {
@@ -118,9 +133,16 @@ impl HttpControlPlane {
         request: reqwest::RequestBuilder,
         bearer: &str,
     ) -> Result<T, TransferError> {
-        let response = request
+        let mut request = request
             .header(reqwest::header::AUTHORIZATION, format!("Bearer {bearer}"))
-            .header(reqwest::header::ACCEPT, "application/json")
+            .header(reqwest::header::ACCEPT, "application/json");
+        if let Some(token) = &self.internal_token {
+            request = request.header(
+                koru_account_wire::app_connections::INTERNAL_TOKEN_HEADER,
+                token.as_str(),
+            );
+        }
+        let response = request
             .send()
             .await
             .map_err(|_| TransferError::Unreachable)?;

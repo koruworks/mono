@@ -19,7 +19,9 @@ mod browser_signin;
 mod creation_tests;
 mod email;
 mod profile_selection;
+mod recovery;
 use profile_selection::SelectionDraft;
+pub use recovery::{RecoverableProfile, UnassignedWorkspaceRow};
 
 use koru_agent_wire::{AccountProfileChoice, AccountProfileRow, AccountState};
 use koru_appearance_ui::{EmojiColorPanel, Outcome as AppearanceOutcome};
@@ -98,6 +100,13 @@ pub enum Action {
     RestoreLocalProfile {
         profile_id: String,
     },
+    /// `NeedsProfile` recovery (root-catalog §6.3): restore a shared Profile
+    /// deletion by its batch. The host performs it off this thread and opens
+    /// the Profile that comes back.
+    RestoreDeletedProfile {
+        profile: koru_core::ProfileId,
+        deletion: koru_store_core::ids::DeletionId,
+    },
     CreateLocalProfile {
         id: koru_core::ProfileId,
         owner_display_name: String,
@@ -125,6 +134,9 @@ enum Screen {
     AccountStatus,
     ExistingProfiles,
     RestoringProfile,
+    /// The restorable Trash and the unassigned workspaces, from the Profile
+    /// form (root-catalog §6.3). See `recovery`.
+    Recovery,
     Profile,
     Workspace,
     Finishing,
@@ -156,6 +168,7 @@ impl Screen {
             Screen::AccountStatus => "Account status",
             Screen::ExistingProfiles => "Profile chooser",
             Screen::RestoringProfile => "Restoring Profile",
+            Screen::Recovery => "Recovery",
             Screen::Profile => "Profile form",
             Screen::Workspace | Screen::Finishing => "Workspace form",
         }
@@ -191,6 +204,10 @@ enum Hit {
     RetryExisting(usize),
     RefreshProfiles,
     CancelSelection,
+    /// The Profile form's way to the recovery screen.
+    Recovery,
+    /// A recovery row's *Restore*, by its position in the deleted list.
+    RestoreDeleted(usize),
     CreateNew,
     ContinueOffline,
     ResumeAccount,
@@ -257,6 +274,9 @@ pub struct OnboardingView {
     account_profile_sources: Vec<ProfileSource>,
     account_surface: Option<crate::account_ui::Surface>,
     selected_existing: Option<usize>,
+    /// What `NeedsProfile` can recover, pushed in by the host (`recovery`).
+    recovery_deleted: Vec<RecoverableProfile>,
+    recovery_unassigned: Vec<UnassignedWorkspaceRow>,
     selection: SelectionDraft,
     existing_profile_scroll: f32,
     existing_profile_scroll_drag: Option<f32>,
@@ -359,6 +379,8 @@ impl Default for OnboardingView {
             account_profile_sources: Vec::new(),
             account_surface: None,
             selected_existing: None,
+            recovery_deleted: Vec::new(),
+            recovery_unassigned: Vec::new(),
             selection: SelectionDraft::default(),
             existing_profile_scroll: 0.0,
             existing_profile_scroll_drag: None,
@@ -1398,6 +1420,10 @@ impl OnboardingView {
                 }
                 true
             }
+            Key::Named(NamedKey::Escape) if self.screen == Screen::Recovery => {
+                self.show_profile();
+                true
+            }
             Key::Named(NamedKey::Escape) if self.screen == Screen::ExistingProfiles => {
                 if self.selection_has_unfinished() {
                     self.activate_selection(Hit::CancelSelection);
@@ -1480,6 +1506,7 @@ impl OnboardingView {
                 Screen::AccountStatus => self.draw_account_status(canvas, root),
                 Screen::ExistingProfiles => self.draw_existing_profiles(canvas, root),
                 Screen::RestoringProfile => self.draw_restoring_profile(canvas, root),
+                Screen::Recovery => self.draw_recovery(canvas, root),
                 Screen::Profile => self.draw_profile(canvas, root),
                 Screen::Workspace | Screen::Finishing => self.draw_workspace(canvas, root),
             }
@@ -1775,6 +1802,7 @@ impl OnboardingView {
                 .unwrap_or_default(),
             Screen::ExistingProfiles => self.selection_controls(),
             Screen::RestoringProfile => Vec::new(),
+            Screen::Recovery => self.recovery_controls(),
             Screen::Profile => {
                 let mut controls = vec![Hit::Name];
                 if self.can_reopen_account_creation() {
@@ -1791,6 +1819,9 @@ impl OnboardingView {
                 }
                 if Self::profile_has_back() {
                     controls.push(Hit::Back);
+                }
+                if self.recovery_offered() {
+                    controls.push(Hit::Recovery);
                 }
                 controls
             }
@@ -1870,6 +1901,10 @@ impl OnboardingView {
             ) => self.activate_selection(hit),
             (Screen::ExistingProfiles, Hit::CreateNew) => self.show_connected_profile(),
             (Screen::ExistingProfiles, Hit::ContinueOffline) => self.show_profile(),
+            (Screen::Profile, Hit::Recovery) if self.recovery_offered() => self.open_recovery(),
+            (Screen::Recovery, hit @ (Hit::Back | Hit::RestoreDeleted(_))) => {
+                self.activate_recovery(hit)
+            }
             (Screen::Profile, Hit::Name) => self.focus = 0,
             (Screen::Profile, Hit::ProfileName) => {
                 if let Some(index) = self
@@ -2033,9 +2068,13 @@ impl OnboardingView {
             Screen::AccountStatus => self.account_action_hit(x, y),
             Screen::ExistingProfiles => self.existing_profiles_hit(x, y),
             Screen::RestoringProfile => None,
+            Screen::Recovery => self.recovery_hit(x, y),
             Screen::Profile => {
                 if self.can_reopen_account_creation() && self.resume_account_rect().contains(x, y) {
                     return Some(Hit::ResumeAccount);
+                }
+                if self.recovery_offered() && self.recovery_link_rect().contains(x, y) {
+                    return Some(Hit::Recovery);
                 }
                 if self.owner_name_rect().contains(x, y) {
                     return Some(Hit::Name);
@@ -2954,6 +2993,25 @@ impl OnboardingView {
                 back,
                 self.hover == Some(Hit::Back),
                 back_focused,
+            );
+        }
+        // `NeedsProfile` recovery (root-catalog §6.3): only while the host
+        // found a restorable Profile or an unassigned workspace.
+        if self.recovery_offered() {
+            let rect = self.recovery_link_rect();
+            let focused = controls.get(self.focus) == Some(&Hit::Recovery);
+            ActionButton::new(
+                koru_i18n::t(self.language, koru_i18n::Key::OnboardingRecoveryLink),
+                ActionStyle::Ghost,
+                None,
+            )
+            .draw_focused(
+                canvas,
+                root,
+                &mut self.engine,
+                rect,
+                self.hover == Some(Hit::Recovery),
+                focused,
             );
         }
     }
@@ -4461,6 +4519,149 @@ mod tests {
         view.activate(Hit::Secondary);
         assert_eq!(view.take_action(), Some(Action::StartGoogle));
         assert!(!view.browser_apple);
+    }
+
+    fn recoverable() -> (RecoverableProfile, UnassignedWorkspaceRow) {
+        (
+            RecoverableProfile {
+                profile: koru_core::ProfileId::new(),
+                deletion: koru_store_core::ids::DeletionId::new(),
+                name: "Work".into(),
+                at_ms: 1_000,
+                workspaces: 2,
+                unavailable: 1,
+            },
+            UnassignedWorkspaceRow {
+                workspace: koru_core::WorkspaceId::new(),
+                name: "Orphan".into(),
+            },
+        )
+    }
+
+    /// `NeedsProfile` recovery (root-catalog §6.3): offered from the Profile
+    /// form only while the host found something, restores by the exact
+    /// batch, and never from an embedded form.
+    #[test]
+    fn recovery_is_offered_only_with_something_to_recover_and_restores_by_batch() {
+        let mut view = OnboardingView::default();
+        view.show_profile();
+        assert!(!view.controls().contains(&Hit::Recovery));
+        let (deleted, unassigned) = recoverable();
+        view.show_recovery(vec![deleted.clone()], vec![unassigned]);
+        assert!(view.controls().contains(&Hit::Recovery));
+        let link = view.recovery_link_rect();
+        assert_eq!(
+            view.hit(link.x + link.w * 0.5, link.y + link.h * 0.5),
+            Some(Hit::Recovery)
+        );
+        view.activate(Hit::Recovery);
+        assert_eq!(view.screen, Screen::Recovery);
+        assert_eq!(view.controls(), vec![Hit::RestoreDeleted(0), Hit::Back]);
+        let layout = view.recovery_layout();
+        let (_, button) = layout.deleted[0];
+        assert_eq!(
+            view.hit(button.x + button.w * 0.5, button.y + button.h * 0.5),
+            Some(Hit::RestoreDeleted(0))
+        );
+        assert_eq!(layout.unassigned.len(), 1);
+        assert!(layout.note.is_some(), "move needs a Profile first");
+        assert!(
+            view.recovery_deleted_line(&deleted)
+                .contains("1 no longer available"),
+            "{}",
+            view.recovery_deleted_line(&deleted)
+        );
+        view.activate(Hit::RestoreDeleted(0));
+        assert_eq!(
+            view.take_action(),
+            Some(Action::RestoreDeletedProfile {
+                profile: deleted.profile,
+                deletion: deleted.deletion,
+            })
+        );
+        assert_eq!(view.screen, Screen::RestoringProfile);
+        assert!(view.controls().is_empty(), "nothing to press while it runs");
+        view.recovery_failed("refused");
+        assert_eq!(view.screen, Screen::Recovery);
+        assert_eq!(view.error.as_deref(), Some("refused"));
+        view.key(&Key::Named(NamedKey::Escape), None, ModifiersState::empty());
+        assert_eq!(view.screen, Screen::Profile);
+        // Nothing left to recover: the offer is withdrawn.
+        view.show_recovery(Vec::new(), Vec::new());
+        assert!(!view.controls().contains(&Hit::Recovery));
+
+        let mut embedded = OnboardingView::default();
+        embedded.set_embedded(true);
+        embedded.show_profile();
+        let (deleted, unassigned) = recoverable();
+        embedded.show_recovery(vec![deleted], vec![unassigned]);
+        assert!(
+            !embedded.controls().contains(&Hit::Recovery),
+            "Manage has its own recovery sections"
+        );
+    }
+
+    /// The recovery screen publishes its lists, and a client's click on a
+    /// row's *Restore* — keyed by the Profile itself — is the same batch
+    /// restore the keyboard raises.
+    #[test]
+    fn the_recovery_screen_publishes_its_rows_and_routes_a_click_to_the_restore() {
+        use crate::accessibility::{ControlPart, Occurrence, ViewSlot, WindowSlot};
+        let mut view = OnboardingView::default();
+        view.show_profile();
+        let (deleted, unassigned) = recoverable();
+        view.show_recovery(vec![deleted.clone()], vec![unassigned.clone()]);
+        view.activate(Hit::Recovery);
+        let (window, slot) = (WindowSlot::from_raw(1), ViewSlot::from_raw(1));
+        let nodes = view.accessibility_semantics(window, slot);
+        assert_eq!(nodes.len(), 1);
+        let lists: Vec<&crate::accessibility::SemanticNode> = nodes[0]
+            .children
+            .iter()
+            .filter(|child| child.role == accesskit::Role::ListBox)
+            .collect();
+        assert_eq!(
+            lists.len(),
+            2,
+            "deleted Profiles, then unassigned workspaces"
+        );
+        assert_eq!(lists[0].label.as_deref(), Some("Restore a deleted profile"));
+        assert_eq!(lists[0].children.len(), 1);
+        assert!(
+            lists[0].children[0]
+                .label
+                .as_deref()
+                .is_some_and(|label| label.starts_with("Work, "))
+        );
+        let restore = &lists[0].children[0].children[0];
+        assert_eq!(restore.role, accesskit::Role::Button);
+        assert_eq!(
+            restore.occurrence,
+            Occurrence::model(
+                window,
+                slot,
+                deleted.profile.as_uuid(),
+                ControlPart::new("restore")
+            )
+        );
+        assert_eq!(lists[1].label.as_deref(), Some("Unassigned workspaces"));
+        assert_eq!(lists[1].children[0].label.as_deref(), Some("Orphan"));
+        assert_eq!(
+            view.accessibility_focus(window, slot),
+            Some(restore.occurrence.clone())
+        );
+        assert!(view.accessibility_action(
+            restore.occurrence.clone(),
+            accesskit::Action::Click,
+            None
+        ));
+        assert_eq!(
+            view.take_action(),
+            Some(Action::RestoreDeletedProfile {
+                profile: deleted.profile,
+                deletion: deleted.deletion,
+            })
+        );
     }
 
     #[test]

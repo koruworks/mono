@@ -16,6 +16,7 @@ pub mod host;
 pub mod log;
 mod projection;
 mod replication;
+mod root_inspection;
 mod search;
 mod store_backup;
 mod sync_control;

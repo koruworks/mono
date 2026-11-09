@@ -35,9 +35,13 @@ pub enum Effect {
         new_identity_id: String,
     },
     /// Remove a Profile from this device, with its Workspaces when asked.
+    /// With `preview` — the deletion preview the person confirmed over —
+    /// the shared deletion batch (root-catalog §6.1); without it, the
+    /// device-local removal.
     RemoveLocalProfile {
         profile: ProfileId,
         delete_workspaces: bool,
+        preview: Option<koru_api_client::ProfileDeletionPreview>,
     },
     /// The hosted Profile is deleted; finish removing it here.
     FinishHostedDeletion {
@@ -86,10 +90,11 @@ impl ProfilesController {
                 new_identity_id,
             });
         }
-        if let Some((profile, delete_workspaces)) = self.take_remove_request() {
+        if let Some((profile, delete_workspaces, preview)) = self.take_remove_request() {
             return Some(Effect::RemoveLocalProfile {
                 profile,
                 delete_workspaces,
+                preview,
             });
         }
         if let Some((profile, discovered_after_offline)) = self.take_hosted_delete_request() {
@@ -183,9 +188,15 @@ impl ProfilesController {
         }
     }
 
-    pub(crate) fn take_remove_request(&mut self) -> Option<(ProfileId, bool)> {
+    pub(crate) fn take_remove_request(
+        &mut self,
+    ) -> Option<(
+        ProfileId,
+        bool,
+        Option<koru_api_client::ProfileDeletionPreview>,
+    )> {
         match self.take_local_effect(|effect| matches!(effect, LocalEffect::Remove(..)))? {
-            LocalEffect::Remove(id, cascade) => Some((id, cascade)),
+            LocalEffect::Remove(id, cascade, preview) => Some((id, cascade, preview)),
             _ => unreachable!(),
         }
     }

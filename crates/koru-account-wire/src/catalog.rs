@@ -110,6 +110,15 @@ pub enum RouteId {
     ListAppConnections,
     UpdateAppConnection,
     RevokeAppConnection,
+    // The v2 Cloud catalog (root-catalog Plan 3.1). Appended: the table is
+    // indexed by position.
+    BindAccountCatalog,
+    ReadCloudRootCatalog,
+    PullCloudRootUnit,
+    PushCloudRootUnit,
+    IssueCloudSyncTokenV2,
+    DescribeCloudWorkspaceV2,
+    DiscoverCloudCatalog,
 }
 
 impl RouteId {
@@ -175,6 +184,13 @@ impl RouteId {
             Self::ListAppConnections => "account.app_connections_list",
             Self::UpdateAppConnection => "account.app_connection_update",
             Self::RevokeAppConnection => "account.app_connection_revoke",
+            Self::BindAccountCatalog => "account.cloud_catalog_binding_update",
+            Self::ReadCloudRootCatalog => "account.cloud_catalog_read",
+            Self::PullCloudRootUnit => "account.cloud_catalog_unit_pull",
+            Self::PushCloudRootUnit => "account.cloud_catalog_unit_push",
+            Self::IssueCloudSyncTokenV2 => "account.cloud_sync_token_issue_v2",
+            Self::DescribeCloudWorkspaceV2 => "account.cloud_workspace_descriptor_read_v2",
+            Self::DiscoverCloudCatalog => "account.cloud_discovery_read",
         }
     }
 }
@@ -940,7 +956,93 @@ pub const ROUTES: &[Route] = &[
         None,
         "Revoke a connection"
     ),
+    // The v2 Cloud catalog (root-catalog TECHNICAL.final §4.1, §7.3; the
+    // contract is docs/cloud-platform/contracts/root-catalog-cloud-v2.md).
+    // Every route is native-device-authenticated and bounded by the shared
+    // body caps; a unit larger than a request body goes over the Cloud
+    // carrier under a user-catalog or user-personal permit instead.
+    route!(
+        BindAccountCatalog,
+        Put,
+        "/v1/account/cloud/catalog/binding",
+        NativeDeviceSession,
+        cloud_catalog_binding_request,
+        cloud_catalog_binding,
+        Body,
+        "Get or create the account's one root-catalog binding; idempotent, never a merge"
+    ),
+    route!(
+        ReadCloudRootCatalog,
+        Get,
+        "/v1/account/cloud/catalog",
+        NativeDeviceSession,
+        empty_request,
+        cloud_root_catalog,
+        None,
+        "List the account's admitted catalog units with their frontiers and projection watermarks"
+    ),
+    route!(
+        PullCloudRootUnit,
+        Post,
+        "/v1/account/cloud/catalog/units/pull",
+        NativeDeviceSession,
+        cloud_root_unit_request,
+        cloud_root_unit_updates,
+        Body,
+        "Read one catalog or personal unit from the device's accepted frontier, through the export boundary"
+    ),
+    route!(
+        PushCloudRootUnit,
+        Post,
+        "/v1/account/cloud/catalog/units/push",
+        NativeDeviceSession,
+        cloud_root_unit_updates,
+        cloud_root_join_receipt,
+        Body,
+        "Admit one catalog or personal unit's derived bytes and answer the join receipt"
+    ),
+    route!(
+        IssueCloudSyncTokenV2,
+        Post,
+        "/v1/account/cloud/sync-token",
+        NativeDeviceSession,
+        sync_token_request_v2,
+        sync_token_response_v2,
+        Body,
+        "Obtain a short-lived credential for one Cloud scope: user catalog, one Workspace, one personal unit or one Profile's units"
+    ),
+    route!(
+        DescribeCloudWorkspaceV2,
+        Get,
+        "/v1/account/cloud/workspaces/{workspace_id}/descriptor",
+        NativeDeviceSession,
+        empty_request,
+        cloud_workspace_descriptor_v2,
+        None,
+        "Read the identity-only bootstrap descriptor of one authorized Workspace with its current placement; no membership Profile is named"
+    ),
+    route!(
+        DiscoverCloudCatalog,
+        Get,
+        "/v1/account/cloud/discovery",
+        NativeDeviceSession,
+        empty_request,
+        cloud_discovery_receipt,
+        None,
+        "Read one discovery receipt: scope, authorization generation, projection coverage and results grouped by current placement"
+    ),
 ];
+
+schema_fn!(cloud_catalog_binding_request, CloudCatalogBindingRequestV2);
+schema_fn!(cloud_catalog_binding, CloudCatalogBindingV2);
+schema_fn!(cloud_root_catalog, CloudRootCatalogV2);
+schema_fn!(cloud_root_unit_request, CloudRootUnitRequestV2);
+schema_fn!(cloud_root_unit_updates, CloudRootUnitUpdatesV2);
+schema_fn!(cloud_root_join_receipt, CloudRootJoinReceiptV2);
+schema_fn!(sync_token_request_v2, SyncTokenRequestV2);
+schema_fn!(sync_token_response_v2, SyncTokenResponseV2);
+schema_fn!(cloud_workspace_descriptor_v2, CloudWorkspaceDescriptorV2);
+schema_fn!(cloud_discovery_receipt, CloudDiscoveryReceiptV2);
 
 schema_fn!(
     oauth_consent_query,

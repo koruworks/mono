@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! A Profile's page: its header, what needs the person, its Workspaces
-//! (`workspaces`), *Sign-in and sync* and *Delete profile…* — laid out as a
-//! Settings page: a title, a lead, then captioned cards.
+//! (`workspaces`), *Sign-in and sync* and the footer's removals — laid out
+//! as a Settings page: a title, a lead, then captioned cards.
 //!
 //! ```text
 //! [tile] Personal                       [Switch to this profile]   the title
@@ -20,8 +20,15 @@
 //! Sign-in and sync
 //! ┌ repair, or the rows ───────────────────────┐   see `sign_in`
 //! └────────────────────────────────────────────┘
-//! Delete profile…
+//! Delete profile and its workspaces…  Remove from this device…  [Delete from Koru…]
 //! ```
+//!
+//! **The footer is two actions, not one with a sub-menu** (root-catalog
+//! QUESTIONS Q4): the shared, restorable deletion and the device-local
+//! removal each say what they do on the button, and each opens its own
+//! confirmation. *Delete from Koru…* — the account's deletion — joins them
+//! where the controller allows it. They wrap like the attention card's
+//! answers when the column is narrow.
 //!
 //! **The tile sits before the title, at the title's height** (32 px, the
 //! title line's): it is the Profile's face as much as its name is, and it
@@ -88,8 +95,12 @@ pub(crate) enum Control {
     CloudSync,
     /// *Get Koru Cloud…*: the Koru Cloud page.
     GetCloud,
-    /// *Delete profile…*.
+    /// *Delete profile and its workspaces…*: the shared, restorable batch.
     Delete,
+    /// *Remove from this device…*: the device-local removal.
+    RemoveFromDevice,
+    /// *Delete from Koru…*: the account's deletion, where allowed.
+    DeleteFromKoru,
     // ---- the Workspaces section (`workspaces`) ----
     /// *Import…*: content into the open workspace (decision 10: only on the
     /// open Profile's page).
@@ -111,6 +122,17 @@ pub(crate) enum Control {
     /// The controller's notice: run it again, or put it away (S24).
     NoticeRetry,
     NoticeDismiss,
+    // ---- the recovery sections (`recovery`, root-catalog §3.6, §6.3) ----
+    /// An Unassigned workspace's row; a click selects nothing and does
+    /// nothing — the row's two controls are beside it.
+    UnassignedRow(workspaces::Wid),
+    /// Its `•••`: the window's workspace menu, whose *Move to Profile ▸*
+    /// flyout is the destination picker.
+    UnassignedMore(workspaces::Wid),
+    /// *Restore Profile*: the batch restore of the Profile it came from.
+    RestoreUnassignedProfile(workspaces::Wid),
+    /// A deleted Profile's *Restore*: the same batch restore.
+    RestoreDeletedProfile(ProfileId),
     // ---- the Linked devices page (`devices`) ----
     /// *Link a device…*: the Link dialog.
     LinkDevice,
@@ -284,6 +306,8 @@ pub(crate) struct Laid {
     pub header: Header,
     pub attention: Option<Words>,
     pub workspaces: Option<workspaces::WorkspacesSection>,
+    /// The Unassigned and Deleted profiles lists, while there are any.
+    pub recovery: Option<recovery::RecoverySection>,
     pub sign_in: Option<Section>,
     pub footer: Option<Rect>,
     /// The Linked devices page, when that is the page.
@@ -315,7 +339,6 @@ pub(super) const SIGN_IN_TITLE: &str = "Sign-in and sync";
 const CURRENT: &str = "Current profile · ";
 const SWITCH: &str = "Switch to this profile";
 const CLOUD_POINTER: &str = "Can't reach Koru — see Koru Cloud";
-const DELETE: &str = "Delete profile…";
 
 impl ManageView {
     /// The Profile this page is about, when the page is a Profile's.
@@ -354,16 +377,23 @@ impl ManageView {
         let header = self.lay_header(profile, column, &mut controls);
         let mut y = header.rect.y + header.rect.h + koru_ui::PageShell::LEAD_GAP;
         let attention = self.lay_attention(profile, column, y, &mut controls);
-        let (workspaces, sign_in, footer) = match &attention {
+        let (workspaces, recovery, sign_in, footer) = match &attention {
             // The page is the question while it is up: see the module docs.
             Some(card) => {
                 y = card.rect.y + card.rect.h;
-                (None, None, None)
+                (None, None, None, None)
             }
             None => {
                 let (workspaces, bottom) =
                     self.lay_workspaces_section(profile, column, y, &mut controls, &mut disabled);
                 y = bottom + SECTION_GAP;
+                // Recovery (root-catalog §6.3) on every Profile's page, only
+                // while there is something to recover.
+                let (recovery, bottom) =
+                    self.lay_recovery_sections(column, y, &mut controls, &mut disabled);
+                if recovery.is_some() {
+                    y = bottom + SECTION_GAP;
+                }
                 // *Sign-in and sync* is Koru Cloud's; a build that hides it
                 // has no such section (koru-features).
                 let section = koru_features::cloud_sync().then(|| {
@@ -373,7 +403,7 @@ impl ManageView {
                 });
                 let footer = self.lay_footer(column, y, &mut controls);
                 y = footer.y + footer.h;
-                (Some(workspaces), section, Some(footer))
+                (Some(workspaces), recovery, section, Some(footer))
             }
         };
         Laid {
@@ -381,6 +411,7 @@ impl ManageView {
             header,
             attention,
             workspaces,
+            recovery,
             sign_in,
             footer,
             devices: None,
@@ -622,16 +653,44 @@ impl ManageView {
         }
     }
 
+    /// The footer's actions, in the order they are pressed and read: the
+    /// shared deletion, the device-local removal, and the account's
+    /// deletion where the controller allows it. Compact destructive
+    /// buttons in a row, wrapping when the column is narrow.
     fn lay_footer(&mut self, column: Rect, y: f32, controls: &mut Vec<Placed>) -> Rect {
-        let w = ActionButton::new(DELETE, ActionStyle::Destructive, None).width(&mut self.engine);
-        let rect = Rect::new(column.x, y, w, ActionButton::H);
-        controls.push(Placed {
-            control: Control::Delete,
-            rect,
-            label: DELETE.into(),
-            look: Look::Action(ActionStyle::Destructive),
-        });
-        rect
+        let lang = crate::format::lang();
+        let mut actions = vec![
+            (Control::Delete, koru_i18n::Key::ProfileDeleteAction),
+            (
+                Control::RemoveFromDevice,
+                koru_i18n::Key::ProfileRemoveFromDeviceAction,
+            ),
+        ];
+        if Self::offers_delete_from_koru(&self.c) {
+            actions.push((
+                Control::DeleteFromKoru,
+                koru_i18n::Key::ProfileDeleteFromKoruAction,
+            ));
+        }
+        let (mut at, mut row_y) = (column.x, y);
+        for (control, key) in actions {
+            let label = koru_i18n::t(lang, key);
+            let w = ActionButton::new(label, ActionStyle::Destructive, None)
+                .width(&mut self.engine)
+                .min(column.w);
+            if at > column.x && at + w > column.x + column.w {
+                at = column.x;
+                row_y += ActionButton::H + BUTTON_GAP;
+            }
+            controls.push(Placed {
+                control,
+                rect: Rect::new(at, row_y, w, ActionButton::H),
+                label: label.into(),
+                look: Look::Action(ActionStyle::Destructive),
+            });
+            at += w + BUTTON_GAP;
+        }
+        Rect::new(column.x, y, column.w, row_y + ActionButton::H - y)
     }
 
     // ---- input ---------------------------------------------------------------
@@ -702,6 +761,9 @@ impl ManageView {
         if let Some(done) = self.activate_workspace_control(control) {
             return done;
         }
+        if let Some(done) = self.activate_recovery_control(control) {
+            return done;
+        }
         match control {
             Control::Tile => self.requests.push(Request::ChangeIconAndColor(profile)),
             Control::Name => self.requests.push(Request::Rename(profile)),
@@ -743,7 +805,9 @@ impl ManageView {
             Control::CloudSync => {
                 self.perform(Intent::CloudSync(profile));
             }
-            Control::Delete => self.ask_how_to_delete(profile),
+            Control::Delete => self.ask_to_delete(profile),
+            Control::RemoveFromDevice => self.ask_to_remove_from_device(profile),
+            Control::DeleteFromKoru => self.ask_to_delete_from_koru(profile),
             // The Workspaces section's, answered above.
             Control::ImportWorkspaces
             | Control::NewWorkspace
@@ -755,6 +819,11 @@ impl ManageView {
             | Control::RestoreWorkspace(_)
             | Control::NoticeRetry
             | Control::NoticeDismiss => return false,
+            // The recovery sections', answered above.
+            Control::UnassignedRow(_)
+            | Control::UnassignedMore(_)
+            | Control::RestoreUnassignedProfile(_)
+            | Control::RestoreDeletedProfile(_) => return false,
             // The New profile page's, answered above.
             Control::CloseCreation => return false,
             // The Linked devices page's, answered above.

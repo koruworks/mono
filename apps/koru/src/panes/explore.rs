@@ -433,8 +433,18 @@ pub enum PopoverRow {
     Help(help::Action),
     WorkspaceAction(workspace_menu_elements::MenuAction),
     WorkspaceNotice,
+    /// **The Unassigned group** at the top of the Workspace menu (root-catalog
+    /// §3.6): an index into the controller's unassigned list. The row opens
+    /// Manage on it; its two actions follow it as rows of their own.
+    Unassigned(usize),
+    UnassignedMove(usize),
+    /// Only for a workspace from a deleted Profile this device can restore.
+    UnassignedRestore(usize),
     /// Workspace heading with a separate Manage workspaces target.
     WorkspacesHeading,
+    /// The one line an empty Profile's list shows (§3.10): furniture, like
+    /// the notice.
+    WorkspacesEmpty,
     /// An index into the open Profile's workspace list. The row switches; the
     /// gear that shows on hover opens the Manage tab on it.
     Workspace(usize),
@@ -454,7 +464,7 @@ impl PopoverRow {
     /// is furniture: *WORKSPACES · n* and *PROFILES · n* are skipped; the
     /// foot (its `+`) is a stop.
     fn selectable(self) -> bool {
-        !matches!(self, Self::WorkspaceNotice)
+        !matches!(self, Self::WorkspaceNotice | Self::WorkspacesEmpty)
     }
 }
 
@@ -473,7 +483,10 @@ pub enum PopoverPart {
 }
 
 /// What the sync icon says, from the Agent's account state for the open
-/// Profile (the review's artboard: five states).
+/// Profile (the review's artboard: five states) and, since the root catalog
+/// (Plan 2.2), from the organization sync the Agent reports per linked
+/// device: four more, none of which is ever "up to date" while an eligible
+/// root unit is unapplied.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 pub enum SyncStatus {
     /// No cloud for this Profile: muted.
@@ -486,6 +499,15 @@ pub enum SyncStatus {
     Offline,
     /// Failed, cancelled, or waiting for consent: a red dot.
     NeedsAttention,
+    /// Root units or a placement from another device have not all arrived.
+    Pending,
+    /// This device's own sync setting keeps the organization here (Q5's
+    /// "waiting for your switch").
+    PausedBySettings,
+    /// A Workspace's stored sync choice is above its Profile's ceiling.
+    BlockedByMismatch,
+    /// Another device holds part of the organization back for privacy.
+    Held,
 }
 
 impl SyncStatus {
@@ -496,6 +518,37 @@ impl SyncStatus {
             Self::Syncing => koru_i18n::Key::SyncSyncing,
             Self::Offline => koru_i18n::Key::SyncOffline,
             Self::NeedsAttention => koru_i18n::Key::SyncNeedsAttention,
+            Self::Pending => koru_i18n::Key::SyncPending,
+            Self::PausedBySettings => koru_i18n::Key::SyncPausedBySettings,
+            Self::BlockedByMismatch => koru_i18n::Key::SyncBlockedByMismatch,
+            Self::Held => koru_i18n::Key::SyncHeld,
+        }
+    }
+
+    /// The sentence behind an organization reading, for a reader; `None`
+    /// for the account-derived states, whose words stand alone.
+    pub fn hint(self) -> Option<koru_i18n::Key> {
+        match self {
+            Self::Pending => Some(koru_i18n::Key::SyncPendingHint),
+            Self::PausedBySettings => Some(koru_i18n::Key::SyncPausedBySettingsHint),
+            Self::BlockedByMismatch => Some(koru_i18n::Key::SyncBlockedByMismatchHint),
+            Self::Held => Some(koru_i18n::Key::SyncHeldHint),
+            Self::NotSetUp
+            | Self::UpToDate
+            | Self::Syncing
+            | Self::Offline
+            | Self::NeedsAttention => None,
+        }
+    }
+
+    fn from_organization(reading: organization_sync::OrganizationSync) -> Self {
+        use organization_sync::OrganizationSync as Reading;
+        match reading {
+            Reading::UpToDate => Self::UpToDate,
+            Reading::Pending => Self::Pending,
+            Reading::Held => Self::Held,
+            Reading::PausedBySettings => Self::PausedBySettings,
+            Reading::BlockedByMismatch => Self::BlockedByMismatch,
         }
     }
 }
@@ -681,6 +734,10 @@ pub struct ExploreView {
     /// The Agent's last account state, which the sync icon and your card's
     /// subtitle read for the open Profile ([`sync_status`](Self::sync_status)).
     account: Option<koru_agent_wire::AccountState>,
+    /// The Agent's last organization sync status (root-catalog Plan 2.2),
+    /// folded to one reading per Profile and Workspace; the sync icon and
+    /// the Workspace menu's rows read it ([`organization_sync`]).
+    organization: organization_sync::OrganizationReadings,
     /// Devices besides this one that hold the Profile: the summary's *Link a
     /// device* row says *n linked* (frame 6A).
     linked_count: usize,
@@ -928,39 +985,104 @@ impl ExploreView {
         changed
     }
 
+    /// The Agent's organization sync status (root-catalog Plan 2.2), whole.
+    /// Answers whether anything the icon or a row shows changed.
+    pub fn set_root_sync(&mut self, status: &koru_agent_wire::RootSyncStatus) -> bool {
+        let readings = organization_sync::OrganizationReadings::from_status(status);
+        let changed = self.organization != readings;
+        self.organization = readings;
+        changed
+    }
+
+    /// The organization reading for `profile`: its own unit's and its
+    /// Workspaces', as the Agent's linked devices reported them. `None`
+    /// when no linked device has said anything.
+    pub(crate) fn organization_status(
+        &self,
+        profile: ProfileId,
+    ) -> Option<organization_sync::OrganizationSync> {
+        if self.organization.is_empty() {
+            return None;
+        }
+        let members: Vec<WorkspaceId> = if self.current_profile == Some(profile) {
+            self.workspaces.iter().map(|w| w.id).collect()
+        } else {
+            self.catalog
+                .get(&profile)
+                .map(|rows| rows.iter().map(|w| w.id).collect())
+                .unwrap_or_default()
+        };
+        self.organization.profile(profile, members)
+    }
+
+    /// One Workspace's organization reading, for its row in the menu;
+    /// `None` when nothing was said about it or it is up to date, which the
+    /// row does not need to say.
+    pub(crate) fn workspace_organization_status(
+        &self,
+        workspace: WorkspaceId,
+    ) -> Option<SyncStatus> {
+        self.organization
+            .workspace(workspace)
+            .filter(|reading| *reading != organization_sync::OrganizationSync::UpToDate)
+            .map(SyncStatus::from_organization)
+    }
+
     /// What the sync icon and the chip's second line say about the open
     /// Profile: the Agent's account stage first, then the Profile's own cloud
-    /// row. A Profile the Agent is still receiving is *Syncing*; one with no
-    /// cloud row and nothing on its way is *Not set up*.
+    /// row, then — since the root catalog (Plan 2.2) — what the linked
+    /// devices say about the Profile's organization. A Profile the Agent is
+    /// still receiving is *Syncing*; one with no cloud row and nothing on its
+    /// way is *Not set up*. An organization that is pending, paused, blocked
+    /// or held is said before any claim of being up to date: catalog
+    /// receipts, not document hydration, decide convergence (§7.2). A
+    /// Profile with no cloud whose organization a linked device reports up
+    /// to date is *Up to date* — the surviving replica's ordinary reading.
     pub fn sync_status(&self) -> SyncStatus {
         use koru_agent_wire::{AccountStage, CloudConnectionStage};
-        let Some(state) = self.account.as_ref() else {
-            return SyncStatus::NotSetUp;
+        let organization = self
+            .current_profile
+            .and_then(|profile| self.organization_status(profile));
+        let cloud = 'cloud: {
+            let Some(state) = self.account.as_ref() else {
+                break 'cloud SyncStatus::NotSetUp;
+            };
+            match state.stage {
+                AccountStage::NotConfigured
+                | AccountStage::SignedOut
+                | AccountStage::AwaitingAccountCreation => break 'cloud SyncStatus::NotSetUp,
+                AccountStage::Unavailable => return SyncStatus::Offline,
+                AccountStage::Failed | AccountStage::Cancelled => {
+                    return SyncStatus::NeedsAttention;
+                }
+                _ => {}
+            }
+            let Some(profile) = self.current_profile else {
+                break 'cloud SyncStatus::NotSetUp;
+            };
+            let id = profile.to_string();
+            match state
+                .cloud_profiles
+                .iter()
+                .find(|row| row.profile_id == id)
+                .map(|row| row.stage)
+            {
+                Some(CloudConnectionStage::Syncing) => SyncStatus::UpToDate,
+                Some(CloudConnectionStage::Connecting) => SyncStatus::Syncing,
+                Some(CloudConnectionStage::Retrying) => return SyncStatus::Offline,
+                Some(CloudConnectionStage::WaitingForConsent) => {
+                    return SyncStatus::NeedsAttention;
+                }
+                None if self.receiving_profiles.contains(&profile) => SyncStatus::Syncing,
+                None => SyncStatus::NotSetUp,
+            }
         };
-        match state.stage {
-            AccountStage::NotConfigured
-            | AccountStage::SignedOut
-            | AccountStage::AwaitingAccountCreation => return SyncStatus::NotSetUp,
-            AccountStage::Unavailable => return SyncStatus::Offline,
-            AccountStage::Failed | AccountStage::Cancelled => return SyncStatus::NeedsAttention,
-            _ => {}
-        }
-        let Some(profile) = self.current_profile else {
-            return SyncStatus::NotSetUp;
-        };
-        let id = profile.to_string();
-        match state
-            .cloud_profiles
-            .iter()
-            .find(|row| row.profile_id == id)
-            .map(|row| row.stage)
-        {
-            Some(CloudConnectionStage::Syncing) => SyncStatus::UpToDate,
-            Some(CloudConnectionStage::Connecting) => SyncStatus::Syncing,
-            Some(CloudConnectionStage::Retrying) => SyncStatus::Offline,
-            Some(CloudConnectionStage::WaitingForConsent) => SyncStatus::NeedsAttention,
-            None if self.receiving_profiles.contains(&profile) => SyncStatus::Syncing,
-            None => SyncStatus::NotSetUp,
+        match organization {
+            Some(reading) if reading != organization_sync::OrganizationSync::UpToDate => {
+                SyncStatus::from_organization(reading)
+            }
+            Some(_) if cloud == SyncStatus::NotSetUp => SyncStatus::UpToDate,
+            _ => cloud,
         }
     }
 
@@ -3184,6 +3306,34 @@ impl ExploreView {
         changed
     }
 
+    /// The Unassigned group's rows, as the shared controller read them with
+    /// the catalog (root-catalog §3.6). Empty without a controller.
+    pub(crate) fn unassigned_rows(&self) -> Vec<koru_workspaces_ui::UnassignedRow> {
+        self.workspace_controller
+            .as_ref()
+            .map(|controller| controller.borrow().unassigned().to_vec())
+            .unwrap_or_default()
+    }
+
+    /// The deleted Profile an Unassigned row came from and the deletion this
+    /// device can restore it by — `None` for a row unassigned for another
+    /// reason, or whose deletion another device holds (M2).
+    pub(crate) fn unassigned_restorable(
+        &self,
+        row: &koru_workspaces_ui::UnassignedRow,
+    ) -> Option<(ProfileId, koru_store_core::ids::DeletionId)> {
+        if !row.from_deleted_profile() {
+            return None;
+        }
+        let former = row.former_profile?;
+        let deletion = self
+            .workspace_controller
+            .as_ref()?
+            .borrow()
+            .deletion_of(former)?;
+        Some((crate::manage::workspaces::app_profile(former), deletion))
+    }
+
     pub(crate) fn set_workspace_controller(&mut self, controller: crate::manage::SharedWorkspaces) {
         self.workspace_controller = Some(controller);
     }
@@ -3540,6 +3690,16 @@ impl ExploreView {
                         .into_iter()
                         .map(|(action, _)| PopoverRow::WorkspaceAction(action)),
                 );
+                // **Unassigned first** (root-catalog §3.6): a workspace no
+                // Profile lists is reachable before this Profile's own rows,
+                // and only while there is one.
+                for (i, row) in self.unassigned_rows().iter().enumerate() {
+                    out.push(PopoverRow::Unassigned(i));
+                    out.push(PopoverRow::UnassignedMove(i));
+                    if self.unassigned_restorable(row).is_some() {
+                        out.push(PopoverRow::UnassignedRestore(i));
+                    }
+                }
                 out.push(PopoverRow::WorkspacesHeading);
                 // **Pinned first, archived not at all — except the one you are
                 // in — and deleted never.** A workspace can be archived while
@@ -3558,6 +3718,9 @@ impl ExploreView {
                     })
                     .collect();
                 shown.sort_by_key(|&i| !list[i].pinned);
+                if shown.is_empty() {
+                    out.push(PopoverRow::WorkspacesEmpty);
+                }
                 out.extend(shown.into_iter().map(PopoverRow::Workspace));
                 out.extend([
                     PopoverRow::WorkspaceAction(workspace_menu_elements::MenuAction::New),
@@ -3982,7 +4145,11 @@ impl ExploreView {
             PopoverRow::WorkspaceAction(action) => {
                 action == workspace_menu_elements::MenuAction::Import
             }
-            PopoverRow::WorkspaceNotice => true,
+            PopoverRow::WorkspaceNotice | PopoverRow::WorkspacesEmpty => true,
+            // The destination flyout opens beside the page; the page stays
+            // so the row it is about stays lit.
+            PopoverRow::UnassignedMove(_) => true,
+            PopoverRow::Unassigned(_) | PopoverRow::UnassignedRestore(_) => false,
             PopoverRow::WorkspacesHeading => part != PopoverPart::Gear,
             PopoverRow::ProfilesHeading => part != PopoverPart::Gear,
             // The foot's words do nothing; each button is a destination —
@@ -4025,7 +4192,29 @@ impl ExploreView {
     fn choose(&mut self, row: PopoverRow, part: PopoverPart) -> Outcome {
         match row {
             PopoverRow::WorkspaceAction(action) => action.outcome(),
-            PopoverRow::WorkspaceNotice => Outcome::Consumed,
+            PopoverRow::WorkspaceNotice | PopoverRow::WorkspacesEmpty => Outcome::Consumed,
+            // An Unassigned row opens Manage on it, where both of its actions
+            // are too; its two sub-rows are the actions themselves.
+            PopoverRow::Unassigned(i) => match self.unassigned_rows().get(i) {
+                Some(row) => {
+                    Outcome::ManageWorkspace(crate::manage::workspaces::app_workspace(row.id))
+                }
+                None => Outcome::Consumed,
+            },
+            PopoverRow::UnassignedMove(i) => match self.unassigned_rows().get(i) {
+                Some(row) => {
+                    Outcome::MoveUnassigned(crate::manage::workspaces::app_workspace(row.id))
+                }
+                None => Outcome::Consumed,
+            },
+            PopoverRow::UnassignedRestore(i) => match self
+                .unassigned_rows()
+                .get(i)
+                .and_then(|row| self.unassigned_restorable(row))
+            {
+                Some((profile, deletion)) => Outcome::RestoreProfile { profile, deletion },
+                None => Outcome::Consumed,
+            },
             PopoverRow::Workspace(i) => {
                 let Some(id) = self.workspaces.get(i).map(|w| w.id) else {
                     return Outcome::Consumed;
@@ -8196,6 +8385,7 @@ mod apps_rail_elements;
 mod canvases;
 mod heading_elements;
 pub mod home_nav;
+pub(crate) mod organization_sync;
 pub mod rail;
 mod rail_overflow;
 mod slides;

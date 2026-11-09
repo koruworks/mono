@@ -134,6 +134,30 @@ Restore a locally removed Profile from retained Store data
 
 Returns: restored or already_active; workspace tombstones remain unchanged
 
+## GET `/v1/profiles/deleted`
+
+List the restorable shared Profile deletions this device holds
+
+Returns: one entry per active, unpurged Profile deletion batch with its captured targets, the retained Profile's name, and which targets are past retention or purged
+
+## GET `/v1/profiles/{id}/deletion-preview`
+
+What deleting a Profile would move to Trash right now
+
+Returns: the live workspaces placed under the Profile and a placement revision the delete echoes back; a changed list refuses the stale confirmation
+
+## POST `/v1/profiles/{id}/delete`
+
+Delete a Profile as a shared batch: the Profile and every captured workspace move to Trash in one transaction
+
+Returns: the batch id and each target's deletion id; HTTP 409 idempotency_conflict when the preview is stale. Takes destroy_workspaces, like the workspace delete; the targets' rooms are disconnected first
+
+## POST `/v1/profiles/{id}/restore`
+
+Restore a Profile deletion batch: the Profile and the workspaces trashed by exactly that deletion
+
+Returns: which targets came back, stayed in Trash under an independent deletion, were moved elsewhere already, or were purged. The same scope the delete takes
+
 ## GET `/v1/profiles/{id}`
 
 One profile
@@ -307,6 +331,12 @@ Returns: the whole dictionary after the write. A removed word is a deleted key, 
 Clear one profile's personal spelling dictionary
 
 Returns: the empty dictionary after every word visible to this device is deleted
+
+## GET `/v1/workspaces/unassigned`
+
+Live workspaces reachable from no active Profile, with the reason
+
+Returns: each live workspace placed under nobody, under a deleted or absent Profile, or under a legacy holder, with its former Profile; moving one is the ordinary move, restoring its Profile is the batch restore
 
 ## GET `/v1/workspaces`
 

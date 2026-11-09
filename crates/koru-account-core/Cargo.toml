@@ -16,6 +16,10 @@ schema = ["dep:schemars", "koru-store-core/schema"]
 [dependencies]
 koru-device = { path = "../koru-device" }
 koru-store-core = { path = "../koru-store-core" }
+# Only for the version vectors the hosted root-catalog admission answers
+# (`root_catalog::admission`); every document it reads is built and
+# validated by koru-store-core, which already links the same loro.
+loro.workspace = true
 schemars = { workspace = true, optional = true }
 serde.workspace = true
 unicode-normalization.workspace = true

@@ -20,10 +20,46 @@ use serde::{Deserialize, Serialize};
 pub const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
 
 pub use koru_store_core::profile_units::ProfileUnitRef;
+/// The address of one root-catalog unit on the wire: a Profile catalog unit
+/// by Profile UUID or a Workspace catalog unit by Workspace UUID. Its serde
+/// shape (`{"type": "profile_catalog" | "workspace_catalog", ..}`, unknown
+/// fields refused) is the one `koru-store-core` defines; no frame names a
+/// subject any other way.
+pub use koru_store_core::root_catalog::CatalogUnitRef;
 /// The peer-to-peer protocol number this runtime speaks; declared in
 /// `koru-sync-control` (its doc says when to bump it and why it is not the
 /// ALPN) and re-exported here because this is the crate that enforces it.
 pub use koru_sync_control::PEER_PROTOCOL_VERSION;
+
+/// The data-plane refusal for a peer that advertises protocol 5: it still
+/// writes `workspaces.owner` from a descriptor and exports personal units on
+/// the v1 address, which 6 stopped doing (root-catalog TECHNICAL.final §11.4).
+pub const ROOT_CATALOG_REQUIRED: &str = "root_catalog_required";
+/// The answer a provisioning asks the sync pass to retry after root units:
+/// no root placement is known for the Workspace yet and the peer's grant
+/// does not let a descriptor's Profile stand in for one (§7.2).
+pub const PLACEMENT_PENDING: &str = "placement_pending";
+/// A root or personal frame from a peer whose relationship is not bound to
+/// the recipient's user scope: a Profile or Workspace grant is a content
+/// relationship and never installs placement into the recipient's catalog
+/// (§7.2 last bullet).
+pub const ROOT_SCOPE_NOT_BOUND: &str = "root_scope_not_bound";
+/// The recipient holds no such root unit. Not an error on the wire: the
+/// sender answers a request from the empty version with a snapshot.
+pub const ROOT_UNIT_NOT_FOUND: &str = "root_unit_not_found";
+/// The export boundary held the unit back (`Derived::Hold`, §4.3): its
+/// current state names a Profile this recipient may not know. Nothing is
+/// sent in its place.
+pub const ROOT_UNIT_HELD: &str = "root_unit_held";
+/// The subject's device-local transport mode closes the peer path. The same
+/// spelling the blob contract uses (`koru_cloud_blob::BlobCode::ModeRefusesTransport`),
+/// so a root, content and blob refusal read as one idea.
+pub const MODE_REFUSES_TRANSPORT: &str = "mode_refuses_transport";
+/// The local policy generation or the peer's authorization moved between
+/// staging and commit, or between deriving and sending: the payload is
+/// discarded and local work kept (§9 "Privacy/authority changes during
+/// staged work").
+pub const POLICY_CHANGED: &str = "policy_changed";
 
 #[derive(Clone, Debug)]
 pub struct AuthenticatedPeer {
@@ -58,6 +94,10 @@ pub struct AuthenticatedPeer {
 pub fn protocol_refusal(peer_protocol: Option<u32>, incompatible: bool) -> Option<&'static str> {
     match peer_protocol {
         None | Some(0..=4) => Some("profile_units_required"),
+        // A 5 peer has the unit addresses but not the root exchange: it
+        // would still write placement from descriptors and export personal
+        // units on the v1 address, so its data plane is refused by name.
+        Some(5) => Some(ROOT_CATALOG_REQUIRED),
         Some(version) if version != PEER_PROTOCOL_VERSION || incompatible => {
             Some("incompatible_protocol")
         }
@@ -171,6 +211,56 @@ impl AuthenticatedPeer {
             return Err(StoreFailure::new("unauthorized_workspace"));
         }
         self.check_active()
+    }
+
+    /// Whether this relationship is the same person's device, and so the one
+    /// kind of peer whose validated relationship is bound to the recipient's
+    /// user scope (root-catalog TECHNICAL.final §4.1, §7.2). Only an
+    /// `all_data` pairing is: a Profile grant and a Workspace grant are
+    /// content relationships, they receive the root units their grant
+    /// covers, and they never install placement into the recipient's
+    /// catalog. The binding itself is decided once per relationship by the
+    /// recipient's Store and persisted there; this is the precondition.
+    pub fn binds_root_scope(&self) -> bool {
+        self.all_data
+    }
+
+    /// Refuse a root or personal frame from a peer that is not scope-bound.
+    pub fn check_root_scope(&self) -> Result<(), StoreFailure> {
+        if !self.binds_root_scope() {
+            return Err(StoreFailure::new(ROOT_SCOPE_NOT_BOUND));
+        }
+        self.check_active()
+    }
+
+    /// Run one root-catalog operation while this relationship is bound to the
+    /// recipient's user scope and still stands.
+    pub fn with_root_scope<T>(
+        &self,
+        operation: impl FnOnce() -> Result<T, StoreFailure>,
+    ) -> Result<T, StoreFailure> {
+        self.check_root_scope()?;
+        self.with_active_fence(operation)
+    }
+
+    /// Whether the relationship still stands, for a caller outside the
+    /// `with_*` fences that has to recheck right before a send (§4.4 "late
+    /// callbacks must recheck"). Reads the flag only; see
+    /// [`Self::with_active_fence`].
+    pub fn still_authorized(&self) -> bool {
+        self.check_active().is_ok()
+    }
+
+    /// Run one Store operation inside the revocation barrier after the
+    /// caller has established the grant itself — the root-aware Workspace
+    /// rule ([`ReplicationStore::authorize_workspace`]) evaluates a Profile
+    /// grant against current placement, which no `with_authorized_*` above
+    /// expresses. Same barrier, same rule about nesting.
+    pub fn with_fence<T>(
+        &self,
+        operation: impl FnOnce() -> Result<T, StoreFailure>,
+    ) -> Result<T, StoreFailure> {
+        self.with_active_fence(operation)
     }
 
     /// Whether a catalog view can be established at all. An empty authority
@@ -303,6 +393,49 @@ pub enum PeerFrame {
         unit: ProfileUnitRef,
         updates: Vec<Vec<u8>>,
     },
+    /// Protocol 6 (root-catalog TECHNICAL.final §4.2, §7.2): the root
+    /// catalog as the sender may frame it **for this recipient** — the
+    /// eligible Profile and Workspace catalog units and, for the same
+    /// person's device only, the personal v2 units — each as an address and
+    /// a version vector. Never a name, a color, a transport mode, a scope or
+    /// a hidden subject's UUID: a subject the recipient may not know appears
+    /// in no list, count or digest. The reply mirrors [`PeerFrame::Catalog`]
+    /// for content, and the pair is exchanged before any Workspace inventory
+    /// so placement is known before content is provisioned.
+    RootCatalogRequest,
+    RootCatalog {
+        /// [`root_catalog_digest`] over the eligible units; equal digests
+        /// end the root exchange for the pass.
+        digest: Vec<u8>,
+        units: Vec<RootUnitState>,
+        #[serde(default)]
+        personal: Vec<PersonalUnitState>,
+    },
+    /// `version` is the recipient's accepted frontier for the unit — its
+    /// join receipt — so the sender fills only the gap; the empty vector
+    /// asks for a snapshot.
+    RootUnitRequest {
+        unit: CatalogUnitRef,
+        version: Vec<u8>,
+    },
+    /// Bytes from the export boundary (`root_catalog::export::derive`):
+    /// a derived snapshot or updates since the requested frontier, with
+    /// hidden historical Profile references redacted. Never raw unit bytes.
+    RootUnitUpdates {
+        unit: CatalogUnitRef,
+        updates: Vec<Vec<u8>>,
+    },
+    /// The personal v2 unit of one Workspace under the shared user scope.
+    /// Only a scope-bound (same person's) peer may ask or be answered; the
+    /// address is the Workspace alone (§5.1), never a Profile.
+    PersonalRequest {
+        workspace: WorkspaceId,
+        version: Vec<u8>,
+    },
+    PersonalUpdates {
+        workspace: WorkspaceId,
+        updates: Vec<Vec<u8>>,
+    },
     InventoryRequest {
         workspace_id: WorkspaceId,
     },
@@ -422,12 +555,101 @@ pub fn profile_unit_sort_key(
     (tag, unit.profile(), unit.workspace())
 }
 
+/// One Workspace in the content inventory a peer may see.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkspaceCatalogState {
     pub workspace_id: WorkspaceId,
+    /// **A bootstrap placement hint since protocol 6, not authority.** The
+    /// sender's current root placement of the Workspace, kept on the wire
+    /// so a Profile-granted peer can tell which grant admits the row and so
+    /// a receiver without a unit knows what the sender believes. Placement
+    /// itself travels in the Workspace's root unit
+    /// ([`PeerFrame::RootUnitUpdates`]); a receiver that holds the unit
+    /// ignores this field for placement, and a receiver that does not holds
+    /// provisioning pending rather than install it (root-catalog
+    /// TECHNICAL.final §7.2).
     pub profile_id: ProfileId,
     #[serde(default)]
     pub digest: Vec<u8>,
+}
+
+/// One root-catalog unit as advertised: its address and the sender's
+/// authoritative version vector. Redaction preserves every operation id, so
+/// the version a redacted export brings the recipient to is this one.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RootUnitState {
+    pub unit: CatalogUnitRef,
+    pub version: Vec<u8>,
+}
+
+impl RootUnitState {
+    pub fn validate(&self) -> Result<(), StoreFailure> {
+        loro::VersionVector::decode(&self.version)
+            .map_err(|_| StoreFailure::new("invalid_root_version"))?;
+        Ok(())
+    }
+}
+
+/// One personal v2 unit as advertised to the same person's device: the
+/// Workspace it belongs to and its version vector.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PersonalUnitState {
+    pub workspace: WorkspaceId,
+    pub version: Vec<u8>,
+}
+
+impl PersonalUnitState {
+    pub fn validate(&self) -> Result<(), StoreFailure> {
+        loro::VersionVector::decode(&self.version)
+            .map_err(|_| StoreFailure::new("invalid_root_version"))?;
+        Ok(())
+    }
+}
+
+/// What a store frames for one peer in answer to a [`PeerFrame::RootCatalogRequest`]:
+/// already filtered to what the recipient may know and what its device-local
+/// transport policy lets leave on the peer path.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RootCatalogInventory {
+    pub units: Vec<RootUnitState>,
+    pub personal: Vec<PersonalUnitState>,
+}
+
+/// One local subject's transport reading for the status surfaces
+/// ([`ReplicationStore::root_sync_admissions`]). Device-local facts about a
+/// subject this device holds; never framed to a peer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RootSubjectAdmission {
+    pub subject: CatalogUnitRef,
+    /// The effective mode admits the peer path.
+    pub allows_peer: bool,
+    /// The stored choice is above the Profile's ceiling (`ceiling_mismatch`).
+    pub ceiling_mismatch: bool,
+    /// Edits wait in a private overlay that the publication job has not
+    /// folded into the durable unit yet — pending publication, never lost.
+    pub overlay_pending: bool,
+}
+
+/// Wire tags determine order, independently of Rust's enum declaration order.
+pub fn root_unit_sort_key(unit: CatalogUnitRef) -> (&'static str, String) {
+    (unit.kind().as_str(), unit.subject_id())
+}
+
+/// The outcome of applying root or personal frames on the receiving side
+/// (root-catalog TECHNICAL.final §7.2 join phases). `frontier` is the
+/// recipient's accepted version vector after the call — what the next
+/// request carries so the sender fills only the gap.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RootJoin {
+    /// Staged, validated and locally committed; `reconciled` when the
+    /// frontier now covers everything the sender advertised.
+    Applied { frontier: Vec<u8>, reconciled: bool },
+    /// A frame needs ancestors the unit does not have: nothing was applied,
+    /// the receipt stays at `staged`, and the sender needs `frontier` to
+    /// send the gap.
+    Pending { frontier: Vec<u8> },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -439,8 +661,27 @@ pub struct BlobChunk {
     pub complete: bool,
 }
 
+/// What a Workspace inventory says about the Workspace it carries.
+///
+/// Two halves, deliberately told apart since protocol 6 (root-catalog
+/// TECHNICAL.final §7.2 "version placement context separately from immutable
+/// content identity"):
+///
+/// - **Content identity**, immutable: `workspace_id`, `manifest_document`,
+///   `workspace_created_at_ms`. These are what a replica *is*; the manifest
+///   identity guard in `Store::provision_replica` holds them.
+/// - **Bootstrap placement and appearance**: every `profile_*` field and the
+///   shared `workspace_*` appearance/lifecycle fields. The Profile fields are
+///   the sender's placement at the time of the inventory and the Profile's
+///   identity for a first bootstrap by the same person's device; they carry
+///   no authority over the receiver's placement, which is its root Workspace
+///   unit. A receiver that holds the unit ignores them for placement; one
+///   that does not holds provisioning pending rather than install them.
+///   Scoped peers receive them redacted, as before. No root field is added
+///   here: placement travels in root units.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReplicaDescriptor {
+    /// Bootstrap placement hint; see the type's doc.
     pub profile_id: ProfileId,
     pub profile_name: String,
     pub profile_locale: String,
@@ -598,22 +839,167 @@ pub trait ReplicationStore: Send + Sync + 'static {
     ) -> Result<DurableAck, StoreFailure> {
         Err(StoreFailure::new("profile_not_found"))
     }
-    /// Return only Workspace rows authorized through all-data, their owner
-    /// Profile, or an exact Workspace grant.
+    /// Return only Workspace rows authorized through all-data, the Profile
+    /// their **current root placement** names, or an exact Workspace grant,
+    /// and whose device-local transport mode admits the peer path.
     fn catalog(
         &self,
         _peer: &AuthenticatedPeer,
     ) -> Result<Vec<WorkspaceCatalogState>, StoreFailure> {
         Ok(Vec::new())
     }
-    /// Resolve the immutable owner used to select the Profile or exact
-    /// Workspace guard before any Workspace metadata or bytes are exposed.
+    /// The Profile a Workspace is currently placed under on this device, for
+    /// the Profile-grant check and the personal-unit FK check. Since protocol
+    /// 6 the live adapters answer the root placement (overlay, then unit),
+    /// falling back to the `workspaces.owner` projection only for a row
+    /// that has no unit. Not authority over anything but this device's
+    /// grant evaluation.
     fn workspace_profile(&self, workspace: WorkspaceId) -> Result<ProfileId, StoreFailure>;
+    /// Whether `peer` may touch `workspace` right now (root-catalog
+    /// TECHNICAL.final §7.2): an exact Workspace grant authorizes by UUID;
+    /// a Profile grant is evaluated against the Workspace's **current**
+    /// validated placement, so a move out of a granted Profile closes that
+    /// peer's access on the next check; all-data evaluates the scope. Every
+    /// case rechecks the relationship fence. The default derives the
+    /// placement from [`Self::workspace_profile`] and hides existence from a
+    /// scoped peer, as every adapter did before 6.
+    fn authorize_workspace(
+        &self,
+        peer: &AuthenticatedPeer,
+        workspace: WorkspaceId,
+    ) -> Result<(), StoreFailure> {
+        let profile = match self.workspace_profile(workspace) {
+            Ok(profile) => profile,
+            Err(error) => {
+                return Err(
+                    if peer.all_data || peer.authorized_workspaces.contains(&workspace) {
+                        error
+                    } else {
+                        StoreFailure::new("unauthorized_workspace")
+                    },
+                );
+            }
+        };
+        peer.check_authorized_workspace_profile(workspace, profile)
+    }
+    /// Whether this device's transport mode lets `workspace` be asked of a
+    /// peer at all (§4.4: a known Local-only subject is neither listed,
+    /// served nor requested over the peer path). Asked before an
+    /// `InventoryRequest` leaves; the serving side's own methods refuse
+    /// independently. The default permits, for the same reason
+    /// [`Self::admit_peer_blob_transfer`]'s does.
+    fn admit_peer_subject(&self, _workspace: WorkspaceId) -> Result<(), StoreFailure> {
+        Ok(())
+    }
+    /// Provision a replica's rows from an inventory. Since protocol 6 the
+    /// descriptor's Profile is a bootstrap hint: the Workspace's root unit,
+    /// when this device holds one, decides placement, and a differing
+    /// descriptor owner is not `WorkspaceExists`. Answers
+    /// [`PLACEMENT_PENDING`] when no placement is known and the peer's grant
+    /// cannot supply one; the sync pass retries after root units.
     fn provision_replica(
         &self,
         peer: &AuthenticatedPeer,
         replica: &ReplicaDescriptor,
     ) -> Result<(), StoreFailure>;
+
+    // ---- protocol 6: the root-catalog exchange (TECHNICAL.final §4, §7.2)
+
+    /// Bind `peer`'s relationship to this device's user scope, once, and say
+    /// whether it is bound. `true` only for a scope-bound (`all_data`)
+    /// relationship; the adapter persists the mapping under the documented
+    /// `store_state` key so it is decided once per relationship and never
+    /// re-derived from container names. A Profile or Workspace grant
+    /// answers `false` and the pass requests no root units from it.
+    fn bind_root_scope(&self, _peer: &AuthenticatedPeer) -> Result<bool, StoreFailure> {
+        Ok(false)
+    }
+    /// The publication job (§4.3, §4.4): publish every pending private
+    /// overlay whose subject's admission now allows export. Idempotent;
+    /// failures are logged by the adapter and left for the next pass.
+    /// Returns how many were published.
+    fn publish_pending_root_overlays(&self) -> Result<usize, StoreFailure> {
+        Ok(0)
+    }
+    /// **This device's own reading of every subject it holds**, for the
+    /// status a person sees (Plan 2.2, TECHNICAL.final §4.4, §9): whether the
+    /// subject's device-local mode admits the peer path, whether its stored
+    /// choice sits above its Profile's ceiling, and whether a private overlay
+    /// is still waiting to be published. Asked once per full pass, outside
+    /// any UI thread; the pass seeds the peer's status with it before the
+    /// units it actually exchanges override the reading. Local subjects only
+    /// and local facts only: nothing here leaves the device. The default says
+    /// nothing, which the phone's adapter keeps while it has no mode toggle.
+    fn root_sync_admissions(&self) -> Result<Vec<RootSubjectAdmission>, StoreFailure> {
+        Ok(Vec::new())
+    }
+    /// The eligible root inventory for `peer`: what this device may frame
+    /// for that recipient on the peer path, after the publication job.
+    fn root_catalog(
+        &self,
+        _peer: &AuthenticatedPeer,
+    ) -> Result<RootCatalogInventory, StoreFailure> {
+        Ok(RootCatalogInventory::default())
+    }
+    /// The recipient-side frontier of one root unit — the version the next
+    /// request carries. [`ROOT_UNIT_NOT_FOUND`] for a unit this device does
+    /// not hold yet; [`MODE_REFUSES_TRANSPORT`] for a known subject whose
+    /// mode blocks inbound metadata.
+    fn root_unit_version(
+        &self,
+        _peer: &AuthenticatedPeer,
+        _unit: CatalogUnitRef,
+    ) -> Result<Vec<u8>, StoreFailure> {
+        Err(StoreFailure::new(ROOT_UNIT_NOT_FOUND))
+    }
+    /// Bytes for one root unit from the export boundary, for `peer`, since
+    /// `version` (a snapshot when empty). Never raw bytes; a hold answers
+    /// [`ROOT_UNIT_HELD`].
+    fn root_unit_updates_since(
+        &self,
+        _peer: &AuthenticatedPeer,
+        _unit: CatalogUnitRef,
+        _version: &loro::VersionVector,
+    ) -> Result<Vec<u8>, StoreFailure> {
+        Err(StoreFailure::new(ROOT_UNIT_NOT_FOUND))
+    }
+    /// Stage, validate and locally commit root frames for one unit under this
+    /// device's scope, with the projections a changed placement or lifecycle
+    /// implies, and record the join receipt. `advertised` is the version the
+    /// sender listed, so the receipt can say `reconciled`.
+    fn apply_remote_root_updates(
+        &self,
+        _peer: &AuthenticatedPeer,
+        _unit: CatalogUnitRef,
+        _updates: Vec<Vec<u8>>,
+        _advertised: Option<&loro::VersionVector>,
+    ) -> Result<RootJoin, StoreFailure> {
+        Err(StoreFailure::new(ROOT_SCOPE_NOT_BOUND))
+    }
+    fn personal_version(
+        &self,
+        _peer: &AuthenticatedPeer,
+        _workspace: WorkspaceId,
+    ) -> Result<Vec<u8>, StoreFailure> {
+        Err(StoreFailure::new(ROOT_UNIT_NOT_FOUND))
+    }
+    fn personal_updates_since(
+        &self,
+        _peer: &AuthenticatedPeer,
+        _workspace: WorkspaceId,
+        _version: &loro::VersionVector,
+    ) -> Result<Vec<u8>, StoreFailure> {
+        Err(StoreFailure::new(ROOT_UNIT_NOT_FOUND))
+    }
+    fn apply_remote_personal_updates(
+        &self,
+        _peer: &AuthenticatedPeer,
+        _workspace: WorkspaceId,
+        _updates: Vec<Vec<u8>>,
+        _advertised: Option<&loro::VersionVector>,
+    ) -> Result<RootJoin, StoreFailure> {
+        Err(StoreFailure::new(ROOT_SCOPE_NOT_BOUND))
+    }
     fn provision_document(
         &self,
         peer: &AuthenticatedPeer,
@@ -766,12 +1152,21 @@ pub fn frame_workspace(frame: &PeerFrame) -> Option<WorkspaceId> {
         | PeerFrame::LoroBatch { workspace_id, .. } => Some(*workspace_id),
         PeerFrame::Inventory(inventory) => Some(inventory.workspace_id),
         PeerFrame::BlobChunk(chunk) => Some(chunk.workspace_id),
+        // A personal frame names a Workspace but is not a content frame: it
+        // belongs to the user scope the relationship is bound to, so it is
+        // routed and authorized as account-scoped, like a root unit.
         PeerFrame::SyncRequest
         | PeerFrame::SyncAck
         | PeerFrame::CatalogRequest
         | PeerFrame::Catalog { .. }
         | PeerFrame::ProfileRequest { .. }
         | PeerFrame::ProfileUpdates { .. }
+        | PeerFrame::RootCatalogRequest
+        | PeerFrame::RootCatalog { .. }
+        | PeerFrame::RootUnitRequest { .. }
+        | PeerFrame::RootUnitUpdates { .. }
+        | PeerFrame::PersonalRequest { .. }
+        | PeerFrame::PersonalUpdates { .. }
         | PeerFrame::TrustRecord { .. }
         | PeerFrame::TrustRecords { .. }
         | PeerFrame::TrustAck
@@ -788,7 +1183,10 @@ pub fn handle_frame(
         return vec![PeerFrame::Error { code: code.into() }];
     }
     let workspace = frame_workspace(&frame);
-    if matches!(frame, PeerFrame::CatalogRequest) {
+    if matches!(
+        frame,
+        PeerFrame::CatalogRequest | PeerFrame::RootCatalogRequest
+    ) {
         if !peer.has_catalog_scope() {
             return vec![PeerFrame::Error {
                 code: "unauthorized_catalog".into(),
@@ -810,19 +1208,27 @@ pub fn handle_frame(
         }
         return handle_authorized_frame(store, peer, frame);
     }
+    // A root unit request is admitted per unit by the store's eligibility
+    // rule (what this recipient may know of that subject); a personal request
+    // additionally needs the scope-bound relationship. Both recheck the fence.
+    if matches!(frame, PeerFrame::RootUnitRequest { .. }) {
+        if let Err(error) = peer.check_active() {
+            return vec![PeerFrame::Error {
+                code: error.code.into(),
+            }];
+        }
+        return handle_authorized_frame(store, peer, frame);
+    }
+    if matches!(frame, PeerFrame::PersonalRequest { .. }) {
+        if let Err(error) = peer.check_root_scope() {
+            return vec![PeerFrame::Error {
+                code: error.code.into(),
+            }];
+        }
+        return handle_authorized_frame(store, peer, frame);
+    }
     if let Some(workspace) = workspace {
-        let profile = match store.workspace_profile(workspace) {
-            Ok(profile) => profile,
-            Err(error) => {
-                let code = if peer.all_data || peer.authorized_workspaces.contains(&workspace) {
-                    error.code
-                } else {
-                    "unauthorized_workspace"
-                };
-                return vec![PeerFrame::Error { code: code.into() }];
-            }
-        };
-        if let Err(error) = peer.check_authorized_workspace_profile(workspace, profile) {
+        if let Err(error) = store.authorize_workspace(peer, workspace) {
             return vec![PeerFrame::Error {
                 code: error.code.into(),
             }];
@@ -989,6 +1395,76 @@ fn handle_authorized_frame(
                 }],
             }
         }
+        PeerFrame::RootCatalogRequest => match store.root_catalog(peer) {
+            Ok(mut inventory) => {
+                inventory
+                    .units
+                    .sort_by_key(|unit| root_unit_sort_key(unit.unit));
+                inventory.units.dedup_by_key(|unit| unit.unit);
+                inventory
+                    .personal
+                    .sort_by_key(|personal| personal.workspace);
+                inventory
+                    .personal
+                    .dedup_by_key(|personal| personal.workspace);
+                let Some(digest) = root_catalog_digest(peer, &inventory.units, &inventory.personal)
+                else {
+                    return vec![PeerFrame::Error {
+                        code: "unauthorized_catalog".into(),
+                    }];
+                };
+                vec![PeerFrame::RootCatalog {
+                    digest,
+                    units: inventory.units,
+                    personal: inventory.personal,
+                }]
+            }
+            Err(error) => vec![PeerFrame::Error {
+                code: error.code.into(),
+            }],
+        },
+        PeerFrame::RootUnitRequest { unit, version } => {
+            let Ok(version) = loro::VersionVector::decode(&version) else {
+                return vec![PeerFrame::Error {
+                    code: "invalid_root_version".into(),
+                }];
+            };
+            match store.root_unit_updates_since(peer, unit, &version) {
+                Ok(update) => vec![PeerFrame::RootUnitUpdates {
+                    unit,
+                    updates: vec![update],
+                }],
+                Err(error) => {
+                    // Ids only: a held unit is logged by address, never by
+                    // what its history names.
+                    tracing::info!(
+                        peer = %peer.device_id.to_storage(),
+                        unit = ?unit,
+                        error_code = error.code,
+                        "root_sync direction=local_to_peer action=unit_refused"
+                    );
+                    vec![PeerFrame::Error {
+                        code: error.code.into(),
+                    }]
+                }
+            }
+        }
+        PeerFrame::PersonalRequest { workspace, version } => {
+            let Ok(version) = loro::VersionVector::decode(&version) else {
+                return vec![PeerFrame::Error {
+                    code: "invalid_root_version".into(),
+                }];
+            };
+            match store.personal_updates_since(peer, workspace, &version) {
+                Ok(update) => vec![PeerFrame::PersonalUpdates {
+                    workspace,
+                    updates: vec![update],
+                }],
+                Err(error) => vec![PeerFrame::Error {
+                    code: error.code.into(),
+                }],
+            }
+        }
         PeerFrame::BlobRequest {
             workspace_id,
             hash,
@@ -1038,6 +1514,9 @@ fn handle_authorized_frame(
         | PeerFrame::CloudCompare { .. }
         | PeerFrame::CloudCompared { .. }
         | PeerFrame::ProfileUpdates { .. }
+        | PeerFrame::RootCatalog { .. }
+        | PeerFrame::RootUnitUpdates { .. }
+        | PeerFrame::PersonalUpdates { .. }
         | PeerFrame::Inventory(_)
         | PeerFrame::BlobChunk(_)
         | PeerFrame::TrustRecord { .. }
@@ -1045,6 +1524,72 @@ fn handle_authorized_frame(
         | PeerFrame::TrustAck
         | PeerFrame::Error { .. } => Vec::new(),
     }
+}
+
+/// The equal-digest shortcut for the root exchange: a hash over the
+/// **eligible** units only — what this sender may frame for this recipient
+/// after the transport and visibility rules — so two devices whose eligible
+/// roots agree exchange no unit. A subject the recipient may not know is
+/// not in the input, so it is not in the hash either (root-catalog
+/// TECHNICAL.final §4.2 last paragraph, §4.3). Like [`catalog_digest`], the
+/// scope is part of the hash: a value computed for one grant never equals
+/// one computed for another.
+pub fn root_catalog_digest(
+    peer: &AuthenticatedPeer,
+    units: &[RootUnitState],
+    personal: &[PersonalUnitState],
+) -> Option<Vec<u8>> {
+    if !peer.has_catalog_scope()
+        || peer.protocol_refusal().is_some()
+        || peer.check_active().is_err()
+        || units.iter().any(|unit| unit.validate().is_err())
+        || personal.iter().any(|unit| unit.validate().is_err())
+        || (!personal.is_empty() && !peer.binds_root_scope())
+    {
+        return None;
+    }
+    let mut units = units.iter().collect::<Vec<_>>();
+    units.sort_by_key(|unit| root_unit_sort_key(unit.unit));
+    if units.windows(2).any(|pair| pair[0].unit == pair[1].unit) {
+        return None;
+    }
+    let mut personal = personal.iter().collect::<Vec<_>>();
+    personal.sort_by_key(|unit| unit.workspace);
+    if personal
+        .windows(2)
+        .any(|pair| pair[0].workspace == pair[1].workspace)
+    {
+        return None;
+    }
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"koru-sync-root-catalog-v6\0");
+    hasher.update(&[u8::from(peer.all_data)]);
+    if !peer.all_data {
+        hasher.update(&(peer.authorized_profiles.len() as u64).to_le_bytes());
+        for profile in &peer.authorized_profiles {
+            hasher.update(profile.as_uuid().as_bytes());
+        }
+        hasher.update(&(peer.authorized_workspaces.len() as u64).to_le_bytes());
+        for workspace in &peer.authorized_workspaces {
+            hasher.update(workspace.as_uuid().as_bytes());
+        }
+    }
+    hasher.update(&(units.len() as u64).to_le_bytes());
+    for unit in units {
+        let (kind, subject) = root_unit_sort_key(unit.unit);
+        hasher.update(&(kind.len() as u64).to_le_bytes());
+        hasher.update(kind.as_bytes());
+        hasher.update(subject.as_bytes());
+        hasher.update(&(unit.version.len() as u64).to_le_bytes());
+        hasher.update(&unit.version);
+    }
+    hasher.update(&(personal.len() as u64).to_le_bytes());
+    for unit in personal {
+        hasher.update(unit.workspace.as_uuid().as_bytes());
+        hasher.update(&(unit.version.len() as u64).to_le_bytes());
+        hasher.update(&unit.version);
+    }
+    Some(hasher.finalize().as_bytes().to_vec())
 }
 
 /// Root of the disposable anti-entropy tree. The already-filtered Profile rows

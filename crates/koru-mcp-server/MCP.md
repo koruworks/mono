@@ -147,9 +147,10 @@ offset `at_utf8`: `{"type": "document", "document_id": "…"}`,
 `{"type": "attachment", "file_id": "…"}` or `{"type": "link", "url":
 "https://…", "label": "caption"}` (`http`, `https` or `mailto`; the caption
 defaults to the address).
-`set_language` labels a `code` block. An image goes in with `add_image`, a
-separate call with the file's bytes in base64 (PNG, JPEG, GIF or WebP, up to 8
-MiB), not an operation. Attribute values are the shapes a read
+`set_language` labels a `code` block. An image is not an operation.
+`create_image_upload` returns a short-lived URL; PUT the raw bytes there
+(PNG, JPEG, GIF or WebP, up to 8 MiB), then `add_image` or `replace_image`
+with that `upload_id`. Do not send the bytes in a tool argument. Attribute values are the shapes a read
 reports: `date` `{value: "YYYY-MM-DD"}`, `datetime_zoned` `{instant_ms,
 timezone}`, `datetime_floating` `{wall}`, `text`, `number`, `bool`, `url`.
 `koru.due` takes a `date` or a `datetime_zoned` and makes the node a task;
@@ -190,7 +191,8 @@ The current tool surface is:
 - `get_documentation`, `list_workspaces`, `list_documents`, `search_documents`,
   `list_tasks`, `read_document`, `list_files`, `search_files`, `get_file`, and
   `read_file` for discovery and reads;
-- `create_document`, `edit_document`, `update_task`, `add_image`,
+- `create_document`, `edit_document`, `update_task`, `create_image_upload`,
+  `add_image`, `replace_image`,
   `ensure_file_note`, and `extract_to_document` for durable semantic
   mutations; and
 - `save_document_version`, `list_document_versions`,
@@ -235,6 +237,12 @@ This file is the long form; the reply points here.
   `insert(parent_id, kind, text, node_id?, after_node_id?)`. Which fields a
   given op takes is enforced by the server, which rejects an unknown or
   misplaced field with an error rather than ignoring it.
+- **One type per branch.** Unions such as string-or-null are published as
+  `anyOf: [{"type":"string"}, {"type":"null"}]` rather than a `type` array.
+  This improves portability to clients that only accept a single type name.
+  Explicit null remains distinct from omission; required fields, numeric
+  bounds, enums and object constraints retain their meaning. The same rule
+  applies recursively to local and hosted tool catalogs.
 - **Kept:** every property name, type, enum value and `required`, `minimum` and
   `maximum`, a string `format` (`uuid`), and a default that names a value
   (`"open"`, `"relevance"`). `compaction_keeps_every_parameter_name_and_value`
@@ -268,12 +276,12 @@ group (maintainers, 2026-11-02).
 | Toolset | Tools | Bytes | ~Tokens | Budget |
 | --- | --- | ---: | ---: | ---: |
 | `core` — always on | `get_documentation`, `list_workspaces` | 697 | 175 | 770 |
-| `docs` | `list_documents`, `search_documents`, `read_document`, `create_document`, `edit_document`, `add_image`, `extract_to_document` | 11,939 | 2,985 | 13,130 |
+| `docs` | `list_documents`, `search_documents`, `read_document`, `create_document`, `edit_document`, `create_image_upload`, `add_image`, `replace_image`, `extract_to_document` | 13,641 | 3,411 | 15,010 |
 | `files` | `list_files`, `search_files`, `get_file`, `read_file`, `ensure_file_note` | 2,266 | 567 | 2,500 |
 | `versions` | `save_document_version`, `list_document_versions`, `compare_document_versions`, `restore_document_version` | 2,036 | 509 | 2,250 |
 | `tasks` | `list_tasks`, `update_task` | 3,099 | 775 | 3,410 |
 | `chat` | `list_chats`, `search_chats`, `read_chat` | 1,369 | 343 | 1,510 |
-| every toolset on | the whole reply, envelope included | 21,451 | 5,363 | 23,670 |
+| every toolset on | the whole reply, envelope included | 23,162 | 5,791 | 25,550 |
 
 A toolset's bytes are its tools as published, one separator each; the reply
 adds about 45 bytes of envelope. Tokens are bytes over four. Measured
@@ -446,6 +454,55 @@ authority. The three public gateway operations require the existing `ai.chat`
 scope, which is already included in the default desktop session. If the gateway
 or AI worker is unavailable, the chat tool returns a structured error while the
 MCP bridge remains available for its other tools.
+
+## Access after a workspace moves
+
+A person organizes workspaces under Profiles, and moves them; a hosted app
+connection is granted either **Profiles** or **workspaces by UUID**
+(root-catalog [TECHNICAL.final §3.9, §7.4](../../docs/features/root-catalog/TECHNICAL.final.md),
+[ADR-000-rootcatalog](../../docs/decisions/ADR-000-rootcatalog.md)). The two
+kinds behave differently when a workspace moves, and nothing about either is
+a tool input.
+
+- **A Profile grant follows current placement.** The connection reaches the
+  live, Cloud-enabled workspaces the committed projection places under that
+  Profile now. A workspace moved into a granted Profile joins the set with
+  the projection commit; one moved out leaves it. The workspace's identity
+  — its UUID, replica, incarnation, documents and blobs — is untouched by a
+  move, so a document an agent created before the move is the same document
+  after it.
+- **A UUID grant stays attached.** The connection reaches that workspace
+  wherever it is placed, including explicitly unassigned. It never learns
+  which Profile holds it.
+- **Neither grants more.** No grant yields a Profile catalog unit, a personal
+  unit or anything outside the account's membership; a workspace-only client
+  sees workspace UUIDs and documents and nothing keyed by a Profile or a user
+  scope. Membership, lifecycle and Read / Read & edit still apply.
+- **Re-evaluation between admission and execution.** The hosted executor
+  asks its access resolver, before each tool that needs a content scope and
+  once per `list_*` and `search_*` call, whether the session's set is still
+  current, and runs the call under the current set. A UUID named in a call
+  is therefore checked against *current* access: a workspace that left a
+  granted Profile answers `permission_denied` on the next call even inside a
+  long session, the same refusal an unselected workspace always had. A
+  connection that is revoked or no longer entitled answers
+  `authorization_revoked`.
+- **Projection lag is pending, never a fallback.** When the service has
+  admitted a move its projection has not committed, the workspace's grant is
+  undecided. A call naming it answers `authorization_unavailable` with
+  `details.reason: "placement_pending"` and `retry_after_seconds`; nothing
+  was changed, and a retry is safe. Listings and searches leave it out until
+  it is decided; no other workspace is served in its place and the hint of
+  where it used to be is never used.
+- **Nothing about Profiles in tool inputs.** No tool takes a `profile_id`,
+  there is no organization or move tool, no compatibility adapter, and the
+  published `tools/list` is unchanged by this rule
+  (`no_tool_input_names_a_profile_personal_unit_or_user_scope`).
+
+Local hosts are untouched: the desktop bridge and Koru AI have no resolver
+and their access is what it was. The shared evaluation rule is
+`koru_account_core::app_connections::resolve_workspaces`; the executor's seam
+is `AccessResolver` on `RequestContext` (`crates/koru-mcp-server/src/access.rs`).
 
 ## Identities and document shape
 
@@ -692,42 +749,77 @@ sent, so a request that left its ids out replays as itself, and the replay's
 
 ## Adding an image
 
-`add_image` stores an image and puts it in a document as one block, in one call:
+An image is two steps, and neither step puts the file in the model's context.
+
+1. `create_image_upload` with `workspace_id` and an optional `name` (blob
+   filename metadata, not a caption and not a path). The answer is
+   `upload_id`, `expires_at` (Unix milliseconds, ten minutes from creation)
+   and `upload`: `{ "method": "PUT", "url", "headers": { "authorization":
+   "Upload <token>" } }`.
+2. The uploader — the MCP client or a migration program, not the model —
+   `PUT`s the raw bytes to `upload.url` with that header and
+   `Content-Length`. The body is the file. There is no base64 and no chunked
+   encoding. The token is not a store credential and not an account bearer.
+3. `add_image` inserts a new block, or `replace_image` replaces the bytes of
+   an existing image, naming `upload_id`.
 
 ```jsonc
 {"workspace_id": "…", "document_id": "…", "base_revision": "<from the read>",
+ "upload_id": "<from create_image_upload>",
+ "node_id": "<a UUID you choose>",
  "parent_id": "<root_node_id>", "after_node_id": null,
- "data_base64": "<the file's bytes, standard base64>", "name": "library.jpg"}
+ "caption": "Library"}
 ```
 
-`node_id` is optional: left out, the server mints it and the answer's
-`node_id` is it. A UUID sent there is used as given; a local name is minted
-too and reported in `created` ([New node ids](#new-node-ids)).
+`replace_image` takes `workspace_id`, `document_id`, `base_revision`,
+`upload_id` and the existing image's `node_id`. `caption`, when sent, sets
+the name; omit it to leave the name.
 
 - **The bytes are checked, not trusted.** The format and the size come from the
-  file's header: PNG, JPEG, GIF or WebP, at most 8 MiB decoded. Anything else —
-  an SVG, a script, a truncated file, a mislabelled one — is refused with the
-  reason, and nothing is stored.
+  file's header: PNG, JPEG, GIF or WebP, at most 8 MiB decoded, at most 40
+  million pixels, and the pixel data must decode. Anything else — an SVG, a
+  script, a truncated file — is refused and the upload stays incomplete.
+  Nothing is written into the document.
+- **The reference is the upload, not a hash you invent.** The same bytes `PUT`
+  again return the same hash. Different bytes after a success are
+  `upload_conflict`. An upload that has not been `PUT` is `upload_not_complete`.
+  An expired one is `upload_expired`. Another workspace is
+  `upload_workspace_mismatch`. Another principal is `permission_denied`.
+  A host that cannot accept bytes answers `image_upload_unavailable`.
 - **The document holds a hash, not the bytes.** The bytes go to the workspace's
   blob store, addressed by their content
   ([ADR-12](../../docs/decisions/ADR-001-025.md#adr-12--blob-bytes-never-enter-the-crdt)),
-  and the new `image` block carries that hash, the type and the pixel size.
+  and the image block carries that hash, the type and the pixel size.
   Storing the same bytes twice keeps one copy. `read_document` reports the
-  block as `{"type":"blob","hash","mime","width","height","attributes"}`.
-  `attributes` is the same list a text block carries, so a due on an image
-  reads back.
-- **It is an edit.** It takes `base_revision`, places the block with `parent_id`
-  and `after_node_id` exactly as an `insert` does, writes the same
-  `mcp_before` and `mcp_after` history markers, and answers the edit's
-  `revision` and `history` with `node_id`, `hash`, `mime`, `width`, `height` and
-  `size`. A stale revision is `stale_node` as for any edit.
-- **Not idempotent.** A `node_id` you sent names the block, so repeating a
-  call that succeeded is refused as a duplicate id rather than adding a second
-  image. One the server minted is new on every call, so send your own UUID
-  when a retry must not add the image twice.
-- **What it does not do yet.** It does not add an image inside a seed
-  (`create_document`), take a URL or a file path, or add a *file* to the
-  workspace's file list; `list_files` and `read_file` are unchanged.
+  block as `{"type":"blob","hash","mime","width","height","attributes"}` and
+  the caption as `metadata.name`. `attributes` is the same list a text block
+  carries, so a due on an image reads back. The tool answer is that metadata.
+  It does not prove a device has drawn the pixels; that happens when the blob
+  is on the viewing device.
+- **Hosted Cloud storage.** Hosted MCP sends the same content hash through
+  Cloud's blob allocation, byte upload and durable mapping used by devices.
+  The API checks the live app connection and its workspace write access on the
+  private control route. The `PUT` succeeds only after Cloud reports the blob
+  durable, so another device can fetch the image by the document's hash.
+- **Caption.** `caption` is `metadata.name`, the label a view shows instead of
+  "Image N". It is not the blob filename (`name` on `create_image_upload`).
+- **It is an edit.** It takes `base_revision`, and `add_image` places the block
+  with `parent_id` and `after_node_id` exactly as an `insert` does. On a
+  device it writes the same `mcp_before` and `mcp_after` history markers.
+  Hosted answers carry no `history`. A stale revision is `revision_conflict`
+  when the document does not already show this image.
+- **Lost responses.** Send your own UUID as `node_id`. If that node already
+  shows this upload's hash, the answer is `replayed: true` and no second image
+  is inserted, even when `base_revision` is stale. A node id that already
+  exists as something else is `duplicate_node_id` and nothing is written.
+  An id the server minted is new on every call.
+- **Hosted claims.** On the hosted catalog, `add_image` and `replace_image`
+  take `claim_ids` the same way `edit_document` does. A hosted call with no
+  claim check installed answers `claims_unavailable` and writes nothing.
+- **What it does not do.** It does not add an image inside a seed
+  (`create_document`), take a URL or a file path, fetch a remote image, or add
+  a *file* to the workspace's file list. `list_files` and `read_file` are
+  unchanged. `edit_document` still cannot send an image hash.
 
 ## Diagrams
 

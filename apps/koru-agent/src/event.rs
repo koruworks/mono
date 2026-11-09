@@ -228,6 +228,10 @@ pub enum AgentEvent {
     /// Store's pairing ALPN produced an incoming join, a completed exchange,
     /// or a failure. The evidence stays in the shared sync-control queue.
     PairingChanged,
+    /// The daemon's organization sync reading changed (root-catalog Plan
+    /// 2.2). The snapshot stays in the shared sync-control status; the app
+    /// pushes it whole to every shell.
+    RootSyncChanged,
     /// Content-free account state nudge; the controller owns the snapshot.
     AccountChanged,
     /// Browser handoff targeted to the shell that initiated this generation.
@@ -493,6 +497,7 @@ impl AgentEvent {
             Self::ReminderSnooze { .. } => "ReminderSnooze",
             Self::NotificationControlAnswered { .. } => "NotificationControlAnswered",
             Self::PairingChanged => "PairingChanged",
+            Self::RootSyncChanged => "RootSyncChanged",
             Self::AccountChanged => "AccountChanged",
             Self::AccountBrowser { .. } => "AccountBrowser",
             Self::AccountResult { .. } => "AccountResult",

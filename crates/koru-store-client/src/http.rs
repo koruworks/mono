@@ -745,6 +745,63 @@ impl Client {
         self.decode(response)
     }
 
+    // ---- the shared Profile deletion batch (root-catalog Plan 1.3) --------
+    //
+    // Distinct from the device-local pair above: these write and read the
+    // root fact that converges between devices and is undone as a batch.
+
+    /// What deleting `id` would move to Trash right now, with the revision
+    /// [`Self::delete_profile`] echoes back. Shown before the confirmation,
+    /// never after it.
+    pub fn profile_deletion_preview(
+        &self,
+        id: ProfileId,
+    ) -> Result<koru_store_wire::ProfileDeletionPreview> {
+        self.get(&format!(
+            "/v1/profiles/{}/deletion-preview",
+            id.to_storage()
+        ))
+    }
+
+    /// Delete `id` as a shared batch over exactly `preview`. A stale preview
+    /// is refused with `idempotency_conflict`; refresh it and ask again.
+    /// `destroy_workspaces`, like the workspace delete.
+    pub fn delete_profile(
+        &self,
+        id: ProfileId,
+        preview: &koru_store_wire::ProfileDeletionPreview,
+    ) -> Result<koru_store_wire::ProfileDeletionBatch> {
+        self.post(
+            &format!("/v1/profiles/{}/delete", id.to_storage()),
+            &koru_store_wire::DeleteProfile {
+                preview: preview.clone(),
+            },
+        )
+    }
+
+    /// The restorable Profile deletions this device holds, by name.
+    pub fn profile_deletions(&self) -> Result<Vec<koru_store_wire::DeletedProfileListing>> {
+        self.get("/v1/profiles/deleted")
+    }
+
+    /// Restore the deletion batch `deletion` of Profile `id`. The outcome
+    /// says, per captured target, what happened to it.
+    pub fn restore_profile(
+        &self,
+        id: ProfileId,
+        deletion: koru_store_wire::DeletionId,
+    ) -> Result<koru_store_wire::ProfileRestoreOutcome> {
+        self.post(
+            &format!("/v1/profiles/{}/restore", id.to_storage()),
+            &koru_store_wire::RestoreProfile { deletion },
+        )
+    }
+
+    /// Live workspaces reachable from no active Profile, with the reason.
+    pub fn unassigned_workspaces(&self) -> Result<Vec<koru_store_wire::UnassignedWorkspace>> {
+        self.get("/v1/workspaces/unassigned")
+    }
+
     pub fn rename_profile(&self, id: ProfileId, name: &str) -> Result<Profile> {
         let response = self.send_with_retry(|discovery| {
             self.http

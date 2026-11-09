@@ -229,7 +229,12 @@ use serde::{Deserialize, Serialize};
 /// chat as a tab — a `koru://chat/…` link from outside Koru, or a chat hit in
 /// the Agent's search overlay. A 44 window would send a request a 45 Agent
 /// cannot read, and could not read the push; the handshake refuses it.
-pub const PROTOCOL_VERSION: u32 = 45;
+/// 46 adds [`Push::RootSync`] (root-catalog Plan 2.2): the organization sync
+/// status per Profile and Workspace and peer — up to date, pending, paused by
+/// this device's settings, blocked by a ceiling mismatch, or held by the
+/// peer for privacy — read from the daemon's receipts and admissions. Ids
+/// and states only; the window words it.
+pub const PROTOCOL_VERSION: u32 = 46;
 
 /// The frame version the agent's stream stamps, handed to `koru_ipc::frame`.
 ///
@@ -999,6 +1004,15 @@ pub enum Push {
     ProfileLifecycleDeleted {
         profile_id: String,
     },
+    /// **The organization sync status**, whole, on every change and once on
+    /// connect (root-catalog Plan 2.2). A snapshot rather than deltas so a
+    /// window that opens mid-pass reads the current answer. Identifiers and
+    /// states only: the subject this device asked a peer about is named,
+    /// what a peer holds back is never named, and no mode row, name or
+    /// count travels.
+    RootSync {
+        status: RootSyncStatus,
+    },
     /// Show this result. See [`Target`].
     Open {
         target: Target,
@@ -1469,7 +1483,7 @@ pub struct AccountProfileCloud {
     pub discovery: Option<CloudDiscovery>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CloudDiscovery {
     pub account_id: String,
     pub pass: u64,
@@ -1483,6 +1497,80 @@ pub struct CloudDiscovery {
     pub failure_code: Option<String>,
     pub retry_at_millis: Option<i64>,
     pub automatic_retry: bool,
+    /// Root-catalog Plan 3.2: what the v2 discovery receipt said about the
+    /// pass these counts were grouped from. Every field is absent or zero on
+    /// a receipt from a v1 service, which groups by membership Profile and
+    /// knows no coverage.
+    ///
+    /// `coverage` is `complete`, `partial` or `held`. The counts above are
+    /// grouped by **current committed placement**; under `partial` they
+    /// count what the projection has read, and `pending_units` says how many
+    /// admitted units it has not — so a Profile with zero discovered
+    /// Workspaces is *empty* only under `complete`, and *pending* otherwise.
+    #[serde(default)]
+    pub coverage: Option<String>,
+    #[serde(default)]
+    pub pending_units: u32,
+    /// The receipt's scope: `user_catalog` or `workspaces`.
+    #[serde(default)]
+    pub scope: Option<String>,
+    /// The account's authorization generation the receipt was read under.
+    #[serde(default)]
+    pub authorization_generation: Option<u64>,
+    /// This Profile's lifecycle in the account's catalog: `live`, `deleted`
+    /// or `purged`. `None` means the account's catalog holds no admitted
+    /// unit for it — a Profile whose Cloud sync is off is **not syncing**,
+    /// never *empty*.
+    #[serde(default)]
+    pub profile_lifecycle: Option<String>,
+    /// Workspaces whose current placement is explicitly unassigned. They
+    /// group under no Profile, so the same number is on every Profile's
+    /// receipt of the pass.
+    #[serde(default)]
+    pub unassigned: u32,
+}
+
+/// What a person is told about one Profile's or Workspace's organization
+/// sync with one linked device (root-catalog TECHNICAL.final §4.4, §7.2,
+/// §9). Read from the Store's join receipts and transport admissions, never
+/// from document hydration: a Workspace whose root unit has not arrived is
+/// pending however many of its documents have.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RootSyncState {
+    UpToDate,
+    /// Root units, a placement or an overlay publication are still owed.
+    Pending,
+    /// This device's own mode row closes the peer path for the subject;
+    /// nothing moves until its sync setting is changed here.
+    PausedBySettings,
+    /// The Workspace's stored choice is above its Profile's ceiling; the
+    /// transport is stopped until the existing correction changes a row.
+    BlockedByMismatch,
+    /// The peer holds the unit back for privacy. The hidden subject is
+    /// never named.
+    Held,
+}
+
+/// One subject's reading with one peer. Exactly one of `profile_id` and
+/// `workspace_id` is set.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RootSyncSubject {
+    pub peer_device_id: String,
+    #[serde(default)]
+    pub profile_id: Option<String>,
+    #[serde(default)]
+    pub workspace_id: Option<String>,
+    pub state: RootSyncState,
+}
+
+/// The whole organization sync status this Agent knows, every connected
+/// peer's reading of every subject it touched. Empty with no connected
+/// peer: the surfaces then say what they said before.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RootSyncStatus {
+    #[serde(default)]
+    pub subjects: Vec<RootSyncSubject>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -215,6 +215,17 @@ pub enum Outcome {
     ///
     /// **The pane reports which workspace; it never builds the menu.** What
     /// the workspace may have done to it is the container's to know.
+    /// **Move to…** on an Unassigned row of the Workspace menu (root-catalog
+    /// §3.6): the container opens the window's workspace menu for it, whose
+    /// *Move to Profile ▸* flyout is the destination picker.
+    MoveUnassigned(WorkspaceId),
+    /// **Restore Profile** on an Unassigned row: the batch restore of the
+    /// deleted Profile it came from (§3.7). The container hands it to the
+    /// workspaces controller, which owns the vouched client.
+    RestoreProfile {
+        profile: koru_core::ProfileId,
+        deletion: koru_store_core::ids::DeletionId,
+    },
     WorkspaceMenu {
         workspace: WorkspaceId,
         at: (f32, f32),

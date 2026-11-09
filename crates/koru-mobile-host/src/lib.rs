@@ -29,9 +29,11 @@ use koru_contract::mobile_proto as wire;
 use koru_delegate_document::{RUN_KIND, RunDocument, RunDocumentError, SCHEDULE_KIND};
 use koru_device::{DeviceId, TrustRecord};
 use koru_replication::protocol::{
-    AuthenticatedPeer, BlobChunk, DocumentReplicaState, DurableAck, ProfileReplicaState,
-    ReplicaDescriptor, ReplicationStore, StoreFailure, WorkspaceCatalogState, WorkspaceInventory,
+    AuthenticatedPeer, BlobChunk, CatalogUnitRef, DocumentReplicaState, DurableAck,
+    PLACEMENT_PENDING, ProfileReplicaState, ReplicaDescriptor, ReplicationStore,
+    RootCatalogInventory, RootJoin, StoreFailure, WorkspaceCatalogState, WorkspaceInventory,
 };
+use koru_replication::root_exchange;
 use koru_store_core::{DocumentId, ProfileId, Timestamp, WorkspaceId};
 use serde::{Deserialize, Serialize};
 
@@ -3220,20 +3222,34 @@ impl MobileReplicationStore {
     {
         let peer = peer.clone();
         self.with_store(move |store| {
-            let profile = match store.workspace_including_deleted(workspace) {
-                Ok(workspace) => workspace.owner,
-                Err(error)
-                    if error.code() == koru_store_core::errors::Code::WorkspaceNotFound
-                        && !peer.all_data
-                        && !peer.authorized_workspaces.contains(&workspace) =>
-                {
-                    // Normalize only absence. A corrupt or unavailable Store
-                    // remains a retryable operational failure, not authorization.
-                    return Err(sf("unauthorized_workspace"));
-                }
-                Err(error) => return Err(map_store(error)),
-            };
-            peer.with_authorized_workspace_profile(workspace, profile, || task(store))
+            // The root-aware grant rule (§7.2): UUID grants by id, Profile
+            // grants by current placement, all-data by scope. The
+            // transport-mode gate is deliberately not asked here, as it is
+            // not for blobs on this host (D238/D258): Android has no mode
+            // toggle, so a gate here would be a silent outage.
+            root_exchange::authorize_workspace(store, &peer, workspace)?;
+            peer.with_fence(|| task(store))
+        })
+    }
+
+    /// The export boundary's three steps, each under its own Store task:
+    /// prepare, derive off the worker, recheck right before the bytes go.
+    fn export_root_unit(
+        &self,
+        peer: &AuthenticatedPeer,
+        subject: koru_store_core::root_catalog::ExportSubject,
+        version: &loro::VersionVector,
+    ) -> Result<Vec<u8>, StoreFailure> {
+        let prepared_peer = peer.clone();
+        let source = self.with_store(move |store| {
+            root_exchange::prepare_root_export(store, &prepared_peer, subject)
+        })?;
+        let recipient = (!version.is_empty()).then_some(version);
+        let publication = root_exchange::derive_root_export(&source, peer, recipient)?;
+        let rechecked_peer = peer.clone();
+        self.with_store(move |store| {
+            root_exchange::recheck_root_export(store, &rechecked_peer, &publication)?;
+            Ok(publication.bytes)
         })
     }
 }
@@ -3315,12 +3331,13 @@ impl ReplicationStore for MobileReplicationStore {
                             continue;
                         }
                         if let Some(workspace) = state.unit.workspace() {
-                            let actual_owner = store
-                                .workspace_including_deleted(workspace)
-                                .map_err(map_store)?
-                                .owner;
-                            if peer
-                                .check_authorized_workspace_profile(workspace, actual_owner)
+                            // A v1 personal address is not exported since
+                            // catalog 13; the grant is read off the current
+                            // placement, never the row's owner.
+                            if matches!(
+                                state.unit,
+                                koru_store_core::profile_units::ProfileUnitRef::Personal { .. }
+                            ) || root_exchange::authorize_workspace(store, &peer, workspace)
                                 .is_err()
                             {
                                 continue;
@@ -3400,11 +3417,7 @@ impl ReplicationStore for MobileReplicationStore {
         self.with_store(move |store| {
             peer.with_authorized_profile_unit(unit, || {
                 if let Some(workspace) = unit.workspace() {
-                    let actual_owner = store
-                        .workspace_including_deleted(workspace)
-                        .map_err(map_store)?
-                        .owner;
-                    peer.check_authorized_workspace_profile(workspace, actual_owner)?;
+                    root_exchange::authorize_workspace(store, &peer, workspace)?;
                 }
                 store
                     .profile_unit_version(unit)
@@ -3425,11 +3438,7 @@ impl ReplicationStore for MobileReplicationStore {
         self.with_store(move |store| {
             peer.with_authorized_profile_unit(unit, || {
                 if let Some(workspace) = unit.workspace() {
-                    let actual_owner = store
-                        .workspace_including_deleted(workspace)
-                        .map_err(map_store)?
-                        .owner;
-                    peer.check_authorized_workspace_profile(workspace, actual_owner)?;
+                    root_exchange::authorize_workspace(store, &peer, workspace)?;
                 }
                 store
                     .profile_unit_updates_since(unit, &version)
@@ -3448,11 +3457,7 @@ impl ReplicationStore for MobileReplicationStore {
         self.with_store(move |store| {
             peer.with_authorized_profile_unit(unit, || {
                 if let Some(workspace) = unit.workspace() {
-                    let actual_owner = store
-                        .workspace_including_deleted(workspace)
-                        .map_err(map_store)?
-                        .owner;
-                    peer.check_authorized_workspace_profile(workspace, actual_owner)?;
+                    root_exchange::authorize_workspace(store, &peer, workspace)?;
                 }
                 store
                     .apply_profile_unit_updates(unit, &updates)
@@ -3472,35 +3477,49 @@ impl ReplicationStore for MobileReplicationStore {
         self.with_store(move |store| {
             peer.with_catalog_scope(|| {
                 let workspaces = store.workspaces_including_deleted().map_err(map_store)?;
-                workspaces
-                    .into_iter()
-                    .filter(|workspace| {
-                        peer.all_data
-                            || peer.authorized_profiles.contains(&workspace.owner)
-                            || peer.authorized_workspaces.contains(&workspace.id)
-                    })
-                    .map(|workspace| {
-                        let digest = store
-                            .workspace_sync_digest(workspace.id)
-                            .map_err(map_store)?;
-                        Ok(WorkspaceCatalogState {
-                            workspace_id: workspace.id,
-                            profile_id: workspace.owner,
-                            digest,
-                        })
-                    })
-                    .collect()
+                let mut result = Vec::new();
+                for workspace in workspaces {
+                    if root_exchange::authorize_workspace(store, &peer, workspace.id).is_err() {
+                        continue;
+                    }
+                    let placement = store
+                        .current_placement_profile(workspace.id)
+                        .map_err(map_store)?
+                        .unwrap_or(workspace.owner);
+                    let digest = store
+                        .workspace_sync_digest(workspace.id)
+                        .map_err(map_store)?;
+                    result.push(WorkspaceCatalogState {
+                        workspace_id: workspace.id,
+                        // A bootstrap hint since protocol 6; see the type's doc.
+                        profile_id: placement,
+                        digest,
+                    });
+                }
+                Ok(result)
             })
         })
     }
 
     fn workspace_profile(&self, workspace: WorkspaceId) -> Result<ProfileId, StoreFailure> {
         self.with_store(move |store| {
-            store
+            let row = store
                 .workspace_including_deleted(workspace)
-                .map(|workspace| workspace.owner)
-                .map_err(map_store)
+                .map_err(map_store)?;
+            Ok(store
+                .current_placement_profile(workspace)
+                .map_err(map_store)?
+                .unwrap_or(row.owner))
         })
+    }
+
+    fn authorize_workspace(
+        &self,
+        peer: &AuthenticatedPeer,
+        workspace: WorkspaceId,
+    ) -> Result<(), StoreFailure> {
+        let peer = peer.clone();
+        self.with_store(move |store| root_exchange::authorize_workspace(store, &peer, workspace))
     }
 
     fn provision_replica(
@@ -3511,56 +3530,114 @@ impl ReplicationStore for MobileReplicationStore {
         let peer = peer.clone();
         let replica = replica.clone();
         self.with_store(move |store| {
-            peer.with_authorized_workspace_profile(replica.workspace_id, replica.profile_id, || {
-                let profile = if peer.all_data {
-                    let locale = koru_store_core::text::Locale::parse(&replica.profile_locale)
-                        .ok_or_else(|| sf("invalid_locale"))?;
-                    koru_store_core::model::Profile {
-                        id: replica.profile_id,
-                        name: replica.profile_name.clone(),
-                        purpose: None,
-                        avatar: None,
-                        icon: replica.profile_icon.clone(),
-                        color: replica.profile_color.clone(),
-                        account: None,
-                        locale,
-                        created_at: koru_store_core::model::Timestamp::from_millis(
-                            replica.profile_created_at_ms,
-                        ),
-                        kind: koru_store_core::model::ProfileKind::parse(&replica.profile_kind),
-                    }
-                } else {
-                    if replica.has_profile_metadata() {
-                        return Err(sf("scoped_profile_metadata"));
-                    }
-                    store.profile(replica.profile_id).map_err(map_store)?
-                };
-                let workspace = koru_store_core::model::Workspace {
-                    id: replica.workspace_id,
-                    owner: replica.profile_id,
-                    name: replica.workspace_name.clone(),
-                    created_at: koru_store_core::model::Timestamp::from_millis(
-                        replica.workspace_created_at_ms,
-                    ),
-                    last_opened_at: None,
-                    icon: replica.workspace_icon.clone(),
-                    color: replica.workspace_color.clone(),
-                    pinned: replica.workspace_pinned,
-                    archived: replica.workspace_archived,
-                    deleted_at: replica
-                        .workspace_deleted_at_ms
-                        .map(koru_store_core::model::Timestamp::from_millis),
-                    position: 0,
-                };
-                store
-                    .provision_replica(
-                        &profile,
-                        &workspace,
-                        replica.manifest_document,
-                        koru_store_core::model::Timestamp::now(),
-                    )
-                    .map_err(map_store)
-            })
+            match root_exchange::provision_replica(store, &peer, &replica)? {
+                koru_store_core::ProvisionedReplica::Ready => Ok(()),
+                koru_store_core::ProvisionedReplica::PlacementPending => {
+                    tracing::info!(
+                        peer = %peer.device_id.to_storage(),
+                        workspace = %replica.workspace_id.to_storage(),
+                        "root_sync direction=peer_to_local action=provisioning_pending reason=no_root_placement"
+                    );
+                    Err(sf(PLACEMENT_PENDING))
+                }
+            }
+        })
+    }
+
+    // ---- protocol 6: the root-catalog exchange
+
+    fn bind_root_scope(&self, peer: &AuthenticatedPeer) -> Result<bool, StoreFailure> {
+        let peer = peer.clone();
+        self.with_store(move |store| root_exchange::bind_root_scope(store, &peer))
+    }
+
+    fn publish_pending_root_overlays(&self) -> Result<usize, StoreFailure> {
+        self.with_store(root_exchange::publish_pending_root_overlays)
+    }
+
+    fn root_catalog(&self, peer: &AuthenticatedPeer) -> Result<RootCatalogInventory, StoreFailure> {
+        let peer = peer.clone();
+        self.with_store(move |store| root_exchange::root_catalog(store, &peer))
+    }
+
+    fn root_unit_version(
+        &self,
+        peer: &AuthenticatedPeer,
+        unit: CatalogUnitRef,
+    ) -> Result<Vec<u8>, StoreFailure> {
+        let peer = peer.clone();
+        self.with_store(move |store| root_exchange::root_unit_version(store, &peer, unit))
+    }
+
+    fn root_unit_updates_since(
+        &self,
+        peer: &AuthenticatedPeer,
+        unit: CatalogUnitRef,
+        version: &loro::VersionVector,
+    ) -> Result<Vec<u8>, StoreFailure> {
+        use koru_store_core::root_catalog::ExportSubject;
+        let subject = match unit {
+            CatalogUnitRef::Profile { profile } => ExportSubject::ProfileCatalog(profile),
+            CatalogUnitRef::Workspace { workspace } => ExportSubject::WorkspaceCatalog(workspace),
+        };
+        self.export_root_unit(peer, subject, version)
+    }
+
+    fn apply_remote_root_updates(
+        &self,
+        peer: &AuthenticatedPeer,
+        unit: CatalogUnitRef,
+        updates: Vec<Vec<u8>>,
+        advertised: Option<&loro::VersionVector>,
+    ) -> Result<RootJoin, StoreFailure> {
+        let staging_peer = peer.clone();
+        let staged = self.with_store(move |store| {
+            root_exchange::stage_root_unit(store, &staging_peer, unit, &updates)
+        })?;
+        let peer = peer.clone();
+        let advertised = advertised.cloned();
+        self.with_store(move |store| {
+            root_exchange::commit_root_unit(store, &peer, staged, advertised.as_ref())
+        })
+    }
+
+    fn personal_version(
+        &self,
+        peer: &AuthenticatedPeer,
+        workspace: WorkspaceId,
+    ) -> Result<Vec<u8>, StoreFailure> {
+        let peer = peer.clone();
+        self.with_store(move |store| root_exchange::personal_version(store, &peer, workspace))
+    }
+
+    fn personal_updates_since(
+        &self,
+        peer: &AuthenticatedPeer,
+        workspace: WorkspaceId,
+        version: &loro::VersionVector,
+    ) -> Result<Vec<u8>, StoreFailure> {
+        self.export_root_unit(
+            peer,
+            koru_store_core::root_catalog::ExportSubject::PersonalV2(workspace),
+            version,
+        )
+    }
+
+    fn apply_remote_personal_updates(
+        &self,
+        peer: &AuthenticatedPeer,
+        workspace: WorkspaceId,
+        updates: Vec<Vec<u8>>,
+        advertised: Option<&loro::VersionVector>,
+    ) -> Result<RootJoin, StoreFailure> {
+        let staging_peer = peer.clone();
+        let staged = self.with_store(move |store| {
+            root_exchange::stage_personal_unit(store, &staging_peer, workspace, &updates)
+        })?;
+        let peer = peer.clone();
+        let advertised = advertised.cloned();
+        self.with_store(move |store| {
+            root_exchange::commit_personal_unit(store, &peer, staged, advertised.as_ref())
         })
     }
 
@@ -3591,7 +3668,12 @@ impl ReplicationStore for MobileReplicationStore {
             let record = store
                 .workspace_including_deleted(workspace)
                 .map_err(map_store)?;
-            let profile = store.profile(record.owner).map_err(map_store)?;
+            // The bootstrap placement hint is the current root placement.
+            let placement = store
+                .current_placement_profile(workspace)
+                .map_err(map_store)?
+                .unwrap_or(record.owner);
+            let profile = store.profile(placement).map_err(map_store)?;
             let manifest = if record.deleted_at.is_some() {
                 store
                     .replica_manifest_id_including_deleted(workspace)
@@ -3677,11 +3759,8 @@ impl ReplicationStore for MobileReplicationStore {
             let Some(workspace) = store.locate(document).map_err(map_store)? else {
                 return Ok(None);
             };
-            let profile = store
-                .workspace_including_deleted(workspace)
-                .map_err(map_store)?
-                .owner;
-            peer.with_authorized_workspace_profile(workspace, profile, || Ok(Some(workspace)))
+            root_exchange::authorize_workspace(store, &peer, workspace)?;
+            peer.with_fence(|| Ok(Some(workspace)))
         })
     }
     fn document_name(
@@ -5601,6 +5680,32 @@ mod tests {
                     .unwrap();
                 store
                     .create_workspace(profile.id, "Original", Timestamp::from_millis(2))
+                    .unwrap()
+            })
+            .unwrap();
+
+        // **The person has turned sync on for this Profile.**
+        //
+        // Every row starts at the seeded `local_only` default and nothing
+        // promotes one but a person (D258): the desktop asks at the Profile
+        // prompt and commits the answer through `choose_transport_mode`. A
+        // Local-only subject exports nothing over a peer — not its bytes and,
+        // since the root catalog landed, not its Workspace unit either
+        // (root-catalog TECHNICAL.final §3.5, §4.4) — and without that unit
+        // the same person's other device may not place the Workspace at all
+        // and answers `placement_pending` for ever. So this is the precondition
+        // the exchange is about, armed here exactly as the desktop's own
+        // root-exchange fixtures arm it, because the test stands in for the
+        // person who answered.
+        let owner = workspace.owner;
+        a_store
+            .with_store(move |store| {
+                store
+                    .choose_transport_mode(
+                        owner,
+                        koru_store_core::transport::TransportMode::P2p,
+                        true,
+                    )
                     .unwrap()
             })
             .unwrap();

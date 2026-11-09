@@ -63,3 +63,28 @@ fn reminder_ids_require_canonical_lowercase_v4() {
     assert!(ReminderId::parse("11111111-1111-1111-8111-111111111111").is_none());
     assert!(ReminderId::parse("00000000-0000-0000-0000-000000000000").is_none());
 }
+
+#[test]
+fn catalog_ids_round_trip_in_canonical_lowercase_form() {
+    fn check(storage: String, parse: fn(&str) -> Option<String>) {
+        assert_eq!(storage.len(), 36, "{storage}");
+        assert_eq!(storage, storage.to_lowercase(), "{storage}");
+        assert_eq!(parse(&storage).as_deref(), Some(storage.as_str()));
+        assert_eq!(parse("not-a-scope"), None);
+        assert_eq!(parse("Mein Konto"), None);
+    }
+    check(UserScopeId::new().to_storage(), |s| {
+        UserScopeId::parse(s).map(|id| id.to_storage())
+    });
+    check(DeletionId::new().to_storage(), |s| {
+        DeletionId::parse(s).map(|id| id.to_storage())
+    });
+    check(RestoreId::new().to_storage(), |s| {
+        RestoreId::parse(s).map(|id| id.to_storage())
+    });
+    let scope = UserScopeId::new();
+    assert!(format!("{scope:?}").starts_with("scope:"));
+    let json = serde_json::to_string(&scope).unwrap();
+    assert_eq!(json, format!("\"{}\"", scope.to_storage()));
+    assert_eq!(serde_json::from_str::<UserScopeId>(&json).unwrap(), scope);
+}

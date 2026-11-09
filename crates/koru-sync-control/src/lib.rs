@@ -16,9 +16,12 @@ use uuid::Uuid;
 use zeroize::Zeroize;
 
 use cloud::{
-    CloudBlobAccessV1, CloudNetworkCost, CloudPermitV1, CloudStage, CloudStatus, CloudStatusRecord,
-    CloudTransferDecision, MAX_CLOUD_PERMIT_PAGE, MAX_CLOUD_PERMITS,
+    CloudAccountBindingRef, CloudBlobAccessV1, CloudNetworkCost, CloudPermitScopeV2, CloudPermitV1,
+    CloudPermitV2, CloudRootExport, CloudRootJoin, CloudRootUnitState, CloudStage, CloudStatus,
+    CloudStatusRecord, CloudTransferDecision, MAX_CLOUD_PERMIT_PAGE, MAX_CLOUD_PERMITS,
+    MAX_CLOUD_ROOT_FRAMES,
 };
+use koru_store_core::service::JoinUnit;
 
 /// 6 fenced mixed builds before Cloud provenance/principal state could cross
 /// control. 7 carries HOST-CONTROL §3's seven Cloud operations and the
@@ -70,7 +73,15 @@ pub const CONTROL_SERVICE: &str = "koru-store-sync";
 /// 5 requires independent identity, private, personal and legacy Profile unit
 /// addresses. Exact Profile grants admit fresh identity/private state; legacy
 /// bytes still require all-data. Older peers receive profile_units_required.
-pub const PEER_PROTOCOL_VERSION: u32 = 5;
+/// 6 adds the root-catalog exchange (root-catalog TECHNICAL.final §4, §7.2,
+/// §11.4): per-subject Profile/Workspace catalog units and personal v2 units
+/// travel as their own frames through the native-redaction export boundary,
+/// a descriptor's Profile is a bootstrap placement hint rather than
+/// authority, and placement is read from the root unit. A 5 peer still
+/// writes `workspaces.owner` from descriptors and exports personal units on
+/// the v1 address, so it receives `root_catalog_required`; 0..=4 keep
+/// `profile_units_required`.
+pub const PEER_PROTOCOL_VERSION: u32 = 6;
 
 /// A sanity bound on one gossip batch, not a capacity limit: a trust store
 /// holds a handful of records per paired device, so anything near this is a
@@ -325,7 +336,21 @@ pub enum ControlRequest {
         sequence: u64,
         account_id: CloudId,
         account_generation: u64,
+        /// The v1 shape, kept on the wire for the compatibility window of
+        /// root-catalog Plan 3.2 and read as v2 at the boundary
+        /// ([`CloudPermitV2::from_v1`]). The host holds v2 permits only.
         permits: Vec<CloudPermitV1>,
+        /// The v2 permits (root-catalog Plan 3.2): one scope each, every one
+        /// with a dataset — the two catalog scopes never reach the host,
+        /// because no bridged stream runs under them.
+        ///
+        /// Absent and empty are the same message, and the field is omitted
+        /// when it is empty so that a frozen v1 request re-encodes
+        /// byte-for-byte: a v1 sender never writes the key, and the frozen
+        /// vectors of `host-control-v1` are the contract for what a v1
+        /// request is.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        permits_v2: Vec<CloudPermitV2>,
     },
     /// The explicit barrier before any content stream attaches. Two IPC
     /// channels are not assumed ordered, so nothing may be forwarded until
@@ -387,6 +412,59 @@ pub enum ControlRequest {
         profile_id: CloudId,
         dataset: CloudReplicaPrincipalV1,
     },
+    // ---- Root-catalog Plan 3.2: the Store half of the account path ----
+    /// `read_cloud_bootstrap` without a Profile (TECHNICAL.final §7.3 "The
+    /// former Profile is not a prerequisite"): the originating device's
+    /// manifest identity and whether its own transport policy for the
+    /// Workspace admits the Cloud path.
+    ReadCloudBootstrapV2 {
+        control_session_id: ControlSessionId,
+        account_id: CloudId,
+        dataset: CloudReplicaPrincipalV1,
+    },
+    /// `Store::bind_account_scope` with the service's verified binding. A
+    /// device bound to another account answers `catalog_binding_conflict`
+    /// and nothing is written.
+    BindCloudAccountScope {
+        control_session_id: ControlSessionId,
+        account_id: CloudId,
+        catalog_scope_id: CloudId,
+        bound_at_ms: i64,
+    },
+    /// The binding this device holds, to declare to the service.
+    ReadCloudAccountBinding {
+        control_session_id: ControlSessionId,
+    },
+    /// The publication job, then the eligible root inventory over the Cloud
+    /// path (`RootGrant::account()`): units with their frontiers and the
+    /// count of units held back.
+    ReadCloudRootInventory {
+        control_session_id: ControlSessionId,
+    },
+    /// The frontier this device holds for one unit, for a pull request.
+    ReadCloudRootFrontier {
+        control_session_id: ControlSessionId,
+        unit: JoinUnit,
+    },
+    /// One unit through the export boundary for the account: prepare under
+    /// the lock, derive off it, recheck right before the answer.
+    ExportCloudRootUnit {
+        control_session_id: ControlSessionId,
+        unit: JoinUnit,
+        /// The service's frontier for the unit; `None` asks for a snapshot.
+        recipient_frontier: Option<Vec<u8>>,
+    },
+    /// The staged join of the service's frames for one unit, with the
+    /// account id as the relationship.
+    JoinCloudRootUnit {
+        control_session_id: ControlSessionId,
+        account_id: CloudId,
+        unit: JoinUnit,
+        frames: Vec<Vec<u8>>,
+        /// The frontier the service advertised, so the receipt can say
+        /// `reconciled`.
+        advertised: Option<Vec<u8>>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -439,6 +517,38 @@ pub enum ControlResponse {
         /// Null means **not ready**, never empty content: the daemon returns
         /// an id only when a real durable local manifest identity exists.
         manifest_document_id: Option<CloudId>,
+        /// Whether this device's own transport policy for the Workspace
+        /// admits the Cloud path (`ReadCloudBootstrapV2` only; `None` for a
+        /// v1 read, or when the Store holds no mode row for it). Absent is
+        /// that `None`, and the key is omitted when it is absent so that a
+        /// v1 `cloud_bootstrap` answer re-encodes exactly as the frozen
+        /// `host-control-v1` sequences froze it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        allows_cloud: Option<bool>,
+    },
+    CloudAccountScopeBound {
+        control_session_id: ControlSessionId,
+    },
+    CloudAccountBinding {
+        control_session_id: ControlSessionId,
+        binding: Option<CloudAccountBindingRef>,
+    },
+    CloudRootInventory {
+        control_session_id: ControlSessionId,
+        units: Vec<CloudRootUnitState>,
+        held: u32,
+    },
+    CloudRootFrontier {
+        control_session_id: ControlSessionId,
+        frontier: Option<Vec<u8>>,
+    },
+    CloudRootUnitExport {
+        control_session_id: ControlSessionId,
+        export: CloudRootExport,
+    },
+    CloudRootUnitJoined {
+        control_session_id: ControlSessionId,
+        join: CloudRootJoin,
     },
     Rejected {
         code: String,
@@ -457,6 +567,71 @@ pub struct ControlStatus {
     pub peers: Vec<PeerStatus>,
     #[serde(default)]
     pub sync_event: Option<SyncEvent>,
+    /// The organization (root-catalog) status per subject and peer, as the
+    /// last sync pass with each connected peer left it (root-catalog
+    /// TECHNICAL.final §4.4, §7.2, §9; Plan 2.2). Identifiers and states
+    /// only: no name, no mode row, no hidden subject.
+    #[serde(default)]
+    pub root_sync: Vec<RootSyncSubject>,
+}
+
+/// **What a person is told about one Profile's or Workspace's organization
+/// sync with one peer.** Read from the Store's receipts and admissions by
+/// the sync pass, never from a document's hydration: a Workspace whose root
+/// unit has not arrived is pending however many of its documents have.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RootSyncState {
+    /// Every eligible unit the peer advertised is applied here.
+    UpToDate,
+    /// Root units, a placement or an overlay publication are still owed:
+    /// `placement_pending`, `root_unit_pending`, a reconciled-short join, a
+    /// private overlay waiting to be published.
+    Pending,
+    /// This device's own mode row closes the peer path for the subject
+    /// (`mode_refuses_transport`): nothing moves until the person changes
+    /// the subject's sync setting here.
+    PausedBySettings,
+    /// The Workspace's stored choice is above its Profile's ceiling
+    /// (`ceiling_mismatch`): the transport is stopped until the existing
+    /// correction path changes a row.
+    BlockedByMismatch,
+    /// The peer holds the unit back for privacy (`root_unit_held`). The
+    /// subject this device asked about is named; what hides it never is.
+    Held,
+}
+
+impl RootSyncState {
+    /// Which of two readings a person should see when both are true of one
+    /// subject: a stop beats a wait, a wait beats done.
+    pub fn worse(self, other: Self) -> Self {
+        fn rank(state: RootSyncState) -> u8 {
+            match state {
+                RootSyncState::UpToDate => 0,
+                RootSyncState::Pending => 1,
+                RootSyncState::Held => 2,
+                RootSyncState::PausedBySettings => 3,
+                RootSyncState::BlockedByMismatch => 4,
+            }
+        }
+        if rank(other) > rank(self) {
+            other
+        } else {
+            self
+        }
+    }
+}
+
+/// One subject's reading with one peer. Exactly one of `profile` and
+/// `workspace` is set.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RootSyncSubject {
+    pub peer: DeviceId,
+    #[serde(default)]
+    pub profile: Option<ProfileId>,
+    #[serde(default)]
+    pub workspace: Option<WorkspaceId>,
+    pub state: RootSyncState,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -558,7 +733,7 @@ struct CloudBookkeeping {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct LivePermit {
-    permit: CloudPermitV1,
+    permit: CloudPermitV2,
     /// 0 until `install_cloud_session` acknowledges one. The generation is the
     /// connection's (the worker allocates it from a per-connection counter), so
     /// a later install on the **same** connection must name a strictly higher
@@ -589,7 +764,7 @@ enum CloudSequenced {
     Context {
         account_id: CloudId,
         account_generation: u64,
-        permits: Vec<CloudPermitV1>,
+        permits: Vec<CloudPermitV2>,
     },
     Fence {
         account_id: CloudId,
@@ -783,14 +958,28 @@ impl ControlHost {
                 account_id,
                 account_generation,
                 permits,
-            } => self.replace_cloud_context(
-                session_id,
-                control_session_id,
-                sequence,
-                account_id,
-                account_generation,
-                permits,
-            ),
+                permits_v2,
+            } => {
+                // The v1 shape is read as v2 at the boundary, so the host
+                // holds one permit type. A v1 permit that cannot be read as
+                // v2 refuses the whole page, as a malformed v2 one does.
+                let mut all = Vec::with_capacity(permits.len() + permits_v2.len());
+                for permit in &permits {
+                    match CloudPermitV2::from_v1(permit) {
+                        Ok(converted) => all.push(converted),
+                        Err(error) => return rejected_code(error.code()),
+                    }
+                }
+                all.extend(permits_v2);
+                self.replace_cloud_context(
+                    session_id,
+                    control_session_id,
+                    sequence,
+                    account_id,
+                    account_generation,
+                    all,
+                )
+            }
             ControlRequest::InstallCloudSession {
                 principal,
                 connection_id,
@@ -883,6 +1072,107 @@ impl ControlHost {
                 ControlResponse::CloudBootstrap {
                     control_session_id: session_id,
                     manifest_document_id: None,
+                    allows_cloud: None,
+                }
+            }
+            ControlRequest::ReadCloudBootstrapV2 {
+                control_session_id,
+                account_id,
+                dataset,
+            } => {
+                if control_session_id != session_id {
+                    return rejected(HostError::StaleSession);
+                }
+                if !account_id.is_v4() || !dataset.is_workspace() {
+                    return rejected(HostError::InvalidCloudRequest);
+                }
+                ControlResponse::CloudBootstrap {
+                    control_session_id: session_id,
+                    manifest_document_id: None,
+                    allows_cloud: None,
+                }
+            }
+            // The Store half of the account path (root-catalog Plan 3.2).
+            // The host validates the session and the shape; the daemon
+            // answers from the Store, the only valid source, and replaces
+            // these placeholders. A placeholder that reaches an Agent is a
+            // host with no Store behind it, which the Agent reads as
+            // unavailable, never as an empty catalog.
+            ControlRequest::BindCloudAccountScope {
+                control_session_id,
+                account_id,
+                catalog_scope_id,
+                bound_at_ms,
+            } => {
+                if control_session_id != session_id {
+                    return rejected(HostError::StaleSession);
+                }
+                if !account_id.is_v4() || !catalog_scope_id.is_v4() || bound_at_ms <= 0 {
+                    return rejected(HostError::InvalidCloudRequest);
+                }
+                ControlResponse::CloudAccountScopeBound {
+                    control_session_id: session_id,
+                }
+            }
+            ControlRequest::ReadCloudAccountBinding { control_session_id } => {
+                if control_session_id != session_id {
+                    return rejected(HostError::StaleSession);
+                }
+                ControlResponse::CloudAccountBinding {
+                    control_session_id: session_id,
+                    binding: None,
+                }
+            }
+            ControlRequest::ReadCloudRootInventory { control_session_id } => {
+                if control_session_id != session_id {
+                    return rejected(HostError::StaleSession);
+                }
+                ControlResponse::CloudRootInventory {
+                    control_session_id: session_id,
+                    units: Vec::new(),
+                    held: 0,
+                }
+            }
+            ControlRequest::ReadCloudRootFrontier {
+                control_session_id, ..
+            } => {
+                if control_session_id != session_id {
+                    return rejected(HostError::StaleSession);
+                }
+                ControlResponse::CloudRootFrontier {
+                    control_session_id: session_id,
+                    frontier: None,
+                }
+            }
+            ControlRequest::ExportCloudRootUnit {
+                control_session_id, ..
+            } => {
+                if control_session_id != session_id {
+                    return rejected(HostError::StaleSession);
+                }
+                ControlResponse::CloudRootUnitExport {
+                    control_session_id: session_id,
+                    export: CloudRootExport::NotFound,
+                }
+            }
+            ControlRequest::JoinCloudRootUnit {
+                control_session_id,
+                account_id,
+                frames,
+                ..
+            } => {
+                if control_session_id != session_id {
+                    return rejected(HostError::StaleSession);
+                }
+                if !account_id.is_v4() || frames.is_empty() || frames.len() > MAX_CLOUD_ROOT_FRAMES
+                {
+                    return rejected(HostError::InvalidCloudRequest);
+                }
+                ControlResponse::CloudRootUnitJoined {
+                    control_session_id: session_id,
+                    join: CloudRootJoin::Pending {
+                        frontier: Vec::new(),
+                    },
                 }
             }
         }
@@ -896,7 +1186,7 @@ impl ControlHost {
         sequence: u64,
         account_id: CloudId,
         account_generation: u64,
-        permits: Vec<CloudPermitV1>,
+        permits: Vec<CloudPermitV2>,
     ) -> ControlResponse {
         if control_session_id != session_id {
             return rejected(HostError::StaleSession);
@@ -981,7 +1271,7 @@ impl ControlHost {
         &self,
         account_id: CloudId,
         account_generation: u64,
-        permits: &[CloudPermitV1],
+        permits: &[CloudPermitV2],
     ) -> Result<(), &'static str> {
         if permits.len() > MAX_CLOUD_PERMIT_PAGE {
             return Err(HostError::CloudPermitPage.code());
@@ -995,6 +1285,12 @@ impl ControlHost {
         let mut seen = BTreeSet::new();
         for permit in permits {
             permit.validate().map_err(|error| error.code())?;
+            // Only a scope with a dataset has a stream this host can admit;
+            // the user-catalog and user-personal scopes run over the account
+            // API in the Agent and never come here.
+            if permit.dataset().is_none() {
+                return Err(cloud::HostCloudError::PermitScope.code());
+            }
             if permit.account_id != account_id {
                 return Err(HostError::ForeignCloudPermit.code());
             }
@@ -1101,7 +1397,7 @@ impl ControlHost {
             return rejected(HostError::UnknownCloudPermit);
         };
         if held.permit.account_id != principal.account_id
-            || held.permit.dataset != principal.dataset
+            || held.permit.dataset() != Some(principal.dataset)
             || held.permit.account_generation != principal.account_generation
         {
             return rejected(HostError::CloudPermitMismatch);
@@ -1137,11 +1433,12 @@ impl ControlHost {
                 .cloud
                 .live
                 .values()
-                .map(|held| CloudStatusRecord {
+                .filter_map(|held| held.permit.dataset().map(|dataset| (held, dataset)))
+                .map(|(held, dataset)| CloudStatusRecord {
                     permit_id: held.permit.permit_id,
                     account_id: held.permit.account_id,
                     account_generation: held.permit.account_generation,
-                    dataset: held.permit.dataset,
+                    dataset,
                     stage: held.stage,
                     error_code: held.error_code.clone(),
                     pending_consent_ids: Vec::new(),
@@ -1164,15 +1461,18 @@ impl ControlHost {
     /// **Identity only.** No permit id, no account id, no generation, no
     /// expiry and no credential leaves this call — the initializer needs to
     /// know *which subjects* the account covers and nothing else about them.
-    /// A Workspace dataset names both its Profile and its Workspace; a Profile
-    /// dataset names only its Profile.
+    /// A Workspace permit names its Workspace and, as a placement hint, the
+    /// Profile it is currently placed under (none when unassigned); a
+    /// Profile-units permit names only its Profile.
     pub fn cloud_authorized_subjects(&self) -> (BTreeSet<ProfileId>, BTreeSet<WorkspaceId>) {
         let mut profiles = BTreeSet::new();
         let mut workspaces = BTreeSet::new();
         for held in self.cloud.live.values() {
-            profiles.insert(ProfileId::from_uuid(held.permit.profile_id.as_uuid()));
-            if let CloudReplicaPrincipalV1::Workspace { workspace_id, .. } = held.permit.dataset {
-                workspaces.insert(WorkspaceId::from_uuid(workspace_id.as_uuid()));
+            if let Some(profile) = held.permit.placement_profile() {
+                profiles.insert(ProfileId::from_uuid(profile.as_uuid()));
+            }
+            if let CloudPermitScopeV2::Workspace { descriptor } = &held.permit.scope {
+                workspaces.insert(WorkspaceId::from_uuid(descriptor.workspace_id.as_uuid()));
             }
         }
         (profiles, workspaces)
@@ -1194,11 +1494,11 @@ impl ControlHost {
         self.cloud
             .live
             .values()
-            .find(|held| match held.permit.dataset {
-                CloudReplicaPrincipalV1::Workspace { workspace_id, .. } => {
-                    workspace_id.as_uuid() == workspace
+            .find(|held| match &held.permit.scope {
+                CloudPermitScopeV2::Workspace { descriptor } => {
+                    descriptor.workspace_id.as_uuid() == workspace
                 }
-                CloudReplicaPrincipalV1::Profile { .. } => false,
+                _ => false,
             })
             .map(|held| (held.stage, held.error_code.clone()))
     }
@@ -1213,7 +1513,7 @@ impl ControlHost {
     pub fn installed_cloud_permit(
         &self,
         principal: &CloudPrincipalV1,
-    ) -> Result<CloudPermitV1, HostError> {
+    ) -> Result<CloudPermitV2, HostError> {
         if Some(principal.control_session_id) != self.session.map(ControlSessionId::as_uuid) {
             return Err(HostError::StaleSession);
         }
@@ -1223,7 +1523,7 @@ impl ControlHost {
             .get(&principal.permit_id)
             .ok_or(HostError::UnknownCloudPermit)?;
         if held.permit.account_id != principal.account_id
-            || held.permit.dataset != principal.dataset
+            || held.permit.dataset() != Some(principal.dataset)
             || held.permit.account_generation != principal.account_generation
         {
             return Err(HostError::CloudPermitMismatch);
@@ -1435,6 +1735,7 @@ impl ControlHost {
             desired_connections: self.desired_connections.len(),
             peers: Vec::new(),
             sync_event: None,
+            root_sync: Vec::new(),
         }
     }
 
@@ -1623,10 +1924,13 @@ impl HostError {
     }
 }
 
-/// True for the seven control-7 Cloud variants, which carry an extra 64 KiB
+/// True for the control-7 Cloud variants, which carry an extra 64 KiB
 /// frame cap on top of the existing one ([`cloud::MAX_CLOUD_CONTROL_FRAME_BYTES`]).
 /// A reader checks the encoded body it already has rather than re-encoding the
-/// decoded request.
+/// decoded request. The root-unit join (`JoinCloudRootUnit`) is deliberately
+/// not under it: its body is the frames the account API answered, bounded
+/// by that API's response cap and by the socket's own frame cap, and a
+/// personal unit's history is not a permit page.
 pub fn is_cloud_request(request: &ControlRequest) -> bool {
     matches!(
         request,
@@ -1638,6 +1942,12 @@ pub fn is_cloud_request(request: &ControlRequest) -> bool {
             | ControlRequest::ReplaceCloudNetworkPolicy { .. }
             | ControlRequest::ReplaceCloudBlobAccess { .. }
             | ControlRequest::ReadCloudBootstrap { .. }
+            | ControlRequest::ReadCloudBootstrapV2 { .. }
+            | ControlRequest::BindCloudAccountScope { .. }
+            | ControlRequest::ReadCloudAccountBinding { .. }
+            | ControlRequest::ReadCloudRootInventory { .. }
+            | ControlRequest::ReadCloudRootFrontier { .. }
+            | ControlRequest::ExportCloudRootUnit { .. }
     )
 }
 

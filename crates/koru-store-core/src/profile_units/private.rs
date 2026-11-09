@@ -5,17 +5,18 @@ use super::*;
 use crate::reminders::ReminderSettings;
 
 pub struct PrivateManifest {
-    pub(super) inner: UnitDoc,
+    pub(super) inner: UnitDoc<ProfileUnitRef>,
 }
 impl PrivateManifest {
     pub fn create(profile: ProfileId) -> Result<Self> {
+        let unit = ProfileUnitRef::Private { profile };
         Ok(Self {
-            inner: UnitDoc::fresh(ProfileUnitRef::Private { profile })?,
+            inner: UnitDoc::fresh(unit, |doc| unit.write_header(doc))?,
         })
     }
     pub fn from_snapshot(bytes: &[u8]) -> Result<Self> {
         Ok(Self {
-            inner: UnitDoc::load(bytes, |profile, workspace| {
+            inner: load_profile_unit(bytes, |profile, workspace| {
                 if workspace.is_some() {
                     return Err(scope_mismatch());
                 }
@@ -28,6 +29,9 @@ impl PrivateManifest {
     }
     pub fn profile_id(&self) -> ProfileId {
         self.inner.unit.profile()
+    }
+    pub fn unit(&self) -> ProfileUnitRef {
+        self.inner.unit
     }
     unit_methods!();
     fn content(&self) -> ProfileContent<'_> {

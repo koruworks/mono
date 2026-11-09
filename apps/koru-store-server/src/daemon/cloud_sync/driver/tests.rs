@@ -120,6 +120,7 @@ fn parts<J: StoreJobs>(
         permission: accept,
         progress: |_| {},
         uploads: None,
+        interest: None,
     }
 }
 
@@ -191,11 +192,17 @@ async fn replica(device: &Device) -> Arc<MemoryStore> {
         })
         .unwrap()
         .unwrap();
+    // The Workspace's root unit first, placed under the Profile, as a
+    // paired device's pass delivers it; then the identity-only bootstrap
+    // under that known placement (root-catalog Plan 3.2).
+    crate::cloud_driver::seed_root_placement(&store.client(), device.profile, device.workspace)
+        .await
+        .unwrap();
     crate::cloud_driver::ensure_workspace(
         &store.client(),
-        device.profile,
         device.workspace,
         device.manifest,
+        koru_store_core::ReplicaPlacement::KnownOnly,
     )
     .await
     .unwrap();
@@ -628,6 +635,7 @@ async fn confirmed_versions_and_session_ends_are_reported() {
             deferrals: Arc::default(),
             permission: accept,
             uploads: None,
+            interest: None,
         },
     );
     passes(&driver, 1).await;

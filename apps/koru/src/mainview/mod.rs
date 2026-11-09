@@ -177,9 +177,11 @@ fn profiles_effect_request(effect: crate::manage::profiles::Effect) -> PaneReque
         Effect::RemoveLocalProfile {
             profile,
             delete_workspaces,
+            preview,
         } => PaneRequest::RemoveLocalProfile {
             profile,
             delete_workspaces,
+            preview,
         },
         Effect::FinishHostedDeletion {
             profile,
@@ -6933,6 +6935,18 @@ impl MainView {
         self.recompose_run_pill_captions();
     }
 
+    /// **Take the organization sync status** (root-catalog Plan 2.2) — the
+    /// Agent's whole reading per Profile and Workspace per linked device —
+    /// and hand it to the one surface that words it, the Explore pane's
+    /// sync icon and Workspace menu. A single-consumer snapshot like the
+    /// device list, drained here whether or not the switcher is open.
+    fn refresh_root_sync(&mut self) -> bool {
+        let Some(status) = self.agent.take_root_sync() else {
+            return false;
+        };
+        self.explore.set_root_sync(&status)
+    }
+
     /// Ask for device identity once on each live Agent connection until that
     /// generation answers. A dropped writer advances the generation, so the
     /// reconnect wake reissues naturally without a timer or polling.
@@ -7930,6 +7944,29 @@ impl MainView {
                 self.open_manage_workspaces(owner)
             }
             Outcome::ManageWorkspaces => self.open_manage_workspaces(None),
+            // The Unassigned row's *Move to…*: the window's workspace menu,
+            // whose *Move to Profile ▸* flyout is the destination picker,
+            // anchored beside the row (root-catalog §3.6).
+            Outcome::MoveUnassigned(id) => {
+                let at = self
+                    .explore
+                    .unassigned_move_anchor(self.explore_popover_area(), self.viewport, id)
+                    .unwrap_or(self.pointer);
+                self.open_workspace_menu(id, at, true)
+            }
+            // *Restore Profile*: the batch restore, through the controller
+            // that holds the vouched client; its outcome arrives as the
+            // controller's notice (§3.7, §6.3).
+            Outcome::RestoreProfile { profile, deletion } => {
+                self.workspace_controller.borrow_mut().perform(
+                    koru_workspaces_ui::Action::RestoreProfile(
+                        crate::manage::workspaces::catalog_profile(profile),
+                        deletion,
+                    ),
+                );
+                self.arm_workspaces_poll();
+                true
+            }
             Outcome::OpenSyncSettings => self.open_sync_settings_tab(),
             Outcome::ManageProfile(profile) => {
                 self.open_manage(crate::manage::Page::Profile(profile))
@@ -14880,6 +14917,7 @@ impl View for MainView {
         let delegation_requested = self.drain_delegate_request();
         let delegation_answered = self.maintain_delegation();
         self.refresh_device_names();
+        let root_sync_changed = self.refresh_root_sync();
         let welcome_ticks = self.welcome_progress.maintain(now);
         if welcome_ticks {
             self.sync_welcome_lists();
@@ -15383,6 +15421,7 @@ impl View for MainView {
             || feedback_failed
             || telemetry_changed
             || refresh_stats
+            || root_sync_changed
     }
 }
 impl MainView {
