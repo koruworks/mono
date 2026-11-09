@@ -29,7 +29,8 @@ use koru_store_core::root_catalog::{
     WorkspaceCatalogUnit,
 };
 use koru_store_core::service::{
-    EnsuredWorkspace, JoinPhase, JoinUnit, RootGrant, RootJoinOutcome, build_reminder_index,
+    EnsuredWorkspace, JoinPhase, JoinUnit, PurgedSubjectExport, RootGrant, RootJoinOutcome,
+    build_reminder_index, purged_subject_export_key,
 };
 use koru_store_core::transport::{
     SetTransportMode, TransportMode, TransportPath, TransportSubject,
@@ -800,6 +801,170 @@ fn seam_purge_step_4_bytes_fault_leaves_the_row_pending_and_the_retry_finishes()
         koru_store_core::service::PurgeOutcome::default(),
         "nothing left to do"
     );
+}
+
+// ------------------------------------- the purged subject's export choice
+
+/// The subject's mode row in `local_transport_modes`, for the one assertion
+/// that is about the row being gone rather than about what replaced it.
+fn mode_rows(f: &Root, workspace: WorkspaceId) -> i64 {
+    f.count(&format!(
+        "SELECT COUNT(*) FROM local_transport_modes
+          WHERE subject_kind = 'workspace' AND subject_id = '{}'",
+        workspace.to_storage()
+    ))
+}
+
+fn state_rows(f: &Root, key: &str) -> i64 {
+    f.count(&format!(
+        "SELECT COUNT(*) FROM store_state WHERE key = '{key}'"
+    ))
+}
+
+/// Seam: purge step 1 writes the subject's export choice in the **same**
+/// transaction as the purge evidence (§6.4). A fault on that one
+/// `store_state` insert leaves neither the evidence nor the key; the retry
+/// writes both once, and the evidence can still leave after step 5 has
+/// taken the mode row with it — which is the whole point of the key.
+#[test]
+fn seam_purge_step_1_records_the_export_choice_in_the_evidences_own_transaction() {
+    let mut f = Root::new();
+    let (_, w) = f.cloud_pair();
+    let unit = CatalogUnitRef::Workspace { workspace: w };
+    f.store.delete_workspace(w, at()).unwrap();
+    let key = purged_subject_export_key(w);
+    let before = dump(&f);
+    // INSERT, not UPDATE: the publication upserts, and an upsert fires the
+    // UPDATE triggers only on its `DO UPDATE` branch — there is no row yet.
+    f.fail_on(&format!(
+        "BEFORE INSERT ON store_state WHEN NEW.key = '{key}'"
+    ));
+    let outcome = f.store.purge_deleted(after_retention(at())).unwrap();
+    assert_eq!(outcome.pending, vec![(w, Code::StorageFailed)]);
+    assert!(outcome.purged.is_empty());
+    f.recover();
+    assert_eq!(dump(&f), before, "neither the evidence nor the key");
+    assert!(workspace_unit(&f, w).purged().is_empty());
+    assert_eq!(f.store.purged_subject_export(w).unwrap(), None);
+    assert!(f.backend.0.deleted.borrow().is_empty(), "no bytes went");
+
+    let retry = f.store.purge_deleted(after_retention(at())).unwrap();
+    assert_eq!(retry.purged, vec![w]);
+    assert_eq!(workspace_unit(&f, w).purged().len(), 1, "one fact");
+    assert_eq!(
+        f.store.purged_subject_export(w).unwrap(),
+        Some(PurgedSubjectExport {
+            peer: true,
+            cloud: true
+        }),
+        "the choice the subject held the moment before the purge"
+    );
+    assert_eq!(state_rows(&f, &key), 1, "one key");
+    assert_eq!(mode_rows(&f, w), 0, "step 5 took the row the key replaces");
+    f.restart();
+    for path in [TransportPath::Peer, TransportPath::Cloud] {
+        assert!(
+            f.store
+                .eligible_export_source(unit, path)
+                .unwrap()
+                .is_some(),
+            "the purge evidence still leaves on {path:?}"
+        );
+    }
+    let inventory = f.store.root_export_inventory(&peer_grant()).unwrap();
+    assert!(
+        inventory.units.iter().any(|(listed, _)| *listed == unit),
+        "and an all_data peer is offered it"
+    );
+    assert_eq!(inventory.held, 0);
+}
+
+/// §4.4: a Local-only subject's purge evidence stays on this device, as its
+/// placement always did. The key records the refusal rather than losing it,
+/// so the evidence is withheld on both paths and is not even listed.
+#[test]
+fn a_local_only_workspaces_purge_evidence_is_withheld_after_the_purge() {
+    let mut f = Root::new();
+    // A Profile with no explicit choice: Local-only, so the lifecycle facts
+    // are written to the overlay and nothing about W may leave.
+    let a = f.profile("A");
+    let w = f.store.create_workspace(a, "W", at()).unwrap().id;
+    let unit = CatalogUnitRef::Workspace { workspace: w };
+    f.store.delete_workspace(w, at()).unwrap();
+    assert_eq!(
+        f.store.purge_deleted(after_retention(at())).unwrap().purged,
+        vec![w]
+    );
+    assert_eq!(
+        workspace_unit(&f, w).purged().len(),
+        1,
+        "the evidence is here"
+    );
+    assert_eq!(
+        f.store.purged_subject_export(w).unwrap(),
+        Some(PurgedSubjectExport {
+            peer: false,
+            cloud: false
+        }),
+        "the refusal is recorded, not lost with the row"
+    );
+    f.restart();
+    for path in [TransportPath::Peer, TransportPath::Cloud] {
+        assert!(
+            f.store
+                .eligible_export_source(unit, path)
+                .unwrap()
+                .is_none(),
+            "nothing leaves on {path:?}"
+        );
+    }
+    for grant in [peer_grant(), RootGrant::account()] {
+        let inventory = f.store.root_export_inventory(&grant).unwrap();
+        assert!(inventory.units.is_empty(), "not listed");
+        assert!(inventory.personal.is_empty());
+    }
+    assert!(
+        f.store
+            .root_export_source(&peer_grant(), ExportSubject::WorkspaceCatalog(w))
+            .is_err(),
+        "and not served on request either"
+    );
+}
+
+/// A Workspace purged by a build that kept no record has none, and the
+/// absence is not permission: the missing mode row stays the storage error
+/// it was, the unit is held, and the inventory counts it without naming it.
+#[test]
+fn a_subject_purged_before_the_export_choice_existed_stays_held() {
+    let mut f = Root::new();
+    let (_, w) = f.cloud_pair();
+    let unit = CatalogUnitRef::Workspace { workspace: w };
+    f.store.delete_workspace(w, at()).unwrap();
+    assert_eq!(
+        f.store.purge_deleted(after_retention(at())).unwrap().purged,
+        vec![w]
+    );
+    // What an older purge left: the evidence, no mode row, and no key.
+    let key = purged_subject_export_key(w);
+    f.control
+        .execute("DELETE FROM store_state WHERE key = ?1", [&key])
+        .unwrap();
+    f.restart();
+    assert_eq!(f.store.purged_subject_export(w).unwrap(), None);
+    assert_eq!(mode_rows(&f, w), 0);
+    for path in [TransportPath::Peer, TransportPath::Cloud] {
+        assert_eq!(
+            f.store
+                .eligible_export_source(unit, path)
+                .unwrap_err()
+                .code(),
+            Code::CorruptState,
+            "no row and no record is not a default on {path:?}"
+        );
+    }
+    let inventory = f.store.root_export_inventory(&peer_grant()).unwrap();
+    assert!(!inventory.units.iter().any(|(listed, _)| *listed == unit));
+    assert_eq!(inventory.held, 1, "held, as a number and not an id");
 }
 
 // ------------------------------------------------- account scope binding

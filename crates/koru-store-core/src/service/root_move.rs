@@ -564,6 +564,16 @@ impl<C: Catalog, B: Backend> Store<C, B> {
     /// ([`Self::publish_pending_overlay`]) so the export never carries a
     /// placement the device has already superseded.
     ///
+    /// A **purged** subject has no mode row left — step 5 of the purge takes
+    /// it, the key is `ON DELETE RESTRICT` — while its unit row stays with
+    /// the purge evidence (§6.4). For that one case the answer comes from
+    /// the choice the purge recorded beside its evidence
+    /// ([`Store::purged_subject_export`]), so the evidence leaves exactly
+    /// where the subject itself would have the moment before the purge, and
+    /// a returning stale replica can be refused. A subject purged before
+    /// that record existed has none, and the missing row stays the storage
+    /// error it was: held, never admitted by default.
+    ///
     /// Redaction of historical Profile references is the export module's
     /// business, not this method's: these are the bytes it starts from.
     pub fn eligible_export_source(
@@ -571,12 +581,7 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         unit: CatalogUnitRef,
         path: TransportPath,
     ) -> Result<Option<Vec<u8>>> {
-        let admission = self.transport_admission(transport_subject(unit))?;
-        let allowed = match path {
-            TransportPath::Peer => admission.allows_peer(),
-            TransportPath::Cloud => admission.allows_cloud(),
-        };
-        if !allowed {
+        if !self.export_admitted(unit, path)? {
             return Ok(None);
         }
         let scope = self.catalog.local_user_scope()?;
@@ -587,6 +592,33 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             .catalog
             .root_catalog_unit(scope, unit)?
             .map(|row| row.snapshot))
+    }
+
+    /// Whether `unit`'s subject admits `path` right now: its mode row, or —
+    /// only when that row is gone — the admission its purge recorded. A
+    /// Profile's row is never removed by a purge, so a Profile with no row
+    /// is the storage error it always was, and so is a Workspace purged
+    /// without a record.
+    fn export_admitted(&self, unit: CatalogUnitRef, path: TransportPath) -> Result<bool> {
+        let admission = match self.transport_admission(transport_subject(unit)) {
+            Ok(admission) => admission,
+            Err(error) if error.code() == Code::CorruptState => {
+                let purged = unit
+                    .workspace()
+                    .map(|workspace| self.purged_subject_export(workspace))
+                    .transpose()?
+                    .flatten();
+                return match purged {
+                    Some(record) => Ok(record.allows(path)),
+                    None => Err(error),
+                };
+            }
+            Err(error) => return Err(error),
+        };
+        Ok(match path {
+            TransportPath::Peer => admission.allows_peer(),
+            TransportPath::Cloud => admission.allows_cloud(),
+        })
     }
 }
 

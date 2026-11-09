@@ -80,9 +80,10 @@ mod root_move;
 pub use pins::PinnedWorkspace;
 pub use replacement::{ListingState, MovedWorkspace, RemovedWorkspace, Replacement};
 pub use root_lifecycle::{
-    BatchPhase, DeletedProfile, K_ROOT_CATALOG_BATCH_PREFIX, ProfileDeletionBatch,
-    ProfileDeletionJob, ProfileDeletionPreview, ProfileRestoreOutcome, PurgeOutcome,
-    UnassignedReason, UnassignedWorkspace, batch_job_key, expires_at,
+    BatchPhase, DeletedProfile, K_PURGED_SUBJECT_EXPORT_PREFIX, K_ROOT_CATALOG_BATCH_PREFIX,
+    ProfileDeletionBatch, ProfileDeletionJob, ProfileDeletionPreview, ProfileRestoreOutcome,
+    PurgeOutcome, PurgedSubjectExport, UnassignedReason, UnassignedWorkspace, batch_job_key,
+    expires_at, purged_subject_export_key,
 };
 mod profile_projection;
 pub use preparation::{CreateProfileWithWorkspace, CreatedProfile, FirstWorkspace};
