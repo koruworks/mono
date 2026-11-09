@@ -407,10 +407,18 @@ fn a_replica_that_already_knew_a_value_keeps_it() {
 // --------------------------------------------------------- shape fidelity
 
 /// One map insert as a recipient's history shows it, keyed by its op id.
+///
+/// Deliberately not the change's `deps` array. Loro records dependencies
+/// per *change*, and a change is only a batch: clearing the freeform commit
+/// messages that §4.3 step 3 requires removes the boundary that split two
+/// of this fixture's changes, so the derived history carries the same
+/// operations in one change and the dependency that was an explicit `deps`
+/// entry becomes the implicit counter adjacency inside it. The causal graph
+/// is unchanged, and it is the graph §4.3 promises, so it is asserted
+/// batching-independently by [`causal_parents`] instead.
 #[derive(Debug, PartialEq, Eq)]
 struct Insert {
     lamport: i64,
-    deps: serde_json::Value,
     container: String,
     key: String,
     value: serde_json::Value,
@@ -432,7 +440,6 @@ fn inserts(json: &serde_json::Value) -> BTreeMap<String, Insert> {
                     format!("{peer}@{counter}"),
                     Insert {
                         lamport: change["lamport"].as_i64().unwrap() + counter - start,
-                        deps: change["deps"].clone(),
                         container: op["container"].as_str().unwrap().to_string(),
                         key: op["content"]["key"].as_str().unwrap().to_string(),
                         value: op["content"]["value"].clone(),
@@ -444,15 +451,77 @@ fn inserts(json: &serde_json::Value) -> BTreeMap<String, Insert> {
     out
 }
 
+/// `peer@counter -> the op ids it causally depends on directly`, for every
+/// operation of a JSON history, read without regard to how the history was
+/// batched into changes.
+///
+/// A Loro change is a contiguous run of one peer's operations that share
+/// one dependency frontier: a remote dependency can only appear at a
+/// change's first operation, because anything new to depend on starts a new
+/// change. So the first operation's parents are the change's `deps`, and
+/// every later operation's sole parent is its own predecessor counter —
+/// which is exactly what a `deps` entry on a change starting there would
+/// have said. Two histories that agree here have the same causal graph
+/// however they were grouped, and a dependency genuinely dropped by a
+/// re-encode would show as a missing parent.
+fn causal_parents(json: &serde_json::Value) -> BTreeMap<String, BTreeSet<String>> {
+    let mut out = BTreeMap::new();
+    for change in json["changes"].as_array().unwrap() {
+        let id = change["id"].as_str().unwrap();
+        let (start, peer) = id.split_once('@').unwrap();
+        let start: i64 = start.parse().unwrap();
+        let deps: BTreeSet<String> = change["deps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|dep| dep.as_str().unwrap().to_string())
+            .collect();
+        for op in change["ops"].as_array().unwrap() {
+            let counter = op["counter"].as_i64().unwrap();
+            let parents = if counter == start {
+                deps.clone()
+            } else {
+                [format!("{}@{peer}", counter - 1)].into_iter().collect()
+            };
+            out.insert(format!("{peer}@{counter}"), parents);
+        }
+    }
+    out
+}
+
 #[test]
 fn ids_containers_and_keys_are_preserved_and_messages_stripped() {
     let fixture = moved();
-    let [a, b, _] = fixture.profiles;
-    let unit = fixture.unit;
+    let [a, b, c] = fixture.profiles;
+    let mut unit = fixture.unit;
+    // A concurrent second writer, merged back in, so the history under
+    // comparison is a real graph with a cross-peer dependency and a merge
+    // change — not one peer's linear run, which any grouping would satisfy.
+    let other =
+        WorkspaceCatalogUnit::from_snapshot(&unit.snapshot().unwrap(), fixture.workspace, 30)
+            .unwrap();
+    let forked = other.version();
+    let concurrent = DeletionId::new();
+    other
+        .record_deletion(concurrent, &DeletionRecord::new(500, None))
+        .unwrap();
+    unit.record_restore(
+        RestoreId::new(),
+        &RestoreRecord {
+            at_ms: 600,
+            observed_deletions: vec![fixture.deletion],
+            batch_id: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        unit.import_frames(&[other.updates_since(&forked).unwrap()])
+            .unwrap(),
+        Staged::Applied(())
+    );
     // A freeform message on one more commit; the derived history drops it.
     unit.inner.doc.set_next_commit_message("moved for the demo");
-    unit.set_placement(fixture.placements[2].profile, Uuid::new_v4())
-        .unwrap();
+    unit.set_placement(Some(c), Uuid::new_v4()).unwrap();
     let source = history(&unit.inner.doc);
     assert!(
         source["changes"]
@@ -461,6 +530,11 @@ fn ids_containers_and_keys_are_preserved_and_messages_stripped() {
             .iter()
             .any(|change| change["msg"] == "moved for the demo")
     );
+    let source_parents = causal_parents(&source);
+    assert!(
+        source_parents.values().any(|parents| parents.len() > 1),
+        "the fixture is a graph: one operation merges two peers' histories"
+    );
 
     let publication = publish(
         ExportSubject::WorkspaceCatalog(fixture.workspace),
@@ -468,7 +542,8 @@ fn ids_containers_and_keys_are_preserved_and_messages_stripped() {
         &[a, b],
         None,
     );
-    let derived = history(&fresh_recipient(&publication.bytes));
+    let recipient_doc = fresh_recipient(&publication.bytes);
+    let derived = history(&recipient_doc);
     for change in derived["changes"].as_array().unwrap() {
         assert!(change["msg"].is_null(), "messages are stripped");
     }
@@ -501,6 +576,28 @@ fn ids_containers_and_keys_are_preserved_and_messages_stripped() {
         }
     }
     assert_eq!(nulled, 2);
+
+    // The same lineage, not just the same operations: every operation —
+    // deletes included, which `inserts` does not see — keeps the exact
+    // direct causal parents it had, and the derived document ends at the
+    // authoritative version and frontier. The change-level `deps` arrays
+    // may differ, because stripping the commit message lets two of the
+    // source's changes merge into one; nothing causal moves with them.
+    assert_eq!(
+        source_parents,
+        causal_parents(&derived),
+        "every operation keeps its direct causal parents"
+    );
+    assert_eq!(
+        recipient_doc.oplog_vv(),
+        unit.inner.doc.oplog_vv(),
+        "the derived history ends at the authoritative version"
+    );
+    assert_eq!(
+        recipient_doc.oplog_frontiers(),
+        unit.inner.doc.oplog_frontiers(),
+        "and at the same frontier, so it is the same lineage"
+    );
 }
 
 // ---------------------------------------------------------- personal v2
