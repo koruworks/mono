@@ -149,7 +149,7 @@ fn permit_v2(scope: CloudPermitScopeV2) -> CloudPermitV2 {
         version: CLOUD_PERMIT_VERSION_V2,
         permit_id: Uuid::new_v4(),
         account_id: v4(5),
-        catalog_scope_id: v4(6),
+        catalog_scope_id: Some(v4(6)),
         scope,
         account_generation: 1,
         authority_generation: 1,
@@ -300,4 +300,97 @@ fn v2_permits_are_one_scope_each_and_need_no_profile_pair() {
     let mut extra = json;
     extra["profile_id"] = serde_json::json!("leak");
     assert!(serde_json::from_value::<CloudPermitV2>(extra).is_err());
+}
+
+/// Root-catalog Plan 3.2's compatibility window: a v1 permit pair is read
+/// as a v2 Workspace permit whose placement is the v1 membership Profile,
+/// and a v2 Profile-units permit over Identity and Private only; the v1
+/// Personal unit is the Workspace-keyed scope and is dropped, and a Profile
+/// permit that carried nothing else is refused rather than admitted empty.
+#[test]
+fn a_v1_pair_is_read_as_two_v2_scopes_and_personal_is_not_one_of_them() {
+    let profile = v4(5);
+    let descriptor = CloudWorkspaceDescriptorV1 {
+        version: CLOUD_WORKSPACE_DESCRIPTOR_VERSION,
+        profile_id: profile,
+        workspace_id: v4(1),
+        workspace_incarnation_id: v4(2),
+        logical_replica_id: v4(3),
+        lineage_id: v4(2),
+        manifest_document_id: v4(4),
+        authorization_version: 1,
+        membership_epoch: 1,
+        cloud_access_epoch: 1,
+    };
+    let workspace = CloudPermitV1 {
+        version: CLOUD_PERMIT_VERSION,
+        permit_id: Uuid::new_v4(),
+        dataset: descriptor_v2(None).dataset(),
+        account_id: v4(9),
+        profile_id: profile,
+        authority_workspace_id: v4(1),
+        authority_workspace_incarnation_id: v4(2),
+        account_generation: 3,
+        expires_at_seconds: 100,
+        allowed_profile_units: Vec::new(),
+        workspace_descriptor: Some(descriptor),
+    };
+    let converted = CloudPermitV2::from_v1(&workspace).unwrap();
+    assert_eq!(converted.permit_id, workspace.permit_id);
+    assert_eq!(converted.account_generation, 3);
+    assert_eq!(converted.authority_generation, 1);
+    assert_eq!(converted.catalog_scope_id, None);
+    assert_eq!(converted.placement_profile(), Some(profile));
+    assert_eq!(converted.dataset(), Some(workspace.dataset));
+    let CloudPermitScopeV2::Workspace { descriptor: v2 } = &converted.scope else {
+        panic!("a Workspace permit reads as the Workspace scope");
+    };
+    assert_eq!(v2.placement_revision, 0);
+    assert_eq!(v2.manifest_document_id, v4(4));
+
+    let units = CloudPermitV1 {
+        dataset: CloudReplicaPrincipalV1::Profile {
+            profile_id: profile,
+            lineage_id: v4(6),
+            logical_replica_id: v4(7),
+        },
+        allowed_profile_units: vec![
+            ProfileUnitRef::Identity {
+                profile: profile_id(profile),
+            },
+            ProfileUnitRef::Personal {
+                owner: profile_id(profile),
+                workspace: koru_store_core::WorkspaceId::from_uuid(v4(1).as_uuid()),
+            },
+        ],
+        workspace_descriptor: None,
+        ..workspace.clone()
+    };
+    let converted = CloudPermitV2::from_v1(&units).unwrap();
+    let CloudPermitScopeV2::ProfileUnits {
+        allowed_profile_units,
+        ..
+    } = &converted.scope
+    else {
+        panic!("a Profile permit reads as the Profile-units scope");
+    };
+    assert_eq!(
+        allowed_profile_units,
+        &vec![ProfileUnitRef::Identity {
+            profile: profile_id(profile),
+        }]
+    );
+    assert_eq!(converted.placement_profile(), Some(profile));
+
+    let personal_only = CloudPermitV1 {
+        allowed_profile_units: vec![ProfileUnitRef::Personal {
+            owner: profile_id(profile),
+            workspace: koru_store_core::WorkspaceId::from_uuid(v4(1).as_uuid()),
+        }],
+        ..units
+    };
+    assert_eq!(
+        CloudPermitV2::from_v1(&personal_only).unwrap_err(),
+        HostCloudError::PermitProfileUnits
+    );
 }

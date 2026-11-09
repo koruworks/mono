@@ -30,6 +30,7 @@ fn receipt() -> CloudDiscovery {
         failure_code: None,
         retry_at_millis: None,
         automatic_retry: false,
+        ..Default::default()
     }
 }
 fn cloud(state: &mut AccountState, discovery: Option<CloudDiscovery>) {

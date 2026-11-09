@@ -5,13 +5,16 @@
 //! It is deliberately thin. Every route already exists and is already
 //! strict; the only judgment here is which refusal is a reason to retry, and
 //! that a 503 `server_unavailable` from the descriptor read means "not ready
-//! yet", never "make something up".
+//! yet", never "make something up". A 404 on a v2 catalog route means the
+//! service does not speak v2 yet (root-catalog Plan 3.2's window), and the
+//! two binding refusals keep their own words because they are terminal.
 
 use koru_account_client::{AccountAuthorization, AccountClient, ClientError};
 use koru_account_wire::cloud_sync::{SyncTokenRequestV1, SyncTokenResponseV1};
 use koru_account_wire::{
-    CloudProfileSelectionRequestV1, CloudWorkspaceCursorV1, CloudWorkspaceDescriptorV1,
-    CloudWorkspacePageV1, ErrorCode, JwksResponseV1, Version1,
+    CloudCatalogBindingRequestV2, CloudDiscoveryScopeV2, CloudProfileSelectionRequestV1,
+    CloudRootUnitRequestV2, CloudWorkspaceCursorV1, CloudWorkspaceDescriptorV1,
+    CloudWorkspacePageV1, ErrorCode, JwksResponseV1, SyncTokenRequestV2, Version1, Version2,
 };
 
 use super::*;
@@ -97,10 +100,112 @@ impl Api for HostedApi {
     fn jwks(&mut self) -> Result<JwksResponseV1, Failure> {
         self.client.jwks().map_err(failure)
     }
+
+    fn bind_catalog(
+        &mut self,
+        authority: &EnrollmentAuthorization,
+        held: Option<CloudCatalogBindingRefV2>,
+    ) -> Result<CloudCatalogBindingV2, Failure> {
+        self.client
+            .bind_cloud_catalog(
+                &CloudCatalogBindingRequestV2 {
+                    version: Version2,
+                    held,
+                },
+                &AccountAuthorization::Bearer(&authority.access),
+            )
+            .map_err(failure)
+    }
+
+    fn root_catalog(
+        &mut self,
+        authority: &EnrollmentAuthorization,
+        after: Option<CloudUnitRefV2>,
+    ) -> Result<CloudRootCatalogV2, Failure> {
+        self.client
+            .cloud_root_catalog(
+                after.as_ref(),
+                &AccountAuthorization::Bearer(&authority.access),
+            )
+            .map_err(failure)
+    }
+
+    fn pull_root_unit(
+        &mut self,
+        authority: &EnrollmentAuthorization,
+        unit: CloudUnitRefV2,
+        frontier: Vec<u8>,
+    ) -> Result<CloudRootUnitUpdatesV2, Failure> {
+        self.client
+            .pull_cloud_root_unit(
+                &CloudRootUnitRequestV2 {
+                    version: Version2,
+                    unit,
+                    frontier,
+                },
+                &AccountAuthorization::Bearer(&authority.access),
+            )
+            .map_err(failure)
+    }
+
+    fn push_root_unit(
+        &mut self,
+        authority: &EnrollmentAuthorization,
+        updates: CloudRootUnitUpdatesV2,
+    ) -> Result<CloudRootJoinReceiptV2, Failure> {
+        self.client
+            .push_cloud_root_unit(&updates, &AccountAuthorization::Bearer(&authority.access))
+            .map_err(failure)
+    }
+
+    fn discover_v2(
+        &mut self,
+        authority: &EnrollmentAuthorization,
+        after: Option<CloudDiscoveryCursorV2>,
+    ) -> Result<CloudDiscoveryReceiptV2, Failure> {
+        self.client
+            .cloud_discovery(
+                CloudDiscoveryScopeV2::Workspaces,
+                after.as_ref(),
+                &AccountAuthorization::Bearer(&authority.access),
+            )
+            .map_err(failure)
+    }
+
+    fn issue_token_v2(
+        &mut self,
+        authority: &EnrollmentAuthorization,
+        scope: CloudSyncScopeV2,
+    ) -> Result<SyncTokenResponseV2, Failure> {
+        self.client
+            .issue_cloud_sync_token_v2(
+                &SyncTokenRequestV2 {
+                    version: Version2,
+                    scope,
+                },
+                &AccountAuthorization::Bearer(&authority.access),
+            )
+            .map_err(failure)
+    }
+
+    fn describe_v2(
+        &mut self,
+        authority: &EnrollmentAuthorization,
+        workspace: WorkspaceId,
+    ) -> Result<CloudWorkspaceDescriptorV2, Failure> {
+        self.client
+            .cloud_workspace_descriptor_v2(
+                workspace,
+                &AccountAuthorization::Bearer(&authority.access),
+            )
+            .map_err(failure)
+    }
 }
 
 /// A transport problem is offline and retried; a revoked session or a denied
-/// principal is not, because only a new authorization can change it.
+/// principal is not, because only a new authorization can change it. A 404
+/// is a route the service does not serve; the two binding refusals are
+/// terminal for the account and keep their words.
 fn failure(error: ClientError) -> Failure {
     match error {
         ClientError::Transport(_) => Failure::Offline,
@@ -108,8 +213,11 @@ fn failure(error: ClientError) -> Failure {
             Failure::RateLimited(Duration::from_millis(retry_after_millis))
         }
         ClientError::Api { status, code } => match (status, code.as_str()) {
+            (_, CATALOG_BINDING_CONFLICT) => Failure::CatalogBindingConflict,
+            (_, CATALOG_BINDING_MISMATCH) => Failure::CatalogBindingMismatch,
             (401, _) => Failure::SessionExpired,
             (403, _) => Failure::Denied,
+            (404, _) => Failure::RouteNotFound,
             (_, ErrorCode::SERVER_UNAVAILABLE) => Failure::NotReady,
             _ => Failure::Unavailable,
         },

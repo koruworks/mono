@@ -433,9 +433,19 @@ async fn an_empty_in_memory_store_reconciles_searches_lists_edits_and_queries_ag
         })
         .unwrap()
         .unwrap();
-    crate::cloud_driver::ensure_workspace(&replica.client(), profile, workspace, manifest)
+    // The Workspace's root unit first, placed under the Profile; then the
+    // identity-only bootstrap under that known placement (Plan 3.2).
+    crate::cloud_driver::seed_root_placement(&replica.client(), profile, workspace)
         .await
         .unwrap();
+    crate::cloud_driver::ensure_workspace(
+        &replica.client(),
+        workspace,
+        manifest,
+        koru_store_core::ReplicaPlacement::KnownOnly,
+    )
+    .await
+    .unwrap();
 
     // Reconcile.
     let driver = Driver::spawn(

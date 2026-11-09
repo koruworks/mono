@@ -29,6 +29,7 @@ fn an_older_cloud_profile_message_has_no_discovery_receipt() {
         failure_code: Some("cloud_unavailable".into()),
         retry_at_millis: Some(99),
         automatic_retry: true,
+        ..Default::default()
     };
     let row = AccountProfileCloud {
         discovery: Some(receipt),

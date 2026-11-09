@@ -1,15 +1,20 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Independent Workspace admissions with bounded active threads and persistent subscriptions.
-//! A completed first pass hands the stream to the host's retained subscription;
-//! it does not hold the lane forever. Only this owner admits, renews and fences
-//! permits. Admission threads are joined; the host owns live stream cleanup.
+//! Independent dataset sessions with bounded active threads and persistent
+//! subscriptions. A completed first pass hands the stream to the host's
+//! retained subscription; it does not hold the lane forever. Only this owner
+//! admits, renews and fences permits. Session threads are joined; the host
+//! owns live stream cleanup.
+//!
+//! Since root-catalog Plan 3.2 a lane is one scope's session — a Workspace's
+//! content, or a Profile's Identity/Private units — never a pair: a
+//! Workspace's content does not wait for, and is not followed by, a Profile
+//! dataset.
 use super::*;
 
 struct Lane {
-    pending: VecDeque<Admission>,
-    current: Option<Admission>,
-    workspace: bool,
+    pending: VecDeque<Session>,
+    current: Option<Session>,
     attempt: u8,
     running: Option<std::thread::JoinHandle<()>>,
 }
@@ -17,31 +22,24 @@ struct Lane {
 impl<A: Api, H: Host> Coordinator<A, H> {
     pub(super) fn run_sessions(
         &mut self,
-        admitted: Vec<Admission>,
+        sessions: Vec<Session>,
         clock: &dyn Clock,
         failure: &mut Option<Failure>,
     ) -> bool {
         let mut order = VecDeque::new();
-        let mut lanes = BTreeMap::<(ProfileId, WorkspaceId), Lane>::new();
-        for admission in admitted {
-            order.push_back((
-                admission.candidate.profile_id,
-                admission.candidate.workspace_id,
-            ));
+        let mut lanes = BTreeMap::<Owner, Lane>::new();
+        for session in sessions {
+            order.push_back(session.owner);
             lanes
-                .entry((
-                    admission.candidate.profile_id,
-                    admission.candidate.workspace_id,
-                ))
+                .entry(session.owner)
                 .or_insert_with(|| Lane {
                     pending: VecDeque::new(),
                     current: None,
-                    workspace: true,
                     attempt: 0,
                     running: None,
                 })
                 .pending
-                .push_back(admission);
+                .push_back(session);
         }
         let (sender, receiver) = mpsc::sync_channel(lanes.len().max(1));
         let mut hinted = false;
@@ -51,32 +49,23 @@ impl<A: Api, H: Host> Coordinator<A, H> {
                 if running >= COHORT_WORKSPACES {
                     break;
                 }
-                let key = order.pop_front().expect("admission order");
+                let key = order.pop_front().expect("session order");
                 order.push_back(key);
-                let lane = lanes.get_mut(&key).expect("admission lane");
+                let lane = lanes.get_mut(&key).expect("session lane");
                 if lane.running.is_some() {
                     continue;
                 }
                 loop {
                     if lane.current.is_none() {
                         lane.current = lane.pending.pop_front();
-                        lane.workspace = true;
                         lane.attempt = 0;
                     }
-                    let Some(admission) = lane.current.as_mut() else {
+                    let Some(session) = lane.current.as_mut() else {
                         break;
                     };
-                    let prepared =
-                        self.prepare_session(admission, lane.workspace, lane.attempt, clock);
-                    let result = prepared.and_then(|()| {
-                        self.spawn_session(
-                            admission,
-                            lane.workspace,
-                            lane.attempt,
-                            key,
-                            sender.clone(),
-                        )
-                    });
+                    let prepared = self.prepare_session(session, lane.attempt, clock);
+                    let result = prepared
+                        .and_then(|()| self.spawn_session(session, lane.attempt, sender.clone()));
                     match result {
                         Ok(handle) => {
                             lane.running = Some(handle);
@@ -97,12 +86,12 @@ impl<A: Api, H: Host> Coordinator<A, H> {
                 continue;
             }
             // Every running session is bounded by its host and observes the
-            // shared authorization. One blocked Profile cannot hold another's
-            // next Workspace behind a cohort-wide join.
+            // shared authorization. One blocked Workspace cannot hold
+            // another's session behind a cohort-wide join.
             let Ok((key, result)) = receiver.recv() else {
                 break;
             };
-            let lane = lanes.get_mut(&key).expect("owned Workspace lane");
+            let lane = lanes.get_mut(&key).expect("owned session lane");
             if let Some(handle) = lane.running.take() {
                 let _ = handle.join();
             }
@@ -121,51 +110,46 @@ impl<A: Api, H: Host> Coordinator<A, H> {
 
     fn spawn_session(
         &self,
-        admission: &Admission,
-        workspace: bool,
+        session: &Session,
         attempt: u8,
-        key: (ProfileId, WorkspaceId),
-        done: mpsc::SyncSender<((ProfileId, WorkspaceId), Result<SessionReport, Failure>)>,
+        done: mpsc::SyncSender<(Owner, Result<SessionReport, Failure>)>,
     ) -> Result<std::thread::JoinHandle<()>, Failure> {
         let authority = self.current_authority()?;
         let access = self.session_access(&authority);
         let keys = self.jwks.as_ref().ok_or(Failure::Unavailable)?.1.clone();
         let host = self.host.clone();
-        let token = admission.token.clone();
-        let permit = if workspace {
-            &admission.workspace_permit
-        } else {
-            &admission.profile_permit
-        }
-        .clone();
-        let route = if workspace {
-            token.workspace()
-        } else {
-            token.profile()
-        }
-        .clone();
-        let profile = admission.candidate.profile_id;
-        tracing::info!(?profile, workspace = ?admission.candidate.workspace_id,
-            dataset = ?permit.dataset, attempt, "cloud session: starting Profile lane");
+        let scoped = session.scoped.clone();
+        let owner = session.owner;
+        let dataset = scoped.permit.dataset().ok_or(Failure::DatasetMismatch)?;
+        tracing::info!(
+            ?owner,
+            dataset = ?dataset,
+            attempt,
+            "cloud session: starting lane"
+        );
         std::thread::Builder::new()
-            .name("koru-cloud-profile".into())
+            .name("koru-cloud-session".into())
             .spawn(move || {
                 // Always report completion, including a port panic. The owner
-                // joins this handle before admitting the Profile's next session.
+                // joins this handle before admitting the lane's next session.
                 let result =
-                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match route {
-                        DatasetRouteResultV1::Unavailable { .. } => Err(Failure::WorkerUnavailable),
-                        DatasetRouteResultV1::Available { dataset, route } => host.open_dataset(
-                            &permit,
-                            token.credential(),
-                            &route,
-                            dataset,
-                            &keys,
-                            &access,
-                        ),
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        match &scoped.route {
+                            CloudRouteResultV2::Unavailable { .. } => {
+                                Err(Failure::WorkerUnavailable)
+                            }
+                            CloudRouteResultV2::Available { route } => host.open_dataset(
+                                &scoped.permit,
+                                &scoped.credential,
+                                route,
+                                dataset,
+                                &keys,
+                                &access,
+                            ),
+                        }
                     }))
                     .unwrap_or(Err(Failure::Unavailable));
-                let _ = done.send((key, result));
+                let _ = done.send((owner, result));
             })
             .map_err(|_| Failure::Unavailable)
     }
@@ -177,16 +161,12 @@ impl<A: Api, H: Host> Coordinator<A, H> {
         failure: &mut Option<Failure>,
         hinted: &mut bool,
     ) {
-        let admission = lane.current.as_ref().expect("active admission");
-        let permit = if lane.workspace {
-            &admission.workspace_permit
-        } else {
-            &admission.profile_permit
-        };
+        let session = lane.current.take().expect("active session");
+        let permit = &session.scoped.permit;
         match result {
             Ok(report) => {
-                tracing::info!(profile = ?permit.profile_id, dataset = ?permit.dataset,
-                    stage = ?report.stage, code = report.error_code, "cloud session: Profile lane answered");
+                tracing::info!(owner = ?session.owner, dataset = ?permit.dataset(),
+                    stage = ?report.stage, code = report.error_code, "cloud session: lane answered");
                 *hinted |= report.remote_hint;
                 if let Some(record) = self.records.get_mut(&permit.permit_id) {
                     record.stage = report.stage;
@@ -207,13 +187,6 @@ impl<A: Api, H: Host> Coordinator<A, H> {
                 }
                 *failure = Some(merge(failure.take(), error));
             }
-        }
-        if lane.workspace {
-            lane.workspace = false;
-        } else {
-            self.admissions
-                .insert(admission.candidate.workspace_id, admission.clone());
-            lane.current.take();
         }
         lane.attempt = 0;
         self.publish_progress();

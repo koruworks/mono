@@ -689,6 +689,7 @@ fn context(
         account_id: account,
         account_generation,
         permits,
+        permits_v2: Vec::new(),
     }
 }
 

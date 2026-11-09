@@ -2,7 +2,9 @@
 
 use super::*;
 use koru_device::cloud::CloudId;
-use koru_sync_control::cloud::CloudWorkspaceDescriptorV1;
+use koru_sync_control::cloud::{
+    CLOUD_PERMIT_VERSION_V2, CLOUD_WORKSPACE_DESCRIPTOR_VERSION_V2, CloudWorkspaceDescriptorV2,
+};
 
 fn id(byte: u8) -> CloudId {
     let mut bytes = [byte; 16];
@@ -12,89 +14,103 @@ fn id(byte: u8) -> CloudId {
     CloudId::from_bytes(bytes)
 }
 
-fn workspace_permit() -> CloudPermitV1 {
-    CloudPermitV1 {
-        version: 1,
-        permit_id: uuid::Uuid::new_v4(),
-        dataset: CloudReplicaPrincipalV1::Workspace {
-            workspace_id: id(1),
-            incarnation_id: id(2),
-            logical_replica_id: id(3),
-        },
-        account_id: id(4),
-        profile_id: id(5),
-        authority_workspace_id: id(1),
-        authority_workspace_incarnation_id: id(2),
-        account_generation: 1,
-        expires_at_seconds: 600,
-        allowed_profile_units: Vec::new(),
-        workspace_descriptor: Some(CloudWorkspaceDescriptorV1 {
-            version: 1,
-            profile_id: id(5),
-            workspace_id: id(1),
-            workspace_incarnation_id: id(2),
-            logical_replica_id: id(3),
-            lineage_id: id(2),
-            manifest_document_id: id(6),
-            authorization_version: 1,
-            membership_epoch: 1,
-            cloud_access_epoch: 1,
-        }),
+fn descriptor(placement: Option<CloudId>) -> CloudWorkspaceDescriptorV2 {
+    CloudWorkspaceDescriptorV2 {
+        version: CLOUD_WORKSPACE_DESCRIPTOR_VERSION_V2,
+        workspace_id: id(1),
+        workspace_incarnation_id: id(2),
+        logical_replica_id: id(3),
+        lineage_id: id(2),
+        manifest_document_id: id(6),
+        authorization_version: 1,
+        membership_epoch: 1,
+        cloud_access_epoch: 1,
+        placement,
+        placement_revision: 4,
     }
 }
 
-fn profile_permit(units: Vec<ProfileUnitRef>) -> CloudPermitV1 {
-    CloudPermitV1 {
+fn permit(scope: CloudPermitScopeV2) -> CloudPermitV2 {
+    CloudPermitV2 {
+        version: CLOUD_PERMIT_VERSION_V2,
+        permit_id: uuid::Uuid::new_v4(),
+        account_id: id(4),
+        catalog_scope_id: Some(id(7)),
+        scope,
+        account_generation: 1,
+        authority_generation: 1,
+        expires_at_seconds: 600,
+    }
+}
+
+fn workspace_permit(placement: Option<CloudId>) -> CloudPermitV2 {
+    permit(CloudPermitScopeV2::Workspace {
+        descriptor: descriptor(placement),
+    })
+}
+
+fn profile_permit(units: Vec<ProfileUnitRef>) -> CloudPermitV2 {
+    permit(CloudPermitScopeV2::ProfileUnits {
         dataset: CloudReplicaPrincipalV1::Profile {
             profile_id: id(5),
             lineage_id: id(7),
             logical_replica_id: id(8),
         },
         allowed_profile_units: units,
-        workspace_descriptor: None,
-        ..workspace_permit()
-    }
+    })
 }
 
+/// A Workspace permit plans its Workspace under the descriptor's manifest,
+/// with the placement carried as the scope's Profile hint — present, or nil
+/// for an explicitly unassigned Workspace, which plans all the same
+/// (root-catalog TECHNICAL.final §7.3: the former Profile is not a
+/// prerequisite).
 #[test]
 fn a_workspace_permit_plans_its_workspace_under_the_descriptor_manifest() {
-    let permit = workspace_permit();
-    let (plan, scope) = plan_for(&permit).unwrap();
+    let placed = workspace_permit(Some(id(5)));
+    let (plan, scope) = plan_for(&placed).unwrap();
     assert_eq!(
         plan,
         Plan::Workspace {
             workspace_id: WorkspaceId::from_uuid(id(1).as_uuid()),
         }
     );
-    assert_eq!(scope.principal, permit.dataset);
+    assert_eq!(Some(scope.principal), placed.dataset());
     assert_eq!(scope.manifest, DocumentId::from_uuid(id(6).as_uuid()));
     assert_eq!(scope.profile, id(5));
     assert_eq!(
         scope.eligibility_workspace,
         WorkspaceId::from_uuid(id(1).as_uuid())
     );
+
+    let unassigned = workspace_permit(None);
+    let (plan, scope) = plan_for(&unassigned).unwrap();
+    assert!(matches!(plan, Plan::Workspace { .. }));
+    assert_eq!(scope.profile, CloudId::from_bytes([0; 16]));
 }
 
+/// The two catalog scopes have no dataset session and are never planned.
 #[test]
-fn a_workspace_permit_without_a_descriptor_or_with_the_wrong_one_is_refused() {
-    let mut permit = workspace_permit();
-    permit.workspace_descriptor = None;
+fn a_catalog_scope_permit_is_refused() {
     assert_eq!(
-        plan_for(&permit).map(|_| ()).unwrap_err(),
-        "cloud_permit_descriptor_required"
+        plan_for(&permit(CloudPermitScopeV2::UserCatalog))
+            .map(|_| ())
+            .unwrap_err(),
+        "cloud_permit_scope"
     );
-    let mut permit = workspace_permit();
-    permit.workspace_descriptor.as_mut().unwrap().workspace_id = id(9);
     assert_eq!(
-        plan_for(&permit).map(|_| ()).unwrap_err(),
-        "cloud_permit_descriptor_mismatch"
+        plan_for(&permit(CloudPermitScopeV2::UserPersonal {
+            workspace_id: id(1)
+        }))
+        .map(|_| ())
+        .unwrap_err(),
+        "cloud_permit_scope"
     );
 }
 
 #[test]
 fn a_profile_permit_plans_exactly_the_units_it_allows() {
     let profile = ProfileId::from_uuid(id(5).as_uuid());
-    let workspace = WorkspaceId::from_uuid(id(1).as_uuid());
     let (plan, _) = plan_for(&profile_permit(vec![ProfileUnitRef::Identity { profile }])).unwrap();
     assert_eq!(
         plan,
@@ -107,10 +123,6 @@ fn a_profile_permit_plans_exactly_the_units_it_allows() {
     let (plan, scope) = plan_for(&profile_permit(vec![
         ProfileUnitRef::Identity { profile },
         ProfileUnitRef::Private { profile },
-        ProfileUnitRef::Personal {
-            owner: profile,
-            workspace,
-        },
     ]))
     .unwrap();
     assert_eq!(
@@ -118,18 +130,20 @@ fn a_profile_permit_plans_exactly_the_units_it_allows() {
         Plan::Profile {
             profile_id: profile,
             private: true,
-            personal_workspaces: vec![workspace],
+            personal_workspaces: Vec::new(),
         }
     );
     assert_eq!(scope.manifest, DocumentId::from_uuid(uuid::Uuid::nil()));
+    assert_eq!(scope.profile, id(5));
 
-    // A Personal unit of an unrelated Workspace, or another Profile's unit,
-    // is not narrowed down: the whole permit is refused.
-    let foreign = WorkspaceId::from_uuid(id(9).as_uuid());
+    // Personal is the Workspace-keyed user-personal scope in v2, and
+    // another Profile's unit is not narrowed down: the whole permit is
+    // refused either way.
+    let workspace = WorkspaceId::from_uuid(id(1).as_uuid());
     assert_eq!(
         plan_for(&profile_permit(vec![ProfileUnitRef::Personal {
             owner: profile,
-            workspace: foreign,
+            workspace,
         }]))
         .map(|_| ())
         .unwrap_err(),
@@ -220,8 +234,8 @@ fn the_document_half_of_coverage_is_what_the_pass_carried() {
 }
 
 /// A Profile dataset carries no documents, so it contributes no coverage
-/// input: Identity, Private and Personal are facts about the dataset and about
-/// no document at all.
+/// input: Identity and Private are facts about the dataset and about no
+/// document at all.
 #[test]
 fn a_pass_that_carried_no_documents_contributes_no_coverage_input() {
     assert!(covered_documents(&cloud_sync::Outcome::default()).is_empty());
