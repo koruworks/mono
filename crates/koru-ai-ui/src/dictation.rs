@@ -65,13 +65,13 @@ use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
 use koru_draw::theme::{Ink, Profile, Space, roles};
 use koru_draw::{icons, scene};
-use koru_ui::icon_button::{self, IconButton, Metrics, State as IconButtonState};
+use koru_ui::icon_button::{self, Metrics, State as IconButtonState};
 use koru_ui::tooltip::{Tooltip, TooltipContent};
 use vello::Scene;
 use vello::kurbo::Affine;
 use winit::keyboard::{Key, NamedKey};
 
-use super::{COMPOSER_PAD_X, ChatSurface, Focus};
+use super::{COMPOSER_ICON_SIZE, COMPOSER_PAD_X, ChatSurface, Focus};
 
 /// The loudest level a host reports: `koru_voice::LevelBucket::MAX`. Written
 /// here rather than linked, because this crate links no voice crate — the
@@ -483,13 +483,22 @@ impl ChatSurface {
         if self.dictation.live.is_some() {
             return;
         }
-        IconButton::new(icons::MICROPHONE, mic)
-            .with_state(IconButtonState {
+        icon_button::draw_with(
+            canvas,
+            root,
+            &mut self.engine,
+            mic,
+            icons::MICROPHONE,
+            IconButtonState {
                 hovered: mic.contains(self.pointer.0, self.pointer.1),
                 active: false,
                 disabled: false,
-            })
-            .draw(canvas, root, &mut self.engine);
+            },
+            Metrics {
+                icon_size: COMPOSER_ICON_SIZE,
+                ..Metrics::STANDARD
+            },
+        );
     }
 
     /// The tooltip over the microphone, ✕ or ■.

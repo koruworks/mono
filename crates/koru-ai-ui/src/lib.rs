@@ -158,6 +158,7 @@ use usage::{format_usage_report, message_content_height, message_height, usage_l
 const PAD: f32 = 14.0;
 const FIELD_H: f32 = 36.0;
 const BUTTON_H: f32 = ActionButton::H;
+const COMPOSER_ICON_SIZE: f32 = theme::IconSize::M.px(theme::Profile::Desktop);
 const CARD_GAP: f32 = 10.0;
 /// The space under an agent's notice line (D69), as under a work line.
 const NOTICE_GAP: f32 = 6.0;
@@ -6046,8 +6047,11 @@ impl ChatSurface {
     }
 
     fn context_indicator_button(&self) -> Option<Rect> {
+        self.context_indicator_rect(self.chat_model_button())
+    }
+
+    fn context_indicator_rect(&self, model: Rect) -> Option<Rect> {
         self.transcript.as_ref()?;
-        let model = self.chat_model_button();
         Some(Rect::new(model.x, model.y, BUTTON_H, model.h))
     }
 
@@ -6872,7 +6876,9 @@ impl ChatSurface {
                     .icon_layout(caret, ActionButton::ICON_SIZE)
                     .width()
         });
-        let indicator = self.context_indicator_button();
+        // The shell is taken while its frame paints. Recomputing the model
+        // button here would use fallback send geometry and shift the ring.
+        let indicator = self.context_indicator_rect(model_button);
         let lead_width = indicator.map_or(0.0, |rect| rect.w + 2.0);
         let shown_label = self.engine.elided(
             &model_label,
@@ -6942,8 +6948,7 @@ impl ChatSurface {
             );
         }
         if let Some(rect) = indicator {
-            let ring_inset = theme::Space::S1.px(theme::Profile::Desktop);
-            let mark_inset = theme::Space::S2.px(theme::Profile::Desktop);
+            let ring_inset = theme::Space::S0_5.px(theme::Profile::Desktop);
             let _indicator = koru_draw::inspect::scope(
                 "ComposerContextIndicator",
                 "element",
@@ -6963,10 +6968,10 @@ impl ChatSurface {
             );
             if let Some(transcript) = &self.transcript {
                 let mark = Rect::new(
-                    rect.x + mark_inset,
-                    rect.y + mark_inset,
-                    rect.w - mark_inset * 2.0,
-                    rect.h - mark_inset * 2.0,
+                    rect.x + (rect.w - COMPOSER_ICON_SIZE) * 0.5,
+                    rect.y + (rect.h - COMPOSER_ICON_SIZE) * 0.5,
+                    COMPOSER_ICON_SIZE,
+                    COMPOSER_ICON_SIZE,
                 );
                 model_picker::draw_provider_mark(
                     canvas,
@@ -14574,6 +14579,36 @@ mod tests {
             surface.status.as_deref(),
             Some("Der Agent hat diese Denkstufe nicht übernommen")
         );
+    }
+
+    #[test]
+    fn the_context_ring_stays_at_the_model_chips_leading_edge_while_painting() {
+        let mut surface = ChatSurface::new();
+        let (reader, _commands, _updates) = Reader::test_pair();
+        surface.reader = Some(reader);
+        surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 600.0));
+        let mut chat = transcript();
+        chat.chat.current_model.provider = AiProviderId::parse("agent-codex").unwrap();
+        surface.transcript = Some(chat);
+        surface.validated_ready = true;
+        surface.offer_dictation(true);
+        surface.offer_microphone_choice(true);
+
+        let root = Affine::IDENTITY;
+        let capture =
+            koru_draw::inspect::Frame::begin(1, root, scene::rect(0.0, 0.0, 900.0, 600.0));
+        surface.draw(&mut Scene::new(), root);
+        let painted = capture
+            .finish()
+            .records
+            .into_iter()
+            .find(|record| record.name == "ComposerContextIndicator")
+            .expect("painted context ring")
+            .rect();
+        let model = surface.chat_model_button();
+        assert_eq!(painted.x0 as f32, model.x);
+        assert_eq!(painted.y0 as f32, model.y);
+        assert_eq!(painted.x1 as f32, model.x + BUTTON_H);
     }
 
     #[test]

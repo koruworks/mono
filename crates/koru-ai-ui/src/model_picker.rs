@@ -2130,7 +2130,7 @@ pub(crate) fn draw_provider_mark(
             scene::draw_brand_icon(canvas, root, inner, colour, icon)
         }
         brand::ProfileMark::Glyph(glyph) => {
-            let layout = engine.icon_layout(glyph, inner.h + 2.0);
+            let layout = engine.icon_layout(glyph, inner.h);
             scene::draw_layout(
                 canvas,
                 root,
