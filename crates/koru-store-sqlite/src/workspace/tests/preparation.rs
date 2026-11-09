@@ -15,6 +15,7 @@ mod acceptance;
 mod lifecycle;
 mod pins;
 mod replacement;
+mod rollout;
 mod root_catalog;
 
 struct BackendState {

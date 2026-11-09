@@ -255,6 +255,23 @@ impl SqliteCatalog {
         Self::from_connection(db::open_shared_in_memory(name)?)
     }
 
+    /// What a build that understands catalog 12 does with this file: the
+    /// SQL steps with `understood` lowered to 12 — [`db::migrate`] refuses a
+    /// newer stamp before touching anything. Test-only; the product never
+    /// lowers what it understands (root-catalog Plan 4.2, "rollback cannot
+    /// restore old writers").
+    #[cfg(test)]
+    pub(crate) fn open_named_memory_as_twelve(name: &koru_sqlite::MemoryName) -> Result<Self> {
+        let mut connection = db::open_named_memory(name)?;
+        db::migrate(
+            &mut connection,
+            "catalog.db",
+            MIGRATIONS,
+            root_catalog::FROM,
+        )?;
+        Ok(Self { connection })
+    }
+
     fn from_connection(mut connection: Connection) -> Result<Self> {
         // The SQL-only steps bring the file to 12, or refuse one stamped
         // above 13. Then the one step that needs Rust inside its transaction.

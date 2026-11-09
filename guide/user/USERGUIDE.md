@@ -545,9 +545,9 @@ Profile a workspace sits under, what is in the Trash, what came back from it
 a move that came from another device, and nothing merges: two Profiles (or
 two workspaces) that happen to share a name are two, on every device, and
 stay two. A workspace that arrives under a Profile this device does not have
-yet waits in the **Unassigned** group at the top of the Workspace menu, marked
-*Its Profile has not arrived yet*, and moves into place when the Profile
-does. A Profile you keep **Local only** on a device never leaves it — not
+yet waits in the **Unassigned (from deleted Profile)** group at the top of
+the Workspace menu, marked *Its Profile has not arrived yet*, and moves into
+place when the Profile does. A Profile you keep **Local only** on a device never leaves it — not
 its name, not its workspaces, not where they sit — whatever the same Profile
 does on your other devices.
 
@@ -5809,11 +5809,13 @@ warning first, requires fresh Google authentication, and changes the local
 identity mismatch is never overwritten and an email match never reconnects a
 Profile.
 **Remove Profile from this device** removes an empty Profile and its settings.
-When it still owns Workspaces, **Remove Profile and All Workspaces...** asks once,
-moves those Workspaces to recoverable Trash, and then removes the Profile. It
-does not change other devices or erase hosted account metadata. The hosted
-recovery listing can therefore appear again after sign-in. Removing the last
-local Profile returns to onboarding.
+When it still owns Workspaces, **Remove Profile and All Workspaces...** asks once
+and moves the Profile and those Workspaces to Trash together as one deletion,
+restorable for 30 days under **Deleted profiles**; your other linked devices
+that sync the Profile see the same deletion. It does not erase hosted account
+metadata, so the hosted recovery listing can appear again after sign-in.
+Removing the last local Profile returns to onboarding, where the deletion can
+be restored.
 
 A connected Profile separately offers **Delete from Koru...**. After a
 Cancel-default confirmation and, when needed, a fresh Google sign-in, Koru
@@ -5970,14 +5972,20 @@ your browser blocks the automatic download. An interrupted account request offer
 Retry sign-in, which continues the same request.
 
 A Profile can be removed directly when it has no active Workspace. If it still
-owns Workspaces, **Remove Profile and All Workspaces...** asks once, moves each
-one to recoverable Trash, and then removes the Profile locally. Koru keeps the
-Profile record, its CRDT, deleted Workspace tombstones, and Workspace databases,
-while other devices and the hosted recovery listing are unchanged. Signing in
-may therefore list it again even when no current device can supply content. Removing the last
-visible Profile does not leave you on a profile-less Manage page. The next launch
-enters the same **NeedsProfile** onboarding used by a new installation, where
-you can continue offline or sign in before creating a new Profile and Workspace.
+owns Workspaces, **Remove Profile and All Workspaces...** asks once and moves
+the Profile and every listed workspace to Trash together as one deletion,
+restorable for 30 days under **Deleted profiles** (see *Restoring a deleted
+Profile restores that deletion*, above). Koru keeps the Profile record, its
+CRDT, deleted Workspace tombstones, and Workspace databases. Your other linked
+devices that sync this Profile see the same deletion and list it under their
+own **Deleted profiles**; a device that keeps the Profile **Local only** is
+not told. The hosted recovery listing is unchanged, so signing in may list the
+Profile again even when no current device can supply content. Removing the
+last visible Profile does not leave you on a profile-less Manage page. The
+next launch enters the same **NeedsProfile** onboarding used by a new
+installation, where you can restore a deleted profile, find unassigned
+workspaces, continue offline or sign in before creating a new Profile and
+Workspace.
 
 **Show archived** and **Show trash** under a profile's workspaces in **Manage**
 are independent. Trashed rows never appear in the ordinary workspace switcher;
@@ -6026,6 +6034,19 @@ replaces every program in that folder and never touches this one.
 To keep a copy of a workspace somewhere you choose — a backup drive, a cloud
 folder — use **Export Backup…** on the workspace, which writes the workspace,
 every document and every image to one `.koru` file that **Import…** takes back.
+
+**When an update changes how the store is organized.** Some updates change the
+shape of the store's own catalog — the first build that keeps your Profiles,
+workspaces and Trash as a shared catalog your linked devices converge on is
+one. The first launch of such a build migrates your catalog once, on this
+computer and on each of your other devices as they update; it takes a moment
+and keeps every Profile, workspace, reminder and Trash entry where it was. An
+older build then refuses to open the migrated store rather than write into
+something it does not understand. Before installing an update that says it
+changes the store, keep a copy: `koru --backup` (below, under *If something
+has gone wrong*) writes a whole-store backup you can go back to, and **Export
+Backup…** keeps a single workspace. Restoring an older backup over the
+migrated store loses whatever you did since it was taken.
 
 To run a completely separate Koru against a folder of your own, start it with
 `--root`:
