@@ -79,7 +79,7 @@ pub(crate) fn usage_line(usage: &AiUsage, lang: Lang) -> Option<String> {
     }
 }
 
-fn compact(n: u64) -> String {
+pub(crate) fn compact(n: u64) -> String {
     if n < 1_000 {
         return n.to_string();
     }

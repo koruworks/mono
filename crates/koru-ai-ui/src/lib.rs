@@ -113,6 +113,7 @@ mod composer;
 mod composer_band;
 mod composer_plus;
 mod composer_shell;
+mod context_window;
 mod dictation;
 mod doc_links;
 mod effort;
@@ -635,6 +636,8 @@ pub struct ChatSurface {
     model_options_open: bool,
     model_option_offset: usize,
     chat_model_open: bool,
+    context_window_open: bool,
+    context_window_usage: Option<(ChatId, u64, u64)>,
     model_chevron: Tween,
     microphone_chevron: Tween,
     send_chevron: Tween,
@@ -1076,6 +1079,8 @@ impl ChatSurface {
             model_options_open: false,
             model_option_offset: 0,
             chat_model_open: false,
+            context_window_open: false,
+            context_window_usage: None,
             model_chevron: Tween::new(theme::GLYPH_MORPH_MS, false),
             microphone_chevron: Tween::new(theme::GLYPH_MORPH_MS, false),
             send_chevron: Tween::new(theme::GLYPH_MORPH_MS, false),
@@ -1732,6 +1737,10 @@ impl ChatSurface {
         // and footer (§9.5).
         if let Some(handled) = self.picker_key(key, text, mods) {
             return handled;
+        }
+        if self.context_window_open && matches!(key, Key::Named(NamedKey::Escape)) {
+            self.context_window_open = false;
+            return true;
         }
         if self.tool_access_open && self.focus == Focus::WorkspaceSearch {
             if matches!(key, Key::Named(NamedKey::Escape)) {
@@ -2474,6 +2483,20 @@ impl ChatSurface {
             self.tool_mode_open = false;
             self.web_search_tooltip.clear();
             return true;
+        }
+        if self
+            .context_indicator_button()
+            .is_some_and(|button| button.contains(x, y))
+        {
+            self.context_window_open = !self.context_window_open;
+            self.chat_model_open = false;
+            return true;
+        }
+        if let Some(panel) = self.context_window_panel() {
+            self.context_window_open = false;
+            if panel.rect.contains(x, y) {
+                return true;
+            }
         }
         if self.chat_model_button().contains(x, y) {
             if self.chat_model_open {
@@ -5990,11 +6013,28 @@ impl ChatSurface {
         let toolbar = self.composer_toolbar_rect();
         // As wide as its label wants, up to half the toolbar; the mode
         // control gives way to its left.
-        let width = (self.chip_label_w + 44.0)
+        let ring_width = if self.transcript.is_some() {
+            BUTTON_H + 2.0
+        } else {
+            0.0
+        };
+        let width = (self.chip_label_w + 44.0 + ring_width)
             .max(78.0)
             .min((toolbar.w * 0.5).max(78.0))
             .min(toolbar.w);
         Rect::new(toolbar.x + toolbar.w - width, toolbar.y, width, toolbar.h)
+    }
+
+    fn context_indicator_button(&self) -> Option<Rect> {
+        self.transcript.as_ref()?;
+        let model = self.chat_model_button();
+        Some(Rect::new(model.x, model.y, BUTTON_H, model.h))
+    }
+
+    fn context_progress(&self) -> Option<f32> {
+        let chat = self.current_chat_id()?;
+        let (reported_chat, used, size) = self.context_window_usage?;
+        (reported_chat == chat && size > 0).then_some(used as f32 / size as f32)
     }
 
     /// Whether the composer has its quiet row below: an agent chat's folder
@@ -6812,10 +6852,12 @@ impl ChatSurface {
                     .icon_layout(caret, ActionButton::ICON_SIZE)
                     .width()
         });
+        let indicator = self.context_indicator_button();
+        let lead_width = indicator.map_or(0.0, |rect| rect.w + 2.0);
         let shown_label = self.engine.elided(
             &model_label,
             role::row(),
-            (model_button.w - ActionButton::PAD_X * 2.0 - caret_width).max(0.0),
+            (model_button.w - lead_width - ActionButton::PAD_X * 2.0 - caret_width).max(0.0),
         );
         let hovered = model_button.contains(self.pointer.0, self.pointer.1);
         self.model_chevron.set(self.chat_model_open, Instant::now());
@@ -6840,14 +6882,16 @@ impl ChatSurface {
                 root,
                 &mut self.engine,
                 Rect::new(
-                    model_button.x,
+                    model_button.x + lead_width,
                     model_button.y,
-                    model_button.w - caret_width,
+                    model_button.w - lead_width - caret_width,
                     model_button.h,
                 ),
                 false,
             );
-            let content_x = model_button.x + (model_button.w - text_w - caret_width) * 0.5;
+            let content_x = model_button.x
+                + lead_width
+                + (model_button.w - lead_width - text_w - caret_width) * 0.5;
             let caret_rect = Rect::new(
                 content_x + text_w + ActionButton::GAP,
                 model_button.y,
@@ -6868,9 +6912,52 @@ impl ChatSurface {
                 canvas,
                 root,
                 &mut self.engine,
-                model_button,
+                Rect::new(
+                    model_button.x + lead_width,
+                    model_button.y,
+                    model_button.w - lead_width,
+                    model_button.h,
+                ),
                 hovered,
             );
+        }
+        if let Some(rect) = indicator {
+            let ring_inset = theme::Space::S1.px(theme::Profile::Desktop);
+            let mark_inset = theme::Space::S2.px(theme::Profile::Desktop);
+            let _indicator = koru_draw::inspect::scope(
+                "ComposerContextIndicator",
+                "element",
+                root,
+                scene::rect(rect.x, rect.y, rect.w, rect.h),
+                |record| record.property("action", "open context window", "button"),
+            );
+            koru_ui::progress_ring::ProgressRing::new(self.context_progress()).draw(
+                canvas,
+                root,
+                Rect::new(
+                    rect.x + ring_inset,
+                    rect.y + ring_inset,
+                    rect.w - ring_inset * 2.0,
+                    rect.h - ring_inset * 2.0,
+                ),
+            );
+            if let Some(transcript) = &self.transcript {
+                let mark = Rect::new(
+                    rect.x + mark_inset,
+                    rect.y + mark_inset,
+                    rect.w - mark_inset * 2.0,
+                    rect.h - mark_inset * 2.0,
+                );
+                model_picker::draw_provider_mark(
+                    canvas,
+                    root,
+                    &mut self.engine,
+                    &transcript.chat.current_model.provider,
+                    agents::is_agent_provider(&transcript.chat.current_model.provider),
+                    mark,
+                    theme::p().text,
+                );
+            }
         }
         false
     }
@@ -7037,6 +7124,7 @@ impl ChatSurface {
             Instant::now(),
         );
         self.draw_model_picker(canvas, root);
+        self.draw_context_window(canvas, root);
         self.draw_tool_mode_picker(canvas, root);
         self.draw_approval_mode_picker(canvas, root);
         self.draw_tool_access_picker(canvas, root);
@@ -14469,6 +14557,23 @@ mod tests {
     }
 
     #[test]
+    fn the_context_ring_opens_details_without_opening_the_model_picker() {
+        let mut surface = ChatSurface::new();
+        surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 600.0));
+        surface.transcript = Some(transcript());
+        surface.composer_rect();
+
+        let indicator = surface.context_indicator_button().expect("chat ring");
+        assert_eq!(surface.context_progress(), None);
+        assert!(surface.mouse_down(indicator.x + 2.0, indicator.y + 2.0));
+        assert!(surface.context_window_panel().is_some());
+        assert!(!surface.chat_model_open);
+
+        assert!(surface.mouse_down(indicator.x + 2.0, indicator.y + 2.0));
+        assert!(surface.context_window_panel().is_none());
+    }
+
+    #[test]
     fn the_chip_reads_the_effort_and_a_stop_sets_the_chats_default() {
         let mut surface = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
@@ -14493,7 +14598,7 @@ mod tests {
         assert_eq!(surface.chip_label(), "gpt-5.5 · Medium");
 
         let chip = surface.chat_model_button();
-        assert!(surface.mouse_down(chip.x + 2.0, chip.y + 2.0));
+        assert!(surface.mouse_down(chip.x + BUTTON_H + 4.0, chip.y + 2.0));
         let control = surface.effort_control().cloned().unwrap();
         let high = surface
             .picker_segment_rect(ReasoningChoice::Level(ReasoningLevel::High))
@@ -14549,7 +14654,7 @@ mod tests {
         assert!(surface.web_search_button().is_none());
 
         let chip = surface.chat_model_button();
-        assert!(surface.mouse_down(chip.x + 2.0, chip.y + 2.0));
+        assert!(surface.mouse_down(chip.x + BUTTON_H + 4.0, chip.y + 2.0));
         assert!(
             surface.chat_model_open,
             "the chip opens even with no model list"

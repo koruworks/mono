@@ -1339,6 +1339,14 @@ the search box, the agents, the list, the effort strip and the toggles,
 Left and Right to move the level on the strip, Space or Enter to flip a
 toggle, Esc to clear the search or close.
 
+In an open chat, the model mark at the left of the model chip opens the
+**Context window** panel. Its ring shows a percentage only when the agent
+reports both the current context used and the context limit. Otherwise the
+panel says the current usage is unavailable. The panel can still show the
+last reported input tokens and the total tokens processed across replies;
+these are different from the current context window. Click the mark again,
+click outside, or press Esc to close the panel.
+
 When you scroll up in a chat, a round ↓ button appears above the message
 box; click it, or press `Ctrl+End`, to jump to the newest message and keep
 following a reply as it arrives. If you have typed something, `Ctrl+End`

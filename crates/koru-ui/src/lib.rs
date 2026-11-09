@@ -66,6 +66,7 @@ pub mod popover;
 pub mod preview_tile;
 pub mod profile_picker;
 pub mod progress_bar;
+pub mod progress_ring;
 pub mod prompt;
 pub mod pulsing_dots;
 pub mod scrollbar;

@@ -2109,7 +2109,7 @@ pub(crate) fn row_id(entry: &RailEntry, row: &Row) -> Option<String> {
 /// (`agent-claude` wears Claude's), OpenAI's for OpenAI, a glyph where there
 /// is no brand — [`provider_mark`], which a chat tab wears too. The rail
 /// draws it, and so does a favorite's row, at its start.
-fn draw_provider_mark(
+pub(crate) fn draw_provider_mark(
     canvas: &mut Scene,
     root: Affine,
     engine: &mut TextEngine,
