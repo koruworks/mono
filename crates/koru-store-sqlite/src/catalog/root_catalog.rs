@@ -37,6 +37,8 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use super::collect;
 use crate::db::sql_failed;
 
+pub mod inspection;
+
 /// The version this step moves the catalog from and to.
 pub(super) const FROM: i64 = 12;
 pub(super) const TO: i64 = 13;

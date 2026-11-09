@@ -30,6 +30,8 @@ pub enum Command {
     Backup(Option<PathBuf>),
     /// Replace a stopped Store from a backup file.
     Restore(PathBuf),
+    /// The root catalog's inventory as ids and counts, read-only.
+    RootCatalog,
     Help,
     Version,
 }
@@ -108,6 +110,10 @@ const COMMANDS: &[(&str, &str)] = &[
     (
         "restore",
         "restore one Store backup (Store must be stopped)",
+    ),
+    (
+        "root-catalog",
+        "the root catalog as ids and counts, read-only (never migrates)",
     ),
 ];
 
@@ -256,6 +262,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Invocation, Reje
                 i += 1;
                 Command::Restore(PathBuf::from(target))
             }
+            "root-catalog" => Command::RootCatalog,
             _ => {
                 return Err(Rejected {
                     why: Why::Unknown {

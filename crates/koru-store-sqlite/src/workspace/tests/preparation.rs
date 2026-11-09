@@ -11,6 +11,7 @@ use std::{
     rc::Rc,
 };
 
+mod acceptance;
 mod lifecycle;
 mod pins;
 mod replacement;
@@ -21,7 +22,9 @@ struct BackendState {
     created: RefCell<Vec<WorkspaceId>>,
     deleted: RefCell<Vec<WorkspaceId>>,
     fault: Cell<Option<&'static str>>,
-    cleanup_fails: bool,
+    /// A `Cell` so a test can arm the cleanup fault for one step and lift it
+    /// for the retry (root-catalog Plan 4.1's purge step 4).
+    cleanup_fails: Cell<bool>,
 }
 
 #[derive(Clone)]
@@ -34,7 +37,7 @@ impl FaultBackend {
             created: RefCell::new(vec![]),
             deleted: RefCell::new(vec![]),
             fault: Cell::new(fault),
-            cleanup_fails,
+            cleanup_fails: Cell::new(cleanup_fails),
         }))
     }
 }
@@ -69,7 +72,7 @@ impl Backend for FaultBackend {
     }
     fn delete_workspace(&self, id: WorkspaceId) -> Result<()> {
         self.0.deleted.borrow_mut().push(id);
-        if self.0.cleanup_fails {
+        if self.0.cleanup_fails.get() {
             return Err(Error::new(Code::StorageFailed, "cleanup fault"));
         }
         self.0.backend.delete_workspace(id)
