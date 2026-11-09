@@ -313,9 +313,15 @@ fn a_workspace_grant_stays_attached_across_moves_and_ignores_placement_in_its_ke
         "no Profile to project: the hint it came with is kept"
     );
 
-    // A Profile grant on B would not reach the unassigned Workspace.
+    // No Profile grant reaches the unassigned Workspace, not even the later
+    // flag: that flag includes `other` under the undecided A, and `w` is
+    // under no Profile at all.
     let profile_only = request(vec![profile_grant(b, ProfileAccess::Allowed)], true);
-    assert!(ids(&catalog.resolve(&candidates, &profile_only)).is_empty());
+    assert_eq!(
+        ids(&catalog.resolve(&candidates, &profile_only)),
+        vec![other],
+        "unassigned is under no Profile; the later flag reaches only `other`"
+    );
 }
 
 /// A stale evaluation — older placement revision or membership epoch — is
