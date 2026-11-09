@@ -144,6 +144,36 @@ impl Device {
     fn workspace_count(&self) -> usize {
         self.store().workspaces_including_deleted().unwrap().len()
     }
+
+    /// Type into a document and flush it, as a window's room does.
+    ///
+    /// **A created document is empty.** `create_document` writes the title
+    /// and the kind into the *manifest* and leaves the document itself with
+    /// no operation at all — the store deliberately does not know what is
+    /// inside one (ADR-80), so the first node is seeded by whoever opens it.
+    /// Its snapshot therefore carries nothing, and a test that wants to show
+    /// content travelling between two devices has to write some first.
+    fn type_into(&self, workspace: WorkspaceId, document: DocumentId, peer_id: u64, text: &str) {
+        let mut store = self.store();
+        let base = store.version(workspace, document).unwrap();
+        let live = loro::LoroDoc::new();
+        live.import(&store.snapshot(workspace, document).unwrap())
+            .unwrap();
+        live.set_peer_id(peer_id).unwrap();
+        live.get_text("t").insert(0, text).unwrap();
+        live.commit();
+        let update = live.export(loro::ExportMode::updates(&base)).unwrap();
+        store
+            .apply_update(
+                workspace,
+                document,
+                update,
+                at(),
+                koru_store_core::ports::UpdateOrigin::Store,
+            )
+            .unwrap();
+        store.flush(workspace, document, at()).unwrap();
+    }
 }
 
 fn relationship() -> RelationshipId {
@@ -367,6 +397,7 @@ fn a_workspace_moved_after_sync_follows_on_the_peer_without_workspace_exists() {
         .store()
         .create_document(w, "Plan", "page", None, None, at())
         .unwrap();
+    a.type_into(w, document, 1, "the plan");
     let peer = all_data_peer(relationship());
 
     sync(&a, &b, &peer);
@@ -834,11 +865,22 @@ impl Device {
     }
 }
 
-/// The publication job: a move into a Local-only Profile waits in the
-/// overlay and is framed nowhere; once the destination admits export the
-/// job folds it into the durable unit and the next inventory carries it.
+/// A move into a Local-only Profile waits in the overlay and is framed
+/// nowhere; once the destination admits export the overlay is folded into
+/// the durable unit **exactly once** and the next inventory carries it.
+///
+/// **Which call folds it.** §4.3 publishes an overlay "when sync becomes
+/// eligible", and for a Workspace the transport-mode commit is where
+/// eligibility changes: committing the group that raises the destination
+/// Profile's ceiling publishes the overlay in that same call
+/// (`Store::publish_newly_exportable_overlays`). The publication job is
+/// the backstop for the folds a mode commit cannot do — a Profile unit's
+/// overlay, a publication that failed and was only logged, a policy
+/// generation that moved under it — so here it must find nothing left.
+/// That is the assertion this test exists for: the fold happens once, not
+/// once per pass, and the job never folds a second time.
 #[test]
-fn the_publication_job_folds_an_overlay_once_the_subject_may_export() {
+fn a_held_overlay_is_folded_exactly_once_when_its_subject_may_export() {
     let a = Device::new("A");
     let open = a.profile("Open", TransportMode::P2p);
     let closed = a.profile("Closed", TransportMode::LocalOnly);
@@ -856,7 +898,11 @@ fn the_publication_job_folds_an_overlay_once_the_subject_may_export() {
 
     a.store().move_workspace(w, closed.id).unwrap();
     assert_eq!(a.placement(w), Some(closed.id), "the local move succeeded");
-    assert_eq!(a.adapter.publish_pending_root_overlays().unwrap(), 0);
+    assert_eq!(
+        a.adapter.publish_pending_root_overlays().unwrap(),
+        0,
+        "nothing is published while the destination may not export"
+    );
     let inventory = a.adapter.root_catalog(&peer).unwrap();
     assert!(
         !inventory.units.iter().any(|unit| unit.unit == unit_of(w)),
@@ -870,8 +916,22 @@ fn the_publication_job_folds_an_overlay_once_the_subject_may_export() {
         koru_replication::protocol::ROOT_UNIT_HELD
     );
 
+    assert_eq!(
+        a.store().pending_overlay_units().unwrap(),
+        vec![unit_of(w)],
+        "the move waits in W's private overlay"
+    );
+
     a.arm_all_profile(closed.id, TransportMode::P2p);
-    assert_eq!(a.adapter.publish_pending_root_overlays().unwrap(), 1);
+    assert!(
+        a.store().pending_overlay_units().unwrap().is_empty(),
+        "the commit that made W exportable folded its overlay (§4.3)"
+    );
+    assert_eq!(
+        a.adapter.publish_pending_root_overlays().unwrap(),
+        0,
+        "folded once: the job has nothing left to publish"
+    );
     assert_eq!(
         a.adapter.publish_pending_root_overlays().unwrap(),
         0,
