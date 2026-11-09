@@ -158,6 +158,32 @@ id_type!(
     HistoryEntryId,
     "hist"
 );
+id_type!(
+    /// The local validated user binding a root catalog and its personal units
+    /// are keyed by (`docs/features/root-catalog/TECHNICAL.final.md` §4.1).
+    ///
+    /// Before sign-in one device-local handle exists, kept in `store_state`
+    /// under [`K_LOCAL_USER_SCOPE`](crate::root_catalog::K_LOCAL_USER_SCOPE).
+    /// It is a SQL row key and an authorization boundary, **never a field of
+    /// any Loro unit**: it cannot be dropped merely because the UUIDs it
+    /// scopes are globally unique, and it cannot be claimed by a document.
+    UserScopeId,
+    "scope"
+);
+id_type!(
+    /// One deletion fact in a root-catalog unit: the key of
+    /// `deletions[DeleteId]` and of the `purged[DeleteId]` evidence that may
+    /// follow it. Minted per deletion, so two deletions of one subject are
+    /// two facts and a restore can name exactly the ones it observed.
+    DeletionId,
+    "del"
+);
+id_type!(
+    /// One restore fact in a root-catalog unit: the key of
+    /// `restores[RestoreId]`.
+    RestoreId,
+    "restore"
+);
 
 /// Reminder identity is new storage, so it starts with the repository's full
 /// canonical contract: version 4 and lowercase hyphenated spelling on read as

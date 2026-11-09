@@ -53,7 +53,7 @@ fn a_fresh_catalog_carries_the_table_and_its_index() {
     let c = catalog();
 
     assert_eq!(c.schema_version().unwrap(), CATALOG_SCHEMA_VERSION);
-    assert_eq!(CATALOG_SCHEMA_VERSION, 12);
+    assert_eq!(CATALOG_SCHEMA_VERSION, 13);
     assert!(has_table(&c, "local_transport_modes"));
     let index: String = c
         .connection

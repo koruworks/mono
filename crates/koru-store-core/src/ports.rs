@@ -32,12 +32,15 @@
 //! a real search index arrives later as a swap rather than a migration.
 
 use crate::errors::Result;
-use crate::ids::{ClientId, DocumentId, DocumentVersionId, HistoryEntryId, ProfileId, WorkspaceId};
+use crate::ids::{
+    ClientId, DocumentId, DocumentVersionId, HistoryEntryId, ProfileId, UserScopeId, WorkspaceId,
+};
 use crate::model::{
     ApiClient, Blob, BlobHash, DocumentEntry, DocumentKind, Lineage, Profile, Timestamp, Workspace,
 };
 use crate::profile_account::ProfileAccountBinding;
 use crate::profile_units::ProfileUnitRef;
+use crate::root_catalog::{CatalogUnitKind, CatalogUnitRef};
 use crate::transport::{
     TransportModeCommit, TransportModeGroup, TransportModeRequest, TransportModeState,
     TransportSubject,
@@ -118,6 +121,60 @@ pub struct ReminderDue {
     pub workspace: WorkspaceId,
     pub reminder: crate::ids::ReminderId,
     pub due_at_ms: Option<i64>,
+}
+
+/// [`ReminderDue`] re-keyed for personal v2: the owner is the user scope the
+/// row was read under, not a Profile, so the Profile field is gone rather
+/// than overloaded. Same hint semantics — `None` means inspect the rule.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorkspaceReminderDue {
+    pub workspace: WorkspaceId,
+    pub reminder: crate::ids::ReminderId,
+    pub due_at_ms: Option<i64>,
+}
+
+/// One `root_catalog_units` row: the durable Loro snapshot of a catalog unit
+/// and the compare-and-set revision that orders its commits.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RootCatalogUnitRow {
+    pub snapshot: Vec<u8>,
+    pub revision: i64,
+}
+
+/// One unit's part of an atomic root-catalog commit. `expected_revision`
+/// is `None` for a row that must not exist yet, or the revision the caller
+/// read; the stored row moves to that revision plus one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RootCatalogUnitCommit {
+    pub unit: CatalogUnitRef,
+    pub snapshot: Vec<u8>,
+    pub expected_revision: Option<i64>,
+}
+
+/// One `root_catalog_overlays` row: a private Loro fork of a unit at
+/// `base_vv` with its own writer, held only while its edits cannot be
+/// published. Never advertised, never exported, never a second replica.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RootCatalogOverlay {
+    /// The encoded [`loro::VersionVector`] of the published unit the fork
+    /// started from.
+    pub base_vv: Vec<u8>,
+    pub private_snapshot: Vec<u8>,
+    /// Stored as the i64 with the same bits; SQLite has no u64.
+    pub writer_peer_id: u64,
+}
+
+/// One `workspace_personal_crdts` row: a personal v2 unit under
+/// `(user_scope_id, workspace_id)`, its disposable due-index stamp and the
+/// persisted writer identity every future operation of this replica uses.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorkspacePersonalUnitState {
+    pub snapshot: Vec<u8>,
+    /// The encoded [`loro::VersionVector`] the due index was built from;
+    /// `None` while unavailable or rebuilding.
+    pub indexed_version: Option<Vec<u8>>,
+    /// Stored as the i64 with the same bits; SQLite has no u64.
+    pub writer_peer_id: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -251,6 +308,100 @@ pub trait Catalog {
         rows: &[ReminderDue],
     ) -> Result<bool>;
     fn profile_reminder_due(&self, owner: ProfileId) -> Result<Vec<ReminderDue>>;
+
+    // ---- root catalog (docs/features/root-catalog/TECHNICAL.final.md §4.2)
+    //
+    // Every row below is keyed by a `UserScopeId`: the local validated user
+    // binding, a SQL key and an authorization boundary that no Loro unit
+    // carries. The tables arrive in one forward catalog migration.
+
+    /// The device-local scope handle: the `store_state` row under
+    /// [`K_LOCAL_USER_SCOPE`](crate::root_catalog::K_LOCAL_USER_SCOPE),
+    /// written once by that migration. There is always exactly one.
+    fn local_user_scope(&self) -> Result<UserScopeId>;
+    /// One `root_catalog_units` row by its full key
+    /// `(user_scope_id, unit_kind, subject_id)`.
+    fn root_catalog_unit(
+        &self,
+        scope: UserScopeId,
+        unit: CatalogUnitRef,
+    ) -> Result<Option<RootCatalogUnitRow>>;
+    /// Every `root_catalog_units` row of one kind under one scope. A missing
+    /// row is not a deletion; lifecycle lives inside the unit.
+    fn root_catalog_units(
+        &self,
+        scope: UserScopeId,
+        kind: CatalogUnitKind,
+    ) -> Result<Vec<(CatalogUnitRef, RootCatalogUnitRow)>>;
+    /// Publish several units' snapshots in one transaction, each guarded by
+    /// its `expected_revision`: `None` inserts a row that must not exist,
+    /// `Some(r)` replaces a row whose revision is exactly `r` and stamps
+    /// `r + 1`. One mismatch rolls back every unit in the batch.
+    fn commit_root_catalog_units(
+        &mut self,
+        scope: UserScopeId,
+        commits: &[RootCatalogUnitCommit],
+    ) -> Result<()>;
+    /// The `root_catalog_overlays` row for one unit, if a private fork is
+    /// being held.
+    fn root_catalog_overlay(
+        &self,
+        scope: UserScopeId,
+        unit: CatalogUnitRef,
+    ) -> Result<Option<RootCatalogOverlay>>;
+    /// Insert or replace the `root_catalog_overlays` row for one unit.
+    fn commit_root_catalog_overlay(
+        &mut self,
+        scope: UserScopeId,
+        unit: CatalogUnitRef,
+        overlay: &RootCatalogOverlay,
+    ) -> Result<()>;
+    /// Delete the `root_catalog_overlays` row for one unit once its edits
+    /// have been published into the durable unit. Absent is not an error.
+    fn clear_root_catalog_overlay(
+        &mut self,
+        scope: UserScopeId,
+        unit: CatalogUnitRef,
+    ) -> Result<()>;
+
+    // ---- personal v2 (docs/features/root-catalog/TECHNICAL.final.md §5.1)
+
+    /// One `workspace_personal_crdts` row by `(user_scope_id, workspace_id)`.
+    fn workspace_personal_unit(
+        &self,
+        scope: UserScopeId,
+        workspace: WorkspaceId,
+    ) -> Result<Option<WorkspacePersonalUnitState>>;
+    /// Every `workspace_personal_crdts` row under one scope, whatever the
+    /// Workspace's current placement — personal data follows the Workspace.
+    fn workspace_personal_units(
+        &self,
+        scope: UserScopeId,
+    ) -> Result<Vec<(WorkspaceId, WorkspacePersonalUnitState)>>;
+    /// Insert or replace the `workspace_personal_crdts` row. Changed bytes
+    /// atomically clear its `indexed_version`, as the v1 commit does.
+    fn commit_workspace_personal_unit(
+        &mut self,
+        scope: UserScopeId,
+        workspace: WorkspaceId,
+        snapshot: &[u8],
+        writer_peer_id: u64,
+    ) -> Result<()>;
+    /// Replace the Workspace's rows of the re-keyed reminder due index and
+    /// stamp `indexed_version`, in one transaction, only if the row still
+    /// holds exactly `source_snapshot`. A stale rebuild returns `false`
+    /// without writing — the v1 compare-and-set, re-keyed.
+    fn replace_workspace_due_index(
+        &mut self,
+        scope: UserScopeId,
+        workspace: WorkspaceId,
+        source_snapshot: &[u8],
+        indexed_version: &[u8],
+        rows: &[WorkspaceReminderDue],
+    ) -> Result<bool>;
+    /// Every due-index row under one scope, including `None` hints.
+    fn workspace_reminder_due(&self, scope: UserScopeId) -> Result<Vec<WorkspaceReminderDue>>;
+
     fn put_workspace(&mut self, workspace: &Workspace) -> Result<()>;
     /// Publish a prepared workspace and its manifest routing location together.
     fn publish_workspace(&mut self, workspace: &Workspace, manifest: DocumentId) -> Result<()>;

@@ -5077,7 +5077,12 @@ fn sync_document_digest(
 /// Random, and **never derived from a machine name, a hostname or a path** — a
 /// peer id names a replica, and a replica is not a person or a computer. Taken
 /// from a v4 UUID so it comes out of `getrandom` rather than a clock.
-fn mint_peer_id() -> u64 {
+///
+/// Public because the root-catalog migration and the personal v2 units mint
+/// their writer identities the same way: a unit's writer must be a fresh
+/// peer, never the Store's global stream (`docs/features/root-catalog/TECHNICAL.final.md`
+/// §5.2 step 6), and there is one way to mint one.
+pub fn mint_peer_id() -> u64 {
     let bytes = uuid::Uuid::new_v4().into_bytes();
     let mut eight = [0u8; 8];
     eight.copy_from_slice(&bytes[..8]);

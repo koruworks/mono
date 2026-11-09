@@ -4,6 +4,7 @@ use super::*;
 use koru_store_core::fixtures::{BIDI_LINE, COMPOSED, DECOMPOSED, SAMPLES};
 
 mod profile_units;
+mod root_catalog;
 mod transport_modes;
 
 fn at() -> Timestamp {

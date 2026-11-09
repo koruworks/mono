@@ -80,7 +80,10 @@ fn profile_carrier_handoff_is_causal_scoped_and_durable_for_all_three_units() {
         profile_units::{IdentityManifest, PersonalManifest, PrivateManifest, ProfileUnitRef},
     };
     use loro::{ExportMode, LoroDoc};
-    for kind in 0..3 {
+    // Identity and private only. Personal units are v2 since catalog 13 and
+    // are not exported on the v1 carrier (root-catalog TECHNICAL §11.4); the
+    // personal arms below stay as the carrier's vocabulary.
+    for kind in 0..2 {
         for mixed in [false, true] {
             let directory = isolated_directory();
             let path = directory.path().join("catalog.db");
