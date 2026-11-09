@@ -21,7 +21,7 @@ use rmcp::{
     model::{
         Annotations, CallToolResult, ErrorData, ListResourceTemplatesResult, ListResourcesResult,
         ReadResourceRequestParams, ReadResourceResponse, Resource, ResourceTemplate, Role,
-        ServerCapabilities, ServerInfo,
+        ServerCapabilities, ServerConfig,
     },
     schemars, tool, tool_handler, tool_router,
 };
@@ -7148,13 +7148,13 @@ impl ServerHandler for KoruMcp {
         Ok(result)
     }
 
-    fn get_info(&self) -> ServerInfo {
+    fn get_info(&self) -> ServerConfig {
         let mut instructions = String::from(SERVER_INSTRUCTIONS);
         if let Some(note) = self.toolsets.note() {
             instructions.push(' ');
             instructions.push_str(&note);
         }
-        ServerInfo::new(
+        ServerConfig::new(
             ServerCapabilities::builder()
                 .enable_tools()
                 .enable_resources()
