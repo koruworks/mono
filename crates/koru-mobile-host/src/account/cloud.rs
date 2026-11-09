@@ -9,7 +9,10 @@
 //! [`koru_network_iroh::cloud::dial`]; the pass is the shared
 //! [`koru_store_server::cloud_sync::reconcile_dataset`], run on the host's
 //! own Tokio runtime against the host's own `StoreWorkerClient`, exactly as
-//! the gateway runs it on the desktop.
+//! the gateway runs it on the desktop. The Store half of the account path
+//! (root-catalog Plan 3.2) — the binding, the root inventory, the export
+//! boundary and the staged join — is the same `root_sync` API the desktop
+//! daemon answers over control, called under this host's own lock.
 //!
 //! The permit bookkeeping the gateway keeps in its `ControlHost` is kept here
 //! as a table of live permits: an installed context admits a stream, a fence
@@ -22,13 +25,19 @@ use std::sync::{Arc, Mutex, Weak};
 use koru_account_core::workspace_authorization::Region;
 use koru_account_core::{KoruIdentityId, ProfileId};
 use koru_account_runtime::cloud::{
-    self, CloudPermitV1, Failure, Host, LocalBootstrap, SessionReport, Stage,
+    self, CloudAccountBindingRef, CloudPermitScopeV2, CloudPermitV2, CloudRootExport,
+    CloudRootJoin, CloudRootUnitState, Failure, Host, LocalBootstrap, RootInventory, SessionReport,
+    Stage,
 };
 use koru_account_wire::cloud_sync::SyncCredential;
-use koru_account_wire::{CloudSyncRouteV1, CloudWorkspaceDescriptorV1, JwksResponseV1};
+use koru_account_wire::{CloudCatalogBindingV2, CloudSyncRouteV1, JwksResponseV1};
 use koru_device::cloud::{CloudId, CloudReplicaPrincipalV1};
 use koru_network_iroh::{CloudRoute, cloud::dial};
 use koru_replication::cloud::{Refusal, transfer};
+use koru_store_core::errors::Code;
+use koru_store_core::root_catalog::{CatalogUnitRef, Derived, ExportSubject};
+use koru_store_core::service::{JoinUnit, RootGrant, RootJoinOutcome};
+use koru_store_core::transport::{TransportPath, TransportSubject};
 use koru_store_core::{DocumentId, WorkspaceId};
 use koru_store_server::cloud_sync::{self, Progress};
 use uuid::Uuid;
@@ -161,6 +170,28 @@ impl MobileCloudHost {
     fn host(&self) -> Result<Arc<MobileHost>, Failure> {
         self.host.upgrade().ok_or(Failure::Unavailable)
     }
+
+    /// One Store turn for the account path. A Store refusal is carried as
+    /// the stable code the Agent's coordinator reads; the worker being gone
+    /// is unavailability.
+    fn with_store<R: Send + 'static>(
+        &self,
+        task: impl FnOnce(&mut koru_store_server::WorkerStore) -> Result<R, &'static str>
+        + Send
+        + 'static,
+    ) -> Result<R, Failure> {
+        let host = self.host()?;
+        host.store()
+            .with_store(task)
+            .map_err(|_| Failure::Unavailable)?
+            .map_err(|code| match code {
+                cloud::CATALOG_BINDING_CONFLICT => Failure::CatalogBindingConflict,
+                _ => {
+                    tracing::info!(code, "cloud host: the Store refused a root operation");
+                    Failure::Unavailable
+                }
+            })
+    }
 }
 
 fn lock(live: &Mutex<BTreeMap<Uuid, Live>>) -> std::sync::MutexGuard<'_, BTreeMap<Uuid, Live>> {
@@ -191,74 +222,99 @@ fn route_of(route: &CloudSyncRouteV1) -> Result<CloudRoute, Failure> {
     })
 }
 
+/// A Store refusal of a root or personal operation as the wire names it.
+fn store_code(error: &koru_store_core::Error) -> &'static str {
+    match error.code() {
+        Code::Forbidden => "mode_refuses_transport",
+        Code::IdempotencyConflict => "policy_changed",
+        Code::WorkspaceNotFound => "root_unit_not_found",
+        Code::CorruptState => "store_corrupt",
+        _ => "store_unavailable",
+    }
+}
+
+fn catalog_unit(unit: JoinUnit) -> Option<CatalogUnitRef> {
+    match unit {
+        JoinUnit::ProfileCatalog { profile } => Some(CatalogUnitRef::Profile { profile }),
+        JoinUnit::WorkspaceCatalog { workspace } => Some(CatalogUnitRef::Workspace { workspace }),
+        JoinUnit::PersonalV2 { .. } => None,
+    }
+}
+
+fn subject(unit: JoinUnit) -> ExportSubject {
+    match unit {
+        JoinUnit::ProfileCatalog { profile } => ExportSubject::ProfileCatalog(profile),
+        JoinUnit::WorkspaceCatalog { workspace } => ExportSubject::WorkspaceCatalog(workspace),
+        JoinUnit::PersonalV2 { workspace } => ExportSubject::PersonalV2(workspace),
+    }
+}
+
+fn version(bytes: Option<&[u8]>) -> Option<loro::VersionVector> {
+    bytes.map(|bytes| loro::VersionVector::decode(bytes).unwrap_or_default())
+}
+
 impl Host for MobileCloudHost {
     fn local_workspace(
         &self,
         _account: KoruIdentityId,
-        profile: ProfileId,
         dataset: CloudReplicaPrincipalV1,
     ) -> Result<Option<LocalBootstrap>, Failure> {
         let CloudReplicaPrincipalV1::Workspace { workspace_id, .. } = dataset else {
             return Err(Failure::DatasetMismatch);
         };
         let workspace = WorkspaceId::from_uuid(workspace_id.as_uuid());
-        let host = self.host()?;
         // The same rule as the gateway's `read_cloud_bootstrap`: a Workspace
         // this Store does not hold is a fresh device; one it holds answers
-        // its durable manifest identity, deleted or not; a Store that cannot
-        // answer is an error, never a null.
-        let manifest = host
-            .store()
-            .with_store(move |store| -> Result<Option<DocumentId>, &'static str> {
-                match store.workspace_including_deleted(workspace) {
-                    Ok(_) => store
-                        .replica_manifest_id_including_deleted(workspace)
-                        .map(Some)
-                        .map_err(|_| "manifest_unavailable"),
-                    Err(error)
-                        if error.code == koru_store_core::errors::Code::WorkspaceNotFound =>
-                    {
-                        Ok(None)
+        // its durable manifest identity, deleted or not, and whether its own
+        // transport policy admits the Cloud path; a Store that cannot answer
+        // is an error, never a null.
+        let found =
+            self.with_store(
+                move |store| match store.workspace_including_deleted(workspace) {
+                    Ok(_) => {
+                        let manifest = store
+                            .replica_manifest_id_including_deleted(workspace)
+                            .map_err(|_| "manifest_unavailable")?;
+                        let allows_cloud = store
+                            .transport_admission(TransportSubject::Workspace(workspace))
+                            .ok()
+                            .map(|admission| admission.allows_cloud());
+                        Ok(Some((manifest, allows_cloud)))
                     }
+                    Err(error) if error.code == Code::WorkspaceNotFound => Ok(None),
                     Err(_) => Err("store_unavailable"),
-                }
-            })
-            .map_err(|_| Failure::Unavailable)?
-            .map_err(|_| Failure::Unavailable)?;
-        Ok(manifest.map(|manifest| LocalBootstrap {
-            profile_id: profile,
+                },
+            )?;
+        Ok(found.map(|(manifest, allows_cloud)| LocalBootstrap {
             workspace_id: workspace,
             manifest_document_id: manifest.as_uuid(),
+            allows_cloud,
         }))
     }
 
-    /// Step 1 is the selection path's provisioning (TECHNICAL §7.4). Here
-    /// the Profile's presence and its account binding are checked against
-    /// the Store; a Profile bound to another account is never touched.
+    /// The Profile whose Identity/Private units are about to sync must be
+    /// present here and bound to this account (the selection path's
+    /// provisioning, TECHNICAL §7.4). A Profile bound to another account is
+    /// never touched. Never asked before a Workspace's content.
     fn ensure_profile_presence(
         &self,
         profile: ProfileId,
         account: KoruIdentityId,
     ) -> Result<(), Failure> {
-        let host = self.host()?;
         let binding = koru_store_core::ProfileAccountBinding::from_identity_uuid(account.as_uuid())
             .map_err(|_| Failure::Denied)?;
-        let present = host
-            .store()
-            .with_store(move |store| -> Result<bool, &'static str> {
-                store
-                    .profile_lifecycle_inventory()
-                    .map(|inventory| {
-                        inventory.iter().any(|stored| {
-                            stored.profile == profile
-                                && stored.account_binding == binding
-                                && stored.removed_at.is_none()
-                        })
+        let present = self.with_store(move |store| {
+            store
+                .profile_lifecycle_inventory()
+                .map(|inventory| {
+                    inventory.iter().any(|stored| {
+                        stored.profile == profile
+                            && stored.account_binding == binding
+                            && stored.removed_at.is_none()
                     })
-                    .map_err(|_| "store_unavailable")
-            })
-            .map_err(|_| Failure::Unavailable)?
-            .map_err(|_| Failure::Unavailable)?;
+                })
+                .map_err(|_| "store_unavailable")
+        })?;
         if present {
             Ok(())
         } else {
@@ -266,24 +322,33 @@ impl Host for MobileCloudHost {
         }
     }
 
-    /// Step 3, with the Profile read back from the Store: the shared
-    /// identity-only bootstrap the gateway runs at installation.
-    fn ensure_workspace_presence(
-        &self,
-        descriptor: &CloudWorkspaceDescriptorV1,
-    ) -> Result<(), Failure> {
+    /// Step 3 under the Workspace's **root placement** (root-catalog
+    /// TECHNICAL.final §7.2–7.3): the shared identity-only bootstrap the
+    /// gateway runs at installation. A placement this Store cannot list the
+    /// Workspace under yet is `placement_pending`, which the coordinator
+    /// retries after the next root join; the descriptor's placement seeds
+    /// nothing — except for a permit of the v1 window, whose service has no
+    /// root units to join, where it is the hint it was before M3.
+    fn ensure_workspace_presence(&self, permit: &CloudPermitV2) -> Result<(), Failure> {
+        let CloudPermitScopeV2::Workspace { descriptor } = &permit.scope else {
+            return Err(Failure::DatasetMismatch);
+        };
         let host = self.host()?;
         let store = host.store().clone();
-        let profile = descriptor.profile_id;
-        let workspace = descriptor.workspace_id;
-        let manifest = DocumentId::from_uuid(descriptor.manifest_document_id);
+        let workspace = WorkspaceId::from_uuid(descriptor.workspace_id.as_uuid());
+        let manifest = DocumentId::from_uuid(descriptor.manifest_document_id.as_uuid());
+        let placement = koru_store_server::cloud_driver::bootstrap_placement(permit);
         host.tokio()
             .block_on(koru_store_server::cloud_driver::ensure_workspace(
-                &store, profile, workspace, manifest,
+                &store, workspace, manifest, placement,
             ))
             .map_err(|code| {
                 tracing::warn!(code, "cloud host: workspace bootstrap refused");
-                Failure::Bootstrap
+                if code == cloud::PLACEMENT_PENDING {
+                    Failure::PlacementPending
+                } else {
+                    Failure::Bootstrap
+                }
             })
     }
 
@@ -292,7 +357,7 @@ impl Host for MobileCloudHost {
         _sequence: u64,
         account: KoruIdentityId,
         account_generation: u64,
-        permits: &[CloudPermitV1],
+        permits: &[CloudPermitV2],
     ) -> Result<(), Failure> {
         let account_id = cloud(account.as_uuid());
         let mut live = lock(&self.live);
@@ -302,8 +367,9 @@ impl Host for MobileCloudHost {
             held.account_id != account_id || held.account_generation >= account_generation
         });
         for permit in permits {
-            if cloud(permit.account_id.as_uuid()) != account_id
+            if permit.account_id != account_id
                 || permit.account_generation != account_generation
+                || permit.dataset().is_none()
             {
                 return Err(Failure::DatasetMismatch);
             }
@@ -375,7 +441,7 @@ impl Host for MobileCloudHost {
 
     fn open_dataset(
         &self,
-        permit: &CloudPermitV1,
+        permit: &CloudPermitV2,
         credential: &SyncCredential,
         route: &CloudSyncRouteV1,
         dataset: CloudReplicaPrincipalV1,
@@ -390,6 +456,12 @@ impl Host for MobileCloudHost {
         {
             return Err(Failure::CredentialExpired);
         }
+        let account: KoruIdentityId = permit
+            .account_id
+            .as_uuid()
+            .to_string()
+            .parse()
+            .map_err(|_| Failure::DatasetMismatch)?;
         let host = self.host()?;
         if !lock(&self.live).contains_key(&permit.permit_id) {
             return Err(Failure::Unavailable);
@@ -476,15 +548,16 @@ impl Host for MobileCloudHost {
         };
         // The dataset incarnation coverage is claimed under, exactly as
         // `cloud_driver` reads it on the desktop.
-        let blob_incarnation = permit.workspace_descriptor.as_ref().map(|descriptor| {
-            koru_device::cloud::CloudId::from_bytes(*descriptor.workspace_incarnation_id.as_bytes())
-        });
-        let control_permit = cloud::control_permit(permit);
-        let (plan, scope) =
-            koru_store_server::cloud_driver::plan_for(&control_permit).map_err(|code| {
-                tracing::warn!(code, "cloud host: permit cannot be planned");
-                Failure::DatasetMismatch
-            })?;
+        let blob_incarnation = match &permit.scope {
+            CloudPermitScopeV2::Workspace { descriptor } => {
+                Some(descriptor.workspace_incarnation_id)
+            }
+            _ => None,
+        };
+        let (plan, scope) = koru_store_server::cloud_driver::plan_for(permit).map_err(|code| {
+            tracing::warn!(code, "cloud host: permit cannot be planned");
+            Failure::DatasetMismatch
+        })?;
         let Some(capacity) = NonZeroUsize::new(SESSION_QUEUE) else {
             return Err(Failure::Unavailable);
         };
@@ -633,11 +706,7 @@ impl Host for MobileCloudHost {
         loop {
             let current_access = access.access_token().ok_or(Failure::SessionExpired)?;
             if renewed.elapsed().as_secs() >= 30 {
-                self.replace_blob_access(
-                    permit.account_id,
-                    permit.account_generation,
-                    &current_access,
-                )?;
+                self.replace_blob_access(account, permit.account_generation, &current_access)?;
                 renewed = std::time::Instant::now();
             }
             if accepted
@@ -660,5 +729,179 @@ impl Host for MobileCloudHost {
             }
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
+    }
+
+    // ----- The Store half of the account path, in process ---------------
+
+    fn account_binding(&self) -> Result<Option<CloudAccountBindingRef>, Failure> {
+        self.with_store(|store| {
+            store
+                .account_binding()
+                .map(|binding| {
+                    binding.map(|binding| CloudAccountBindingRef {
+                        account_id: cloud(binding.account_id),
+                        catalog_scope_id: cloud(binding.catalog_scope_id),
+                    })
+                })
+                .map_err(|error| store_code(&error))
+        })
+    }
+
+    fn bind_account_scope(&self, binding: &CloudCatalogBindingV2) -> Result<(), Failure> {
+        let account_id = binding.account_id.as_uuid();
+        let catalog_scope_id = binding.catalog_scope_id.as_uuid();
+        let bound_at_ms = binding.bound_at_ms;
+        self.with_store(move |store| {
+            store
+                .bind_account_scope(account_id, catalog_scope_id, bound_at_ms)
+                .map(|_| ())
+                .map_err(|error| match error.code() {
+                    // §4.1: two bound accounts never join; a binding is never
+                    // renamed. Both terminal for the coordinator.
+                    Code::Forbidden => cloud::CATALOG_BINDING_CONFLICT,
+                    _ => store_code(&error),
+                })
+        })
+    }
+
+    fn root_inventory(&self) -> Result<RootInventory, Failure> {
+        self.with_store(|store| {
+            // The publication job first, so a pending overlay has had its
+            // chance before the inventory is read (STORE.md).
+            if let Err(error) = store.publish_pending_overlays() {
+                tracing::info!(
+                    code = store_code(&error),
+                    "cloud host: publication job did not run"
+                );
+            }
+            let inventory = store
+                .root_export_inventory(&RootGrant::account())
+                .map_err(|error| store_code(&error))?;
+            Ok(RootInventory {
+                units: inventory
+                    .units
+                    .into_iter()
+                    .map(|(unit, version)| CloudRootUnitState {
+                        unit: JoinUnit::catalog(unit),
+                        frontier: version.encode(),
+                    })
+                    .chain(inventory.personal.into_iter().map(|(workspace, version)| {
+                        CloudRootUnitState {
+                            unit: JoinUnit::PersonalV2 { workspace },
+                            frontier: version.encode(),
+                        }
+                    }))
+                    .collect(),
+                held: u32::try_from(inventory.held).unwrap_or(u32::MAX),
+            })
+        })
+    }
+
+    fn root_unit_frontier(&self, unit: JoinUnit) -> Result<Option<Vec<u8>>, Failure> {
+        self.with_store(move |store| {
+            let frontier = match (catalog_unit(unit), unit) {
+                (Some(catalog), _) => store.root_unit_frontier(catalog, TransportPath::Cloud),
+                (None, JoinUnit::PersonalV2 { workspace }) => {
+                    store.personal_frontier(workspace, TransportPath::Cloud)
+                }
+                (None, _) => return Err("root_unit_not_found"),
+            }
+            .map_err(|error| store_code(&error))?;
+            Ok(frontier.map(|version| version.encode()))
+        })
+    }
+
+    fn export_root_unit(
+        &self,
+        unit: JoinUnit,
+        recipient_frontier: Option<&[u8]>,
+    ) -> Result<CloudRootExport, Failure> {
+        let recipient = version(recipient_frontier);
+        self.with_store(move |store| {
+            // §4.3 in three steps on one worker turn: prepare, derive,
+            // recheck the policy generation before the bytes are answered.
+            let source = match store.root_export_source(&RootGrant::account(), subject(unit)) {
+                Ok(Some(source)) => source,
+                Ok(None) => return Ok(CloudRootExport::NotFound),
+                Err(error) if error.code() == Code::Forbidden => return Ok(CloudRootExport::Held),
+                Err(error) => return Err(store_code(&error)),
+            };
+            let authorization = store
+                .account_binding()
+                .ok()
+                .flatten()
+                .map(|binding| binding.account_id.to_string())
+                .unwrap_or_default();
+            Ok(
+                match source.derive(recipient.as_ref(), authorization.clone()) {
+                    Ok(Derived::Publish(publication)) => {
+                        if store.policy_generation() != publication.capture.policy_generation
+                            || publication.capture.authorization != authorization
+                        {
+                            tracing::info!(
+                                ?unit,
+                                "cloud host: payload discarded reason=policy_changed"
+                            );
+                            CloudRootExport::Held
+                        } else {
+                            CloudRootExport::Published {
+                                frames: vec![publication.bytes],
+                                redacted_ops: u32::try_from(publication.redacted_ops)
+                                    .unwrap_or(u32::MAX),
+                            }
+                        }
+                    }
+                    Ok(Derived::Hold { reason }) => {
+                        tracing::info!(?unit, reason = %reason, "cloud host: root unit held");
+                        CloudRootExport::Held
+                    }
+                    Err(error) => {
+                        tracing::info!(?unit, ?error, "cloud host: root export refused");
+                        CloudRootExport::Held
+                    }
+                },
+            )
+        })
+    }
+
+    fn join_root_unit(
+        &self,
+        account: KoruIdentityId,
+        unit: JoinUnit,
+        frames: &[Vec<u8>],
+        advertised: Option<&[u8]>,
+    ) -> Result<CloudRootJoin, Failure> {
+        let account_id = account.as_uuid();
+        let frames = frames.to_vec();
+        let advertised = version(advertised);
+        self.with_store(move |store| {
+            let outcome = match (catalog_unit(unit), unit) {
+                (Some(catalog), _) => {
+                    let staged = store
+                        .stage_root_unit(account_id, catalog, &frames)
+                        .map_err(|error| store_code(&error))?;
+                    store
+                        .commit_staged_root_unit(account_id, staged, advertised.as_ref())
+                        .map_err(|error| store_code(&error))?
+                }
+                (None, JoinUnit::PersonalV2 { workspace }) => {
+                    let staged = store
+                        .stage_personal_unit(account_id, workspace, &frames)
+                        .map_err(|error| store_code(&error))?;
+                    store
+                        .commit_staged_personal_unit(account_id, staged, advertised.as_ref())
+                        .map_err(|error| store_code(&error))?
+                }
+                (None, _) => return Err("root_unit_not_found"),
+            };
+            Ok(match outcome {
+                RootJoinOutcome::Applied { frontier, .. } => CloudRootJoin::Applied {
+                    frontier: frontier.encode(),
+                },
+                RootJoinOutcome::Pending { frontier } => CloudRootJoin::Pending {
+                    frontier: frontier.encode(),
+                },
+            })
+        })
     }
 }

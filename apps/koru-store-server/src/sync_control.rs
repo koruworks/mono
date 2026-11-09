@@ -327,9 +327,40 @@ enum RuntimeAction {
     CloudPlaceholder,
     /// HOST-CONTROL §3.1 `read_cloud_bootstrap`: the host validated the
     /// session and the shape; the daemon reads the durable manifest identity
-    /// through the Store worker, the only valid local source.
+    /// through the Store worker, the only valid local source. `policy` is
+    /// the v2 read (root-catalog Plan 3.2), which also answers whether this
+    /// device's transport policy for the Workspace admits the Cloud path.
     ReadCloudBootstrap {
         workspace: koru_store_core::WorkspaceId,
+        policy: bool,
+    },
+    /// **The Store half of the account path** (root-catalog Plan 3.2): the
+    /// host validated the session and the shape and answered a placeholder;
+    /// the daemon answers from the Store worker and replaces it.
+    CloudRoot(CloudRootAction),
+}
+
+/// One Store-backed root-catalog operation the Agent asked over control.
+enum CloudRootAction {
+    Bind {
+        account_id: uuid::Uuid,
+        catalog_scope_id: uuid::Uuid,
+        bound_at_ms: i64,
+    },
+    ReadBinding,
+    Inventory,
+    Frontier {
+        unit: koru_store_core::service::JoinUnit,
+    },
+    Export {
+        unit: koru_store_core::service::JoinUnit,
+        recipient_frontier: Option<Vec<u8>>,
+    },
+    Join {
+        account_id: uuid::Uuid,
+        unit: koru_store_core::service::JoinUnit,
+        frames: Vec<Vec<u8>>,
+        advertised: Option<Vec<u8>>,
     },
 }
 
@@ -367,6 +398,13 @@ fn request_kind_name(request: &koru_sync_control::ControlRequest) -> &'static st
         R::ReplaceCloudNetworkPolicy { .. } => "replace_cloud_network_policy",
         R::ReplaceCloudBlobAccess { .. } => "replace_cloud_blob_access",
         R::ReadCloudBootstrap { .. } => "read_cloud_bootstrap",
+        R::ReadCloudBootstrapV2 { .. } => "read_cloud_bootstrap_v2",
+        R::BindCloudAccountScope { .. } => "bind_cloud_account_scope",
+        R::ReadCloudAccountBinding { .. } => "read_cloud_account_binding",
+        R::ReadCloudRootInventory { .. } => "read_cloud_root_inventory",
+        R::ReadCloudRootFrontier { .. } => "read_cloud_root_frontier",
+        R::ExportCloudRootUnit { .. } => "export_cloud_root_unit",
+        R::JoinCloudRootUnit { .. } => "join_cloud_root_unit",
     }
 }
 
@@ -414,7 +452,54 @@ impl RuntimeAction {
                 ..
             } => Self::ReadCloudBootstrap {
                 workspace: koru_store_core::WorkspaceId::from_uuid(workspace_id.as_uuid()),
+                policy: false,
             },
+            ControlRequest::ReadCloudBootstrapV2 {
+                dataset: koru_device::cloud::CloudReplicaPrincipalV1::Workspace { workspace_id, .. },
+                ..
+            } => Self::ReadCloudBootstrap {
+                workspace: koru_store_core::WorkspaceId::from_uuid(workspace_id.as_uuid()),
+                policy: true,
+            },
+            ControlRequest::BindCloudAccountScope {
+                account_id,
+                catalog_scope_id,
+                bound_at_ms,
+                ..
+            } => Self::CloudRoot(CloudRootAction::Bind {
+                account_id: account_id.as_uuid(),
+                catalog_scope_id: catalog_scope_id.as_uuid(),
+                bound_at_ms: *bound_at_ms,
+            }),
+            ControlRequest::ReadCloudAccountBinding { .. } => {
+                Self::CloudRoot(CloudRootAction::ReadBinding)
+            }
+            ControlRequest::ReadCloudRootInventory { .. } => {
+                Self::CloudRoot(CloudRootAction::Inventory)
+            }
+            ControlRequest::ReadCloudRootFrontier { unit, .. } => {
+                Self::CloudRoot(CloudRootAction::Frontier { unit: *unit })
+            }
+            ControlRequest::ExportCloudRootUnit {
+                unit,
+                recipient_frontier,
+                ..
+            } => Self::CloudRoot(CloudRootAction::Export {
+                unit: *unit,
+                recipient_frontier: recipient_frontier.clone(),
+            }),
+            ControlRequest::JoinCloudRootUnit {
+                account_id,
+                unit,
+                frames,
+                advertised,
+                ..
+            } => Self::CloudRoot(CloudRootAction::Join {
+                account_id: account_id.as_uuid(),
+                unit: *unit,
+                frames: frames.clone(),
+                advertised: advertised.clone(),
+            }),
             ControlRequest::ReplaceCloudContext { .. }
             | ControlRequest::InstallCloudSession { .. }
             | ControlRequest::FenceCloud { .. }
@@ -422,7 +507,8 @@ impl RuntimeAction {
             | ControlRequest::DecideCloudTransfer { .. }
             | ControlRequest::ReplaceCloudNetworkPolicy { .. }
             | ControlRequest::ReplaceCloudBlobAccess { .. }
-            | ControlRequest::ReadCloudBootstrap { .. } => Self::CloudPlaceholder,
+            | ControlRequest::ReadCloudBootstrap { .. }
+            | ControlRequest::ReadCloudBootstrapV2 { .. } => Self::CloudPlaceholder,
         }
     }
 
@@ -433,22 +519,34 @@ impl RuntimeAction {
         response: koru_sync_control::ControlResponse,
     ) -> koru_sync_control::ControlResponse {
         match self {
-            Self::ReadCloudBootstrap { workspace } => {
+            Self::ReadCloudBootstrap { workspace, policy } => {
                 let koru_sync_control::ControlResponse::CloudBootstrap {
                     control_session_id, ..
                 } = response
                 else {
                     return response;
                 };
-                return match read_cloud_bootstrap(store, workspace) {
-                    Ok(manifest_document_id) => {
+                return match read_cloud_bootstrap(store, workspace, policy) {
+                    Ok((manifest_document_id, allows_cloud)) => {
                         koru_sync_control::ControlResponse::CloudBootstrap {
                             control_session_id,
                             manifest_document_id,
+                            allows_cloud,
                         }
                     }
                     Err(code) => koru_sync_control::ControlResponse::Rejected { code: code.into() },
                 };
+            }
+            Self::CloudRoot(action) => {
+                // The host answered a placeholder after validating the
+                // session; only a placeholder is replaced, a refusal stands.
+                if matches!(
+                    response,
+                    koru_sync_control::ControlResponse::Rejected { .. }
+                ) {
+                    return response;
+                }
+                return cloud_root::answer(store, action, response);
             }
             Self::Provision(secret) => {
                 if let ReplicationRuntime::Iroh(runtime) = runtime {
@@ -573,32 +671,343 @@ impl RuntimeAction {
 /// fresh device; a Workspace it holds answers the manifest the catalog
 /// records, including a soft-deleted one, because the identity survives
 /// deletion. A Store that cannot answer is an error, never a null: "errors
-/// and timeouts are not null success".
+/// and timeouts are not null success". The v2 read (`policy`) also answers
+/// whether this device's transport policy for a held Workspace admits the
+/// Cloud path, the Profile ceiling included (root-catalog TECHNICAL.final
+/// §4.4); `None` when no mode row answers.
 fn read_cloud_bootstrap(
     store: &crate::StoreWorkerClient,
     workspace: koru_store_core::WorkspaceId,
-) -> Result<Option<koru_device::cloud::CloudId>, &'static str> {
+    policy: bool,
+) -> Result<(Option<koru_device::cloud::CloudId>, Option<bool>), &'static str> {
     store
         .with_store(
-            move |store| -> Result<Option<koru_store_core::DocumentId>, &'static str> {
+            move |store| -> Result<(Option<koru_store_core::DocumentId>, Option<bool>), &'static str> {
                 match store.workspace_including_deleted(workspace) {
-                    Ok(_) => store
-                        .replica_manifest_id_including_deleted(workspace)
-                        .map(Some)
-                        .map_err(|_| "manifest_unavailable"),
+                    Ok(_) => {
+                        let manifest = store
+                            .replica_manifest_id_including_deleted(workspace)
+                            .map_err(|_| "manifest_unavailable")?;
+                        let allows_cloud = policy
+                            .then(|| {
+                                store
+                                    .transport_admission(
+                                        koru_store_core::transport::TransportSubject::Workspace(
+                                            workspace,
+                                        ),
+                                    )
+                                    .ok()
+                                    .map(|admission| admission.allows_cloud())
+                            })
+                            .flatten();
+                        Ok((Some(manifest), allows_cloud))
+                    }
                     Err(error)
                         if error.code == koru_store_core::errors::Code::WorkspaceNotFound =>
                     {
-                        Ok(None)
+                        Ok((None, None))
                     }
                     Err(_) => Err("store_unavailable"),
                 }
             },
         )
         .map_err(|_| "store_worker_unavailable")?
-        .map(|manifest| {
-            manifest.map(|id| koru_device::cloud::CloudId::from_bytes(*id.as_uuid().as_bytes()))
+        .map(|(manifest, allows_cloud)| {
+            (
+                manifest
+                    .map(|id| koru_device::cloud::CloudId::from_bytes(*id.as_uuid().as_bytes())),
+                allows_cloud,
+            )
         })
+}
+
+/// The Store half of the account path (root-catalog Plan 3.2): every
+/// operation is a `Store` method of `root_sync` under the account's own
+/// Cloud grant, run on the Store worker, and every refusal is a stable code
+/// the Agent reads. Nothing here prints a snapshot, a name or a hidden
+/// subject; a hold is a hold, never raw bytes.
+mod cloud_root {
+    use koru_store_core::errors::Code;
+    use koru_store_core::root_catalog::{CatalogUnitRef, Derived, ExportSubject};
+    use koru_store_core::service::{JoinUnit, RootGrant, RootJoinOutcome};
+    use koru_store_core::transport::TransportPath;
+    use koru_sync_control::ControlResponse;
+    use koru_sync_control::cloud::{
+        CloudAccountBindingRef, CloudRootExport, CloudRootJoin, CloudRootUnitState,
+        MAX_CLOUD_ROOT_INVENTORY,
+    };
+
+    use super::CloudRootAction;
+
+    fn cloud(id: uuid::Uuid) -> koru_device::cloud::CloudId {
+        koru_device::cloud::CloudId::from_bytes(*id.as_bytes())
+    }
+
+    /// A Store refusal as the wire names it: the mode or the scope closed
+    /// the path, the staged premises moved, or the Store could not answer.
+    fn code(error: &koru_store_core::Error) -> &'static str {
+        match error.code() {
+            Code::Forbidden => "mode_refuses_transport",
+            Code::IdempotencyConflict => "policy_changed",
+            Code::WorkspaceNotFound => "root_unit_not_found",
+            Code::CorruptState => "store_corrupt",
+            _ => "store_unavailable",
+        }
+    }
+
+    fn rejected(code: &str) -> ControlResponse {
+        ControlResponse::Rejected {
+            code: code.to_owned(),
+        }
+    }
+
+    fn catalog_unit(unit: JoinUnit) -> Option<CatalogUnitRef> {
+        match unit {
+            JoinUnit::ProfileCatalog { profile } => Some(CatalogUnitRef::Profile { profile }),
+            JoinUnit::WorkspaceCatalog { workspace } => {
+                Some(CatalogUnitRef::Workspace { workspace })
+            }
+            JoinUnit::PersonalV2 { .. } => None,
+        }
+    }
+
+    fn subject(unit: JoinUnit) -> ExportSubject {
+        match unit {
+            JoinUnit::ProfileCatalog { profile } => ExportSubject::ProfileCatalog(profile),
+            JoinUnit::WorkspaceCatalog { workspace } => ExportSubject::WorkspaceCatalog(workspace),
+            JoinUnit::PersonalV2 { workspace } => ExportSubject::PersonalV2(workspace),
+        }
+    }
+
+    fn version(bytes: Option<&[u8]>) -> Option<loro::VersionVector> {
+        bytes.map(|bytes| loro::VersionVector::decode(bytes).unwrap_or_default())
+    }
+
+    pub(super) fn answer(
+        store: &crate::StoreWorkerClient,
+        action: CloudRootAction,
+        placeholder: ControlResponse,
+    ) -> ControlResponse {
+        let session = match &placeholder {
+            ControlResponse::CloudAccountScopeBound { control_session_id }
+            | ControlResponse::CloudAccountBinding {
+                control_session_id, ..
+            }
+            | ControlResponse::CloudRootInventory {
+                control_session_id, ..
+            }
+            | ControlResponse::CloudRootFrontier {
+                control_session_id, ..
+            }
+            | ControlResponse::CloudRootUnitExport {
+                control_session_id, ..
+            }
+            | ControlResponse::CloudRootUnitJoined {
+                control_session_id, ..
+            } => *control_session_id,
+            _ => return placeholder,
+        };
+        let answered = match action {
+            CloudRootAction::Bind {
+                account_id,
+                catalog_scope_id,
+                bound_at_ms,
+            } => store.with_store(move |store| {
+                store
+                    .bind_account_scope(account_id, catalog_scope_id, bound_at_ms)
+                    .map(|_| ControlResponse::CloudAccountScopeBound {
+                        control_session_id: session,
+                    })
+                    .map_err(|error| match error.code() {
+                        // §4.1: two bound accounts never join; a binding is
+                        // never renamed. Both are the Agent's terminal codes.
+                        Code::Forbidden => "catalog_binding_conflict",
+                        other => {
+                            let _ = other;
+                            code(&error)
+                        }
+                    })
+            }),
+            CloudRootAction::ReadBinding => store.with_store(move |store| {
+                store
+                    .account_binding()
+                    .map(|binding| ControlResponse::CloudAccountBinding {
+                        control_session_id: session,
+                        binding: binding.map(|binding| CloudAccountBindingRef {
+                            account_id: cloud(binding.account_id),
+                            catalog_scope_id: cloud(binding.catalog_scope_id),
+                        }),
+                    })
+                    .map_err(|error| code(&error))
+            }),
+            CloudRootAction::Inventory => store.with_store(move |store| {
+                // The publication job first, so a pending overlay has had
+                // its chance before the inventory is read (STORE.md).
+                if let Err(error) = store.publish_pending_overlays() {
+                    tracing::info!(
+                        code = code(&error),
+                        "cloud root: publication job did not run"
+                    );
+                }
+                let inventory = store
+                    .root_export_inventory(&RootGrant::account())
+                    .map_err(|error| code(&error))?;
+                let mut units: Vec<CloudRootUnitState> = inventory
+                    .units
+                    .into_iter()
+                    .map(|(unit, version)| CloudRootUnitState {
+                        unit: JoinUnit::catalog(unit),
+                        frontier: version.encode(),
+                    })
+                    .chain(inventory.personal.into_iter().map(|(workspace, version)| {
+                        CloudRootUnitState {
+                            unit: JoinUnit::PersonalV2 { workspace },
+                            frontier: version.encode(),
+                        }
+                    }))
+                    .collect();
+                let held = u32::try_from(inventory.held).unwrap_or(u32::MAX);
+                if units.len() > MAX_CLOUD_ROOT_INVENTORY {
+                    tracing::warn!(
+                        units = units.len(),
+                        capacity = MAX_CLOUD_ROOT_INVENTORY,
+                        "cloud root: inventory over the control bound; truncated"
+                    );
+                    units.truncate(MAX_CLOUD_ROOT_INVENTORY);
+                }
+                Ok(ControlResponse::CloudRootInventory {
+                    control_session_id: session,
+                    units,
+                    held,
+                })
+            }),
+            CloudRootAction::Frontier { unit } => store.with_store(move |store| {
+                let frontier = match catalog_unit(unit) {
+                    Some(catalog) => store.root_unit_frontier(catalog, TransportPath::Cloud),
+                    None => {
+                        let JoinUnit::PersonalV2 { workspace } = unit else {
+                            unreachable!("a non-catalog join unit is the personal one");
+                        };
+                        store.personal_frontier(workspace, TransportPath::Cloud)
+                    }
+                }
+                .map_err(|error| code(&error))?;
+                Ok(ControlResponse::CloudRootFrontier {
+                    control_session_id: session,
+                    frontier: frontier.map(|version| version.encode()),
+                })
+            }),
+            CloudRootAction::Export {
+                unit,
+                recipient_frontier,
+            } => store.with_store(move |store| {
+                // §4.3 in three steps on one worker turn: prepare under the
+                // lock, derive, recheck the policy generation before the
+                // bytes are answered. The worker holds the Store for the
+                // whole turn, so nothing moves between the steps.
+                let source = match store.root_export_source(&RootGrant::account(), subject(unit)) {
+                    Ok(Some(source)) => source,
+                    Ok(None) => {
+                        return Ok(ControlResponse::CloudRootUnitExport {
+                            control_session_id: session,
+                            export: CloudRootExport::NotFound,
+                        });
+                    }
+                    Err(error) if error.code() == Code::Forbidden => {
+                        return Ok(ControlResponse::CloudRootUnitExport {
+                            control_session_id: session,
+                            export: CloudRootExport::Held,
+                        });
+                    }
+                    Err(error) => return Err(code(&error)),
+                };
+                let recipient = version(recipient_frontier.as_deref());
+                let authorization = store
+                    .account_binding()
+                    .ok()
+                    .flatten()
+                    .map(|binding| binding.account_id.to_string())
+                    .unwrap_or_default();
+                let export = match source.derive(recipient.as_ref(), authorization.clone()) {
+                    Ok(Derived::Publish(publication)) => {
+                        if store.policy_generation() != publication.capture.policy_generation
+                            || publication.capture.authorization != authorization
+                        {
+                            tracing::info!(
+                                unit = ?unit,
+                                "cloud root: payload discarded reason=policy_changed"
+                            );
+                            CloudRootExport::Held
+                        } else {
+                            CloudRootExport::Published {
+                                frames: vec![publication.bytes],
+                                redacted_ops: u32::try_from(publication.redacted_ops)
+                                    .unwrap_or(u32::MAX),
+                            }
+                        }
+                    }
+                    Ok(Derived::Hold { reason }) => {
+                        tracing::info!(unit = ?unit, reason = %reason, "cloud root: unit held");
+                        CloudRootExport::Held
+                    }
+                    Err(error) => {
+                        tracing::info!(unit = ?unit, ?error, "cloud root: export refused");
+                        CloudRootExport::Held
+                    }
+                };
+                Ok(ControlResponse::CloudRootUnitExport {
+                    control_session_id: session,
+                    export,
+                })
+            }),
+            CloudRootAction::Join {
+                account_id,
+                unit,
+                frames,
+                advertised,
+            } => store.with_store(move |store| {
+                let advertised = version(advertised.as_deref());
+                let outcome = match catalog_unit(unit) {
+                    Some(catalog) => {
+                        let staged = store
+                            .stage_root_unit(account_id, catalog, &frames)
+                            .map_err(|error| code(&error))?;
+                        store
+                            .commit_staged_root_unit(account_id, staged, advertised.as_ref())
+                            .map_err(|error| code(&error))?
+                    }
+                    None => {
+                        let JoinUnit::PersonalV2 { workspace } = unit else {
+                            unreachable!("a non-catalog join unit is the personal one");
+                        };
+                        let staged = store
+                            .stage_personal_unit(account_id, workspace, &frames)
+                            .map_err(|error| code(&error))?;
+                        store
+                            .commit_staged_personal_unit(account_id, staged, advertised.as_ref())
+                            .map_err(|error| code(&error))?
+                    }
+                };
+                let join = match outcome {
+                    RootJoinOutcome::Applied { frontier, .. } => CloudRootJoin::Applied {
+                        frontier: frontier.encode(),
+                    },
+                    RootJoinOutcome::Pending { frontier } => CloudRootJoin::Pending {
+                        frontier: frontier.encode(),
+                    },
+                };
+                Ok(ControlResponse::CloudRootUnitJoined {
+                    control_session_id: session,
+                    join,
+                })
+            }),
+        };
+        match answered {
+            Ok(Ok(response)) => response,
+            Ok(Err(code)) => rejected(code),
+            Err(_) => rejected("store_worker_unavailable"),
+        }
+    }
 }
 
 fn control_state_event(

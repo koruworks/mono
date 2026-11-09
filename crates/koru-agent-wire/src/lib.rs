@@ -1469,7 +1469,7 @@ pub struct AccountProfileCloud {
     pub discovery: Option<CloudDiscovery>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CloudDiscovery {
     pub account_id: String,
     pub pass: u64,
@@ -1483,6 +1483,37 @@ pub struct CloudDiscovery {
     pub failure_code: Option<String>,
     pub retry_at_millis: Option<i64>,
     pub automatic_retry: bool,
+    /// Root-catalog Plan 3.2: what the v2 discovery receipt said about the
+    /// pass these counts were grouped from. Every field is absent or zero on
+    /// a receipt from a v1 service, which groups by membership Profile and
+    /// knows no coverage.
+    ///
+    /// `coverage` is `complete`, `partial` or `held`. The counts above are
+    /// grouped by **current committed placement**; under `partial` they
+    /// count what the projection has read, and `pending_units` says how many
+    /// admitted units it has not — so a Profile with zero discovered
+    /// Workspaces is *empty* only under `complete`, and *pending* otherwise.
+    #[serde(default)]
+    pub coverage: Option<String>,
+    #[serde(default)]
+    pub pending_units: u32,
+    /// The receipt's scope: `user_catalog` or `workspaces`.
+    #[serde(default)]
+    pub scope: Option<String>,
+    /// The account's authorization generation the receipt was read under.
+    #[serde(default)]
+    pub authorization_generation: Option<u64>,
+    /// This Profile's lifecycle in the account's catalog: `live`, `deleted`
+    /// or `purged`. `None` means the account's catalog holds no admitted
+    /// unit for it — a Profile whose Cloud sync is off is **not syncing**,
+    /// never *empty*.
+    #[serde(default)]
+    pub profile_lifecycle: Option<String>,
+    /// Workspaces whose current placement is explicitly unassigned. They
+    /// group under no Profile, so the same number is on every Profile's
+    /// receipt of the pass.
+    #[serde(default)]
+    pub unassigned: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

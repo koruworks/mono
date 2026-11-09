@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::*;
-use koru_account_core::{KoruIdentityId, ProfileId, WorkspaceId};
-use koru_account_wire::{CloudWorkspaceDescriptorV1, Version1};
+use koru_account_core::KoruIdentityId;
 use koru_device::ReplicationEndpointSecret;
+use koru_store_core::ProfileId;
 use koru_store_core::profile_units::ProfileUnitRef;
+use koru_sync_control::cloud::{
+    CLOUD_PERMIT_VERSION_V2, CLOUD_WORKSPACE_DESCRIPTOR_VERSION_V2, CloudWorkspaceDescriptorV2,
+};
 
 fn v4(byte: u8) -> Uuid {
     let mut bytes = [byte; 16];
@@ -25,34 +28,52 @@ fn endpoint(byte: u8) -> ReplicationEndpointId {
     )
 }
 
-fn permit() -> CloudPermitV1 {
-    CloudPermitV1 {
-        version: 1,
+fn descriptor(placement: Option<CloudId>) -> CloudWorkspaceDescriptorV2 {
+    CloudWorkspaceDescriptorV2 {
+        version: CLOUD_WORKSPACE_DESCRIPTOR_VERSION_V2,
+        workspace_id: cloud(v4(3)),
+        workspace_incarnation_id: cloud(v4(4)),
+        logical_replica_id: cloud(v4(5)),
+        lineage_id: cloud(v4(4)),
+        manifest_document_id: cloud(v4(6)),
+        authorization_version: 4,
+        membership_epoch: 5,
+        cloud_access_epoch: 6,
+        placement,
+        placement_revision: 0,
+    }
+}
+
+/// A Workspace permit whose placement is the Profile the credential also
+/// names: the ordinary case after a bootstrap.
+fn permit() -> CloudPermitV2 {
+    CloudPermitV2 {
+        version: CLOUD_PERMIT_VERSION_V2,
         permit_id: v4(9),
-        dataset: koru_device::cloud::CloudReplicaPrincipalV1::Workspace {
-            workspace_id: cloud(v4(3)),
-            incarnation_id: cloud(v4(4)),
-            logical_replica_id: cloud(v4(5)),
+        account_id: cloud(v4(1)),
+        catalog_scope_id: Some(cloud(v4(13))),
+        scope: CloudPermitScopeV2::Workspace {
+            descriptor: descriptor(Some(cloud(v4(2)))),
         },
-        account_id: account(),
-        profile_id: ProfileId::from_uuid(v4(2)),
-        authority_workspace_id: cloud(v4(3)),
-        authority_workspace_incarnation_id: cloud(v4(4)),
         account_generation: 1,
+        authority_generation: 1,
         expires_at_seconds: 4_000,
-        allowed_profile_units: Vec::new(),
-        workspace_descriptor: Some(CloudWorkspaceDescriptorV1 {
-            version: Version1,
-            profile_id: ProfileId::from_uuid(v4(2)),
-            workspace_id: WorkspaceId::from_uuid(v4(3)),
-            workspace_incarnation_id: v4(4),
-            logical_replica_id: v4(5),
-            lineage_id: v4(4),
-            manifest_document_id: v4(6),
-            authorization_version: 4,
-            membership_epoch: 5,
-            cloud_access_epoch: 6,
-        }),
+    }
+}
+
+fn profile_units_permit() -> CloudPermitV2 {
+    CloudPermitV2 {
+        scope: CloudPermitScopeV2::ProfileUnits {
+            dataset: CloudReplicaPrincipalV1::Profile {
+                profile_id: cloud(v4(2)),
+                lineage_id: cloud(v4(4)),
+                logical_replica_id: cloud(v4(8)),
+            },
+            allowed_profile_units: vec![ProfileUnitRef::Identity {
+                profile: ProfileId::from_uuid(v4(2)),
+            }],
+        },
+        ..permit()
     }
 }
 
@@ -89,6 +110,13 @@ fn compact(claims: &SyncCredentialClaimsV1) -> SyncCredential {
     SyncCredential::try_from(format!("{head}.{body}.{signature}")).unwrap()
 }
 
+fn accepted() -> Accepted {
+    Accepted {
+        session_generation: 3,
+        expires_at_seconds: 4_000,
+    }
+}
+
 #[test]
 fn the_verified_credential_payload_decodes_to_its_claims() {
     let claims = claims();
@@ -106,10 +134,7 @@ fn a_principal_is_formed_from_the_permit_and_the_claims_and_cross_checked() {
         endpoint(1),
         endpoint(2),
         v4(11),
-        Accepted {
-            session_generation: 3,
-            expires_at_seconds: 4_000,
-        },
+        accepted(),
     )
     .unwrap();
     assert_eq!(principal.permit_id, v4(9));
@@ -119,6 +144,7 @@ fn a_principal_is_formed_from_the_permit_and_the_claims_and_cross_checked() {
     assert_eq!(principal.worker_endpoint_id, endpoint(2));
     assert_eq!(principal.client_endpoint_id, endpoint(1));
     assert_eq!(principal.session_generation, 3);
+    assert_eq!(principal.authority_workspace_id, cloud(v4(3)));
     assert_eq!(
         (
             principal.authorization_version,
@@ -138,14 +164,16 @@ fn a_principal_is_formed_from_the_permit_and_the_claims_and_cross_checked() {
         endpoint(3),
         endpoint(2),
         v4(11),
-        Accepted {
-            session_generation: 3,
-            expires_at_seconds: 4_000,
-        },
+        accepted(),
     );
     assert_eq!(wrong_endpoint.unwrap_err(), Failure::DatasetMismatch);
     let mut other_workspace = permit();
-    other_workspace.authority_workspace_id = cloud(v4(12));
+    other_workspace.scope = CloudPermitScopeV2::Workspace {
+        descriptor: CloudWorkspaceDescriptorV2 {
+            workspace_id: cloud(v4(12)),
+            ..descriptor(Some(cloud(v4(2))))
+        },
+    };
     assert_eq!(
         build_principal(
             &other_workspace,
@@ -153,47 +181,122 @@ fn a_principal_is_formed_from_the_permit_and_the_claims_and_cross_checked() {
             endpoint(1),
             endpoint(2),
             v4(11),
-            Accepted {
-                session_generation: 3,
-                expires_at_seconds: 4_000,
-            },
+            accepted(),
+        )
+        .unwrap_err(),
+        Failure::DatasetMismatch
+    );
+    let mut other_account = permit();
+    other_account.account_id = cloud(v4(14));
+    assert_eq!(
+        build_principal(
+            &other_account,
+            &claims(),
+            endpoint(1),
+            endpoint(2),
+            v4(11),
+            accepted()
         )
         .unwrap_err(),
         Failure::DatasetMismatch
     );
 }
 
+/// The former Profile is not a prerequisite (TECHNICAL.final §7.3): a
+/// Workspace permit whose placement is unassigned, or names a Profile other
+/// than the one the credential still carries as a hint, forms its
+/// principal all the same — the Profile in the principal is the claims',
+/// never an admission input.
 #[test]
-fn the_control_permit_carries_every_field_as_a_canonical_id() {
-    let runtime = permit();
-    let control = control_permit(&runtime);
-    assert_eq!(control.permit_id, runtime.permit_id);
-    assert_eq!(control.account_id, cloud(v4(1)));
-    assert_eq!(control.profile_id, cloud(v4(2)));
-    assert_eq!(control.dataset, runtime.dataset);
-    assert_eq!(control.allowed_profile_units, runtime.allowed_profile_units);
-    let descriptor = control.workspace_descriptor.unwrap();
-    assert_eq!(descriptor.manifest_document_id, cloud(v4(6)));
-    assert_eq!(descriptor.lineage_id, descriptor.workspace_incarnation_id);
-    assert!(descriptor.validate().is_ok());
-    assert!(control.validate().is_ok());
+fn a_workspace_permit_needs_no_profile_to_form_its_principal() {
+    for placement in [None, Some(cloud(v4(15)))] {
+        let mut moved = permit();
+        moved.scope = CloudPermitScopeV2::Workspace {
+            descriptor: descriptor(placement),
+        };
+        let principal = build_principal(
+            &moved,
+            &claims(),
+            endpoint(1),
+            endpoint(2),
+            v4(11),
+            accepted(),
+        )
+        .unwrap();
+        assert_eq!(principal.profile_id, cloud(v4(2)));
+        assert_eq!(principal.dataset, moved.dataset().unwrap());
+        assert!(principal.validate().is_ok());
+    }
+}
 
-    // A Profile permit carries its allowed units through unchanged and
-    // validates without a descriptor.
-    let mut profile = permit();
-    profile.dataset = koru_device::cloud::CloudReplicaPrincipalV1::Profile {
-        profile_id: cloud(v4(2)),
-        lineage_id: cloud(v4(4)),
-        logical_replica_id: cloud(v4(8)),
+/// A Profile-units permit names its Profile; the credential must agree, and
+/// the authorizing Workspace fields are the credential's.
+#[test]
+fn a_profile_units_permit_cross_checks_the_profile_and_takes_the_workspace_from_the_claims() {
+    let principal = build_principal(
+        &profile_units_permit(),
+        &claims(),
+        endpoint(1),
+        endpoint(2),
+        v4(11),
+        accepted(),
+    )
+    .unwrap();
+    assert_eq!(principal.profile_id, cloud(v4(2)));
+    assert_eq!(principal.authority_workspace_id, cloud(v4(3)));
+    assert!(matches!(
+        principal.dataset,
+        CloudReplicaPrincipalV1::Profile { .. }
+    ));
+    let mut other_profile = profile_units_permit();
+    other_profile.scope = CloudPermitScopeV2::ProfileUnits {
+        dataset: CloudReplicaPrincipalV1::Profile {
+            profile_id: cloud(v4(16)),
+            lineage_id: cloud(v4(4)),
+            logical_replica_id: cloud(v4(8)),
+        },
+        allowed_profile_units: vec![ProfileUnitRef::Identity {
+            profile: ProfileId::from_uuid(v4(16)),
+        }],
     };
-    profile.workspace_descriptor = None;
-    profile.allowed_profile_units = vec![ProfileUnitRef::Identity {
-        profile: ProfileId::from_uuid(v4(2)),
-    }];
-    let control = control_permit(&profile);
-    assert_eq!(control.allowed_profile_units, profile.allowed_profile_units);
-    assert!(control.workspace_descriptor.is_none());
-    assert!(control.validate().is_ok());
+    assert_eq!(
+        build_principal(
+            &other_profile,
+            &claims(),
+            endpoint(1),
+            endpoint(2),
+            v4(11),
+            accepted()
+        )
+        .unwrap_err(),
+        Failure::DatasetMismatch
+    );
+}
+
+/// The two catalog scopes have no dataset session: no principal is formed
+/// for them and no stream can be dialed under them.
+#[test]
+fn a_catalog_scope_permit_forms_no_principal() {
+    for scope in [
+        CloudPermitScopeV2::UserCatalog,
+        CloudPermitScopeV2::UserPersonal {
+            workspace_id: cloud(v4(3)),
+        },
+    ] {
+        let catalog = CloudPermitV2 { scope, ..permit() };
+        assert_eq!(
+            build_principal(
+                &catalog,
+                &claims(),
+                endpoint(1),
+                endpoint(2),
+                v4(11),
+                accepted()
+            )
+            .unwrap_err(),
+            Failure::DatasetMismatch
+        );
+    }
 }
 
 #[test]
@@ -226,6 +329,9 @@ fn stages_map_one_to_one_and_unknown_codes_collapse_to_one_static() {
     // 2.3): the hosted server reads it as the creation refusal, not as a
     // generic failure.
     assert_eq!(static_code("sync_unit_exists"), "sync_unit_exists");
+    // Root-catalog Plan 3.2: a pending placement is retried, not reported
+    // as a broken bootstrap.
+    assert_eq!(static_code("placement_pending"), "placement_pending");
     assert_eq!(static_code("something_new"), "cloud_session_failed");
     let _ = ReplicationEndpointSecret::generate();
 }
