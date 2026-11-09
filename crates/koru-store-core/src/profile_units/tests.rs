@@ -20,9 +20,16 @@ fn entity(workspace: WorkspaceId) -> EntityRef {
     )
     .unwrap()
 }
+/// The typed JSON history, exported *without* peer compression so the ids in
+/// it are the real ones. The compressed export renumbers every id to an index
+/// into its own `peers` table — a document written by peer 7 reports `0@0` —
+/// so an assertion about who authored a change must read this form.
 fn history(doc: &LoroDoc) -> serde_json::Value {
-    serde_json::to_value(doc.export_json_updates(&loro::VersionVector::default(), &doc.oplog_vv()))
-        .unwrap()
+    serde_json::to_value(doc.export_json_updates_without_peer_compression(
+        &loro::VersionVector::default(),
+        &doc.oplog_vv(),
+    ))
+    .unwrap()
 }
 
 fn history_entities(value: &serde_json::Value) -> Vec<EntityRef> {
@@ -544,8 +551,13 @@ fn personal_v2_header_names_the_workspace_only_and_loads_under_its_address() {
     assert_eq!(string(&meta, "workspace_id"), Some(workspace.to_storage()));
     assert!(meta.get("owner_profile_id").is_none());
     assert!(meta.get("user_scope_id").is_none());
+    // `create_v2` takes the writer before it writes anything, so the header
+    // itself is authored by it: nothing of this unit carries the throwaway
+    // peer the empty document started with.
     let decoded = history(&personal.inner.doc);
-    for change in decoded["changes"].as_array().unwrap() {
+    let changes = decoded["changes"].as_array().unwrap();
+    assert!(!changes.is_empty());
+    for change in changes {
         assert!(change["id"].as_str().unwrap().ends_with("@7"));
     }
 
