@@ -74,16 +74,19 @@ fn grants_cover_workspaces_by_uuid_by_current_placement_or_by_all_data() {
         all_data: true,
         profiles: &no_profiles,
         workspaces: &no_workspaces,
+        path: TransportPath::Peer,
     };
     let by_profile = RootGrant {
         all_data: false,
         profiles: &profiles,
         workspaces: &no_workspaces,
+        path: TransportPath::Peer,
     };
     let by_uuid = RootGrant {
         all_data: false,
         profiles: &no_profiles,
         workspaces: &workspaces,
+        path: TransportPath::Peer,
     };
     assert!(grant_covers_workspace(&all, workspace, None));
     assert!(grant_covers_workspace(&by_uuid, workspace, Some(other)));

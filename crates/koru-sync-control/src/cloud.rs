@@ -41,6 +41,11 @@ pub const MAX_CLOUD_CONTROL_FRAME_BYTES: usize = 64 * 1024;
 pub const CLOUD_PERMIT_VERSION: u32 = 1;
 pub const CLOUD_WORKSPACE_DESCRIPTOR_VERSION: u32 = 1;
 pub const CLOUD_STATUS_VERSION: u32 = 1;
+/// The v2 permit and descriptor of root-catalog Plan 3.1 (TECHNICAL.final
+/// §7.3): separate admissions per scope, placement beside — not inside —
+/// content identity. Beside v1, which old clients keep issuing.
+pub const CLOUD_PERMIT_VERSION_V2: u32 = 2;
+pub const CLOUD_WORKSPACE_DESCRIPTOR_VERSION_V2: u32 = 2;
 
 /// Identity only, and deliberately **not** [`ReplicaDescriptor`], which also
 /// carries names and appearance. It comes from the hosted descriptor read
@@ -167,6 +172,202 @@ impl CloudPermitV1 {
             }
         }
         Ok(())
+    }
+}
+
+/// The v2 bootstrap descriptor: the same content identity as
+/// [`CloudWorkspaceDescriptorV1`] with the membership Profile gone and the
+/// Workspace's **placement as a projection of the committed account
+/// catalog** beside it (root-catalog TECHNICAL.final §7.3 "Hosted storage
+/// must separate owner account/workspace membership from placement").
+/// `placement` null is explicitly unassigned — a Workspace the v1 shape
+/// could not describe at all. It still comes from the hosted descriptor read
+/// or `read_cloud_bootstrap`, never from an invented manifest.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CloudWorkspaceDescriptorV2 {
+    pub version: u32,
+    pub workspace_id: CloudId,
+    pub workspace_incarnation_id: CloudId,
+    pub logical_replica_id: CloudId,
+    pub lineage_id: CloudId,
+    pub manifest_document_id: CloudId,
+    pub authorization_version: i64,
+    pub membership_epoch: i64,
+    pub cloud_access_epoch: i64,
+    pub placement: Option<CloudId>,
+    /// The catalog unit revision at which the placement was committed to the
+    /// hosted projection; a Profile-grant cache invalidates on it.
+    pub placement_revision: i64,
+}
+
+impl CloudWorkspaceDescriptorV2 {
+    /// Canonical UUIDv4 for every id, lineage equal to the incarnation,
+    /// positive epochs and a nonnegative placement revision. A placement
+    /// that is present must be a canonical v4 too; null is a value here,
+    /// not an omission.
+    pub fn validate(&self) -> Result<(), HostCloudError> {
+        if self.version != CLOUD_WORKSPACE_DESCRIPTOR_VERSION_V2 {
+            return Err(HostCloudError::DescriptorVersion);
+        }
+        if !self.workspace_id.is_v4()
+            || !self.workspace_incarnation_id.is_v4()
+            || !self.logical_replica_id.is_v4()
+            || !self.lineage_id.is_v4()
+            || !self.manifest_document_id.is_v4()
+            || self.placement.is_some_and(|profile| !profile.is_v4())
+        {
+            return Err(HostCloudError::DescriptorIdentity);
+        }
+        if self.lineage_id != self.workspace_incarnation_id {
+            return Err(HostCloudError::DescriptorLineage);
+        }
+        if self.authorization_version <= 0
+            || self.membership_epoch <= 0
+            || self.cloud_access_epoch <= 0
+            || self.placement_revision < 0
+        {
+            return Err(HostCloudError::DescriptorEpoch);
+        }
+        Ok(())
+    }
+
+    /// The v1 dataset principal of this Workspace, for the existing
+    /// handshake.
+    pub fn dataset(&self) -> CloudReplicaPrincipalV1 {
+        CloudReplicaPrincipalV1::Workspace {
+            workspace_id: self.workspace_id,
+            incarnation_id: self.workspace_incarnation_id,
+            logical_replica_id: self.logical_replica_id,
+        }
+    }
+}
+
+/// What one v2 permit admits (TECHNICAL.final §7.3 "separately versioned
+/// user-catalog, workspace, user-personal and optional Profile
+/// Identity/Private admissions, each with its own eligibility and authority
+/// generation"). A permit is for one scope; the `(workspace_permit,
+/// profile_permit)` pairing of v1 is gone — a Workspace is admitted on its
+/// own descriptor, membership and incarnation, and no Profile permit is
+/// required beside it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "scope", rename_all = "snake_case", deny_unknown_fields)]
+pub enum CloudPermitScopeV2 {
+    /// The account's root units: Profile and Workspace catalog units, over
+    /// the account catalog session. No v1 dataset: the session is the
+    /// scope's, not a replica's.
+    UserCatalog,
+    /// One Workspace's content. The descriptor's placement is a projection
+    /// for the UI and the grant cache, never an admission input.
+    Workspace {
+        descriptor: CloudWorkspaceDescriptorV2,
+    },
+    /// The account's personal v2 unit for one Workspace, over the account
+    /// catalog session. Follows the Workspace's policy; names no Profile.
+    UserPersonal { workspace_id: CloudId },
+    /// One Profile's Identity and Private units over its v1 Profile
+    /// dataset, eligible only while a Cloud-enabled Workspace is currently
+    /// placed under it (§4.4); never Personal, which is `UserPersonal`.
+    ProfileUnits {
+        dataset: CloudReplicaPrincipalV1,
+        /// Identity and/or Private of exactly this Profile.
+        allowed_profile_units: Vec<ProfileUnitRef>,
+    },
+}
+
+/// One bounded authority context for one scope. Like [`CloudPermitV1`], an
+/// admission limit, never proof that local content exists; unlike it,
+/// fenced by the scope's own `authority_generation` as well as the account
+/// generation, so a Profile-units permit issued before the last Cloud
+/// Workspace moved out is stale on its own, without re-issuing the
+/// Workspace's.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CloudPermitV2 {
+    pub version: u32,
+    pub permit_id: Uuid,
+    pub account_id: CloudId,
+    pub catalog_scope_id: CloudId,
+    pub scope: CloudPermitScopeV2,
+    pub account_generation: u64,
+    pub authority_generation: u64,
+    pub expires_at_seconds: i64,
+}
+
+impl CloudPermitV2 {
+    pub fn validate(&self) -> Result<(), HostCloudError> {
+        if self.version != CLOUD_PERMIT_VERSION_V2 {
+            return Err(HostCloudError::PermitVersion);
+        }
+        if self.permit_id.get_version_num() != 4
+            || !self.account_id.is_v4()
+            || !self.catalog_scope_id.is_v4()
+        {
+            return Err(HostCloudError::PermitIdentity);
+        }
+        if self.account_generation == 0 || self.authority_generation == 0 {
+            return Err(HostCloudError::PermitGeneration);
+        }
+        if self.expires_at_seconds <= 0 {
+            return Err(HostCloudError::PermitExpiry);
+        }
+        match &self.scope {
+            CloudPermitScopeV2::UserCatalog => Ok(()),
+            CloudPermitScopeV2::Workspace { descriptor } => descriptor.validate(),
+            CloudPermitScopeV2::UserPersonal { workspace_id } => {
+                if !workspace_id.is_v4() {
+                    return Err(HostCloudError::PermitIdentity);
+                }
+                Ok(())
+            }
+            CloudPermitScopeV2::ProfileUnits {
+                dataset,
+                allowed_profile_units,
+            } => {
+                let CloudReplicaPrincipalV1::Profile { profile_id, .. } = dataset else {
+                    return Err(HostCloudError::PermitScope);
+                };
+                if !profile_id.is_v4() {
+                    return Err(HostCloudError::PermitIdentity);
+                }
+                if allowed_profile_units.is_empty() || allowed_profile_units.len() > 2 {
+                    return Err(HostCloudError::PermitProfileUnits);
+                }
+                let mut seen = allowed_profile_units.clone();
+                seen.sort();
+                seen.dedup();
+                if seen.len() != allowed_profile_units.len() {
+                    return Err(HostCloudError::PermitProfileUnits);
+                }
+                for unit in allowed_profile_units {
+                    let profile = match unit {
+                        ProfileUnitRef::Identity { profile }
+                        | ProfileUnitRef::Private { profile } => profile,
+                        // Personal is `UserPersonal`, keyed by the Workspace;
+                        // the legacy private unit is never admitted to Cloud.
+                        ProfileUnitRef::Personal { .. } | ProfileUnitRef::LegacyPrivate { .. } => {
+                            return Err(HostCloudError::PermitProfileUnits);
+                        }
+                    };
+                    if profile.as_uuid().as_bytes() != profile_id.as_bytes() {
+                        return Err(HostCloudError::PermitProfileUnits);
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// The v1 dataset principal this permit's session is admitted under:
+    /// the Workspace's or the Profile's replica for the content scopes,
+    /// `None` for the two account-catalog scopes, whose session is the
+    /// catalog's own.
+    pub fn dataset(&self) -> Option<CloudReplicaPrincipalV1> {
+        match &self.scope {
+            CloudPermitScopeV2::Workspace { descriptor } => Some(descriptor.dataset()),
+            CloudPermitScopeV2::ProfileUnits { dataset, .. } => Some(*dataset),
+            CloudPermitScopeV2::UserCatalog | CloudPermitScopeV2::UserPersonal { .. } => None,
+        }
     }
 }
 
@@ -357,6 +558,9 @@ pub enum HostCloudError {
     PermitProfileUnits,
     PermitDescriptorRequired,
     PermitDescriptorForbidden,
+    /// A v2 permit whose scope and dataset disagree: a Profile-units scope
+    /// over a Workspace dataset, or the reverse.
+    PermitScope,
 }
 
 impl HostCloudError {
@@ -376,6 +580,7 @@ impl HostCloudError {
             Self::PermitProfileUnits => "cloud_permit_profile_units",
             Self::PermitDescriptorRequired => "cloud_permit_descriptor_required",
             Self::PermitDescriptorForbidden => "cloud_permit_descriptor_forbidden",
+            Self::PermitScope => "cloud_permit_scope",
         }
     }
 }

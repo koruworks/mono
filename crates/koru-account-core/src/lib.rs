@@ -20,6 +20,7 @@ mod ports;
 mod profile_lifecycle;
 pub mod regional_bootstrap;
 mod resolver;
+pub mod root_catalog;
 mod secret;
 pub mod subscription;
 pub mod sync_issuance;
@@ -30,7 +31,8 @@ pub use creation::*;
 pub use device_ownership::*;
 pub use email::*;
 pub use ids::{
-    AccountSessionId, AppConnectionId, AuthFlowId, AuthIdentityId, IdParseError, KoruIdentityId,
+    AccountSessionId, AppConnectionId, AuthFlowId, AuthIdentityId, CatalogScopeId, IdParseError,
+    KoruIdentityId,
 };
 pub use koru_device::{DeviceDescriptorV1, DeviceId};
 pub use koru_store_core::{DocumentId, ProfileId, WorkspaceId};

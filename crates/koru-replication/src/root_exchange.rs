@@ -44,6 +44,7 @@ pub fn grant(peer: &AuthenticatedPeer) -> RootGrant<'_> {
         all_data: peer.all_data,
         profiles: &peer.authorized_profiles,
         workspaces: &peer.authorized_workspaces,
+        path: TransportPath::Peer,
     }
 }
 
@@ -139,7 +140,7 @@ pub fn root_unit_version<C: Catalog, B: Backend>(
 ) -> Result<Vec<u8>, StoreFailure> {
     peer.with_root_scope(|| {
         store
-            .root_unit_frontier(unit)
+            .root_unit_frontier(unit, TransportPath::Peer)
             .map_err(map_root_error)?
             .map(|version| version.encode())
             .ok_or_else(|| StoreFailure::new(ROOT_UNIT_NOT_FOUND))
@@ -153,7 +154,7 @@ pub fn personal_version<C: Catalog, B: Backend>(
 ) -> Result<Vec<u8>, StoreFailure> {
     peer.with_root_scope(|| {
         store
-            .personal_frontier(workspace)
+            .personal_frontier(workspace, TransportPath::Peer)
             .map_err(map_root_error)?
             .map(|version| version.encode())
             .ok_or_else(|| StoreFailure::new(ROOT_UNIT_NOT_FOUND))
