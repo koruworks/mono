@@ -5684,6 +5684,32 @@ mod tests {
             })
             .unwrap();
 
+        // **The person has turned sync on for this Profile.**
+        //
+        // Every row starts at the seeded `local_only` default and nothing
+        // promotes one but a person (D258): the desktop asks at the Profile
+        // prompt and commits the answer through `choose_transport_mode`. A
+        // Local-only subject exports nothing over a peer — not its bytes and,
+        // since the root catalog landed, not its Workspace unit either
+        // (root-catalog TECHNICAL.final §3.5, §4.4) — and without that unit
+        // the same person's other device may not place the Workspace at all
+        // and answers `placement_pending` for ever. So this is the precondition
+        // the exchange is about, armed here exactly as the desktop's own
+        // root-exchange fixtures arm it, because the test stands in for the
+        // person who answered.
+        let owner = workspace.owner;
+        a_store
+            .with_store(move |store| {
+                store
+                    .choose_transport_mode(
+                        owner,
+                        koru_store_core::transport::TransportMode::P2p,
+                        true,
+                    )
+                    .unwrap()
+            })
+            .unwrap();
+
         let a_endpoint = koru_device::ReplicationEndpointSecret::generate();
         let b_endpoint = koru_device::ReplicationEndpointSecret::generate();
         let a_id = DeviceId::new();
