@@ -59,11 +59,13 @@ fn plus_menu_shows_trigger_hints_on_the_matching_rows() {
     let items = surface.plus_menu.as_ref().unwrap().items();
     assert_eq!(
         items.len(),
-        3,
-        "the file action sits beside the trigger doors"
+        4,
+        "file and folder actions sit beside the trigger doors"
     );
     assert_eq!(items[1].shortcut().as_deref(), Some("@"));
     assert!(matches!(items[2], PlusItem::UploadFiles(_)));
+    assert!(matches!(items[3], PlusItem::AddFolder(_)));
+    assert!(!items[3].has_submenu());
     assert_eq!(
         PlusItem::Commands("Commands").shortcut().as_deref(),
         Some("/")

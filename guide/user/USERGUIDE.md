@@ -1449,8 +1449,9 @@ another workspace's document, Koru grants the needed workspace before it sends
 the message. A refused grant leaves the draft and its attachments in place.
 **+ → Upload or add files** opens the file picker directly; after choosing a
 file, choose whether to add it to the current workspace or attach a reference.
-When a workspace is open, **+ → Add to project → Add file to this workspace**
-imports a file there directly.
+**+ → Add folder** opens the folder picker directly and attaches the selected
+folder as context. To import a file into the current workspace, use **+ →
+Upload or add files** and choose **Add to workspace** after selecting it.
 
 Type `@` to find a document or a task by name. A selected task links to its
 place in the document; when you send it to AI, the containing document supplies

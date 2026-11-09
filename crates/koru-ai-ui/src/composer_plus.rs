@@ -40,8 +40,7 @@ pub(super) enum PlusItem {
     Recent(&'static str),
     KoruContext(&'static str),
     UploadFiles(&'static str),
-    AddToProject(&'static str),
-    ImportToWorkspace(&'static str),
+    AddFolder(&'static str),
     WorkInProject(&'static str, &'static str),
     Commands(&'static str),
     Skills(&'static str),
@@ -57,8 +56,7 @@ impl MenuItem for PlusItem {
             Self::Recent(label)
             | Self::KoruContext(label)
             | Self::UploadFiles(label)
-            | Self::AddToProject(label)
-            | Self::ImportToWorkspace(label)
+            | Self::AddFolder(label)
             | Self::Commands(label)
             | Self::Skills(label)
             | Self::SearchWeb(label, _)
@@ -74,8 +72,7 @@ impl MenuItem for PlusItem {
             Self::Recent(_) => Some(icons::CLOCK),
             Self::KoruContext(_) | Self::Document(_, _) => Some(icons::DOCUMENT),
             Self::UploadFiles(_) => Some(icons::PAPERCLIP),
-            Self::AddToProject(_) => Some(icons::FOLDER),
-            Self::ImportToWorkspace(_) => Some(icons::PAPERCLIP),
+            Self::AddFolder(_) => Some(icons::FOLDER),
             Self::WorkInProject(..) => Some(icons::FOLDER),
             Self::Commands(_) | Self::Skills(_) => Some(icons::SPARKLE),
             Self::SearchWeb(_, on) => Some(if *on { icons::CHECK } else { icons::GLOBE }),
@@ -84,7 +81,7 @@ impl MenuItem for PlusItem {
     }
 
     fn has_submenu(&self) -> bool {
-        matches!(self, Self::Recent(_) | Self::AddToProject(_))
+        matches!(self, Self::Recent(_))
     }
 
     fn shortcut(&self) -> Option<String> {
@@ -150,12 +147,10 @@ impl ChatSurface {
             PlusItem::KoruContext(t(self.lang, TextKey::AiComposerKoruContext)),
             PlusItem::UploadFiles(t(self.lang, TextKey::AiComposerUploadFiles)),
         ];
-        if self.context_workspace.is_some() {
-            items.push(PlusItem::AddToProject(t(
-                self.lang,
-                TextKey::AiComposerAddToProject,
-            )));
-        }
+        items.push(PlusItem::AddFolder(t(
+            self.lang,
+            TextKey::AiComposerAddFolder,
+        )));
         if self.transcript.as_ref().is_some_and(|transcript| {
             crate::agents::is_agent_provider(&transcript.chat.current_model.provider)
         }) {
@@ -202,13 +197,6 @@ impl ChatSurface {
         self.plus_menu_at(items);
     }
 
-    fn open_project_plus_menu(&mut self) {
-        self.plus_menu_at(vec![
-            PlusItem::Back(t(self.lang, TextKey::Back)),
-            PlusItem::ImportToWorkspace(t(self.lang, TextKey::AiComposerImportToWorkspace)),
-        ]);
-    }
-
     pub(super) fn choose_plus_item(&mut self, index: usize) -> bool {
         let Some(item) = self
             .plus_menu
@@ -220,15 +208,14 @@ impl ChatSurface {
         };
         match item {
             PlusItem::Recent(_) => self.open_recent_plus_menu(),
-            PlusItem::AddToProject(_) => self.open_project_plus_menu(),
+            PlusItem::AddFolder(_) => {
+                self.plus_menu = None;
+                self.computer_picker_request = Some(ComputerPickerKind::Folder);
+            }
             PlusItem::Back(_) => self.open_plus_menu(),
             PlusItem::UploadFiles(_) => {
                 self.plus_menu = None;
                 self.computer_picker_request = Some(ComputerPickerKind::File);
-            }
-            PlusItem::ImportToWorkspace(_) => {
-                self.plus_menu = None;
-                self.computer_picker_request = Some(ComputerPickerKind::WorkspaceFile);
             }
             PlusItem::WorkInProject(..) => {
                 self.plus_menu = None;

@@ -10563,7 +10563,7 @@ mod tests {
     }
 
     #[test]
-    fn plus_menu_opens_file_and_working_folder_pickers_directly() {
+    fn plus_menu_opens_file_folder_and_working_folder_pickers_directly() {
         let mut surface = ChatSurface::new();
         let mut chat = transcript();
         chat.chat.current_model.provider = AiProviderId::parse("agent-claude").unwrap();
@@ -10606,6 +10606,22 @@ mod tests {
             .unwrap()
             .items()
             .iter()
+            .position(|item| matches!(item, composer_plus::PlusItem::AddFolder(_)))
+            .unwrap();
+        assert!(surface.choose_plus_item(folder));
+        assert!(surface.plus_menu.is_none());
+        assert_eq!(
+            surface.take_computer_picker_request(),
+            Some(ComputerPickerKind::Folder)
+        );
+
+        surface.open_plus_menu();
+        let folder = surface
+            .plus_menu
+            .as_ref()
+            .unwrap()
+            .items()
+            .iter()
             .position(|item| matches!(item, composer_plus::PlusItem::WorkInProject(..)))
             .unwrap();
         assert!(surface.choose_plus_item(folder));
@@ -10620,7 +10636,7 @@ mod tests {
     }
 
     #[test]
-    fn plus_project_submenu_imports_to_the_current_workspace() {
+    fn plus_file_action_imports_to_the_current_workspace() {
         let mut surface = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
         surface.reader = Some(reader);
@@ -10633,28 +10649,25 @@ mod tests {
         surface.composer_rect();
 
         surface.open_plus_menu();
-        let project = surface
+        let file = surface
             .plus_menu
             .as_ref()
             .unwrap()
             .items()
             .iter()
-            .position(|item| matches!(item, composer_plus::PlusItem::AddToProject(_)))
+            .position(|item| matches!(item, composer_plus::PlusItem::UploadFiles(_)))
             .unwrap();
-        assert!(surface.choose_plus_item(project));
-        assert!(matches!(
-            surface.plus_menu.as_ref().unwrap().items()[1],
-            composer_plus::PlusItem::ImportToWorkspace(_)
-        ));
-        assert!(surface.choose_plus_item(1));
+        assert!(surface.choose_plus_item(file));
         assert_eq!(
             surface.take_computer_picker_request(),
-            Some(ComputerPickerKind::WorkspaceFile)
+            Some(ComputerPickerKind::File)
         );
-        assert!(surface.computer_path_chosen(
-            ComputerPickerKind::WorkspaceFile,
-            PathBuf::from("C:/fixture.pdf"),
-        ));
+        assert!(
+            surface
+                .computer_path_chosen(ComputerPickerKind::File, PathBuf::from("C:/fixture.pdf"),)
+        );
+        assert!(surface.computer_file_choice.is_some());
+        assert!(surface.finish_computer_file_choice(ChoiceOutcome::Chosen(0)));
         assert!(surface.computer_file_choice.is_none());
         assert!(matches!(
             commands.recv_timeout(Duration::from_millis(50)).unwrap(),

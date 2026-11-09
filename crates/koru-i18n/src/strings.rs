@@ -362,8 +362,7 @@ pub enum Key {
     EntitySearchAllHint,
     AiComposerFilesAndFolders,
     AiComposerUploadFiles,
-    AiComposerAddToProject,
-    AiComposerImportToWorkspace,
+    AiComposerAddFolder,
     AiComposerWorkInProject,
     AiComposerWorkInProjectHint,
     AiComposerComputerFile,
@@ -3052,7 +3051,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2152] = [
+    pub const ALL: [Key; 2151] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -3306,8 +3305,7 @@ impl Key {
         Key::EntitySearchAllHint,
         Key::AiComposerFilesAndFolders,
         Key::AiComposerUploadFiles,
-        Key::AiComposerAddToProject,
-        Key::AiComposerImportToWorkspace,
+        Key::AiComposerAddFolder,
         Key::AiComposerWorkInProject,
         Key::AiComposerWorkInProjectHint,
         Key::AiComposerComputerFile,
@@ -7982,8 +7980,7 @@ pub const ROWS: &[Row] = &[
     Row { key: Key::EntitySearchAllHint, en: "{} for all", es: "{} para todos", pt_br: "{} para todos", de: "{} für alle", fr: "{} pour tout", ar: "{} للكل", zh_hans: "{} 搜索全部", ja: "{}ですべて検索" },
     Row { key: Key::AiComposerFilesAndFolders, en: "Files and folders", es: "Archivos y carpetas", pt_br: "Arquivos e pastas", de: "Dateien und Ordner", fr: "Fichiers et dossiers", ar: "الملفات والمجلدات", zh_hans: "文件和文件夹", ja: "ファイルとフォルダー" },
     Row { key: Key::AiComposerUploadFiles, en: "Upload or add files", es: "Subir o añadir archivos", pt_br: "Enviar ou adicionar arquivos", de: "Dateien hochladen oder hinzufügen", fr: "Importer ou ajouter des fichiers", ar: "رفع الملفات أو إضافتها", zh_hans: "上传或添加文件", ja: "ファイルをアップロードまたは追加" },
-    Row { key: Key::AiComposerAddToProject, en: "Add to project", es: "Añadir al proyecto", pt_br: "Adicionar ao projeto", de: "Zum Projekt hinzufügen", fr: "Ajouter au projet", ar: "إضافة إلى المشروع", zh_hans: "添加到项目", ja: "プロジェクトに追加" },
-    Row { key: Key::AiComposerImportToWorkspace, en: "Add file to this workspace", es: "Añadir archivo a este espacio de trabajo", pt_br: "Adicionar arquivo a este espaço de trabalho", de: "Datei zu diesem Arbeitsbereich hinzufügen", fr: "Ajouter un fichier à cet espace de travail", ar: "إضافة ملف إلى مساحة العمل هذه", zh_hans: "将文件添加到此工作区", ja: "このワークスペースにファイルを追加" },
+    Row { key: Key::AiComposerAddFolder, en: "Add folder", es: "Añadir carpeta", pt_br: "Adicionar pasta", de: "Ordner hinzufügen", fr: "Ajouter un dossier", ar: "إضافة مجلد", zh_hans: "添加文件夹", ja: "フォルダーを追加" },
     Row { key: Key::AiComposerWorkInProject, en: "Work in a project", es: "Trabajar en un proyecto", pt_br: "Trabalhar em um projeto", de: "In einem Projekt arbeiten", fr: "Travailler dans un projet", ar: "العمل في مشروع", zh_hans: "在项目中工作", ja: "プロジェクトで作業" },
     Row { key: Key::AiComposerWorkInProjectHint, en: "Start a chat in a project", es: "Iniciar un chat en un proyecto", pt_br: "Iniciar um chat em um projeto", de: "Chat in einem Projekt starten", fr: "Démarrer une discussion dans un projet", ar: "بدء محادثة في مشروع", zh_hans: "在项目中开始聊天", ja: "プロジェクトでチャットを開始" },
     Row { key: Key::AiComposerComputerFile, en: "File", es: "Archivo", pt_br: "Arquivo", de: "Datei", fr: "Fichier", ar: "ملف", zh_hans: "文件", ja: "ファイル" },
