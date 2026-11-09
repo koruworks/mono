@@ -93,8 +93,21 @@ fn the_binding_request_declares_only_what_the_device_holds_and_is_strict() {
         binding_generation: 1,
     };
     let json = round_trip(&binding);
+    // The **set** of keys, sorted here rather than read in the order the
+    // object happens to carry: `serde_json` keeps insertion order only with
+    // its `preserve_order` feature, which this crate does not ask for but
+    // workspace feature unification turns on, so the order differs between
+    // `cargo test -p koru-account-wire` and `cargo test --workspace`. The
+    // contract is which fields a binding answer carries, not their order.
+    let mut keys = json
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    keys.sort_unstable();
     assert_eq!(
-        json.as_object().unwrap().keys().collect::<Vec<_>>(),
+        keys,
         [
             "account_id",
             "binding_generation",
@@ -102,8 +115,6 @@ fn the_binding_request_declares_only_what_the_device_holds_and_is_strict() {
             "catalog_scope_id",
             "version"
         ]
-        .iter()
-        .collect::<Vec<_>>()
     );
 }
 
