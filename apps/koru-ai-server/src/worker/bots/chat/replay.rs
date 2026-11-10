@@ -6,7 +6,7 @@ use koru_delegate_api::bots::BotObservation;
 #[cfg(test)]
 mod tests;
 
-fn source(value: AgentSource) -> BotToolSource {
+pub(super) fn source(value: AgentSource) -> BotToolSource {
     let (kind, id) = match value {
         AgentSource::Tool(id) => (BotToolSourceKind::Tool, id.to_string()),
         AgentSource::Approval(id) => (BotToolSourceKind::Approval, id.to_string()),

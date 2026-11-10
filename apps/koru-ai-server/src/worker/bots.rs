@@ -384,7 +384,10 @@ fn guard_command(
             )?;
             let implemented = matches!(
                 command,
-                WorkerCommand::SendTurn { .. } | WorkerCommand::RetryTurn { .. }
+                WorkerCommand::SendTurn { .. }
+                    | WorkerCommand::RetryTurn { .. }
+                    | WorkerCommand::ApproveToolCall { .. }
+                    | WorkerCommand::DenyToolCall { .. }
             ) || matches!(&command,WorkerCommand::CancelAttempt {attempt,..}
                     if repository.bot_submission_for_attempt(*attempt).map_err(ai_failure)?.is_some());
             if !command.bot_read_only() && !implemented {

@@ -9,9 +9,13 @@ use koru_delegate_api::bots::{BotCommand as DelegateCommand, BotDelegatePort, Bo
 use koru_delegate_core::{BotAdmissionState, BotSubmissionKey};
 use koru_session_protocol::{AgentEvent, PendingInput};
 
+mod controls;
 mod preparation;
 mod replay;
 mod runtime;
+pub(in crate::worker) use controls::{
+    ControlJob, ControlReadJob, ControlReadResult, ControlResult,
+};
 pub(in crate::worker) use runtime::{LiveChat, StepJob, StepResult};
 
 pub(in crate::worker) use preparation::{chat_capture, retry_anchor, retry_input};

@@ -27,6 +27,17 @@ pub(in crate::worker) struct LiveChat {
     control_busy: bool,
     stopping: bool,
 }
+impl LiveChat {
+    pub(super) fn control_fence(&self) -> Option<BotExecutionFence> {
+        if self.stopping || self.pending.is_some() || !matches!(self.phase, Phase::Observe) {
+            return None;
+        }
+        self.fence
+            .as_ref()
+            .filter(|fence| fence.turn.is_some())
+            .cloned()
+    }
+}
 #[cfg(test)]
 impl LiveChat {
     pub(super) fn fixture(submission: BotSubmission, fence: BotExecutionFence) -> Self {

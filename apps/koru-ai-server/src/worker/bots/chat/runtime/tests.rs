@@ -111,6 +111,11 @@ fn control_shutdown_discards_queued_work_and_joins_after_inflight_call_returns()
     admin
         .try_submit(control_job(Arc::new(Count(calls.clone()))))
         .unwrap_or_else(|_| panic!("queue has room"));
+    admin
+        .try_submit(ProviderAdminJob::BotInteraction(
+            super::super::controls::ControlJob::fixture(Arc::new(Count(calls.clone()))),
+        ))
+        .unwrap_or_else(|_| panic!("interactive queue has room"));
     shutdown.store(true, Ordering::Release);
     release_tx.send(()).unwrap();
     admin.stop();
@@ -205,7 +210,73 @@ fn native_stop_runs_while_both_providers_and_normal_admin_are_blocked() {
         }
         _ => panic!("unexpected result"),
     }
+    admin
+        .try_submit(ProviderAdminJob::BotInteraction(
+            super::super::controls::ControlJob::fixture(Arc::new(Administrative)),
+        ))
+        .unwrap_or_else(|_| panic!("interactive queue has room"));
+    assert!(matches!(
+        events.recv_timeout(Duration::from_secs(5)).unwrap(),
+        Envelope::BotInteraction(_)
+    ));
     drop(release);
     provider.stop();
     admin.stop();
+}
+
+#[test]
+fn stop_precedes_a_full_interactive_queue_and_rejected_interaction_can_retry() {
+    let (output, events) = sync_channel(32);
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let mut admin = ProviderAdminPool::spawn(None, None, output, shutdown).unwrap();
+    let (entered_tx, entered) = sync_channel(1);
+    let (release_tx, release) = sync_channel(1);
+    let interactive =
+        |port| ProviderAdminJob::BotInteraction(super::super::controls::ControlJob::fixture(port));
+    admin
+        .try_submit(interactive(Arc::new(Blocked {
+            entered: entered_tx,
+            release: Mutex::new(release),
+        })))
+        .unwrap_or_else(|_| panic!("first interaction"));
+    entered.recv_timeout(Duration::from_secs(5)).unwrap();
+    for _ in 0..PROVIDER_ADMIN_QUEUE_CAPACITY {
+        admin
+            .try_submit(interactive(Arc::new(Administrative)))
+            .unwrap_or_else(|_| panic!("reserved capacity"));
+    }
+    let rejected = match admin.try_submit(interactive(Arc::new(Administrative))) {
+        Err(error) => error,
+        Ok(()) => panic!("interactive queue must be bounded"),
+    };
+    assert_eq!(rejected.failure.code, "ai_worker_saturated");
+    assert!(rejected.failure.retryable);
+    admin
+        .try_submit(control_job(Arc::new(Administrative)))
+        .unwrap_or_else(|_| panic!("Stop has independent capacity"));
+    release_tx.send(()).unwrap();
+    assert!(matches!(
+        events.recv_timeout(Duration::from_secs(5)).unwrap(),
+        Envelope::BotInteraction(_)
+    ));
+    assert!(matches!(
+        events.recv_timeout(Duration::from_secs(5)).unwrap(),
+        Envelope::BotChatStep(_)
+    ));
+    events.recv_timeout(Duration::from_secs(5)).unwrap();
+    admin
+        .try_submit(rejected.job)
+        .unwrap_or_else(|_| panic!("retry after progress"));
+    for _ in 0..PROVIDER_ADMIN_QUEUE_CAPACITY {
+        assert!(matches!(
+            events.recv_timeout(Duration::from_secs(5)).unwrap(),
+            Envelope::BotInteraction(_)
+        ));
+    }
+    admin.stop();
+    assert!(
+        admin
+            .try_submit(interactive(Arc::new(Administrative)))
+            .is_err()
+    );
 }
