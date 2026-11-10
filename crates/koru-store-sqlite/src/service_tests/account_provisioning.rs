@@ -106,8 +106,10 @@ fn closed_workspace_index_repairs_by_source_version_and_never_reports_missing_as
             )
             .unwrap();
     }
-    // The catalog holder may differ from personal owner after a Workspace move.
-    let workspace = koru_store_core::Workspace::new(other.id, "Closed", at()).unwrap();
+    // Personal data is v2 and follows the Workspace's current placement: the
+    // Profile the Workspace is placed under sees its reminders, any other
+    // Profile of the same user sees none of them.
+    let workspace = koru_store_core::Workspace::new(profile.id, "Closed", at()).unwrap();
     catalog.put_workspace(&workspace).unwrap();
     let mut store = Store::open(catalog, NoWorkspaceIo).unwrap();
     let rule = ReminderRule {
@@ -135,6 +137,12 @@ fn closed_workspace_index_repairs_by_source_version_and_never_reports_missing_as
         Code::ReminderIndexUpdating
     );
     assert!(store.reminders(other.id).unwrap().is_empty());
+    assert!(
+        store
+            .reminder_index_candidates(other.id)
+            .unwrap()
+            .is_empty()
+    );
     let source = store
         .reminder_index_candidates(profile.id)
         .unwrap()
@@ -150,7 +158,7 @@ fn closed_workspace_index_repairs_by_source_version_and_never_reports_missing_as
     let (version, rows) = koru_store_core::service::build_reminder_index(&source).unwrap();
     assert!(
         store
-            .publish_reminder_index(&source, &version, &rows)
+            .publish_reminder_index(&source, &version.encode(), &rows)
             .unwrap()
     );
     assert_eq!(
@@ -168,7 +176,7 @@ fn closed_workspace_index_repairs_by_source_version_and_never_reports_missing_as
         .unwrap();
     assert!(
         !store
-            .publish_reminder_index(&source, &version, &rows)
+            .publish_reminder_index(&source, &version.encode(), &rows)
             .unwrap()
     );
     assert_eq!(

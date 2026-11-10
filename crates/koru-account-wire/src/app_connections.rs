@@ -12,6 +12,7 @@
 //! account dispatcher does not serve them. [`INTERNAL_ROUTES`] are served
 //! only on the API's internal listener.
 
+use koru_account_core::root_catalog::SubjectLifecycle;
 use koru_account_core::{AppConnectionId, DocumentId, KoruIdentityId, ProfileId, WorkspaceId};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -143,6 +144,18 @@ pub struct AppConnectionProfileV1 {
     pub profile_access: ProfileAccessV1,
 }
 
+/// The person's choice for one Workspace, pinned to its UUID (root-catalog
+/// TECHNICAL.final §3.9): it follows the Workspace wherever it is placed,
+/// where a Profile decision follows the Profile's current placement. Added
+/// by root-catalog Plan 3.3; every list that carries it defaults to empty,
+/// so a v1 body without it keeps its meaning.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AppConnectionWorkspaceGrantV1 {
+    pub workspace_id: WorkspaceId,
+    pub workspace_access: ProfileAccessV1,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AppConnectionRevokedReasonV1 {
@@ -234,6 +247,10 @@ pub struct OAuthConsentDecisionRequestV1 {
     pub allow_profiles_enabled_later: bool,
     #[serde(default)]
     pub profiles: Vec<AppConnectionProfileV1>,
+    /// Grants pinned to a Workspace UUID (root-catalog Plan 3.3). A v1
+    /// consent page sends none.
+    #[serde(default)]
+    pub workspaces: Vec<AppConnectionWorkspaceGrantV1>,
 }
 
 impl fmt::Debug for OAuthConsentDecisionRequestV1 {
@@ -242,6 +259,7 @@ impl fmt::Debug for OAuthConsentDecisionRequestV1 {
             .field("decision", &self.decision)
             .field("access", &self.access)
             .field("profiles", &self.profiles.len())
+            .field("workspaces", &self.workspaces.len())
             .finish_non_exhaustive()
     }
 }
@@ -271,6 +289,10 @@ pub struct AppConnectionSummaryV1 {
     pub access: AppConnectionAccessV1,
     pub allow_profiles_enabled_later: bool,
     pub profiles: Vec<AppConnectionProfileV1>,
+    /// Grants pinned to a Workspace UUID (root-catalog Plan 3.3); empty for
+    /// a connection approved before them.
+    #[serde(default)]
+    pub workspaces: Vec<AppConnectionWorkspaceGrantV1>,
     pub created_at_millis: i64,
     pub last_used_at_millis: i64,
     pub revoked_at_millis: Option<i64>,
@@ -303,6 +325,9 @@ pub struct UpdateAppConnectionRequestV1 {
     pub allow_profiles_enabled_later: Option<bool>,
     #[serde(default)]
     pub profiles: Vec<AppConnectionProfileV1>,
+    /// Writes a row for every Workspace it names; the others keep theirs.
+    #[serde(default)]
+    pub workspaces: Vec<AppConnectionWorkspaceGrantV1>,
 }
 
 // --- OAuth protocol documents (RFC-shaped, unversioned) ---------------------
@@ -416,19 +441,43 @@ pub struct AppConnectionStateV1 {
     pub active_until_millis: Option<i64>,
     pub allow_profiles_enabled_later: bool,
     pub profiles: Vec<AppConnectionProfileV1>,
-    /// Empty when revoked or not entitled.
+    /// Empty when revoked or not entitled. Resolved by
+    /// `koru_account_core::app_connections::resolve_workspaces` against the
+    /// committed projection (root-catalog Plan 3.3): a Profile decision
+    /// yields the Workspaces currently placed under it, a Workspace grant
+    /// its Workspace wherever it is placed.
     pub workspaces: Vec<AppConnectionWorkspaceV1>,
     pub read_at_millis: i64,
     /// The connection's name now, 1 to 64 characters, which every commit the
     /// host makes under it carries in its `actor/1` attribution
     /// (`contracts/connector-attribution-v1.md`; Cloud MCP Q2.3-1).
     pub name: String,
+    /// Grants pinned to a Workspace UUID (root-catalog Plan 3.3).
+    #[serde(default)]
+    pub workspace_grants: Vec<AppConnectionWorkspaceGrantV1>,
+    /// Workspaces whose grant cannot be decided at this read because the
+    /// projection has not caught up with an admitted unit: neither in
+    /// `workspaces` nor refused. The host answers the typed retry for a call
+    /// naming one and reads again after `retry_after_seconds`.
+    #[serde(default)]
+    pub pending: Vec<AppConnectionPendingWorkspaceV1>,
+    /// The key this read was computed under. Two reads with an equal key
+    /// resolved the same set from the same facts; a read whose key differs
+    /// from the one a cached session holds replaces that session's set.
+    /// Absent from a service that has not adopted the root catalog.
+    #[serde(default)]
+    pub evaluation: Option<AppConnectionEvaluationV1>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AppConnectionWorkspaceV1 {
     pub workspace_id: WorkspaceId,
+    /// **Where the Workspace is currently placed, as the committed
+    /// projection says** — a hint for the replica's manifest-stage names,
+    /// not what authorizes the Workspace (root-catalog §7.3). This v1 field
+    /// cannot say "unassigned": an explicitly unassigned Workspace reached
+    /// through a UUID grant carries the placement it last had.
     pub profile_id: ProfileId,
     pub workspace_incarnation_id: Uuid,
     pub authorization_version: i64,
@@ -439,6 +488,63 @@ pub struct AppConnectionWorkspaceV1 {
     /// absent, the Workspace's names are `unavailable` (Cloud MCP Q1.6-1).
     #[serde(default)]
     pub manifest_document_id: Option<Uuid>,
+}
+
+/// Why a Workspace's grant is pending (root-catalog §7.4: lag is a typed
+/// retry, never a fallback to another Workspace or to the hint).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum AppConnectionPendingReasonV1 {
+    WorkspaceNotProjected,
+    ProjectionLag { watermark: i64, admitted: i64 },
+    ProfileNotProjected { profile_id: ProfileId },
+}
+
+/// One Workspace the connection-state read could not decide yet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AppConnectionPendingWorkspaceV1 {
+    pub workspace_id: WorkspaceId,
+    pub retry_after_seconds: i64,
+    pub reason: AppConnectionPendingReasonV1,
+}
+
+/// The projection's facts about one candidate Workspace, as the key records
+/// them. For a connection with no Profile decision `profile_id`,
+/// `placement_revision` and `profile_lifecycle` are null, zero and null:
+/// a move changes nothing about its access.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+pub enum AppConnectionPlacementRevisionV1 {
+    Pending,
+    Projected {
+        profile_id: Option<ProfileId>,
+        placement_revision: i64,
+        lifecycle: SubjectLifecycle,
+        profile_lifecycle: Option<SubjectLifecycle>,
+    },
+}
+
+/// Everything about one candidate Workspace the resolved set depends on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AppConnectionWorkspaceRevisionV1 {
+    pub workspace_id: WorkspaceId,
+    pub membership_epoch: i64,
+    pub authorization_version: i64,
+    pub cloud_access_epoch: i64,
+    pub documents_write: bool,
+    pub placement: AppConnectionPlacementRevisionV1,
+}
+
+/// The cache key of one connection-state read
+/// (`koru_account_core::app_connections::GrantEvaluation`): every candidate
+/// Workspace's facts, granted or not, and whether placement is part of it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AppConnectionEvaluationV1 {
+    pub follows_placement: bool,
+    pub workspaces: Vec<AppConnectionWorkspaceRevisionV1>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -649,3 +755,170 @@ impl From<koru_account_core::app_connections::RevokedReason> for AppConnectionRe
         }
     }
 }
+
+impl From<AppConnectionWorkspaceGrantV1> for koru_account_core::app_connections::WorkspaceDecision {
+    fn from(value: AppConnectionWorkspaceGrantV1) -> Self {
+        Self {
+            workspace_id: value.workspace_id,
+            access: value.workspace_access.into(),
+        }
+    }
+}
+
+impl From<koru_account_core::app_connections::WorkspaceDecisionRecord>
+    for AppConnectionWorkspaceGrantV1
+{
+    fn from(value: koru_account_core::app_connections::WorkspaceDecisionRecord) -> Self {
+        Self {
+            workspace_id: value.workspace_id,
+            workspace_access: value.access.into(),
+        }
+    }
+}
+
+impl From<koru_account_core::app_connections::PendingReason> for AppConnectionPendingReasonV1 {
+    fn from(value: koru_account_core::app_connections::PendingReason) -> Self {
+        use koru_account_core::app_connections::PendingReason as Core;
+        match value {
+            Core::WorkspaceNotProjected => Self::WorkspaceNotProjected,
+            Core::ProjectionLag {
+                watermark,
+                admitted,
+            } => Self::ProjectionLag {
+                watermark,
+                admitted,
+            },
+            Core::ProfileNotProjected { profile_id } => Self::ProfileNotProjected { profile_id },
+        }
+    }
+}
+
+impl From<AppConnectionPendingReasonV1> for koru_account_core::app_connections::PendingReason {
+    fn from(value: AppConnectionPendingReasonV1) -> Self {
+        match value {
+            AppConnectionPendingReasonV1::WorkspaceNotProjected => Self::WorkspaceNotProjected,
+            AppConnectionPendingReasonV1::ProjectionLag {
+                watermark,
+                admitted,
+            } => Self::ProjectionLag {
+                watermark,
+                admitted,
+            },
+            AppConnectionPendingReasonV1::ProfileNotProjected { profile_id } => {
+                Self::ProfileNotProjected { profile_id }
+            }
+        }
+    }
+}
+
+impl From<koru_account_core::app_connections::GrantPending> for AppConnectionPendingWorkspaceV1 {
+    fn from(value: koru_account_core::app_connections::GrantPending) -> Self {
+        Self {
+            workspace_id: value.workspace_id,
+            retry_after_seconds: value.retry_after_seconds,
+            reason: value.reason.into(),
+        }
+    }
+}
+
+impl From<AppConnectionPendingWorkspaceV1> for koru_account_core::app_connections::GrantPending {
+    fn from(value: AppConnectionPendingWorkspaceV1) -> Self {
+        Self {
+            workspace_id: value.workspace_id,
+            retry_after_seconds: value.retry_after_seconds,
+            reason: value.reason.into(),
+        }
+    }
+}
+
+impl From<koru_account_core::app_connections::ProjectedPlacement>
+    for AppConnectionPlacementRevisionV1
+{
+    fn from(value: koru_account_core::app_connections::ProjectedPlacement) -> Self {
+        use koru_account_core::app_connections::ProjectedPlacement as Core;
+        match value {
+            Core::Pending => Self::Pending,
+            Core::Projected {
+                profile_id,
+                placement_revision,
+                lifecycle,
+                profile_lifecycle,
+            } => Self::Projected {
+                profile_id,
+                placement_revision,
+                lifecycle,
+                profile_lifecycle,
+            },
+        }
+    }
+}
+
+impl From<AppConnectionPlacementRevisionV1>
+    for koru_account_core::app_connections::ProjectedPlacement
+{
+    fn from(value: AppConnectionPlacementRevisionV1) -> Self {
+        match value {
+            AppConnectionPlacementRevisionV1::Pending => Self::Pending,
+            AppConnectionPlacementRevisionV1::Projected {
+                profile_id,
+                placement_revision,
+                lifecycle,
+                profile_lifecycle,
+            } => Self::Projected {
+                profile_id,
+                placement_revision,
+                lifecycle,
+                profile_lifecycle,
+            },
+        }
+    }
+}
+
+impl From<&koru_account_core::app_connections::GrantEvaluation> for AppConnectionEvaluationV1 {
+    fn from(value: &koru_account_core::app_connections::GrantEvaluation) -> Self {
+        Self {
+            follows_placement: value.follows_placement,
+            workspaces: value
+                .revisions
+                .iter()
+                .map(
+                    |(workspace_id, revision)| AppConnectionWorkspaceRevisionV1 {
+                        workspace_id: *workspace_id,
+                        membership_epoch: revision.membership_epoch,
+                        authorization_version: revision.authorization_version,
+                        cloud_access_epoch: revision.cloud_access_epoch,
+                        documents_write: revision.documents_write,
+                        placement: revision.placement.into(),
+                    },
+                )
+                .collect(),
+        }
+    }
+}
+
+impl From<AppConnectionEvaluationV1> for koru_account_core::app_connections::GrantEvaluation {
+    fn from(value: AppConnectionEvaluationV1) -> Self {
+        Self {
+            follows_placement: value.follows_placement,
+            revisions: value
+                .workspaces
+                .into_iter()
+                .map(|revision| {
+                    (
+                        revision.workspace_id,
+                        koru_account_core::app_connections::WorkspaceRevision {
+                            membership_epoch: revision.membership_epoch,
+                            authorization_version: revision.authorization_version,
+                            cloud_access_epoch: revision.cloud_access_epoch,
+                            documents_write: revision.documents_write,
+                            placement: revision.placement.into(),
+                        },
+                    )
+                })
+                .collect(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests;

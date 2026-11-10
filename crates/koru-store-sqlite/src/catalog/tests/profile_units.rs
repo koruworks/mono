@@ -2,21 +2,15 @@
 
 use super::*;
 
+/// A v1 personal address. No row is stored under it since catalog 13; the
+/// tests below pin what the legacy methods answer about it, and
+/// `tests/root_catalog.rs` covers the v2 rows that replaced it.
 fn personal(c: &mut SqliteCatalog, owner: ProfileId) -> ProfileUnitRef {
     let workspace = Workspace::new(owner, "Workspace", at()).unwrap();
     c.put_workspace(&workspace).unwrap();
     ProfileUnitRef::Personal {
         owner,
         workspace: workspace.id,
-    }
-}
-
-fn due(unit: ProfileUnitRef, due_at_ms: Option<i64>) -> ReminderDue {
-    ReminderDue {
-        owner: unit.profile(),
-        workspace: unit.workspace().unwrap(),
-        reminder: ReminderId::new(),
-        due_at_ms,
     }
 }
 
@@ -40,20 +34,37 @@ fn schema_ten_upgrade_creates_units_without_seeding_or_touching_legacy() {
     );
     assert_eq!(c.profile_units(profile.id).unwrap().len(), 1);
     assert!(c.profile_reminder_due(profile.id).unwrap().is_empty());
-    let tables: i64 = c.connection.query_row(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN
-         ('profile_identity_crdts', 'profile_private_crdts', 'profile_personal_crdts', 'profile_reminder_due')",
-        [], |row| row.get(0)).unwrap();
-    assert_eq!(tables, 4);
-    let index: String = c
+    // Schema 11 created four tables; catalog 13 then replaced the two
+    // Profile-keyed personal ones with the Workspace-keyed v2 rows.
+    let tables: i64 = c
         .connection
         .query_row(
-            "SELECT sql FROM sqlite_master WHERE name = 'profile_reminder_due_by_time'",
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN
+         ('profile_identity_crdts', 'profile_private_crdts')",
             [],
             |row| row.get(0),
         )
         .unwrap();
-    assert!(index.contains("owner_profile_id, due_at_ms, workspace_id, reminder_id"));
+    assert_eq!(tables, 2);
+    let legacy: i64 = c
+        .connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE name IN
+         ('profile_personal_crdts', 'profile_reminder_due', 'profile_reminder_due_by_time')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(legacy, 0);
+    let index: String = c
+        .connection
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE name = 'workspace_reminder_due_by_time'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(index.contains("user_scope_id, due_at_ms, workspace_id, reminder_id"));
     assert_eq!(
         db::migrate(&mut c.connection, "catalog.db", &MIGRATIONS[..10], 10)
             .unwrap_err()
@@ -213,15 +224,11 @@ fn timestamp_repair_compares_source_bytes_and_changes_no_other_projection_fields
 }
 
 #[test]
-fn units_remain_distinct_by_owner_workspace_and_kind() {
+fn profile_addressed_units_stay_distinct_and_the_v1_personal_address_is_honest() {
     let mut c = catalog();
     let profile = a_profile(&mut c);
     let other = a_profile(&mut c);
     let unit = personal(&mut c, profile.id);
-    let other_unit = ProfileUnitRef::Personal {
-        owner: other.id,
-        workspace: unit.workspace().unwrap(),
-    };
     c.initialize_profile_units(&profile, b"identity", b"private")
         .unwrap();
     c.commit_profile_unit(
@@ -231,15 +238,42 @@ fn units_remain_distinct_by_owner_workspace_and_kind() {
         b"legacy",
     )
     .unwrap();
-    c.commit_profile_unit(unit, b"personal").unwrap();
-    c.commit_profile_unit(other_unit, b"other-personal")
-        .unwrap();
-    assert_eq!(c.profile_units(profile.id).unwrap().len(), 4);
-    assert_eq!(c.profile_units(other.id).unwrap().len(), 1);
-    assert_eq!(c.profile_unit(unit).unwrap().unwrap().snapshot, b"personal");
+    // Legacy, identity and private are listed under the Profile; no
+    // personal unit is, because none is keyed by a Profile any more.
+    assert_eq!(c.profile_units(profile.id).unwrap().len(), 3);
+    assert!(
+        c.profile_units(other.id).unwrap().is_empty(),
+        "a Profile nobody initialized has units of nobody else"
+    );
+    assert_eq!(c.profile_unit(unit).unwrap(), None);
+    // Every v1 personal write names the v2 replacement and writes nothing.
     assert_eq!(
-        c.profile_unit(other_unit).unwrap().unwrap().snapshot,
-        b"other-personal"
+        c.commit_profile_unit(unit, b"personal").unwrap_err().code,
+        Code::ProfileUnitScopeMismatch
+    );
+    assert_eq!(
+        c.commit_profile_units(&[(unit, b"personal".to_vec())])
+            .unwrap_err()
+            .code,
+        Code::ProfileUnitScopeMismatch
+    );
+    assert_eq!(
+        c.replace_profile_due_index(
+            profile.id,
+            unit.workspace().unwrap(),
+            b"snapshot",
+            b"vector",
+            &[]
+        )
+        .unwrap_err()
+        .code,
+        Code::ProfileUnitScopeMismatch
+    );
+    assert!(c.profile_reminder_due(profile.id).unwrap().is_empty());
+    assert!(
+        c.workspace_personal_unit(c.local_user_scope().unwrap(), unit.workspace().unwrap())
+            .unwrap()
+            .is_none()
     );
     assert_eq!(
         c.commit_profile_unit(
@@ -253,217 +287,6 @@ fn units_remain_distinct_by_owner_workspace_and_kind() {
         Code::InvalidRequest
     );
     assert_eq!(c.profile(profile.id).unwrap().unwrap(), profile);
-}
-
-#[test]
-fn changed_personal_bytes_invalidate_stamp_and_stale_rebuild_cannot_replace_hints() {
-    let mut c = catalog();
-    let profile = a_profile(&mut c);
-    let unit = personal(&mut c, profile.id);
-    let hints = [due(unit, None), due(unit, Some(10))];
-    c.commit_profile_unit(unit, b"snapshot-1").unwrap();
-    assert!(
-        c.replace_profile_due_index(
-            profile.id,
-            unit.workspace().unwrap(),
-            b"snapshot-1",
-            b"vector-1",
-            &hints
-        )
-        .unwrap()
-    );
-    c.commit_profile_unit(unit, b"snapshot-1").unwrap();
-    assert_eq!(
-        c.profile_unit(unit).unwrap().unwrap().indexed_version,
-        Some(b"vector-1".to_vec())
-    );
-    assert_eq!(c.profile_reminder_due(profile.id).unwrap(), hints);
-    c.commit_profile_unit(unit, b"snapshot-2").unwrap();
-    assert_eq!(c.profile_unit(unit).unwrap().unwrap().indexed_version, None);
-    assert!(
-        !c.replace_profile_due_index(
-            profile.id,
-            unit.workspace().unwrap(),
-            b"snapshot-1",
-            b"old-vector",
-            &[]
-        )
-        .unwrap()
-    );
-    assert_eq!(c.profile_reminder_due(profile.id).unwrap(), hints);
-    assert_eq!(c.profile_unit(unit).unwrap().unwrap().indexed_version, None);
-}
-
-#[test]
-fn index_failure_rolls_back_stamp_and_rows_and_rejects_wrong_scope() {
-    let mut c = catalog();
-    let profile = a_profile(&mut c);
-    let unit = personal(&mut c, profile.id);
-    c.commit_profile_unit(unit, b"snapshot").unwrap();
-    let hint = due(unit, Some(10));
-    c.replace_profile_due_index(
-        profile.id,
-        unit.workspace().unwrap(),
-        b"snapshot",
-        b"vector",
-        &[hint.clone()],
-    )
-    .unwrap();
-    let duplicate = due(unit, None);
-    assert!(
-        c.replace_profile_due_index(
-            profile.id,
-            unit.workspace().unwrap(),
-            b"snapshot",
-            b"new-vector",
-            &[duplicate.clone(), duplicate]
-        )
-        .is_err()
-    );
-    assert_eq!(c.profile_reminder_due(profile.id).unwrap(), [hint.clone()]);
-    assert_eq!(
-        c.profile_unit(unit).unwrap().unwrap().indexed_version,
-        Some(b"vector".to_vec())
-    );
-    for mismatch_owner in [true, false] {
-        let mut invalid = hint.clone();
-        if mismatch_owner {
-            invalid.owner = ProfileId::new();
-        } else {
-            invalid.workspace = WorkspaceId::new();
-        }
-        assert_eq!(
-            c.replace_profile_due_index(
-                profile.id,
-                unit.workspace().unwrap(),
-                b"snapshot",
-                b"new-vector",
-                &[invalid]
-            )
-            .unwrap_err()
-            .code,
-            Code::InvalidRequest
-        );
-    }
-    assert_eq!(c.profile_reminder_due(profile.id).unwrap(), [hint]);
-}
-
-#[test]
-fn batch_failure_rolls_back_earlier_snapshots_and_index_invalidation() {
-    let mut c = catalog();
-    let profile = a_profile(&mut c);
-    let first = personal(&mut c, profile.id);
-    let second = personal(&mut c, profile.id);
-    c.commit_profile_units(&[(first, b"first".to_vec()), (second, b"second".to_vec())])
-        .unwrap();
-    c.replace_profile_due_index(profile.id, first.workspace().unwrap(), b"first", b"v1", &[])
-        .unwrap();
-    let before = c.profile_units(profile.id).unwrap();
-    assert!(
-        c.commit_profile_units(&[(first, b"new".to_vec()), (second, vec![])])
-            .is_err()
-    );
-    assert_eq!(c.profile_units(profile.id).unwrap(), before);
-    assert!(
-        c.commit_profile_units(&[
-            (first, b"new".to_vec()),
-            (
-                ProfileUnitRef::Identity {
-                    profile: profile.id
-                },
-                b"invalid".to_vec()
-            )
-        ])
-        .is_err()
-    );
-    assert_eq!(c.profile_units(profile.id).unwrap(), before);
-}
-
-#[test]
-fn logical_removal_retains_units_and_physical_deletion_is_refused() {
-    let mut c = catalog();
-    let profile = a_profile(&mut c);
-    c.initialize_profile_units(&profile, b"identity", b"private")
-        .unwrap();
-    let unit = personal(&mut c, profile.id);
-    let workspace = unit.workspace().unwrap();
-    c.commit_profile_unit(unit, b"personal").unwrap();
-    c.replace_profile_due_index(
-        profile.id,
-        workspace,
-        b"personal",
-        b"vector",
-        &[due(unit, None)],
-    )
-    .unwrap();
-    let location = DocumentId::new();
-    c.set_workspace_deleted(workspace, Some(at()), &[]).unwrap();
-    // An independently retained derived reference must survive failed purge.
-    c.record_location(location, workspace).unwrap();
-    let attempt = super::begin_removal(&mut c, profile.id);
-    c.remove_profile_local(profile.id, Some(attempt), at())
-        .unwrap();
-    assert!(c.workspace_has_personal_units(workspace).unwrap());
-    assert!(!c.workspace_has_personal_units(WorkspaceId::new()).unwrap());
-    let retained = c.profile_units(profile.id).unwrap();
-    assert_eq!(
-        c.forget_workspace(workspace).unwrap_err().code,
-        Code::WorkspaceInUse
-    );
-    assert_eq!(
-        c.purge_workspace(workspace).unwrap_err().code,
-        Code::WorkspaceInUse
-    );
-    assert_eq!(c.locate(location).unwrap(), Some(workspace));
-    assert_eq!(c.profile_units(profile.id).unwrap(), retained);
-    assert_eq!(c.profile_reminder_due(profile.id).unwrap().len(), 1);
-    assert!(
-        c.connection
-            .execute(
-                "DELETE FROM profiles WHERE id = ?1",
-                params![profile.id.to_storage()]
-            )
-            .is_err()
-    );
-}
-
-#[test]
-fn missing_scope_and_empty_snapshots_cannot_create_personal_authority() {
-    let mut c = catalog();
-    let profile = a_profile(&mut c);
-    let unit = personal(&mut c, profile.id);
-    assert!(c.commit_profile_unit(unit, b"").is_err());
-    assert!(
-        c.commit_profile_unit(
-            ProfileUnitRef::Personal {
-                owner: ProfileId::new(),
-                workspace: unit.workspace().unwrap(),
-            },
-            b"snapshot"
-        )
-        .is_err()
-    );
-    assert!(
-        c.commit_profile_unit(
-            ProfileUnitRef::Personal {
-                owner: profile.id,
-                workspace: WorkspaceId::new(),
-            },
-            b"snapshot"
-        )
-        .is_err()
-    );
-    assert!(
-        !c.replace_profile_due_index(
-            profile.id,
-            unit.workspace().unwrap(),
-            b"snapshot",
-            b"vector",
-            &[]
-        )
-        .unwrap()
-    );
-    assert!(c.profile_unit(unit).unwrap().is_none());
 }
 
 #[test]
@@ -508,15 +331,15 @@ fn failed_private_commit_keeps_live_cache_and_restart_on_the_committed_lineage()
     .unwrap();
     let workspace = Workspace::new(profile.id, "Retained", at()).unwrap();
     c.put_workspace(&workspace).unwrap();
-    c.commit_profile_unit(
-        ProfileUnitRef::Personal {
-            owner: profile.id,
-            workspace: workspace.id,
-        },
-        &koru_store_core::profile_units::PersonalManifest::create(profile.id, workspace.id)
+    let scope = c.local_user_scope().unwrap();
+    c.commit_workspace_personal_unit(
+        scope,
+        workspace.id,
+        &koru_store_core::profile_units::PersonalManifest::create_v2(workspace.id, 7)
             .unwrap()
             .export_snapshot()
             .unwrap(),
+        7,
     )
     .unwrap();
     c.set_workspace_deleted(workspace.id, Some(Timestamp::from_millis(1)), &[])
@@ -631,9 +454,12 @@ fn failed_private_commit_keeps_live_cache_and_restart_on_the_committed_lineage()
     control
         .execute_batch("DROP TRIGGER reject_identity;")
         .unwrap();
+    // The trashed row was written by the legacy projection alone and has no
+    // root unit: the purge is driven by unit facts (Plan 1.3), so it finds
+    // no candidate, touches no backend bytes and retires no personal row.
     assert_eq!(
-        store.purge_deleted(at()).unwrap_err().code,
-        Code::WorkspaceInUse
+        store.purge_deleted(at()).unwrap(),
+        koru_store_core::service::PurgeOutcome::default()
     );
     drop(store);
     let mut reopened = Store::open(

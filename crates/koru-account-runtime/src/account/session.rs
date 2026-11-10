@@ -104,6 +104,11 @@ impl SessionRuntime {
                 None
             }
             Ok(Some(value)) => {
+                // Armed from the slot these bytes came out of, before anything
+                // can refresh them: a rotation must not go out under a key
+                // that is not already durable beside the token it rotates.
+                self.service
+                    .arm_refresh_retry_key(self.persistence.refresh_retry_key());
                 self.service
                     .credential_restored(&value, self.persistence.record());
                 Some(value)
@@ -326,6 +331,10 @@ impl SessionRuntime {
                     break;
                 }
                 credential = Some(pending.credential);
+                // The replacement's own retry key went into the same vault
+                // write, so the next rotation of these bytes already has a
+                // durable key to present.
+                service.arm_refresh_retry_key(persistence.refresh_retry_key());
                 service.credential_owner_acknowledged(persistence.record());
                 log_persisted(scope, true);
                 pending.state.generation = envelope.generation;
@@ -413,6 +422,7 @@ impl SessionRuntime {
                 match persistence.restore(service.as_mut()) {
                     Ok(value) if !changes_credential || persistence.legacy_ready() => {
                         credential = value;
+                        service.arm_refresh_retry_key(persistence.refresh_retry_key());
                         discovery_pending = false;
                     }
                     Ok(_) => {
@@ -551,6 +561,15 @@ impl SessionRuntime {
                 }
                 finish(&worker_active, generation);
                 break;
+            }
+            // Nothing is armed when the slot held no retry key and the vault
+            // would not take one at restore. Topping it up here is what keeps
+            // a momentary vault failure from leaving a session unable to
+            // rotate for the rest of the process; an armed one costs nothing.
+            if let Some(restored) = &credential
+                && persistence.refresh_retry_key().is_none()
+            {
+                service.arm_refresh_retry_key(persistence.ensure_refresh_retry_key(restored));
             }
             let outcome = service.execute(
                 generation,
@@ -709,6 +728,7 @@ impl SessionRuntime {
                                 break;
                             }
                             credential = Some(next);
+                            service.arm_refresh_retry_key(persistence.refresh_retry_key());
                             service.credential_owner_acknowledged(persistence.record());
                             log_persisted(scope, false);
                         }

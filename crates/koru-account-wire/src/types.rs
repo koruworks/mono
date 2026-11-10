@@ -1416,7 +1416,9 @@ pub struct CloudProfileSelectionRequestV1 {
     pub workspace_id: WorkspaceId,
 }
 
-fn canonical_v4_workspace_id<'de, D: Deserializer<'de>>(d: D) -> Result<WorkspaceId, D::Error> {
+pub(crate) fn canonical_v4_workspace_id<'de, D: Deserializer<'de>>(
+    d: D,
+) -> Result<WorkspaceId, D::Error> {
     let value = String::deserialize(d)?;
     let id = uuid::Uuid::parse_str(&value).map_err(de::Error::custom)?;
     if id.to_string() != value

@@ -217,8 +217,26 @@ pub enum ClientError {
     InvalidRequest,
     MissingBrowserOrigin,
     Transport(TransportError),
-    Api { status: u16, code: ErrorCode },
-    RateLimited { retry_after_millis: u64 },
+    /// A refusal that carried the public API's own `DeveloperErrorV1`: the
+    /// status and the code are both the service's own words.
+    Api {
+        status: u16,
+        code: ErrorCode,
+    },
+    RateLimited {
+        retry_after_millis: u64,
+    },
+    /// A non-2xx whose body is not that envelope — a gateway's own 404 page,
+    /// an HTML 502, an empty body. The status is then the only thing the
+    /// answer says, and it is kept rather than discarded: a service that
+    /// does not serve a route is not an outage, and flattening its 404 into
+    /// [`Self::InvalidResponse`] is what made it look like one. There is no
+    /// code to match on, which is why this is not [`Self::Api`].
+    ApiWithoutCode {
+        status: u16,
+    },
+    /// A body that could not be read as what the route promises, on an
+    /// answer that claimed to succeed.
     InvalidResponse,
     ContractMismatch,
 }
@@ -231,6 +249,9 @@ impl fmt::Display for ClientError {
             Self::Transport(_) => f.write_str("the public API is unavailable"),
             Self::Api { code, .. } => write!(f, "public API error {}", code.as_str()),
             Self::RateLimited { .. } => f.write_str("public API error rate_limited"),
+            Self::ApiWithoutCode { status } => {
+                write!(f, "public API error without a code (HTTP {status})")
+            }
             Self::InvalidResponse => f.write_str("the public API returned an invalid response"),
             Self::ContractMismatch => f.write_str("the account route contract is inconsistent"),
         }
@@ -791,6 +812,142 @@ impl AccountClient {
         )
     }
 
+    // ----- The v2 Cloud catalog (root-catalog Plan 3.1's contract, called by
+    // Plan 3.2's coordinator). Every route is native-device-authenticated and
+    // bounded by the shared body caps; none carries a name, a credential or a
+    // hidden subject.
+
+    /// Get or create the account's one root-catalog binding, declaring what
+    /// this device already holds. Idempotent; a device of another account is
+    /// refused with `catalog_binding_conflict` and nothing is written. A 404
+    /// is a service that does not answer v2 yet, which the caller reads as
+    /// the v1 compatibility window.
+    pub fn bind_cloud_catalog(
+        &self,
+        request: &CloudCatalogBindingRequestV2,
+        authorization: &AccountAuthorization<'_>,
+    ) -> Result<CloudCatalogBindingV2, ClientError> {
+        self.send_json(
+            RouteId::BindAccountCatalog,
+            request,
+            Some(authorization),
+            false,
+        )
+    }
+
+    /// The account's admitted catalog units with their frontiers and
+    /// projection watermarks. `after` continues a paged answer from the last
+    /// unit listed; the cursor is a position, never authority.
+    pub fn cloud_root_catalog(
+        &self,
+        after: Option<&CloudUnitRefV2>,
+        authorization: &AccountAuthorization<'_>,
+    ) -> Result<CloudRootCatalogV2, ClientError> {
+        let route = route_by_id(RouteId::ReadCloudRootCatalog);
+        let path = match after {
+            None => route.path.to_owned(),
+            Some(unit) => {
+                let (kind, subject) = unit_cursor(*unit);
+                format!(
+                    "{}?after_kind={kind}&after_subject_id={subject}",
+                    route.path
+                )
+            }
+        };
+        self.send_empty_at(RouteId::ReadCloudRootCatalog, path, authorization)
+    }
+
+    /// One unit from the device's accepted frontier, through the export
+    /// boundary; an empty frontier asks for a snapshot.
+    pub fn pull_cloud_root_unit(
+        &self,
+        request: &CloudRootUnitRequestV2,
+        authorization: &AccountAuthorization<'_>,
+    ) -> Result<CloudRootUnitUpdatesV2, ClientError> {
+        self.send_json(
+            RouteId::PullCloudRootUnit,
+            request,
+            Some(authorization),
+            false,
+        )
+    }
+
+    /// Admit one unit's derived bytes and read the join receipt.
+    pub fn push_cloud_root_unit(
+        &self,
+        request: &CloudRootUnitUpdatesV2,
+        authorization: &AccountAuthorization<'_>,
+    ) -> Result<CloudRootJoinReceiptV2, ClientError> {
+        self.send_json(
+            RouteId::PushCloudRootUnit,
+            request,
+            Some(authorization),
+            false,
+        )
+    }
+
+    /// One short-lived credential for one Cloud scope. The response is
+    /// evidence to validate and correlate, never authority by itself.
+    pub fn issue_cloud_sync_token_v2(
+        &self,
+        request: &SyncTokenRequestV2,
+        authorization: &AccountAuthorization<'_>,
+    ) -> Result<SyncTokenResponseV2, ClientError> {
+        let response: SyncTokenResponseV2 = self.send_json(
+            RouteId::IssueCloudSyncTokenV2,
+            request,
+            Some(authorization),
+            false,
+        )?;
+        response
+            .validate()
+            .map_err(|_| ClientError::InvalidResponse)?;
+        if response.scope != request.scope {
+            return Err(ClientError::InvalidResponse);
+        }
+        Ok(response)
+    }
+
+    /// Identity-only bootstrap facts for one authorized Workspace with its
+    /// placement as the committed projection holds it. No Profile is named
+    /// in the request: the former Profile is not a prerequisite.
+    pub fn cloud_workspace_descriptor_v2(
+        &self,
+        workspace_id: koru_account_core::WorkspaceId,
+        authorization: &AccountAuthorization<'_>,
+    ) -> Result<CloudWorkspaceDescriptorV2, ClientError> {
+        self.send_empty_at(
+            RouteId::DescribeCloudWorkspaceV2,
+            render_workspace_route_path(RouteId::DescribeCloudWorkspaceV2, workspace_id)?,
+            authorization,
+        )
+    }
+
+    /// One discovery receipt from the committed projection: scope,
+    /// authorization generation, coverage and results grouped by current
+    /// placement. `after` continues a paged answer.
+    pub fn cloud_discovery(
+        &self,
+        scope: CloudDiscoveryScopeV2,
+        after: Option<&CloudDiscoveryCursorV2>,
+        authorization: &AccountAuthorization<'_>,
+    ) -> Result<CloudDiscoveryReceiptV2, ClientError> {
+        let route = route_by_id(RouteId::DiscoverCloudCatalog);
+        let scope = match scope {
+            CloudDiscoveryScopeV2::UserCatalog => "user_catalog",
+            CloudDiscoveryScopeV2::Workspaces => "workspaces",
+        };
+        let path = match after {
+            None => format!("{}?scope={scope}", route.path),
+            Some(cursor) => format!(
+                "{}?scope={scope}&after_workspace_id={}",
+                route.path,
+                cursor.workspace_id.to_storage()
+            ),
+        };
+        self.send_empty_at(RouteId::DiscoverCloudCatalog, path, authorization)
+    }
+
     pub fn issue_device_attestation(
         &self,
         profile_id: koru_account_core::ProfileId,
@@ -984,8 +1141,18 @@ impl AccountClient {
             return Err(ClientError::Transport(TransportError::ResponseTooLarge));
         }
         if !(200..300).contains(&response.status) {
-            let error: DeveloperErrorV1 =
-                serde_json::from_slice(&response.body).map_err(|_| ClientError::InvalidResponse)?;
+            // A refusal is read from the envelope, but the status is the
+            // service's answer whether or not the envelope is there: a
+            // gateway, a proxy or a route the deployment does not serve
+            // answers in its own words, and the status is then all there is
+            // to go on. Keep it. Discarding it is how a 404 on a route the
+            // service does not serve yet became indistinguishable from an
+            // outage.
+            let Ok(error) = serde_json::from_slice::<DeveloperErrorV1>(&response.body) else {
+                return Err(ClientError::ApiWithoutCode {
+                    status: response.status,
+                });
+            };
             if response.status == 429 && error.code.as_str() == ErrorCode::RATE_LIMITED {
                 return Err(ClientError::RateLimited {
                     retry_after_millis: error
@@ -1036,6 +1203,20 @@ fn render_route_path(
 /// rendered path is read back through the route table so a catalog edit that
 /// changed a path shape fails here rather than posting a device signature at
 /// whatever route happens to match.
+/// A catalog unit as the `after_*` query values of the catalog listing: the
+/// wire tag of its kind and its subject's canonical id.
+fn unit_cursor(unit: CloudUnitRefV2) -> (&'static str, String) {
+    match unit {
+        CloudUnitRefV2::ProfileCatalog { subject_id } => {
+            ("profile_catalog", subject_id.to_storage())
+        }
+        CloudUnitRefV2::WorkspaceCatalog { subject_id } => {
+            ("workspace_catalog", subject_id.to_storage())
+        }
+        CloudUnitRefV2::PersonalV2 { subject_id } => ("personal_v2", subject_id.to_storage()),
+    }
+}
+
 fn render_workspace_route_path(
     route_id: RouteId,
     workspace_id: koru_account_core::WorkspaceId,

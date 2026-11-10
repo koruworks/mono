@@ -73,6 +73,13 @@ pub enum Action {
     SoftDelete(WorkspaceId),
     Restore(WorkspaceId),
 
+    // ------------------- recovery, behind `workspace.destroy` (root catalog §6.3)
+    /// **Restore a deleted Profile by its deletion batch**: the Profile and
+    /// the workspaces trashed by exactly that deletion come back; earlier
+    /// Trash and later moves stand. From an Unassigned row (its former
+    /// Profile) or a *Deleted profiles* row.
+    RestoreProfile(ProfileId, koru_api_client::DeletionId),
+
     // ------------------------------------------------------------ the surface's own
     ShowArchived,
     ShowTrash,

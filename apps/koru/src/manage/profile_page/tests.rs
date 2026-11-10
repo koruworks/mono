@@ -257,7 +257,10 @@ fn a_synced_profile_lists_its_google_accounts_and_the_account_actions() {
     for placed in &view.laid().controls {
         let r = placed.rect;
         if matches!(placed.look, Look::Header)
-            || placed.control == Control::Delete
+            || matches!(
+                placed.control,
+                Control::Delete | Control::RemoveFromDevice | Control::DeleteFromKoru
+            )
             || r.y + r.h <= workspaces.y + workspaces.h
         {
             continue;
@@ -371,7 +374,7 @@ fn a_failed_deletion_is_the_page_until_it_is_answered() {
         &mut view,
         Control::Attention(Attention::RemoveAfterFailure)
     ));
-    assert_eq!(view.c.take_remove_request(), Some((synced.id, true)));
+    assert_eq!(view.c.take_remove_request(), Some((synced.id, true, None)));
 }
 
 #[test]
@@ -451,8 +454,10 @@ fn tab_walks_the_nav_then_the_page_and_enter_presses_what_it_is_on() {
             Control::ImportWorkspaces,
             Control::NewWorkspace,
             Control::Session,
-            Control::Delete
-        ]
+            Control::Delete,
+            Control::RemoveFromDevice,
+        ],
+        "signed out: the footer's two removals, and no Delete from Koru"
     );
     // The first Tab lands on the open page's row, then walks on.
     let none = ModifiersState::empty();
@@ -533,15 +538,51 @@ fn a_screen_reader_hears_the_pages_controls_as_buttons_and_presses_them() {
         area: Rect::new(40.0, 60.0, 1000.0, 1000.0),
     };
     let tree = view.semantics(&cx);
+    // The footer's three actions are buttons, named from the table, in
+    // the order they are placed: the shared deletion, the device-local
+    // removal, then the account's deletion.
+    let lang = crate::format::lang();
+    let footer = [
+        (Control::Delete, koru_i18n::Key::ProfileDeleteAction),
+        (
+            Control::RemoveFromDevice,
+            koru_i18n::Key::ProfileRemoveFromDeviceAction,
+        ),
+        (
+            Control::DeleteFromKoru,
+            koru_i18n::Key::ProfileDeleteFromKoruAction,
+        ),
+    ];
+    let mut positions = Vec::new();
+    for (control, key) in footer {
+        let label = koru_i18n::t(lang, key);
+        let (index, node) = tree
+            .children
+            .iter()
+            .enumerate()
+            .find(|(_, node)| node.label.as_deref() == Some(label))
+            .unwrap_or_else(|| panic!("{control:?} is a button named {label:?}"));
+        assert_eq!(node.role, accesskit::Role::Button);
+        let placed = view.laid().placed(control).unwrap().rect;
+        let bounds = node.bounds.unwrap();
+        assert_eq!((bounds.x, bounds.y), (placed.x + 40.0, placed.y + 60.0));
+        positions.push(index);
+    }
+    assert!(
+        positions.windows(2).all(|pair| pair[0] < pair[1]),
+        "{positions:?}"
+    );
     let delete = tree
         .children
         .iter()
-        .find(|node| node.label.as_deref() == Some("Delete profile…"))
-        .expect("the footer is a button");
-    assert_eq!(delete.role, accesskit::Role::Button);
-    let placed = view.laid().placed(Control::Delete).unwrap().rect;
-    let bounds = delete.bounds.unwrap();
-    assert_eq!((bounds.x, bounds.y), (placed.x + 40.0, placed.y + 60.0));
+        .find(|node| {
+            node.label.as_deref()
+                == Some(koru_i18n::t(
+                    lang,
+                    koru_i18n::Key::ProfileRemoveFromDeviceAction,
+                ))
+        })
+        .expect("the device-local removal");
     let switch = tree
         .children
         .iter()
@@ -559,7 +600,7 @@ fn a_screen_reader_hears_the_pages_controls_as_buttons_and_presses_them() {
     assert!(view.accessibility_action(&cx, target, accesskit::Action::Focus));
     assert_eq!(view.accessible_focus(&cx), target);
     assert!(view.accessibility_action(&cx, target, accesskit::Action::Click));
-    assert!(view.dialog().is_some(), "the delete dialog");
+    assert!(view.dialog().is_some(), "the remove question");
     let tree = view.semantics(&cx);
     assert!(
         tree.children

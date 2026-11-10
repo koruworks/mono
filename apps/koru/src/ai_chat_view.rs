@@ -323,8 +323,8 @@ impl AiChatView {
         self.surface.listed_chats()
     }
 
-    pub fn set_context_document(&mut self, document: Option<(DocumentId, String)>) -> bool {
-        self.surface.set_context_document(document)
+    pub fn set_recent_documents(&mut self, documents: Vec<(DocumentId, String)>) -> bool {
+        self.surface.set_recent_documents(documents)
     }
 
     pub fn take_openai_credential_request(&mut self) -> Option<OpenAiCredentialRequest> {
@@ -343,9 +343,41 @@ impl AiChatView {
         self.surface.working_folder_chosen(chat, folder)
     }
 
+    pub fn take_computer_picker_request(&mut self) -> Option<koru_ai_ui::ComputerPickerKind> {
+        self.surface.take_computer_picker_request()
+    }
+
+    pub fn computer_path_chosen(
+        &mut self,
+        kind: koru_ai_ui::ComputerPickerKind,
+        path: std::path::PathBuf,
+    ) -> bool {
+        self.surface.computer_path_chosen(kind, path)
+    }
+
+    pub fn take_workspace_import_request(&mut self) -> Option<koru_ai_ui::WorkspaceImportRequest> {
+        self.surface.take_workspace_import_request()
+    }
+
+    pub fn workspace_file_imported(
+        &mut self,
+        op: uuid::Uuid,
+        result: Result<koru_ai_ui::DocumentId, String>,
+    ) -> bool {
+        self.surface.workspace_file_imported(op, result)
+    }
+
     /// A document chip in this chat was clicked; the container opens it.
     pub fn take_open_document_request(&mut self) -> Option<koru_link::KoruLink> {
         self.surface.take_open_document_request()
+    }
+
+    pub fn take_place_document_request(&mut self) -> Option<koru_link::KoruLink> {
+        self.surface.take_place_document_request()
+    }
+
+    pub fn take_attachment_open_request(&mut self) -> Option<koru_ai_ui::AttachmentOpenRequest> {
+        self.surface.take_attachment_open_request()
     }
 
     /// The coding agents turned off on this machine (Agent providers).
@@ -516,6 +548,10 @@ impl AiChatView {
 }
 
 impl View for AiChatView {
+    fn set_mods(&mut self, mods: ModifiersState) {
+        self.surface.set_mods(mods);
+    }
+
     fn key(
         &mut self,
         _ws: &mut WorkspaceDoc,

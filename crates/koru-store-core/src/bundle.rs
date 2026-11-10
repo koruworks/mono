@@ -137,6 +137,38 @@ impl ImportMode {
     }
 }
 
+/// What [`import_workspace`](crate::service::Store::import_workspace)
+/// published: the Workspace, and whether its content was staged into a
+/// repository this import claimed or into the one an interrupted Restore left
+/// behind. A value, not a log line, so a caller cannot mistake a recovery for
+/// a first import by accident.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct ImportedWorkspace {
+    pub workspace: WorkspaceId,
+    pub publication: ImportPublication,
+}
+
+/// Where an import's content rows were staged before the publication.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum ImportPublication {
+    /// Into a repository this import claimed.
+    Fresh,
+    /// Into the repository an earlier Restore of the same bundle left behind
+    /// when it crashed between staging and publication (root-catalog
+    /// QUESTIONS.md Q6). Only a Restore resumes: a Duplicate mints a new id
+    /// every time and never meets a leftover.
+    Resumed,
+}
+
+impl ImportPublication {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Fresh => "fresh",
+            Self::Resumed => "resumed",
+        }
+    }
+}
+
 impl Bundle {
     /// Check the bundle is internally consistent before anything is written.
     ///

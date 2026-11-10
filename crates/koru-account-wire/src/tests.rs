@@ -196,8 +196,10 @@ fn account_schema_has_no_canonical_document_content_shape() {
 fn route_catalog_is_unique_and_schema_complete() {
     // Six of these are email sign-in's: start, verify, complete, sign in,
     // resend, and the native start. Five are app connections': consent's
-    // read and decision, and the connections list, edit and revoke.
-    assert_eq!(ROUTES.len(), 60);
+    // read and decision, and the connections list, edit and revoke. Seven
+    // are the v2 Cloud catalog's: binding, catalog read, unit pull and
+    // push, the v2 sync token, the v2 descriptor and discovery.
+    assert_eq!(ROUTES.len(), 67);
     let mut ids = BTreeSet::new();
     let mut method_paths = BTreeSet::new();
     for route in ROUTES {
@@ -675,7 +677,6 @@ fn cloud_discovery_page_is_explicit_and_selection_request_is_strict() {
         r#"{"version":1,"workspace_id":"40000000-0000-1000-8000-000000000004"}"#,
         r#"{"version":1,"workspace_id":"40000000-0000-4000-8000-000000000004","profile_id":"x"}"#,
         r#"{"version":1,"workspace_id":"40000000-0000-4000-8000-000000000004","device_id":"x"}"#,
-        r#"{"version":1,"workspace_id":"40000000-0000-4000-8000-000000000004".to_uppercase()}"#,
         r#"{"version":1}"#,
     ] {
         assert!(

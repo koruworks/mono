@@ -28,8 +28,8 @@ pub(crate) fn message_height(message: &MessageLayout) -> f32 {
 
 pub(crate) fn message_content_height(message: &MessageLayout) -> f32 {
     if !message.attachments.is_empty() {
-        // The person's own words, then their pictures and files; a message
-        // of attachments only is its tiles alone.
+        // The person's own words, then their attachment pills; a message
+        // of attachments only is its pill row alone.
         let (_, tiles) = crate::attachments::card_tiles(&message.attachments, message.wrap_width);
         return if message.display.trim().is_empty() {
             tiles
@@ -79,7 +79,7 @@ pub(crate) fn usage_line(usage: &AiUsage, lang: Lang) -> Option<String> {
     }
 }
 
-fn compact(n: u64) -> String {
+pub(crate) fn compact(n: u64) -> String {
     if n < 1_000 {
         return n.to_string();
     }
@@ -201,7 +201,8 @@ mod tests {
         MessageState, ModelSelection, ReasoningChoice, Timestamp, UsageSource,
     };
     use koru_ai_wire::{
-        AI_STREAM_VERSION, ChatTranscript, MessageUsage, PublicAiEvent, StreamEvent,
+        AI_STREAM_VERSION, ChatTranscript, MessageUsage, PublicAiEvent, ReportedContextUsage,
+        StreamEvent,
     };
     use winit::keyboard::{Key as WinitKey, ModifiersState, NamedKey};
 
@@ -260,6 +261,7 @@ mod tests {
             feedback: Vec::new(),
             usage: Vec::new(),
             reasoning_control: None,
+            agent_commands: None,
             attachments: Vec::new(),
         }
     }
@@ -393,6 +395,76 @@ mod tests {
     }
 
     #[test]
+    fn reported_context_updates_the_ring_without_changing_turn_usage() {
+        let mut surface = ChatSurface::new();
+        surface.transcript = Some(transcript());
+        let chat = surface.current_chat_id().unwrap();
+        let attempt_id = koru_ai_core::InferenceAttemptId::new();
+        surface.attempt = Some(attempt_id);
+        surface.apply_update(event(PublicAiEvent::ContextUsage {
+            attempt_id,
+            used: 48_000,
+            size: 475_000,
+        }));
+        assert_eq!(
+            surface.context_window_usage.get(&chat),
+            Some(&(48_000, 475_000))
+        );
+        assert!((surface.context_progress().unwrap() - 0.101).abs() < 0.001);
+        assert_eq!(surface.live_usage, None);
+    }
+
+    #[test]
+    fn reopened_chat_restores_the_latest_reported_context_for_its_model() {
+        let mut transcript = transcript();
+        let chat = &transcript.chat;
+        let message_id = MessageId::new();
+        transcript.messages.push(Message {
+            id: message_id,
+            chat_id: chat.id,
+            ordinal: 0,
+            role: ChatRole::Assistant,
+            state: MessageState::Complete,
+            markdown: "Answer".into(),
+            origin_message_id: None,
+            provider: Some(chat.current_model.provider.clone()),
+            requested_model: Some(chat.current_model.requested_model.clone()),
+            resolved_model: None,
+            error_class: None,
+            created_at: Timestamp::from_millis(2),
+            completed_at: Some(Timestamp::from_millis(3)),
+        });
+        transcript.usage.push(MessageUsage {
+            message_id,
+            usage: AiUsage::default(),
+            context: Some(ReportedContextUsage {
+                used: 173_700,
+                size: 258_400,
+            }),
+        });
+        let mut surface = ChatSurface::new();
+        surface.transcript = Some(transcript);
+        assert_eq!(surface.reported_context_usage(), Some((173_700, 258_400)));
+        let snapshot = surface.context_window_snapshot().unwrap();
+        assert_eq!(
+            (snapshot.used, snapshot.size),
+            (Some(173_700), Some(258_400))
+        );
+
+        surface.attempt = Some(koru_ai_core::InferenceAttemptId::new());
+        assert_eq!(surface.reported_context_usage(), None);
+        surface.attempt = None;
+        surface
+            .transcript
+            .as_mut()
+            .unwrap()
+            .chat
+            .current_model
+            .requested_model = "another-model".into();
+        assert_eq!(surface.reported_context_usage(), None);
+    }
+
+    #[test]
     fn transcript_usage_labels_historical_messages_and_grows_geometry() {
         let mut surface = ChatSurface::new();
         surface.lang = Lang::En;
@@ -427,6 +499,7 @@ mod tests {
             .push(MessageUsage {
                 message_id,
                 usage: usage(Some(2_000), Some(800), None, Some(2_800)),
+                context: None,
             });
         surface.rebuild_messages(width);
         let message = &surface.message_layouts[0];

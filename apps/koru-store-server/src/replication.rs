@@ -10,11 +10,14 @@ use std::sync::Arc;
 
 use koru_device::DeviceId;
 use koru_replication::protocol::{
-    AuthenticatedPeer, BlobChunk, DocumentReplicaState, DurableAck, ProfileReplicaState,
-    ReplicaDescriptor, ReplicationStore, StoreFailure, WorkspaceCatalogState, WorkspaceInventory,
+    AuthenticatedPeer, BlobChunk, CatalogUnitRef, DocumentReplicaState, DurableAck,
+    PLACEMENT_PENDING, ProfileReplicaState, ReplicaDescriptor, ReplicationStore,
+    RootCatalogInventory, RootJoin, StoreFailure, WorkspaceCatalogState, WorkspaceInventory,
 };
+use koru_replication::root_exchange;
 use koru_store_api::{AppState, KoruStore};
-use koru_store_core::{DocumentId, ProfileId, WorkspaceId};
+use koru_store_core::root_catalog::ExportSubject;
+use koru_store_core::{DocumentId, ProfileId, ProvisionedReplica, WorkspaceId};
 
 pub struct LiveReplicationStore {
     state: Arc<AppState>,
@@ -25,6 +28,15 @@ impl LiveReplicationStore {
         Self { state }
     }
 
+    /// Every content operation on one Workspace, in this order: the
+    /// root-aware grant check (§7.2: UUID grants by id, Profile grants by
+    /// current placement, all-data by scope), then §4.4's transport gate (a
+    /// Local-only Workspace is neither listed, served nor admitted over the
+    /// peer path), then the relationship fence around the Store call.
+    ///
+    /// The first two are `root_exchange::admit_peer_description`, the one
+    /// predicate the phone's adapter asks for the same answers, so the two
+    /// cannot drift apart over which half of §4.4 they keep.
     fn with_workspace<T>(
         &self,
         peer: &AuthenticatedPeer,
@@ -32,20 +44,28 @@ impl LiveReplicationStore {
         operation: impl FnOnce(&mut KoruStore) -> Result<T, StoreFailure>,
     ) -> Result<T, StoreFailure> {
         let mut store = self.state.store.lock().map_err(|_| failed("internal"))?;
-        let profile = match store.workspace_including_deleted(workspace) {
-            Ok(workspace) => workspace.owner,
-            Err(error)
-                if error.code() == koru_store_core::errors::Code::WorkspaceNotFound
-                    && !peer.all_data
-                    && !peer.authorized_workspaces.contains(&workspace) =>
-            {
-                // Hide existence only. Corruption and availability failures
-                // remain actionable Store errors and must not look like denial.
-                return Err(failed("unauthorized_workspace"));
-            }
-            Err(error) => return Err(map_error(error)),
+        root_exchange::admit_peer_description(&store, peer, workspace)?;
+        peer.with_fence(|| operation(&mut store))
+    }
+
+    /// The export boundary's three steps for one root or personal unit:
+    /// prepare under the lock, derive off it, recheck under it right before
+    /// the bytes are handed to the frame.
+    fn export_root_unit(
+        &self,
+        peer: &AuthenticatedPeer,
+        subject: ExportSubject,
+        version: &loro::VersionVector,
+    ) -> Result<Vec<u8>, StoreFailure> {
+        let source = {
+            let store = self.state.store.lock().map_err(|_| failed("internal"))?;
+            root_exchange::prepare_root_export(&store, peer, subject)?
         };
-        peer.with_authorized_workspace_profile(workspace, profile, || operation(&mut store))
+        let recipient = (!version.is_empty()).then_some(version);
+        let publication = root_exchange::derive_root_export(&source, peer, recipient)?;
+        let store = self.state.store.lock().map_err(|_| failed("internal"))?;
+        root_exchange::recheck_root_export(&store, peer, &publication)?;
+        Ok(publication.bytes)
     }
 }
 
@@ -245,18 +265,24 @@ impl ReplicationStore for LiveReplicationStore {
                 if !peer.all_data && !peer.authorized_profiles.contains(&profile.id) {
                     continue;
                 }
+                // §4.4: a Profile whose device-local mode closes the peer
+                // path lists none of its units — its name is in the identity
+                // unit, and nothing about it leaves.
+                if root_exchange::admit_peer_profile(&store, profile.id).is_err() {
+                    continue;
+                }
                 for state in store.profile_unit_states(profile.id).map_err(map_error)? {
                     if peer.check_authorized_profile_unit(state.unit).is_err() {
                         continue;
                     }
                     if let Some(workspace) = state.unit.workspace() {
-                        let actual_owner = store
-                            .workspace_including_deleted(workspace)
-                            .map_err(map_error)?
-                            .owner;
-                        if peer
-                            .check_authorized_workspace_profile(workspace, actual_owner)
-                            .is_err()
+                        // A v1 personal address is not exported since
+                        // catalog 13 (personal data travels as v2 on the
+                        // root exchange); it is skipped, never an error.
+                        if matches!(
+                            state.unit,
+                            koru_store_core::profile_units::ProfileUnitRef::Personal { .. }
+                        ) || root_exchange::authorize_workspace(&store, peer, workspace).is_err()
                         {
                             continue;
                         }
@@ -331,12 +357,9 @@ impl ReplicationStore for LiveReplicationStore {
         let mut store = self.state.store.lock().map_err(|_| failed("internal"))?;
         peer.with_authorized_profile_unit(unit, || {
             if let Some(workspace) = unit.workspace() {
-                let actual_owner = store
-                    .workspace_including_deleted(workspace)
-                    .map_err(map_error)?
-                    .owner;
-                peer.check_authorized_workspace_profile(workspace, actual_owner)?;
+                root_exchange::authorize_workspace(&store, peer, workspace)?;
             }
+            root_exchange::admit_peer_profile(&store, unit.profile())?;
             store
                 .profile_unit_version(unit)
                 .map(|version| version.encode())
@@ -353,12 +376,9 @@ impl ReplicationStore for LiveReplicationStore {
         let mut store = self.state.store.lock().map_err(|_| failed("internal"))?;
         peer.with_authorized_profile_unit(unit, || {
             if let Some(workspace) = unit.workspace() {
-                let actual_owner = store
-                    .workspace_including_deleted(workspace)
-                    .map_err(map_error)?
-                    .owner;
-                peer.check_authorized_workspace_profile(workspace, actual_owner)?;
+                root_exchange::authorize_workspace(&store, peer, workspace)?;
             }
+            root_exchange::admit_peer_profile(&store, unit.profile())?;
             store
                 .profile_unit_updates_since(unit, &version)
                 .map_err(map_error)
@@ -374,12 +394,9 @@ impl ReplicationStore for LiveReplicationStore {
         let mut store = self.state.store.lock().map_err(|_| failed("internal"))?;
         peer.with_authorized_profile_unit(unit, || {
             if let Some(workspace) = unit.workspace() {
-                let actual_owner = store
-                    .workspace_including_deleted(workspace)
-                    .map_err(map_error)?
-                    .owner;
-                peer.check_authorized_workspace_profile(workspace, actual_owner)?;
+                root_exchange::authorize_workspace(&store, peer, workspace)?;
             }
+            root_exchange::admit_peer_profile(&store, unit.profile())?;
             store
                 .apply_profile_unit_updates(unit, &updates)
                 .map_err(map_error)?;
@@ -396,35 +413,60 @@ impl ReplicationStore for LiveReplicationStore {
         peer.with_catalog_scope(|| {
             let mut store = self.state.store.lock().map_err(|_| failed("internal"))?;
             let workspaces = store.workspaces_including_deleted().map_err(map_error)?;
-            workspaces
-                .into_iter()
-                .filter(|workspace| {
-                    peer.all_data
-                        || peer.authorized_profiles.contains(&workspace.owner)
-                        || peer.authorized_workspaces.contains(&workspace.id)
-                })
-                .map(|workspace| {
-                    let digest = store
-                        .workspace_sync_digest(workspace.id)
-                        .map_err(map_error)?;
-                    Ok(WorkspaceCatalogState {
-                        workspace_id: workspace.id,
-                        profile_id: workspace.owner,
-                        digest,
-                    })
-                })
-                .collect()
+            let mut result = Vec::new();
+            for workspace in workspaces {
+                // Authorized by the root-aware rule, and only while this
+                // device's mode admits the peer path for it (§4.4): a
+                // Local-only Workspace is not a row in this list.
+                if root_exchange::admit_peer_description(&store, peer, workspace.id).is_err() {
+                    continue;
+                }
+                let placement = store
+                    .current_placement_profile(workspace.id)
+                    .map_err(map_error)?
+                    .unwrap_or(workspace.owner);
+                let digest = store
+                    .workspace_sync_digest(workspace.id)
+                    .map_err(map_error)?;
+                result.push(WorkspaceCatalogState {
+                    workspace_id: workspace.id,
+                    // A bootstrap hint since protocol 6; see the type's doc.
+                    profile_id: placement,
+                    digest,
+                });
+            }
+            Ok(result)
         })
     }
 
+    fn authorize_workspace(
+        &self,
+        peer: &AuthenticatedPeer,
+        workspace: WorkspaceId,
+    ) -> Result<(), StoreFailure> {
+        let store = self.state.store.lock().map_err(|_| failed("internal"))?;
+        root_exchange::authorize_workspace(&store, peer, workspace)
+    }
+
+    fn admit_peer_subject(&self, workspace: WorkspaceId) -> Result<(), StoreFailure> {
+        let store = self.state.store.lock().map_err(|_| failed("internal"))?;
+        root_exchange::admit_peer_subject(&store, workspace)
+    }
+
+    /// The Profile a Workspace is currently placed under here — the root
+    /// placement, with the row's owner only for a row without a unit or an
+    /// unassigned register (the only evidence a projection has). Grant
+    /// evaluation does not read this; [`Self::authorize_workspace`] does
+    /// its own root read.
     fn workspace_profile(&self, workspace: WorkspaceId) -> Result<ProfileId, StoreFailure> {
-        self.state
-            .store
-            .lock()
-            .map_err(|_| failed("internal"))?
+        let store = self.state.store.lock().map_err(|_| failed("internal"))?;
+        let row = store
             .workspace_including_deleted(workspace)
-            .map(|workspace| workspace.owner)
-            .map_err(map_error)
+            .map_err(map_error)?;
+        Ok(store
+            .current_placement_profile(workspace)
+            .map_err(map_error)?
+            .unwrap_or(row.owner))
     }
 
     fn provision_replica(
@@ -432,89 +474,47 @@ impl ReplicationStore for LiveReplicationStore {
         peer: &AuthenticatedPeer,
         replica: &ReplicaDescriptor,
     ) -> Result<(), StoreFailure> {
-        let mut discoverability_changed = false;
-        let result = peer.with_authorized_workspace_profile(
-            replica.workspace_id,
-            replica.profile_id,
-            || {
-                let mut store = self.state.store.lock().map_err(|_| failed("internal"))?;
-                let profile = if peer.all_data {
-                    let locale = koru_store_core::text::Locale::parse(&replica.profile_locale)
-                        .ok_or_else(|| failed("invalid_locale"))?;
-                    koru_store_core::model::Profile {
-                        id: replica.profile_id,
-                        name: replica.profile_name.clone(),
-                        purpose: None,
-                        avatar: None,
-                        icon: replica.profile_icon.clone(),
-                        color: replica.profile_color.clone(),
-                        account: None,
-                        locale,
-                        created_at: koru_store_core::model::Timestamp::from_millis(
-                            replica.profile_created_at_ms,
-                        ),
-                        kind: koru_store_core::model::ProfileKind::parse(
-                            &replica.profile_kind,
-                        ),
-                    }
-                } else {
-                    if replica.has_profile_metadata() {
-                        return Err(failed("scoped_profile_metadata"));
-                    }
-                    store.profile(replica.profile_id).map_err(map_error)?
-                };
-                let workspace = koru_store_core::model::Workspace {
-                    id: replica.workspace_id,
-                    owner: replica.profile_id,
-                    name: replica.workspace_name.clone(),
-                    created_at: koru_store_core::model::Timestamp::from_millis(
-                        replica.workspace_created_at_ms,
-                    ),
-                    last_opened_at: None,
-                    icon: replica.workspace_icon.clone(),
-                    color: replica.workspace_color.clone(),
-                    pinned: replica.workspace_pinned,
-                    archived: replica.workspace_archived,
-                    deleted_at: replica
-                        .workspace_deleted_at_ms
-                        .map(koru_store_core::model::Timestamp::from_millis),
-                    position: 0,
-                };
-                let previous = store.workspace_including_deleted(replica.workspace_id).ok();
-                let was_discoverable = previous
-                    .as_ref()
-                    .is_some_and(|workspace| workspace.deleted_at.is_none());
-                let result = store
-                    .provision_replica(
-                        &profile,
-                        &workspace,
-                        replica.manifest_document,
-                        koru_store_core::model::Timestamp::now(),
-                    )
-                    .map_err(map_error);
-                let is_discoverable = store
-                    .workspace_including_deleted(replica.workspace_id)
-                    .ok()
-                    .is_some_and(|workspace| workspace.deleted_at.is_none());
-                discoverability_changed = result.is_ok() && was_discoverable != is_discoverable;
-                if result.is_ok() && peer_object_logs_enabled() {
-                    let action = if previous.is_none() {
-                        "workspace_received"
-                    } else {
-                        "workspace_metadata_received"
-                    };
+        let discoverability_changed;
+        let result = {
+            let mut store = self.state.store.lock().map_err(|_| failed("internal"))?;
+            let previous = store.workspace_including_deleted(replica.workspace_id).ok();
+            let was_discoverable = previous
+                .as_ref()
+                .is_some_and(|workspace| workspace.deleted_at.is_none());
+            let result = match root_exchange::provision_replica(&mut store, peer, replica) {
+                Ok(ProvisionedReplica::Ready) => Ok(()),
+                Ok(ProvisionedReplica::PlacementPending) => {
                     tracing::info!(
-                        "peer_object direction=peer_to_local action={} peer={} workspace={} archived={} deleted={}",
-                        action,
-                        peer.device_id.to_storage(),
-                        replica.workspace_id.to_storage(),
-                        replica.workspace_archived,
-                        replica.workspace_deleted_at_ms.is_some()
+                        peer = %peer.device_id.to_storage(),
+                        workspace = %replica.workspace_id.to_storage(),
+                        "root_sync direction=peer_to_local action=provisioning_pending reason=no_root_placement"
                     );
+                    Err(failed(PLACEMENT_PENDING))
                 }
-                result
-            },
-        );
+                Err(error) => Err(error),
+            };
+            let is_discoverable = store
+                .workspace_including_deleted(replica.workspace_id)
+                .ok()
+                .is_some_and(|workspace| workspace.deleted_at.is_none());
+            discoverability_changed = result.is_ok() && was_discoverable != is_discoverable;
+            if result.is_ok() && peer_object_logs_enabled() {
+                let action = if previous.is_none() {
+                    "workspace_received"
+                } else {
+                    "workspace_metadata_received"
+                };
+                tracing::info!(
+                    "peer_object direction=peer_to_local action={} peer={} workspace={} archived={} deleted={}",
+                    action,
+                    peer.device_id.to_storage(),
+                    replica.workspace_id.to_storage(),
+                    replica.workspace_archived,
+                    replica.workspace_deleted_at_ms.is_some()
+                );
+            }
+            result
+        };
         // The Store commit and its mutex guard are both behind us. A reader
         // woken here can immediately reconcile, including when replication
         // created the first workspace or changed a tombstone in either
@@ -523,6 +523,147 @@ impl ReplicationStore for LiveReplicationStore {
             self.state.notify_catalog_change();
         }
         result
+    }
+
+    // ---- protocol 6: the root-catalog exchange
+
+    fn bind_root_scope(&self, peer: &AuthenticatedPeer) -> Result<bool, StoreFailure> {
+        let mut store = self.state.store.lock().map_err(|_| failed("internal"))?;
+        root_exchange::bind_root_scope(&mut store, peer)
+    }
+
+    fn publish_pending_root_overlays(&self) -> Result<usize, StoreFailure> {
+        let mut store = self.state.store.lock().map_err(|_| failed("internal"))?;
+        root_exchange::publish_pending_root_overlays(&mut store)
+    }
+
+    fn root_sync_admissions(
+        &self,
+    ) -> Result<Vec<koru_replication::protocol::RootSubjectAdmission>, StoreFailure> {
+        let store = self.state.store.lock().map_err(|_| failed("internal"))?;
+        root_exchange::root_sync_admissions(&store)
+    }
+
+    fn root_catalog(&self, peer: &AuthenticatedPeer) -> Result<RootCatalogInventory, StoreFailure> {
+        let store = self.state.store.lock().map_err(|_| failed("internal"))?;
+        root_exchange::root_catalog(&store, peer)
+    }
+
+    fn root_unit_version(
+        &self,
+        peer: &AuthenticatedPeer,
+        unit: CatalogUnitRef,
+    ) -> Result<Vec<u8>, StoreFailure> {
+        let store = self.state.store.lock().map_err(|_| failed("internal"))?;
+        root_exchange::root_unit_version(&store, peer, unit)
+    }
+
+    fn root_unit_updates_since(
+        &self,
+        peer: &AuthenticatedPeer,
+        unit: CatalogUnitRef,
+        version: &loro::VersionVector,
+    ) -> Result<Vec<u8>, StoreFailure> {
+        let subject = match unit {
+            CatalogUnitRef::Profile { profile } => ExportSubject::ProfileCatalog(profile),
+            CatalogUnitRef::Workspace { workspace } => ExportSubject::WorkspaceCatalog(workspace),
+        };
+        self.export_root_unit(peer, subject, version)
+    }
+
+    fn apply_remote_root_updates(
+        &self,
+        peer: &AuthenticatedPeer,
+        unit: CatalogUnitRef,
+        updates: Vec<Vec<u8>>,
+        advertised: Option<&loro::VersionVector>,
+    ) -> Result<RootJoin, StoreFailure> {
+        // Staged under one lock, committed under another: a policy change
+        // in between is found by the commit's recheck, not papered over.
+        let staged = {
+            let store = self.state.store.lock().map_err(|_| failed("internal"))?;
+            root_exchange::stage_root_unit(&store, peer, unit, &updates)?
+        };
+        let (join, lifecycle_event) = {
+            let mut store = self.state.store.lock().map_err(|_| failed("internal"))?;
+            let (join, outcome) =
+                root_exchange::commit_root_unit_outcome(&mut store, peer, staged, advertised)?;
+            // A Profile deletion or restore that arrived from another device
+            // is the same fact a local batch publishes (Plan 1.3's
+            // `profile.deleted` / `profile.restored`): the windows refresh
+            // their Profile catalog on it, and the one whose open Profile
+            // just went settles into `NeedsProfile` (Plan 2.2, §6.3). The
+            // row's visibility after the commit says which it was.
+            let lifecycle_event = match (unit, &outcome) {
+                (
+                    CatalogUnitRef::Profile { profile },
+                    koru_store_core::service::RootJoinOutcome::Applied {
+                        lifecycle_changed: true,
+                        ..
+                    },
+                ) => {
+                    let active = store
+                        .profiles()
+                        .map(|profiles| profiles.iter().any(|row| row.id == profile))
+                        .unwrap_or(true);
+                    Some((profile, active))
+                }
+                _ => None,
+            };
+            (join, lifecycle_event)
+        };
+        if matches!(join, RootJoin::Applied { .. }) {
+            // Placement or lifecycle may have moved a listing; readers
+            // reconcile from the catalog, which is the only truth they read.
+            self.state.notify_catalog_change();
+        }
+        if let Some((profile, active)) = lifecycle_event {
+            if active {
+                self.state
+                    .publish_catalog_event(koru_events::ProfileRestored {
+                        profile_id: profile.as_uuid(),
+                    });
+            } else {
+                self.state
+                    .publish_catalog_event(koru_events::ProfileDeleted {
+                        profile_id: profile.as_uuid(),
+                    });
+            }
+        }
+        Ok(join)
+    }
+
+    fn personal_version(
+        &self,
+        peer: &AuthenticatedPeer,
+        workspace: WorkspaceId,
+    ) -> Result<Vec<u8>, StoreFailure> {
+        let store = self.state.store.lock().map_err(|_| failed("internal"))?;
+        root_exchange::personal_version(&store, peer, workspace)
+    }
+
+    fn personal_updates_since(
+        &self,
+        peer: &AuthenticatedPeer,
+        workspace: WorkspaceId,
+        version: &loro::VersionVector,
+    ) -> Result<Vec<u8>, StoreFailure> {
+        self.export_root_unit(peer, ExportSubject::PersonalV2(workspace), version)
+    }
+
+    fn apply_remote_personal_updates(
+        &self,
+        peer: &AuthenticatedPeer,
+        workspace: WorkspaceId,
+        updates: Vec<Vec<u8>>,
+        advertised: Option<&loro::VersionVector>,
+    ) -> Result<RootJoin, StoreFailure> {
+        let staged = {
+            let store = self.state.store.lock().map_err(|_| failed("internal"))?;
+            root_exchange::stage_personal_unit(&store, peer, workspace, &updates)?
+        };
+        let mut store = self.state.store.lock().map_err(|_| failed("internal"))?;
+        root_exchange::commit_personal_unit(&mut store, peer, staged, advertised)
     }
 
     fn provision_document(
@@ -562,7 +703,13 @@ impl ReplicationStore for LiveReplicationStore {
             let record = store
                 .workspace_including_deleted(workspace)
                 .map_err(map_error)?;
-            let profile = store.profile(record.owner).map_err(map_error)?;
+            // The bootstrap placement hint is the current root placement;
+            // the row's owner only when there is no unit or no register.
+            let placement = store
+                .current_placement_profile(workspace)
+                .map_err(map_error)?
+                .unwrap_or(record.owner);
+            let profile = store.profile(placement).map_err(map_error)?;
             let manifest = if record.deleted_at.is_some() {
                 store
                     .replica_manifest_id_including_deleted(workspace)
@@ -665,11 +812,9 @@ impl ReplicationStore for LiveReplicationStore {
         let Some(workspace) = store.locate(document).map_err(map_error)? else {
             return Ok(None);
         };
-        let profile = store
-            .workspace_including_deleted(workspace)
-            .map_err(map_error)?
-            .owner;
-        peer.with_authorized_workspace_profile(workspace, profile, || Ok(Some(workspace)))
+        root_exchange::authorize_workspace(&store, peer, workspace)?;
+        root_exchange::admit_peer_subject(&store, workspace)?;
+        peer.with_fence(|| Ok(Some(workspace)))
     }
 
     fn document_name(
@@ -1004,51 +1149,56 @@ mod tests {
     use koru_store_core::text::Locale;
     use koru_store_sqlite::{SqliteBackend, SqliteCatalog};
 
+    /// Personal data is v2 and travels only to the same person's device
+    /// (root-catalog TECHNICAL.final §5.1, §7.2): a Profile- or
+    /// Workspace-granted peer is framed no personal unit, may not ask for one,
+    /// and a Profile unit still needs its exact Profile grant.
     #[test]
-    fn personal_admission_requires_its_owner_and_the_actual_workspace_authority() {
-        use koru_store_core::ports::Catalog;
-        use koru_store_core::profile_units::{
-            IdentityManifest, PersonalManifest, PrivateManifest, ProfileUnitRef,
-        };
+    fn personal_units_need_the_scope_bound_relationship_and_profile_units_their_grant() {
+        use koru_replication::protocol::ROOT_SCOPE_NOT_BOUND;
+        use koru_store_core::profile_units::ProfileUnitRef;
+        use koru_store_core::transport::{SetTransportMode, TransportMode, TransportSubject};
         let at = Timestamp::from_millis(31);
-        let a = koru_store_core::Profile::new("A", Locale::default(), at).unwrap();
-        let b = koru_store_core::Profile::new("B", Locale::default(), at).unwrap();
-        let mut catalog = SqliteCatalog::in_memory().unwrap();
-        for profile in [&a, &b] {
-            catalog
-                .initialize_profile_units(
-                    profile,
-                    &IdentityManifest::create(profile)
-                        .unwrap()
-                        .export_snapshot()
-                        .unwrap(),
-                    &PrivateManifest::create(profile.id)
-                        .unwrap()
-                        .export_snapshot()
-                        .unwrap(),
-                )
-                .unwrap();
-        }
-        let workspace = koru_store_core::Workspace::new(b.id, "Held by B", at).unwrap();
-        catalog.put_workspace(&workspace).unwrap();
-        let unit = ProfileUnitRef::Personal {
-            owner: a.id,
-            workspace: workspace.id,
-        };
-        catalog
-            .commit_profile_unit(
-                unit,
-                &PersonalManifest::create(a.id, workspace.id)
-                    .unwrap()
-                    .export_snapshot()
-                    .unwrap(),
-            )
-            .unwrap();
-        let store = Store::open(
-            catalog,
-            SqliteBackend::new(std::path::Path::new("unused-admission-root")),
+        let mut store = Store::open(
+            SqliteCatalog::in_memory().unwrap(),
+            SqliteBackend::in_memory(),
         )
         .unwrap();
+        let a = store
+            .create_profile("A", None, None, Locale::default(), at)
+            .unwrap();
+        let b = store
+            .create_profile("B", None, None, Locale::default(), at)
+            .unwrap();
+        let workspace = store.create_workspace(b.id, "Held by B", at).unwrap().id;
+        for (subject, revision) in [
+            (TransportSubject::Profile(a.id), 1),
+            (TransportSubject::Profile(b.id), 1),
+            (TransportSubject::Workspace(workspace), 1),
+        ] {
+            store
+                .set_transport_mode(SetTransportMode {
+                    subject,
+                    expected_revision: revision,
+                    mode: TransportMode::P2p,
+                })
+                .unwrap();
+        }
+        let entity = koru_store_core::EntityRef::new(
+            "task",
+            workspace,
+            DocumentId::new(),
+            uuid::Uuid::new_v4(),
+        )
+        .unwrap();
+        store
+            .set_personal_attribute(
+                b.id,
+                &entity,
+                "k",
+                Some(&koru_store_core::PersonalAttributeValue::Text { text: "v".into() }),
+            )
+            .unwrap();
         let state = Arc::new(AppState::new(
             store,
             "<memory>".into(),
@@ -1069,31 +1219,27 @@ mod tests {
             incompatible: false,
             peer_protocol: Some(koru_sync_control::PEER_PROTOCOL_VERSION),
         };
+        assert!(adapter.root_catalog(&peer).unwrap().personal.is_empty());
+        assert_eq!(
+            adapter.personal_version(&peer, workspace).unwrap_err().code,
+            ROOT_SCOPE_NOT_BOUND
+        );
+        peer.authorized_workspaces.insert(workspace);
+        assert!(adapter.root_catalog(&peer).unwrap().personal.is_empty());
+        assert_eq!(
+            adapter
+                .personal_updates_since(&peer, workspace, &loro::VersionVector::new())
+                .unwrap_err()
+                .code,
+            ROOT_SCOPE_NOT_BOUND
+        );
+        // No v1 personal address is listed any more, for any grant.
         assert!(
             !adapter
                 .profiles(&peer)
                 .unwrap()
                 .iter()
-                .any(|row| row.unit == unit)
-        );
-        assert_eq!(
-            adapter.profile_version(&peer, unit).unwrap_err().code,
-            "unauthorized_workspace"
-        );
-        assert_eq!(
-            adapter
-                .apply_remote_profile_updates(&peer, unit, vec![])
-                .unwrap_err()
-                .code,
-            "unauthorized_workspace"
-        );
-        peer.authorized_workspaces.insert(workspace.id);
-        assert!(
-            adapter
-                .profiles(&peer)
-                .unwrap()
-                .iter()
-                .any(|row| row.unit == unit)
+                .any(|row| matches!(row.unit, ProfileUnitRef::Personal { .. }))
         );
         peer.authorized_profiles.clear();
         assert!(adapter.profiles(&peer).unwrap().is_empty());
@@ -1104,6 +1250,9 @@ mod tests {
                 .code,
             "unauthorized_profile"
         );
+        peer.all_data = true;
+        assert_eq!(adapter.root_catalog(&peer).unwrap().personal.len(), 1);
+        assert!(adapter.personal_version(&peer, workspace).is_ok());
     }
 
     #[test]
@@ -1132,6 +1281,13 @@ mod tests {
             "test".into(),
             at.millis(),
         ));
+        // §4.4: a Workspace at the seeded Local-only default admits no peer
+        // bytes; the person has opened this one.
+        open_transfers(
+            &state,
+            workspace,
+            koru_store_core::transport::TransportMode::P2p,
+        );
         let adapter = LiveReplicationStore::new(Arc::clone(&state));
         let endpoint = ReplicationEndpointSecret::generate();
         let peer = AuthenticatedPeer {
@@ -1325,8 +1481,10 @@ mod tests {
     }
 
     /// **A Local-only Workspace advertises nothing, serves nothing, admits
-    /// nothing** — and still answers for its documents, because Local-only is a
-    /// statement about what leaves this device, not a broken adapter.
+    /// nothing** — its documents included since protocol 6 (root-catalog
+    /// TECHNICAL.final §3.5, §4.4: nothing about the subject enters or leaves
+    /// this device over the peer path). Still not a broken adapter: the
+    /// refusal has the blob contract's own name.
     #[test]
     fn a_local_only_workspace_advertises_serves_and_admits_no_blob() {
         use koru_store_core::transport::{TransportMode, TransportSubject};
@@ -1351,12 +1509,15 @@ mod tests {
             ])
             .unwrap();
 
-        // 1. Advertising.
-        let inventory = adapter.inventory(&peer, workspace).unwrap();
-        assert!(inventory.blobs.is_empty(), "a closed Workspace advertised");
-        assert!(
-            !inventory.documents.is_empty(),
-            "documents are a different question and are not this plan's"
+        // 1. Advertising: not listed, not served as an inventory at all.
+        assert_eq!(
+            adapter.inventory(&peer, workspace).unwrap_err().code,
+            koru_cloud_blob::BlobCode::ModeRefusesTransport.as_str()
+        );
+        assert!(adapter.catalog(&peer).unwrap().is_empty());
+        assert_eq!(
+            adapter.admit_peer_subject(workspace).unwrap_err().code,
+            koru_cloud_blob::BlobCode::ModeRefusesTransport.as_str()
         );
 
         // 3. Serving.
@@ -1385,6 +1546,76 @@ mod tests {
                 .unwrap_err()
                 .code,
             koru_cloud_blob::BlobCode::ModeRefusesTransport.as_str()
+        );
+    }
+
+    /// **The same rule stated as the privacy rule it is** (root-catalog
+    /// TECHNICAL.final §3.5 decision 5, §4.4): a Local-only Workspace is not
+    /// *described* to a peer — not its name, not its placement Profile's
+    /// identity, not its manifest id, not its document list — and the
+    /// strongest grant there is does not change that, because `all_data` is
+    /// authorization and not a transport-policy override.
+    ///
+    /// The paired assertion on the phone's adapter is
+    /// `koru_mobile_host`'s `a_local_only_workspace_is_described_to_no_peer`;
+    /// both go through `root_exchange::admit_peer_description` so the two
+    /// answering adapters cannot keep different halves of the rule.
+    #[test]
+    fn a_local_only_workspace_is_described_to_no_peer() {
+        use koru_store_core::transport::TransportMode;
+        let (_dir, state, adapter, _uuid_peer, profile, workspace, _blob) = peer_blob_fixture();
+        let document = state
+            .store
+            .lock()
+            .unwrap()
+            .create_document(
+                workspace,
+                "Plan",
+                "page",
+                None,
+                None,
+                Timestamp::from_millis(1_770_000_000_001),
+            )
+            .unwrap()
+            .0;
+        let endpoint = ReplicationEndpointSecret::generate();
+        let all_data = AuthenticatedPeer {
+            relationship_id: RelationshipId::new(),
+            device_id: DeviceId::new(),
+            endpoint_id: endpoint.endpoint_id(),
+            all_data: true,
+            authorized_profiles: [profile].into_iter().collect(),
+            authorized_workspaces: [workspace].into_iter().collect(),
+            authorization_fence: koru_replication::protocol::AuthorizationFence::active(),
+            display_name: None,
+            incompatible: false,
+            peer_protocol: Some(koru_sync_control::PEER_PROTOCOL_VERSION),
+        };
+
+        // Open first, so the assertions below are about the mode and not
+        // about a fixture that never worked: the full description crosses.
+        open_transfers(&state, workspace, TransportMode::P2p);
+        let described = adapter.inventory(&all_data, workspace).unwrap();
+        assert_eq!(described.replica.workspace_name, "W");
+        assert!(
+            described
+                .documents
+                .iter()
+                .any(|entry| entry.document_id == document)
+        );
+        assert_eq!(adapter.catalog(&all_data).unwrap().len(), 1);
+        assert!(!adapter.profiles(&all_data).unwrap().is_empty());
+
+        // Now the person closes it. Nothing about the subject leaves.
+        open_transfers(&state, workspace, TransportMode::LocalOnly);
+        assert!(
+            adapter.catalog(&all_data).unwrap().is_empty(),
+            "withheld by absence: a peer must not learn there is something it is not told"
+        );
+        assert!(adapter.profiles(&all_data).unwrap().is_empty());
+        assert_eq!(
+            adapter.inventory(&all_data, workspace).unwrap_err().code,
+            koru_replication::protocol::MODE_REFUSES_TRANSPORT
         );
     }
 
@@ -1429,11 +1660,8 @@ mod tests {
         );
 
         assert!(
-            adapter
-                .inventory(&peer, workspace)
-                .unwrap()
-                .blobs
-                .is_empty()
+            adapter.inventory(&peer, workspace).is_err(),
+            "the Profile ceiling closes the Workspace's whole peer path"
         );
         assert!(
             adapter
@@ -1570,9 +1798,37 @@ mod tests {
         assert_eq!(inventory.blobs, [blob.clone()]);
         assert_eq!(inventory.replica.profile_icon.as_deref(), Some("🔬"));
         assert_eq!(inventory.replica.profile_color.as_deref(), Some("teal"));
+        // Protocol 6: the same person's device learns placement from the
+        // root units and the Profile from its identity unit before any
+        // content is provisioned; a descriptor alone is pending.
+        assert_eq!(
+            target
+                .provision_replica(&peer, &inventory.replica)
+                .unwrap_err()
+                .code,
+            koru_replication::protocol::PLACEMENT_PENDING
+        );
+        assert!(target.bind_root_scope(&peer).unwrap());
+        for remote in source.root_catalog(&peer).unwrap().units {
+            let bytes = source
+                .root_unit_updates_since(&peer, remote.unit, &loro::VersionVector::new())
+                .unwrap();
+            target
+                .apply_remote_root_updates(&peer, remote.unit, vec![bytes], None)
+                .unwrap();
+        }
+        for state in source.profiles(&peer).unwrap() {
+            if matches!(
+                state.unit,
+                koru_store_core::profile_units::ProfileUnitRef::Identity { .. }
+            ) {
+                target.provision_profile(&peer, &state).unwrap();
+            }
+        }
+        let _ = catalog_changes.borrow_and_update();
         target.provision_replica(&peer, &inventory.replica).unwrap();
         assert!(catalog_changes.has_changed().unwrap());
-        assert_eq!(*catalog_changes.borrow_and_update(), 1);
+        let _ = catalog_changes.borrow_and_update();
         target.provision_replica(&peer, &inventory.replica).unwrap();
         assert!(
             !catalog_changes.has_changed().unwrap(),
@@ -1643,7 +1899,20 @@ mod tests {
         assert!(source_text.contains("windows"));
         assert!(source_text.contains("mobile"));
 
+        // Lifecycle is a root fact since catalog 13: the Trash travels in
+        // W's unit, and the manifest's deletion hint is ignored by a device
+        // that holds the unit.
         let manifest = inventory.replica.manifest_document;
+        let unit = koru_store_core::root_catalog::CatalogUnitRef::Workspace { workspace };
+        let exchange_root = || {
+            let local =
+                loro::VersionVector::decode(&target.root_unit_version(&peer, unit).unwrap())
+                    .unwrap();
+            let bytes = source.root_unit_updates_since(&peer, unit, &local).unwrap();
+            target
+                .apply_remote_root_updates(&peer, unit, vec![bytes], None)
+                .unwrap();
+        };
         source_state
             .store
             .lock()
@@ -1651,8 +1920,30 @@ mod tests {
             .delete_workspace(workspace, Timestamp::from_millis(at.millis() + 1))
             .unwrap();
         exchange_document(&source, &target, &peer, workspace, manifest);
+        assert!(
+            target_state
+                .store
+                .lock()
+                .unwrap()
+                .workspace_including_deleted(workspace)
+                .unwrap()
+                .deleted_at
+                .is_none(),
+            "a manifest hint does not trash a Workspace that has a unit"
+        );
+        let _ = catalog_changes.borrow_and_update();
+        exchange_root();
         assert!(catalog_changes.has_changed().unwrap());
-        assert_eq!(*catalog_changes.borrow_and_update(), 2);
+        assert!(
+            target_state
+                .store
+                .lock()
+                .unwrap()
+                .workspace_including_deleted(workspace)
+                .unwrap()
+                .deleted_at
+                .is_some()
+        );
 
         source_state
             .store
@@ -1660,9 +1951,19 @@ mod tests {
             .unwrap()
             .restore_workspace(workspace)
             .unwrap();
-        exchange_document(&source, &target, &peer, workspace, manifest);
+        let _ = catalog_changes.borrow_and_update();
+        exchange_root();
         assert!(catalog_changes.has_changed().unwrap());
-        assert_eq!(*catalog_changes.borrow_and_update(), 3);
+        assert!(
+            target_state
+                .store
+                .lock()
+                .unwrap()
+                .workspace_including_deleted(workspace)
+                .unwrap()
+                .deleted_at
+                .is_none()
+        );
     }
 
     #[test]
@@ -1832,6 +2133,11 @@ mod tests {
             "test".into(),
             at.millis(),
         ));
+        open_transfers(
+            &state,
+            workspace,
+            koru_store_core::transport::TransportMode::P2p,
+        );
         let adapter = LiveReplicationStore::new(Arc::clone(&state));
         let endpoint = ReplicationEndpointSecret::generate();
         let peer = AuthenticatedPeer {
@@ -1870,6 +2176,24 @@ mod tests {
             .create_profile("Same person", None, None, Locale::parse("en").unwrap(), at)
             .unwrap();
         let workspace = store.create_workspace(from.id, "Move me", at).unwrap().id;
+        // Both Profiles open on this device: the grant, not the mode, is
+        // what this test turns on.
+        for profile in [from.id, to.id] {
+            let group = store.transport_mode_group(profile).unwrap();
+            let mut requests = vec![koru_store_core::transport::SetTransportMode {
+                subject: group.profile.subject,
+                expected_revision: group.profile.revision,
+                mode: koru_store_core::transport::TransportMode::P2p,
+            }];
+            for child in &group.children {
+                requests.push(koru_store_core::transport::SetTransportMode {
+                    subject: child.subject,
+                    expected_revision: child.revision,
+                    mode: koru_store_core::transport::TransportMode::P2p,
+                });
+            }
+            store.set_transport_modes(&requests).unwrap();
+        }
         let state = Arc::new(AppState::new(
             store,
             dir.path().display().to_string(),
@@ -1917,3 +2241,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod root_tests;

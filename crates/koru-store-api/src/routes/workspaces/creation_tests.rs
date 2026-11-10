@@ -152,7 +152,10 @@ async fn selection_requires_management_but_authority_is_read_only() {
         serde_json::from_slice(&to_bytes(read.into_body(), usize::MAX).await.unwrap()).unwrap();
     assert!(rows.is_empty());
     assert!(state.store.lock().unwrap().workspaces().unwrap().is_empty());
-    for expected in ["created", "active"] {
+    // Management is the scope the route takes, but selection creates nothing
+    // (root-catalog Plan 1.3): an empty Profile answers `empty`, and asking
+    // again does not mint one behind the grant.
+    for _ in 0..2 {
         let response = app
             .clone()
             .oneshot(selection_request(owner, Scope::ManageWorkspaces, false))
@@ -162,9 +165,9 @@ async fn selection_requires_management_but_authority_is_read_only() {
         let body: serde_json::Value =
             serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
                 .unwrap();
-        assert_eq!(body["state"], expected);
+        assert_eq!(body["state"], "empty");
     }
-    assert_eq!(state.store.lock().unwrap().workspaces().unwrap().len(), 1);
+    assert!(state.store.lock().unwrap().workspaces().unwrap().is_empty());
 }
 
 #[tokio::test]

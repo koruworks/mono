@@ -35,14 +35,15 @@
 //! (`koru_export_markdown::message_text`); a recalled or queued message
 //! brings its quotes back as chips.
 //!
-//! ## Skills
+//! ## Agent skills and commands
 //!
 //! A skill of the chat's agent picked under `$` (koru-ai D121, [`crate::skills`])
 //! is a **skill chip** where the `$` was typed — the editor's pill under
 //! [`koru_core::attributes::ROLE_SKILL`], holding the skill's name. At send
-//! it is `$name` in the text and its name in [`ComposedMessage::skills`]. A
-//! recalled message brings `$name` back as text, not as a chip: nothing
-//! stores which words were chips.
+//! its selected name is stored as a durable skill link and in
+//! [`ComposedMessage::skills`]. A command selected under `/` is a command
+//! pill and link at the same position. Recall restores both kinds as pills;
+//! typed `$name` and `/name` words keep their literal meaning.
 //!
 //! ## Where it is drawn
 //!
@@ -112,7 +113,7 @@ pub struct ComposedMessage {
     /// UC15 a turn sends the whole document.
     pub documents: Vec<(koru_ai_core::DocumentId, String)>,
     /// Every skill chip's name (koru-ai D121), in reading order, each once;
-    /// the text says `$name` where each is.
+    /// Markdown keeps its selected-link identity until prompt rendering.
     pub skills: Vec<String>,
 }
 
@@ -121,6 +122,7 @@ pub struct ComposedMessage {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DollarToken {
     pub(crate) row: NodeId,
+    pub(crate) marker: char,
     /// The `$`'s byte offset in the row's text.
     pub(crate) start: usize,
     /// The caret's: where the token ends.
@@ -138,10 +140,20 @@ fn name_char(character: char) -> bool {
 /// the line or after a space, then name characters up to the caret. Its
 /// byte offset and what follows it; `None` when the caret is not in one —
 /// `a$b`, `$$`, or a price like `5$` is not a token.
+#[cfg(test)]
 pub(crate) fn dollar_before(text: &str, caret: usize) -> Option<(usize, &str)> {
+    trigger_before(text, caret, '$')
+}
+
+#[cfg(test)]
+pub(crate) fn slash_before(text: &str, caret: usize) -> Option<(usize, &str)> {
+    trigger_before(text, caret, '/')
+}
+
+fn trigger_before(text: &str, caret: usize, marker: char) -> Option<(usize, &str)> {
     let head = text.get(..caret)?;
     let start = head.rfind(|character: char| !name_char(character))?;
-    if !head[start..].starts_with('$') {
+    if !head[start..].starts_with(marker) {
         return None;
     }
     if head[..start]
@@ -191,11 +203,13 @@ pub struct ChatComposer {
     current_workspace: Option<WorkspaceId>,
     /// The document the host is showing, offered to a bare `@#`.
     current_document: Option<(koru_core::DocumentId, String)>,
+    recent_documents: Vec<(koru_core::DocumentId, String)>,
     /// The box the text sits in, in host coordinates, padding included.
     text: Rect,
     /// Where host coordinates put the editor's view origin.
     origin: (f32, f32),
     open_request: Option<koru_link::KoruLink>,
+    place_request: Option<koru_link::KoruLink>,
 }
 
 impl ChatComposer {
@@ -212,9 +226,11 @@ impl ChatComposer {
             catalog_known: false,
             current_workspace: None,
             current_document: None,
+            recent_documents: Vec::new(),
             text: Rect::new(0.0, 0.0, 1.0, 1.0),
             origin: (0.0, 0.0),
             open_request: None,
+            place_request: None,
         }
     }
 
@@ -272,6 +288,14 @@ impl ChatComposer {
     /// **The `$` the caret is in, if any** (koru-ai D121): not while a
     /// dictation is provisional, and not across a selection.
     pub(crate) fn dollar_token(&self) -> Option<DollarToken> {
+        self.name_token('$')
+    }
+
+    pub(crate) fn slash_token(&self) -> Option<DollarToken> {
+        self.name_token('/')
+    }
+
+    fn name_token(&self, marker: char) -> Option<DollarToken> {
         if self.composing() {
             return None;
         }
@@ -280,9 +304,10 @@ impl ChatComposer {
             return None;
         }
         let caret = paragraph.caret();
-        let (start, query) = dollar_before(&paragraph.text, caret)?;
+        let (start, query) = trigger_before(&paragraph.text, caret, marker)?;
         Some(DollarToken {
             row: paragraph.id,
+            marker,
             start,
             end: caret,
             query: query.to_owned(),
@@ -295,6 +320,27 @@ impl ChatComposer {
     /// Backspace takes the chip back whole. `false` when the token is no
     /// longer there.
     pub(crate) fn insert_skill(&mut self, token: &DollarToken, name: &str, label: &str) -> bool {
+        if token.marker != '$' && token.marker != '/' {
+            return false;
+        }
+        self.insert_named(token, skill_attr(name, label))
+    }
+
+    pub(crate) fn insert_command(&mut self, token: &DollarToken, name: &str, label: &str) -> bool {
+        if token.marker != '/' {
+            return false;
+        }
+        self.insert_named(
+            token,
+            Attr::labelled(
+                koru_core::attributes::ROLE_COMMAND,
+                AttrValue::Text(name.to_owned()),
+                label.to_owned(),
+            ),
+        )
+    }
+
+    fn insert_named(&mut self, token: &DollarToken, attr: Attr) -> bool {
         let current = self
             .ws
             .read(token.row)
@@ -302,7 +348,7 @@ impl ChatComposer {
             .and_then(|node| node.content.as_text().map(str::to_owned));
         if current
             .as_deref()
-            .and_then(|text| dollar_before(text, token.end))
+            .and_then(|text| trigger_before(text, token.end, token.marker))
             .is_none_or(|(start, _)| start != token.start)
         {
             return false;
@@ -313,10 +359,7 @@ impl ChatComposer {
             .ws
             .delete_text(token.row, token.start..token.end)
             .is_err()
-            || self
-                .ws
-                .insert_pill(token.row, token.start, &skill_attr(name, label))
-                .is_err()
+            || self.ws.insert_pill(token.row, token.start, &attr).is_err()
         {
             self.ws.checkpoint();
             return false;
@@ -428,19 +471,27 @@ impl ChatComposer {
             };
             let mut from = 0;
             for found in koru_link::wrapped(line) {
-                let koru_link::KoruLink::Document { document, node } = found.link else {
-                    continue;
+                let attr = match found.link {
+                    koru_link::KoruLink::Document { document, node } => {
+                        let reference = koru_core::DocumentReference {
+                            document: koru_core::DocumentId::from_uuid(document),
+                            node: node.map(NodeId::from_uuid),
+                        };
+                        Attr::labelled(
+                            "document",
+                            AttrValue::Document(reference),
+                            title(koru_ai_core::DocumentId::from_uuid(document)),
+                        )
+                    }
+                    koru_link::KoruLink::Skill { name } => skill_attr(&name, &name),
+                    koru_link::KoruLink::Command { name } => Attr::labelled(
+                        koru_core::attributes::ROLE_COMMAND,
+                        AttrValue::Text(name.clone()),
+                        name,
+                    ),
+                    _ => continue,
                 };
                 at += insert_text(&mut self.ws, row, at, &line[from..found.range.start]);
-                let reference = koru_core::DocumentReference {
-                    document: koru_core::DocumentId::from_uuid(document),
-                    node: node.map(NodeId::from_uuid),
-                };
-                let attr = Attr::labelled(
-                    "document",
-                    AttrValue::Document(reference),
-                    title(koru_ai_core::DocumentId::from_uuid(document)),
-                );
                 if self.ws.insert_pill(row, at, &attr).is_ok() {
                     at += koru_core::ANCHOR.len_utf8();
                 }
@@ -554,6 +605,67 @@ impl ChatComposer {
         true
     }
 
+    /// Add a recent document at the caret, using the same stored pill as an
+    /// `@` picker choice. The menu supplies only a title and identity; it
+    /// never reads the document on the window thread.
+    pub(crate) fn insert_document(
+        &mut self,
+        document: koru_ai_core::DocumentId,
+        title: &str,
+    ) -> bool {
+        let first = self
+            .ws
+            .children(Parent::Node(self.root))
+            .ok()
+            .and_then(|rows| rows.first().copied());
+        let Some((row, at)) = self
+            .editor
+            .body
+            .focused()
+            .map(|paragraph| (paragraph.id, paragraph.caret()))
+            .or(first.map(|row| (row, 0)))
+        else {
+            return false;
+        };
+        let attr = Attr::labelled(
+            "document",
+            AttrValue::Document(koru_core::DocumentReference {
+                document: koru_core::DocumentId::from_uuid(document.as_uuid()),
+                node: None,
+            }),
+            title.to_owned(),
+        );
+        self.ws.checkpoint();
+        self.ws.begin_group();
+        if self.ws.insert_pill(row, at, &attr).is_err() {
+            self.ws.checkpoint();
+            return false;
+        }
+        let after = at + koru_core::ANCHOR.len_utf8();
+        if !self
+            .ws
+            .read(row)
+            .ok()
+            .and_then(|node| {
+                node.content
+                    .as_text()
+                    .map(|text| text[after..].starts_with(' '))
+            })
+            .unwrap_or(false)
+        {
+            let _ = self.ws.insert_text(row, after, " ");
+        }
+        self.ws.checkpoint();
+        self.editor.view.active = true;
+        self.editor.body.rebuild(&self.ws);
+        self.editor.body.focus_on(row);
+        self.editor.place_caret(after + 1);
+        self.editor.view.desired_x = None;
+        self.editor.settle();
+        self.editor.scroll_to_caret();
+        true
+    }
+
     /// Whether the caret is on the message's first visual line — where Up
     /// leaves the text instead of moving inside it.
     pub(crate) fn caret_on_first_line(&self) -> bool {
@@ -628,6 +740,36 @@ impl ChatComposer {
             document.map(|(id, title)| (koru_core::DocumentId::from_uuid(id.as_uuid()), title));
     }
 
+    pub(crate) fn set_recent_documents(
+        &mut self,
+        documents: Vec<(koru_core::DocumentId, String)>,
+    ) -> bool {
+        if self.recent_documents == documents {
+            return false;
+        }
+        self.recent_documents = documents;
+        if !self.recent_documents.is_empty()
+            && matches!(&self.editor.view.overlay, Overlay::Entity(picker) if picker.document_query.trim().is_empty())
+        {
+            let hits = self
+                .recent_documents
+                .iter()
+                .map(|(document, title)| DocumentChoice {
+                    target: DocumentTarget {
+                        document: *document,
+                        node: None,
+                    },
+                    title: title.clone(),
+                    breadcrumb: String::new(),
+                    is_file: false,
+                })
+                .collect();
+            self.editor.set_entity_recents(hits)
+        } else {
+            false
+        }
+    }
+
     /// A chip was clicked, in the composer or in a sent message: the document
     /// the host should open.
     /// A paste found no text: the surface reads the clipboard's picture or
@@ -645,6 +787,14 @@ impl ChatComposer {
 
     pub(crate) fn take_open_request(&mut self) -> Option<koru_link::KoruLink> {
         self.open_request.take()
+    }
+
+    pub(crate) fn take_place_request(&mut self) -> Option<koru_link::KoruLink> {
+        self.place_request.take()
+    }
+
+    pub(crate) fn set_mods(&mut self, mods: ModifiersState) {
+        self.editor.view.mods = mods;
     }
 
     // ------------------------------------------------------------ geometry
@@ -770,6 +920,13 @@ impl ChatComposer {
         self.editor.mouse_move(vx, vy)
     }
 
+    pub(crate) fn over_inline_pill(&self) -> bool {
+        matches!(
+            self.editor.view.hover,
+            Some(koru_editor::view_state::Hover::Pill { .. })
+        )
+    }
+
     pub(crate) fn mouse_up(&mut self) -> bool {
         let changed = self.editor.mouse_up(&mut self.ws);
         self.sync();
@@ -858,6 +1015,15 @@ impl ChatComposer {
             });
             changed = true;
         }
+        if let Some(koru_editor::view_state::Reference::Document(target)) =
+            self.editor.take_wants_place_chooser()
+        {
+            self.place_request = Some(koru_link::KoruLink::Document {
+                document: target.document.as_uuid(),
+                node: target.node.map(|node| node.as_uuid()),
+            });
+            changed = true;
+        }
         // Doors the policy keeps shut; drained so a stale one cannot linger.
         self.editor.view.wants_open = None;
         self.editor.view.wants_toast = None;
@@ -899,8 +1065,30 @@ impl ChatComposer {
                 is_file: false,
             });
         changed |= self.editor.set_entity_current_document(here);
+        if !self.recent_documents.is_empty()
+            && matches!(&self.editor.view.overlay, Overlay::Entity(picker) if picker.document_query.trim().is_empty())
+        {
+            let hits = self
+                .recent_documents
+                .iter()
+                .map(|(document, title)| DocumentChoice {
+                    target: DocumentTarget {
+                        document: *document,
+                        node: None,
+                    },
+                    title: title.clone(),
+                    breadcrumb: String::new(),
+                    is_file: false,
+                })
+                .collect();
+            changed |= self.editor.set_entity_recents(hits);
+        }
         let search = self.search.as_mut().expect("started above");
-        if let Some(request) = self.editor.take_entity_search_request() {
+        if let Some(request) = self
+            .editor
+            .take_entity_search_request()
+            .and_then(|r| r.with_document_fallback(!self.recent_documents.is_empty()))
+        {
             let scope = request
                 .workspaces
                 .into_iter()
@@ -958,16 +1146,20 @@ impl ChatComposer {
                 .map(|hit| DocumentChoice {
                     target: DocumentTarget {
                         document: koru_core::DocumentId::from_uuid(hit.document.as_uuid()),
-                        node: None,
+                        node: hit.node.as_deref().and_then(NodeId::parse),
                     },
                     title: hit.title,
                     breadcrumb: hit.breadcrumb,
                     is_file: false,
                 })
                 .collect();
-            changed |= self
-                .editor
-                .set_entity_search_results(hits, update.unavailable);
+            if self.recent_documents.is_empty()
+                || !matches!(&self.editor.view.overlay, Overlay::Entity(picker) if picker.document_query.trim().is_empty())
+            {
+                changed |= self
+                    .editor
+                    .set_entity_search_results(hits, update.unavailable);
+            }
             changed |= self.sync();
         }
         changed
@@ -1072,8 +1264,9 @@ pub(crate) fn recalled_rows(markdown: &str) -> Vec<Recalled<'_>> {
 /// Insert `text` into `row` at `at`: the bytes it added, none for an empty
 /// piece or a refusal.
 fn insert_text(ws: &mut WorkspaceDoc, row: NodeId, at: usize, text: &str) -> usize {
-    if !text.is_empty() && ws.insert_text(row, at, text).is_ok() {
-        text.len()
+    let plain = koru_link::unescape_literal_links(text);
+    if !plain.is_empty() && ws.insert_text(row, at, &plain).is_ok() {
+        plain.len()
     } else {
         0
     }

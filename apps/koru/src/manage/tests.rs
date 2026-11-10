@@ -676,3 +676,158 @@ fn a_screen_reader_hears_the_nav_as_options_and_the_page_as_a_heading() {
     assert!(view.accessibility_action(&cx, devices, accesskit::Action::Focus));
     assert_eq!(view.accessible_focus(&cx), devices);
 }
+
+// --------------------------------------- recovery (root catalog Plan 1.3)
+
+/// The two recovery lists sit on a Profile's page only while the controller
+/// has something in them; their *Restore* buttons ask the controller for the
+/// batch restore, and a reader hears which Profile each is about.
+#[test]
+fn recovery_sections_appear_with_something_to_recover_and_restore_asks_the_controller() {
+    use koru_workspaces_ui::{Authorization, DeletedProfileRow, Recovery, UnassignedRow};
+    let w: SharedWorkspaces = std::rc::Rc::new(std::cell::RefCell::new(
+        koru_workspaces_ui::WorkspacesController::new(),
+    ));
+    let mut view = ManageView::with_workspace_controller(w.clone());
+    let personal = profile("Personal");
+    view.delegate(|c| {
+        c.take_request();
+        c.set_profiles(vec![personal.clone()], personal.id, &[])
+    });
+    View::set_viewport(&mut view, 1000.0, 700.0);
+    view.show(Page::Profile(personal.id));
+    assert!(
+        view.laid().recovery.is_none(),
+        "nothing to recover, no section"
+    );
+
+    let former = koru_store_core::ids::ProfileId::new();
+    let deletion = koru_store_core::ids::DeletionId::new();
+    let orphan = koru_store_core::ids::WorkspaceId::new();
+    w.borrow_mut().set_authorization(Authorization::Vouched);
+    w.borrow_mut().fixture_recovery(Recovery {
+        unassigned: vec![UnassignedRow {
+            id: orphan,
+            name: "Orphan".into(),
+            icon: None,
+            color: None,
+            former_profile: Some(former),
+            reason: koru_api_client::UnassignedReason::ProfileDeleted,
+        }],
+        deleted_profiles: vec![DeletedProfileRow {
+            profile: former,
+            name: Some("Work".into()),
+            deletion,
+            at_ms: 1_000,
+            retention_ms: 30,
+            targets: 2,
+            expired_or_purged: 1,
+        }],
+    });
+    view.refresh_workspaces();
+    let laid = view.laid().clone();
+    let section = laid.recovery.as_ref().expect("both lists");
+    let unassigned = section.unassigned.as_ref().expect("the Unassigned list");
+    assert_eq!(unassigned.label.1, "Unassigned (from deleted Profile)");
+    assert_eq!(unassigned.rows[0].full_name, "Orphan");
+    let deleted = section.deleted.as_ref().expect("the Deleted profiles list");
+    assert_eq!(deleted.label.1, "Deleted profiles");
+    assert_eq!(deleted.rows[0].full_name, "Work");
+    assert!(
+        deleted.rows[0].sub.1.contains("2 workspaces")
+            && deleted.rows[0].sub.1.contains("1 no longer available"),
+        "{}",
+        deleted.rows[0].sub.1
+    );
+    // Under the Workspaces section, above *Delete profile…*.
+    let workspaces = laid.workspaces.as_ref().unwrap().rect;
+    assert!(section.rect.y >= workspaces.y + workspaces.h);
+    assert!(section.rect.y + section.rect.h <= laid.footer.unwrap().y);
+    // The controls are in keyboard order with the rest of the page.
+    let controls: Vec<_> = laid.controls.iter().map(|placed| placed.control).collect();
+    let more = controls
+        .iter()
+        .position(|c| *c == profile_page::Control::UnassignedMore(orphan))
+        .expect("the row's `•••`");
+    let restore_unassigned = controls
+        .iter()
+        .position(|c| *c == profile_page::Control::RestoreUnassignedProfile(orphan))
+        .expect("*Restore Profile*");
+    let restore_deleted = controls
+        .iter()
+        .position(|c| {
+            *c == profile_page::Control::RestoreDeletedProfile(workspaces::app_profile(former))
+        })
+        .expect("*Restore*");
+    assert!(more < restore_deleted && restore_unassigned < restore_deleted);
+    assert!(
+        laid.disabled.is_empty(),
+        "vouched: every restore may be pressed"
+    );
+
+    // The `•••` asks the window for the workspace menu — the destination
+    // picker — and *Restore* asks the controller for the batch restore.
+    let rect = laid
+        .placed(profile_page::Control::UnassignedMore(orphan))
+        .unwrap()
+        .rect;
+    assert!(press(&mut view, rect));
+    assert!(matches!(
+        view.take_request(),
+        Some(Request::WorkspaceMenu { workspace, .. }) if workspace == workspaces::app_workspace(orphan)
+    ));
+    let rect = laid
+        .placed(profile_page::Control::RestoreDeletedProfile(
+            workspaces::app_profile(former),
+        ))
+        .unwrap()
+        .rect;
+    assert!(press(&mut view, rect));
+    assert!(w.borrow().has_pending(), "the restore is on its way");
+
+    // A reader hears the Profile a *Restore* brings back.
+    let cx = accessibility::Context {
+        window: WindowSlot::from_raw(1),
+        view: ViewSlot::from_raw(1),
+        area: Rect::new(0.0, 0.0, 1000.0, 700.0),
+    };
+    let tree = view.semantics(&cx);
+    fn labels(node: &koru_workspace_host::accessibility::SemanticNode, out: &mut Vec<String>) {
+        if let Some(label) = &node.label {
+            out.push(label.clone());
+        }
+        for child in &node.children {
+            labels(child, out);
+        }
+    }
+    let mut names = Vec::new();
+    labels(&tree, &mut names);
+    assert!(
+        names.iter().any(|name| name == "Restore: Work"),
+        "{names:?}"
+    );
+    assert!(
+        names.iter().any(|name| name == "Restore Profile"),
+        "{names:?}"
+    );
+    assert!(
+        names
+            .iter()
+            .any(|name| name == "Orphan, Unassigned (from deleted Profile)"),
+        "{names:?}"
+    );
+
+    // An unvouched window keeps the controls and dims them, as every other
+    // destructive row is dimmed, with the controller's reason.
+    w.borrow_mut().set_authorization(Authorization::Refused);
+    view.refresh_workspaces();
+    assert!(
+        view.laid()
+            .disabled
+            .contains(&profile_page::Control::RestoreUnassignedProfile(orphan))
+    );
+    // Gone from the catalog, gone from the page.
+    w.borrow_mut().fixture_recovery(Recovery::default());
+    view.refresh_workspaces();
+    assert!(view.laid().recovery.is_none());
+}

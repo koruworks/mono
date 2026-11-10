@@ -76,6 +76,8 @@ enum Command {
         name: String,
         attempt: u64,
     },
+    /// Restore a Profile deletion batch (root catalog §6.3).
+    RestoreProfile(ProfileId, koru_api_client::DeletionId),
     /// Ask whether this session may remove a workspace at all.
     Probe,
     /// The same question about moving one. Two probes, because a window can
@@ -398,6 +400,18 @@ impl WorkspaceLinks {
         ));
     }
 
+    pub(crate) fn restore_profile(
+        &self,
+        id: crate::CommandId,
+        profile: ProfileId,
+        deletion: koru_api_client::DeletionId,
+    ) {
+        self.send(Command::Keyed(
+            id,
+            Box::new(Command::RestoreProfile(profile, deletion)),
+        ));
+    }
+
     pub(crate) fn keep_profile(
         &self,
         id: crate::CommandId,
@@ -516,6 +530,11 @@ fn run(client: &Client, command: Command) -> Answer {
             result: client.store().ensure_live_workspace(owner, &name),
         },
         Command::Catalog => catalog_answer(client),
+        // The Store's own route, with this window's `destroy_workspaces`:
+        // the restore decides what the Trash contains, like a workspace's.
+        Command::RestoreProfile(profile, deletion) => {
+            Answer::ProfileRestored(client.store().restore_profile(profile, deletion))
+        }
         Command::KeepProfile(owner, attempt) => {
             Answer::ProfileKept(client.catalog().keep_profile(owner, attempt))
         }

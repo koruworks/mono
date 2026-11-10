@@ -7,7 +7,11 @@ const PE: &[u8] = b"MZ\x90\0\x03\0\0\0\x04\0\0\0\xFF\xFF";
 
 #[test]
 fn tokens_round_trip() {
-    for kind in [AttachmentKind::Image, AttachmentKind::File] {
+    for kind in [
+        AttachmentKind::Image,
+        AttachmentKind::File,
+        AttachmentKind::Folder,
+    ] {
         assert_eq!(AttachmentKind::parse(kind.as_token()), Some(kind));
     }
     for source in [
@@ -15,6 +19,7 @@ fn tokens_round_trip() {
         AttachmentSource::Drop,
         AttachmentSource::FilePicker,
         AttachmentSource::Workspace,
+        AttachmentSource::Path,
     ] {
         assert_eq!(AttachmentSource::parse(source.as_token()), Some(source));
     }

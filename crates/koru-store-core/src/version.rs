@@ -13,6 +13,8 @@
 //! | [`CATALOG_SCHEMA_VERSION`] | `catalog.db` gains a table or column |
 //! | [`WORKSPACE_SCHEMA_VERSION`] | `workspace.db` gains a table or column |
 //! | [`CRDT_SCHEMA_VERSION`] | the manifest's Loro shape changes |
+//! | [`PERSONAL_CRDT_SCHEMA_VERSION`], [`PERSONAL_V2_CRDT_SCHEMA_VERSION`] | the personal unit's header or scope rule changes |
+//! | [`CATALOG_UNIT_FORMAT_VERSION`] | a root-catalog unit's Loro shape changes |
 //! | [`BUNDLE_FORMAT_VERSION`] | the `.koru` bundle layout changes |
 //!
 //! **The rule the whole module exists for:** a newer release must never
@@ -50,8 +52,17 @@ pub const API_VERSION: u32 = 1;
 /// `local_transport_modes`, the device-local Local/P2P/Cloud choice per Profile
 /// and Workspace with the compare-and-set revision that orders it (D230, D249,
 /// migration 024). Seeded Local-only, and deliberately never replicated: two
-/// devices are *supposed* to disagree about this one.
-pub const CATALOG_SCHEMA_VERSION: i64 = 12;
+/// devices are *supposed* to disagree about this one. `13` adds the per-user
+/// root catalog (`docs/features/root-catalog/TECHNICAL.final.md` §4.2, §5):
+/// `root_catalog_units` and `root_catalog_overlays` keyed by user scope, the
+/// Workspace-scoped personal v2 rows `workspace_personal_crdts` with their
+/// re-keyed due index, and the migration receipts. The step seeds one unit
+/// per retained Profile and Workspace, migrates every `(Profile, Workspace)`
+/// personal history into its Workspace's v2 unit with normalized PeerIDs,
+/// and drops `profile_personal_crdts` and `profile_reminder_due` — all in one
+/// transaction, so a failure leaves a 12 that the next open retries
+/// (migration 025, part SQL and part Rust).
+pub const CATALOG_SCHEMA_VERSION: i64 = 13;
 
 /// `workspace.db`, held in SQLite's `PRAGMA user_version`.
 ///
@@ -106,8 +117,25 @@ pub const PROFILE_CRDT_SCHEMA_VERSION: i64 = 3;
 
 /// Independent fresh Profile identity, personal and private unit formats (D170).
 pub const PROFILE_IDENTITY_CRDT_SCHEMA_VERSION: i64 = 1;
+/// The personal unit as first shipped: scoped to `(owner Profile, Workspace)`
+/// and stamped with both ids. Still the version a legacy source is validated
+/// against before the root-catalog migration unions its history.
 pub const PERSONAL_CRDT_SCHEMA_VERSION: i64 = 1;
+/// The personal unit after the root-catalog migration
+/// (`docs/features/root-catalog/TECHNICAL.final.md` §5.1): scoped to the
+/// Workspace alone under a user scope that lives outside the document.
+/// `meta.owner_profile_id` may linger as history and is ignored for
+/// ownership. A newer value opens read-only through [`Compatibility`].
+pub const PERSONAL_V2_CRDT_SCHEMA_VERSION: i64 = 2;
 pub const PROFILE_PRIVATE_CRDT_SCHEMA_VERSION: i64 = 1;
+
+/// The root-catalog units' Loro shape (`docs/features/root-catalog/TECHNICAL.final.md`
+/// §4.2), stored as `meta.schema_version` in every Profile and Workspace
+/// catalog unit. `1` is the first format: `meta`, append-only `deletions`,
+/// `restores` and `purged` facts, and — on a Workspace unit — the one atomic
+/// `placement.current` register. Distinct from the personal versions because
+/// the catalog and the personal data of one Workspace evolve independently.
+pub const CATALOG_UNIT_FORMAT_VERSION: i64 = 1;
 
 /// The `.koru` bundle, stored as `format_version` in its `manifest.json`.
 pub const BUNDLE_FORMAT_VERSION: u32 = 2;

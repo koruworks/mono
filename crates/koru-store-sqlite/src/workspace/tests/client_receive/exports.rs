@@ -141,16 +141,20 @@ fn local_export_profiles_reuse_exact_committed_unit_snapshots_and_refuse_placeho
         workspace_id: CloudId::from_bytes(f.workspace.as_uuid().into_bytes()),
     };
     let budget = MemoryBudget::new(2 * transfer::MAX_PAYLOAD);
+    // Personal units are v2 (catalog 13). A complete v1 snapshot is still
+    // admitted on the v1 address — into the Workspace's v2 unit, through the
+    // migration's normalization — but nothing personal leaves on the v1
+    // carrier until Plan 2.1's negotiated exchange: the export is refused,
+    // before and after admission, rather than answered empty.
+    let fenced = |failure: &Failure| {
+        matches!(
+            failure,
+            Failure::Store(koru_store_core::Code::ProfileUnitScopeMismatch)
+        )
+    };
     assert!(
         client_store::version(&mut f.store, scope, personal, at(), |_, _, _| Ok(()))
-            .unwrap()
-            .is_empty()
-    );
-    assert!(
-        request(scope, personal, VersionVector::new(), &budget)
-            .run(&mut f.store, at(), |_, _, _| Ok(()))
-            .unwrap()
-            .is_none()
+            .is_err_and(|failure| fenced(&failure))
     );
     assert!(f.store.profile_unit_snapshot(personal_unit).is_err());
     let snapshot = PersonalManifest::create(f.profile, f.workspace)
@@ -160,6 +164,16 @@ fn local_export_profiles_reuse_exact_committed_unit_snapshots_and_refuse_placeho
     f.store
         .apply_profile_unit_updates(personal_unit, &[snapshot])
         .unwrap();
+    assert!(
+        client_store::version(&mut f.store, scope, personal, at(), |_, _, _| Ok(()))
+            .is_err_and(|failure| fenced(&failure))
+    );
+    assert!(
+        request(scope, personal, VersionVector::new(), &budget)
+            .run(&mut f.store, at(), |_, _, _| Ok(()))
+            .is_err_and(|failure| fenced(&failure))
+    );
+    assert_eq!(budget.used(), 0);
     for (unit, stored) in [
         (
             Unit::Identity { profile_id },
@@ -169,7 +183,6 @@ fn local_export_profiles_reuse_exact_committed_unit_snapshots_and_refuse_placeho
             Unit::Private { profile_id },
             ProfileUnitRef::Private { profile: f.profile },
         ),
-        (personal, personal_unit),
     ] {
         let exact = f.store.profile_unit_snapshot(stored).unwrap();
         let export = request(scope, unit, VersionVector::new(), &budget)

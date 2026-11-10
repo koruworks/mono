@@ -213,6 +213,16 @@ impl Client {
         self.server.update_chat_tool_policy(context, chat, request)
     }
 
+    pub fn add_chat_workspace_grants(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        request: koru_ai_wire::AddChatWorkspaceGrantsRequest,
+    ) -> Result<ChatToolPolicyResponse> {
+        self.server
+            .add_chat_workspace_grants(context, chat, request)
+    }
+
     pub fn read_chat_tool_policy(
         &self,
         context: RequestContext,
@@ -349,6 +359,36 @@ impl Client {
     ) -> Result<koru_ai_wire::ChatAttachmentResponse> {
         self.server
             .put_attachment(context, chat, attachment, upload)
+    }
+
+    pub fn restage_attachment(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        source: koru_ai_core::ChatAttachmentId,
+        request: koru_ai_wire::RestageAttachmentRequest,
+    ) -> Result<koru_ai_wire::ChatAttachmentResponse> {
+        self.server
+            .restage_attachment(context, chat, source, request)
+    }
+
+    pub fn reference_attachment(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        request: koru_ai_wire::ReferenceAttachmentRequest,
+    ) -> Result<koru_ai_wire::ChatAttachmentResponse> {
+        self.server.reference_attachment(context, chat, request)
+    }
+
+    pub fn from_workspace_attachment(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        request: koru_ai_wire::FromWorkspaceAttachmentRequest,
+    ) -> Result<koru_ai_wire::ChatAttachmentResponse> {
+        self.server
+            .from_workspace_attachment(context, chat, request)
     }
 
     pub fn remove_attachment(

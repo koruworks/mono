@@ -11,6 +11,7 @@ use koru_replication::cloud::{
 };
 use koru_store_core::{
     Locale, ProfileId, WorkspaceId,
+    personal_attributes::{EntityRef, PersonalAttributeValue},
     ports::UpdateOrigin,
     profile_units::{IdentityManifest, PersonalManifest, PrivateManifest, ProfileUnitRef},
     service::Store,
@@ -324,17 +325,6 @@ fn client_receive_profile_units_use_existing_atomic_catalog_commits() {
             ProfileUnitRef::Private { profile: f.profile },
             private.export_snapshot().unwrap(),
         ),
-        (
-            Unit::Personal {
-                profile_id,
-                workspace_id: CloudId::from_bytes(f.workspace.as_uuid().into_bytes()),
-            },
-            ProfileUnitRef::Personal {
-                owner: f.profile,
-                workspace: f.workspace,
-            },
-            personal.export_snapshot().unwrap(),
-        ),
     ];
     for (unit, stored_unit, bytes) in cases {
         let budget = MemoryBudget::new(64 * 1024 * 1024);
@@ -360,15 +350,54 @@ fn client_receive_profile_units_use_existing_atomic_catalog_commits() {
         let persisted = LoroDoc::new();
         persisted.import(&row.snapshot).unwrap();
         assert_eq!(persisted.oplog_vv(), source.oplog_vv());
-        if matches!(unit, Unit::Personal { .. }) {
-            // Existing typed readers materialize empty root containers without
-            // adding CRDT operations. Normalize those read-only roots before
-            // comparing deep values, not the version vectors above.
-            source.get_map("reminders");
-            source.get_map("personal_attributes");
-        }
         assert_eq!(persisted.get_deep_value(), source.get_deep_value());
     }
+
+    // **The v1 personal address holds no unit since catalog 13** (Plan 1.1,
+    // TECHNICAL.final §5.2 step 6). A *complete* v1 snapshot that still
+    // arrives is admitted into the Workspace's own v2 unit through the
+    // migration's PeerID normalization — so, unlike the two units above, the
+    // bytes are not kept as they were and nothing is listed under
+    // `ProfileUnitRef::Personal`; what has to survive is the content.
+    let entity =
+        EntityRef::new("node", f.workspace, f.document, DocumentId::new().as_uuid()).unwrap();
+    let note = PersonalAttributeValue::Text {
+        text: "legacy".into(),
+    };
+    personal
+        .set_personal_attribute(&entity, "note", &note)
+        .unwrap();
+    let unit = Unit::Personal {
+        profile_id,
+        workspace_id: CloudId::from_bytes(f.workspace.as_uuid().into_bytes()),
+    };
+    let budget = MemoryBudget::new(64 * 1024 * 1024);
+    let done = completed(scope, unit, personal.export_snapshot().unwrap(), &budget);
+    let receipt = client_store::receive(&mut f.store, scope, done, at(), |_, _, _| Ok(())).unwrap();
+    assert_ack(scope, unit, &receipt);
+    assert_eq!(
+        receipt.durable_sequence(),
+        None,
+        "Profile commit does not use workspace sequences"
+    );
+    assert_eq!(budget.used(), 0);
+    assert!(
+        f.store
+            .profile_unit_states(f.profile)
+            .unwrap()
+            .iter()
+            .all(|state| !matches!(state.unit, ProfileUnitRef::Personal { .. })),
+        "a personal unit was listed on the retired v1 address"
+    );
+    assert_eq!(
+        f.store
+            .personal_attributes(f.profile, &entity)
+            .unwrap()
+            .get("note"),
+        Some(&note),
+        "the legacy snapshot was admitted into the Workspace's v2 unit"
+    );
+
     assert_eq!(f.store.profile(f.profile).unwrap().name, "Cloud name");
     assert_eq!(
         f.store.personal_dictionary(f.profile).unwrap()["en"],

@@ -107,6 +107,7 @@ Chords are shown as this platform writes them.
 | `Ctrl+Shift+X` | Save diagram as… |
 | `Ctrl+K` | Link |
 | `Ctrl+Shift+Space` | Emoji |
+| `Ctrl+Space` | Search all workspaces in @ picker |
 | `Ctrl+D` | Delete line (children outdent) |
 | `Ctrl+C` | Copy |
 | `Ctrl+X` | Cut |

@@ -1,5 +1,15 @@
 // SPDX-License-Identifier: MPL-2.0
 
+//! One person's reminders and personal attributes for one Workspace.
+//!
+//! Two addresses, one content shape. A v1 unit is `(owner Profile,
+//! Workspace)` and stays strict against that pair, because a legacy source is
+//! validated by its own contract before it is migrated. A v2 unit is the
+//! Workspace alone: the owning user scope is the SQL row key the caller
+//! resolved from its validated binding, and it is never written into the
+//! document, so a Profile can be removed without hiding the data that
+//! followed its Workspace elsewhere.
+
 use super::content::ProfileContent;
 use super::*;
 use crate::ids::{ActionId, ReminderId};
@@ -8,32 +18,164 @@ use crate::reminders::{OccurrenceAction, ReminderReductionInput, ReminderRule, S
 use std::collections::{BTreeMap, BTreeSet};
 
 pub struct PersonalManifest {
-    pub(super) inner: UnitDoc,
+    pub(super) inner: UnitDoc<PersonalScope>,
+}
+impl std::fmt::Debug for PersonalManifest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PersonalManifest")
+            .field("scope", &self.inner.unit)
+            .field("version", &self.version())
+            .finish()
+    }
 }
 impl PersonalManifest {
+    /// A fresh v1 unit. Legacy storage only; new personal units are v2.
     pub fn create(owner: ProfileId, workspace: WorkspaceId) -> Result<Self> {
+        let unit = ProfileUnitRef::Personal { owner, workspace };
         Ok(Self {
-            inner: UnitDoc::fresh(ProfileUnitRef::Personal { owner, workspace })?,
-        })
-    }
-    pub fn from_snapshot(bytes: &[u8]) -> Result<Self> {
-        Ok(Self {
-            inner: UnitDoc::load(bytes, |owner, workspace| {
-                Ok(ProfileUnitRef::Personal {
-                    owner,
-                    workspace: workspace.ok_or_else(scope_mismatch)?,
-                })
+            inner: UnitDoc::fresh(PersonalScope::Legacy { owner, workspace }, |doc| {
+                unit.write_header(doc)
             })?,
         })
     }
-    pub fn owner(&self) -> ProfileId {
-        self.inner.unit.profile()
+
+    /// Load v1 bytes, strictly against the `(owner, workspace)` their header
+    /// names. A v2 document has no owner in its header and is refused here.
+    pub fn from_snapshot(bytes: &[u8]) -> Result<Self> {
+        Ok(Self {
+            inner: UnitDoc::load_with(bytes, |doc| {
+                let meta = doc.get_map("meta");
+                let owner = string(&meta, "owner_profile_id")
+                    .or_else(|| string(&meta, "profile_id"))
+                    .and_then(|id| ProfileId::parse(&id))
+                    .ok_or_else(|| corrupt("unit has no Profile scope"))?;
+                let workspace = string(&meta, "workspace_id")
+                    .and_then(|id| WorkspaceId::parse(&id))
+                    .ok_or_else(scope_mismatch)?;
+                Ok(PersonalScope::Legacy { owner, workspace })
+            })?,
+        })
+    }
+
+    /// A fresh v2 unit written by `writer_peer` from its first operation.
+    /// The header carries the format and the Workspace, nothing else: no
+    /// owner, no scope, no transport choice.
+    pub fn create_v2(workspace: WorkspaceId, writer_peer: u64) -> Result<Self> {
+        let unit = PersonalUnitRef { workspace };
+        Ok(Self {
+            inner: UnitDoc::fresh(PersonalScope::Workspace(unit), |doc| {
+                doc.set_peer_id(writer_peer).map_err(loro_failed)?;
+                let meta = doc.get_map("meta");
+                meta.insert("schema_version", PERSONAL_V2_CRDT_SCHEMA_VERSION)
+                    .map_err(loro_failed)?;
+                meta.insert("workspace_id", workspace.to_storage())
+                    .map_err(loro_failed)?;
+                Ok(())
+            })?,
+        })
+    }
+
+    /// Load v2 bytes for the Workspace the caller resolved under its user
+    /// scope. A v1 document is refused: its scope was a Profile pair, and the
+    /// migration — not a relabel — is what moves it to this address.
+    pub fn from_snapshot_v2(bytes: &[u8], expected_workspace: WorkspaceId) -> Result<Self> {
+        Ok(Self {
+            inner: UnitDoc::load(
+                bytes,
+                PersonalScope::Workspace(PersonalUnitRef {
+                    workspace: expected_workspace,
+                }),
+            )?,
+        })
+    }
+
+    /// The peer-exchange staging of a v2 unit (root-catalog TECHNICAL.final
+    /// §7.2): fork, apply, validate the complete candidate, and report a
+    /// frame with missing ancestors as [`Staged::Pending`] rather than as a
+    /// rejected transfer — the sender needs this unit's version to send the
+    /// gap. The held unit is untouched either way. The v1-era
+    /// [`Self::staged_import`] keeps its refusing contract for its callers.
+    pub fn stage_v2(&self, frames: &[Vec<u8>]) -> Result<Staged<Self>> {
+        if !matches!(self.inner.unit, PersonalScope::Workspace(_)) {
+            return Err(scope_mismatch());
+        }
+        Ok(self
+            .inner
+            .staged_import(frames)?
+            .map(|inner| Self { inner }))
+    }
+
+    /// A v2 unit this device did not hold, from a peer's frames: imported
+    /// into an empty document, so this replica authors nothing into a
+    /// history it only received, then validated as `workspace`'s v2 unit and
+    /// given `writer_peer` as the persisted writer every later local edit
+    /// uses. A frame with missing ancestors is [`Staged::Pending`].
+    pub fn v2_from_frames(
+        frames: &[Vec<u8>],
+        workspace: WorkspaceId,
+        writer_peer: u64,
+    ) -> Result<Staged<Self>> {
+        let doc = loro::LoroDoc::new();
+        for frame in frames {
+            let status = doc
+                .import(frame)
+                .map_err(|_| Error::bare(Code::CrdtRejected))?;
+            if status.pending.is_some() {
+                return Ok(Staged::Pending);
+            }
+        }
+        let bytes = doc
+            .export(loro::ExportMode::snapshot())
+            .map_err(|_| Error::bare(Code::StorageFailed))?;
+        let unit = Self::from_snapshot_v2(&bytes, workspace)?;
+        unit.set_peer_id(writer_peer)?;
+        Ok(Staged::Applied(unit))
+    }
+
+    pub fn scope(&self) -> PersonalScope {
+        self.inner.unit
+    }
+    /// The v1 wire address; `None` for a v2 unit, which has no owner.
+    pub fn unit(&self) -> Option<ProfileUnitRef> {
+        self.inner.unit.legacy_unit()
+    }
+    /// The v1 owner; `None` for a v2 unit. Never read `meta.owner_profile_id`
+    /// for this: on a v2 document that key is history, not ownership.
+    pub fn owner(&self) -> Option<ProfileId> {
+        match self.inner.unit {
+            PersonalScope::Legacy { owner, .. } => Some(owner),
+            PersonalScope::Workspace(_) => None,
+        }
     }
     pub fn workspace(&self) -> WorkspaceId {
-        self.inner
-            .unit
-            .workspace()
-            .expect("personal address has workspace")
+        self.inner.unit.workspace()
+    }
+    /// The peer id every new operation of this replica is written under. For
+    /// a v2 unit this is the persisted per-unit writer identity
+    /// (`workspace_personal_crdts.writer_peer_id`), never the Store's global
+    /// stream (`docs/features/root-catalog/TECHNICAL.final.md` §5.2 step 6).
+    pub fn writer_peer(&self) -> u64 {
+        self.inner.doc.peer_id()
+    }
+    /// The due-index hints of every recognized rule: the next scheduled or
+    /// snoozed instant, or `None` where only the authoritative reducer can
+    /// say. One computation for the v1 index, the v2 index and the migration.
+    pub(crate) fn reminder_due_hints(&self) -> Vec<(ReminderId, Option<i64>)> {
+        use crate::reminders::{EffectiveState, OccurrenceMoment, TargetState};
+        self.reminder_reduction_inputs()
+            .into_iter()
+            .map(|row| {
+                let due_at_ms = match row.reduce(TargetState::Active, None).effective {
+                    EffectiveState::Scheduled {
+                        moment: OccurrenceMoment::Zoned { value },
+                        ..
+                    } => Some(value.instant_ms()),
+                    EffectiveState::Snoozed { until_ms, .. } => Some(until_ms),
+                    _ => None,
+                };
+                (row.stored().rule.id, due_at_ms)
+            })
+            .collect()
     }
     fn check_target(&self, target: &EntityRef) -> Result<()> {
         if target.workspace() == self.workspace() {

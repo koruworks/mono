@@ -275,6 +275,16 @@ fn non_empty(value: Option<&str>) -> Option<String> {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Workspace {
     pub id: WorkspaceId,
+    /// The Profile this Workspace is listed under.
+    ///
+    /// **A one-way projection, not the authority.** Since catalog 13 the
+    /// Workspace's root catalog unit (`placement.current`, read through
+    /// `Store::root_placement`) says where this user has placed it, and a
+    /// *move* writes this field only through that root operation, in the
+    /// same catalog transaction as the unit. Creation (Plan 1.3) and replica
+    /// provisioning (Plan 2.1) publish the unit with the row; a remote root
+    /// unit re-projects this field when it lands. A Workspace without a unit
+    /// is read from here, as the only evidence there is.
     pub owner: ProfileId,
     pub name: String,
     pub created_at: Timestamp,

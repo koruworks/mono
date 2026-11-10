@@ -341,6 +341,63 @@ fn a_connection_is_read_from_the_account_in_one_place() {
     }
 }
 
+/// **A refusal Koru Cloud worded itself is not an outage** (root-catalog
+/// QUESTIONS.md Q12). Damage on the service's side says that is what it is,
+/// and a unit this build cannot read asks for the one thing that can change
+/// it. Both used to read as *Koru Cloud unavailable · local content is
+/// available*, which sent a person to look at a connection that was fine
+/// and promised a retry that could never help them.
+#[test]
+fn a_refusal_koru_cloud_worded_is_not_told_as_an_outage() {
+    use koru_agent_wire::{
+        AccountProfileCloud, AccountStage, AccountState, CloudConnectionStage, CloudDiscovery,
+    };
+    let profile = "p1";
+    // A pass that failed leaves the Profile *retrying*; its code is what
+    // says whether that is an outage.
+    let row = |failure: Option<&str>, deferred: Option<&str>| AccountProfileCloud {
+        profile_id: profile.into(),
+        stage: CloudConnectionStage::Retrying,
+        discovery: Some(CloudDiscovery {
+            failure_code: failure.map(str::to_owned),
+            deferred_code: deferred.map(str::to_owned),
+            ..Default::default()
+        }),
+    };
+    let mut account = AccountState {
+        stage: AccountStage::SignedIn,
+        ..Default::default()
+    };
+    for code in ["root_projection_corrupt", "catalog_binding_corrupt"] {
+        account.cloud_profiles = vec![row(Some(code), None)];
+        let connection = Connection::of(&account, profile, false);
+        assert_eq!(connection, Connection::AccountProblem, "{code}");
+        assert_eq!(
+            connection.sentence(Lang::En),
+            "Koru Cloud has a problem with your account"
+        );
+        assert!(
+            connection.is_stopped(),
+            "{code}: nothing of this account moves while it is damaged"
+        );
+        assert_eq!(hold_sentence(Lang::En, code), connection.sentence(Lang::En));
+    }
+    account.cloud_profiles = vec![row(None, Some("root_unit_format_too_new"))];
+    let connection = Connection::of(&account, profile, false);
+    assert_eq!(connection, Connection::NeedsUpdate);
+    assert_eq!(connection.sentence(Lang::En), "Update Koru to sync this");
+    assert!(
+        !connection.is_stopped(),
+        "one unit cannot be read; everything else still syncs"
+    );
+    // A refusal that really is Koru Cloud not serving keeps its old words.
+    account.cloud_profiles = vec![row(Some("cloud_unavailable"), None)];
+    assert_eq!(
+        Connection::of(&account, profile, false),
+        Connection::Unavailable
+    );
+}
+
 /// **A build with no Koru Cloud is not an outage.** Every reader of
 /// [`Connection::of`] says *isn't set up in this build* — never *unavailable*
 /// or *retrying* — and the rows under it treat it as stopped.

@@ -435,7 +435,7 @@ pub(crate) fn draw(
                 root,
                 &caret,
                 x + line.indent + line.layout.width() + 6.0,
-                y + line.y + 2.0,
+                y + line.y + (line.layout.height() - caret.height()) * 0.5,
                 Some(p.text_dim),
             );
         }

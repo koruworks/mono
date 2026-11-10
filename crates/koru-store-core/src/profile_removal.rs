@@ -1,15 +1,32 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Local removal coordination retained in the catalog state table.
+//!
+//! Everything here is **device-local removal**: an attempt to take a
+//! Profile off *this installation* — its Workspaces into the Trash, then
+//! `profiles.removed_at` — which is local suppression and never
+//! global-delete consent (root-catalog TECHNICAL.final §2.1). The **shared
+//! deletion** of a Profile, the root fact that converges between a user's
+//! devices and is restored as a batch, is a different operation with no
+//! attempt: `Store::delete_profile` / `Store::restore_profile` in
+//! `service/root_lifecycle.rs`. Neither kind below is that operation.
 
 use crate::{ProfileId, Timestamp, ids::RemovalAttemptId};
 use serde::{Deserialize, Serialize};
 
+/// Which device-local removal is running. Both kinds end in the local
+/// `removed_at` marker and leave every other device untouched; neither is
+/// the shared deletion (`Store::delete_profile`), which writes a root
+/// deletion fact instead of an attempt.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum RemovalKind {
+    /// Manage's "remove from this device": trash each Workspace here, then
+    /// hide the Profile here.
     Local,
+    /// The cleanup after a hosted account deletion the server already
+    /// acknowledged; same local effects, driven by the Agent's journal.
     HostedCleanup,
 }
 

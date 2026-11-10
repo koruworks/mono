@@ -50,7 +50,7 @@ koru-store-wire = { path = "../koru-store-wire" }
 # server-side HTTP transport is deliberately not enabled: the endpoint is
 # stateless JSON over one POST, which the SDK's client already speaks, and
 # the transport feature would add `sse-stream` to the tree.
-rmcp = { version = "=3.1.2", default-features = false, features = ["server"] }
+rmcp = { version = "=3.9.0", default-features = false, features = ["server"] }
 serde.workspace = true
 serde_json.workspace = true
 schemars.workspace = true
@@ -66,7 +66,7 @@ windows-sys.workspace = true
 [dev-dependencies]
 # The SDK's client, driven against the in-process router through a
 # transport of its own: the protocol test of the run endpoint.
-rmcp = { version = "=3.1.2", default-features = false, features = ["client", "server"] }
+rmcp = { version = "=3.9.0", default-features = false, features = ["client", "server"] }
 # **`no-sink` under test.** These suites open a real events worker, and without
 # this the worker would construct the configured telemetry sink and post their
 # fixtures into the shared analytics project. `cfg(test)` cannot cover it: a

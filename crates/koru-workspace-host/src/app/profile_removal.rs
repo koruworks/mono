@@ -25,6 +25,10 @@ pub(super) struct ProfileCascadeCompletion {
 pub(super) enum CascadeReady {
     Complete(RemovalAttemptId),
     AlreadyRemoved,
+    /// The shared deletion batch committed (root-catalog §6.1): the Profile
+    /// is hidden and its captured workspaces are in the Trash together.
+    /// What follows is the same local cleanup a removal gets.
+    Deleted,
 }
 
 /// Why a cascade stopped, as the code the Profiles page words.
@@ -40,6 +44,11 @@ pub(super) enum CascadeFailure {
     NotPermitted,
     Unsupported,
     Incomplete,
+    /// The Store refused the deletion batch because the workspaces under the
+    /// Profile changed after the preview was shown (`idempotency_conflict`,
+    /// root-catalog §6.1). Nothing moved; the page refreshes the preview and
+    /// asks again.
+    StalePreview,
 }
 
 impl CascadeFailure {
@@ -48,7 +57,44 @@ impl CascadeFailure {
             Self::NotPermitted => "profile_cascade_not_permitted",
             Self::Unsupported => "profile_cascade_unsupported",
             Self::Incomplete => "profile_cascade_incomplete",
+            Self::StalePreview => "profile_deletion_preview_stale",
         }
+    }
+}
+
+/// **Delete a Profile as the shared batch** (root-catalog §6.1, §6.3) over
+/// the preview the person confirmed. The Store commits the Profile's deletion
+/// fact, one on every captured workspace, their Trash projections and the
+/// local application job in one transaction, or refuses: a stale preview is
+/// [`CascadeFailure::StalePreview`], a Profile already gone is verified as
+/// such, and anything else is retryable. The device-local cleanup that
+/// follows (settings, the remembered Profile) is the same as a removal's.
+fn delete_profile_batch(
+    root: Option<&std::path::Path>,
+    profile: koru_core::ProfileId,
+    preview: &koru_api_client::ProfileDeletionPreview,
+) -> Result<CascadeReady, CascadeFailure> {
+    let client = cascade_client(root)?;
+    // Checked first, so an unvouched window is told so rather than refused
+    // by the Store's scope check with a less useful word.
+    if !client.catalog().may_destroy() {
+        return Err(CascadeFailure::NotPermitted);
+    }
+    let store_profile = koru_store_core::ids::ProfileId::from_uuid(profile.as_uuid());
+    match client.store().delete_profile(store_profile, preview) {
+        Ok(_batch) => Ok(CascadeReady::Deleted),
+        Err(error) if error.code() == koru_store_core::Code::IdempotencyConflict => {
+            Err(CascadeFailure::StalePreview)
+        }
+        Err(error)
+            if matches!(
+                error.code(),
+                koru_store_core::Code::ProfileNotFound | koru_store_core::Code::ProfileRemoved
+            ) =>
+        {
+            verify_removed(&client, store_profile).map(|()| CascadeReady::AlreadyRemoved)
+        }
+        Err(_) => Err(CascadeFailure::Incomplete),
     }
 }
 
@@ -57,11 +103,148 @@ pub(super) struct ProfileOfflineCompletion {
     pub(super) result: Result<(), String>,
 }
 
+/// Whether a Profile that left the catalog is a shared deletion the Store
+/// can list (root-catalog Plan 2.2). `deleted: false` is a real answer —
+/// a device-local removal in another window, or a Store that could not be
+/// asked — and leaves the window alone.
+pub(super) struct RemoteDeletionCheck {
+    pub(super) profile: koru_core::ProfileId,
+    pub(super) deleted: bool,
+}
+
+/// Ask the Store whether `profile` carries an active shared deletion. Off
+/// the loop: a gateway round trip. A read, so it asks for the reading
+/// scopes only — a window the Agent will not vouch for the destructive
+/// scope still has to settle when its Profile is gone.
+fn remote_deletion_confirmed(
+    root: Option<&std::path::Path>,
+    profile: koru_core::ProfileId,
+) -> bool {
+    const SCOPES: &[&str] = &["store.read_documents", "store.manage_workspaces"];
+    let segment = koru_workspace::fromstore::segment();
+    let client = match root {
+        Some(root) => koru_api_client::Client::connect_at_first_party(segment, root, SCOPES),
+        None => koru_api_client::Client::connect_first_party(segment, SCOPES),
+    };
+    let Ok(client) = client else {
+        return false;
+    };
+    let store_profile = koru_store_core::ids::ProfileId::from_uuid(profile.as_uuid());
+    client
+        .store()
+        .profile_deletions()
+        .map(|deletions| {
+            deletions
+                .iter()
+                .any(|listing| listing.deletion.profile == store_profile)
+        })
+        .unwrap_or(false)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum HostedProfileRemovalSource {
     Origin,
     Peer,
     Reconciliation,
+}
+
+/// One hosted removal this window is carrying, and what it still knows about
+/// the Profile being removed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct HostedProfileRemoval {
+    pub(super) source: HostedProfileRemovalSource,
+    /// The Profile's name as it read when the removal was first observed.
+    /// `None` when this device never had one for it — the name is not
+    /// recoverable later, because the removal is what takes the row away.
+    pub(super) name: Option<String>,
+}
+
+/// Which Profile a deletion from another device was for, as well as this
+/// device can still say when the notice is worded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DeletedProfile<'a> {
+    /// The name captured when the removal was observed.
+    Named(&'a str),
+    /// No name was ever known here, and it was the Profile in use — which is
+    /// the one thing left that identifies it.
+    InUseWithoutName,
+    /// No name was ever known here and it was not the Profile in use. Its
+    /// Workspaces in the Trash are all that is left to go by.
+    WithoutName,
+}
+
+impl<'a> DeletedProfile<'a> {
+    fn new(name: Option<&'a str>, was_in_use: bool) -> Self {
+        match name.map(str::trim).filter(|name| !name.is_empty()) {
+            Some(name) => Self::Named(name),
+            None if was_in_use => Self::InUseWithoutName,
+            None => Self::WithoutName,
+        }
+    }
+}
+
+/// The lookup order behind [`App::observed_profile_name`], free of the window
+/// so it can be tested: the catalog row while it is still there, then the open
+/// Profile's own document, which outlives it, and last the name this device
+/// remembered while the Profile existed ([`crate::profile_names`]). A blank
+/// name is no name, from any of the three.
+///
+/// **Remembered is consulted last** because the two live sources are current
+/// and it is not: it holds what the last catalog listing said, so a rename
+/// that has arrived since must win over it. And it is consulted at all because
+/// a deletion from another device names no Profile and is heard of only after
+/// the row has gone — possibly on a later launch, when neither live source has
+/// ever had anything to say about it.
+///
+/// `None` still has to be reachable: a Profile this device never saw has no
+/// name anywhere, and the notice says so rather than inventing one.
+fn observed_profile_name_in(
+    catalog: &[koru_core::ProfileSummary],
+    profile: koru_core::ProfileId,
+    open_profile_name: Option<String>,
+    remembered_name: Option<String>,
+) -> Option<String> {
+    fn named(name: Option<String>) -> Option<String> {
+        name.filter(|name| !name.trim().is_empty())
+    }
+
+    named(
+        catalog
+            .iter()
+            .find(|row| row.id == profile)
+            .map(|row| row.name.clone()),
+    )
+    .or_else(|| named(open_profile_name))
+    .or_else(|| named(remembered_name))
+}
+
+/// The language the notices are written in: the system's, chosen once before
+/// any string is read.
+fn notice_lang() -> koru_i18n::Lang {
+    koru_i18n::Lang::for_system(koru_window::system_locale::system_locale().as_deref())
+}
+
+/// The notice for a Profile another device deleted.
+///
+/// **An unknown name is a different sentence, never a stand-in name.** The
+/// first version of this put `"This Profile"` in typographic quotes where the
+/// name goes, so the notice named a Profile nobody has and told the person
+/// nothing about which one was gone.
+fn profile_deleted_elsewhere_notice(lang: koru_i18n::Lang, profile: DeletedProfile<'_>) -> String {
+    match profile {
+        DeletedProfile::Named(name) => koru_i18n::fill(
+            koru_i18n::t(lang, koru_i18n::Key::ProfileDeletedOnAnotherDevice),
+            &[name],
+        ),
+        DeletedProfile::InUseWithoutName => {
+            koru_i18n::t(lang, koru_i18n::Key::ProfileInUseDeletedOnAnotherDevice).to_owned()
+        }
+        DeletedProfile::WithoutName => koru_i18n::t(
+            lang,
+            koru_i18n::Key::ProfileWithoutNameDeletedOnAnotherDevice,
+        )
+        .to_owned(),
+    }
 }
 
 /// Move every active Workspace owned by one Profile to recoverable Trash.
@@ -134,7 +317,7 @@ fn removal_absence(
     }
 }
 
-fn cascade_client(
+pub(super) fn cascade_client(
     root: Option<&std::path::Path>,
 ) -> Result<koru_api_client::Client, CascadeFailure> {
     const SCOPES: &[&str] = &[
@@ -179,6 +362,33 @@ fn cascade_steps(
 }
 
 impl<H: Host> App<H> {
+    /// The Profile's name **while it can still be read**, for a removal that
+    /// is only beginning.
+    ///
+    /// The catalog row is the normal source, and the open Profile's own
+    /// document is the one that outlives it: a removal is precisely the thing
+    /// that takes the row away, so a name read when the cleanup finishes is
+    /// usually missing and — for a deletion that arrived from another device,
+    /// where the row is gone before this window hears of it — always missing.
+    ///
+    /// That is what the third source is for: the names this device remembered
+    /// from every catalog listing it ever read, which is the only one of the
+    /// three that was written *before* the deletion and therefore the only one
+    /// left after a restart. `None` means this device never saw that Profile
+    /// at all, and the notice says so rather than inventing a name.
+    pub(super) fn observed_profile_name(&self, profile: koru_core::ProfileId) -> Option<String> {
+        observed_profile_name_in(
+            &self.runtime.profile_catalog,
+            profile,
+            if self.runtime.profile_id() == profile {
+                self.runtime.profile.name()
+            } else {
+                None
+            },
+            self.runtime.profile_names.get(profile),
+        )
+    }
+
     pub(super) fn start_continue_profile_offline(
         &mut self,
         profile: koru_core::ProfileId,
@@ -240,6 +450,60 @@ impl<H: Host> App<H> {
         }
     }
 
+    /// Confirm a vanished open Profile as a shared deletion before the
+    /// window settles (root-catalog Plan 2.2, §6.3). One check per Profile
+    /// at a time; the answer arrives through
+    /// [`Self::service_remote_deletion_checks`].
+    pub(super) fn start_remote_deletion_check(&mut self, profile: koru_core::ProfileId) {
+        if !self.remote_deletion_checks_in_flight.insert(profile) {
+            return;
+        }
+        let root = self.gateway_root.clone();
+        let tx = self.remote_deletion_tx.clone();
+        let proxy = self.wake_proxy.clone();
+        let started = std::thread::Builder::new()
+            .name("koru-profile-remote-deletion".into())
+            .spawn(move || {
+                let deleted = remote_deletion_confirmed(root.as_deref(), profile);
+                let _ = tx.send(RemoteDeletionCheck { profile, deleted });
+                let _ = proxy.send_event(Wake::Profiles);
+            });
+        if started.is_err() {
+            self.remote_deletion_checks_in_flight.remove(&profile);
+        }
+    }
+
+    /// A confirmed shared deletion of the open Profile settles the window
+    /// the way a committed local batch does: the Store has already fenced
+    /// its writers and trashed its Workspaces, so what remains is this
+    /// device's cleanup and the move to another Profile or to
+    /// `NeedsProfile`. Nothing is created and nothing is recreated.
+    fn service_remote_deletion_checks(&mut self) {
+        while let Ok(check) = self.remote_deletion_rx.try_recv() {
+            self.remote_deletion_checks_in_flight.remove(&check.profile);
+            if !check.deleted {
+                continue;
+            }
+            // Still the open Profile, and still gone: a Profile that came
+            // back (a restore raced the check) is left alone.
+            if self.runtime.profile_id() != check.profile
+                || self
+                    .runtime
+                    .profile_catalog
+                    .iter()
+                    .any(|row| row.id == check.profile)
+            {
+                continue;
+            }
+            // The catalog row went first — its absence is what started this
+            // check — so the name is taken from the Profile's own document,
+            // which the guard above has just proven is still the open one.
+            let name = self.observed_profile_name(check.profile);
+            self.remote_profile_deletions.insert(check.profile, name);
+            self.begin_removed_profile_cleanup(check.profile);
+        }
+    }
+
     pub(super) fn start_profile_cascade(&mut self, profile: koru_core::ProfileId) {
         if !self.profile_cascades_in_flight.insert(profile) {
             return;
@@ -256,6 +520,41 @@ impl<H: Host> App<H> {
             .name("koru-profile-cascade".into())
             .spawn(move || {
                 let result = cascade_profile_workspaces(root.as_deref(), profile, kind);
+                let _ = tx.send(ProfileCascadeCompletion { profile, result });
+                let _ = proxy.send_event(Wake::Profiles);
+            });
+        if started.is_err() {
+            self.profile_cascades_in_flight.remove(&profile);
+            let mut changed = false;
+            for pane in self.panes.values_mut() {
+                changed |= pane
+                    .view
+                    .local_profile_remove_failed(profile, CascadeFailure::Incomplete.code());
+            }
+            if changed {
+                self.invalidate_everywhere();
+            }
+        }
+    }
+
+    /// The shared deletion batch for a Profile the person confirmed over
+    /// `preview` (Manage's *Delete profile…*). Off the loop, like the cascade;
+    /// its completion takes the cascade's channel and the same cleanup.
+    pub(super) fn start_profile_deletion(
+        &mut self,
+        profile: koru_core::ProfileId,
+        preview: koru_api_client::ProfileDeletionPreview,
+    ) {
+        if !self.profile_cascades_in_flight.insert(profile) {
+            return;
+        }
+        let root = self.gateway_root.clone();
+        let tx = self.profile_cascade_tx.clone();
+        let proxy = self.wake_proxy.clone();
+        let started = std::thread::Builder::new()
+            .name("koru-profile-delete".into())
+            .spawn(move || {
+                let result = delete_profile_batch(root.as_deref(), profile, &preview);
                 let _ = tx.send(ProfileCascadeCompletion { profile, result });
                 let _ = proxy.send_event(Wake::Profiles);
             });
@@ -302,7 +601,12 @@ impl<H: Host> App<H> {
                     }
                     self.host.remove_local_profile(completion.profile, attempt)
                 }
-                Ok(CascadeReady::AlreadyRemoved) => {
+                // The batch is committed and the Profile hidden; the Store
+                // has already fenced its writers. What remains is this
+                // device's own cleanup, then the window settles — onto another
+                // Profile, or by relaunching into `NeedsProfile` when none is
+                // left (root-catalog §6.3).
+                Ok(CascadeReady::AlreadyRemoved | CascadeReady::Deleted) => {
                     self.begin_removed_profile_cleanup(completion.profile);
                 }
                 Err(failure) => {
@@ -328,6 +632,7 @@ impl<H: Host> App<H> {
 
     pub(super) fn service_profile_removals(&mut self, event_loop: &ActiveEventLoop) {
         self.service_profile_offline();
+        self.service_remote_deletion_checks();
         while let Some((raw_profile, outcome)) = self.host.take_local_profile_removal() {
             let Some(profile) = koru_core::ProfileId::parse(&raw_profile) else {
                 continue;
@@ -384,13 +689,6 @@ impl<H: Host> App<H> {
                 }
                 continue;
             }
-            let removed_profile_name = self
-                .runtime
-                .profile_catalog
-                .iter()
-                .find(|profile| profile.id == completion.profile)
-                .map(|profile| profile.name.clone())
-                .unwrap_or_else(|| "This Profile".into());
             // Cancellation of the asynchronous next-Profile open must not
             // select the just-removed Profile from the previous cached list.
             self.runtime
@@ -412,10 +710,11 @@ impl<H: Host> App<H> {
                 .settings
                 .profile_mru
                 .retain(|profile| *profile != completion.profile);
-            let hosted_source = self
-                .hosted_profile_removals
-                .get(&completion.profile)
-                .copied();
+            // The name was captured when the removal was first observed; the
+            // catalog row it came from has been gone since.
+            let hosted = self.hosted_profile_removals.get(&completion.profile);
+            let hosted_source = hosted.map(|removal| removal.source);
+            let hosted_name = hosted.and_then(|removal| removal.name.clone());
             if hosted_source.is_some() {
                 self.acknowledge_profile_cleanup(
                     completion.profile,
@@ -464,8 +763,27 @@ impl<H: Host> App<H> {
                 }
             }
             if hosted_source == Some(HostedProfileRemovalSource::Peer) {
-                let message = format!(
-                    "\u{201c}{removed_profile_name}\u{201d} was deleted from Koru\n\nAnother trusted device deleted this Profile. It no longer syncs. Its Workspaces on this device were moved to Trash and, with its AI chats, remain recoverable for 30 days."
+                let message = profile_deleted_elsewhere_notice(
+                    notice_lang(),
+                    DeletedProfile::new(hosted_name.as_deref(), removed_current),
+                );
+                for pane in self.panes.values_mut() {
+                    let _ = if next.is_some() {
+                        pane.view.show_notice_open_another_profile(message.clone())
+                    } else {
+                        pane.view.show_notice(message.clone())
+                    };
+                    pane.window.request_redraw();
+                }
+            } else if let Some(observed_name) =
+                self.remote_profile_deletions.remove(&completion.profile)
+            {
+                // A shared deletion that arrived through the root units
+                // (Plan 2.2): the Workspaces are in the Trash by the Store's
+                // own projection and the batch is restorable from here.
+                let message = profile_deleted_elsewhere_notice(
+                    notice_lang(),
+                    DeletedProfile::new(observed_name.as_deref(), removed_current),
                 );
                 for pane in self.panes.values_mut() {
                     let _ = if next.is_some() {
@@ -476,6 +794,14 @@ impl<H: Host> App<H> {
                     pane.window.request_redraw();
                 }
             }
+            // **After the notice, never before it.** The local cleanup is the
+            // last thing that needed the remembered name, and a Profile that
+            // is gone from this device must not leave its name behind — not
+            // for a deletion elsewhere, and least of all for one the person
+            // asked for here. `forget` waits for the disk, because the next
+            // statements may relaunch this process (see
+            // [`crate::profile_names`]).
+            self.runtime.profile_names.forget(completion.profile);
             if hosted_source.is_some() && navigation_settled {
                 self.acknowledge_profile_cleanup(
                     completion.profile,

@@ -367,6 +367,7 @@ fn quoted_path_submission_is_ordered_partial_retryable_and_idempotent() {
         idempotency_key: IdempotencyKey::mint(),
         text: "echo".into(),
         attachment_ids: vec![first, second],
+        references: Vec::new(),
         mode: None,
         fast: None,
         reasoning: None,
@@ -458,6 +459,7 @@ fn unsupported_delivery_stays_pending_visible_and_does_not_write_binary() {
         idempotency_key: IdempotencyKey::mint(),
         text: String::new(),
         attachment_ids: vec![attachment_id],
+        references: Vec::new(),
         mode: None,
         fast: None,
         reasoning: None,
@@ -501,6 +503,7 @@ fn pending_input_idempotency_survives_the_whole_live_session() {
         idempotency_key: IdempotencyKey::mint(),
         text: "first".into(),
         attachment_ids: Vec::new(),
+        references: Vec::new(),
         mode: None,
         fast: None,
         reasoning: None,
@@ -518,6 +521,7 @@ fn pending_input_idempotency_survives_the_whole_live_session() {
                     idempotency_key: IdempotencyKey::mint(),
                     text: format!("next-{index}"),
                     attachment_ids: Vec::new(),
+                    references: Vec::new(),
                     mode: None,
                     fast: None,
                     reasoning: None,
@@ -570,6 +574,7 @@ fn native_delivery_uses_only_an_advertised_adapter_and_retries_the_same_turn() {
         idempotency_key: IdempotencyKey::mint(),
         text: "inspect these".into(),
         attachment_ids: vec![first, second],
+        references: Vec::new(),
         mode: None,
         fast: None,
         reasoning: None,
@@ -641,6 +646,7 @@ fn native_profile_without_the_negotiated_capability_never_calls_the_adapter() {
                 idempotency_key: IdempotencyKey::mint(),
                 text: String::new(),
                 attachment_ids: vec![attachment_id],
+                references: Vec::new(),
                 mode: None,
                 fast: None,
                 reasoning: None,
@@ -668,6 +674,7 @@ fn managed_text_without_images_preserves_the_accepted_turn_until_immediate_cance
         idempotency_key: IdempotencyKey::mint(),
         text: "text fixture".into(),
         attachment_ids: Vec::new(),
+        references: Vec::new(),
         mode: None,
         fast: None,
         reasoning: None,
@@ -693,6 +700,7 @@ fn managed_text_without_images_preserves_the_accepted_turn_until_immediate_cance
         idempotency_key: IdempotencyKey::mint(),
         text: "another input".into(),
         attachment_ids: Vec::new(),
+        references: Vec::new(),
         mode: None,
         fast: None,
         reasoning: None,
@@ -730,6 +738,81 @@ fn managed_text_without_images_preserves_the_accepted_turn_until_immediate_cance
 }
 
 #[test]
+fn reference_only_input_starts_a_turn_and_never_steers_references() {
+    let capabilities = CapabilitySet::new([
+        capability::MANAGED_EVENTS.parse().unwrap(),
+        capability::MANAGED_CANCEL.parse().unwrap(),
+    ]);
+    let harness = managed_harness(capabilities);
+    {
+        let mut state = harness.state.inner.lock().unwrap();
+        state.hold_events = true;
+        state.steerable = true;
+    }
+    let handle = &harness.handle;
+    let lease = handle.attach(viewport(1, 0, 6), 20).unwrap().lease.token;
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .display()
+        .to_string();
+    let reference = koru_session_protocol::PathReference {
+        kind: koru_session_protocol::PathReferenceKind::Folder,
+        path,
+    };
+    let input = PendingInput {
+        model: None,
+        idempotency_key: IdempotencyKey::mint(),
+        text: String::new(),
+        attachment_ids: Vec::new(),
+        references: vec![reference.clone()],
+        mode: None,
+        fast: None,
+        reasoning: None,
+        skills: Vec::new(),
+    };
+    let sent = handle.send_pending_input(lease, input.clone()).unwrap();
+    eventually(|| !harness.state.inner.lock().unwrap().calls.is_empty());
+    {
+        let state = harness.state.inner.lock().unwrap();
+        assert_eq!(state.calls.len(), 1);
+        assert_eq!(state.calls[0].references, vec![reference]);
+        assert!(state.calls[0].text.is_empty());
+        assert!(state.calls[0].attachments.is_empty());
+    }
+    let another_reference = PendingInput {
+        idempotency_key: IdempotencyKey::mint(),
+        ..input
+    };
+    assert_eq!(
+        handle
+            .send_pending_input(lease, another_reference)
+            .unwrap_err(),
+        ErrorCode::InvalidTransition
+    );
+    let steered = PendingInput {
+        model: None,
+        idempotency_key: IdempotencyKey::mint(),
+        text: "continue".into(),
+        attachment_ids: Vec::new(),
+        references: Vec::new(),
+        mode: None,
+        fast: None,
+        reasoning: None,
+        skills: Vec::new(),
+    };
+    assert_eq!(
+        handle.send_pending_input(lease, steered).unwrap().turn_id,
+        sent.turn_id
+    );
+    {
+        let mut state = harness.state.inner.lock().unwrap();
+        assert_eq!(state.steered.len(), 1);
+        assert!(state.steered[0].references.is_empty());
+        state.hold_events = false;
+    }
+    harness.state.ready.notify_one();
+}
+
+#[test]
 fn managed_text_does_not_smuggle_unsupported_images_into_the_provider() {
     let harness = managed_harness(delivery_capability(capability::MANAGED_EVENTS));
     let handle = &harness.handle;
@@ -749,6 +832,7 @@ fn managed_text_does_not_smuggle_unsupported_images_into_the_provider() {
                 idempotency_key: IdempotencyKey::mint(),
                 text: "text with an unsupported image".into(),
                 attachment_ids: vec![attachment],
+                references: Vec::new(),
                 mode: None,
                 fast: None,
                 reasoning: None,
@@ -779,6 +863,7 @@ fn a_refused_managed_text_submission_retries_without_replacing_another_turn() {
         idempotency_key: IdempotencyKey::mint(),
         text: "refused fixture".into(),
         attachment_ids: Vec::new(),
+        references: Vec::new(),
         mode: None,
         fast: None,
         reasoning: None,
@@ -806,6 +891,7 @@ fn a_refused_managed_text_submission_retries_without_replacing_another_turn() {
         idempotency_key: IdempotencyKey::mint(),
         text: "different turn".into(),
         attachment_ids: Vec::new(),
+        references: Vec::new(),
         mode: None,
         fast: None,
         reasoning: None,
@@ -874,6 +960,7 @@ fn an_accepted_managed_submission_survives_lease_loss_before_its_reply() {
         idempotency_key: IdempotencyKey::mint(),
         text: "accepted before lease loss".into(),
         attachment_ids: Vec::new(),
+        references: Vec::new(),
         mode: None,
         fast: None,
         reasoning: None,
@@ -921,6 +1008,7 @@ fn text_sent_during_a_turn_steers_it_when_the_provider_can_and_is_refused_when_i
                 idempotency_key: IdempotencyKey::mint(),
                 text: "first".into(),
                 attachment_ids: Vec::new(),
+                references: Vec::new(),
                 mode: None,
                 fast: None,
                 reasoning: None,
@@ -934,6 +1022,7 @@ fn text_sent_during_a_turn_steers_it_when_the_provider_can_and_is_refused_when_i
         idempotency_key: IdempotencyKey::mint(),
         text: "and also this".into(),
         attachment_ids: Vec::new(),
+        references: Vec::new(),
         mode: None,
         fast: None,
         reasoning: None,
@@ -1016,6 +1105,7 @@ fn answers_sent_as_the_next_message_reach_the_adapter_as_input() {
         idempotency_key: IdempotencyKey::mint(),
         text: String::new(),
         attachment_ids: Vec::new(),
+        references: Vec::new(),
         mode: None,
         fast: None,
         reasoning: None,
@@ -1102,6 +1192,7 @@ fn an_inputs_model_reaches_the_adapter_and_moves_the_sessions_model() {
         idempotency_key: IdempotencyKey::mint(),
         text: text.into(),
         attachment_ids: Vec::new(),
+        references: Vec::new(),
         mode: None,
         fast: None,
         reasoning: None,
@@ -1177,6 +1268,7 @@ fn an_inputs_skills_reach_the_adapter_and_never_ride_a_steer() {
         idempotency_key: IdempotencyKey::mint(),
         text: text.into(),
         attachment_ids: Vec::new(),
+        references: Vec::new(),
         mode: None,
         fast: None,
         reasoning: None,

@@ -18,6 +18,8 @@ const MANAGE: el::Key = el::Key::surface(SURFACE, "manage");
 const CLOUD: el::Key = el::Key::surface(SURFACE, "cloud");
 const RESUME: el::Key = el::Key::surface(SURFACE, "resume-removal");
 const KEEP: el::Key = el::Key::surface(SURFACE, "keep-profile");
+/// An empty Profile's one way out (root-catalog §3.10): the name prompt.
+const CREATE: el::Key = el::Key::surface(SURFACE, "new-workspace");
 const DOTS: el::Key = el::Key::surface(SURFACE, "dots");
 
 pub(super) struct WaitPane {
@@ -102,6 +104,7 @@ pub(super) fn message(reading: &WaitReading, lang: koru_i18n::Lang) -> String {
             }
         }
         WaitReading::Unavailable { .. } => Words::ProfileWaitUnavailable,
+        WaitReading::Empty => Words::ProfileEmptyWorkspaces,
         WaitReading::EnrollmentFailed { code, .. } | WaitReading::ContentFailed { code, .. } => {
             match code.as_deref() {
                 Some("session_revoked" | "cloud_access_revoked" | "authentication_required") => {
@@ -197,6 +200,9 @@ impl MainView {
             WaitReading::ContentFailed {
                 automatic: false, ..
             } => actions.push((CLOUD, Words::ProfileWaitSignIn)),
+            // Empty is a state, not a failure: nothing to retry, and the one
+            // explicit action is to make a workspace (root-catalog §3.10).
+            WaitReading::Empty => actions.push((CREATE, Words::TerminalNewWorkspace)),
             _ => {}
         }
         let owner = crate::manage::workspaces::catalog_profile(wait.attempt.profile);
@@ -405,6 +411,7 @@ impl MainView {
                     self.ask_pane(PaneRequest::RemoveLocalProfile {
                         profile: attempt.profile,
                         delete_workspaces: true,
+                        preview: None,
                     })
                 }
             }
@@ -441,6 +448,7 @@ impl MainView {
             }
             CLOUD => self.open_manage(crate::manage::Page::Cloud),
             MANAGE => self.open_manage_workspaces(Some(attempt.profile)),
+            CREATE => self.prompt_new_workspace(),
             _ => false,
         }
     }

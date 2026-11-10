@@ -29,6 +29,7 @@ fn an_older_cloud_profile_message_has_no_discovery_receipt() {
         failure_code: Some("cloud_unavailable".into()),
         retry_at_millis: Some(99),
         automatic_retry: true,
+        ..Default::default()
     };
     let row = AccountProfileCloud {
         discovery: Some(receipt),
@@ -38,6 +39,45 @@ fn an_older_cloud_profile_message_has_no_discovery_receipt() {
         serde_json::from_str::<AccountProfileCloud>(&json(&row)).unwrap(),
         row
     );
+}
+
+/// **The organization status carries ids and states and nothing else**
+/// (root-catalog Plan 2.2): a sentinel standing for a hidden Profile's name
+/// or id appears nowhere in a status that only names what this device asked
+/// a peer about, and an older Agent's push without the field reads as empty.
+#[test]
+fn root_sync_status_round_trips_and_names_no_hidden_subject() {
+    let hidden_name = "SENTINEL-HIDDEN-PROFILE-NAME";
+    let hidden_id = "0b4a1f2e-9c3d-4e5f-8a7b-6c5d4e3f2a1b";
+    let status = RootSyncStatus {
+        subjects: vec![
+            RootSyncSubject {
+                peer_device_id: "peer".into(),
+                profile_id: Some("profile".into()),
+                workspace_id: None,
+                state: RootSyncState::PausedBySettings,
+            },
+            RootSyncSubject {
+                peer_device_id: "peer".into(),
+                profile_id: None,
+                workspace_id: Some("workspace".into()),
+                state: RootSyncState::Held,
+            },
+        ],
+    };
+    let rendered = json(&Push::RootSync {
+        status: status.clone(),
+    });
+    assert!(rendered.contains("\"root_sync\""), "{rendered}");
+    assert!(rendered.contains("\"paused_by_settings\""), "{rendered}");
+    assert!(rendered.contains("\"held\""), "{rendered}");
+    assert!(!rendered.contains(hidden_name) && !rendered.contains(hidden_id));
+    assert_eq!(
+        serde_json::from_str::<Push>(&rendered).unwrap(),
+        Push::RootSync { status }
+    );
+    let old: RootSyncStatus = serde_json::from_str("{}").unwrap();
+    assert!(old.subjects.is_empty());
 }
 
 #[test]
@@ -622,8 +662,10 @@ fn the_two_version_numbers_are_not_the_same_declaration() {
     //
     // Literal numbers rather than an inequality, so that bumping one is a
     // deliberate edit here as well as there -- which is what caught the
-    // `OpenLink` bump that took the protocol to 8 and left the frame alone.
-    assert_eq!(PROTOCOL_VERSION, 45);
+    // `OpenLink` bump that took the protocol to 8 and left the frame alone,
+    // and then caught root-catalog Plan 2.2 taking the protocol to 46 for
+    // `Push::RootSync` while the frame stayed at 1.
+    assert_eq!(PROTOCOL_VERSION, 46);
     assert_eq!(FRAME_VERSION, 1);
 }
 

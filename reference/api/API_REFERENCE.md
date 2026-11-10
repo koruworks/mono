@@ -134,6 +134,30 @@ Restore a locally removed Profile from retained Store data
 
 Returns: restored or already_active; workspace tombstones remain unchanged
 
+## GET `/v1/profiles/deleted`
+
+List the restorable shared Profile deletions this device holds
+
+Returns: one entry per active, unpurged Profile deletion batch with its captured targets, the retained Profile's name, and which targets are past retention or purged
+
+## GET `/v1/profiles/{id}/deletion-preview`
+
+What deleting a Profile would move to Trash right now
+
+Returns: the live workspaces placed under the Profile and a placement revision the delete echoes back; a changed list refuses the stale confirmation
+
+## POST `/v1/profiles/{id}/delete`
+
+Delete a Profile as a shared batch: the Profile and every captured workspace move to Trash in one transaction
+
+Returns: the batch id and each target's deletion id; HTTP 409 idempotency_conflict when the preview is stale. Takes destroy_workspaces, like the workspace delete; the targets' rooms are disconnected first
+
+## POST `/v1/profiles/{id}/restore`
+
+Restore a Profile deletion batch: the Profile and the workspaces trashed by exactly that deletion
+
+Returns: which targets came back, stayed in Trash under an independent deletion, were moved elsewhere already, or were purged. The same scope the delete takes
+
 ## GET `/v1/profiles/{id}`
 
 One profile
@@ -307,6 +331,12 @@ Returns: the whole dictionary after the write. A removed word is a deleted key, 
 Clear one profile's personal spelling dictionary
 
 Returns: the empty dictionary after every word visible to this device is deleted
+
+## GET `/v1/workspaces/unassigned`
+
+Live workspaces reachable from no active Profile, with the reason
+
+Returns: each live workspace placed under nobody, under a deleted or absent Profile, or under a legacy holder, with its former Profile; moving one is the ordinary move, restoring its Profile is the batch restore
 
 ## GET `/v1/workspaces`
 
@@ -662,6 +692,12 @@ Read a chat's workspace-tool policy
 
 Returns: The durable Manual or Auto mode and complete selected-workspace grant set.
 
+## POST `/v1/ai/chats/{chat}/tool-policy/grants`
+
+Add workspace grants to a chat atomically
+
+Returns: The durable policy with all existing and newly granted workspaces; the mode is unchanged.
+
 ## DELETE `/v1/ai/chats/{chat}`
 
 Delete an AI chat while retaining anonymous usage
@@ -769,6 +805,24 @@ Returns: The durable denied activity. The provider receives a structured permiss
 Store a picture or file for a local agent chat's next message
 
 Returns: The stored attachment's metadata, staged until a send names it. Idempotent by id: the same content answers the same attachment, different content answers attachment_conflict.
+
+## POST `/v1/ai/chats/{chat}/attachments/reference`
+
+Stage a local file or folder path for a local agent chat
+
+Returns: The staged path reference. No file or folder contents are read or copied.
+
+## POST `/v1/ai/chats/{chat}/attachments/from-workspace`
+
+Copy a granted workspace file into a local agent chat
+
+Returns: The staged copy with workspace provenance. The source grant is checked before reading bytes.
+
+## POST `/v1/ai/chats/{chat}/attachments/{attachment}/restage`
+
+Copy a sent attachment into a fresh staged attachment for recall
+
+Returns: The new staged attachment. Deleting its id during the copy cancels publication.
 
 ## DELETE `/v1/ai/chats/{chat}/attachments/{attachment}`
 

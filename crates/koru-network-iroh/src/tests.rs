@@ -15,6 +15,7 @@ use crate::hydration::{BLOB_CHUNK_BYTES, MAX_BLOB_HYDRATION_BYTES};
 
 mod profile_units;
 mod redial;
+mod root_catalog;
 use profile_units::profile_identity;
 
 struct EchoEnrollmentHandler {
@@ -345,6 +346,18 @@ struct InventoryStore {
     /// This device's transport mode, as §6's second point reads it. Armed
     /// rather than asserted: a closed Workspace is a state, not a failure.
     peer_blobs_closed: AtomicBool,
+    /// Protocol 6: the root units this device frames (address → version
+    /// bytes, as `unit_versions` does for Profile units), its personal v2
+    /// units, and the switches a test arms.
+    root_units: Mutex<BTreeMap<protocol::CatalogUnitRef, Vec<u8>>>,
+    personal_units: Mutex<BTreeMap<WorkspaceId, Vec<u8>>>,
+    /// Whether a root placement is known here: provisioning for the same
+    /// person's device is pending until a Workspace unit has been applied.
+    placement_known: AtomicBool,
+    /// The export boundary holds every root unit back.
+    root_held: AtomicBool,
+    /// This device's mode closes the peer path for the Workspace.
+    peer_subject_blocked: AtomicBool,
 }
 
 impl InventoryStore {
@@ -364,6 +377,11 @@ impl InventoryStore {
             workspace_ready: AtomicBool::new(true),
             stall_units: AtomicBool::new(false),
             peer_blobs_closed: AtomicBool::new(false),
+            root_units: Mutex::new(BTreeMap::new()),
+            personal_units: Mutex::new(BTreeMap::new()),
+            placement_known: AtomicBool::new(true),
+            root_held: AtomicBool::new(false),
+            peer_subject_blocked: AtomicBool::new(false),
         }
     }
 
@@ -584,12 +602,229 @@ impl protocol::ReplicationStore for InventoryStore {
 
     fn provision_replica(
         &self,
-        _: &protocol::AuthenticatedPeer,
+        peer: &protocol::AuthenticatedPeer,
         _: &protocol::ReplicaDescriptor,
     ) -> Result<(), protocol::StoreFailure> {
+        // The same person's device provisions under a known root placement
+        // only; a descriptor's Profile never stands in (§7.2).
+        if peer.all_data && !self.placement_known.load(Ordering::SeqCst) {
+            return Err(protocol::StoreFailure::new(protocol::PLACEMENT_PENDING));
+        }
         self.workspace_ready.store(true, Ordering::SeqCst);
         self.unit_events.lock().unwrap().push("workspace");
         Ok(())
+    }
+
+    fn admit_peer_subject(&self, _: WorkspaceId) -> Result<(), protocol::StoreFailure> {
+        if self.peer_subject_blocked.load(Ordering::SeqCst) {
+            return Err(protocol::StoreFailure::new(
+                protocol::MODE_REFUSES_TRANSPORT,
+            ));
+        }
+        Ok(())
+    }
+
+    // ---- protocol 6
+
+    fn bind_root_scope(
+        &self,
+        peer: &protocol::AuthenticatedPeer,
+    ) -> Result<bool, protocol::StoreFailure> {
+        Ok(peer.binds_root_scope())
+    }
+
+    fn publish_pending_root_overlays(&self) -> Result<usize, protocol::StoreFailure> {
+        self.unit_events.lock().unwrap().push("publication_job");
+        Ok(0)
+    }
+
+    /// This device's own reading of the subjects it holds, as the real Store
+    /// answers it (`root_exchange::root_sync_admissions`): the same mode row
+    /// that makes [`Self::admit_peer_subject`] refuse is what the pass seeds
+    /// `PausedBySettings` from, so a double that refuses the one but stays
+    /// silent on the other would let the status report the peer's reason for
+    /// this device's own setting.
+    fn root_sync_admissions(
+        &self,
+    ) -> Result<Vec<protocol::RootSubjectAdmission>, protocol::StoreFailure> {
+        let allows_peer = !self.peer_subject_blocked.load(Ordering::SeqCst);
+        Ok(vec![
+            protocol::RootSubjectAdmission {
+                subject: protocol::CatalogUnitRef::Profile {
+                    profile: ProfileId::from_uuid(self.workspace.as_uuid()),
+                },
+                allows_peer: true,
+                ceiling_mismatch: false,
+                overlay_pending: false,
+            },
+            protocol::RootSubjectAdmission {
+                subject: protocol::CatalogUnitRef::Workspace {
+                    workspace: self.workspace,
+                },
+                allows_peer,
+                ceiling_mismatch: false,
+                overlay_pending: false,
+            },
+        ])
+    }
+
+    fn root_catalog(
+        &self,
+        peer: &protocol::AuthenticatedPeer,
+    ) -> Result<protocol::RootCatalogInventory, protocol::StoreFailure> {
+        peer.with_catalog_scope(|| {
+            let units = self
+                .root_units
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(unit, _)| match unit {
+                    protocol::CatalogUnitRef::Profile { profile } => {
+                        peer.all_data || peer.authorized_profiles.contains(profile)
+                    }
+                    protocol::CatalogUnitRef::Workspace { workspace } => {
+                        peer.all_data
+                            || peer.authorized_workspaces.contains(workspace)
+                            || peer
+                                .authorized_profiles
+                                .contains(&ProfileId::from_uuid(workspace.as_uuid()))
+                    }
+                })
+                .map(|(unit, version)| protocol::RootUnitState {
+                    unit: *unit,
+                    version: version.clone(),
+                })
+                .collect();
+            let personal = if peer.binds_root_scope() {
+                self.personal_units
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .map(|(workspace, version)| protocol::PersonalUnitState {
+                        workspace: *workspace,
+                        version: version.clone(),
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            Ok(protocol::RootCatalogInventory { units, personal })
+        })
+    }
+
+    fn root_unit_version(
+        &self,
+        peer: &protocol::AuthenticatedPeer,
+        unit: protocol::CatalogUnitRef,
+    ) -> Result<Vec<u8>, protocol::StoreFailure> {
+        peer.with_root_scope(|| {
+            self.root_units
+                .lock()
+                .unwrap()
+                .get(&unit)
+                .cloned()
+                .ok_or_else(|| protocol::StoreFailure::new(protocol::ROOT_UNIT_NOT_FOUND))
+        })
+    }
+
+    fn root_unit_updates_since(
+        &self,
+        peer: &protocol::AuthenticatedPeer,
+        unit: protocol::CatalogUnitRef,
+        _: &loro::VersionVector,
+    ) -> Result<Vec<u8>, protocol::StoreFailure> {
+        peer.with_catalog_scope(|| {
+            if self.root_held.load(Ordering::SeqCst) {
+                return Err(protocol::StoreFailure::new(protocol::ROOT_UNIT_HELD));
+            }
+            self.root_units
+                .lock()
+                .unwrap()
+                .get(&unit)
+                .cloned()
+                .ok_or_else(|| protocol::StoreFailure::new(protocol::ROOT_UNIT_NOT_FOUND))
+        })
+    }
+
+    fn apply_remote_root_updates(
+        &self,
+        peer: &protocol::AuthenticatedPeer,
+        unit: protocol::CatalogUnitRef,
+        updates: Vec<Vec<u8>>,
+        advertised: Option<&loro::VersionVector>,
+    ) -> Result<protocol::RootJoin, protocol::StoreFailure> {
+        peer.with_root_scope(|| {
+            self.unit_events.lock().unwrap().push(match unit {
+                protocol::CatalogUnitRef::Profile { .. } => "root_profile",
+                protocol::CatalogUnitRef::Workspace { .. } => {
+                    self.placement_known.store(true, Ordering::SeqCst);
+                    "root_workspace"
+                }
+            });
+            let frontier = updates[0].clone();
+            self.root_units
+                .lock()
+                .unwrap()
+                .insert(unit, frontier.clone());
+            let reconciled = advertised.is_none_or(|advertised| {
+                loro::VersionVector::decode(&frontier)
+                    .is_ok_and(|frontier| frontier.includes_vv(advertised))
+            });
+            Ok(protocol::RootJoin::Applied {
+                frontier,
+                reconciled,
+            })
+        })
+    }
+
+    fn personal_version(
+        &self,
+        peer: &protocol::AuthenticatedPeer,
+        workspace: WorkspaceId,
+    ) -> Result<Vec<u8>, protocol::StoreFailure> {
+        peer.with_root_scope(|| {
+            self.personal_units
+                .lock()
+                .unwrap()
+                .get(&workspace)
+                .cloned()
+                .ok_or_else(|| protocol::StoreFailure::new(protocol::ROOT_UNIT_NOT_FOUND))
+        })
+    }
+
+    fn personal_updates_since(
+        &self,
+        peer: &protocol::AuthenticatedPeer,
+        workspace: WorkspaceId,
+        _: &loro::VersionVector,
+    ) -> Result<Vec<u8>, protocol::StoreFailure> {
+        self.personal_version(peer, workspace)
+    }
+
+    fn apply_remote_personal_updates(
+        &self,
+        peer: &protocol::AuthenticatedPeer,
+        workspace: WorkspaceId,
+        updates: Vec<Vec<u8>>,
+        _: Option<&loro::VersionVector>,
+    ) -> Result<protocol::RootJoin, protocol::StoreFailure> {
+        peer.with_root_scope(|| {
+            // Personal rows reference the Workspace row; the real Store
+            // answers `workspace_not_found` until content bootstrap.
+            if !self.workspace_ready.load(Ordering::SeqCst) {
+                return Err(protocol::StoreFailure::new("workspace_not_found"));
+            }
+            self.unit_events.lock().unwrap().push("personal_v2");
+            let frontier = updates[0].clone();
+            self.personal_units
+                .lock()
+                .unwrap()
+                .insert(workspace, frontier.clone());
+            Ok(protocol::RootJoin::Applied {
+                frontier,
+                reconciled: true,
+            })
+        })
     }
 
     fn provision_document(
@@ -1611,6 +1846,15 @@ impl RequestTransport for CatalogThenPendingInventory {
                     }],
                 }),
                 protocol::PeerFrame::InventoryRequest { .. } => std::future::pending().await,
+                // An all-data peer is asked for its root catalog before any
+                // inventory (§7.2). This double holds no root units, which
+                // makes the root exchange a no-op whatever the digests say,
+                // so the pass reaches the inventory this test is about.
+                protocol::PeerFrame::RootCatalogRequest => Ok(protocol::PeerFrame::RootCatalog {
+                    digest: vec![99],
+                    units: Vec::new(),
+                    personal: Vec::new(),
+                }),
                 other => panic!("unexpected scripted request: {other:?}"),
             }
         })
@@ -1661,6 +1905,14 @@ impl RequestTransport for CatalogThenProfileGone {
                 }),
                 protocol::PeerFrame::InventoryRequest { .. } => Ok(protocol::PeerFrame::Error {
                     code: "profile_not_found".into(),
+                }),
+                // As above: no root units, so the root exchange neither
+                // reschedules the pass nor contributes an error code, and
+                // `profile_not_found` is still the one the test reads.
+                protocol::PeerFrame::RootCatalogRequest => Ok(protocol::PeerFrame::RootCatalog {
+                    digest: vec![99],
+                    units: Vec::new(),
+                    personal: Vec::new(),
                 }),
                 other => panic!("unexpected scripted request: {other:?}"),
             }
@@ -2510,14 +2762,15 @@ fn a_history_write_failure_does_not_hide_the_applied_state_change() {
 #[test]
 fn catalog_change_detail_names_each_changed_category() {
     let changes = CatalogChanges {
+        root: 1,
         profiles: 1,
         workspaces: 2,
         documents: 3,
     };
-    assert_eq!(changes.total(), 6);
+    assert_eq!(changes.total(), 7);
     assert_eq!(
         changes.summary(),
-        "1 profile change, 2 workspace changes, 3 document changes"
+        "1 placement change, 1 profile change, 2 workspace changes, 3 document changes"
     );
 }
 
@@ -6362,4 +6615,118 @@ async fn the_selected_path_predicate_refuses_a_relayed_connection() {
     client.close().await;
     peer_endpoint.close().await;
     relay.shutdown().await.expect("relay shuts down");
+}
+
+// ------------------------------------------- the organization status (Plan 2.2)
+
+/// **A pass's readings are installed whole**: a full pass replaces what the
+/// peer said before, a retry scoped to failed Workspaces only updates what
+/// it touched, within one pass the worse reading of a subject wins, and a
+/// peer that disconnects takes its readings with it.
+#[test]
+fn root_sync_readings_are_installed_whole_and_leave_with_the_peer() {
+    let peer = DeviceId::new();
+    let profile = ProfileId::new();
+    let workspace = WorkspaceId::new();
+    let status = RwLock::new(NetworkStatus::default());
+
+    let mut pass = RootSyncPass::default();
+    pass.note(
+        protocol::CatalogUnitRef::Profile { profile },
+        RootSyncState::UpToDate,
+    );
+    pass.note_workspace(workspace, RootSyncState::UpToDate);
+    pass.note_workspace(workspace, RootSyncState::Pending);
+    pass.note_workspace(workspace, RootSyncState::UpToDate);
+    pass.install(&status, peer, true);
+    let rows = status.read().unwrap().root_sync[&peer].clone();
+    assert_eq!(rows.len(), 2);
+    assert!(
+        rows.iter()
+            .any(|row| row.profile == Some(profile) && row.state == RootSyncState::UpToDate)
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.workspace == Some(workspace) && row.state == RootSyncState::Pending),
+        "the worse reading of one subject wins within a pass"
+    );
+
+    // A retry pass touching only the Workspace keeps the Profile's reading.
+    let mut retry = RootSyncPass::default();
+    retry.note_workspace(workspace, RootSyncState::UpToDate);
+    retry.install(&status, peer, false);
+    let rows = status.read().unwrap().root_sync[&peer].clone();
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().any(|row| row.profile == Some(profile)));
+    assert!(
+        rows.iter()
+            .any(|row| row.workspace == Some(workspace) && row.state == RootSyncState::UpToDate)
+    );
+
+    // A full pass that says nothing about the Profile forgets it.
+    let mut next = RootSyncPass::default();
+    next.note_workspace(workspace, RootSyncState::Held);
+    next.install(&status, peer, true);
+    let rows = status.read().unwrap().root_sync[&peer].clone();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].state, RootSyncState::Held);
+
+    // Seeding from this device's own admissions: a closed mode row, a
+    // ceiling mismatch and a pending overlay each read as their state; an
+    // ordinary subject gets no reading from the seed.
+    let mut seeded = RootSyncPass::default();
+    let other = WorkspaceId::new();
+    seeded.seed(&[
+        protocol::RootSubjectAdmission {
+            subject: protocol::CatalogUnitRef::Profile { profile },
+            allows_peer: false,
+            ceiling_mismatch: false,
+            overlay_pending: false,
+        },
+        protocol::RootSubjectAdmission {
+            subject: protocol::CatalogUnitRef::Workspace { workspace },
+            allows_peer: true,
+            ceiling_mismatch: true,
+            overlay_pending: false,
+        },
+        protocol::RootSubjectAdmission {
+            subject: protocol::CatalogUnitRef::Workspace { workspace: other },
+            allows_peer: true,
+            ceiling_mismatch: false,
+            overlay_pending: true,
+        },
+        protocol::RootSubjectAdmission {
+            subject: protocol::CatalogUnitRef::Workspace {
+                workspace: WorkspaceId::new(),
+            },
+            allows_peer: true,
+            ceiling_mismatch: false,
+            overlay_pending: false,
+        },
+    ]);
+    assert_eq!(seeded.subjects.len(), 3);
+    assert_eq!(
+        seeded.subjects[&protocol::CatalogUnitRef::Profile { profile }],
+        RootSyncState::PausedBySettings
+    );
+    assert_eq!(
+        seeded.subjects[&protocol::CatalogUnitRef::Workspace { workspace }],
+        RootSyncState::BlockedByMismatch
+    );
+    assert_eq!(
+        seeded.subjects[&protocol::CatalogUnitRef::Workspace { workspace: other }],
+        RootSyncState::Pending
+    );
+
+    // Disconnecting the peer drops its readings; connecting keeps them.
+    set_peer(
+        &status,
+        peer,
+        PeerConnectionState::Connected {
+            path: PathKind::Direct,
+        },
+    );
+    assert!(status.read().unwrap().root_sync.contains_key(&peer));
+    set_peer(&status, peer, PeerConnectionState::Disconnected);
+    assert!(!status.read().unwrap().root_sync.contains_key(&peer));
 }

@@ -734,6 +734,29 @@ payload!(ProfileRemovalChanged, "profile.removal_changed", |self| {
     Draft::new(EventName::from_static(Self::NAME)).attr("profile", AttrValue::Id(self.profile_id))
 });
 
+/// The Store committed a shared Profile deletion batch (root-catalog
+/// TECHNICAL.final §6.1): the Profile and its captured Workspaces are in
+/// the Trash. Each target also gets its own `workspace.catalog.deleted`;
+/// this row is the batch itself, keyed by the Profile, for the surfaces that
+/// list restorable Profiles.
+pub struct ProfileDeleted {
+    pub profile_id: Uuid,
+}
+
+payload!(ProfileDeleted, "profile.deleted", |self| {
+    Draft::new(EventName::from_static(Self::NAME)).attr("profile", AttrValue::Id(self.profile_id))
+});
+
+/// A Profile deletion batch was restored. Each Workspace that left the
+/// Trash with it also gets `workspace.catalog.restored`.
+pub struct ProfileRestored {
+    pub profile_id: Uuid,
+}
+
+payload!(ProfileRestored, "profile.restored", |self| {
+    Draft::new(EventName::from_static(Self::NAME)).attr("profile", AttrValue::Id(self.profile_id))
+});
+
 payload!(
     ProfileAppearanceChanged,
     "profile.appearance_changed",

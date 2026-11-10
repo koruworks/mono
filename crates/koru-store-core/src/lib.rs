@@ -35,6 +35,11 @@
 //! The manifest is the one exception, because a workspace has to be listable
 //! without opening everything in it.
 //!
+//! Beside the Workspace sit the independently addressed units: a Profile's
+//! identity, private and personal documents ([`profile_units`]) and the
+//! per-user root catalog's Profile and Workspace units ([`root_catalog`]),
+//! each its own `LoroDoc` on one shared staging mechanism.
+//!
 //! ## Reading order
 //!
 //! [`ids`] → [`model`] → [`manifest`] → [`ports`] → [`lifecycle`].
@@ -57,16 +62,21 @@ pub mod profile_removal;
 pub mod profile_units;
 pub mod recovery;
 pub mod reminders;
+pub mod root_catalog;
 pub mod service;
 pub mod stats;
 pub mod temporal;
 pub mod text;
 pub mod transport;
+pub(crate) mod unit_doc;
 pub mod version;
 
-pub use bundle::{Bundle, ImportMode};
+pub use bundle::{Bundle, ImportMode, ImportPublication, ImportedWorkspace};
 pub use errors::{Class, Code, Error, Result};
-pub use ids::{ActionId, ClientId, DocumentId, ProfileId, ReminderId, RuleRevisionId, WorkspaceId};
+pub use ids::{
+    ActionId, ClientId, DeletionId, DocumentId, ProfileId, ReminderId, RestoreId, RuleRevisionId,
+    UserScopeId, WorkspaceId,
+};
 pub use lifecycle::{CheckpointPolicy, CommitWindow, LiveDocument, checksum};
 pub use manifest::Manifest;
 pub use model::{
@@ -77,7 +87,9 @@ pub use personal_attributes::{EntityRef, PersonalAttributeValue};
 pub use ports::{
     BackupId, BackupInfo, Backups, BlobStore, Catalog, Checkpoint, CheckpointHeader, DocumentIndex,
     DocumentState, LocalProfileRemoval, LocalProfileRestoration, Opened, ProfileCatalogState,
-    Recovery, SeedDocument, SeededDocument, StoredUpdate, UpdateBatch, WorkspaceRepo,
+    Recovery, RootCatalogOverlay, RootCatalogUnitCommit, RootCatalogUnitRow, SeedDocument,
+    SeededDocument, StoredUpdate, UpdateBatch, WorkspacePersonalUnitState, WorkspaceReminderDue,
+    WorkspaceRepo,
 };
 pub use profile_account::{
     ProfileAccountBinding, ProfileAccountBindingOutcome, ProfileAccountClearOutcome,
@@ -88,18 +100,22 @@ pub use reminders::{
     ReminderActions, ReminderChange, ReminderReductionInput, ReminderRule, ReminderSettings,
     RuleStatus, SemanticOffset, StoredReminder, TargetState, ToneId, WeekStartPreference,
 };
-pub use service::TransportModeChoice;
+pub use root_catalog::{
+    CatalogUnitKind, CatalogUnitRef, CatalogUnitRefusal, DeletionRecord, K_LOCAL_USER_SCOPE,
+    Placement, ProfileCatalogUnit, PurgeRecord, RestoreRecord, Staged, WorkspaceCatalogUnit,
+};
+pub use service::{TransportModeChoice, mint_peer_id};
 pub mod sync_digest;
 pub use service::{
-    Backend, Committed, DictionaryCommitted, IdentityChange, IdentityCommitted, ReminderCommitted,
-    SeededCreation, Store, TRASH_RETENTION_MS,
+    Backend, Committed, DictionaryCommitted, IdentityChange, IdentityCommitted, ProvisionedReplica,
+    ReminderCommitted, ReplicaPlacement, SeededCreation, Store, TRASH_RETENTION_MS,
 };
 pub use temporal::{CalendarDate, FloatingDateTime, TemporalValue, ZonedDateTime};
 pub use text::Locale;
 pub use transport::{
-    EffectiveTransportMode, InitializeTransportMode, SetTransportMode, SharingEvidence,
-    TransportMode, TransportModeCommit, TransportModeRequest, TransportModeState, TransportPath,
-    TransportSubject,
+    DeviceLinkage, EffectiveTransportMode, InitializeTransportMode, SetTransportMode,
+    SharingEvidence, TransportMode, TransportModeCommit, TransportModeRequest, TransportModeState,
+    TransportPath, TransportSubject, seeded_child_mode,
 };
 pub use version::{
     API_VERSION, BUNDLE_FORMAT_VERSION, CAPABILITIES, CATALOG_SCHEMA_VERSION, CRDT_SCHEMA_VERSION,

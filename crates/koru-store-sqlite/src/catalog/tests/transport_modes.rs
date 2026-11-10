@@ -53,7 +53,7 @@ fn a_fresh_catalog_carries_the_table_and_its_index() {
     let c = catalog();
 
     assert_eq!(c.schema_version().unwrap(), CATALOG_SCHEMA_VERSION);
-    assert_eq!(CATALOG_SCHEMA_VERSION, 12);
+    assert_eq!(CATALOG_SCHEMA_VERSION, 13);
     assert!(has_table(&c, "local_transport_modes"));
     let index: String = c
         .connection
@@ -594,6 +594,152 @@ fn a_request_for_another_profiles_subject_is_refused() {
     assert_eq!(error.code(), Code::InvalidRequest);
     assert_eq!(
         c.transport_mode(TransportSubject::Workspace(elsewhere.id))
+            .unwrap()
+            .mode,
+        TransportMode::LocalOnly
+    );
+}
+
+// ------------------------------------------- the seed asks about linking
+
+/// Bind an account the way `Store::bind_account_scope` does — the key is what
+/// [`device_linkage`] reads; its value is the service's binding and is not
+/// this question's business.
+fn bind_account(c: &mut SqliteCatalog) {
+    c.set_state(K_ACCOUNT_SCOPE, "{\"account_id\":\"x\"}")
+        .unwrap();
+}
+
+#[test]
+fn a_standalone_catalog_still_seeds_every_new_row_local_only() {
+    let mut c = catalog();
+    let owner = a_profile(&mut c);
+    let workspace = ws_of(&mut c, owner.id, "Work");
+
+    for subject in [
+        TransportSubject::Profile(owner.id),
+        TransportSubject::Workspace(workspace.id),
+    ] {
+        let state = c.transport_mode(subject).unwrap();
+        assert_eq!(state.mode, TransportMode::LocalOnly, "{subject:?}");
+        assert!(!state.explicit_choice, "{subject:?}");
+    }
+}
+
+#[test]
+fn an_account_binding_or_a_paired_peer_makes_a_new_row_admit_peers() {
+    for link in [
+        bind_account as fn(&mut SqliteCatalog),
+        |c: &mut SqliteCatalog| {
+            // One `all_data` relationship, as `Store::bind_peer_scope` writes it.
+            c.set_state(
+                &format!("{K_PEER_SCOPE_PREFIX}7d1f9e02-0000-4000-8000-000000000001"),
+                "33333333-3333-4333-8333-333333333333",
+            )
+            .unwrap();
+        },
+    ] {
+        let mut c = catalog();
+        link(&mut c);
+        let owner = a_profile(&mut c);
+        let workspace = ws_of(&mut c, owner.id, "Work");
+
+        for subject in [
+            TransportSubject::Profile(owner.id),
+            TransportSubject::Workspace(workspace.id),
+        ] {
+            let state = c.transport_mode(subject).unwrap();
+            assert_eq!(state.mode, TransportMode::P2p, "{subject:?}");
+            // A default, not a choice: the person still outranks it.
+            assert!(!state.explicit_choice, "{subject:?}");
+            assert_eq!(state.revision, 1, "{subject:?}");
+        }
+    }
+}
+
+#[test]
+fn an_unrelated_store_state_key_is_not_a_linkage() {
+    let mut c = catalog();
+    // `root_catalog.peer_scope.` contains `_`, which `LIKE` would read as a
+    // wildcard. These two keys must not answer "linked".
+    c.set_state("root_catalog_peer_scope_x", "no").unwrap();
+    c.set_state("peer_id", "12345").unwrap();
+    let owner = a_profile(&mut c);
+
+    assert_eq!(
+        c.transport_mode(TransportSubject::Profile(owner.id))
+            .unwrap()
+            .mode,
+        TransportMode::LocalOnly
+    );
+}
+
+#[test]
+fn linking_afterwards_never_promotes_a_row_that_already_exists() {
+    let mut c = catalog();
+    let owner = a_profile(&mut c);
+    let before = ws_of(&mut c, owner.id, "Made first");
+
+    bind_account(&mut c);
+    // Every projection write runs the seed again. None of them is a mode
+    // decision, and linking is not a decision about data the person already
+    // has — that would reverse D258 retroactively.
+    c.put_profile(&owner).unwrap();
+    c.put_workspace(&before).unwrap();
+
+    for subject in [
+        TransportSubject::Profile(owner.id),
+        TransportSubject::Workspace(before.id),
+    ] {
+        let state = c.transport_mode(subject).unwrap();
+        assert_eq!(state.mode, TransportMode::LocalOnly, "{subject:?}");
+        assert_eq!(state.revision, 1, "{subject:?}");
+    }
+
+    // A Workspace created after linking, under that same unpromoted Profile,
+    // is **capped at its Profile's row** rather than seeded above it: a child
+    // over its ceiling is a `ceiling_mismatch`, which stops the transport
+    // instead of opening it.
+    let after = ws_of(&mut c, owner.id, "Made after");
+    assert_eq!(
+        c.transport_mode(TransportSubject::Workspace(after.id))
+            .unwrap()
+            .mode,
+        TransportMode::LocalOnly
+    );
+
+    // Under a Profile that was itself created after linking, both rows admit
+    // the peer path and nothing is mismatched.
+    let fresh = a_profile(&mut c);
+    let child = ws_of(&mut c, fresh.id, "Work");
+    assert_eq!(
+        c.transport_mode(TransportSubject::Workspace(child.id))
+            .unwrap()
+            .mode,
+        TransportMode::P2p
+    );
+}
+
+#[test]
+fn an_explicit_profile_choice_still_outranks_the_linkage_default() {
+    let mut c = catalog();
+    bind_account(&mut c);
+    let owner = a_profile(&mut c);
+    c.commit_transport_modes(
+        owner.id,
+        &[set(
+            TransportSubject::Profile(owner.id),
+            1,
+            TransportMode::LocalOnly,
+        )],
+    )
+    .unwrap();
+
+    // The person turned this Profile off on a linked device. A Workspace
+    // created under it is Local-only, name and all.
+    let workspace = ws_of(&mut c, owner.id, "Private");
+    assert_eq!(
+        c.transport_mode(TransportSubject::Workspace(workspace.id))
             .unwrap()
             .mode,
         TransportMode::LocalOnly

@@ -10,6 +10,7 @@ mod catalog;
 pub mod cloud_sync;
 mod openapi;
 pub mod regional_bootstrap;
+pub mod root_catalog;
 mod schema;
 mod types;
 mod version;
@@ -22,9 +23,10 @@ pub use cloud_sync::{
 };
 pub use openapi::{extend_openapi, openapi};
 pub use regional_bootstrap::{CloudSyncRouteV1, CloudSyncSeedV1, RegionalBootstrapV1};
+pub use root_catalog::*;
 pub use schema::{TYPE_NAMES, catalogue};
 pub use types::*;
-pub use version::Version1;
+pub use version::{Version1, Version2};
 
 /// The capability a host publishes when it composes an account service. A host
 /// that mounts the catalog without one omits it and answers

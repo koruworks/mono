@@ -272,6 +272,11 @@ impl Waits {
             Ok(EnsuredWorkspace::Removing { mark }) => {
                 wait.presentation.reading = WaitReading::Removing { mark }
             }
+            // The Profile has no live workspace and none is manufactured
+            // (root-catalog §3.10). Its own reading: the pane says the
+            // Profile is empty and offers *New workspace*; nothing is
+            // created and nothing is retried on a clock.
+            Ok(EnsuredWorkspace::Empty) => wait.presentation.reading = WaitReading::Empty,
             Err(error) => {
                 wait.presentation.reading = WaitReading::Unavailable {
                     cause: error.code().as_str().into(),

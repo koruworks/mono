@@ -35,11 +35,11 @@ use koru_replication::cloud::{
 };
 use koru_store_api::cloud_activity::{CloudActivity, PassCounts, UnitStep};
 use koru_store_core::{
-    DocumentId, ProfileId, Timestamp, WorkspaceId, profile_units::ProfileUnitRef,
+    DocumentId, ProfileId, ReplicaPlacement, Timestamp, WorkspaceId, profile_units::ProfileUnitRef,
 };
 use koru_sync_control::{
     ControlHost,
-    cloud::{CloudPermitV1, CloudStage},
+    cloud::{CloudPermitScopeV2, CloudPermitV2, CloudStage},
 };
 use tokio::time::Instant;
 
@@ -287,7 +287,14 @@ async fn run_session(
     };
     let permit_id = permit.permit_id;
     let generation = principal.session_generation;
-    let blob_workspace = match permit.dataset {
+    // The installed context admits only permits with a dataset session; the
+    // host refused the catalog scopes at the page, so this is the permit's
+    // own shape, never a guess.
+    let Some(dataset) = permit.dataset() else {
+        session.reset(1);
+        return;
+    };
+    let blob_workspace = match dataset {
         CloudReplicaPrincipalV1::Workspace { workspace_id, .. } => {
             Some(WorkspaceId::from_uuid(workspace_id.as_uuid()))
         }
@@ -300,10 +307,10 @@ async fn run_session(
     // was dropped and re-provisioned is a different dataset, and a mapping
     // under the old incarnation says nothing about the new one, so the
     // boundary check below compares this exact value.
-    let blob_incarnation = permit
-        .workspace_descriptor
-        .as_ref()
-        .map(|descriptor| descriptor.workspace_incarnation_id);
+    let blob_incarnation = match &permit.scope {
+        CloudPermitScopeV2::Workspace { descriptor } => Some(descriptor.workspace_incarnation_id),
+        _ => None,
+    };
     let (plan, scope) = match plan_for(&permit) {
         Ok(value) => value,
         Err(code) => {
@@ -313,9 +320,11 @@ async fn run_session(
         }
     };
     // HOST-CONTROL §3.1 step 3, at installation: the identity-only
-    // bootstrap for a Workspace this Store does not hold yet. An existing
-    // Workspace whose manifest is not the descriptor's is a refusal, never a
-    // replacement.
+    // bootstrap for a Workspace this Store does not hold yet, placed by its
+    // root unit (root-catalog Plan 3.2), never by the descriptor. An
+    // existing Workspace whose manifest is not the descriptor's is a
+    // refusal, never a replacement; a placement not known here yet is
+    // `placement_pending`, which the Agent retries after the next root join.
     if let Err(code) = bootstrap(&store, &permit).await {
         tracing::warn!(code, "cloud session: workspace bootstrap refused");
         set_stage(&host, permit_id, CloudStage::Unavailable, Some(code));
@@ -337,7 +346,7 @@ async fn run_session(
             generation,
             expires_at_seconds: principal.expires_at_seconds,
         },
-        principal: permit.dataset,
+        principal: dataset,
         expires_at_seconds: principal.expires_at_seconds,
         generation,
         // A device's session: no claim reference crosses it either way.
@@ -658,50 +667,52 @@ fn record(activity: &Mutex<CloudActivity>, write: impl FnOnce(&mut CloudActivity
 
 /// Which units this permit may carry, and the carrier scope for them. The
 /// plan is bounded by the permit, never by what the remote advertises: a
-/// Profile permit that does not name Private does not sync Private. Shared
-/// with the Android host, which runs the same pass in process.
-pub fn plan_for(permit: &CloudPermitV1) -> Result<(Plan, Scope), &'static str> {
-    let profile = ProfileId::from_uuid(permit.profile_id.as_uuid());
-    let eligibility_workspace = WorkspaceId::from_uuid(permit.authority_workspace_id.as_uuid());
-    match permit.dataset {
-        CloudReplicaPrincipalV1::Workspace { workspace_id, .. } => {
-            let descriptor = permit
-                .workspace_descriptor
-                .as_ref()
-                .ok_or("cloud_permit_descriptor_required")?;
-            if descriptor.workspace_id != workspace_id {
-                return Err("cloud_permit_descriptor_mismatch");
-            }
+/// Profile-units permit that does not name Private does not sync Private.
+/// Shared with the Android host, which runs the same pass in process.
+///
+/// Since root-catalog Plan 3.2 a permit is one scope's (`CloudPermitV2`): a
+/// Workspace's content, whose `Scope.profile` is the placement the
+/// descriptor projects (a hint the carrier's manifest frames carry, nil for
+/// an explicitly unassigned Workspace, never authority), or a Profile's
+/// Identity/Private units. The two catalog scopes have no dataset session
+/// and are refused here, as the host refused them at the page.
+pub fn plan_for(permit: &CloudPermitV2) -> Result<(Plan, Scope), &'static str> {
+    match &permit.scope {
+        CloudPermitScopeV2::Workspace { descriptor } => {
+            let workspace = WorkspaceId::from_uuid(descriptor.workspace_id.as_uuid());
             let manifest = DocumentId::from_uuid(descriptor.manifest_document_id.as_uuid());
             Ok((
                 Plan::Workspace {
-                    workspace_id: WorkspaceId::from_uuid(workspace_id.as_uuid()),
+                    workspace_id: workspace,
                 },
                 Scope {
-                    principal: permit.dataset,
-                    eligibility_workspace,
-                    profile: permit.profile_id,
+                    principal: descriptor.dataset(),
+                    eligibility_workspace: workspace,
+                    profile: descriptor
+                        .placement
+                        .unwrap_or_else(|| koru_device::cloud::CloudId::from_bytes([0; 16])),
                     manifest,
                 },
             ))
         }
-        CloudReplicaPrincipalV1::Profile { profile_id, .. } => {
-            if profile_id != permit.profile_id {
-                return Err("cloud_permit_profile_mismatch");
-            }
+        CloudPermitScopeV2::ProfileUnits {
+            dataset,
+            allowed_profile_units,
+        } => {
+            let CloudReplicaPrincipalV1::Profile { profile_id, .. } = *dataset else {
+                return Err("cloud_permit_scope");
+            };
+            let profile = ProfileId::from_uuid(profile_id.as_uuid());
             let mut private = false;
-            let mut personal_workspaces = Vec::new();
-            for unit in &permit.allowed_profile_units {
+            for unit in allowed_profile_units {
                 match unit {
                     ProfileUnitRef::Identity { profile: owner } if *owner == profile => {}
                     ProfileUnitRef::Private { profile: owner } if *owner == profile => {
                         private = true;
                     }
-                    ProfileUnitRef::Personal { owner, workspace }
-                        if *owner == profile && *workspace == eligibility_workspace =>
-                    {
-                        personal_workspaces.push(*workspace);
-                    }
+                    // Personal is the Workspace-keyed user-personal scope in
+                    // v2 and never on a Profile dataset; another Profile's
+                    // unit is not narrowed down, the whole permit is refused.
                     _ => return Err("cloud_permit_profile_units"),
                 }
             }
@@ -709,49 +720,93 @@ pub fn plan_for(permit: &CloudPermitV1) -> Result<(Plan, Scope), &'static str> {
                 Plan::Profile {
                     profile_id: profile,
                     private,
-                    personal_workspaces,
+                    personal_workspaces: Vec::new(),
                 },
                 Scope {
-                    principal: permit.dataset,
-                    eligibility_workspace,
-                    profile: permit.profile_id,
+                    principal: *dataset,
+                    // No authorizing Workspace in v2: the Profile's units are
+                    // eligible on the Profile's own placement facts. The
+                    // carrier consults this for Document and Personal units
+                    // only, neither of which a Profile-units plan carries.
+                    eligibility_workspace: WorkspaceId::from_uuid(uuid::Uuid::nil()),
+                    profile: profile_id,
                     // A Profile dataset carries no manifest; the scope's
                     // manifest field is consulted for Document units only.
                     manifest: DocumentId::from_uuid(uuid::Uuid::nil()),
                 },
             ))
         }
+        CloudPermitScopeV2::UserCatalog | CloudPermitScopeV2::UserPersonal { .. } => {
+            Err("cloud_permit_scope")
+        }
     }
 }
 
-/// HOST-CONTROL §3.1 step 3 for a Workspace dataset: provision the replica
-/// with the Profile read back from the Store and the descriptor's manifest
-/// id. The Profile's presence is the selection path's job (step 1) and is not
-/// invented here; a missing Profile is a refusal the coordinator retries
-/// after selection has landed it.
-async fn bootstrap(store: &StoreWorkerClient, permit: &CloudPermitV1) -> Result<(), &'static str> {
-    let Some(descriptor) = permit.workspace_descriptor.as_ref().copied() else {
+/// HOST-CONTROL §3.1 step 3 for a Workspace permit: provision the replica
+/// under the placement its **root unit** holds here, with the descriptor's
+/// manifest id. The descriptor's placement is a hint and seeds nothing
+/// (root-catalog TECHNICAL.final §7.2–7.3) — in the v1 window it places the
+/// row and publishes no unit, see [`bootstrap_placement`]; a placement this
+/// Store cannot list the Workspace under yet is `placement_pending`, retried
+/// by the Agent after the next root join.
+async fn bootstrap(store: &StoreWorkerClient, permit: &CloudPermitV2) -> Result<(), &'static str> {
+    let CloudPermitScopeV2::Workspace { descriptor } = &permit.scope else {
         return Ok(());
     };
     ensure_workspace(
         store,
-        ProfileId::from_uuid(permit.profile_id.as_uuid()),
         WorkspaceId::from_uuid(descriptor.workspace_id.as_uuid()),
         DocumentId::from_uuid(descriptor.manifest_document_id.as_uuid()),
+        bootstrap_placement(permit),
     )
     .await
 }
 
+/// How a Workspace permit's replica is placed when this Store does not hold
+/// it yet: by its root unit only (`KnownOnly`) under the v2 contract, whose
+/// root units arrive before content; by the descriptor's Profile for a
+/// permit of the **v1 window** (`catalog_scope_id: None`, which only a
+/// v1-window permit has), whose service has no root units to join.
+///
+/// In that window the hint places the row and **nothing else**
+/// (`HintWithoutUnit`, root-catalog QUESTIONS.md Q7, decided 2026-11-09):
+/// the descriptor's placement is the legacy owner column no client writes
+/// any more, so a Workspace unit published from it would race the first real
+/// unit from a linked device by Loro's map ordering and could win over a
+/// move the person already made. Provisioning the content and publishing no
+/// unit leaves the Workspace in the one state the placement reads already
+/// tolerate, and the first real unit to arrive becomes its only placement.
+/// Kept exactly as long as the window is; outside it, and on every peer
+/// path, a provisioned replica publishes its unit as before. Shared with the
+/// Android host.
+pub fn bootstrap_placement(permit: &CloudPermitV2) -> ReplicaPlacement {
+    match (&permit.scope, permit.catalog_scope_id) {
+        (
+            CloudPermitScopeV2::Workspace {
+                descriptor:
+                    koru_sync_control::cloud::CloudWorkspaceDescriptorV2 {
+                        placement: Some(profile),
+                        ..
+                    },
+            },
+            None,
+        ) => ReplicaPlacement::HintWithoutUnit(ProfileId::from_uuid(profile.as_uuid())),
+        _ => ReplicaPlacement::KnownOnly,
+    }
+}
+
 /// The identity-only Workspace bootstrap itself, on whichever host owns the
 /// Store worker: present and mapped to this manifest is fine, absent is
-/// provisioned with the stored Profile, and present under another manifest
-/// is refused. Names and appearance are left for the manifest's first
-/// import.
+/// provisioned under `placement` (its known root placement, or the v1
+/// window's unit-less hint — see [`bootstrap_placement`]), present under
+/// another manifest is refused, and a Workspace whose placement is not known
+/// here yet is `placement_pending`. Names and appearance are left for the
+/// manifest's first import.
 pub async fn ensure_workspace(
     store: &StoreWorkerClient,
-    profile: ProfileId,
     workspace: WorkspaceId,
     manifest: DocumentId,
+    placement: ReplicaPlacement,
 ) -> Result<(), &'static str> {
     store
         .with_store_async(move |store| -> Result<(), &'static str> {
@@ -768,13 +823,13 @@ pub async fn ensure_workspace(
                     Ok(())
                 }
                 Err(error) if error.code == koru_store_core::errors::Code::WorkspaceNotFound => {
-                    let profile = store.profile(profile).map_err(|_| "profile_absent")?;
                     let now = Timestamp::now();
                     // Bootstrap fields only: the manifest CRDT overrides the
-                    // name and appearance on its first import.
+                    // name and appearance on its first import, and the root
+                    // placement overrides the owner before the row is written.
                     let workspace = koru_store_core::model::Workspace {
                         id: workspace,
-                        owner: profile.id,
+                        owner: ProfileId::from_uuid(uuid::Uuid::nil()),
                         name: String::new(),
                         created_at: now,
                         last_opened_at: None,
@@ -785,12 +840,51 @@ pub async fn ensure_workspace(
                         deleted_at: None,
                         position: 0,
                     };
-                    store
-                        .provision_replica(&profile, &workspace, manifest, now)
-                        .map_err(|_| "workspace_provisioning_failed")
+                    match store.provision_replica_placed(None, &workspace, manifest, placement, now)
+                    {
+                        Ok(koru_store_core::ProvisionedReplica::Ready) => Ok(()),
+                        Ok(koru_store_core::ProvisionedReplica::PlacementPending) => {
+                            Err("placement_pending")
+                        }
+                        Err(_) => Err("workspace_provisioning_failed"),
+                    }
                 }
                 Err(_) => Err("store_unavailable"),
             }
+        })
+        .await
+        .map_err(|_| "store_worker_unavailable")?
+}
+
+/// **Test only.** Root units arrive before content (peer protocol 6 and the
+/// account path), so a replica that is about to be bootstrapped under
+/// `ReplicaPlacement::KnownOnly` must hold the Workspace's unit first. This
+/// joins a seeded unit placed under `profile` through the Store's own staged
+/// join, as a paired device's pass would, so a test's replica is set up the
+/// way a real one is rather than by a descriptor's Profile.
+#[cfg(test)]
+pub(crate) async fn seed_root_placement(
+    store: &StoreWorkerClient,
+    profile: ProfileId,
+    workspace: WorkspaceId,
+) -> Result<(), &'static str> {
+    store
+        .with_store_async(move |store| -> Result<(), &'static str> {
+            let relationship = uuid::Uuid::new_v4();
+            store
+                .bind_peer_scope(relationship)
+                .map_err(|_| "scope_unbound")?;
+            let snapshot =
+                koru_store_core::root_catalog::seed_workspace_unit(workspace, profile, None, 1)
+                    .map_err(|_| "seed_failed")?;
+            let unit = koru_store_core::root_catalog::CatalogUnitRef::Workspace { workspace };
+            let staged = store
+                .stage_root_unit(relationship, unit, &[snapshot])
+                .map_err(|_| "stage_failed")?;
+            store
+                .commit_staged_root_unit(relationship, staged, None)
+                .map(|_| ())
+                .map_err(|_| "commit_failed")
         })
         .await
         .map_err(|_| "store_worker_unavailable")?

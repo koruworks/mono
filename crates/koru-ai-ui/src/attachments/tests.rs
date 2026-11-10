@@ -45,6 +45,7 @@ fn agent_transcript(provider: &str) -> ChatTranscript {
         usage: Vec::new(),
         sources: Vec::new(),
         reasoning_control: None,
+        agent_commands: None,
         attachments: Vec::new(),
     }
 }
@@ -56,6 +57,71 @@ fn png(width: u32, height: u32) -> koru_clipboard::PngBitmap {
         height,
         bytes: koru_clipboard::png(width, height, &rgba).unwrap(),
     }
+}
+
+#[test]
+fn composer_chip_shortens_long_names_but_keeps_extensions_and_full_drafts() {
+    let file = Draft::reference(
+        PathBuf::from("CFTC Staff Letter 26 - Passive Software Provider.pdf"),
+        AttachmentKind::File,
+    );
+    assert_eq!(file.chip_label(), "CFTC S…ovider.pdf");
+    assert_eq!(file.tile().chip_label(), file.chip_label());
+    assert_eq!(
+        file.file_name,
+        "CFTC Staff Letter 26 - Passive Software Provider.pdf"
+    );
+
+    let folder = Draft::reference(
+        PathBuf::from("research.materials.archive"),
+        AttachmentKind::Folder,
+    );
+    assert_eq!(folder.chip_label(), "resear…rchive");
+    assert_eq!(folder.tile().chip_label(), folder.chip_label());
+
+    let short = Draft::reference(PathBuf::from("notes.pdf"), AttachmentKind::File);
+    assert_eq!(short.chip_label(), "notes.pdf");
+
+    let unicode = Draft::reference(
+        PathBuf::from("日本語の長いファイル名の詳細資料.pdf"),
+        AttachmentKind::File,
+    );
+    assert_eq!(unicode.chip_label(), "日本語の長い…名の詳細資料.pdf");
+}
+
+#[test]
+fn local_reference_tile_keeps_its_path_for_open_and_save() {
+    let draft = Draft::reference(
+        PathBuf::from("C:/Reports/Quarterly review.pdf"),
+        AttachmentKind::File,
+    );
+    let pending = draft.tile();
+    assert_eq!(pending.source, AttachmentSource::Path);
+    assert_eq!(
+        pending.reference_path.as_deref(),
+        Some("C:/Reports/Quarterly review.pdf")
+    );
+
+    let sent = ChatAttachment {
+        id: draft.id,
+        message_id: None,
+        ordinal: None,
+        kind: draft.kind,
+        source: draft.source,
+        file_name: draft.file_name.clone(),
+        media_type: "application/pdf".into(),
+        byte_count: 0,
+        dimensions: None,
+        origin: None,
+        reference_path: draft.reference_path.clone(),
+        created_at: koru_ai_core::Timestamp::from_millis(1),
+    };
+    assert_eq!(Tile::of(&sent), pending);
+    let request = AttachmentOpenRequest::from_tile(ChatId::new(), &pending);
+    assert_eq!(
+        request.reference_path.as_deref(),
+        Some(std::path::Path::new("C:/Reports/Quarterly review.pdf"))
+    );
 }
 
 fn surface_with_agent_chat() -> (ChatSurface, ChatId, std::sync::mpsc::Receiver<Command>) {
@@ -83,6 +149,7 @@ fn stored(chat: ChatId, draft: &Draft) -> Event {
             byte_count: draft.byte_count,
             dimensions: draft.size,
             origin: None,
+            reference_path: None,
             created_at: Timestamp::from_millis(2),
         }),
     }
@@ -103,31 +170,35 @@ fn a_pasted_screenshot_is_named_like_a_screenshot_file() {
 }
 
 #[test]
-fn card_tiles_keep_the_pictures_shape_and_wrap() {
-    let wide = Tile {
+fn sent_attachment_pills_match_composer_height_and_wrap() {
+    let mut wide = Tile {
         id: ChatAttachmentId::new(),
         kind: AttachmentKind::Image,
+        source: AttachmentSource::Clipboard,
+        reference_path: None,
         size: Some((400, 200)),
         name: "wide.png".into(),
         byte_count: 0,
+        chip_width: 0.0,
     };
-    let tall = Tile {
+    let mut tall = Tile {
         size: Some((100, 400)),
         ..wide.clone()
     };
+    let mut engine = TextEngine::new();
+    wide.measure_chip(&mut engine, 1_000.0);
+    tall.measure_chip(&mut engine, 1_000.0);
     let (rects, height) = card_tiles(&[wide.clone(), tall.clone()], 1_000.0);
-    assert_eq!(rects[0].w, CARD_TILE_H * 2.0);
-    assert_eq!(
-        rects[1].w, CARD_TILE_MIN_W,
-        "a tall picture is never a sliver"
-    );
+    assert_eq!(rects[0].w, wide.chip_width);
+    assert_eq!(rects[1].w, tall.chip_width);
+    assert_eq!(rects[0].h, koru_ui::label_chip::Size::Regular.height());
     assert_eq!(rects[1].y, 0.0);
-    assert_eq!(height, CARD_TILE_H);
-    // Narrower than both: the second goes to the next row.
-    let (rects, height) = card_tiles(&[wide, tall], 240.0);
+    assert_eq!(height, rects[0].h);
+    let narrow = wide.chip_width + tall.chip_width + TILE_GAP - 1.0;
+    let (rects, height) = card_tiles(&[wide, tall], narrow);
     assert_eq!(rects[1].x, 0.0);
-    assert_eq!(rects[1].y, CARD_TILE_H + TILE_GAP);
-    assert_eq!(height, CARD_TILE_H * 2.0 + TILE_GAP);
+    assert_eq!(rects[1].y, rects[0].h + TILE_GAP);
+    assert_eq!(height, rects[0].h * 2.0 + TILE_GAP);
     assert_eq!(card_tiles(&[], 100.0).1, 0.0);
 }
 
@@ -231,12 +302,22 @@ fn a_failed_draft_is_red_blocks_the_send_and_comes_out_with_its_cross() {
 
     surface.composer_rect();
     let composer = surface.composer_hit_rect;
-    let tile = strip_tiles(
-        surface.strip(),
-        composer.x + crate::COMPOSER_PAD_X,
-        composer.y + crate::COMPOSER_PAD_TOP,
-    )[0];
-    let cross = remove_button(tile);
+    let tile = surface
+        .chip_band
+        .chip_rect(
+            0,
+            composer.x + crate::COMPOSER_PAD_X,
+            composer.y + crate::COMPOSER_PAD_TOP,
+        )
+        .unwrap();
+    let draft = &surface.strip()[0];
+    let cross = koru_ui::context_chip::ContextChip {
+        label: &draft.file_name,
+        secondary: "",
+        icon: surface.attachment_chip_icon(draft),
+        state: surface.attachment_chip_state(draft),
+    }
+    .remove_rect(tile);
     assert_eq!(
         surface.strip_mouse_down(cross.x + cross.w * 0.5, cross.y + cross.h * 0.5),
         Some(true)
@@ -433,7 +514,7 @@ fn a_chat_switched_away_from_an_agent_drops_its_drafts() {
 }
 
 #[test]
-fn a_sent_messages_pictures_are_laid_out_under_its_words() {
+fn a_sent_messages_attachments_are_laid_out_as_pills() {
     let (mut surface, chat, commands) = surface_with_agent_chat();
     let message = koru_ai_core::Message {
         id: koru_ai_core::MessageId::new(),
@@ -461,6 +542,7 @@ fn a_sent_messages_pictures_are_laid_out_under_its_words() {
         byte_count: 10,
         dimensions: Some((300, 150)),
         origin: None,
+        reference_path: None,
         created_at: Timestamp::from_millis(1),
     };
     let transcript = surface.transcript.as_mut().unwrap();
@@ -469,10 +551,14 @@ fn a_sent_messages_pictures_are_laid_out_under_its_words() {
     surface.messages_dirty = true;
     surface.rebuild_messages(600.0);
     let layout = &surface.message_layouts[0];
-    assert_eq!(layout.attachments, vec![Tile::of(&attachment)]);
-    // A message of the picture alone is the picture's height and width.
-    assert_eq!(message_content_height(layout), CARD_TILE_H);
-    assert_eq!(message_content_width(layout), CARD_TILE_H * 2.0);
+    let mut expected = Tile::of(&attachment);
+    expected.measure_chip(&mut TextEngine::new(), layout.wrap_width);
+    assert_eq!(layout.attachments, vec![expected.clone()]);
+    assert_eq!(
+        message_content_height(layout),
+        koru_ui::label_chip::Size::Regular.height()
+    );
+    assert_eq!(message_content_width(layout), expected.chip_width);
 
     // Drawn on screen, its thumbnail is asked for once — on the thumbnail
     // thread, never the reader's queue — and not again on the next draw.
@@ -507,12 +593,36 @@ fn surface_with_a_sent_picture() -> (ChatSurface, ChatId, Tile) {
     let tile = Tile {
         id: ChatAttachmentId::new(),
         kind: AttachmentKind::Image,
+        source: AttachmentSource::Clipboard,
+        reference_path: None,
         size: Some((300, 150)),
         name: "shot.png".into(),
         byte_count: 4_000,
+        chip_width: 0.0,
     };
     surface.card_tile_hits = vec![(Rect::new(100.0, 100.0, 224.0, 112.0), tile.clone())];
     (surface, chat, tile)
+}
+
+#[test]
+fn a_sent_folder_pill_opens_on_double_click() {
+    let (mut surface, _chat, _picture) = surface_with_a_sent_picture();
+    let folder = std::path::PathBuf::from("example-folder");
+    let tile = Tile {
+        id: ChatAttachmentId::new(),
+        kind: AttachmentKind::Folder,
+        source: AttachmentSource::Path,
+        reference_path: Some(folder.to_string_lossy().into_owned()),
+        size: None,
+        name: "example-folder".into(),
+        byte_count: 0,
+        chip_width: 0.0,
+    };
+    surface.card_tile_hits = vec![(Rect::new(100.0, 100.0, 100.0, 24.0), tile)];
+
+    assert!(surface.mouse_double_click(150.0, 112.0));
+    assert!(!surface.viewer_open());
+    assert!(!surface.mouse_double_click(250.0, 112.0));
 }
 
 /// A click on a sent picture fetches and decodes it off the window thread;
@@ -555,6 +665,66 @@ fn a_sent_picture_opens_in_the_viewer() {
         ModifiersState::empty()
     ));
     assert!(!surface.viewer_open());
+}
+
+#[test]
+fn a_sent_local_picture_reference_opens_in_the_viewer() {
+    let (mut surface, chat, _commands) = surface_with_agent_chat();
+    surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 600.0));
+    let path = PathBuf::from("C:/Pictures/koru/headshot-reddit.jpg");
+    let message = koru_ai_core::Message {
+        id: koru_ai_core::MessageId::new(),
+        chat_id: chat,
+        ordinal: 0,
+        role: koru_ai_core::ChatRole::User,
+        state: koru_ai_core::MessageState::Complete,
+        markdown: "See this picture".into(),
+        origin_message_id: None,
+        provider: None,
+        requested_model: None,
+        resolved_model: None,
+        error_class: None,
+        created_at: Timestamp::from_millis(1),
+        completed_at: Some(Timestamp::from_millis(1)),
+    };
+    let tile_id = ChatAttachmentId::new();
+    let attachment = ChatAttachment {
+        id: tile_id,
+        message_id: Some(message.id),
+        ordinal: Some(0),
+        kind: AttachmentKind::File,
+        source: AttachmentSource::Path,
+        file_name: "headshot-reddit.jpg".into(),
+        media_type: "image/jpeg".into(),
+        byte_count: 0,
+        dimensions: None,
+        origin: None,
+        reference_path: Some(path.to_string_lossy().into_owned()),
+        created_at: Timestamp::from_millis(1),
+    };
+    let transcript = surface.transcript.as_mut().unwrap();
+    transcript.messages.push(message);
+    transcript.attachments.push(attachment);
+    surface.messages_dirty = true;
+    surface.draw(&mut Scene::new(), Affine::IDENTITY);
+    let rect = surface
+        .card_tile_hits
+        .iter()
+        .find(|(_, tile)| tile.id == tile_id)
+        .expect("sent picture pill is drawn")
+        .0;
+
+    assert!(surface.mouse_down(rect.x + rect.w * 0.5, rect.y + rect.h * 0.5));
+    assert_eq!(surface.attachment_work.viewer_fetched, vec![tile_id]);
+    assert_eq!(surface.attachment_work.viewer_paths, vec![Some(path)]);
+    assert!(surface.take_attachment_open_request().is_none());
+    surface.attachment_work.inject(Event::ViewerReady {
+        chat,
+        id: tile_id,
+        picture: viewer_picture(300, 150),
+    });
+    assert!(surface.maintain_attachments());
+    assert!(surface.viewer_open());
 }
 
 /// *Open in external app* hands the original's bytes to a helper thread
@@ -644,8 +814,8 @@ fn a_lifted_viewer_takes_the_window() {
     assert!(!surface.viewer_open());
 }
 
-/// A picture in the strip opens from its own bytes while it is still being
-/// stored; the × still takes it out rather than opening it.
+/// A picture in the strip opens from its own bytes on double-click while it
+/// is still being stored; the × still takes it out rather than opening it.
 #[test]
 fn a_draft_picture_opens_from_its_own_bytes() {
     let (mut surface, chat, _commands) = surface_with_agent_chat();
@@ -653,20 +823,78 @@ fn a_draft_picture_opens_from_its_own_bytes() {
     surface.add_draft(chat, draft.clone());
     surface.composer_rect();
     let composer = surface.composer_hit_rect;
-    let rect = strip_tiles(
-        surface.strips.get(chat),
-        composer.x + COMPOSER_PAD_X,
-        composer.y + COMPOSER_PAD_TOP,
-    )[0];
-    assert_eq!(
-        surface.strip_mouse_down(rect.x + 4.0, rect.y + rect.h - 4.0),
-        Some(true)
-    );
+    let rect = surface
+        .chip_band
+        .chip_rect(
+            0,
+            composer.x + COMPOSER_PAD_X,
+            composer.y + COMPOSER_PAD_TOP,
+        )
+        .unwrap();
+    assert!(surface.mouse_down(rect.x + 4.0, rect.y + rect.h - 4.0));
+    assert!(surface.attachment_work.viewer_fetched.is_empty());
+    assert!(surface.mouse_double_click(rect.x + 4.0, rect.y + rect.h - 4.0));
     assert_eq!(surface.attachment_work.viewer_fetched, vec![draft.id]);
-    let cross = remove_button(rect);
+    let cross = koru_ui::context_chip::ContextChip {
+        label: &draft.file_name,
+        secondary: "",
+        icon: surface.attachment_chip_icon(&draft),
+        state: surface.attachment_chip_state(&draft),
+    }
+    .remove_rect(rect);
     surface.strip_mouse_down(cross.x + 2.0, cross.y + 2.0);
     assert!(!surface.has_strip());
     assert_eq!(surface.attachment_work.viewer_fetched.len(), 1);
+}
+
+#[test]
+fn a_folder_chip_opens_its_local_folder_on_double_click() {
+    let (mut surface, chat, _commands) = surface_with_agent_chat();
+    let folder = PathBuf::from("C:/Users/someone/Desktop/bots");
+    let draft = Draft::reference(folder.clone(), AttachmentKind::Folder);
+    assert!(matches!(draft.double_click_target(), Some(StripOpen::Folder(path)) if path == folder));
+    surface.strips.push(chat, draft);
+    surface.composer_rect();
+    let composer = surface.composer_hit_rect;
+    let rect = surface
+        .chip_band
+        .chip_rect(
+            0,
+            composer.x + COMPOSER_PAD_X,
+            composer.y + COMPOSER_PAD_TOP,
+        )
+        .unwrap();
+    assert!(surface.mouse_down(rect.x + 4.0, rect.y + rect.h - 4.0));
+    assert!(surface.mouse_double_click(rect.x + 4.0, rect.y + rect.h - 4.0));
+    assert_eq!(
+        surface.strip().len(),
+        1,
+        "opening keeps the folder attached"
+    );
+}
+
+#[test]
+fn a_referenced_png_file_opens_in_the_image_viewer() {
+    let (mut surface, chat, _commands) = surface_with_agent_chat();
+    let path = PathBuf::from("C:/Users/someone/Desktop/Bots -- exported-2x.png");
+    let draft = Draft::reference(path.clone(), AttachmentKind::File);
+    surface.strips.push(chat, draft.clone());
+    surface.composer_rect();
+    let composer = surface.composer_hit_rect;
+    let rect = surface
+        .chip_band
+        .chip_rect(
+            0,
+            composer.x + COMPOSER_PAD_X,
+            composer.y + COMPOSER_PAD_TOP,
+        )
+        .unwrap();
+    let (x, y) = (rect.x + 4.0, rect.y + rect.h - 4.0);
+    assert!(surface.mouse_down(x, y));
+    assert!(surface.attachment_work.viewer_fetched.is_empty());
+    assert!(surface.mouse_double_click(x, y));
+    assert_eq!(surface.attachment_work.viewer_fetched, vec![draft.id]);
+    assert_eq!(surface.attachment_work.viewer_paths, vec![Some(path)]);
 }
 
 // ----- allowed files (R4) ---------------------------------------------------
@@ -745,6 +973,7 @@ fn a_stored_file_learns_its_size_and_a_copied_picture_its_thumbnail() {
         byte_count: bytes,
         dimensions: (kind == AttachmentKind::Image).then_some((40, 20)),
         origin: None,
+        reference_path: None,
         created_at: Timestamp::from_millis(1),
     };
     surface.attachment_work.inject(Event::Stored {
@@ -824,18 +1053,19 @@ fn a_send_over_the_messages_total_is_held() {
     assert_eq!(surface.strips.get(chat).len(), 3, "nothing was taken");
 }
 
-/// A click on a file chip opens it in the system's app from a copy — text
-/// and source code as `.txt`, anything else under its own name; a file still
-/// being stored opens nothing yet.
+/// A sent file requests a host preview; a draft still being stored stays inert.
 #[test]
-fn a_file_chip_opens_in_the_systems_app_text_as_text() {
+fn a_sent_file_requests_an_in_window_preview() {
     let (mut surface, chat, _tile) = surface_with_a_sent_picture();
     let chip = |name: &str| Tile {
         id: ChatAttachmentId::new(),
         kind: AttachmentKind::File,
+        source: AttachmentSource::Clipboard,
+        reference_path: None,
         size: None,
         name: name.into(),
         byte_count: 10,
+        chip_width: 0.0,
     };
     let (pdf, source) = (chip("report.pdf"), chip("main.rs"));
     surface.card_tile_hits = vec![
@@ -843,14 +1073,13 @@ fn a_file_chip_opens_in_the_systems_app_text_as_text() {
         (Rect::new(300.0, 100.0, 168.0, 112.0), source.clone()),
     ];
     assert!(surface.mouse_down(150.0, 150.0));
+    let pdf_request = surface.take_attachment_open_request().unwrap();
+    assert_eq!(pdf_request.id, pdf.id);
+    assert_eq!(pdf_request.preview, AttachmentPreview::Unsupported);
     assert!(surface.mouse_down(350.0, 150.0));
-    assert_eq!(
-        surface.attachment_work.opened,
-        vec![
-            (pdf.id, "report.pdf".to_string(), koru_window::OpenAs::AsIs),
-            (source.id, "main.rs".to_string(), koru_window::OpenAs::Text),
-        ]
-    );
+    let source_request = surface.take_attachment_open_request().unwrap();
+    assert_eq!(source_request.id, source.id);
+    assert_eq!(source_request.preview, AttachmentPreview::Text);
     assert!(!surface.viewer_open(), "a file has no viewer");
     assert!(surface.attachment_work.viewer_fetched.is_empty());
 
@@ -859,11 +1088,14 @@ fn a_file_chip_opens_in_the_systems_app_text_as_text() {
     surface.strips.push(chat, storing);
     surface.composer_rect();
     let composer = surface.composer_hit_rect;
-    let rect = strip_tiles(
-        surface.strips.get(chat),
-        composer.x + COMPOSER_PAD_X,
-        composer.y + COMPOSER_PAD_TOP,
-    )[0];
+    let rect = surface
+        .chip_band
+        .chip_rect(
+            0,
+            composer.x + COMPOSER_PAD_X,
+            composer.y + COMPOSER_PAD_TOP,
+        )
+        .unwrap();
     surface.strip_mouse_down(rect.x + 4.0, rect.y + rect.h - 4.0);
-    assert_eq!(surface.attachment_work.opened.len(), 2);
+    assert!(surface.take_attachment_open_request().is_none());
 }

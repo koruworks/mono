@@ -131,7 +131,21 @@ pub fn account_platform(mut request: wire::AccountPlatformRequest) -> wire::Muta
                 .unwrap_or_else(|e| e.into_inner())
                 .clone()
                 .ok_or("account_trust_not_ready")?;
-            account.platform(&mut request).map_err(str::to_owned)
+            // **Foreground wakes the peer pass too** (root-catalog Plan 2.2,
+            // TECHNICAL.final §7.2, §9): the Cloud coordinator hears
+            // `Foreground(true)` through the account; a peer connection that
+            // survived the background gets no connect event, so the data
+            // plane is asked for one pass with every live peer here. The
+            // pass is coalesced and idempotent.
+            let foregrounded = matches!(
+                request.response,
+                Some(wire::account_platform_request::Response::Foreground(true))
+            );
+            account.platform(&mut request).map_err(str::to_owned)?;
+            if foregrounded {
+                host.network().resync_peers();
+            }
+            Ok(())
         });
     crate::account::zeroize_response(&mut request);
     mutation(result, "accepted")

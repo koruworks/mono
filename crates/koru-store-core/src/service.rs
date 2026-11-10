@@ -37,6 +37,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::bundle::{
     Bundle, BundleDocument, BundleHistoryEntry, BundleHistoryVersion, BundleManifest, ImportMode,
+    ImportPublication, ImportedWorkspace,
 };
 use crate::errors::{Code, Error, Result};
 use crate::ids::{
@@ -74,17 +75,90 @@ mod pins;
 mod preparation;
 mod removal;
 mod replacement;
+mod root_conflict;
+mod root_lifecycle;
+mod root_move;
+mod root_repair;
 pub use pins::PinnedWorkspace;
 pub use replacement::{ListingState, MovedWorkspace, RemovedWorkspace, Replacement};
+pub use root_conflict::{
+    BootstrapPlacementConflict, K_BOOTSTRAP_CONFLICT_PREFIX, RivalPlacement, bootstrap_conflict_key,
+};
+pub use root_lifecycle::{
+    BatchPhase, DeletedProfile, K_PURGED_SUBJECT_EXPORT_PREFIX, K_ROOT_CATALOG_BATCH_PREFIX,
+    ProfileDeletionBatch, ProfileDeletionJob, ProfileDeletionPreview, ProfileRestoreOutcome,
+    PurgeOutcome, PurgedSubjectExport, UnassignedReason, UnassignedWorkspace, batch_job_key,
+    expires_at, purged_subject_export_key,
+};
+pub use root_repair::{
+    BootstrapRepair, K_BOOTSTRAP_REPAIR_PREFIX, RepairedWorkspace, bootstrap_repair_key,
+};
 mod profile_projection;
 pub use preparation::{CreateProfileWithWorkspace, CreatedProfile, FirstWorkspace};
 mod profile_units;
+mod root_sync;
+pub use root_sync::{
+    AccountScopeBinding, JoinPhase, JoinUnit, K_ACCOUNT_SCOPE, K_JOIN_RECEIPT_PREFIX,
+    K_PEER_SCOPE_PREFIX, PublishedOverlays, RootExportSource, RootGrant, RootInventory,
+    RootJoinOutcome, RootJoinReceipt, StagedPersonalUnit, StagedRootUnit, grant_covers_workspace,
+    join_receipt_key, peer_scope_key,
+};
 mod transport_modes;
 pub use transport_modes::TransportModeChoice;
 mod updates;
 mod welcome_progress;
-pub use profile_units::{build_reminder_index, read_personal_reminder_inputs};
+pub use profile_units::{
+    build_reminder_index, indexed_version_is_current, read_personal_reminder_inputs,
+};
 pub use welcome_progress::{WELCOME_QUERY_MAX, valid_welcome_row};
+
+/// A staged repository a Restore resumes: open, with the document rows it
+/// already holds.
+type ResumedStaging<W> = (W, HashMap<DocumentId, crate::ports::DocumentState>);
+
+/// The page size `WorkspaceRepo::history_entries` clamps to.
+const HISTORY_PAGE: usize = 200;
+
+/// Whether a resumed import staging already holds this history marker: an
+/// entry on the document at the same moment with the same reason, label,
+/// message and boundary, naming a version with the bundle's frontiers. The
+/// document's markers are read once into `markers`; the version — a snapshot
+/// read — only for a marker whose other fields match.
+fn history_marker_present<R: WorkspaceRepo>(
+    repo: &R,
+    markers: &mut HashMap<DocumentId, Vec<HistoryEntry>>,
+    document: DocumentId,
+    entry: &BundleHistoryEntry,
+    source: &BundleHistoryVersion,
+) -> Result<bool> {
+    if !markers.contains_key(&document) {
+        let mut all = Vec::new();
+        let mut before = None;
+        loop {
+            let page = repo.history_entries(document, before, HISTORY_PAGE)?;
+            let full = page.len() >= HISTORY_PAGE;
+            before = page.last().map(|last| (last.recorded_at, last.id));
+            all.extend(page);
+            if !full {
+                break;
+            }
+        }
+        markers.insert(document, all);
+    }
+    for existing in &markers[&document] {
+        if existing.recorded_at == entry.recorded_at
+            && existing.reason == entry.reason
+            && existing.label == entry.label
+            && existing.message == entry.message
+            && existing.boundary == entry.boundary
+            && let Some(version) = repo.document_version(existing.version)?
+            && version.frontiers == source.frontiers
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
 
 /// Where a workspace's own storage comes from.
 ///
@@ -456,6 +530,56 @@ pub struct IdentityCommitted {
     pub change: IdentityChange,
 }
 
+/// How a replica provisioning may place a Workspace this device holds no
+/// root unit for (root-catalog TECHNICAL.final §7.2). A held unit always
+/// wins over any of these.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ReplicaPlacement {
+    /// The descriptor's owner may seed the unit: a Profile-granted peer
+    /// whose hint names a granted Profile this device holds.
+    Hint(ProfileId),
+    /// The descriptor's owner places the **row** and nothing else: the
+    /// content is provisioned, the projection names that Profile, and **no
+    /// Workspace unit is published** (root-catalog QUESTIONS.md Q7). For the
+    /// Cloud bootstrap of the v1 window only, whose service has no root units
+    /// to join and whose hint is the legacy owner column no client writes any
+    /// more: publishing it would race the first real unit from a linked
+    /// device by Loro's map ordering and could win over a move the person
+    /// already made. A unit-less Workspace is the one state the placement
+    /// reads tolerate — `root_placement` answers `None` and
+    /// `placed_workspaces` falls back to the projection — so the first real
+    /// unit to arrive becomes the only placement, by the ordinary join. A
+    /// later local move creates the unit as a first move does.
+    ///
+    /// **Withholding is not forever, and only one thing may end it.**
+    /// `Store::repair_bootstrap_units` publishes this unit — Q10's correction
+    /// of Q7, because otherwise an account whose only reachable device
+    /// bootstrapped this way keeps the Workspace out of
+    /// `root_export_inventory` permanently. It is allowed to because its
+    /// caller has established the one fact that makes republishing the hint
+    /// honest: a Cloud pass ran under the v2 contract, read the service's
+    /// **full** inventory and finished its pulls, so no unit exists anywhere
+    /// to race. Any other "repair units for rows that have none" job would
+    /// undo this decision by republishing the legacy owner column against a
+    /// unit still in flight. Nothing enforces that but this paragraph.
+    HintWithoutUnit(ProfileId),
+    /// Only an already-known root placement may place it; otherwise the
+    /// provisioning is pending until a root unit arrives — the rule for the
+    /// same person's device (which sends the unit first) and for a
+    /// Workspace-scoped peer (which never installs its Profile here).
+    KnownOnly,
+}
+
+/// What [`Store::provision_replica_placed`] did.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ProvisionedReplica {
+    /// The rows exist and the manifest container is ready for its bytes.
+    Ready,
+    /// Nothing was written: no root placement this device can list the
+    /// Workspace under is known yet. Retry after root units.
+    PlacementPending,
+}
+
 /// A content-first document creation, safe to expose after this returns.
 pub struct SeededCreation {
     pub document: DocumentId,
@@ -515,9 +639,11 @@ pub struct DocumentReport {
 }
 
 /// How long a soft-deleted Workspace stays in the Trash before
-/// [`Store::purge_deleted`] removes it — 30 days. A Profile removed from
-/// this installation longer ago than this is past recovering its
-/// Workspaces, so its removal is final for what is kept beside it too
+/// [`Store::purge_deleted`] removes it — 30 days, recorded per deletion
+/// fact as `DeletionRecord::retention_ms` (root-catalog TECHNICAL.final
+/// §3.8, §6.4; no settings control). A Profile removed from this
+/// installation longer ago than this is past recovering its Workspaces, so
+/// its removal is final for what is kept beside it too
 /// ([`Store::profiles_removed_before`]).
 pub const TRASH_RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1_000;
 
@@ -809,17 +935,22 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         let private = PrivateManifest::create(profile.id)?;
         manifest.set_peer_id(self.peer_id)?;
         private.set_peer_id(self.peer_id)?;
-        // Record the origin before authoring the bytes. This is the one path
-        // on which a person actually creates a Profile here, and therefore the
-        // only place the marker is written from knowledge rather than
-        // assumption. `provision_account_profile` deliberately does not write
-        // it: being told a Profile exists is receipt, not origin.
-        self.catalog
-            .set_state(&profile_origin_key(profile.id), ORIGIN_CREATED_HERE)?;
-        self.catalog.initialize_profile_units(
+        // The origin marker travels in the same transaction as the bytes.
+        // This is the one path on which a person actually creates a Profile
+        // here (with `create_profile_with_workspace`), and therefore the only
+        // place the marker is written from knowledge rather than assumption.
+        // `provision_account_profile` deliberately does not write it: being
+        // told a Profile exists is receipt, not origin. The root Profile unit
+        // is published with the row (Plan 1.3).
+        let scope = self.catalog.local_user_scope()?;
+        let unit = self.fresh_profile_unit(profile.id)?;
+        self.catalog.publish_profile(
             &profile,
             &manifest.export_snapshot()?,
             &private.export_snapshot()?,
+            (&profile_origin_key(profile.id), ORIGIN_CREATED_HERE),
+            scope,
+            &unit,
         )?;
         self.open_profiles.insert(profile.id, manifest);
         self.private_profiles.insert(profile.id, private);
@@ -862,7 +993,10 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         // **No origin marker is written here**, and that omission is the whole
         // point: this device was told the Profile exists, so it is a receiver,
         // and `profile.created_at` above is this device's clock — a fact about
-        // this device, never the Profile's creation time.
+        // this device, never the Profile's creation time. No root Profile unit
+        // either: the account's own unit arrives through M3's negotiated
+        // exchange, and a lifecycle write before then mints one here
+        // (`root_lifecycle::plan_profile_write`).
         self.catalog.put_profile(&profile)?;
         Ok(profile)
     }
@@ -936,6 +1070,17 @@ impl<C: Catalog, B: Backend> Store<C, B> {
                 "the No-profile holder cannot be restored",
             ));
         }
+        // `removed_at` is also the visibility projection of a *shared*
+        // deletion (root_lifecycle.rs). The device-local inverse cannot clear
+        // it: the root fact stays active and the Profile would reappear while
+        // every other device still has it in the Trash. That deletion is
+        // restored by `restore_profile`, which observes it.
+        if self.profile_is_deleted(id)? {
+            return Err(Error::new(
+                Code::ProfileRemoved,
+                "this Profile is in the Trash by a shared deletion; restore that deletion instead",
+            ));
+        }
         let manifest = match self
             .catalog
             .profile_unit(ProfileUnitRef::Identity { profile: id })?
@@ -1002,6 +1147,14 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         self.catalog
             .profile(id)?
             .ok_or_else(|| Error::bare(Code::ProfileNotFound))
+    }
+
+    /// The Profile row whether or not it is hidden (`removed_at`), for the
+    /// surfaces that must name a Profile in the Trash — the restorable
+    /// deletions listing. `None` when no row exists. A read only; nothing
+    /// about the row's visibility changes.
+    pub fn profile_including_removed(&self, id: ProfileId) -> Result<Option<Profile>> {
+        self.catalog.profile_including_removed(id)
     }
 
     /// Atomically compare and set the hosted Koru Identity bound to this Profile.
@@ -1230,14 +1383,58 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         }
         self.ensure_profile_manifest(owner)?;
         let prepared = self.prepare_workspace(owner, name, None, None, at)?;
-        if let Err(error) = self
-            .catalog
-            .publish_workspace(&prepared.workspace, prepared.open.manifest_id)
-        {
+        // The root Workspace unit is published with the row (Plan 1.3); a
+        // replica a peer provisions publishes or receives its unit too
+        // (Plan 2.1).
+        let scope = self.catalog.local_user_scope()?;
+        let unit = match self.fresh_workspace_unit(&prepared.workspace) {
+            Ok(unit) => unit,
+            Err(error) => {
+                self.discard_prepared(prepared);
+                return Err(error);
+            }
+        };
+        if let Err(error) = self.catalog.publish_workspace(
+            &prepared.workspace,
+            prepared.open.manifest_id,
+            scope,
+            &unit,
+        ) {
             self.discard_prepared(prepared);
             return Err(error);
         }
         Ok(self.adopt_prepared(prepared))
+    }
+
+    /// The root Workspace unit a creation publishes beside its row: placed
+    /// under the owner by a fresh move id, under the Store's writer, at
+    /// `None` revision (a row that must not exist yet). Pure.
+    pub(super) fn fresh_workspace_unit(
+        &self,
+        workspace: &Workspace,
+    ) -> Result<crate::ports::RootCatalogUnitCommit> {
+        let unit = crate::root_catalog::WorkspaceCatalogUnit::create(workspace.id, self.peer_id)?;
+        unit.set_placement(Some(workspace.owner), uuid::Uuid::new_v4())?;
+        Ok(crate::ports::RootCatalogUnitCommit {
+            unit: crate::root_catalog::CatalogUnitRef::Workspace {
+                workspace: workspace.id,
+            },
+            snapshot: unit.snapshot()?,
+            expected_revision: None,
+        })
+    }
+
+    /// The root Profile unit a creation publishes beside its row. Pure.
+    pub(super) fn fresh_profile_unit(
+        &self,
+        profile: ProfileId,
+    ) -> Result<crate::ports::RootCatalogUnitCommit> {
+        Ok(crate::ports::RootCatalogUnitCommit {
+            unit: crate::root_catalog::CatalogUnitRef::Profile { profile },
+            snapshot: crate::root_catalog::ProfileCatalogUnit::create(profile, self.peer_id)?
+                .snapshot()?,
+            expected_revision: None,
+        })
     }
 
     /// Provision the identity rows for a workspace being replicated for the
@@ -1245,8 +1442,12 @@ impl<C: Catalog, B: Backend> Store<C, B> {
     /// container only; the peer's manifest snapshot/update must still traverse
     /// [`apply_update`](Self::apply_update) and [`flush`](Self::flush).
     ///
-    /// Narrow by design: transports call this after authorization. Ordinary
-    /// workspace creation continues to mint its own ids.
+    /// The legacy signature, unchanged: the descriptor's owner is admitted
+    /// as a bootstrap hint that may seed the Workspace's root unit when this
+    /// device holds none — a Profile-granted peer whose grant the adapter
+    /// has already checked. Root placement still wins when a unit is held.
+    /// The negotiated peer path and the Cloud bootstrap call
+    /// [`Self::provision_replica_placed`] and choose the rule.
     pub fn provision_replica(
         &mut self,
         profile: &Profile,
@@ -1254,41 +1455,59 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         manifest: DocumentId,
         at: Timestamp,
     ) -> Result<()> {
-        match self.catalog.profile(profile.id)? {
-            Some(existing) if existing.created_at != profile.created_at => {
-                // Keep the identity guard intact. These exact millisecond
-                // values distinguish a bootstrap/precision mismatch from a
-                // different replica identity; names and content are omitted.
-                tracing::warn!(
-                    profile = %profile.id.as_uuid(),
-                    workspace = %workspace.id.as_uuid(),
-                    manifest = %manifest.as_uuid(),
-                    local_profile_created_at_ms = existing.created_at.millis(),
-                    incoming_profile_created_at_ms = profile.created_at.millis(),
-                    creation_delta_ms = i128::from(profile.created_at.millis())
-                        - i128::from(existing.created_at.millis()),
-                    incoming_workspace_created_at_ms = workspace.created_at.millis(),
-                    "store replica: profile creation timestamp mismatch"
-                );
-                return Err(Error::new(
-                    Code::ProfileExists,
-                    "the replica profile id has a different immutable creation time",
-                ));
-            }
-            // Mutable profile fields come from the profile CRDT. A workspace
-            // descriptor is bootstrap compatibility data and may legitimately
-            // carry an older name or omit fields learned through a newer peer.
-            Some(_) => {}
-            None => self.catalog.put_profile(profile)?,
+        match self.provision_replica_placed(
+            Some(profile),
+            workspace,
+            manifest,
+            ReplicaPlacement::Hint(workspace.owner),
+            at,
+        )? {
+            ProvisionedReplica::Ready => Ok(()),
+            // A hint always places; only an explicitly unassigned or
+            // undelivered root placement holds, and that is reported.
+            ProvisionedReplica::PlacementPending => Err(Error::new(
+                Code::ProfileNotFound,
+                "the replica's root placement names no Profile this device holds yet",
+            )),
         }
+    }
 
-        if let Some(existing) = self.catalog.workspace(workspace.id)? {
-            if existing.owner != workspace.owner {
-                return Err(Error::new(
-                    Code::WorkspaceExists,
-                    "the replica workspace id already belongs to another profile",
-                ));
-            }
+    /// **Root-aware provisioning** (root-catalog TECHNICAL.final §7.2
+    /// "Specific changes", §6.2). The descriptor's `owner` is a bootstrap
+    /// hint; placement is resolved through root state:
+    ///
+    /// | unit known | rule | result |
+    /// | --- | --- | --- |
+    /// | yes, placed under a Profile this device holds | any | provisioned there; the descriptor's owner is ignored for placement and a differing one is **not** `WorkspaceExists` |
+    /// | yes, placed under a Profile not held, hidden, or a Holder | any | `PlacementPending` — pending/recovery, never a stale Profile |
+    /// | yes, explicitly unassigned | any | `PlacementPending` (see the module's judgment calls) |
+    /// | no | `Hint(p)` | seeded under `p` by a fresh unit published with the row |
+    /// | no | `HintWithoutUnit(p)` | the row under `p`, **no unit** — the v1 Cloud window (QUESTIONS.md Q7) |
+    /// | no | `KnownOnly` | `PlacementPending` — the sync pass retries after root units |
+    ///
+    /// What is kept unchanged: the manifest identity guard on an existing
+    /// row (`manifests.len() != 1 || id != manifest`), the Profile
+    /// immutable-creation-time guard for a Profile that really is being
+    /// provisioned (the one the resolved placement names, when `profile`
+    /// describes it), and the "manifest already belongs elsewhere" check.
+    /// The row, its routing and — when no unit was held and the rule
+    /// publishes one — its unit are published in one catalog transaction
+    /// (`Catalog::publish_replica`), closing Plan 1.3's "only replicas lack
+    /// a unit" for every rule but `HintWithoutUnit`, whose whole point is to
+    /// leave the placement to the first unit that really arrives. Nothing
+    /// here creates a Workspace of its own or a default.
+    pub fn provision_replica_placed(
+        &mut self,
+        profile: Option<&Profile>,
+        workspace: &Workspace,
+        manifest: DocumentId,
+        placement: ReplicaPlacement,
+        at: Timestamp,
+    ) -> Result<ProvisionedReplica> {
+        if self.workspace_including_deleted(workspace.id).is_ok() {
+            // Content identity is the only thing an existing row is checked
+            // against. Where this device places the Workspace is its root
+            // unit's business, not the descriptor's.
             let repo = self.backend.open_workspace(workspace.id)?;
             let manifests: Vec<_> = repo
                 .documents()?
@@ -1301,23 +1520,96 @@ impl<C: Catalog, B: Backend> Store<C, B> {
                     "the replica workspace id already has another manifest identity",
                 ));
             }
-            // The manifest is the replicated authority for the name. The
-            // descriptor supplies a useful name while a replica is first being
-            // provisioned, but after that it is only bootstrap metadata: an
-            // older peer inventory must not overwrite a rename already present
-            // in this replica's manifest. `flush` projects the authoritative
-            // manifest name back into this catalog row after a durable commit.
-            // Every shared mutable field is now manifest-authoritative. The
+            // Every shared mutable field is manifest-authoritative. The
             // descriptor is bootstrap only and must not overwrite local CRDT
             // state merely because an older peer sent another inventory.
-            return Ok(());
+            return Ok(ProvisionedReplica::Ready);
         }
 
-        if workspace.owner != profile.id {
-            return Err(Error::new(
-                Code::InvalidRequest,
-                "the replica workspace owner does not match its profile",
-            ));
+        // Placement, through root state first (§7.2 "Resolve placement
+        // through root state; if not known, hold provisioning pending").
+        let held_unit = self.effective_workspace_unit(workspace.id)?;
+        let resolved = match held_unit.as_ref().and_then(|unit| unit.placement()) {
+            Some(crate::root_catalog::Placement {
+                profile: Some(owner),
+                ..
+            }) => owner,
+            Some(crate::root_catalog::Placement { profile: None, .. }) => {
+                tracing::info!(
+                    workspace = %workspace.id,
+                    "store replica: root placement is explicitly unassigned; provisioning pending"
+                );
+                return Ok(ProvisionedReplica::PlacementPending);
+            }
+            None if held_unit.is_some() => {
+                // A unit with no register is pending by definition (§4.2).
+                return Ok(ProvisionedReplica::PlacementPending);
+            }
+            None => match placement {
+                ReplicaPlacement::Hint(owner) | ReplicaPlacement::HintWithoutUnit(owner) => owner,
+                ReplicaPlacement::KnownOnly => {
+                    tracing::info!(
+                        workspace = %workspace.id,
+                        "store replica: no root placement known; provisioning pending"
+                    );
+                    return Ok(ProvisionedReplica::PlacementPending);
+                }
+            },
+        };
+
+        // The Profile that really is being provisioned is the resolved one.
+        // The descriptor's Profile metadata is used only when it describes
+        // that Profile; a Profile absent from this device otherwise leaves
+        // the Workspace pending until its identity unit arrives.
+        match self.catalog.profile(resolved)? {
+            Some(existing) => {
+                if let Some(incoming) = profile
+                    && incoming.id == resolved
+                    && existing.created_at != incoming.created_at
+                {
+                    // Keep the identity guard intact. These exact millisecond
+                    // values distinguish a bootstrap/precision mismatch from a
+                    // different replica identity; names and content are
+                    // omitted.
+                    tracing::warn!(
+                        profile = %resolved.as_uuid(),
+                        workspace = %workspace.id.as_uuid(),
+                        manifest = %manifest.as_uuid(),
+                        local_profile_created_at_ms = existing.created_at.millis(),
+                        incoming_profile_created_at_ms = incoming.created_at.millis(),
+                        creation_delta_ms = i128::from(incoming.created_at.millis())
+                            - i128::from(existing.created_at.millis()),
+                        incoming_workspace_created_at_ms = workspace.created_at.millis(),
+                        "store replica: profile creation timestamp mismatch"
+                    );
+                    return Err(Error::new(
+                        Code::ProfileExists,
+                        "the replica profile id has a different immutable creation time",
+                    ));
+                }
+                if existing.is_holder() {
+                    // §6.3: a Holder is neither a persona nor a destination.
+                    return Ok(ProvisionedReplica::PlacementPending);
+                }
+            }
+            None => match profile {
+                Some(incoming) if incoming.id == resolved => {
+                    self.catalog.put_profile(incoming)?;
+                }
+                _ => {
+                    tracing::info!(
+                        workspace = %workspace.id,
+                        profile = %resolved,
+                        "store replica: placement names a Profile not held here; provisioning pending"
+                    );
+                    return Ok(ProvisionedReplica::PlacementPending);
+                }
+            },
+        }
+        if self.catalog.profile_catalog_state(resolved)? != Some(ProfileCatalogState::Active) {
+            // Hidden by a shared deletion or removed locally: the row cannot
+            // be listed under it, and nothing else may stand in.
+            return Ok(ProvisionedReplica::PlacementPending);
         }
         if let Some(other) = self.catalog.locate(manifest)? {
             return Err(Error::new(
@@ -1326,22 +1618,54 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             ));
         }
 
-        // Ordering and last-opened state are local. Shared appearance and
-        // lifecycle arrive in the descriptor for bootstrap, then the manifest
-        // CRDT becomes authoritative as soon as its updates are imported.
+        // Ordering and last-opened state are local. Shared appearance arrives
+        // in the descriptor for bootstrap, then the manifest CRDT becomes
+        // authoritative as soon as its updates are imported. Lifecycle comes
+        // from the root unit when one is held; the descriptor's `deleted_at`
+        // is the hint that seeds a fresh unit's deletion fact otherwise.
         let mut record = workspace.clone();
+        record.owner = resolved;
         record.last_opened_at = None;
-        let deleted_at = record.deleted_at.take();
-        record.position = self.next_workspace_position(profile.id)?;
-        self.catalog.put_workspace(&record)?;
+        record.position = self.next_workspace_position(resolved)?;
+        let scope = self.catalog.local_user_scope()?;
+        let unit = match &held_unit {
+            Some(unit) => {
+                record.deleted_at = root_lifecycle::earliest_active_deletion(unit);
+                None
+            }
+            // The v1 Cloud window (QUESTIONS.md Q7): the row, its owner
+            // projection and its manifest routing are published below exactly
+            // as they are for every other rule, and no unit with them, so the
+            // first real unit from a linked device is the only placement this
+            // Workspace ever has. Until it arrives the `workspaces.owner`
+            // projection written here is the only evidence of where the
+            // Workspace is, which is what the placement reads already expect
+            // of a unit-less row.
+            None if matches!(placement, ReplicaPlacement::HintWithoutUnit(_)) => None,
+            None => Some(crate::ports::RootCatalogUnitCommit {
+                unit: crate::root_catalog::CatalogUnitRef::Workspace {
+                    workspace: record.id,
+                },
+                snapshot: crate::root_catalog::seed_workspace_unit(
+                    record.id,
+                    resolved,
+                    record.deleted_at.map(|deleted| deleted.millis()),
+                    self.peer_id,
+                )?,
+                expected_revision: None,
+            }),
+        };
+        self.catalog
+            .publish_replica(&record, manifest, scope, unit.as_ref())?;
         let mut repo = self.backend.open_workspace(record.id)?;
         repo.create_document(manifest, DocumentKind::Manifest, at)?;
-        self.catalog.record_location(manifest, record.id)?;
-        if let Some(deleted_at) = deleted_at {
-            self.catalog
-                .set_workspace_deleted(record.id, Some(deleted_at), &[manifest])?;
-        }
-        Ok(())
+        tracing::info!(
+            workspace = %record.id,
+            seeded_unit = unit.is_some(),
+            deleted = record.deleted_at.is_some(),
+            "store replica: provisioned under root placement"
+        );
+        Ok(ProvisionedReplica::Ready)
     }
 
     /// The manifest's own deletion state: `Some(Some(at))` actively deleted,
@@ -1787,6 +2111,13 @@ impl<C: Catalog, B: Backend> Store<C, B> {
     /// **Moving a workspace to the profile that already owns it succeeds and
     /// changes nothing** — not even the position. That is what makes the same
     /// request twice a retry rather than a second move to the end of the list.
+    ///
+    /// **A move is a root operation** (`docs/features/root-catalog/TECHNICAL.final.md`
+    /// §7.1): the Workspace unit's `placement.current` is written first, in
+    /// memory, and published with the `workspaces` projection in one catalog
+    /// transaction by `root_move::commit_root_move`. The acknowledgement is
+    /// the durable commit; no network, no disk replay and no document walk
+    /// happen on the caller's thread.
     pub fn move_workspace(&mut self, id: WorkspaceId, to: ProfileId) -> Result<Workspace> {
         self.refuse_profile_removal(self.workspace_including_deleted(id)?.owner)?;
         self.refuse_profile_removal(to)?;
@@ -1796,6 +2127,8 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         if self.catalog.profile(to)?.is_none() {
             return Err(Error::bare(Code::ProfileNotFound));
         }
+        // §6.3: a Holder is legacy inventory, never a destination.
+        self.refuse_holder(to, "a move destination")?;
         let mut workspace = self.workspace_including_deleted(id)?;
         // **The trash is answered honestly and by its own words.** A workspace
         // in the trash is not missing — the caller can see it in the
@@ -1809,13 +2142,35 @@ impl<C: Catalog, B: Backend> Store<C, B> {
                 "that workspace is in the trash; restore it before moving it",
             ));
         }
-        if workspace.owner == to {
+        if self.already_placed_under(id, workspace.owner, to)? {
             return Ok(workspace);
         }
         workspace.owner = to;
         workspace.position = self.next_workspace_position(to)?;
-        self.catalog.put_workspace(&workspace)?;
+        self.commit_root_move(&workspace)?;
         Ok(workspace)
+    }
+
+    /// **Whether a move to `to` has nothing to do.** The `workspaces.owner`
+    /// projection alone cannot answer it: a placement that named a Profile
+    /// this device cannot see — a deleted one, a hidden one, a Holder — is
+    /// projected late, so an Unassigned Workspace can carry a row that
+    /// already names the destination while the root says otherwise. Asking
+    /// the root placement too is what makes "moving one is the ordinary
+    /// move" true for the recovery routes (root-catalog TECHNICAL.final §6.2,
+    /// §6.3). A Workspace with no unit has only the projection, and keeps
+    /// answering from it.
+    fn already_placed_under(
+        &self,
+        workspace: WorkspaceId,
+        owner: ProfileId,
+        to: ProfileId,
+    ) -> Result<bool> {
+        let root_agrees = match self.root_placement(workspace)? {
+            Some(placement) => placement.profile == Some(to),
+            None => true,
+        };
+        Ok(root_agrees && owner == to)
     }
 
     fn next_workspace_position(&self, owner: ProfileId) -> Result<i64> {
@@ -1830,116 +2185,9 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             .saturating_add(1))
     }
 
-    pub fn delete_workspace(&mut self, id: WorkspaceId, at: Timestamp) -> Result<Workspace> {
-        let mut workspace = self.workspace_including_deleted(id)?;
-        self.refuse_profile_removal(workspace.owner)?;
-        if workspace.deleted_at.is_some() {
-            return Ok(workspace);
-        }
-        self.ensure_open_including_deleted(id)?;
-        if let Some(open) = self.open.get_mut(&id) {
-            let before = open.manifest.version();
-            open.manifest.set_workspace_deleted_at(Some(at))?;
-            let update = open.manifest.export_updates_since(&before)?;
-            let manifest_id = open.manifest_id;
-            commit_one(
-                open,
-                id,
-                &mut self.committed,
-                &mut self.sync_dirty,
-                manifest_id,
-                update,
-                at,
-                crate::ports::UpdateOrigin::Store,
-            )?;
-        }
-        let documents: Vec<_> = match self.open.get(&id) {
-            Some(open) => open.repo.documents()?,
-            None => self.backend.open_workspace(id)?.documents()?,
-        }
-        .into_iter()
-        .map(|document| document.id)
-        .collect();
-        self.catalog
-            .set_workspace_deleted(id, Some(at), &documents)?;
-        workspace.deleted_at = Some(at);
-        self.open.remove(&id);
-        Ok(workspace)
-    }
-
-    pub fn restore_workspace(&mut self, id: WorkspaceId) -> Result<Workspace> {
-        let mut workspace = self.workspace_including_deleted(id)?;
-        self.refuse_profile_removal(workspace.owner)?;
-        if workspace.deleted_at.is_none() {
-            return Ok(workspace);
-        }
-        // A locally removed owner can be recovered only by an explicit future
-        // Profile operation. Refuse before changing the retained manifest.
-        self.profile(workspace.owner)?;
-        self.ensure_open_including_deleted(id)?;
-        let at = Timestamp::now();
-        if let Some(open) = self.open.get_mut(&id) {
-            let before = open.manifest.version();
-            open.manifest.set_workspace_deleted_at(None)?;
-            let update = open.manifest.export_updates_since(&before)?;
-            let manifest_id = open.manifest_id;
-            commit_one(
-                open,
-                id,
-                &mut self.committed,
-                &mut self.sync_dirty,
-                manifest_id,
-                update,
-                at,
-                crate::ports::UpdateOrigin::Store,
-            )?;
-        }
-        let documents: Vec<_> = self.open[&id]
-            .repo
-            .documents()?
-            .into_iter()
-            .map(|document| document.id)
-            .collect();
-        self.catalog.set_workspace_deleted(id, None, &documents)?;
-        workspace.deleted_at = None;
-        Ok(workspace)
-    }
-
-    /// Permanently remove soft-deleted workspaces whose retention window has
-    /// elapsed. Backend bytes go first; a failed filesystem removal therefore
-    /// leaves the catalog row available for a later retry.
-    ///
-    /// The Store's start-up calls this with [`TRASH_RETENTION_MS`] ago.
-    pub fn purge_deleted(&mut self, before: Timestamp) -> Result<usize> {
-        let expired: Vec<_> = self
-            .catalog
-            .workspaces_including_deleted()?
-            .into_iter()
-            .filter(|workspace| {
-                workspace
-                    .deleted_at
-                    .is_some_and(|at| at.millis() <= before.millis())
-            })
-            .map(|workspace| workspace.id)
-            .collect();
-        for id in &expired {
-            // The catalog's RESTRICT fence must be checked before removing
-            // backend bytes. Retained personal units have their own explicit
-            // deletion boundary; expiry is not authority to destroy them.
-            if self.catalog.workspace_has_personal_units(*id)? {
-                return Err(Error::new(
-                    Code::WorkspaceInUse,
-                    "retained personal units prevent workspace purge",
-                ));
-            }
-        }
-        for id in &expired {
-            self.open.remove(id);
-            self.backend.delete_workspace(*id)?;
-            self.catalog.purge_workspace(*id)?;
-        }
-        Ok(expired.len())
-    }
+    // Trash, restore and purge are root operations since Plan 1.3:
+    // `root_lifecycle.rs` (`delete_workspace`, `restore_workspace`,
+    // `purge_deleted`, the Profile deletion batch and its restore).
 
     pub fn workspace(&self, id: WorkspaceId) -> Result<Workspace> {
         let workspace = self.workspace_including_deleted(id)?;
@@ -3826,21 +4074,76 @@ impl<C: Catalog, B: Backend> Store<C, B> {
     /// See [`ImportMode`]. The whole bundle is validated **before** anything is
     /// written: importing half a workspace and then finding the rest unreadable
     /// leaves something that looks present and is not.
+    ///
+    /// **Stage the content, then publish** (`TECHNICAL.final.md` §8.5–8.6).
+    /// Every `workspace.db` row — documents, history, blob metadata — is
+    /// written into a freshly claimed repository that no catalog row names
+    /// yet; only then does one catalog transaction publish the root Workspace
+    /// unit (placed under `owner` by a fresh move id), the `workspaces` row,
+    /// every document location and the import receipt in `workspace_lineage`.
+    /// The two databases are separate domains, so this is a staging job and
+    /// not a cross-file transaction: a failure before the publication deletes
+    /// the repository this call claimed, and a crash before it leaves an
+    /// unreferenced repository behind that nothing lists.
+    ///
+    /// How a retry behaves. A Restore keeps the origin's id, so once the
+    /// publication has committed the same bundle is refused with
+    /// `WorkspaceExists` and can never list a second Workspace; a Duplicate
+    /// mints a new id every time and cannot collide. A Restore retried after
+    /// a *crash* mid-staging meets the leftover repository at
+    /// `Backend::create_workspace`. When that repository can be shown to be
+    /// this import's own interrupted staging (`adopt_staged_repository`: no
+    /// `workspaces` row of any kind, no document routing, the bundle's
+    /// manifest document and nothing the bundle does not name) the retry
+    /// resumes it — rows already written are kept, the missing ones are
+    /// written, the blobs are re-put into the content-addressed store — and
+    /// publishes exactly as a first import does, answering
+    /// [`ImportPublication::Resumed`] (root-catalog QUESTIONS.md Q6).
+    /// Anything else keeps the refusal: the import never writes into, and
+    /// never deletes, a repository it cannot show to be its own, because a
+    /// repository with no catalog row is also what `forget_workspace`
+    /// deliberately leaves recoverable.
+    ///
+    /// Restore consults **root evidence first**: a Workspace unit for the
+    /// origin that holds an active deletion or purge evidence refuses the
+    /// import even when the `workspaces` row is long gone — an old bundle
+    /// cannot bypass a deletion by ordinary import. A bundle carries no root
+    /// or transport data, and none is read from it.
     pub fn import_workspace(
         &mut self,
         bundle: &Bundle,
         mode: ImportMode,
         owner: ProfileId,
         at: Timestamp,
-    ) -> Result<WorkspaceId> {
+    ) -> Result<ImportedWorkspace> {
         bundle.validate()?;
         if self.catalog.profile(owner)?.is_none() {
             return Err(Error::bare(Code::ProfileNotFound));
         }
+        let scope = self.catalog.local_user_scope()?;
 
         let origin = bundle.manifest.workspace;
-        let workspace = match mode {
+        let (workspace, held_unit) = match mode {
             ImportMode::Restore => {
+                let held = self.catalog.root_catalog_unit(
+                    scope,
+                    crate::root_catalog::CatalogUnitRef::Workspace { workspace: origin },
+                )?;
+                if let Some(row) = &held {
+                    let unit = crate::root_catalog::WorkspaceCatalogUnit::from_snapshot(
+                        &row.snapshot,
+                        origin,
+                        self.peer_id,
+                    )?;
+                    if unit.is_deleted() || !unit.purged().is_empty() {
+                        return Err(Error::new(
+                            Code::WorkspaceExists,
+                            "this workspace was deleted here and the deletion is still in force; \
+                             an exported bundle cannot bypass it. Restore it from the Trash, or \
+                             import it as a duplicate instead",
+                        ));
+                    }
+                }
                 if self.catalog.workspace(origin)?.is_some() {
                     // Restoring over a workspace already here would merge two
                     // histories under one id with no record of it. Refusing is
@@ -3850,9 +4153,9 @@ impl<C: Catalog, B: Backend> Store<C, B> {
                         "this workspace is already in the store; import it as a duplicate instead",
                     ));
                 }
-                origin
+                (origin, held)
             }
-            ImportMode::Duplicate => WorkspaceId::new(),
+            ImportMode::Duplicate => (WorkspaceId::new(), None),
         };
 
         // Document ids are preserved on restore and re-minted on duplicate, so
@@ -3891,97 +4194,199 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             deleted_at: None,
             position: self.next_workspace_position(owner)?,
         };
-        self.catalog.put_workspace(&record)?;
 
-        let mut repo = self.backend.open_workspace(workspace)?;
-        for document in &bundle.manifest.documents {
-            let id = remap[&document.id];
-            let bytes = match &duplicated_manifest {
-                Some((source, bytes)) if *source == document.id => bytes.as_slice(),
-                _ => bundle
-                    .snapshot_of(document.id)
-                    .ok_or_else(|| Error::new(Code::InvalidRequest, "a snapshot went missing"))?,
+        // The root unit, authored before any storage is claimed: a Loro
+        // failure here owns no repository. A Restore whose origin the root
+        // already holds live moves that unit under its read revision; a
+        // Duplicate, and a Restore the root has never seen, get a fresh one.
+        let unit_ref = crate::root_catalog::CatalogUnitRef::Workspace { workspace };
+        let unit_commit = {
+            let unit = match &held_unit {
+                Some(row) => crate::root_catalog::WorkspaceCatalogUnit::from_snapshot(
+                    &row.snapshot,
+                    workspace,
+                    self.peer_id,
+                )?,
+                None => crate::root_catalog::WorkspaceCatalogUnit::create(workspace, self.peer_id)?,
             };
+            unit.set_placement(Some(owner), uuid::Uuid::new_v4())?;
+            crate::ports::RootCatalogUnitCommit {
+                unit: unit_ref,
+                snapshot: unit.snapshot()?,
+                expected_revision: held_unit.as_ref().map(|row| row.revision),
+            }
+        };
+        // The receipt: a Duplicate records where it came from, as before; a
+        // Restore records that this replica of the origin arrived here by
+        // import at `at`, in the same journal rather than a new table.
+        let receipt = Lineage {
+            workspace,
+            derived_from: origin,
+            kind: match mode {
+                ImportMode::Restore => crate::model::LineageKind::Restore,
+                ImportMode::Duplicate => crate::model::LineageKind::Duplicate,
+            },
+            at,
+        };
 
-            repo.create_document(id, document.kind, at)?;
-            // The snapshot becomes the document's whole history, written as one
-            // update from nothing. A delta would name ancestors that do not
-            // exist here, and Loro would park it as pending — applying nothing
-            // and reporting nothing.
-            repo.commit_updates(&crate::ports::UpdateBatch {
-                document: id,
-                updates: vec![bytes.to_vec()],
-                version_vector: Vec::new(),
-                frontiers: Vec::new(),
-                received_at: at,
-                origins: vec![crate::ports::UpdateOrigin::Store],
-            })?;
-            self.catalog.record_location(id, workspace)?;
-        }
+        // ---- staging: every content row, into a repository nothing lists.
+        // `create_workspace` refuses an existing repository, which is what
+        // keeps a stale leftover from being written over. A Restore that
+        // meets one asks whether it is its own interrupted staging and
+        // resumes it if so; anything else keeps the backend's refusal.
+        let (mut repo, staged_before, publication) = match self.backend.create_workspace(workspace)
+        {
+            Ok(repo) => (repo, HashMap::new(), ImportPublication::Fresh),
+            Err(refusal)
+                if refusal.code() == Code::WorkspaceExists && mode == ImportMode::Restore =>
+            {
+                match self.adopt_staged_repository(bundle, workspace)? {
+                    Some((repo, documents)) => (repo, documents, ImportPublication::Resumed),
+                    None => return Err(refusal),
+                }
+            }
+            Err(error) => return Err(error),
+        };
+        let staged = (|| -> Result<Vec<DocumentId>> {
+            let mut locations = Vec::with_capacity(bundle.manifest.documents.len());
+            for document in &bundle.manifest.documents {
+                let id = remap[&document.id];
+                let bytes = match &duplicated_manifest {
+                    Some((source, bytes)) if *source == document.id => bytes.as_slice(),
+                    _ => bundle.snapshot_of(document.id).ok_or_else(|| {
+                        Error::new(Code::InvalidRequest, "a snapshot went missing")
+                    })?,
+                };
 
-        // History is imported after the live documents exist. `capture_history`
-        // intentionally re-mints storage ids while deduplicating identical
-        // frontiers: a duplicated workspace must not share external identities
-        // with its origin, and callers address the imported entries from the
-        // returned timeline rather than carrying stale ids across stores.
-        for entry in bundle.manifest.history_entries.iter().rev() {
-            let source = bundle
-                .manifest
-                .history_versions
-                .iter()
-                .find(|version| version.id == entry.version)
-                .ok_or_else(|| {
-                    Error::new(Code::InvalidRequest, "a history version went missing")
+                // A resumed staging may hold the row already, with or without
+                // its one update (a crash between the two). Its kind was
+                // compared at adoption; here only the journal's presence is,
+                // never the bytes.
+                let written = match staged_before.get(&id) {
+                    None => {
+                        repo.create_document(id, document.kind, at)?;
+                        false
+                    }
+                    Some(_) => repo.journal_since(id, None)?.head.is_some(),
+                };
+                if !written {
+                    // The snapshot becomes the document's whole history, written
+                    // as one update from nothing. A delta would name ancestors
+                    // that do not exist here, and Loro would park it as pending
+                    // — applying nothing and reporting nothing.
+                    repo.commit_updates(&crate::ports::UpdateBatch {
+                        document: id,
+                        updates: vec![bytes.to_vec()],
+                        version_vector: Vec::new(),
+                        frontiers: Vec::new(),
+                        received_at: at,
+                        origins: vec![crate::ports::UpdateOrigin::Store],
+                    })?;
+                }
+                locations.push(id);
+            }
+
+            // History is imported after the live documents exist.
+            // `capture_history` intentionally re-mints storage ids while
+            // deduplicating identical frontiers: a duplicated workspace must
+            // not share external identities with its origin, and callers
+            // address the imported entries from the returned timeline rather
+            // than carrying stale ids across stores. On a resumed staging a
+            // marker already there is not appended twice; `capture_history`
+            // deduplicates the version it names by itself.
+            let mut markers = HashMap::new();
+            for entry in bundle.manifest.history_entries.iter().rev() {
+                let source = bundle
+                    .manifest
+                    .history_versions
+                    .iter()
+                    .find(|version| version.id == entry.version)
+                    .ok_or_else(|| {
+                        Error::new(Code::InvalidRequest, "a history version went missing")
+                    })?;
+                let snapshot = bundle.history_snapshot_of(source.id).ok_or_else(|| {
+                    Error::new(Code::InvalidRequest, "a history snapshot went missing")
                 })?;
-            let snapshot = bundle.history_snapshot_of(source.id).ok_or_else(|| {
-                Error::new(Code::InvalidRequest, "a history snapshot went missing")
-            })?;
-            let document = remap[&entry.document];
-            repo.capture_history(&HistoryCapture {
-                document,
-                snapshot,
-                version_vector: &source.version_vector,
-                frontiers: &source.frontiers,
-                checksum: &source.checksum,
-                reason: entry.reason,
-                recorded_at: entry.recorded_at,
-                label: entry.label.as_deref(),
-                message: entry.message.as_deref(),
-                boundary: entry.boundary.as_deref(),
-            })?;
-        }
-
-        // **Objects first, then associations.** The bytes are installed into
-        // the one object store and only then does the Workspace gain its row,
-        // so a restore interrupted between the two leaves an object nothing
-        // references — which this rung keeps — rather than a row naming bytes
-        // that are not there.
-        let blobs = self.backend.objects()?;
-        for (hash, bytes) in &bundle.blobs {
-            let written = blobs.put(bytes)?;
-            if written != *hash {
-                return Err(Error::new(
-                    Code::BlobChecksumMismatch,
-                    "a blob in the bundle does not hash to the name it was filed under",
-                ));
+                let document = remap[&entry.document];
+                if publication == ImportPublication::Resumed
+                    && history_marker_present(&repo, &mut markers, document, entry, source)?
+                {
+                    continue;
+                }
+                repo.capture_history(&HistoryCapture {
+                    document,
+                    snapshot,
+                    version_vector: &source.version_vector,
+                    frontiers: &source.frontiers,
+                    checksum: &source.checksum,
+                    reason: entry.reason,
+                    recorded_at: entry.recorded_at,
+                    label: entry.label.as_deref(),
+                    message: entry.message.as_deref(),
+                    boundary: entry.boundary.as_deref(),
+                })?;
             }
-            if let Some(meta) = bundle.manifest.blobs.iter().find(|b| b.hash == *hash) {
-                repo.put_blob(meta)?;
-            }
-        }
 
-        if mode == ImportMode::Duplicate {
-            self.catalog.record_lineage(&Lineage {
-                workspace,
-                derived_from: origin,
-                kind: crate::model::LineageKind::Duplicate,
-                at,
-            })?;
+            // **Objects first, then associations.** The bytes are installed
+            // into the one object store and only then does the Workspace gain
+            // its row, so an import interrupted between the two leaves an
+            // object nothing references — which this rung keeps — rather than
+            // a row naming bytes that are not there. A bundle without blobs
+            // asks the object store for nothing, so a Store kept in memory
+            // can import one. The object store is content-addressed and
+            // `put_blob` upserts, so a resumed staging re-puts what the
+            // crashed attempt installed without duplicating any of it.
+            if !bundle.blobs.is_empty() {
+                let blobs = self.backend.objects()?;
+                for (hash, bytes) in &bundle.blobs {
+                    let written = blobs.put(bytes)?;
+                    if written != *hash {
+                        return Err(Error::new(
+                            Code::BlobChecksumMismatch,
+                            "a blob in the bundle does not hash to the name it was filed under",
+                        ));
+                    }
+                    if let Some(meta) = bundle.manifest.blobs.iter().find(|b| b.hash == *hash) {
+                        repo.put_blob(meta)?;
+                    }
+                }
+            }
+            Ok(locations)
+        })();
+        // Every handle on the staged repository is dropped before the catalog
+        // publication, and before any cleanup of it.
+        drop(repo);
+        let locations = match staged {
+            Ok(locations) => locations,
+            Err(error) => {
+                self.abandon_staging(workspace, publication);
+                return Err(error);
+            }
+        };
+
+        // ---- publication: one catalog transaction, after every content row.
+        if let Err(error) = self.catalog.publish_imported_workspace(
+            scope,
+            &unit_commit,
+            &record,
+            &locations,
+            &receipt,
+        ) {
+            // Nothing names the repository; an object already installed
+            // stays, as above.
+            self.abandon_staging(workspace, publication);
+            return Err(error);
         }
+        tracing::info!(
+            workspace = %workspace,
+            mode = mode.as_str(),
+            publication = publication.as_str(),
+            documents = locations.len(),
+            "imported workspace published"
+        );
 
         // Opened afresh, so the manifest is read back from what was actually
         // written rather than assumed from the bundle.
-        drop(repo);
         self.ensure_open(workspace)?;
         let entries = self.open[&workspace].manifest.entries();
         self.open
@@ -3989,7 +4394,96 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             .expect("just opened")
             .repo
             .reindex(&entries)?;
-        Ok(workspace)
+        Ok(ImportedWorkspace {
+            workspace,
+            publication,
+        })
+    }
+
+    /// A Restore that met an existing repository under its origin's id asks
+    /// whether it is this import's own interrupted staging: a crash between
+    /// staging and publication leaves one that nothing lists (root-catalog
+    /// QUESTIONS.md Q6). Three facts, read under the Store lock, must all
+    /// hold — the catalog has no `workspaces` row for the id, tombstoned rows
+    /// included, because a row of any kind means somebody's Workspace;
+    /// `document_locations` routes nothing to it; and the repository's one
+    /// manifest document is the bundle's. Stricter still, every document the
+    /// repository holds must be one the bundle names, with the bundle's kind,
+    /// because staging writes nothing else. Anything short of that answers
+    /// `None` and the caller keeps the backend's refusal: a repository that
+    /// cannot be shown to be this import's is never written into and never
+    /// deleted here — `forget_workspace` leaves exactly such a repository
+    /// recoverable on purpose. On `Some` the repository is open and its
+    /// documents are returned, so the staging can skip what is already there.
+    fn adopt_staged_repository(
+        &self,
+        bundle: &Bundle,
+        workspace: WorkspaceId,
+    ) -> Result<Option<ResumedStaging<B::Workspace>>> {
+        if self.catalog.workspace(workspace)?.is_some() {
+            return Ok(None);
+        }
+        if !self.catalog.workspace_locations(workspace)?.is_empty() {
+            return Ok(None);
+        }
+        let Some(manifest) = bundle.manifest_document() else {
+            return Ok(None);
+        };
+        let repo = match self.backend.open_workspace(workspace) {
+            Ok(repo) => repo,
+            Err(error) => {
+                tracing::warn!(workspace = %workspace, error = %error,
+                    "an unlisted repository under a Restore's origin id could not be opened; the import keeps the refusal");
+                return Ok(None);
+            }
+        };
+        let documents: HashMap<DocumentId, crate::ports::DocumentState> = repo
+            .documents()?
+            .into_iter()
+            .map(|state| (state.id, state))
+            .collect();
+        let manifests: Vec<DocumentId> = documents
+            .values()
+            .filter(|state| state.kind == DocumentKind::Manifest)
+            .map(|state| state.id)
+            .collect();
+        if manifests.len() != 1 || manifests[0] != manifest {
+            return Ok(None);
+        }
+        let named: HashMap<DocumentId, DocumentKind> = bundle
+            .manifest
+            .documents
+            .iter()
+            .map(|document| (document.id, document.kind))
+            .collect();
+        if documents
+            .values()
+            .any(|state| named.get(&state.id) != Some(&state.kind))
+        {
+            return Ok(None);
+        }
+        tracing::info!(
+            workspace = %workspace,
+            manifest = %manifest,
+            staged = documents.len(),
+            "resuming the staged repository an interrupted Restore left behind"
+        );
+        Ok(Some((repo, documents)))
+    }
+
+    /// A staging that will not be published, after a failure: a repository
+    /// this call claimed is deleted, as the preparation path does; a resumed
+    /// one is left where it was, for the next retry to adopt again. Deleting
+    /// it would be deleting on the adoption's reading of it, and nothing is
+    /// deleted on a reading.
+    fn abandon_staging(&self, workspace: WorkspaceId, publication: ImportPublication) {
+        match publication {
+            ImportPublication::Fresh => self.cleanup_fresh_repository(workspace),
+            ImportPublication::Resumed => tracing::info!(
+                workspace = %workspace,
+                "the resumed staging is left in place for the next retry"
+            ),
+        }
     }
 
     fn duplicate_manifest_snapshot(
@@ -4716,7 +5210,25 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         if changed {
             self.catalog.put_workspace(&workspace)?;
         }
-        let deleted_projection = projection.deleted_at;
+        // **The manifest's deletion state is a hint, not an authority**
+        // (root-catalog TECHNICAL.final §6.1). For a Workspace that has a
+        // root unit the unit's deletion/restore facts decide `deleted_at`,
+        // and an incoming manifest value — however new — produces no root
+        // mutation and cannot restore or re-delete the row. Only a Workspace
+        // with no unit yet (a replica a peer provisioned, M2) is still
+        // projected from its manifest, as the only lifecycle evidence it has.
+        let deleted_projection = match self.root_deleted_at(id)? {
+            Some(root) => {
+                if let Some(hint) = projection.deleted_at
+                    && hint != root
+                {
+                    tracing::debug!(workspace = %id,
+                        "manifest deletion hint disagrees with the root fact; the root stands");
+                }
+                Some(root)
+            }
+            None => projection.deleted_at,
+        };
         let needs_deleted_change = match deleted_projection {
             Some(deleted_at) => workspace.deleted_at != deleted_at,
             // The manifest never recorded a deletion, so this workspace is
@@ -5077,7 +5589,12 @@ fn sync_document_digest(
 /// Random, and **never derived from a machine name, a hostname or a path** — a
 /// peer id names a replica, and a replica is not a person or a computer. Taken
 /// from a v4 UUID so it comes out of `getrandom` rather than a clock.
-fn mint_peer_id() -> u64 {
+///
+/// Public because the root-catalog migration and the personal v2 units mint
+/// their writer identities the same way: a unit's writer must be a fresh
+/// peer, never the Store's global stream (`docs/features/root-catalog/TECHNICAL.final.md`
+/// §5.2 step 6), and there is one way to mint one.
+pub fn mint_peer_id() -> u64 {
     let bytes = uuid::Uuid::new_v4().into_bytes();
     let mut eight = [0u8; 8];
     eight.copy_from_slice(&bytes[..8]);

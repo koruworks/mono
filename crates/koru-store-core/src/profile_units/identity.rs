@@ -7,40 +7,43 @@ use crate::text::Locale;
 
 /// Public identity fields only, authored from current values into a fresh log.
 pub struct IdentityManifest {
-    pub(super) inner: UnitDoc,
+    pub(super) inner: UnitDoc<ProfileUnitRef>,
 }
 
 impl IdentityManifest {
     pub fn create(profile: &Profile) -> Result<Self> {
-        let inner = UnitDoc::fresh(ProfileUnitRef::Identity {
+        let unit = ProfileUnitRef::Identity {
             profile: profile.id,
+        };
+        let inner = UnitDoc::fresh(unit, |doc| {
+            unit.write_header(doc)?;
+            let meta = doc.get_map("meta");
+            meta.insert("name", profile.name.as_str())
+                .map_err(loro_failed)?;
+            meta.insert("locale", profile.locale.as_str())
+                .map_err(loro_failed)?;
+            meta.insert("created_at", profile.created_at.millis())
+                .map_err(loro_failed)?;
+            meta.insert("kind", profile.kind.as_str())
+                .map_err(loro_failed)?;
+            for (key, value) in [
+                ("purpose", profile.purpose.as_deref()),
+                ("avatar", profile.avatar.as_deref()),
+                ("icon", profile.icon.as_deref()),
+                ("color", profile.color.as_deref()),
+                ("account", profile.account.as_deref()),
+            ] {
+                optional(&meta, key, value)?;
+            }
+            Ok(())
         })?;
-        let meta = inner.doc.get_map("meta");
-        meta.insert("name", profile.name.as_str())
-            .map_err(loro_failed)?;
-        meta.insert("locale", profile.locale.as_str())
-            .map_err(loro_failed)?;
-        meta.insert("created_at", profile.created_at.millis())
-            .map_err(loro_failed)?;
-        meta.insert("kind", profile.kind.as_str())
-            .map_err(loro_failed)?;
-        for (key, value) in [
-            ("purpose", profile.purpose.as_deref()),
-            ("avatar", profile.avatar.as_deref()),
-            ("icon", profile.icon.as_deref()),
-            ("color", profile.color.as_deref()),
-            ("account", profile.account.as_deref()),
-        ] {
-            optional(&meta, key, value)?;
-        }
-        inner.doc.commit();
         validation::validate(&inner.doc, inner.unit)?;
         Ok(Self { inner })
     }
 
     pub fn from_snapshot(bytes: &[u8]) -> Result<Self> {
         Ok(Self {
-            inner: UnitDoc::load(bytes, |profile, workspace| {
+            inner: load_profile_unit(bytes, |profile, workspace| {
                 if workspace.is_some() {
                     return Err(scope_mismatch());
                 }
@@ -49,6 +52,9 @@ impl IdentityManifest {
         })
     }
 
+    pub fn unit(&self) -> ProfileUnitRef {
+        self.inner.unit
+    }
     unit_methods!();
 
     pub fn profile(&self) -> Result<Profile> {

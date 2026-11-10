@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Explore reuses a working tab; a pin's document does not change.
+//! Explore reuses a working tab; a pin or chat is not replaced.
 
 use crate::panes::Outcome;
 use koru_editor::{Editing, OpenWhere};
@@ -8,24 +8,68 @@ use koru_workspace_host::View;
 
 use crate::mainview::harness::*;
 use crate::mainview::tab::{Tab, TabView};
-use crate::mainview::tab_rules::KoruTabs;
 
 #[test]
-fn explore_with_active_ai_chat_tab_attaches_context_without_replacing() {
-    let (mut v, mut w) = container();
+fn explore_with_active_ai_chat_tab_opens_a_new_tab() {
+    let (mut v, mut w) = on_document();
     v.tabs_mut().push(Tab::ai_chat());
-    let last = v.tabs().len() - 1;
-    v.tabs_mut().select(last);
-    let doc = a_document(&mut w.ws, "Notes");
+    let chat = v.tabs().active();
+    let doc = a_document(&mut w.ws, "Brief");
     let before = v.tabs().len();
 
     assert!(v.apply(&w.ws, Outcome::OpenNode(doc)));
 
-    assert_eq!(v.tabs().len(), before);
+    assert_eq!(v.tabs().len(), before + 1);
+    assert_eq!(v.document_root(), Some(doc));
     assert!(
-        matches!(v.tabs_mut().active_view(), TabView::AiChat(_)),
-        "the AI chat tab stayed active"
+        matches!(
+            v.tabs().get(chat).map(|t| &t.view),
+            Some(TabView::AiChat(_))
+        ),
+        "the AI chat tab remains in place"
     );
+}
+
+#[test]
+fn store_explore_with_active_ai_chat_tab_requests_a_new_tab() {
+    let (mut v, w) = on_document();
+    v.tabs_mut().push(Tab::ai_chat());
+    let chat = v.tabs().active();
+    let document = koru_core::DocumentId::new();
+    let row = koru_core::NodeId::from_uuid(document.as_uuid());
+    View::set_entries(
+        &mut v,
+        vec![koru_core::explore::ExploreEntry {
+            id: document,
+            parent: None,
+            ordinal: 0,
+            title: "Brief".into(),
+            kind: koru_core::explore::KIND_DOCUMENT.into(),
+            mime: None,
+            note: None,
+            trashed_at: None,
+            trashed_by: None,
+        }],
+        None,
+    );
+
+    assert!(v.apply(&w.ws, Outcome::OpenNode(row)));
+
+    assert_eq!(v.tabs().active(), chat);
+    assert!(matches!(v.tabs().active_tab().view, TabView::AiChat(_)));
+    assert_eq!(
+        v.pending_lands.front().copied(),
+        Some((document, OpenWhere::NewTab))
+    );
+    assert!(matches!(
+        View::take_pane_request(&mut v),
+        Some(koru_workspace_host::PaneRequest::Navigate { .. })
+    ));
+}
+
+#[test]
+fn an_ai_chat_tab_is_not_reusable() {
+    assert!(!Tab::ai_chat().is_reusable());
 }
 
 /// **Welcome is a dedicated tab.** A document opened while it is showing

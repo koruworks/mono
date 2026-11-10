@@ -1,12 +1,18 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Standard scoped requests and acknowledgements, not catalog discovery.
+//! The account path's root and personal frames are [`root`], admitted only
+//! under a user-catalog or user-personal permit.
 use super::{Error, Record, Scope, Unit};
 use crate::{cloud::Refusal, protocol::PeerFrame};
+
+#[path = "metadata_root.rs"]
+pub mod root;
 use koru_device::cloud::CloudId;
 use koru_store_core::profile_units::ProfileUnitRef;
 use loro::VersionVector;
 use loro_protocol::{CrdtType, Permission, ProtocolMessage as Message, UpdateStatusCode, encoding};
+pub use root::{CarrierAdmission, RootMetadata, decode_root, is_root_frame};
 
 /// Negotiated inside the existing authenticated dataset stream, never an ALPN
 /// or an authorization grant. Older workers ignore join auth and omit extra.
@@ -121,7 +127,18 @@ pub fn join_request_mode(
 
 /// Capacity comes from the existing owner, not an unbounded request queue.
 /// Catalog/inventory dispatch is deliberately not fabricated here.
+///
+/// This is a v1 dataset session's decoder: a Workspace or Profile dataset.
+/// The root-catalog frames of the account path are refused on it with
+/// `principal_not_allowed` — a content session never reads or writes the
+/// user's organization — and admitted by [`decode_root`] on a session whose
+/// permit is the account catalog's.
 pub fn decode(scope: Scope, frame: PeerFrame, capacity: usize) -> Result<Vec<Metadata>, Error> {
+    if is_root_frame(&frame) {
+        // `of(principal)` is never a catalog admission, so this refuses.
+        decode_root(CarrierAdmission::of(scope.principal), &frame)?;
+        return Err(Error::Invalid);
+    }
     let mut output = Vec::new();
     let mut push = |value| {
         if output.len() >= capacity {

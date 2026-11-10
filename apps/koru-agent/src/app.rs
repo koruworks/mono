@@ -1417,6 +1417,56 @@ impl Agent {
         }
     }
 
+    /// **The organization sync status as the daemon's last status frame
+    /// said it** (root-catalog Plan 2.2), in the wire's shape: ids and
+    /// states only. `None` without a sync-control session.
+    fn root_sync_push(&self) -> Option<Push> {
+        let status = self.sync_control.as_ref()?.status();
+        let subjects = status
+            .root_sync
+            .into_iter()
+            .map(|row| koru_agent_wire::RootSyncSubject {
+                peer_device_id: row.peer.to_storage(),
+                profile_id: row.profile.map(|id| id.to_storage()),
+                workspace_id: row.workspace.map(|id| id.to_storage()),
+                state: match row.state {
+                    koru_sync_control::RootSyncState::UpToDate => {
+                        koru_agent_wire::RootSyncState::UpToDate
+                    }
+                    koru_sync_control::RootSyncState::Pending => {
+                        koru_agent_wire::RootSyncState::Pending
+                    }
+                    koru_sync_control::RootSyncState::PausedBySettings => {
+                        koru_agent_wire::RootSyncState::PausedBySettings
+                    }
+                    koru_sync_control::RootSyncState::BlockedByMismatch => {
+                        koru_agent_wire::RootSyncState::BlockedByMismatch
+                    }
+                    koru_sync_control::RootSyncState::Held => koru_agent_wire::RootSyncState::Held,
+                },
+            })
+            .collect();
+        Some(Push::RootSync {
+            status: koru_agent_wire::RootSyncStatus { subjects },
+        })
+    }
+
+    fn broadcast_root_sync(&mut self) {
+        let Some(push) = self.root_sync_push() else {
+            return;
+        };
+        let ids: Vec<_> = self.connections.iter().map(Connection::id).collect();
+        for id in ids {
+            self.push(id, push.clone());
+        }
+    }
+
+    fn push_root_sync_to(&mut self, connection: ConnectionId) {
+        if let Some(push) = self.root_sync_push() {
+            self.push(connection, push);
+        }
+    }
+
     fn broadcast_profile_lifecycle_deleted(&mut self, profile_id: String) {
         self.pending_profile_cleanup.insert(profile_id.clone());
         let ids: Vec<_> = self.connections.iter().map(Connection::id).collect();
@@ -4078,6 +4128,10 @@ impl Agent {
                 // shell to that durable workflow before it can treat the
                 // Profile as an ordinary active one again.
                 self.push_pending_profile_cleanup_to(connection);
+                // What the daemon currently says about organization sync,
+                // so a window opened mid-pass does not wait for the next
+                // change to learn it (root-catalog Plan 2.2).
+                self.push_root_sync_to(connection);
                 // A window arriving is one of the moments the session catalog
                 // plausibly moved without the watcher hearing it.
                 self.kick_agents_menu();
@@ -4680,6 +4734,8 @@ impl Agent {
             Push::AccountResult { .. } => "account-result".to_string(),
             Push::AccountChanged => "account-changed".to_string(),
             Push::ProfileLifecycleDeleted { .. } => "profile-lifecycle-deleted".to_string(),
+            // How many readings, never which subjects — this line reaches a log.
+            Push::RootSync { status } => format!("root-sync subjects={}", status.subjects.len()),
             Push::Restore => "restore".to_string(),
             Push::Voice => "voice".to_string(),
             // **Whether, never which.** A device name is a person's hardware
@@ -7390,6 +7446,10 @@ impl WindowApp for Agent {
                 if let Some(account) = &self.account {
                     account.wake_enrollment();
                 }
+                false
+            }
+            AgentEvent::RootSyncChanged => {
+                self.broadcast_root_sync();
                 false
             }
             AgentEvent::AccountChanged => {

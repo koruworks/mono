@@ -98,6 +98,56 @@ fn near(a: Rect, b: Rect) -> bool {
         && (a.h - b.h).abs() < 0.01
 }
 
+/// **A Workspace row says its organization reading where it already shows
+/// state** (root-catalog Plan 2.2): a word after the name while the
+/// Workspace is pending, paused, blocked or held, nothing while it is up
+/// to date or unknown, and the row's geometry is unchanged by it.
+#[test]
+fn a_workspace_row_shows_its_organization_reading_only_while_not_up_to_date() {
+    use koru_agent_wire::{RootSyncState, RootSyncStatus, RootSyncSubject};
+    let mut v = opened(workspaces(2));
+    let a = area(dtheme::SIDEBAR_MIN_W);
+    let (_, frame) = lay(&v, a);
+    assert!(
+        frame.named(ORGANIZATION).next().is_none(),
+        "nothing said, nothing shown"
+    );
+
+    let pending = v.workspaces[0].id;
+    let up_to_date = v.workspaces[1].id;
+    let subject = |workspace: WorkspaceId, state| RootSyncSubject {
+        peer_device_id: "laptop".into(),
+        profile_id: None,
+        workspace_id: Some(workspace.to_string()),
+        state,
+    };
+    assert!(v.set_root_sync(&RootSyncStatus {
+        subjects: vec![
+            subject(pending, RootSyncState::Pending),
+            subject(up_to_date, RootSyncState::UpToDate),
+        ],
+    }));
+    let (_, frame) = lay(&v, a);
+    let words: Vec<_> = frame.named(ORGANIZATION).collect();
+    assert_eq!(words.len(), 1, "one row is not up to date");
+    let rows: Vec<_> = frame.named(ROW).collect();
+    assert_eq!(rows.len(), 2);
+    assert!(
+        words[0].rect.y >= rows[0].rect.y && words[0].rect.y < rows[0].rect.y + rows[0].rect.h,
+        "the word sits in the pending row"
+    );
+    let gear = frame.node(manage(pending)).expect("the gear");
+    assert!(
+        words[0].rect.x + words[0].rect.w <= gear.rect.x,
+        "the word stays before the trailing lane"
+    );
+    assert_eq!(
+        v.workspace_organization_status(pending),
+        Some(super::super::SyncStatus::Pending)
+    );
+    assert_eq!(v.workspace_organization_status(up_to_date), None);
+}
+
 /// **The element page lays out where today's page is**, row for row and
 /// part for part, at both widths, scrolled and not.
 #[test]
@@ -1124,4 +1174,194 @@ fn a_profile_rows_record_names_its_tokens() {
     );
     assert_eq!(value(find("Profile name"), "lines"), "1");
     assert_eq!(value(find("Manage gear"), "name"), "Key::ManageProfile");
+}
+
+// ------------------------------------------- recovery (root catalog Plan 1.3)
+use crate::panes::explore::workspace_menu_elements;
+
+fn recovery_controller(unassigned: koru_core::WorkspaceId) -> crate::manage::SharedWorkspaces {
+    use koru_workspaces_ui::{DeletedProfileRow, Recovery, UnassignedRow, WorkspacesController};
+    let former = koru_store_core::ids::ProfileId::from_uuid(uuid(901));
+    let mut controller = WorkspacesController::new();
+    controller.fixture_recovery(Recovery {
+        unassigned: vec![UnassignedRow {
+            id: crate::manage::workspaces::catalog_workspace(unassigned),
+            name: "Orphan".into(),
+            icon: None,
+            color: None,
+            former_profile: Some(former),
+            reason: koru_api_client::UnassignedReason::ProfileDeleted,
+        }],
+        deleted_profiles: vec![DeletedProfileRow {
+            profile: former,
+            name: Some("Work".into()),
+            deletion: koru_store_core::ids::DeletionId::from_uuid(uuid(902)),
+            at_ms: 1_000,
+            retention_ms: 30,
+            targets: 2,
+            expired_or_purged: 0,
+        }],
+    });
+    std::rc::Rc::new(std::cell::RefCell::new(controller))
+}
+
+/// The Unassigned group leads the menu (root-catalog §3.6): its heading and
+/// rows come before this Profile's own, each row is reachable by the
+/// keyboard and named for a reader, and without anything unassigned there is
+/// no group at all.
+#[test]
+fn the_unassigned_group_leads_the_menu_and_is_absent_without_anything_unassigned() {
+    let orphan = WorkspaceId::from_uuid(uuid(77));
+    let mut v = opened(workspaces(2));
+    let a = area(dtheme::SIDEBAR_MIN_W);
+    let (_, frame) = lay(&v, a);
+    assert!(
+        frame
+            .node(workspace_menu_elements::UNASSIGNED_HEADING)
+            .is_none()
+    );
+    assert!(
+        !v.rows_for(PopoverKind::Summary)
+            .iter()
+            .any(|row| matches!(row, PopoverRow::Unassigned(_)))
+    );
+
+    v.set_workspace_controller(recovery_controller(orphan));
+    let rows = v.rows_for(PopoverKind::Summary);
+    let heading = rows
+        .iter()
+        .position(|row| *row == PopoverRow::WorkspacesHeading)
+        .unwrap();
+    assert_eq!(
+        &rows[heading - 3..heading],
+        &[
+            PopoverRow::Unassigned(0),
+            PopoverRow::UnassignedMove(0),
+            PopoverRow::UnassignedRestore(0),
+        ],
+        "the group sits right above this Profile's heading, and nothing of this Profile's above it"
+    );
+    assert!(
+        rows[..heading - 3]
+            .iter()
+            .all(|row| matches!(row, PopoverRow::WorkspaceAction(_))),
+        "only the header's sync controls precede it"
+    );
+
+    let (_, frame) = lay(&v, a);
+    let group_heading = frame
+        .node(workspace_menu_elements::UNASSIGNED_HEADING)
+        .expect("the group's heading");
+    let own_heading = frame.node(HEADING).expect("this Profile's heading");
+    assert!(group_heading.rect.y < own_heading.rect.y);
+    let row_rect = frame
+        .node(workspace_menu_elements::unassigned(orphan))
+        .expect("the row")
+        .rect;
+    let move_rect = frame
+        .node(workspace_menu_elements::unassigned_move(orphan))
+        .expect("Move to…")
+        .rect;
+    let restore_rect = frame
+        .node(workspace_menu_elements::unassigned_restore(orphan))
+        .expect("Restore Profile")
+        .rect;
+    assert!(row_rect.y < move_rect.y && move_rect.y < restore_rect.y);
+    // The page's rows and the frame's rects agree on every one of them.
+    let page_rows = v.page_rows(&frame);
+    for row in [
+        PopoverRow::Unassigned(0),
+        PopoverRow::UnassignedMove(0),
+        PopoverRow::UnassignedRestore(0),
+    ] {
+        assert!(
+            page_rows.iter().any(|(r, _)| *r == row),
+            "{row:?} is placed"
+        );
+    }
+    // A press on each is what it says: Manage, the destination menu, the
+    // batch restore of the former Profile.
+    assert_eq!(
+        v.choose(PopoverRow::Unassigned(0), PopoverPart::Row),
+        Outcome::ManageWorkspace(orphan)
+    );
+    assert_eq!(
+        v.choose(PopoverRow::UnassignedMove(0), PopoverPart::Row),
+        Outcome::MoveUnassigned(orphan)
+    );
+    assert!(matches!(
+        v.choose(PopoverRow::UnassignedRestore(0), PopoverPart::Row),
+        Outcome::RestoreProfile { profile, .. } if profile.as_uuid() == uuid(901)
+    ));
+
+    // Named for a reader, in order: the heading, then the row and its two
+    // actions as menu items.
+    let cx = cx(a, Lang::En);
+    let nodes = v.element_semantics(&cx, &frame);
+    let menu = &nodes[0];
+    let labels: Vec<&str> = menu
+        .children
+        .iter()
+        .filter_map(|child| child.label.as_deref())
+        .collect();
+    let at = labels
+        .iter()
+        .position(|label| *label == "Unassigned (from deleted Profile)")
+        .expect("the group heading is published");
+    assert_eq!(
+        menu.children[at].role,
+        AkRole::Heading,
+        "a heading, like this Profile's own"
+    );
+    assert_eq!(labels[at + 1], "Orphan, Unassigned (from deleted Profile)");
+    assert_eq!(labels[at + 2], "Move to…: Orphan");
+    assert_eq!(labels[at + 3], "Restore Profile: Orphan");
+    for child in &menu.children[at + 1..at + 4] {
+        assert_eq!(child.role, AkRole::MenuItem);
+        assert_eq!(child.actions, [AkAction::Click, AkAction::Focus]);
+    }
+    assert!(
+        labels
+            .iter()
+            .position(|label| *label == "Workspaces")
+            .unwrap()
+            > at,
+        "the group comes first"
+    );
+    assert!(frame.diagnostics.is_empty(), "{:?}", frame.diagnostics);
+}
+
+/// An empty Profile says so where its rows would be (root-catalog §3.10),
+/// as furniture the keyboard skips; *New workspace* in the foot is the one
+/// way out, and nothing is created by opening the menu.
+#[test]
+fn an_empty_profile_says_so_in_its_list_and_offers_only_new_workspace() {
+    let v = opened(workspaces(0));
+    let rows = v.rows_for(PopoverKind::Summary);
+    assert!(rows.contains(&PopoverRow::WorkspacesEmpty));
+    assert!(!PopoverRow::WorkspacesEmpty.selectable());
+    assert!(rows.contains(&PopoverRow::WorkspaceAction(
+        workspace_menu_elements::MenuAction::New
+    )));
+    let a = area(dtheme::SIDEBAR_MIN_W);
+    let (_, frame) = lay(&v, a);
+    let line = frame
+        .node(workspace_menu_elements::EMPTY)
+        .expect("the empty line is laid out");
+    assert!(frame.node(HEADING).unwrap().rect.y < line.rect.y);
+    let cx = cx(a, Lang::En);
+    let nodes = v.element_semantics(&cx, &frame);
+    assert!(
+        nodes[0]
+            .children
+            .iter()
+            .any(|child| child.label.as_deref() == Some("This profile has no workspaces")),
+        "a reader hears why the list is empty"
+    );
+    let full = opened(workspaces(1));
+    assert!(
+        !full
+            .rows_for(PopoverKind::Summary)
+            .contains(&PopoverRow::WorkspacesEmpty)
+    );
 }

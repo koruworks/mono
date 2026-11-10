@@ -58,6 +58,8 @@ mod pins;
 pub use pins::*;
 mod profile_removal;
 pub use profile_removal::*;
+mod profile_deletion;
+pub use profile_deletion::*;
 pub mod bundle;
 mod creation;
 pub use creation::{CreateProfileWithWorkspace, CreatedProfile, FirstWorkspace};

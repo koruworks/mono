@@ -32,12 +32,15 @@
 //! a real search index arrives later as a swap rather than a migration.
 
 use crate::errors::Result;
-use crate::ids::{ClientId, DocumentId, DocumentVersionId, HistoryEntryId, ProfileId, WorkspaceId};
+use crate::ids::{
+    ClientId, DocumentId, DocumentVersionId, HistoryEntryId, ProfileId, UserScopeId, WorkspaceId,
+};
 use crate::model::{
     ApiClient, Blob, BlobHash, DocumentEntry, DocumentKind, Lineage, Profile, Timestamp, Workspace,
 };
 use crate::profile_account::ProfileAccountBinding;
 use crate::profile_units::ProfileUnitRef;
+use crate::root_catalog::{CatalogUnitKind, CatalogUnitRef};
 use crate::transport::{
     TransportModeCommit, TransportModeGroup, TransportModeRequest, TransportModeState,
     TransportSubject,
@@ -46,6 +49,11 @@ use crate::transport::{
 // ------------------------------------------------------------------ catalog
 
 /// The complete verified projection to publish with a replacement.
+///
+/// `Move` is no longer produced by the Store: since Plan 1.2 a move is a root
+/// operation and goes through [`Catalog::publish_root_unit`], which carries
+/// the same projection write. The variant stays so the port's vocabulary is
+/// unchanged for an implementation that still handles it.
 pub enum Removal<'a> {
     Archive(&'a Workspace),
     Delete(&'a Workspace),
@@ -118,6 +126,140 @@ pub struct ReminderDue {
     pub workspace: WorkspaceId,
     pub reminder: crate::ids::ReminderId,
     pub due_at_ms: Option<i64>,
+}
+
+/// [`ReminderDue`] re-keyed for personal v2: the owner is the user scope the
+/// row was read under, not a Profile, so the Profile field is gone rather
+/// than overloaded. Same hint semantics — `None` means inspect the rule.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorkspaceReminderDue {
+    pub workspace: WorkspaceId,
+    pub reminder: crate::ids::ReminderId,
+    pub due_at_ms: Option<i64>,
+}
+
+/// One `root_catalog_units` row: the durable Loro snapshot of a catalog unit
+/// and the compare-and-set revision that orders its commits.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RootCatalogUnitRow {
+    pub snapshot: Vec<u8>,
+    pub revision: i64,
+}
+
+/// One unit's part of an atomic root-catalog commit. `expected_revision`
+/// is `None` for a row that must not exist yet, or the revision the caller
+/// read; the stored row moves to that revision plus one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RootCatalogUnitCommit {
+    pub unit: CatalogUnitRef,
+    pub snapshot: Vec<u8>,
+    pub expected_revision: Option<i64>,
+}
+
+/// One `root_catalog_overlays` row: a private Loro fork of a unit at
+/// `base_vv` with its own writer, held only while its edits cannot be
+/// published. Never advertised, never exported, never a second replica.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RootCatalogOverlay {
+    /// The encoded [`loro::VersionVector`] of the published unit the fork
+    /// started from.
+    pub base_vv: Vec<u8>,
+    pub private_snapshot: Vec<u8>,
+    /// Stored as the i64 with the same bits; SQLite has no u64.
+    pub writer_peer_id: u64,
+}
+
+/// What a root operation writes about one unit, decided by the Store before
+/// the catalog transaction opens (`docs/features/root-catalog/TECHNICAL.final.md`
+/// §4.3, §7.1). Exactly one of the two rows changes:
+///
+/// - [`Durable`](Self::Durable): the `root_catalog_units` row moves to the
+///   new snapshot under its compare-and-set revision. `clear_overlay` is set
+///   when the snapshot already folds a private overlay in, so the
+///   `root_catalog_overlays` row goes in the same transaction.
+/// - [`Overlay`](Self::Overlay): the edit cannot be published yet (the
+///   subject's effective transport admission is Local-only or fenced), so the
+///   `root_catalog_overlays` row is written whole and the durable row is not
+///   touched — byte for byte.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RootUnitWrite {
+    Durable {
+        commit: RootCatalogUnitCommit,
+        clear_overlay: bool,
+    },
+    Overlay(RootCatalogOverlay),
+}
+
+/// The one-way projection a root operation writes beside its unit facts
+/// (`docs/features/root-catalog/TECHNICAL.final.md` §6.1 "Project root
+/// lifecycle one-way"). The unit is the authority; each variant names the
+/// SQL rows that must agree with it in the same transaction.
+///
+/// Order matters inside one publication: a `workspaces` row can only be
+/// written while its owner Profile is visible, so a batch that hides a
+/// Profile lists its targets' projections *before* [`Self::ProfileHidden`]
+/// and a batch restore lists [`Self::ProfileVisible`] *first*.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RootProjection<'a> {
+    /// A move: owner and position, plus the re-keying of the Workspace's
+    /// `local_transport_modes` row to the new owner with its `mode`,
+    /// `explicit_choice` and `revision` exactly as they were.
+    Placement(&'a Workspace),
+    /// A deletion fact landed: `workspaces.deleted_at` set from the row
+    /// and the Workspace's document routing removed, as a delete always did.
+    WorkspaceDeleted(&'a Workspace),
+    /// The last active deletion was observed by a restore:
+    /// `workspaces.deleted_at` cleared and routing re-inserted for
+    /// `documents`.
+    WorkspaceRestored {
+        workspace: &'a Workspace,
+        documents: &'a [DocumentId],
+    },
+    /// A Profile deletion fact landed. The row is **kept**; it leaves the
+    /// ordinary listings through the same `removed_at` suppression a
+    /// device-local removal uses, so every reader that hides a removed
+    /// Profile hides a deleted one without learning a second rule. The unit
+    /// is the authority on which of the two it is.
+    ProfileHidden { profile: ProfileId, at: Timestamp },
+    /// A Profile deletion was restored: the suppression written by
+    /// [`Self::ProfileHidden`] is cleared.
+    ProfileVisible { profile: ProfileId },
+}
+
+/// Everything one root operation commits, decided by the Store before the
+/// catalog transaction opens: one write per unit it touches, the one-way
+/// projections, and the `store_state` rows it owns (a Profile deletion's
+/// application job). `state` pairs a key with `Some(value)` to upsert or
+/// `None` to delete.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct RootPublication<'a> {
+    pub units: Vec<(CatalogUnitRef, RootUnitWrite)>,
+    pub projections: Vec<RootProjection<'a>>,
+    pub state: Vec<(String, Option<String>)>,
+}
+
+/// Why a Workspace's content may not be purged yet (TECHNICAL.final §5.3,
+/// §9 "Retained personal units block purge"): a personal unit this purge is
+/// not authorized to retire. The hold is reported, never deleted around.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PurgeHold {
+    /// A `workspace_personal_crdts` row under another user scope. This
+    /// device's purge retires only its own scope's unit; a foreign one is
+    /// another user's data and waits for that user's retirement.
+    ForeignScope,
+}
+
+/// One `workspace_personal_crdts` row: a personal v2 unit under
+/// `(user_scope_id, workspace_id)`, its disposable due-index stamp and the
+/// persisted writer identity every future operation of this replica uses.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorkspacePersonalUnitState {
+    pub snapshot: Vec<u8>,
+    /// The encoded [`loro::VersionVector`] the due index was built from;
+    /// `None` while unavailable or rebuilding.
+    pub indexed_version: Option<Vec<u8>>,
+    /// Stored as the i64 with the same bits; SQLite has no u64.
+    pub writer_peer_id: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -219,9 +361,26 @@ pub trait Catalog {
     ) -> Result<()>;
     fn profile_unit(&self, unit: ProfileUnitRef) -> Result<Option<ProfileUnitState>>;
     fn profile_units(&self, profile: ProfileId) -> Result<Vec<ProfileUnitState>>;
-    /// Retained personal authority prevents physical Workspace deletion,
-    /// including when its owner Profile is locally removed.
-    fn workspace_has_personal_units(&self, workspace: WorkspaceId) -> Result<bool>;
+    /// Whether a retained personal unit holds this Workspace's content
+    /// against purge (TECHNICAL.final §5.3). `None` when every personal row
+    /// of the Workspace is under `scope` — this purge may retire it through
+    /// [`Self::retire_workspace_personal_unit`] — or when there is none;
+    /// `Some` names the hold. Never answers by deleting anything.
+    fn personal_unit_hold(
+        &self,
+        scope: UserScopeId,
+        workspace: WorkspaceId,
+    ) -> Result<Option<PurgeHold>>;
+    /// **The authorized retirement job**, and the only path around the
+    /// `RESTRICT` key from `workspace_personal_crdts` to `workspaces`: delete
+    /// exactly this scope's personal row of `workspace` and its due-index
+    /// rows, in one transaction. `Ok(true)` when a row went, `Ok(false)` when
+    /// there was none. Rows under another scope are not touched.
+    fn retire_workspace_personal_unit(
+        &mut self,
+        scope: UserScopeId,
+        workspace: WorkspaceId,
+    ) -> Result<bool>;
     /// Identity bytes and their catalog projection, including the original
     /// creation time rather than a provisioning placeholder's time, share a
     /// durable transaction. Local removal and reserved kind remain local guards.
@@ -251,9 +410,180 @@ pub trait Catalog {
         rows: &[ReminderDue],
     ) -> Result<bool>;
     fn profile_reminder_due(&self, owner: ProfileId) -> Result<Vec<ReminderDue>>;
+
+    // ---- root catalog (docs/features/root-catalog/TECHNICAL.final.md §4.2)
+    //
+    // Every row below is keyed by a `UserScopeId`: the local validated user
+    // binding, a SQL key and an authorization boundary that no Loro unit
+    // carries. The tables arrive in one forward catalog migration.
+
+    /// The device-local scope handle: the `store_state` row under
+    /// [`K_LOCAL_USER_SCOPE`](crate::root_catalog::K_LOCAL_USER_SCOPE),
+    /// written once by that migration. There is always exactly one.
+    fn local_user_scope(&self) -> Result<UserScopeId>;
+    /// One `root_catalog_units` row by its full key
+    /// `(user_scope_id, unit_kind, subject_id)`.
+    fn root_catalog_unit(
+        &self,
+        scope: UserScopeId,
+        unit: CatalogUnitRef,
+    ) -> Result<Option<RootCatalogUnitRow>>;
+    /// Every `root_catalog_units` row of one kind under one scope. A missing
+    /// row is not a deletion; lifecycle lives inside the unit.
+    fn root_catalog_units(
+        &self,
+        scope: UserScopeId,
+        kind: CatalogUnitKind,
+    ) -> Result<Vec<(CatalogUnitRef, RootCatalogUnitRow)>>;
+    /// Publish several units' snapshots in one transaction, each guarded by
+    /// its `expected_revision`: `None` inserts a row that must not exist,
+    /// `Some(r)` replaces a row whose revision is exactly `r` and stamps
+    /// `r + 1`. One mismatch rolls back every unit in the batch.
+    fn commit_root_catalog_units(
+        &mut self,
+        scope: UserScopeId,
+        commits: &[RootCatalogUnitCommit],
+    ) -> Result<()>;
+    /// The `root_catalog_overlays` row for one unit, if a private fork is
+    /// being held.
+    fn root_catalog_overlay(
+        &self,
+        scope: UserScopeId,
+        unit: CatalogUnitRef,
+    ) -> Result<Option<RootCatalogOverlay>>;
+    /// Insert or replace the `root_catalog_overlays` row for one unit.
+    fn commit_root_catalog_overlay(
+        &mut self,
+        scope: UserScopeId,
+        unit: CatalogUnitRef,
+        overlay: &RootCatalogOverlay,
+    ) -> Result<()>;
+    /// Delete the `root_catalog_overlays` row for one unit once its edits
+    /// have been published into the durable unit. Absent is not an error.
+    fn clear_root_catalog_overlay(
+        &mut self,
+        scope: UserScopeId,
+        unit: CatalogUnitRef,
+    ) -> Result<()>;
+    /// Every `root_catalog_overlays` row under one scope — the publication
+    /// job's worklist (root-catalog TECHNICAL.final §4.3, §4.4): each is a
+    /// subject whose edits are waiting for its admission to allow export.
+    fn root_catalog_overlays(
+        &self,
+        scope: UserScopeId,
+    ) -> Result<Vec<(CatalogUnitRef, RootCatalogOverlay)>>;
+    /// **The durable root operation** (TECHNICAL.final §6.1, §7.1), in one
+    /// `IMMEDIATE` transaction: every unit's [`RootUnitWrite`] (compare-and-set
+    /// commit or overlay row), every one-way [`RootProjection`] in the order
+    /// given, and the `store_state` rows of the operation. A move, a trash, a
+    /// restore, a purge fact and a Profile-deletion batch are all this one
+    /// method with different contents; there is no second publication path.
+    /// One compare-and-set mismatch rolls the whole transaction back,
+    /// projections and state included; the Store acknowledges only after this
+    /// returns.
+    fn publish_root(&mut self, scope: UserScopeId, publication: &RootPublication<'_>)
+    -> Result<()>;
+    /// One unit and, for a move, its placement projection — the shape Plan
+    /// 1.2's move used. A thin form of [`Self::publish_root`].
+    fn publish_root_unit(
+        &mut self,
+        scope: UserScopeId,
+        unit: CatalogUnitRef,
+        write: RootUnitWrite,
+        projection: Option<&Workspace>,
+    ) -> Result<()> {
+        let publication = RootPublication {
+            units: vec![(unit, write)],
+            projections: projection
+                .into_iter()
+                .map(RootProjection::Placement)
+                .collect(),
+            state: Vec::new(),
+        };
+        self.publish_root(scope, &publication)
+    }
+    /// **A `.koru` bundle's publication** (TECHNICAL.final §8.5–8.6), after
+    /// every content row of the staged repository exists: the root Workspace
+    /// unit (`None` revision for a fresh unit, the read revision for one the
+    /// root already held), the `workspaces` row, every `document_locations`
+    /// row and the import receipt in `workspace_lineage`, in one `IMMEDIATE`
+    /// transaction. A `workspaces` row already present refuses with
+    /// `WorkspaceExists`, so a Restore retried after publication cannot list
+    /// a second Workspace under the same id.
+    fn publish_imported_workspace(
+        &mut self,
+        scope: UserScopeId,
+        unit: &RootCatalogUnitCommit,
+        workspace: &Workspace,
+        locations: &[DocumentId],
+        receipt: &Lineage,
+    ) -> Result<()>;
+
+    // ---- personal v2 (docs/features/root-catalog/TECHNICAL.final.md §5.1)
+
+    /// One `workspace_personal_crdts` row by `(user_scope_id, workspace_id)`.
+    fn workspace_personal_unit(
+        &self,
+        scope: UserScopeId,
+        workspace: WorkspaceId,
+    ) -> Result<Option<WorkspacePersonalUnitState>>;
+    /// Every `workspace_personal_crdts` row under one scope, whatever the
+    /// Workspace's current placement — personal data follows the Workspace.
+    fn workspace_personal_units(
+        &self,
+        scope: UserScopeId,
+    ) -> Result<Vec<(WorkspaceId, WorkspacePersonalUnitState)>>;
+    /// Insert or replace the `workspace_personal_crdts` row. Changed bytes
+    /// atomically clear its `indexed_version`, as the v1 commit does.
+    fn commit_workspace_personal_unit(
+        &mut self,
+        scope: UserScopeId,
+        workspace: WorkspaceId,
+        snapshot: &[u8],
+        writer_peer_id: u64,
+    ) -> Result<()>;
+    /// Replace the Workspace's rows of the re-keyed reminder due index and
+    /// stamp `indexed_version`, in one transaction, only if the row still
+    /// holds exactly `source_snapshot`. A stale rebuild returns `false`
+    /// without writing — the v1 compare-and-set, re-keyed.
+    fn replace_workspace_due_index(
+        &mut self,
+        scope: UserScopeId,
+        workspace: WorkspaceId,
+        source_snapshot: &[u8],
+        indexed_version: &[u8],
+        rows: &[WorkspaceReminderDue],
+    ) -> Result<bool>;
+    /// Every due-index row under one scope, including `None` hints.
+    fn workspace_reminder_due(&self, scope: UserScopeId) -> Result<Vec<WorkspaceReminderDue>>;
+
     fn put_workspace(&mut self, workspace: &Workspace) -> Result<()>;
-    /// Publish a prepared workspace and its manifest routing location together.
-    fn publish_workspace(&mut self, workspace: &Workspace, manifest: DocumentId) -> Result<()>;
+    /// Publish a prepared workspace, its manifest routing location and its
+    /// root Workspace unit (placed under the owner, `None` revision: a row
+    /// that must not exist yet) together. Since Plan 1.3 no Workspace is
+    /// created without its unit.
+    fn publish_workspace(
+        &mut self,
+        workspace: &Workspace,
+        manifest: DocumentId,
+        scope: UserScopeId,
+        unit: &RootCatalogUnitCommit,
+    ) -> Result<()>;
+    /// Publish a replica a peer or the Cloud provisions (root-catalog
+    /// TECHNICAL.final §7.2): the `workspaces` row exactly as given —
+    /// `deleted_at` included, the manifest's routing location only for a
+    /// live row — and, when this device holds no root unit for it yet,
+    /// the unit that seeds its placement, in one `IMMEDIATE` transaction.
+    /// `unit` is `None` when the root already holds the Workspace's unit and
+    /// the row is the projection of that unit's placement. A row already
+    /// present refuses with `WorkspaceExists`.
+    fn publish_replica(
+        &mut self,
+        workspace: &Workspace,
+        manifest: DocumentId,
+        scope: UserScopeId,
+        unit: Option<&RootCatalogUnitCommit>,
+    ) -> Result<()>;
     /// Publish lifecycle projection and its prepared replacement atomically.
     /// Delete also removes routing; move/archive preserve existing routing.
     fn publish_removal(
@@ -269,9 +599,27 @@ pub trait Catalog {
         documents: &[DocumentId],
     ) -> Result<()>;
     fn workspace_locations(&self, workspace: WorkspaceId) -> Result<Vec<DocumentId>>;
-    /// Publish a fresh Profile, both authority units, its local origin, and its
-    /// prepared first workspace in one transaction. Any retained Profile id
-    /// refuses the entire transaction, including a removed/provisioned row.
+    /// Publish a fresh Profile: its listing row, both authority units, its
+    /// local origin marker and its root Profile catalog unit in one
+    /// transaction. Any retained Profile id refuses the entire transaction,
+    /// including a removed/provisioned row. The creation path of a Profile
+    /// without a first workspace; [`Self::publish_profile_with_workspace`]
+    /// is the same publication with the workspace beside it.
+    fn publish_profile(
+        &mut self,
+        profile: &Profile,
+        identity: &[u8],
+        private: &[u8],
+        origin_marker: (&str, &str),
+        scope: UserScopeId,
+        unit: &RootCatalogUnitCommit,
+    ) -> Result<()>;
+    /// Publish a fresh Profile, both authority units, its local origin, its
+    /// prepared first workspace and both root units (the Profile's and the
+    /// Workspace's, each at `None` revision) in one transaction. Any retained
+    /// Profile id refuses the entire transaction, including a
+    /// removed/provisioned row.
+    #[allow(clippy::too_many_arguments)]
     fn publish_profile_with_workspace(
         &mut self,
         profile: &Profile,
@@ -280,6 +628,8 @@ pub trait Catalog {
         origin_marker: (&str, &str),
         workspace: &Workspace,
         manifest: DocumentId,
+        scope: UserScopeId,
+        units: &[RootCatalogUnitCommit],
     ) -> Result<()>;
     fn workspace(&self, id: WorkspaceId) -> Result<Option<Workspace>>;
     fn workspaces(&self) -> Result<Vec<Workspace>>;
@@ -291,8 +641,16 @@ pub trait Catalog {
     /// two are separate so an accidental unregister stays recoverable.
     fn forget_workspace(&mut self, id: WorkspaceId) -> Result<()>;
     /// Remove the catalog row and every derived reference after retention has
-    /// expired and the backend bytes have been deleted.
+    /// expired and the backend bytes have been deleted. The Workspace's root
+    /// unit row is **not** touched: it keeps the purge evidence
+    /// (TECHNICAL.final §6.4). A personal row still present refuses, whatever
+    /// its scope — the retirement job runs first.
     fn purge_workspace(&mut self, id: WorkspaceId) -> Result<()>;
+    /// The legacy lifecycle projection write, for a Workspace that has **no
+    /// root unit** — the manifest fallback for a row no creation or
+    /// provisioning path produces any more. Every Workspace with a unit is
+    /// trashed and restored through [`Self::publish_root`]; see
+    /// `Store::delete_workspace`.
     fn set_workspace_deleted(
         &mut self,
         id: WorkspaceId,

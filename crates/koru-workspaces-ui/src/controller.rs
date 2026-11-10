@@ -31,8 +31,8 @@ use crate::action::{Action, Request};
 use crate::links::WorkspaceLinks;
 use crate::pending::{CommandId, Pending};
 use crate::state::{
-    Answer, Authorization, Availability, Consequence, Group, MoveConsequence, Notice, ProfileRow,
-    Retry, Row,
+    Answer, Authorization, Availability, Consequence, DeletedProfileRow, Group, MoveConsequence,
+    Notice, ProfileRow, Recovery, Retry, Row, UnassignedRow,
 };
 use crate::{
     NOTICE_MOVE_PROJECTS_PENDING, REFUSAL_DOCUMENTS_OPEN, REFUSAL_MOVE_NO_SUCH_PROFILE,
@@ -82,6 +82,10 @@ pub struct WorkspacesController {
     catalog_received: bool,
     removals_received: bool,
     removals: std::collections::BTreeMap<ProfileId, koru_store_core::profile_removal::RemovalMark>,
+    /// The Unassigned group and the restorable Profile deletions, read with
+    /// the catalog (root catalog §3.6, §6.3). Empty until the first catalog
+    /// answers, and empty is a real answer: no group is drawn.
+    recovery: Recovery,
     /// Every profile, so the picker has somewhere to send a workspace. A
     /// profile is only ever a destination here.
     profiles: Vec<ProfileRow>,
@@ -127,6 +131,7 @@ impl WorkspacesController {
             catalog_received: false,
             removals_received: false,
             removals: std::collections::BTreeMap::new(),
+            recovery: Recovery::default(),
             profiles: Vec::new(),
             availability: Availability::default(),
             authorization: Authorization::default(),
@@ -407,6 +412,89 @@ impl WorkspacesController {
         }
     }
 
+    // ------------------------------------------------------------- recovery
+
+    /// **The Unassigned group** (§3.6): live workspaces no active Profile
+    /// lists, in catalog order. Drawn at the top of the Workspace menu and
+    /// in Manage, and only while there is one.
+    pub fn unassigned(&self) -> &[UnassignedRow] {
+        &self.recovery.unassigned
+    }
+
+    /// The unassigned row of one workspace, if it is one.
+    pub fn unassigned_row(&self, workspace: WorkspaceId) -> Option<&UnassignedRow> {
+        self.recovery
+            .unassigned
+            .iter()
+            .find(|row| row.id == workspace)
+    }
+
+    /// **The restorable Profile deletions** this device holds (§6.3).
+    pub fn deleted_profiles(&self) -> &[DeletedProfileRow] {
+        &self.recovery.deleted_profiles
+    }
+
+    /// The restorable deletion of `profile`, when this device holds one —
+    /// what an Unassigned row's *Restore Profile* restores. `None` is also
+    /// the honest answer for a deletion another device made (M2): the row
+    /// then offers *Move to…* alone.
+    pub fn deletion_of(&self, profile: ProfileId) -> Option<koru_api_client::DeletionId> {
+        self.recovery
+            .deleted_profiles
+            .iter()
+            .find(|row| row.profile == profile)
+            .map(|row| row.deletion)
+    }
+
+    /// Whether either recovery list has anything in it.
+    pub fn has_recovery(&self) -> bool {
+        !self.recovery.is_empty()
+    }
+
+    /// The sentence a batch restore's outcome becomes: how many came back,
+    /// then — only when it happened — how many stayed in Trash under an
+    /// independent deletion and how many are gone (§6.3 "report expired or
+    /// purged targets honestly").
+    pub(crate) fn restore_sentence(
+        lang: Lang,
+        outcome: &koru_api_client::ProfileRestoreOutcome,
+    ) -> String {
+        let count = |n: usize, one: Key, many: Key| match n {
+            1 => t(lang, one).to_owned(),
+            n => fill(
+                t(lang, many),
+                &[&koru_i18n::number::decimal(lang, n as u64)],
+            ),
+        };
+        let mut sentence = match outcome.restored.len() {
+            0 => t(lang, Key::WorkspacesProfileRestoredNone).to_owned(),
+            n => count(
+                n,
+                Key::WorkspacesProfileRestoredOne,
+                Key::WorkspacesProfileRestoredMany,
+            ),
+        };
+        // A target already restored and moved elsewhere keeps its placement;
+        // it is neither back nor lost, so the sentence does not count it.
+        if !outcome.left_in_trash.is_empty() {
+            sentence.push(' ');
+            sentence.push_str(&count(
+                outcome.left_in_trash.len(),
+                Key::WorkspacesRestoreLeftInTrashOne,
+                Key::WorkspacesRestoreLeftInTrashMany,
+            ));
+        }
+        if !outcome.purged.is_empty() {
+            sentence.push(' ');
+            sentence.push_str(&count(
+                outcome.purged.len(),
+                Key::WorkspacesRestorePurgedOne,
+                Key::WorkspacesRestorePurgedMany,
+            ));
+        }
+        sentence
+    }
+
     /// **Whether the archived group is open**, which a host persists.
     ///
     /// It is window furniture rather than a setting (rev 4's program log): a
@@ -600,14 +688,39 @@ impl WorkspacesController {
                         self.removals.insert(owner, mark.clone());
                         self.links.fetch_catalog();
                     }
+                    // `Empty` refreshes too: the listing is current and holds
+                    // no live workspace, which the surface shows as the
+                    // needs-a-workspace state (UI half of Plan 1.3).
                     if matches!(
                         result,
                         Ok(koru_api_client::EnsuredWorkspace::Active { .. }
-                            | koru_api_client::EnsuredWorkspace::Created { .. })
+                            | koru_api_client::EnsuredWorkspace::Created { .. }
+                            | koru_api_client::EnsuredWorkspace::Empty)
                     ) {
                         self.links.fetch_catalog();
                     }
                     let _ = reply.send(result);
+                    return true;
+                }
+                if let Pending::RestoreProfile(profile) = pending {
+                    // Worded here, not by `accept_notice`: the outcome is
+                    // counts, not a refusal token. The lists it changed —
+                    // the Profiles, the catalog, the Trash — are refetched
+                    // rather than guessed at.
+                    self.notice = Some(match *answer {
+                        Answer::ProfileRestored(Ok(outcome)) => Notice {
+                            text: Self::restore_sentence(self.lang, &outcome),
+                            retry: None,
+                        },
+                        _ => Notice {
+                            text: t(self.lang, Key::WorkspacesRestoreProfileFailed).to_owned(),
+                            retry: None,
+                        },
+                    });
+                    self.notice_owner = Some(profile);
+                    self.links.invalidate();
+                    self.links.fetch_catalog();
+                    self.links.fetch_profiles();
                     return true;
                 }
                 if let Pending::CreateProfile(reply) = pending {
@@ -638,16 +751,30 @@ impl WorkspacesController {
             }
             #[cfg(any(test, feature = "fixtures"))]
             Answer::Catalog(rows) => self.adopt_rows(&rows),
-            Answer::CatalogState { rows, removals } => {
-                let changed = !self.removals_received || self.removals != removals;
+            Answer::CatalogState {
+                rows,
+                removals,
+                recovery,
+            } => {
+                let changed = !self.removals_received
+                    || self.removals != removals
+                    || self.recovery != recovery;
                 self.removals_received = true;
                 self.removals = removals;
+                self.recovery = recovery;
                 self.adopt_rows(&rows) | changed
+            }
+            #[cfg(any(test, feature = "fixtures"))]
+            Answer::Recovery(recovery) => {
+                let changed = self.recovery != recovery;
+                self.recovery = recovery;
+                changed
             }
             Answer::ProfileCreated(_)
             | Answer::Pinned(_)
             | Answer::ListingReconciled(_)
             | Answer::ProfileKept(_)
+            | Answer::ProfileRestored(_)
             | Answer::WorkspaceEnsured { .. } => false,
             Answer::Profiles(profiles) => self.adopt_profiles(&profiles),
             Answer::Authorization(authorization) => {
@@ -1193,6 +1320,9 @@ impl WorkspacesController {
                 }),
             Action::Archive(..) => destructive().or_else(trashed),
             Action::SoftDelete(_) | Action::Restore(_) => destructive(),
+            // The batch restore decides what the Trash contains, like a
+            // workspace's restore: the same scope, the same sentence.
+            Action::RestoreProfile(..) => destructive(),
             Action::Select(_)
             | Action::MigrateTo(..)
             | Action::CancelMigrate
@@ -1292,6 +1422,21 @@ impl WorkspacesController {
             // verbs, so it takes a token — fetched and spent without a question
             // in between, because there is nothing to accept.
             Action::Restore(id) => self.begin(id, WorkspaceLifecycleAction::Restore, false),
+            // **The batch restore takes no gateway token.** It closes no
+            // terminal and destroys nothing; the Store's own route is gated
+            // by this window's `destroy_workspaces`, and its answer is the
+            // outcome the notice words. One at a time per Profile.
+            Action::RestoreProfile(profile, deletion) => {
+                if self
+                    .pending
+                    .values()
+                    .any(|pending| matches!(pending, Pending::RestoreProfile(id) if *id == profile))
+                {
+                    return;
+                }
+                let command = self.start_command(Pending::RestoreProfile(profile));
+                self.links.restore_profile(command, profile, deletion);
+            }
             Action::ShowArchived => self.show_archived = !self.show_archived,
             Action::ShowTrash => self.show_trash = !self.show_trash,
             Action::Retry => match self.notice.take().and_then(|notice| notice.retry) {
@@ -1460,6 +1605,31 @@ impl WorkspacesController {
             projects_rescoped: Some(Vec::new()),
             replacement: None,
         }))
+    }
+
+    /// The catalog read said these are unassigned and these Profiles are
+    /// restorable (root catalog §3.6, §6.3).
+    pub fn fixture_recovery(&mut self, recovery: Recovery) -> bool {
+        self.receive(Answer::Recovery(recovery))
+    }
+
+    /// The batch restore answered with `outcome`, for the Profile whose
+    /// restore is pending.
+    pub fn fixture_profile_restored(
+        &mut self,
+        outcome: koru_api_client::ProfileRestoreOutcome,
+    ) -> bool {
+        let Some(command) = self
+            .pending
+            .iter()
+            .find_map(|(id, pending)| matches!(pending, Pending::RestoreProfile(_)).then_some(*id))
+        else {
+            return false;
+        };
+        self.receive(Answer::Settled(
+            command,
+            Box::new(Answer::ProfileRestored(Ok(outcome))),
+        ))
     }
 
     /// A lifecycle operation refused part-way (S24): the notice, with a retry

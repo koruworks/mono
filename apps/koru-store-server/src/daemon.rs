@@ -1022,13 +1022,22 @@ async fn run(
     let catalog = SqliteCatalog::open(&root.join(CATALOG_FILE))?;
     let mut store = Store::open(catalog, SqliteBackend::new(&root))?;
     tracing::info!("store startup: catalog and store opened");
-    let purged = store.purge_deleted(Timestamp::from_millis(
-        Timestamp::now()
-            .millis()
-            .saturating_sub(koru_store_core::TRASH_RETENTION_MS),
-    ))?;
-    if purged > 0 {
-        tracing::info!(workspaces = purged, "purged expired deleted workspaces");
+    // Retention is per deletion fact (`DeletionRecord::retention_ms`), so
+    // the cutoff is simply now; a held or pending Workspace is reported,
+    // never a reason to fail start-up.
+    let purged = store.purge_deleted(Timestamp::now())?;
+    if !purged.purged.is_empty()
+        || !purged.held.is_empty()
+        || !purged.pending.is_empty()
+        || !purged.profiles_purged.is_empty()
+    {
+        tracing::info!(
+            workspaces = purged.purged.len(),
+            held = purged.held.len(),
+            pending = purged.pending.len(),
+            profiles = purged.profiles_purged.len(),
+            "purged expired deleted workspaces"
+        );
     }
     tracing::info!("store startup: purge complete");
     // Blob staging, after a crash. **Not a migration** — start-up hashes

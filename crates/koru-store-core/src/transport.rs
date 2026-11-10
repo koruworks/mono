@@ -208,6 +208,91 @@ impl SharingEvidence {
     }
 }
 
+/// **Whether the person has linked this device to anything of their own**, as
+/// the seeded default for a *new* subject reads it.
+///
+/// D258 made a person's explicit answer the only promotion path, and the
+/// Profile prompt the only place to give it. A phone has no such prompt, so a
+/// Profile or Workspace created there was withheld for ever — and once the
+/// root catalog went behind the same gate, a Workspace made on a phone could
+/// never reach the person's other devices at all. The answer is not a second
+/// evidence path and not a platform check: **linking is the choice**. Joining
+/// this device to an account, or pairing it with another of the person's
+/// devices, is a deliberate act that says "these are mine, keep them
+/// together", and a subject created afterwards starts by admitting the peer
+/// path rather than refusing it.
+///
+/// Three things this deliberately is **not**:
+///
+/// - **Not the platform.** `Linked` is about what the person did, not what the
+///   subject runs on. An unlinked phone seeds exactly as an unlinked desktop
+///   does, and a linked desktop seeds exactly as a linked phone does.
+/// - **Not Cloud.** [`Self::seeded_mode`] stops at [`TransportMode::P2p`]:
+///   linking two of your own devices is consent for them to talk to each
+///   other, not consent to put the data on somebody's server. Cloud still
+///   comes from the Profile prompt and nothing else (D258).
+/// - **Not retroactive.** It is read when a row is *created*. Rows that
+///   already exist are untouched, whatever happens to the linkage afterwards —
+///   promoting them would reverse D258 for data the person already has.
+///
+/// It lands as a default (`explicit_choice = false`), so a person who then
+/// sets that subject Local-only outranks it exactly as they outrank every
+/// other default.
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
+pub enum DeviceLinkage {
+    /// Nothing has been linked: no account binding and no paired relationship.
+    #[default]
+    Standalone,
+    /// The person has joined this device to their account or paired it with
+    /// another of their devices.
+    Linked,
+}
+
+impl DeviceLinkage {
+    pub fn from_linked(linked: bool) -> Self {
+        if linked {
+            Self::Linked
+        } else {
+            Self::Standalone
+        }
+    }
+
+    pub fn is_linked(self) -> bool {
+        matches!(self, Self::Linked)
+    }
+
+    /// The mode a subject created on this device starts at.
+    pub fn seeded_mode(self) -> TransportMode {
+        match self {
+            Self::Standalone => TransportMode::LocalOnly,
+            Self::Linked => TransportMode::P2p,
+        }
+    }
+}
+
+/// The mode a **Workspace** created under `profile` starts at.
+///
+/// Two rules meet here and the order matters:
+///
+/// - A Profile somebody has actually spoken about hands its choice down, as it
+///   has since the `COALESCE` in the catalog's workspace insert: a Workspace
+///   created after the Profile prompt was answered must not sit closed.
+/// - Otherwise the linkage default applies — **capped at the Profile's own
+///   row**. The cap is not politeness: a child stored above its Profile is a
+///   `ceiling_mismatch`, which stops the affected transport and is reported
+///   rather than repaired. Seeding a Workspace P2P under a Profile row that
+///   was seeded Local-only before linking would therefore not open anything;
+///   it would manufacture the corruption state. The Profile row stays where it
+///   is because it was created before the choice, and the Workspace is capped
+///   at it.
+pub fn seeded_child_mode(profile: &TransportModeState, linkage: DeviceLinkage) -> TransportMode {
+    if profile.explicit_choice {
+        profile.mode
+    } else {
+        profile.mode.min(linkage.seeded_mode())
+    }
+}
+
 /// A verified default, derived from sharing evidence the Agent has already
 /// checked. **Writable only through the trusted host-evidence path**, never
 /// from a UI, and it can never modify a row somebody chose explicitly.

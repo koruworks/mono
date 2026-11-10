@@ -56,6 +56,7 @@ fn transcript() -> ChatTranscript {
         feedback: Vec::new(),
         usage: Vec::new(),
         reasoning_control: None,
+        agent_commands: None,
         attachments: Vec::new(),
     }
 }
@@ -136,43 +137,6 @@ fn selected(surface: &mut ChatSurface, from: usize, to: usize) -> Rect {
 
 fn ctrl_l(surface: &mut ChatSurface) -> bool {
     surface.key(&Key::Character("l".into()), Some("l"), koru_keys::PRIMARY)
-}
-
-#[test]
-fn empty_strip_has_no_layout_height() {
-    assert_eq!(pill_band_height(None), 0.0);
-    let doc = ContextDocumentPill {
-        document_id: DocumentId::new(),
-        title: "Launch plan".into(),
-    };
-    assert_eq!(pill_band_height(Some(&doc)), PILL_H + BAND_GAP);
-}
-
-#[test]
-fn context_document_pill_body_and_close_are_hit() {
-    let mut engine = TextEngine::new();
-    let doc = ContextDocumentPill {
-        document_id: DocumentId::new(),
-        title: "Launch plan".into(),
-    };
-    let strip = PillStrip::default();
-    let band = Rect::new(0.0, 0.0, 600.0, PILL_H);
-    let (part, _) = strip
-        .hit(&mut engine, Some(&doc), band, band.x + 20.0, PILL_H * 0.5)
-        .expect("the document pill is hit");
-    assert_eq!(part, PillPart::Body);
-    let pill = PillStrip::layout(&mut engine, Some(&doc), band).unwrap();
-    let (part, _) = strip
-        .hit(
-            &mut engine,
-            Some(&doc),
-            band,
-            pill.close.x + 2.0,
-            PILL_H * 0.5,
-        )
-        .expect("the close target is hit");
-    assert_eq!(part, PillPart::Close);
-    assert!(strip.hit(&mut engine, None, band, 20.0, 10.0).is_none());
 }
 
 /// **The pill shows when a selection is let go** — just over its first

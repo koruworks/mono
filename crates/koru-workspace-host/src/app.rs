@@ -69,8 +69,8 @@ use koru_workspace::session;
 use modifiers::reconcile_physical_modifiers;
 use modifiers::{current_modifier_state, modifiers_after_key_release, modifiers_with_pressed_keys};
 use profile_removal::{
-    HostedProfileRemovalSource, ProfileCascadeCompletion, ProfileOfflineCompletion,
-    ProfileRemovalCleanup,
+    HostedProfileRemoval, HostedProfileRemovalSource, ProfileCascadeCompletion,
+    ProfileOfflineCompletion, ProfileRemovalCleanup,
 };
 
 /// Window chrome theme from the preference. `None` follows the OS and is what
@@ -1432,8 +1432,9 @@ struct KnownFile {
 fn known_workspace_files(
     client: &koru_api_client::Client,
     workspace: koru_store_core::ids::WorkspaceId,
-) -> Result<std::collections::HashMap<String, KnownFile>, String> {
-    let mut known = std::collections::HashMap::new();
+) -> Result<std::collections::HashMap<String, Vec<KnownFile>>, String> {
+    let mut known: std::collections::HashMap<String, Vec<KnownFile>> =
+        std::collections::HashMap::new();
     let entries = client.documents(workspace).map_err(|error| {
         format!("could not check whether selected files are already known: {error}")
     })?;
@@ -1450,13 +1451,27 @@ fn known_workspace_files(
         let Some((hash, node)) = snapshot_file_locator(&snapshot) else {
             continue;
         };
-        known.entry(hash).or_insert_with(|| KnownFile {
+        known.entry(hash).or_default().push(KnownFile {
             document: koru_core::DocumentId::from_uuid(entry.id.as_uuid()),
             node,
             title: entry.title,
         });
     }
     Ok(known)
+}
+
+fn known_file_for_import<'a>(
+    known: &'a std::collections::HashMap<String, Vec<KnownFile>>,
+    hash: &str,
+    title: &str,
+    exact_name: bool,
+) -> Option<&'a KnownFile> {
+    let files = known.get(hash)?;
+    if exact_name {
+        files.iter().find(|file| file.title == title)
+    } else {
+        files.first()
+    }
 }
 
 /// Redirect attachment attributes when a content import reuses a file already
@@ -2482,10 +2497,28 @@ struct App<H: Host> {
     profile_removal_tx: mpsc::Sender<ProfileRemovalCleanup>,
     profile_removal_rx: mpsc::Receiver<ProfileRemovalCleanup>,
     profile_removals_in_flight: HashSet<koru_core::ProfileId>,
-    hosted_profile_removals: HashMap<koru_core::ProfileId, HostedProfileRemovalSource>,
+    /// Keyed by Profile, and carrying the name read when the removal was
+    /// *first observed*: by the time a cleanup completion is processed the
+    /// catalog row is usually gone, and for a deletion that arrived from
+    /// another device it always is, so a name looked up then is no name at
+    /// all.
+    hosted_profile_removals: HashMap<koru_core::ProfileId, HostedProfileRemoval>,
     profile_offline_tx: mpsc::Sender<ProfileOfflineCompletion>,
     profile_offline_rx: mpsc::Receiver<ProfileOfflineCompletion>,
     profile_offline_in_flight: HashSet<koru_core::ProfileId>,
+    /// The open Profile left the Store's catalog without this window asking
+    /// (root-catalog Plan 2.2, §6.3): a bounded worker confirms it is a
+    /// shared deletion before the window settles, and the Profiles it
+    /// confirmed word their notice as a deletion from another device.
+    remote_deletion_tx: mpsc::Sender<profile_removal::RemoteDeletionCheck>,
+    remote_deletion_rx: mpsc::Receiver<profile_removal::RemoteDeletionCheck>,
+    remote_deletion_checks_in_flight: HashSet<koru_core::ProfileId>,
+    /// The confirmed shared deletions, each with the name read when the
+    /// deletion was observed. The catalog row is gone *by construction* on
+    /// this path — its absence is the trigger — so the name comes from the
+    /// open Profile's own document, and is `None` only for a Profile that
+    /// never had one.
+    remote_profile_deletions: HashMap<koru_core::ProfileId, Option<String>>,
     profile_bindings_in_flight: HashSet<koru_core::ProfileId>,
     connected_profile_creation_tx: mpsc::Sender<OnboardingCreation>,
     connected_profile_creation_rx: mpsc::Receiver<OnboardingCreation>,
@@ -2538,6 +2571,7 @@ struct App<H: Host> {
     deleting_workspaces: HashSet<WorkspaceId>,
     /// `/attach` waits for the generic file importer to publish its file entry.
     pending_attachment: Option<(WindowId, NodeId)>,
+    pending_ai_import: Option<(WindowId, uuid::Uuid)>,
     /// A Tasks page whose `+` chose files: attached once the import lands.
     pending_page_attachment: Option<koru_core::ids::PageKey>,
     /// Importable paths coalesced from winit's one-event-per-file drop stream.
@@ -2702,9 +2736,25 @@ struct OnboardingLive {
 enum OnboardingCreation {
     Opened(koru_workspace::fromstore::OpenedFromStore),
     Conflict,
-    Retryable { message: String },
-    RestoreFailed { message: String },
-    CommittedFailure { message: String },
+    Retryable {
+        message: String,
+    },
+    RestoreFailed {
+        message: String,
+    },
+    CommittedFailure {
+        message: String,
+    },
+    /// What `NeedsProfile` can recover (root-catalog §6.3), read off the
+    /// loop when the empty catalog was answered. Both empty offers nothing.
+    Recovery {
+        deleted: Vec<crate::onboarding::RecoverableProfile>,
+        unassigned: Vec<crate::onboarding::UnassignedWorkspaceRow>,
+    },
+    /// A batch restore from the recovery screen refused or did not answer.
+    RecoveryFailed {
+        message: String,
+    },
 }
 
 struct EmbeddedProfileRestore {
@@ -3008,6 +3058,21 @@ impl<H: Host> ApplicationHandler<Wake> for ContentState<H> {
             OnboardingCreation::RestoreFailed { message } => {
                 if let Self::Onboarding(app) = self {
                     app.view.restore_failed(message);
+                    app.request_redraw();
+                }
+            }
+            OnboardingCreation::Recovery {
+                deleted,
+                unassigned,
+            } => {
+                if let Self::Onboarding(app) = self {
+                    app.view.show_recovery(deleted, unassigned);
+                    app.request_redraw();
+                }
+            }
+            OnboardingCreation::RecoveryFailed { message } => {
+                if let Self::Onboarding(app) = self {
+                    app.view.recovery_failed(message);
                     app.request_redraw();
                 }
             }
@@ -3328,7 +3393,14 @@ fn create_onboarding_profile(
 fn profile_catalog_event(name: &str) -> bool {
     matches!(
         name,
-        "profile.created" | "profile.renamed" | "profile.appearance_changed"
+        "profile.created"
+            | "profile.renamed"
+            | "profile.appearance_changed"
+            // A shared deletion or its restore, whether this device confirmed
+            // it or another device's root units carried it here (root-catalog
+            // Plan 2.2): the Profile left or rejoined the list.
+            | "profile.deleted"
+            | "profile.restored"
     )
 }
 
@@ -3354,6 +3426,106 @@ fn bucket_label_key(bucket: koru_core::tasks::Bucket) -> koru_i18n::Key {
         koru_core::tasks::Bucket::Upcoming => koru_i18n::Key::A11yTaskBucketUpcoming,
         koru_core::tasks::Bucket::Later => koru_i18n::Key::A11yTaskBucketLater,
         koru_core::tasks::Bucket::Completed => koru_i18n::Key::A11yTaskBucketCompleted,
+    }
+}
+
+/// What an empty Profile catalog can still recover (root-catalog §6.3): the
+/// Profile deletions this device holds a batch for, and the live workspaces
+/// no Profile lists. A Store that will not answer offers nothing — the
+/// create form stands on its own — rather than a failure in place of a form.
+fn onboarding_recovery(root: Option<&Path>) -> OnboardingCreation {
+    let Ok(client) = profile_removal::cascade_client(root) else {
+        return OnboardingCreation::Recovery {
+            deleted: Vec::new(),
+            unassigned: Vec::new(),
+        };
+    };
+    let deleted = client
+        .store()
+        .profile_deletions()
+        .map(|rows| {
+            rows.into_iter()
+                .map(|row| crate::onboarding::RecoverableProfile {
+                    profile: koru_core::ProfileId::from_uuid(row.deletion.profile.as_uuid()),
+                    deletion: row.deletion.deletion,
+                    name: row.name.unwrap_or_else(|| "Profile".to_owned()),
+                    at_ms: row.deletion.at_ms,
+                    workspaces: row.deletion.targets.len(),
+                    unavailable: row.deletion.expired_or_purged.len(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let unassigned = client
+        .store()
+        .unassigned_workspaces()
+        .map(|rows| {
+            rows.into_iter()
+                .map(|row| crate::onboarding::UnassignedWorkspaceRow {
+                    workspace: WorkspaceId::from_uuid(row.workspace.id.as_uuid()),
+                    name: row.workspace.name,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    OnboardingCreation::Recovery {
+        deleted,
+        unassigned,
+    }
+}
+
+/// The batch restore from the recovery screen, then the strict open of the
+/// Profile that came back. The restore takes this process's
+/// `destroy_workspaces`, which the Agent vouches for as it does for the
+/// removal cascade; a Profile whose restore is acknowledged but which will
+/// not open is reported, never re-restored.
+fn restore_deleted_onboarding_profile(
+    root: Option<&Path>,
+    profile: koru_core::ProfileId,
+    deletion: koru_store_core::ids::DeletionId,
+) -> OnboardingCreation {
+    let client = match profile_removal::cascade_client(root) {
+        Ok(client) => client,
+        Err(_) => {
+            return OnboardingCreation::RecoveryFailed {
+                message: koru_i18n::t(
+                    koru_i18n::current(),
+                    koru_i18n::Key::WorkspacesRestoreProfileFailed,
+                )
+                .to_owned(),
+            };
+        }
+    };
+    let store_profile = koru_store_core::ids::ProfileId::from_uuid(profile.as_uuid());
+    if let Err(error) = client.store().restore_profile(store_profile, deletion) {
+        return OnboardingCreation::RecoveryFailed {
+            message: format!(
+                "{} ({error})",
+                koru_i18n::t(
+                    koru_i18n::current(),
+                    koru_i18n::Key::WorkspacesRestoreProfileFailed
+                )
+            ),
+        };
+    }
+    match koru_workspace::fromstore::open_from_store_profile_preferring_empty(
+        koru_workspace::fromstore::segment(),
+        root,
+        profile,
+        None,
+    ) {
+        Ok(koru_workspace::fromstore::StoreLaunch::Open(opened)) => {
+            OnboardingCreation::Opened(opened)
+        }
+        Ok(koru_workspace::fromstore::StoreLaunch::NeedsProfile) => {
+            OnboardingCreation::RecoveryFailed {
+                message: "Koru restored the Profile but could not open it yet. Try again or restart Koru."
+                    .into(),
+            }
+        }
+        Err(error) => OnboardingCreation::RecoveryFailed {
+            message: format!("Koru restored the Profile but could not open it: {error}"),
+        },
     }
 }
 
@@ -3713,6 +3885,22 @@ impl<H: Host> OnboardingApp<H> {
                         .name("koru-onboarding-restore".into())
                         .spawn(move || {
                             let result = restore_onboarding_profile(root.as_deref(), &profile_id);
+                            let _ = tx.send(result);
+                            let _ = proxy.send_event(Wake::Onboarding);
+                        });
+                }
+                crate::onboarding::Action::RestoreDeletedProfile { profile, deletion } => {
+                    let tx = self.creation_tx.clone();
+                    let proxy = self.proxy.clone();
+                    let root = self.gateway_root.clone();
+                    let _ = std::thread::Builder::new()
+                        .name("koru-onboarding-restore-deleted".into())
+                        .spawn(move || {
+                            let result = restore_deleted_onboarding_profile(
+                                root.as_deref(),
+                                profile,
+                                deletion,
+                            );
                             let _ = tx.send(result);
                             let _ = proxy.send_event(Wake::Onboarding);
                         });
@@ -5116,6 +5304,22 @@ impl<H: Host> App<H> {
                     // not the later Profile acknowledgement.
                     ProfileRuntime::start_events(gateway_root.clone(), proxy.clone());
                     let (creation_tx, creation_rx) = mpsc::channel();
+                    // What this empty catalog can still recover (root-catalog
+                    // §6.3): the restorable Trash and the unassigned
+                    // workspaces, read off the loop and offered from the form
+                    // once they arrive. Nothing is created by asking.
+                    {
+                        let tx = creation_tx.clone();
+                        let proxy = proxy.clone();
+                        let root = gateway_root.clone();
+                        let _ = std::thread::Builder::new()
+                            .name("koru-onboarding-recovery".into())
+                            .spawn(move || {
+                                let result = onboarding_recovery(root.as_deref());
+                                let _ = tx.send(result);
+                                let _ = proxy.send_event(Wake::Onboarding);
+                            });
+                    }
                     // Seeded before the first frame: a build with no Koru
                     // Cloud draws its welcome without the sign-in choices from
                     // the start, rather than for one frame with them.
@@ -5423,6 +5627,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
         let (profile_cascade_tx, profile_cascade_rx) = mpsc::channel();
         let (profile_removal_tx, profile_removal_rx) = mpsc::channel();
         let (profile_offline_tx, profile_offline_rx) = mpsc::channel();
+        let (remote_deletion_tx, remote_deletion_rx) = mpsc::channel();
         let (connected_profile_creation_tx, connected_profile_creation_rx) = mpsc::channel();
         let (profile_publication_tx, profile_publication_rx) = mpsc::channel();
         let (embedded_profile_restore_tx, embedded_profile_restore_rx) = mpsc::channel();
@@ -5570,6 +5775,10 @@ Nothing was written. The store starts on demand, so this usually means it could 
             profile_offline_tx,
             profile_offline_rx,
             profile_offline_in_flight: HashSet::new(),
+            remote_deletion_tx,
+            remote_deletion_rx,
+            remote_deletion_checks_in_flight: HashSet::new(),
+            remote_profile_deletions: HashMap::new(),
             profile_bindings_in_flight: HashSet::new(),
             connected_profile_creation_tx,
             connected_profile_creation_rx,
@@ -5599,6 +5808,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
             pending_import: None,
             deleting_workspaces: HashSet::new(),
             pending_attachment: None,
+            pending_ai_import: None,
             pending_page_attachment: None,
             pending_content_drops: VecDeque::new(),
             // Due once at startup: the share that opened this window was
@@ -7824,7 +8034,35 @@ Nothing was written. The store starts on demand, so this usually means it could 
             // service_profile_waits closes retired content after their answers
             // have drained; a stale catalog alone does not choose a replacement.
             self.sync_pane_context();
+            self.notice_open_profile_gone();
         }
+    }
+
+    /// **The open Profile is no longer in the Store's catalog and nothing in
+    /// this window removed it** (root-catalog Plan 2.2, TECHNICAL.final
+    /// §6.3): another device's root units carried a deletion here, or a
+    /// device-local removal ran elsewhere. Neither is acted on from a
+    /// catalog listing alone — a bounded worker confirms a shared deletion
+    /// from the Store's restorable deletions first, off this thread, and the
+    /// settled window then takes the same path a local removal does: its
+    /// editors are already fenced by the Store, its settings are cleaned up,
+    /// and it moves to another Profile or relaunches into `NeedsProfile`,
+    /// where restore, create and Unassigned are offered.
+    fn notice_open_profile_gone(&mut self) {
+        let open = self.runtime.profile_id();
+        if self
+            .runtime
+            .profile_catalog
+            .iter()
+            .any(|row| row.id == open)
+            || self.profile_removals_in_flight.contains(&open)
+            || self.profile_cascades_in_flight.contains(&open)
+            || self.profile_removal_attempts.contains_key(&open)
+            || self.hosted_profile_removals.contains_key(&open)
+        {
+            return;
+        }
+        self.start_remote_deletion_check(open);
     }
 
     /// Record the one-time reminder startup answer through the one settings
@@ -9076,19 +9314,25 @@ Nothing was written. The store starts on demand, so this usually means it could 
             PaneRequest::RemoveLocalProfile {
                 profile,
                 delete_workspaces: _,
-            } => {
-                self.start_profile_cascade(profile);
-            }
+                preview,
+            } => match preview {
+                Some(preview) => self.start_profile_deletion(profile, preview),
+                None => self.start_profile_cascade(profile),
+            },
             PaneRequest::FinishHostedProfileDeletion {
                 profile,
                 discovered_after_offline,
             } => {
+                let name = self.observed_profile_name(profile);
                 self.hosted_profile_removals.insert(
                     profile,
-                    if discovered_after_offline {
-                        HostedProfileRemovalSource::Reconciliation
-                    } else {
-                        HostedProfileRemovalSource::Origin
+                    HostedProfileRemoval {
+                        source: if discovered_after_offline {
+                            HostedProfileRemovalSource::Reconciliation
+                        } else {
+                            HostedProfileRemovalSource::Origin
+                        },
+                        name,
                     },
                 );
                 self.start_profile_cascade(profile);
@@ -9437,6 +9681,51 @@ Nothing was written. The store starts on demand, so this usually means it could 
                     pane.window.request_redraw();
                 }
             }
+            PaneRequest::ChooseAiComputer { title, folder } => {
+                // The file picker is unparented here: rfd has silently failed
+                // from this event-loop phase on Windows when parented.
+                let chosen = if folder {
+                    crate::dialogs::pick_folder(&title, None, None)
+                } else {
+                    crate::dialogs::pick_open_file(&title, &[], None, None)
+                };
+                if let Some(path) = chosen
+                    && let Some(pane) = self.panes.get_mut(&source)
+                    && pane.view.ai_computer_path_chosen(path)
+                {
+                    pane.window.request_redraw();
+                }
+            }
+            PaneRequest::ImportAiWorkspaceFile {
+                op,
+                workspace,
+                path,
+            } => {
+                let lang = koru_i18n::Lang::for_system(
+                    koru_window::system_locale::system_locale().as_deref(),
+                );
+                let answer = if self.import_busy {
+                    Some(koru_i18n::t(lang, koru_i18n::Key::AiComputerImportBusy).to_owned())
+                } else if self.runtime.workspace.current() != Some(workspace) {
+                    Some(koru_i18n::t(lang, koru_i18n::Key::AiComputerOpenWorkspace).to_owned())
+                } else {
+                    None
+                };
+                if let Some(message) = answer {
+                    if let Some(pane) = self.panes.get_mut(&source)
+                        && pane.view.ai_workspace_file_imported(op, Err(message))
+                    {
+                        pane.window.request_redraw();
+                    }
+                } else {
+                    self.pending_ai_import = Some((source, op));
+                    self.import_content(
+                        source,
+                        "files",
+                        crate::ImportSourceSelection::Files(vec![path]),
+                    );
+                }
+            }
             PaneRequest::ImportFiles(selection) => {
                 self.import_content(source, "files", selection);
             }
@@ -9591,6 +9880,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
             .id()
             .map(|id| koru_store_core::ids::ProfileId::from_uuid(id.as_uuid()));
         let store_workspace = koru_store_core::ids::WorkspaceId::from_uuid(workspace.as_uuid());
+        let composer_exact_file_name = self.pending_ai_import.is_some();
         if let Err(error) = std::thread::Builder::new()
             .name("koru-import-content".into())
             .spawn(move || {
@@ -9728,7 +10018,14 @@ Nothing was written. The store starts on demand, so this usually means it could 
                             .flatten();
                         if let Some(known) = file_locator
                             .as_ref()
-                            .and_then(|(hash, _)| known_files.get(hash))
+                            .and_then(|(hash, _)| {
+                                known_file_for_import(
+                                    &known_files,
+                                    hash,
+                                    &document.title,
+                                    composer_exact_file_name,
+                                )
+                            })
                             .cloned()
                         {
                             already_known += 1;
@@ -9784,14 +10081,11 @@ Nothing was written. The store starts on demand, so this usually means it could 
                                 if kind == koru_core::explore::KIND_FILE {
                                     files.push((id, document.title));
                                     if let Some((hash, node)) = file_locator {
-                                        known_files.insert(
-                                            hash,
-                                            KnownFile {
+                                        known_files.entry(hash).or_default().push(KnownFile {
                                                 document: id,
                                                 node,
                                                 title: files.last().unwrap().1.clone(),
-                                            },
-                                        );
+                                            });
                                     }
                                 }
                             }
@@ -9880,6 +10174,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
             })
         {
             self.import_busy = false;
+            self.answer_ai_import(Err(error.to_string()));
             self.import_source = None;
             self.import_cancel = None;
             self.import_cancel_hide_due = None;
@@ -10150,6 +10445,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
                     return;
                 }
                 self.import_busy = false;
+                self.answer_ai_import(Err(error.to_string()));
                 self.import_source = None;
                 self.import_cancel = None;
                 self.import_cancel_hide_due = None;
@@ -10217,6 +10513,17 @@ Nothing was written. The store starts on demand, so this usually means it could 
                     had_failures,
                     warnings,
                 } = summary;
+                self.answer_ai_import(
+                    files
+                        .first()
+                        .map(|(document, _)| *document)
+                        .ok_or_else(|| {
+                            let lang = koru_i18n::Lang::for_system(
+                                koru_window::system_locale::system_locale().as_deref(),
+                            );
+                            koru_i18n::t(lang, koru_i18n::Key::AiComputerImportEmpty).to_owned()
+                        }),
+                );
                 if let Some(format) = self.import_format.take() {
                     crate::events_host::import_completed(
                         format,
@@ -11662,10 +11969,28 @@ Nothing was written. The store starts on demand, so this usually means it could 
 
     fn finish_content_import_cancellation(&mut self) {
         self.import_busy = false;
+        let lang =
+            koru_i18n::Lang::for_system(koru_window::system_locale::system_locale().as_deref());
+        self.answer_ai_import(Err(koru_i18n::t(
+            lang,
+            koru_i18n::Key::AiComputerImportCancelled,
+        )
+        .to_owned()));
         self.import_source = None;
         self.import_cancel = None;
         self.import_cancel_worker_done = false;
         self.finish_pending_attachment(true);
+    }
+
+    fn answer_ai_import(&mut self, result: Result<koru_core::DocumentId, String>) {
+        let Some((source, op)) = self.pending_ai_import.take() else {
+            return;
+        };
+        if let Some(pane) = self.panes.get_mut(&source)
+            && pane.view.ai_workspace_file_imported(op, result)
+        {
+            pane.window.request_redraw();
+        }
     }
 
     /// Clear a pending `/attach`. When `cancelled`, restore the trigger row so
@@ -13176,6 +13501,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 }
                 OnboardingCreation::Retryable { message }
                 | OnboardingCreation::RestoreFailed { message }
+                | OnboardingCreation::RecoveryFailed { message }
                 | OnboardingCreation::CommittedFailure { message } => {
                     if let Some(pane) = self.panes.get_mut(&source) {
                         let _ = pane.view.local_profile_restore_failed(&message);
@@ -13188,6 +13514,9 @@ Nothing was written. The store starts on demand, so this usually means it could 
                         pane.window.request_redraw();
                     }
                 }
+                // The first-run window's recovery lists; an embedded restore
+                // never produces them.
+                OnboardingCreation::Recovery { .. } => {}
             }
         }
     }
@@ -13276,6 +13605,10 @@ Nothing was written. The store starts on demand, so this usually means it could 
                     startup::fatal(&message);
                     event_loop.exit();
                     return;
+                }
+                // The first-run window's recovery outcomes; a connected
+                // creation never produces them.
+                OnboardingCreation::Recovery { .. } | OnboardingCreation::RecoveryFailed { .. } => {
                 }
             }
         }
@@ -13534,6 +13867,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
 
         self.runtime.profile = profile;
         self.runtime.profile_catalog = profiles;
+        self.runtime.remember_profile_names();
         self.runtime.workspace = workspace;
         self.runtime.current = current;
         self.runtime.live_workspace = has_workspace;
@@ -18536,9 +18870,20 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                     self.restore_from_tray();
                     self.open_support(event_loop);
                 }
+                // The Agent's report is the first this window hears of the
+                // deletion, and the last moment the Profile's name can still
+                // be read: the catalog refresh that follows drops its row,
+                // and the notice is worded at the end of a cleanup that runs
+                // after that.
                 crate::AgentAsk::ProfileLifecycleDeleted(profile) => {
-                    self.hosted_profile_removals
-                        .insert(profile, HostedProfileRemovalSource::Peer);
+                    let name = self.observed_profile_name(profile);
+                    self.hosted_profile_removals.insert(
+                        profile,
+                        HostedProfileRemoval {
+                            source: HostedProfileRemovalSource::Peer,
+                            name,
+                        },
+                    );
                     self.start_profile_cascade(profile);
                 }
             }
@@ -19514,6 +19859,10 @@ mod tests {
         assert!(profile_catalog_event("profile.created"));
         assert!(profile_catalog_event("profile.renamed"));
         assert!(profile_catalog_event("profile.appearance_changed"));
+        // A shared deletion or restore, local or from another device
+        // (root-catalog Plan 2.2), changes what the catalog lists.
+        assert!(profile_catalog_event("profile.deleted"));
+        assert!(profile_catalog_event("profile.restored"));
         assert!(!profile_catalog_event("profile.dictionary.changed"));
         assert!(!profile_catalog_event("workspace.catalog.renamed"));
         assert!(!profile_catalog_event("profile"));
@@ -20410,6 +20759,33 @@ mod tests {
         assert_eq!(
             snapshot_file_locator(&snapshot).map(|(hash, _)| hash),
             Some("b3:abc".into())
+        );
+    }
+
+    #[test]
+    fn composer_file_import_reuses_only_matching_hash_and_name() {
+        let hash = "b3:same".to_owned();
+        let first = KnownFile {
+            document: koru_core::DocumentId::new(),
+            node: koru_core::NodeId::new(),
+            title: "first.pdf".into(),
+        };
+        let second = KnownFile {
+            document: koru_core::DocumentId::new(),
+            node: koru_core::NodeId::new(),
+            title: "second.pdf".into(),
+        };
+        let known = [(hash.clone(), vec![first.clone(), second.clone()])]
+            .into_iter()
+            .collect();
+        assert_eq!(
+            known_file_for_import(&known, &hash, "second.pdf", true).map(|file| file.document),
+            Some(second.document)
+        );
+        assert!(known_file_for_import(&known, &hash, "third.pdf", true).is_none());
+        assert_eq!(
+            known_file_for_import(&known, &hash, "third.pdf", false).map(|file| file.document),
+            Some(first.document)
         );
     }
 

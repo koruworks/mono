@@ -275,6 +275,7 @@ impl PendingInputModel {
                 .filter(|item| item.is_ready_to_send())
                 .map(|item| item.id)
                 .collect(),
+            references: Vec::new(),
             mode: None,
             fast: None,
             reasoning: None,

@@ -232,9 +232,13 @@ pub fn message_text(ws: &WorkspaceDoc, root: NodeId) -> Result<String, ExportErr
         let runs = ws.runs(id).map_err(|e| ExportError::new(e.to_string()))?;
         let attrs = node.content.attrs();
         let mut line = String::new();
+        let mut plain = String::new();
         let mut quoted = false;
         for run in &runs {
             if let Some(pill) = run.pill {
+                line.push_str(&koru_link::escape_literal_links(&std::mem::take(
+                    &mut plain,
+                )));
                 if let Some(attr) = attrs.iter().find(|a| a.id == pill) {
                     if let Some(passage) = quoted_passage(attr) {
                         if !line.is_empty() {
@@ -243,10 +247,23 @@ pub fn message_text(ws: &WorkspaceDoc, root: NodeId) -> Result<String, ExportErr
                         pieces.push(MessagePiece::Quote(passage.to_owned()));
                         quoted = true;
                     } else if let Some(name) = skill_name(attr) {
-                        // A skill goes to its agent as `$name`, exactly —
-                        // never escaped, or the agent would not know it.
-                        line.push('$');
-                        line.push_str(name);
+                        // Keep selected pill identity in storage. The AI
+                        // worker renders `$name` for the provider.
+                        if let Ok(link) = koru_link::skill_link(name) {
+                            line.push_str("[[");
+                            line.push_str(&link);
+                            line.push_str("]]");
+                        } else {
+                            line.push_str(&serialize_pill(attr));
+                        }
+                    } else if let Some(name) = command_name(attr) {
+                        if let Ok(link) = koru_link::command_link(name) {
+                            line.push_str("[[");
+                            line.push_str(&link);
+                            line.push_str("]]");
+                        } else {
+                            line.push_str(&serialize_pill(attr));
+                        }
                     } else {
                         line.push_str(&serialize_pill(attr));
                     }
@@ -256,8 +273,9 @@ pub fn message_text(ws: &WorkspaceDoc, root: NodeId) -> Result<String, ExportErr
             if run.is_pill() {
                 continue;
             }
-            line.push_str(&run.text);
+            plain.push_str(&run.text);
         }
+        line.push_str(&koru_link::escape_literal_links(&plain));
         if !quoted || !line.is_empty() {
             pieces.push(MessagePiece::Line(line));
         }
@@ -285,6 +303,16 @@ fn quoted_passage(attr: &Attr) -> Option<&str> {
 /// The skill a skill chip names, when `attr` is one (koru-ai D121).
 fn skill_name(attr: &Attr) -> Option<&str> {
     if attr.role != koru_core::attributes::ROLE_SKILL {
+        return None;
+    }
+    match &attr.value {
+        AttrValue::Text(name) if !name.is_empty() => Some(name.as_str()),
+        _ => None,
+    }
+}
+
+fn command_name(attr: &Attr) -> Option<&str> {
+    if attr.role != koru_core::attributes::ROLE_COMMAND {
         return None;
     }
     match &attr.value {

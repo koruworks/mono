@@ -30,4 +30,6 @@ pub(crate) enum Pending {
     CreateProfile(
         std::sync::mpsc::Sender<koru_store_core::errors::Result<koru_api_client::CreatedProfile>>,
     ),
+    /// A Profile deletion batch being restored; the answer words the notice.
+    RestoreProfile(ProfileId),
 }

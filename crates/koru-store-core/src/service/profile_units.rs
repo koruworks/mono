@@ -1,11 +1,26 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Independently durable Profile content, addressed by owner and unit.
+//!
+//! Personal data is **v2** here (`docs/features/root-catalog/TECHNICAL.final.md`
+//! §5.1): one unit per Workspace under the device's user scope, read and
+//! written through the `workspace_personal_*` ports. The facade stays
+//! Profile-oriented for its callers — `reminders(profile)` and friends answer
+//! over the Workspaces whose **current placement** is that Profile, read from
+//! the root Workspace unit (`root_move.rs`) — but no personal row is keyed by
+//! a Profile any more, and the former Profile of a Workspace need not exist
+//! for its personal data to be found.
 
 use super::*;
+use crate::ids::UserScopeId;
 use crate::personal_attributes::{PersonalAttributeValue, PersonalAttributes};
-use crate::ports::{ProfileUnitState, ReminderDue};
-use crate::profile_units::{IdentityManifest, PersonalManifest, PrivateManifest, ProfileUnitRef};
+use crate::ports::{
+    ProfileUnitState, ReminderDue, WorkspacePersonalUnitState, WorkspaceReminderDue,
+};
+use crate::profile_units::{
+    IdentityManifest, LegacyPersonalSource, PersonalManifest, PrivateManifest, ProfileUnitRef,
+    admit_legacy_source,
+};
 
 impl<C: Catalog, B: Backend> Store<C, B> {
     pub(super) fn require_profile(&self, profile: ProfileId) -> Result<()> {
@@ -33,63 +48,82 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         Ok(&self.private_profiles[&profile])
     }
 
+    /// The device-local user scope every personal v2 row is keyed by.
+    fn user_scope(&self) -> Result<UserScopeId> {
+        self.catalog.local_user_scope()
+    }
+
+    // Which Workspaces are placed under a Profile — `placed_workspaces` — is
+    // the root catalog's answer and lives in `root_move.rs`: the Workspace
+    // unit's `placement.current` (overlay first), with the `workspaces.owner`
+    // projection only for a Workspace that has no unit yet. Nothing else in
+    // the facade knows where the answer came from.
+
+    /// Open a committed v2 row under its persisted writer. A read-only unit
+    /// refuses the writer, as every unit does, and the caller reports it.
+    pub(super) fn open_personal(
+        workspace: WorkspaceId,
+        state: &WorkspacePersonalUnitState,
+    ) -> Result<PersonalManifest> {
+        let doc = PersonalManifest::from_snapshot_v2(&state.snapshot, workspace)?;
+        doc.set_peer_id(state.writer_peer_id)?;
+        Ok(doc)
+    }
+
+    /// The v2 unit of `workspace`, created on first use with a fresh writer
+    /// that the first commit persists. `owner` is the Profile the caller
+    /// acts as; it must be active, but it is not part of the unit's address
+    /// and the Workspace's former Profile need not exist at all.
     fn personal_candidate(
         &self,
         owner: ProfileId,
         workspace: WorkspaceId,
     ) -> Result<PersonalManifest> {
         self.require_profile(owner)?;
-        if self
-            .catalog
-            .profile_unit(ProfileUnitRef::Identity { profile: owner })?
-            .is_none()
-        {
-            return Err(Error::bare(Code::VersionUnavailable));
-        }
         if self.catalog.workspace(workspace)?.is_none() {
             return Err(Error::bare(Code::WorkspaceNotFound));
         }
-        let unit = ProfileUnitRef::Personal { owner, workspace };
-        let doc = match self.catalog.profile_unit(unit)? {
-            Some(state) => PersonalManifest::from_snapshot(&state.snapshot)?,
-            None => PersonalManifest::create(owner, workspace)?,
-        };
-        if doc.owner() != owner || doc.workspace() != workspace {
-            return Err(Error::bare(Code::ProfileUnitScopeMismatch));
+        // **The Profile in the call still has to hold the Workspace.** The
+        // unit itself is addressed by `(user scope, workspace)` so that
+        // personal data follows a move (§5.1), and every Profile on one
+        // device shares that scope — so without this check any active
+        // Profile could read and overwrite the personal state of a Workspace
+        // placed under another one. §5.1 is explicit that the
+        // Profile-oriented facade "resolves the user's workspace personal
+        // unit using current placement"; the list-shaped reads
+        // (`personal_documents`, `reminders`) always did, and these addressed
+        // ones did not until a `personal_attributes` test caught it.
+        if !self.placed_workspaces(owner)?.contains(&workspace) {
+            return Err(Error::bare(Code::WorkspaceNotFound));
         }
-        doc.set_peer_id(self.peer_id)?;
-        Ok(doc)
+        match self
+            .catalog
+            .workspace_personal_unit(self.user_scope()?, workspace)?
+        {
+            Some(state) => Self::open_personal(workspace, &state),
+            None => PersonalManifest::create_v2(workspace, mint_peer_id()),
+        }
     }
 
+    /// Every personal unit of a Workspace currently placed under `owner`.
     fn personal_documents(&self, owner: ProfileId) -> Result<Vec<PersonalManifest>> {
         self.require_profile(owner)?;
+        let placed = self.placed_workspaces(owner)?;
         self.catalog
-            .profile_units(owner)?
+            .workspace_personal_units(self.user_scope()?)?
             .into_iter()
-            .filter(|state| matches!(state.unit, ProfileUnitRef::Personal { .. }))
-            .map(|state| {
-                let doc = PersonalManifest::from_snapshot(&state.snapshot)?;
-                if state.unit
-                    != (ProfileUnitRef::Personal {
-                        owner: doc.owner(),
-                        workspace: doc.workspace(),
-                    })
-                {
-                    return Err(Error::bare(Code::ProfileUnitScopeMismatch));
-                }
-                doc.set_peer_id(self.peer_id)?;
-                Ok(doc)
-            })
+            .filter(|(workspace, _)| placed.contains(workspace))
+            .map(|(workspace, state)| Self::open_personal(workspace, &state))
             .collect()
     }
 
     fn save_personal(&mut self, doc: &PersonalManifest) -> Result<()> {
-        self.catalog.commit_profile_unit(
-            ProfileUnitRef::Personal {
-                owner: doc.owner(),
-                workspace: doc.workspace(),
-            },
+        let scope = self.user_scope()?;
+        self.catalog.commit_workspace_personal_unit(
+            scope,
+            doc.workspace(),
             &doc.export_snapshot()?,
+            doc.writer_peer(),
         )
     }
 
@@ -116,17 +150,25 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         entity: &EntityRef,
     ) -> Result<PersonalAttributes> {
         self.require_profile(profile)?;
-        let Some(state) = self.catalog.profile_unit(ProfileUnitRef::Personal {
-            owner: profile,
-            workspace: entity.workspace(),
-        })?
+        // Placement decides, as it does for `personal_candidate` and for
+        // every list-shaped read: a Profile that does not hold this Workspace
+        // has no personal state for it. An empty answer rather than a
+        // refusal, because that is what "this Profile has nothing here"
+        // means to a reader, and it is what the route answered when the unit
+        // was addressed by Profile.
+        if !self
+            .placed_workspaces(profile)?
+            .contains(&entity.workspace())
+        {
+            return Ok(PersonalAttributes::new());
+        }
+        let Some(state) = self
+            .catalog
+            .workspace_personal_unit(self.user_scope()?, entity.workspace())?
         else {
             return Ok(PersonalAttributes::new());
         };
-        let doc = PersonalManifest::from_snapshot(&state.snapshot)?;
-        if doc.owner() != profile || doc.workspace() != entity.workspace() {
-            return Err(Error::bare(Code::ProfileUnitScopeMismatch));
-        }
+        let doc = PersonalManifest::from_snapshot_v2(&state.snapshot, entity.workspace())?;
         if doc.is_read_only() {
             return Err(Error::bare(Code::SchemaTooNew));
         }
@@ -199,27 +241,25 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         profile: ProfileId,
     ) -> Result<Vec<ReminderReductionInput>> {
         self.require_profile(profile)?;
+        let placed = self.placed_workspaces(profile)?;
+        let scope = self.user_scope()?;
         let mut out = Vec::new();
-        let indexed_rows = self.catalog.profile_reminder_due(profile)?;
-        for state in self.catalog.profile_units(profile)? {
-            if !matches!(state.unit, ProfileUnitRef::Personal { .. }) {
+        let indexed_rows = self.catalog.workspace_reminder_due(scope)?;
+        for (workspace, state) in self.catalog.workspace_personal_units(scope)? {
+            if !placed.contains(&workspace) {
                 continue;
             }
-            let doc = PersonalManifest::from_snapshot(&state.snapshot)?;
+            let doc = PersonalManifest::from_snapshot_v2(&state.snapshot, workspace)?;
             if doc.is_read_only() {
                 return Err(Error::bare(Code::SchemaTooNew));
             }
-            let indexed = state
-                .indexed_version
-                .as_deref()
-                .and_then(|v| loro::VersionVector::decode(v).ok());
-            if indexed.as_ref() != Some(&doc.version()) {
+            if !indexed_version_is_current(state.indexed_version.as_deref(), &doc.version()) {
                 return Err(Error::bare(Code::ReminderIndexUpdating));
             }
             let inputs = doc.reminder_reduction_inputs();
             let ids: BTreeSet<_> = indexed_rows
                 .iter()
-                .filter(|row| row.workspace == doc.workspace())
+                .filter(|row| row.workspace == workspace)
                 .map(|row| row.reminder)
                 .collect();
             let actual: BTreeSet<_> = inputs.iter().map(|row| row.stored().rule.id).collect();
@@ -237,19 +277,48 @@ impl<C: Catalog, B: Backend> Store<C, B> {
 
     /// Opaque candidates are taken under the Store lock; Loro decoding and
     /// reducer work run on the adapter's existing blocking worker.
+    ///
+    /// Each candidate is a v2 row presented in the facade's Profile-oriented
+    /// shape: `unit` is `Personal { owner: profile, workspace }` where
+    /// `owner` is the Profile the Workspace is **currently placed** under,
+    /// not an address the row is stored by. [`build_reminder_index`] and
+    /// [`read_personal_reminder_inputs`] decode the bytes as v2, and the
+    /// `owner` travels back through [`Self::publish_reminder_index`] only to
+    /// be checked against the rows.
     pub fn reminder_index_candidates(&self, profile: ProfileId) -> Result<Vec<ProfileUnitState>> {
         self.require_profile(profile)?;
+        let placed = self.placed_workspaces(profile)?;
         Ok(self
             .catalog
-            .profile_units(profile)?
+            .workspace_personal_units(self.user_scope()?)?
             .into_iter()
-            .filter(|state| matches!(state.unit, ProfileUnitRef::Personal { .. }))
+            .filter(|(workspace, _)| placed.contains(workspace))
+            .map(|(workspace, state)| ProfileUnitState {
+                unit: ProfileUnitRef::Personal {
+                    owner: profile,
+                    workspace,
+                },
+                snapshot: state.snapshot,
+                indexed_version: state.indexed_version,
+            })
             .collect())
     }
 
     pub fn reminder_index_rows(&self, profile: ProfileId) -> Result<Vec<ReminderDue>> {
         self.require_profile(profile)?;
-        self.catalog.profile_reminder_due(profile)
+        let placed = self.placed_workspaces(profile)?;
+        Ok(self
+            .catalog
+            .workspace_reminder_due(self.user_scope()?)?
+            .into_iter()
+            .filter(|row| placed.contains(&row.workspace))
+            .map(|row| ReminderDue {
+                owner: profile,
+                workspace: row.workspace,
+                reminder: row.reminder,
+                due_at_ms: row.due_at_ms,
+            })
+            .collect())
     }
 
     pub fn publish_reminder_index(
@@ -262,8 +331,26 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             return Err(Error::bare(Code::ProfileUnitScopeMismatch));
         };
         self.require_profile(owner)?;
+        if rows
+            .iter()
+            .any(|row| row.owner != owner || row.workspace != workspace)
+        {
+            return Err(Error::new(
+                Code::InvalidRequest,
+                "reminder index scope mismatch",
+            ));
+        }
+        let rows: Vec<WorkspaceReminderDue> = rows
+            .iter()
+            .map(|row| WorkspaceReminderDue {
+                workspace: row.workspace,
+                reminder: row.reminder,
+                due_at_ms: row.due_at_ms,
+            })
+            .collect();
+        let scope = self.user_scope()?;
         self.catalog
-            .replace_profile_due_index(owner, workspace, &source.snapshot, version, rows)
+            .replace_workspace_due_index(scope, workspace, &source.snapshot, version, &rows)
     }
 
     pub fn reminders_for(
@@ -444,23 +531,20 @@ impl<C: Catalog, B: Backend> Store<C, B> {
     }
 
     pub fn clear_reminder_history(&mut self, profile: ProfileId) -> Result<usize> {
-        let mut changed = Vec::new();
         let mut removed = 0;
+        // One commit per Workspace unit. The v1 facade batched every unit of
+        // a Profile into one catalog transaction; the v2 port commits a unit
+        // at a time, and the clear facts are grow-only and idempotent, so a
+        // commit that fails midway leaves earlier units cleared and the rest
+        // exactly as they were, ready for the retry.
         for doc in self.personal_documents(profile)? {
             let count = doc.clear_handled_reminder_history()?;
             if count > 0 {
                 removed += count;
-                changed.push((
-                    ProfileUnitRef::Personal {
-                        owner: profile,
-                        workspace: doc.workspace(),
-                    },
-                    doc.export_snapshot()?,
-                ));
+                self.save_personal(&doc)?;
             }
         }
-        if !changed.is_empty() {
-            self.catalog.commit_profile_units(&changed)?;
+        if removed > 0 {
             self.record_reminder_change(profile, None, ReminderChange::History);
         }
         Ok(removed)
@@ -564,7 +648,7 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         Ok(result)
     }
 
-    fn record_reminder_change(
+    pub(super) fn record_reminder_change(
         &mut self,
         profile: ProfileId,
         reminder: Option<ReminderId>,
@@ -597,6 +681,7 @@ impl<C: Catalog, B: Backend> Store<C, B> {
 
     pub fn profile_unit_version(&mut self, unit: ProfileUnitRef) -> Result<loro::VersionVector> {
         self.require_profile(unit.profile())?;
+        personal_v1_exchange_fenced(unit)?;
         let Some(state) = self.catalog.profile_unit(unit)? else {
             return Ok(loro::VersionVector::new());
         };
@@ -607,6 +692,7 @@ impl<C: Catalog, B: Backend> Store<C, B> {
     /// or an enumeration/export of the other units belonging to its Profile.
     pub fn profile_unit_snapshot(&self, unit: ProfileUnitRef) -> Result<Vec<u8>> {
         self.require_profile(unit.profile())?;
+        personal_v1_exchange_fenced(unit)?;
         let state = self
             .catalog
             .profile_unit(unit)?
@@ -621,6 +707,7 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         from: &loro::VersionVector,
     ) -> Result<Vec<u8>> {
         self.require_profile(unit.profile())?;
+        personal_v1_exchange_fenced(unit)?;
         let state = self
             .catalog
             .profile_unit(unit)?
@@ -636,9 +723,7 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             ProfileUnitRef::Private { .. } => {
                 PrivateManifest::from_snapshot(&state.snapshot)?.export_updates_since(from)
             }
-            ProfileUnitRef::Personal { .. } => {
-                PersonalManifest::from_snapshot(&state.snapshot)?.export_updates_since(from)
-            }
+            ProfileUnitRef::Personal { .. } => Err(personal_v1_exchange_fenced_error()),
         }
     }
 
@@ -733,45 +818,75 @@ impl<C: Catalog, B: Backend> Store<C, B> {
                     self.record_dictionary_change(profile);
                 }
             }
-            ProfileUnitRef::Personal { workspace, .. } => {
+            ProfileUnitRef::Personal { owner, workspace } => {
+                // A v1 personal frame on the v1 address, after this device
+                // moved to v2. §5.2 step 6: a complete snapshot goes through
+                // the same normalization the migration used and is staged
+                // into the Workspace's v2 unit; a delta is fenced, because
+                // its ancestors live in a namespace this unit no longer
+                // holds under their original ids. There is no second live
+                // v1 path.
                 self.require_profile(profile)?;
                 if self.catalog.workspace(workspace)?.is_none() {
                     return Err(Error::bare(Code::WorkspaceNotFound));
                 }
-                let prior = before
-                    .as_ref()
-                    .map(|s| PersonalManifest::from_snapshot(&s.snapshot))
-                    .transpose()?;
-                let doc = match &prior {
-                    Some(doc) => doc.staged_import(updates)?,
-                    None => PersonalManifest::from_snapshot(&complete_unit_snapshot(updates)?)?,
+                let scope = self.user_scope()?;
+                let held = match self.catalog.workspace_personal_unit(scope, workspace)? {
+                    Some(state) => Some(Self::open_personal(workspace, &state)?),
+                    None => None,
                 };
-                if doc.unit() != unit {
-                    return Err(Error::bare(Code::ProfileUnitScopeMismatch));
-                }
-                if doc.is_read_only() {
-                    return Err(Error::bare(Code::SchemaTooNew));
-                }
-                let old_rows = prior
+                let old_rows = held
                     .as_ref()
                     .map(|d| d.reminders())
                     .unwrap_or_default()
                     .into_iter()
                     .map(|r| (r.rule.id, r))
                     .collect();
+                let old_actions = held
+                    .as_ref()
+                    .map(|d| d.raw_reminder_actions())
+                    .unwrap_or_default();
+                let old_cleared = held
+                    .as_ref()
+                    .map(|d| d.cleared_reminder_actions())
+                    .unwrap_or_default();
+                let mut doc = match held {
+                    Some(doc) => doc,
+                    None => PersonalManifest::create_v2(workspace, mint_peer_id())?,
+                };
+                for frame in updates {
+                    let probe = loro::LoroDoc::new();
+                    let status = probe
+                        .import(frame)
+                        .map_err(|_| Error::bare(Code::CrdtRejected))?;
+                    if status.pending.is_some() {
+                        return Err(Error::new(
+                            Code::CrdtRejected,
+                            "v1 personal deltas are fenced; personal units are v2 and admit only a complete v1 snapshot",
+                        ));
+                    }
+                    let source = LegacyPersonalSource {
+                        owner,
+                        workspace,
+                        snapshot: frame.clone(),
+                    };
+                    let (merged, receipt) = admit_legacy_source(&doc, &source, mint_peer_id())?;
+                    tracing::info!(
+                        changes = receipt.change_count,
+                        ops = receipt.op_count,
+                        peers = receipt.peers.len(),
+                        "admitted a legacy personal snapshot into the workspace's v2 unit",
+                    );
+                    doc = merged;
+                }
+                if doc.is_read_only() {
+                    return Err(Error::bare(Code::SchemaTooNew));
+                }
                 let new_rows = doc
                     .reminders()
                     .into_iter()
                     .map(|r| (r.rule.id, r))
                     .collect();
-                let old_actions = prior
-                    .as_ref()
-                    .map(|d| d.raw_reminder_actions())
-                    .unwrap_or_default();
-                let old_cleared = prior
-                    .as_ref()
-                    .map(|d| d.cleared_reminder_actions())
-                    .unwrap_or_default();
                 let changes = classify_reminder_changes(
                     &old_rows,
                     &new_rows,
@@ -782,8 +897,12 @@ impl<C: Catalog, B: Backend> Store<C, B> {
                     &ReminderSettings::default(),
                     &ReminderSettings::default(),
                 );
-                self.catalog
-                    .commit_profile_unit(unit, &doc.export_snapshot()?)?;
+                self.catalog.commit_workspace_personal_unit(
+                    scope,
+                    workspace,
+                    &doc.export_snapshot()?,
+                    doc.writer_peer(),
+                )?;
                 for (reminder, change) in changes {
                     self.record_reminder_change(profile, reminder, change);
                 }
@@ -851,13 +970,7 @@ fn unit_version(unit: ProfileUnitRef, snapshot: &[u8]) -> Result<loro::VersionVe
             }
             Ok(doc.version())
         }
-        ProfileUnitRef::Personal { .. } => {
-            let doc = PersonalManifest::from_snapshot(snapshot)?;
-            if doc.unit() != unit {
-                return Err(Error::bare(Code::ProfileUnitScopeMismatch));
-            }
-            Ok(doc.version())
-        }
+        ProfileUnitRef::Personal { .. } => Err(personal_v1_exchange_fenced_error()),
         ProfileUnitRef::LegacyPrivate { profile } => {
             let doc = ProfileManifest::from_snapshot(snapshot)?;
             if doc.profile()?.id != profile {
@@ -868,54 +981,98 @@ fn unit_version(unit: ProfileUnitRef, snapshot: &[u8]) -> Result<loro::VersionVe
     }
 }
 
-/// Decode a bounded Profile-unit snapshot off the Store's answering thread.
-pub fn read_personal_reminder_inputs(
-    source: &ProfileUnitState,
-) -> Result<Vec<ReminderReductionInput>> {
-    let doc = PersonalManifest::from_snapshot(&source.snapshot)?;
-    if doc.unit() != source.unit {
-        return Err(Error::bare(Code::ProfileUnitScopeMismatch));
+/// Personal units are v2 and leave this Store only through the negotiated
+/// v2 exchange of Plan 2.1 (`TECHNICAL.final.md` §11.4). The v1 address is
+/// still accepted inbound for a complete snapshot (see
+/// `apply_profile_unit_updates`); outbound it is refused.
+fn personal_v1_exchange_fenced(unit: ProfileUnitRef) -> Result<()> {
+    match unit {
+        ProfileUnitRef::Personal { .. } => Err(personal_v1_exchange_fenced_error()),
+        _ => Ok(()),
     }
-    if doc.is_read_only() {
-        return Err(Error::bare(Code::SchemaTooNew));
-    }
-    Ok(doc.reminder_reduction_inputs())
 }
 
-/// Decode a bounded Profile-unit snapshot off the Store's answering thread.
-/// The index supplies lookup hints only; target/timezone-dependent reduction
-/// remains with the existing reconciliation service.
-pub fn build_reminder_index(source: &ProfileUnitState) -> Result<(Vec<u8>, Vec<ReminderDue>)> {
+fn personal_v1_exchange_fenced_error() -> Error {
+    Error::new(
+        Code::ProfileUnitScopeMismatch,
+        "personal units are v2; the v1 personal address is not exported",
+    )
+}
+
+/// The v2 unit behind a facade candidate (see
+/// `Store::reminder_index_candidates` for the shape).
+fn candidate_personal(source: &ProfileUnitState) -> Result<(ProfileId, PersonalManifest)> {
     let ProfileUnitRef::Personal { owner, workspace } = source.unit else {
         return Err(Error::bare(Code::ProfileUnitScopeMismatch));
     };
-    let doc = PersonalManifest::from_snapshot(&source.snapshot)?;
-    if doc.owner() != owner || doc.workspace() != workspace {
-        return Err(Error::bare(Code::ProfileUnitScopeMismatch));
-    }
+    let doc = PersonalManifest::from_snapshot_v2(&source.snapshot, workspace)?;
     if doc.is_read_only() {
         return Err(Error::bare(Code::SchemaTooNew));
     }
+    Ok((owner, doc))
+}
+
+/// Decode a bounded personal snapshot off the Store's answering thread.
+pub fn read_personal_reminder_inputs(
+    source: &ProfileUnitState,
+) -> Result<Vec<ReminderReductionInput>> {
+    Ok(candidate_personal(source)?.1.reminder_reduction_inputs())
+}
+
+/// Decode a bounded personal snapshot off the Store's answering thread.
+/// The index supplies lookup hints only; target/timezone-dependent reduction
+/// remains with the existing reconciliation service.
+///
+/// **Returns the version, not its encoding.** The bytes are only how the stamp
+/// is stored; the question every caller actually asks is whether a stored stamp
+/// still names this version, and that is
+/// [`indexed_version_is_current`] — never a comparison of two
+/// `VersionVector::encode()` results. Handing back the value keeps a caller
+/// from reaching for the bytes by accident; `encode` it where it is written.
+pub fn build_reminder_index(
+    source: &ProfileUnitState,
+) -> Result<(loro::VersionVector, Vec<ReminderDue>)> {
+    let (owner, doc) = candidate_personal(source)?;
+    let workspace = doc.workspace();
     let rows = doc
-        .reminder_reduction_inputs()
+        .reminder_due_hints()
         .into_iter()
-        .map(|row| {
-            use crate::reminders::{EffectiveState, OccurrenceMoment, TargetState};
-            let due_at_ms = match row.reduce(TargetState::Active, None).effective {
-                EffectiveState::Scheduled {
-                    moment: OccurrenceMoment::Zoned { value },
-                    ..
-                } => Some(value.instant_ms()),
-                EffectiveState::Snoozed { until_ms, .. } => Some(until_ms),
-                _ => None,
-            };
-            ReminderDue {
-                owner,
-                workspace,
-                reminder: row.stored().rule.id,
-                due_at_ms,
-            }
+        .map(|(reminder, due_at_ms)| ReminderDue {
+            owner,
+            workspace,
+            reminder,
+            due_at_ms,
         })
         .collect();
-    Ok((doc.version().encode(), rows))
+    Ok((doc.version(), rows))
+}
+
+/// Does a stored `indexed_version` stamp still name exactly `version`?
+///
+/// **Never compare two `VersionVector::encode()` results.** A
+/// `loro::VersionVector` is a `HashMap<PeerID, Counter>` and `encode` is
+/// `postcard` over that map, so the peer entries come out in the map's
+/// iteration order — which depends on the table's capacity, and so on how many
+/// inserts and removals happened to build it, not on what it holds. One version
+/// read two ways therefore encodes to the same bytes *in a different order*:
+/// equal values, unequal bytes. (Loro sorts in `Frontiers::encode` and does not
+/// here, so this is a property of the type rather than an oversight to wait out
+/// — and `loro` is pinned exactly in the workspace manifest.) A byte comparison
+/// reports a change that never happened, which costs an index rebuild the data
+/// did not need and, where the answer is fed back into an authority recheck, a
+/// spurious conflict.
+///
+/// Decoded, `VersionVector`'s own `PartialEq` compares the peer→counter mapping
+/// and normalises absent and zero counters, which is the property meant.
+///
+/// **A stamp this build cannot decode is not current.** `None` and undecodable
+/// bytes both answer `false`, so the caller rebuilds the index rather than
+/// panicking or failing the read: an index whose stamp nobody can read is an
+/// index nobody can vouch for, and rebuilding one that was in fact current
+/// wastes work, where trusting one is wrong.
+pub fn indexed_version_is_current(stamp: Option<&[u8]>, version: &loro::VersionVector) -> bool {
+    stamp
+        .and_then(|bytes| loro::VersionVector::decode(bytes).ok())
+        .as_ref()
+        == Some(version)
 }

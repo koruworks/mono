@@ -243,6 +243,21 @@
           }
         ]
       },
+      "AddChatWorkspaceGrantsRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "workspace_ids": {
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceId"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "workspace_ids"
+        ],
+        "type": "object"
+      },
       "AdvanceGenerationRequest": {
         "additionalProperties": false,
         "description": "`POST /v1/artifacts/authorities/{run}/generation`: the next attempt.\nStrictly newer than the current one; the grants are re-read from the\nrecord and cannot be sent.",
@@ -350,9 +365,84 @@
           }
         ]
       },
+      "AgentCommand": {
+        "description": "**One entry an agent offers.** `name` is what the person's message says\nand what goes back; `description` is one line about it, empty when the\nagent gave none; `display_name` is the agent's own name to show, when it\ngives one.",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "display_name": {
+            "nullable": true,
+            "type": "string"
+          },
+          "input_hint": {
+            "description": "What the entry takes after its name, in the agent's words, when it\nsays. No skill has one; it is the ACP command's `input.hint`.",
+            "nullable": true,
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/AgentCommandKind"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "kind"
+        ],
+        "type": "object"
+      },
+      "AgentCommandKind": {
+        "description": "**Where an entry comes from**: the folder's own, the person's, what the\nagent ships, what an administrator set. A picker lists the first two\ngroups first and the last two together ([`AgentCommandKind::group`]).",
+        "oneOf": [
+          {
+            "description": "An ACP `available_commands_update` entry invoked by `/name`.",
+            "enum": [
+              "command"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "A skill of the folder the agent works in (Codex's `repo` scope).",
+            "enum": [
+              "repo_skill"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "A skill of the person's own (`user`).",
+            "enum": [
+              "user_skill"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "A skill the agent ships with (`system`).",
+            "enum": [
+              "system_skill"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "A skill an administrator installed (`admin`).",
+            "enum": [
+              "admin_skill"
+            ],
+            "type": "string"
+          }
+        ]
+      },
       "AgentCommandKindView": {
         "description": "Where an entry comes from, in the order a picker lists them.",
         "oneOf": [
+          {
+            "description": "A provider command invoked by `/name`.",
+            "enum": [
+              "command"
+            ],
+            "type": "string"
+          },
           {
             "description": "A skill of the folder the agent works in.",
             "enum": [
@@ -390,6 +480,10 @@
             "type": "string"
           },
           "display_name": {
+            "nullable": true,
+            "type": "string"
+          },
+          "input_hint": {
             "nullable": true,
             "type": "string"
           },
@@ -2366,6 +2460,11 @@
         ],
         "type": "object"
       },
+      "BatchId": {
+        "description": "BatchId — a client-minted v4 UUID, hyphenated and lowercase. Immutable, and never derived from a name or a path.",
+        "format": "uuid",
+        "type": "string"
+      },
       "BeginProfileRemoval": {
         "properties": {
           "kind": {
@@ -2923,7 +3022,7 @@
         "type": "object"
       },
       "ChatAttachment": {
-        "description": "The public metadata of one stored attachment. Never a path.",
+        "description": "The public metadata of one stored attachment. A path reference keeps its\npath here because the person explicitly chose to send that path to an agent.",
         "properties": {
           "byte_count": {
             "format": "uint64",
@@ -2997,6 +3096,10 @@
               }
             ]
           },
+          "reference_path": {
+            "nullable": true,
+            "type": "string"
+          },
           "source": {
             "$ref": "#/components/schemas/ChatAttachmentSource"
           }
@@ -3032,6 +3135,13 @@
               "file"
             ],
             "type": "string"
+          },
+          {
+            "description": "A local directory named to an agent without copying its contents.",
+            "enum": [
+              "folder"
+            ],
+            "type": "string"
           }
         ]
       },
@@ -3061,6 +3171,13 @@
             "description": "Linked with `@` from a workspace the chat may use, and copied.",
             "enum": [
               "workspace"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "A local path reference with no copied bytes.",
+            "enum": [
+              "path"
             ],
             "type": "string"
           }
@@ -3212,6 +3329,14 @@
       },
       "ChatTranscript": {
         "properties": {
+          "agent_commands": {
+            "description": "The live session's current command listing; an empty list is authoritative.\n`None` lets the composer use its short-lived bootstrap catalog.",
+            "items": {
+              "$ref": "#/components/schemas/AgentCommandView"
+            },
+            "nullable": true,
+            "type": "array"
+          },
           "attachments": {
             "default": [],
             "description": "Every attachment of the chat: those sent with a message, in message\nand ordinal order, then the staged ones not yet sent.",
@@ -4087,6 +4212,75 @@
         ],
         "type": "object"
       },
+      "DeleteProfile": {
+        "description": "`POST /v1/profiles/{id}/delete`: the preview the confirmation was shown\nover, echoed back whole. A preview whose targets or revision no longer\nmatch is refused with `idempotency_conflict` (HTTP 409): a materially\ndestructive confirmation taken over a changed list requires a refresh.",
+        "properties": {
+          "preview": {
+            "$ref": "#/components/schemas/ProfileDeletionPreview"
+          }
+        },
+        "required": [
+          "preview"
+        ],
+        "type": "object"
+      },
+      "DeletedProfileListing": {
+        "description": "One restorable Profile deletion as `GET /v1/profiles/deleted` lists it:\nthe Store's record, plus the name of the retained Profile row so a Trash\nsurface can say which Profile it is without a second read.",
+        "properties": {
+          "at_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "batch_id": {
+            "$ref": "#/components/schemas/BatchId"
+          },
+          "deletion": {
+            "$ref": "#/components/schemas/DeletionId"
+          },
+          "expired_or_purged": {
+            "description": "Targets whose content is gone or past its retention at `now`: a\nrestore will report them honestly rather than recreate them.",
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceId"
+            },
+            "type": "array"
+          },
+          "name": {
+            "default": null,
+            "description": "The retained Profile row's name. `None` only when the row is gone,\nwhich the Store does not do while a deletion is restorable.",
+            "nullable": true,
+            "type": "string"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/ProfileId"
+          },
+          "retention_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "targets": {
+            "description": "The captured targets, from the job.",
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceId"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "profile",
+          "deletion",
+          "batch_id",
+          "at_ms",
+          "retention_ms",
+          "targets",
+          "expired_or_purged"
+        ],
+        "type": "object"
+      },
+      "DeletionId": {
+        "description": "DeletionId — a client-minted v4 UUID, hyphenated and lowercase. Immutable, and never derived from a name or a path.",
+        "format": "uuid",
+        "type": "string"
+      },
       "DeliveryMode": {
         "enum": [
           "native_structured",
@@ -4938,6 +5132,7 @@
             "type": "object"
           },
           {
+            "description": "A Workspace manufactured for an empty Profile. **Never produced since\nPlan 1.3 of the root catalog**: `EnsureLive` is a non-creating query\nand answers [`Self::Empty`] instead. Kept on the wire for the\ngenerated schemas and older decoders.",
             "properties": {
               "state": {
                 "enum": [
@@ -4952,6 +5147,21 @@
             "required": [
               "state",
               "workspace"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "**A valid state**: this Profile has no live workspace; create one\nexplicitly (root-catalog TECHNICAL.final §3.10, §6.3). Nothing was\ncreated, and opening, restarting or receiving a remote update over an\nempty Profile keeps answering this without minting a workspace.",
+            "properties": {
+              "state": {
+                "enum": [
+                  "empty"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
             ],
             "type": "object"
           },
@@ -5464,6 +5674,11 @@
             "nullable": true,
             "type": "string"
           },
+          "entity_picker": {
+            "default": false,
+            "description": "Restrict results to document/file titles and live task nodes for an @ picker.\nThis is a query shape over the existing projection, not a stored index.",
+            "type": "boolean"
+          },
           "excluded_workspaces": {
             "default": [],
             "items": {
@@ -5837,6 +6052,27 @@
         "required": [
           "run",
           "held_authority"
+        ],
+        "type": "object"
+      },
+      "FromWorkspaceAttachmentRequest": {
+        "additionalProperties": false,
+        "description": "Copy a Files document into a chat attachment. The id is minted before\nimport so a retry can finish the same operation.",
+        "properties": {
+          "document": {
+            "$ref": "#/components/schemas/DocumentId"
+          },
+          "id": {
+            "$ref": "#/components/schemas/ChatAttachmentId"
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/WorkspaceId"
+          }
+        },
+        "required": [
+          "id",
+          "workspace",
+          "document"
         ],
         "type": "object"
       },
@@ -6851,6 +7087,13 @@
             "minimum": 0,
             "type": "integer"
           },
+          "context_limit_tokens": {
+            "default": null,
+            "format": "uint64",
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
           "context_message_block_count": {
             "format": "uint32",
             "minimum": 0,
@@ -6873,6 +7116,14 @@
                 "nullable": true
               }
             ]
+          },
+          "context_used_tokens": {
+            "default": null,
+            "description": "Latest active-context pair reported by this attempt's provider.\nIt is distinct from response usage and absent for older attempts.",
+            "format": "uint64",
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
           },
           "effective_reasoning": {
             "anyOf": [
@@ -7652,6 +7903,20 @@
       },
       "MessageUsage": {
         "properties": {
+          "context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReportedContextUsage"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "The latest active-context report from the attempt for this reply."
+          },
           "message_id": {
             "$ref": "#/components/schemas/MessageId"
           },
@@ -8535,6 +8800,30 @@
         ],
         "type": "object"
       },
+      "PathReference": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/PathReferenceKind"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "path"
+        ],
+        "type": "object"
+      },
+      "PathReferenceKind": {
+        "description": "A path hint names one file or folder, without copying its contents.",
+        "enum": [
+          "file",
+          "folder"
+        ],
+        "type": "string"
+      },
       "PauseReason": {
         "enum": [
           "rule_paused",
@@ -9012,6 +9301,62 @@
         },
         "type": "object"
       },
+      "ProfileDeletionBatch": {
+        "description": "The committed batch: what the caller publishes events for.",
+        "properties": {
+          "batch_id": {
+            "$ref": "#/components/schemas/BatchId"
+          },
+          "profile_deletion": {
+            "$ref": "#/components/schemas/DeletionId"
+          },
+          "targets": {
+            "items": {
+              "items": [
+                {
+                  "$ref": "#/components/schemas/WorkspaceId"
+                },
+                {
+                  "$ref": "#/components/schemas/DeletionId"
+                }
+              ],
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "batch_id",
+          "profile_deletion",
+          "targets"
+        ],
+        "type": "object"
+      },
+      "ProfileDeletionPreview": {
+        "description": "What a Profile deletion would trash right now, with a revision the caller\nechoes back so a confirmation taken over a stale list is refused.",
+        "properties": {
+          "placement_revision": {
+            "description": "BLAKE3 (first 64 bits) over the Profile unit's revision and, per\ntarget in order, its id, its durable revision and its overlay bytes.\nAny move, trash, restore or overlay write on an involved unit changes\nit; the number itself means nothing.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "targets": {
+            "description": "The live Workspaces currently placed under the Profile, by root\nplacement, in listing order.",
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceId"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "targets",
+          "placement_revision"
+        ],
+        "type": "object"
+      },
       "ProfileId": {
         "format": "uuid",
         "type": "string"
@@ -9043,6 +9388,46 @@
         },
         "required": [
           "attempt"
+        ],
+        "type": "object"
+      },
+      "ProfileRestoreOutcome": {
+        "description": "What a batch restore did to each captured target (§6.3).",
+        "properties": {
+          "left_in_trash": {
+            "description": "The batch's deletion was observed, but an earlier or unseen\nindependent deletion still holds the Workspace in the Trash.",
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceId"
+            },
+            "type": "array"
+          },
+          "moved_elsewhere": {
+            "description": "Already restored by somebody and placed under another Profile;\nnothing was written, the placement stands.",
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceId"
+            },
+            "type": "array"
+          },
+          "purged": {
+            "description": "Content purged; the unit's evidence is retained and nothing is\nrecreated.",
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceId"
+            },
+            "type": "array"
+          },
+          "restored": {
+            "description": "Back in the listing under the restored Profile.",
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceId"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "restored",
+          "left_in_trash",
+          "moved_elsewhere",
+          "purged"
         ],
         "type": "object"
       },
@@ -9313,6 +9698,36 @@
           },
           {
             "properties": {
+              "attempt_id": {
+                "$ref": "#/components/schemas/InferenceAttemptId"
+              },
+              "size": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "type": {
+                "enum": [
+                  "context_usage"
+                ],
+                "type": "string"
+              },
+              "used": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "type",
+              "attempt_id",
+              "used",
+              "size"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
               "activity": {
                 "$ref": "#/components/schemas/ToolActivity"
               },
@@ -9353,6 +9768,36 @@
               "type",
               "attempt_id",
               "notice"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A local agent changed the current session's command listing.",
+            "properties": {
+              "attempt_id": {
+                "$ref": "#/components/schemas/InferenceAttemptId"
+              },
+              "chat": {
+                "$ref": "#/components/schemas/ChatId"
+              },
+              "commands": {
+                "items": {
+                  "$ref": "#/components/schemas/AgentCommandView"
+                },
+                "type": "array"
+              },
+              "type": {
+                "enum": [
+                  "agent_commands"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "attempt_id",
+              "chat",
+              "commands"
             ],
             "type": "object"
           },
@@ -9971,6 +10416,27 @@
         "format": "uuid",
         "type": "string"
       },
+      "ReferenceAttachmentRequest": {
+        "additionalProperties": false,
+        "description": "Stage a local path for an agent without reading or copying its contents.",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/ChatAttachmentId"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ChatAttachmentKind"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "path"
+        ],
+        "type": "object"
+      },
       "RegisterFileRequest": {
         "additionalProperties": false,
         "description": "`POST /v1/artifacts/runs/{run}/register` — D19's one click.\n\nThe title is optional because the click carries no words: absent, the\nfile's own last segment names the result, which is what the person is\nlooking at when they press it.",
@@ -10392,11 +10858,23 @@
         "type": "string"
       },
       "RemovalKind": {
-        "enum": [
-          "local",
-          "hosted_cleanup"
-        ],
-        "type": "string"
+        "description": "Which device-local removal is running. Both kinds end in the local\n`removed_at` marker and leave every other device untouched; neither is\nthe shared deletion (`Store::delete_profile`), which writes a root\ndeletion fact instead of an attempt.",
+        "oneOf": [
+          {
+            "description": "Manage's \"remove from this device\": trash each Workspace here, then\nhide the Profile here.",
+            "enum": [
+              "local"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "The cleanup after a hosted account deletion the server already\nacknowledged; same local effects, driven by the Agent's journal.",
+            "enum": [
+              "hosted_cleanup"
+            ],
+            "type": "string"
+          }
+        ]
       },
       "RemovalMark": {
         "properties": {
@@ -10639,6 +11117,7 @@
       "Replacement": {
         "oneOf": [
           {
+            "description": "A Workspace manufactured for the emptied Profile. **Never produced\nsince Plan 1.2 of the root catalog.** Kept on the wire so the\ngenerated schemas, an older client's decoder and every consumer that\nhandled it are unchanged; new code branches on the other three.",
             "properties": {
               "state": {
                 "enum": [
@@ -10657,6 +11136,7 @@
             "type": "object"
           },
           {
+            "description": "Another verified live Workspace of the source Profile.",
             "properties": {
               "state": {
                 "enum": [
@@ -10675,6 +11155,7 @@
             "type": "object"
           },
           {
+            "description": "The source Profile has no other live Workspace and stays empty, or a\nwhole-Profile removal is in progress and wants none.",
             "properties": {
               "state": {
                 "enum": [
@@ -10689,6 +11170,7 @@
             "type": "object"
           },
           {
+            "description": "The catalog publication did not commit, so nothing is known.",
             "properties": {
               "state": {
                 "enum": [
@@ -10703,6 +11185,25 @@
             "type": "object"
           }
         ]
+      },
+      "ReportedContextUsage": {
+        "properties": {
+          "size": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "used": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "used",
+          "size"
+        ],
+        "type": "object"
       },
       "ResizeRequest": {
         "properties": {
@@ -10720,6 +11221,31 @@
           "idempotency_key",
           "controller_lease",
           "size"
+        ],
+        "type": "object"
+      },
+      "RestageAttachmentRequest": {
+        "additionalProperties": false,
+        "description": "Copy the bytes of a sent attachment into a new staged attachment of the\nsame chat. The caller mints an id for this recall attempt.",
+        "properties": {
+          "new_id": {
+            "$ref": "#/components/schemas/ChatAttachmentId"
+          }
+        },
+        "required": [
+          "new_id"
+        ],
+        "type": "object"
+      },
+      "RestoreProfile": {
+        "description": "`POST /v1/profiles/{id}/restore`: which deletion batch to restore — the\n`deletion` from a [`DeletedProfileListing`].",
+        "properties": {
+          "deletion": {
+            "$ref": "#/components/schemas/DeletionId"
+          }
+        },
+        "required": [
+          "deletion"
         ],
         "type": "object"
       },
@@ -12589,6 +13115,11 @@
             },
             "type": "array"
           },
+          "entity_picker": {
+            "default": false,
+            "description": "Restrict results to document/file titles and live task nodes for an @ picker.\nThis is a query shape over the existing projection, not a stored index.",
+            "type": "boolean"
+          },
           "excluded_workspaces": {
             "default": [],
             "items": {
@@ -12887,6 +13418,12 @@
           "idempotency_key": {
             "$ref": "#/components/schemas/IdempotencyKey"
           },
+          "references": {
+            "items": {
+              "$ref": "#/components/schemas/PathReference"
+            },
+            "type": "array"
+          },
           "text": {
             "type": "string"
           }
@@ -13046,6 +13583,28 @@
       "SessionEvent": {
         "description": "Lifecycle and low-volume facts for one session. Render content has its own\nbounded [`crate::RenderUpdate`] stream.",
         "oneOf": [
+          {
+            "description": "Protocol v23. The live session's current command listing, including an\nauthoritative empty listing.",
+            "properties": {
+              "commands": {
+                "items": {
+                  "$ref": "#/components/schemas/AgentCommand"
+                },
+                "type": "array"
+              },
+              "kind": {
+                "enum": [
+                  "commands_updated"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "commands"
+            ],
+            "type": "object"
+          },
           {
             "properties": {
               "byte_count": {
@@ -16519,6 +17078,68 @@
           }
         ]
       },
+      "UnassignedReason": {
+        "description": "Why a live Workspace is reachable from no active Profile (§3.6, §6.3).",
+        "oneOf": [
+          {
+            "description": "`placement.current.profile_id` is null: somebody unassigned it.",
+            "enum": [
+              "explicitly_unassigned"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "Its Profile's unit holds an active deletion; this Workspace was not a\ncaptured target of that batch, so it stays live.",
+            "enum": [
+              "profile_deleted"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "Its Profile has no row in this catalog.",
+            "enum": [
+              "profile_absent"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "Its register names a `ProfileKind::Holder` row (legacy inventory).",
+            "enum": [
+              "holder_placed"
+            ],
+            "type": "string"
+          }
+        ]
+      },
+      "UnassignedWorkspace": {
+        "description": "A live Workspace the Unassigned recovery item lists. Moving it is the\nordinary `Store::move_workspace`; restoring its Profile is\n`Store::restore_profile`. No Holder is ever created for it.",
+        "properties": {
+          "former_profile": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProfileId"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "reason": {
+            "$ref": "#/components/schemas/UnassignedReason"
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/Workspace"
+          }
+        },
+        "required": [
+          "workspace",
+          "reason"
+        ],
+        "type": "object"
+      },
       "UnregisteredFile": {
         "description": "One file under a run's `.artifacts/<RunId>/` folder that is **not yet a\nresult** (D19).\n\n`path` is what [`crate::run_folder::RegisterFileRequest`] echoes back;\n`size_bytes` and `modified_at_ms` are what the surface draws beside it.",
         "properties": {
@@ -17112,7 +17733,12 @@
             "type": "string"
           },
           "owner": {
-            "$ref": "#/components/schemas/ProfileId"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ProfileId"
+              }
+            ],
+            "description": "The Profile this Workspace is listed under.\n\n**A one-way projection, not the authority.** Since catalog 13 the\nWorkspace's root catalog unit (`placement.current`, read through\n`Store::root_placement`) says where this user has placed it, and a\n*move* writes this field only through that root operation, in the\nsame catalog transaction as the unit. Creation (Plan 1.3) and replica\nprovisioning (Plan 2.1) publish the unit with the row; a remote root\nunit re-projects this field when it lands. A Workspace without a unit\nis read from here, as the only evidence there is."
           },
           "pinned": {
             "default": false,
@@ -18749,6 +19375,280 @@
         "summary": "Choose the approval mode a chat's local agent runs its next message in"
       }
     },
+    "/v1/ai/chats/{chat}/attachments/from-workspace": {
+      "post": {
+        "description": "The staged copy with workspace provenance. The source grant is checked before reading bytes.",
+        "operationId": "ai_from_workspace_attachment",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "chat",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FromWorkspaceAttachmentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatAttachmentResponse"
+                }
+              }
+            },
+            "description": "The staged copy with workspace provenance. The source grant is checked before reading bytes."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The request body or path identity is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The gateway bearer is absent or invalid"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The bearer lacks the operation's declared AI scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment, or the stored file, is not there"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The operation conflicts with durable chat state"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment is larger than the limit"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment's type is not allowed, or its content is not what its name says"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The AI worker is unavailable or saturated"
+          },
+          "507": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment could not be stored on this computer"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "ai.chat"
+            ]
+          }
+        ],
+        "summary": "Copy a granted workspace file into a local agent chat"
+      }
+    },
+    "/v1/ai/chats/{chat}/attachments/reference": {
+      "post": {
+        "description": "The staged path reference. No file or folder contents are read or copied.",
+        "operationId": "ai_reference_attachment",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "chat",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReferenceAttachmentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatAttachmentResponse"
+                }
+              }
+            },
+            "description": "The staged path reference. No file or folder contents are read or copied."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The request body or path identity is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The gateway bearer is absent or invalid"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The bearer lacks the operation's declared AI scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment, or the stored file, is not there"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The operation conflicts with durable chat state"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment is larger than the limit"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment's type is not allowed, or its content is not what its name says"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The AI worker is unavailable or saturated"
+          },
+          "507": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment could not be stored on this computer"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "ai.chat"
+            ]
+          }
+        ],
+        "summary": "Stage a local file or folder path for a local agent chat"
+      }
+    },
     "/v1/ai/chats/{chat}/attachments/{attachment}": {
       "delete": {
         "description": "Whether a staged attachment was removed. A sent attachment stays with its message and answers attachment_sent.",
@@ -19186,6 +20086,152 @@
           }
         ],
         "summary": "Store a picture or file for a local agent chat's next message"
+      }
+    },
+    "/v1/ai/chats/{chat}/attachments/{attachment}/restage": {
+      "post": {
+        "description": "The new staged attachment. Deleting its id during the copy cancels publication.",
+        "operationId": "ai_restage_attachment",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "chat",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "attachment",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RestageAttachmentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatAttachmentResponse"
+                }
+              }
+            },
+            "description": "The new staged attachment. Deleting its id during the copy cancels publication."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The request body or path identity is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The gateway bearer is absent or invalid"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The bearer lacks the operation's declared AI scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment, or the stored file, is not there"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The operation conflicts with durable chat state"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment is larger than the limit"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment's type is not allowed, or its content is not what its name says"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The AI worker is unavailable or saturated"
+          },
+          "507": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment could not be stored on this computer"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "ai.chat"
+            ]
+          }
+        ],
+        "summary": "Copy a sent attachment into a fresh staged attachment for recall"
       }
     },
     "/v1/ai/chats/{chat}/attachments/{attachment}/thumbnail": {
@@ -20191,6 +21237,103 @@
           }
         ],
         "summary": "Replace a chat's workspace-tool policy"
+      }
+    },
+    "/v1/ai/chats/{chat}/tool-policy/grants": {
+      "post": {
+        "description": "The durable policy with all existing and newly granted workspaces; the mode is unchanged.",
+        "operationId": "ai_add_chat_workspace_grants",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "chat",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddChatWorkspaceGrantsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatToolPolicyResponse"
+                }
+              }
+            },
+            "description": "The durable policy with all existing and newly granted workspaces; the mode is unchanged."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The request body or path identity is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The gateway bearer is absent or invalid"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The bearer lacks the operation's declared AI scope"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The operation conflicts with durable chat state"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The AI worker is unavailable or saturated"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "ai.chat"
+            ]
+          }
+        ],
+        "summary": "Add workspace grants to a chat atomically"
       }
     },
     "/v1/ai/chats/{chat}/turns": {
@@ -24647,6 +25790,54 @@
         "summary": "Create a profile. Requires no account and no network."
       }
     },
+    "/v1/profiles/deleted": {
+      "get": {
+        "description": "one entry per active, unpurged Profile deletion batch with its captured targets, the retained Profile's name, and which targets are past retention or purged",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DeletedProfileListing"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "one entry per active, unpurged Profile deletion batch with its captured targets, the retained Profile's name, and which targets are past retention or purged"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "no bearer token, or one that is not recognised"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "the credential does not hold the required scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "manage_workspaces"
+            ]
+          }
+        ],
+        "summary": "List the restorable shared Profile deletions this device holds"
+      }
+    },
     "/v1/profiles/with-workspace": {
       "post": {
         "description": "profile and workspace; ProfileExists on conflicting or retired identity",
@@ -25011,6 +26202,126 @@
           }
         ],
         "summary": "Set a profile's switcher icon and named colour"
+      }
+    },
+    "/v1/profiles/{id}/delete": {
+      "post": {
+        "description": "the batch id and each target's deletion id; HTTP 409 idempotency_conflict when the preview is stale. Takes destroy_workspaces, like the workspace delete; the targets' rooms are disconnected first",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteProfile"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileDeletionBatch"
+                }
+              }
+            },
+            "description": "the batch id and each target's deletion id; HTTP 409 idempotency_conflict when the preview is stale. Takes destroy_workspaces, like the workspace delete; the targets' rooms are disconnected first"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "no bearer token, or one that is not recognised"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "the credential does not hold the required scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "destroy_workspaces"
+            ]
+          }
+        ],
+        "summary": "Delete a Profile as a shared batch: the Profile and every captured workspace move to Trash in one transaction"
+      }
+    },
+    "/v1/profiles/{id}/deletion-preview": {
+      "get": {
+        "description": "the live workspaces placed under the Profile and a placement revision the delete echoes back; a changed list refuses the stale confirmation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileDeletionPreview"
+                }
+              }
+            },
+            "description": "the live workspaces placed under the Profile and a placement revision the delete echoes back; a changed list refuses the stale confirmation"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "no bearer token, or one that is not recognised"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "the credential does not hold the required scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "manage_workspaces"
+            ]
+          }
+        ],
+        "summary": "What deleting a Profile would move to Trash right now"
       }
     },
     "/v1/profiles/{id}/dictionary": {
@@ -26985,6 +28296,71 @@
           }
         ],
         "summary": "Stop only the named current Profile removal attempt"
+      }
+    },
+    "/v1/profiles/{id}/restore": {
+      "post": {
+        "description": "which targets came back, stayed in Trash under an independent deletion, were moved elsewhere already, or were purged. The same scope the delete takes",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RestoreProfile"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileRestoreOutcome"
+                }
+              }
+            },
+            "description": "which targets came back, stayed in Trash under an independent deletion, were moved elsewhere already, or were purged. The same scope the delete takes"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "no bearer token, or one that is not recognised"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "the credential does not hold the required scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "destroy_workspaces"
+            ]
+          }
+        ],
+        "summary": "Restore a Profile deletion batch: the Profile and the workspaces trashed by exactly that deletion"
       }
     },
     "/v1/profiles/{id}/workspace-order": {
@@ -33888,6 +35264,54 @@
           }
         ],
         "summary": "Create a workspace and its manifest"
+      }
+    },
+    "/v1/workspaces/unassigned": {
+      "get": {
+        "description": "each live workspace placed under nobody, under a deleted or absent Profile, or under a legacy holder, with its former Profile; moving one is the ordinary move, restoring its Profile is the batch restore",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/UnassignedWorkspace"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "each live workspace placed under nobody, under a deleted or absent Profile, or under a legacy holder, with its former Profile; moving one is the ordinary move, restoring its Profile is the batch restore"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "no bearer token, or one that is not recognised"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "the credential does not hold the required scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "manage_workspaces"
+            ]
+          }
+        ],
+        "summary": "Live workspaces reachable from no active Profile, with the reason"
       }
     },
     "/v1/workspaces/{id}": {

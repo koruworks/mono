@@ -8,7 +8,8 @@ use koru_channel as channel;
 use koru_store_core::errors::{Code, Error, Result};
 
 use crate::{
-    StoreWorker, WorkerConfig, cli, console, log, projection, search, store_backup, tasks,
+    StoreWorker, WorkerConfig, cli, console, log, projection, root_inspection, search,
+    store_backup, tasks,
 };
 
 pub fn run() {
@@ -53,6 +54,9 @@ pub fn run() {
             .and_then(|root| store_backup::backup_from_cli(&root, destination.as_deref())),
         cli::Command::Restore(source) => {
             root_for(&invocation).and_then(|root| store_backup::restore_from_cli(&root, source))
+        }
+        cli::Command::RootCatalog => {
+            root_for(&invocation).and_then(|root| root_inspection::report_to_console(&root))
         }
     };
 

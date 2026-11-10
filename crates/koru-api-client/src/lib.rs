@@ -109,15 +109,16 @@ pub const CONTROL_SCOPE: &str = "gateway.control";
 pub const EVENTS_READ_SCOPE: &str = "events.read";
 
 pub use koru_store_client::{
-    Ack, Connection, CreateProfileWithWorkspace, Created, CreatedProfile, Discovery,
-    DocumentOutline, EnsureLiveWorkspace, EnsuredWorkspace, Event, Failure, FirstWorkspace,
-    ImportQuery, LocalProfileRemoval, LocalProfileRestoration, ManifestRef, Navigation,
-    NewDocument, NewProfile, NewWorkspace, OutlineHeading, ProfileAccountBindingOutcome,
-    ProfileAccountClearOutcome, ProfileAppearance, ProfileLifecycleInventory,
-    ProfileLifecycleInventoryItem, ProvisionAccountProfile, RecentQuery, RenameProfile,
-    RenameWorkspace, SearchFacets, SearchHit, SearchPage, SearchQuery, SearchRequest,
-    SearchResponse, Status, Stopping, WorkspaceAppearance, WorkspaceAuthority,
-    WorkspaceAuthorityState, WorkspaceAvailabilityIssue,
+    Ack, BatchId, Connection, CreateProfileWithWorkspace, Created, CreatedProfile, DeletedProfile,
+    DeletedProfileListing, DeletionId, Discovery, DocumentOutline, EnsureLiveWorkspace,
+    EnsuredWorkspace, Event, Failure, FirstWorkspace, ImportQuery, LocalProfileRemoval,
+    LocalProfileRestoration, ManifestRef, Navigation, NewDocument, NewProfile, NewWorkspace,
+    OutlineHeading, ProfileAccountBindingOutcome, ProfileAccountClearOutcome, ProfileAppearance,
+    ProfileDeletionBatch, ProfileDeletionPreview, ProfileLifecycleInventory,
+    ProfileLifecycleInventoryItem, ProfileRestoreOutcome, ProvisionAccountProfile, RecentQuery,
+    RenameProfile, RenameWorkspace, SearchFacets, SearchHit, SearchPage, SearchQuery,
+    SearchRequest, SearchResponse, Status, Stopping, UnassignedReason, UnassignedWorkspace,
+    WorkspaceAppearance, WorkspaceAuthority, WorkspaceAuthorityState, WorkspaceAvailabilityIssue,
 };
 pub use koru_store_client::{debug, store_session_debug, sync, sync_debug};
 
@@ -935,6 +936,18 @@ impl AiClient<'_> {
         )
     }
 
+    pub fn add_chat_workspace_grants(
+        &self,
+        chat: ChatId,
+        request: &koru_ai_wire::AddChatWorkspaceGrantsRequest,
+    ) -> AiResult<ChatToolPolicyResponse> {
+        self.json(
+            reqwest::Method::POST,
+            format!("/v1/ai/chats/{chat}/tool-policy/grants"),
+            Some(json_body(request)?),
+        )
+    }
+
     pub fn read_chat_tool_policy(&self, chat: ChatId) -> AiResult<ChatToolPolicyResponse> {
         self.json(
             reqwest::Method::GET,
@@ -1185,6 +1198,50 @@ impl AiClient<'_> {
             reqwest::Method::DELETE,
             format!("/v1/ai/chats/{chat}/attachments/{attachment}"),
             None,
+        )
+    }
+
+    /// Stage an absolute local file or folder path without reading bytes.
+    /// Blocking: call it off the UI thread.
+    pub fn reference_attachment(
+        &self,
+        chat: ChatId,
+        request: koru_ai_wire::ReferenceAttachmentRequest,
+    ) -> AiResult<koru_ai_wire::ChatAttachmentResponse> {
+        self.json(
+            reqwest::Method::POST,
+            format!("/v1/ai/chats/{chat}/attachments/reference"),
+            Some(json_body(&request)?),
+        )
+    }
+
+    /// Copy a granted workspace file into a staged chat attachment.
+    /// Blocking: call it off the UI thread.
+    pub fn from_workspace_attachment(
+        &self,
+        chat: ChatId,
+        request: koru_ai_wire::FromWorkspaceAttachmentRequest,
+    ) -> AiResult<koru_ai_wire::ChatAttachmentResponse> {
+        self.json(
+            reqwest::Method::POST,
+            format!("/v1/ai/chats/{chat}/attachments/from-workspace"),
+            Some(json_body(&request)?),
+        )
+    }
+
+    /// Copy a sent attachment's bytes into a new staged id for recall.
+    pub fn restage_attachment(
+        &self,
+        chat: ChatId,
+        source: koru_ai_core::ChatAttachmentId,
+        new_id: koru_ai_core::ChatAttachmentId,
+    ) -> AiResult<koru_ai_wire::ChatAttachmentResponse> {
+        self.json(
+            reqwest::Method::POST,
+            format!("/v1/ai/chats/{chat}/attachments/{source}/restage"),
+            Some(json_body(&koru_ai_wire::RestageAttachmentRequest {
+                new_id,
+            })?),
         )
     }
 

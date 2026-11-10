@@ -3773,3 +3773,19 @@ fn refeeding_identical_recents_is_not_a_change() {
         "an identical refeed is quiet"
     );
 }
+
+#[test]
+fn ordinary_document_picker_accepts_window_recents() {
+    let mut e = outline();
+    e.key(&ch("@"), Some("@"), NONE);
+    assert!(Editing::entity_wants_recents(&e.editor));
+    let hit = entity_hit("Recent document");
+    assert!(Editing::set_entity_recents(
+        &mut e.editor,
+        vec![hit.clone()]
+    ));
+    let Overlay::Entity(picker) = &e.view().overlay else {
+        panic!("document picker open");
+    };
+    assert_eq!(picker.hits, vec![hit]);
+}

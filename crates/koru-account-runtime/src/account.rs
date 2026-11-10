@@ -211,6 +211,19 @@ pub trait AccountService: Send + 'static {
 
     fn credential_removed(&mut self, _owner: Option<crate::identity::AccountOwner>) {}
 
+    /// The random 32 bytes stored beside the refresh token this service holds,
+    /// which a rotation of that token must present as its idempotency key.
+    ///
+    /// The worker arms it from the vault slot the token itself came out of, so
+    /// the key is durable before any refresh can present it and a process that
+    /// restarts mid-rotation presents the same one again. Nothing armed means
+    /// no key is durable for these bytes, and `refresh` then refuses instead of
+    /// performing a rotation whose replay would be impossible. It is never
+    /// derived from the token: a stolen refresh token must not be enough to
+    /// collect the sealed new pair from the service's retry window
+    /// ([Q11](docs/features/root-catalog/QUESTIONS.md)).
+    fn arm_refresh_retry_key(&mut self, _key: Option<[u8; 32]>) {}
+
     /// Non-mutating current-secret ownership discovery. It must not publish
     /// grants or authorize enrollment before directory/vault durability.
     fn inspect_credential(
@@ -858,13 +871,6 @@ fn failed_state(
         ..Default::default()
     }
 }
-pub fn refresh_retry_key(refresh_token: &str) -> [u8; 32] {
-    let mut input = Vec::with_capacity(38 + refresh_token.len());
-    input.extend_from_slice(b"koru.account.refresh-retry.v1\0");
-    input.extend_from_slice(refresh_token.as_bytes());
-    *blake3::hash(&input).as_bytes()
-}
-
 pub fn startup_capability(
     origin: Option<&str>,
     descriptor: Option<&SignedDeviceDescriptorV1>,
@@ -925,6 +931,12 @@ pub struct ProductionAccountService {
     unacknowledged_session_id: Option<String>,
     removed_credential_owner: Option<crate::identity::AccountOwner>,
     durable_session_id: Option<String>,
+    /// Armed from the vault slot that holds the refresh token; see
+    /// [`AccountService::arm_refresh_retry_key`].
+    refresh_retry_key: Option<[u8; 32]>,
+    /// A rotation has been answered and the hosted device registration it may
+    /// owe has not run yet. It runs once the new pair is durable, never before.
+    device_registration_due: bool,
     visible: Option<Arc<AtomicBool>>,
 }
 
@@ -1006,6 +1018,8 @@ impl ProductionAccountService {
             unacknowledged_session_id: None,
             removed_credential_owner: None,
             durable_session_id: None,
+            refresh_retry_key: None,
+            device_registration_due: false,
             visible: None,
         }
     }
@@ -1335,13 +1349,22 @@ impl ProductionAccountService {
     fn refresh(&mut self, restored: &SessionCredential) -> Result<SessionCredential, ServiceError> {
         let session_id = AccountSessionId::from_str(&restored.session_id)
             .map_err(|_| ServiceError::terminal("credential_invalid"))?;
+        // The key is random bytes the vault already holds beside the token
+        // being presented, not a value derived from that token: holding the
+        // token must not be enough to collect the sealed new pair out of the
+        // service's retry window. Because it is durable before the request
+        // goes out, a rotation this process loses can be replayed under the
+        // same key by the next one — which is the only thing that saves a
+        // rotation the service has already performed. Without a durable key
+        // there is no replay, so the request is not sent at all.
+        let retry_key = self
+            .refresh_retry_key
+            .ok_or_else(|| ServiceError::retryable("credential_unavailable"))?;
         let response = match self.client.refresh(&RefreshRequestV1 {
             version: Version1,
             session_id,
             refresh_token: koru_account_wire::RefreshToken(restored.refresh_token.clone()),
-            idempotency_key: RefreshIdempotencyKey::from_bytes(refresh_retry_key(
-                &restored.refresh_token,
-            )),
+            idempotency_key: RefreshIdempotencyKey::from_bytes(retry_key),
         }) {
             Ok(response) => response,
             Err(error) if refresh_was_revoked(&error) => {
@@ -1357,7 +1380,15 @@ impl ProductionAccountService {
             }
             Err(error) => return Err(map_client_error(error)),
         };
-        self.refresh_device_registration(&response.access_token)?;
+        // Nothing hosted may run between here and the vault write. The device
+        // registration refresh this rotation may owe — a devices call, and
+        // sometimes a challenge and a registration, measured at the bulk of
+        // 5.3 seconds — used to run on this line with `?`, so a stop or a
+        // failure threw away a pair the service had already rotated to and
+        // made every later launch present a superseded token. It is now owed
+        // until the new pair is durable, and `credential_owner_acknowledged`
+        // pays it.
+        self.device_registration_due = true;
         let access_expires_at_millis = response.access_expires_at_millis;
         let credential = self.accept_tokens(response)?;
         // The server keeps only the newest pair current. Paired with the
@@ -2290,6 +2321,8 @@ impl AccountService for ProductionAccountService {
             unacknowledged_session_id: None,
             removed_credential_owner: None,
             durable_session_id: None,
+            refresh_retry_key: None,
+            device_registration_due: false,
             visible: None,
         }))
     }
@@ -3107,6 +3140,28 @@ impl AccountService for ProductionAccountService {
                 cloud.update_authorization(authorization);
             }
         }
+        // The credential a rotation produced is durable, so the hosted calls
+        // it owes may run: a failure here costs a stale registration that the
+        // next refresh owes again, where before it cost the rotation itself.
+        // A restore arrives here with no access token and owes nothing.
+        if self.device_registration_due
+            && let Some(access) = self.access.clone()
+        {
+            self.device_registration_due = false;
+            if let Err(error) = self.refresh_device_registration(&access) {
+                self.device_registration_due = true;
+                tracing::info!(
+                    target: "koru_account",
+                    code = error.code,
+                    retryable = error.retryable,
+                    "device registration refresh deferred after a rotation"
+                );
+            }
+        }
+    }
+
+    fn arm_refresh_retry_key(&mut self, key: Option<[u8; 32]>) {
+        self.refresh_retry_key = key;
     }
 
     fn credential_restored(
@@ -3554,12 +3609,22 @@ fn map_client_error(error: ClientError) -> ServiceError {
         {
             ServiceError::terminal(koru_account_wire::ErrorCode::FRESH_AUTHENTICATION_REQUIRED)
         }
+        // A refusal the service did not word keeps the reading its status
+        // earns, now that the status survives. Only the transient statuses
+        // are listed: a codeless 401 or 403 deliberately does **not** join
+        // the `authentication_required` arm below, because a bare 401 from a
+        // proxy, a CDN or a captive portal is not the service saying the
+        // credential is dead, and reading it as one would sign a person out
+        // on somebody else's say-so.
         ClientError::Transport(_)
         | ClientError::InvalidResponse
         | ClientError::RateLimited { .. }
         | ClientError::Api {
             status: 408 | 429 | 500..=599,
             ..
+        }
+        | ClientError::ApiWithoutCode {
+            status: 408 | 429 | 500..=599,
         } => ServiceError::retryable("account_unavailable"),
         ClientError::Api {
             status: 401 | 403, ..

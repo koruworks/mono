@@ -132,3 +132,15 @@ account_id!(
     AppConnectionId,
     "app-connection"
 );
+account_id!(
+    /// The one logical root catalog of a Koru account (root-catalog
+    /// TECHNICAL.final §4.1): minted by the hosted service the first time
+    /// any device of the account binds, answered unchanged to every later
+    /// device and every verified identity of the same account, and never
+    /// renamed. It is the hosted row key of every admitted catalog unit and
+    /// never a field of any Loro document. Distinct from the account id so
+    /// the binding can carry its own generation, and distinct from every
+    /// device-local `UserScopeId`, which stays in that device's `store_state`.
+    CatalogScopeId,
+    "catalog-scope"
+);

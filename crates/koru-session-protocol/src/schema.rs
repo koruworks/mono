@@ -71,6 +71,8 @@ define_catalogue!(
     CatalogEvent,
     SessionObservation,
     AttachmentKind,
+    PathReferenceKind,
+    PathReference,
     AttachmentSource,
     ImageDimensions,
     AttachmentStatus,

@@ -80,16 +80,59 @@ pub(super) fn validate(doc: &LoroDoc, unit: ProfileUnitRef) -> Result<Compatibil
     Ok(compatibility)
 }
 
+/// Personal v2 (`docs/features/root-catalog/TECHNICAL.final.md` §5.1): the
+/// header names the Workspace and the format, and nothing in it names an
+/// owner. `owner_profile_id` may remain from a migrated v1 history as a
+/// string or a redaction null; it is ignored for ownership and never
+/// trusted for authorization. The content validator is the v1 one, unchanged.
+pub(super) fn validate_personal_v2(doc: &LoroDoc, workspace: WorkspaceId) -> Result<Compatibility> {
+    let meta = doc.get_map("meta");
+    let schema = integer(&meta, "schema_version")
+        .filter(|v| *v > 0)
+        .ok_or_else(|| corrupt("unit format is absent or invalid"))?;
+    if string(&meta, "workspace_id") != Some(workspace.to_storage()) {
+        return Err(scope_mismatch());
+    }
+    // A v1 document is scoped to a Profile pair. It reaches this address
+    // through the migration, which stamps the version; relabeling is refused.
+    if schema < PERSONAL_V2_CRDT_SCHEMA_VERSION {
+        return Err(scope_mismatch());
+    }
+    let compatibility = Compatibility::against(Some(schema), PERSONAL_V2_CRDT_SCHEMA_VERSION);
+    if !compatibility.writable() {
+        return Ok(compatibility);
+    }
+    let LoroValue::Map(values) = doc.get_deep_value() else {
+        return Err(corrupt("unit root is not a map"));
+    };
+    for (key, value) in values.iter() {
+        if !["meta", "personal_attributes", "reminders"].contains(&key.as_str())
+            || !matches!(value, LoroValue::Map(_))
+        {
+            return Err(scope_mismatch());
+        }
+    }
+    allowed_keys(
+        &meta,
+        &["schema_version", "workspace_id", "owner_profile_id"],
+    )?;
+    if let Some(owner) = meta.get("owner_profile_id")
+        && !matches!(
+            owner,
+            ValueOrContainer::Value(LoroValue::String(_) | LoroValue::Null)
+        )
+    {
+        return Err(corrupt("invalid legacy owner field"));
+    }
+    validate_personal(doc, workspace)?;
+    Ok(compatibility)
+}
+
 fn allowed_keys(map: &loro::LoroMap, allowed: &[&str]) -> Result<()> {
     if map.keys().any(|key| !allowed.contains(&key.as_str())) {
         return Err(scope_mismatch());
     }
     Ok(())
-}
-fn entries(map: &loro::LoroMap) -> Vec<(String, ValueOrContainer)> {
-    let mut out = Vec::new();
-    map.for_each(|key, value| out.push((key.to_string(), value)));
-    out
 }
 fn child(value: ValueOrContainer) -> Result<loro::LoroMap> {
     match value {

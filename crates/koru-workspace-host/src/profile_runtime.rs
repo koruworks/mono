@@ -16,6 +16,7 @@ use koru_workspace::Workspace;
 
 use crate::binding_markers::PendingBindings;
 use crate::profile_activation;
+use crate::profile_names::ProfileNames;
 use crate::settings::{ProfileSettings, Written};
 
 /// Persistence for the transitional `ProfileDoc` view.
@@ -135,6 +136,11 @@ pub(crate) struct ProfileRuntime {
     /// The Profile-to-account bindings asked of the Agent and not yet
     /// answered, mirrored to disk off this thread.
     pub(crate) pending_bindings: PendingBindings,
+    /// Every Profile name this device has seen, remembered locally so a
+    /// deletion carried here from another device — which names no Profile and
+    /// arrives after the catalog row has gone — can still be worded with one.
+    /// Device-local and never sent: see [`crate::profile_names`].
+    pub(crate) profile_names: ProfileNames,
 }
 
 impl ProfileRuntime {
@@ -155,6 +161,10 @@ impl ProfileRuntime {
         pending_bindings: PendingBindings,
     ) -> Self {
         debug_assert_eq!(profile.id(), Some(settings.profile_id()));
+        // The first listing of the launch is the first chance to remember what
+        // it names, and it costs a write only when a name changed.
+        let mut profile_names = ProfileNames::open(profile_dir.clone());
+        profile_names.observe(&profile_catalog);
         Self {
             profile_dir,
             profile,
@@ -172,7 +182,16 @@ impl ProfileRuntime {
             profile_refresh_pending: false,
             profile_refresh_error: None,
             pending_bindings,
+            profile_names,
         }
+    }
+
+    /// Take the names from the catalog this runtime is holding.
+    ///
+    /// Called wherever [`Self::profile_catalog`] is replaced. A listing that
+    /// names nothing new writes nothing.
+    pub(crate) fn remember_profile_names(&mut self) {
+        self.profile_names.observe(&self.profile_catalog);
     }
 
     pub(crate) fn profile_id(&self) -> ProfileId {
@@ -242,6 +261,10 @@ impl ProfileRuntime {
                 }
                 if refresh.profiles != self.profile_catalog {
                     self.profile_catalog = refresh.profiles;
+                    // While the rows are still here: the names are kept for
+                    // the notice a deletion elsewhere will need after they
+                    // are not (see [`crate::profile_names`]).
+                    self.remember_profile_names();
                     changed = true;
                 }
                 if let Some(owner) = self.profile.id() {

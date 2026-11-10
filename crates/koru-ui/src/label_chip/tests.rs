@@ -23,6 +23,28 @@ fn a_regular_chip_has_the_same_air_at_both_ends() {
     }
 }
 
+#[test]
+fn a_regular_context_chips_remove_mark_has_matching_edge_padding() {
+    let mut engine = TextEngine::new();
+    let chip = LabelChip::new("headshot-reddit.jpg")
+        .size(Size::Regular)
+        .lead(Lead::Glyph(icons::IMAGE))
+        .trail(Trail::Remove);
+    let plain = chip.trail(Trail::None);
+    let rect = Rect::new(20.0, 8.0, chip.width(&mut engine), chip.height());
+    let lane = chip.trail_rect(rect).expect("remove target");
+    let x = chip.remove_mark_x(rect, lane);
+
+    assert_eq!(
+        chip.width(&mut engine),
+        plain.width(&mut engine) + CHIP_CLOSE_W
+    );
+    assert_eq!(rect.x + rect.w - (x + X_ARM), REGULAR_PAD_X);
+    assert!(x - X_ARM >= lane.x, "all of the × is clickable");
+    assert!(x + X_ARM <= lane.x + lane.w, "all of the × is clickable");
+    assert_eq!(lane.h, rect.h);
+}
+
 /// **A chip that cannot be removed carries no remove lane** — the Tasks
 /// page's row chips read 6 px on the left and 21 px on the right while every
 /// chip reserved one. Its width is the label and its padding, and nothing
@@ -115,6 +137,21 @@ fn a_regular_chip_is_its_line_plus_air_and_its_mark_is_centred() {
     let above = mark.y - rect.y;
     let below = (rect.y + rect.h) - (mark.y + mark.h);
     assert!((above - below).abs() < 0.01);
+}
+
+#[test]
+fn a_context_chips_second_line_changes_geometry_without_moving_its_remove_target() {
+    let mut engine = TextEngine::new();
+    let plain = LabelChip::new("Budget")
+        .size(Size::Regular)
+        .trail(Trail::Remove);
+    let context = plain.secondary("Planning workspace");
+    assert!(context.height() > plain.height());
+    assert!(context.width(&mut engine) > plain.width(&mut engine));
+    let rect = Rect::new(0.0, 0.0, context.width(&mut engine), context.height());
+    let lane = context.trail_rect(rect).expect("remove lane");
+    assert_eq!(lane.x + lane.w, rect.w);
+    assert_eq!(lane.h, rect.h);
 }
 
 #[test]

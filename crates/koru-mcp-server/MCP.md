@@ -455,6 +455,55 @@ scope, which is already included in the default desktop session. If the gateway
 or AI worker is unavailable, the chat tool returns a structured error while the
 MCP bridge remains available for its other tools.
 
+## Access after a workspace moves
+
+A person organizes workspaces under Profiles, and moves them; a hosted app
+connection is granted either **Profiles** or **workspaces by UUID**
+(root-catalog [TECHNICAL.final §3.9, §7.4](../../docs/features/root-catalog/TECHNICAL.final.md),
+[ADR-000-rootcatalog](../../docs/decisions/ADR-000-rootcatalog.md)). The two
+kinds behave differently when a workspace moves, and nothing about either is
+a tool input.
+
+- **A Profile grant follows current placement.** The connection reaches the
+  live, Cloud-enabled workspaces the committed projection places under that
+  Profile now. A workspace moved into a granted Profile joins the set with
+  the projection commit; one moved out leaves it. The workspace's identity
+  — its UUID, replica, incarnation, documents and blobs — is untouched by a
+  move, so a document an agent created before the move is the same document
+  after it.
+- **A UUID grant stays attached.** The connection reaches that workspace
+  wherever it is placed, including explicitly unassigned. It never learns
+  which Profile holds it.
+- **Neither grants more.** No grant yields a Profile catalog unit, a personal
+  unit or anything outside the account's membership; a workspace-only client
+  sees workspace UUIDs and documents and nothing keyed by a Profile or a user
+  scope. Membership, lifecycle and Read / Read & edit still apply.
+- **Re-evaluation between admission and execution.** The hosted executor
+  asks its access resolver, before each tool that needs a content scope and
+  once per `list_*` and `search_*` call, whether the session's set is still
+  current, and runs the call under the current set. A UUID named in a call
+  is therefore checked against *current* access: a workspace that left a
+  granted Profile answers `permission_denied` on the next call even inside a
+  long session, the same refusal an unselected workspace always had. A
+  connection that is revoked or no longer entitled answers
+  `authorization_revoked`.
+- **Projection lag is pending, never a fallback.** When the service has
+  admitted a move its projection has not committed, the workspace's grant is
+  undecided. A call naming it answers `authorization_unavailable` with
+  `details.reason: "placement_pending"` and `retry_after_seconds`; nothing
+  was changed, and a retry is safe. Listings and searches leave it out until
+  it is decided; no other workspace is served in its place and the hint of
+  where it used to be is never used.
+- **Nothing about Profiles in tool inputs.** No tool takes a `profile_id`,
+  there is no organization or move tool, no compatibility adapter, and the
+  published `tools/list` is unchanged by this rule
+  (`no_tool_input_names_a_profile_personal_unit_or_user_scope`).
+
+Local hosts are untouched: the desktop bridge and Koru AI have no resolver
+and their access is what it was. The shared evaluation rule is
+`koru_account_core::app_connections::resolve_workspaces`; the executor's seam
+is `AccessResolver` on `RequestContext` (`crates/koru-mcp-server/src/access.rs`).
+
 ## Identities and document shape
 
 Every id Koru stores or answers is a UUID of one distinct type, and one Store

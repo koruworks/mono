@@ -311,3 +311,99 @@ fn every_identity_mint_site_names_the_origin_marker() {
         );
     }
 }
+
+// --------------------------------------------- the reminder index's version stamp
+
+/// Two peer ids and two fillers that make one version encode two ways.
+///
+/// `loro::VersionVector` is a `HashMap<PeerID, Counter>` and `encode` is
+/// `postcard` over that map, so the peer entries are emitted in the map's
+/// iteration order — a function of the table's capacity, which is a function of
+/// how many inserts and removals built it. Inserting two fillers before the two
+/// real peers and removing them again leaves a table one growth larger than the
+/// plain two-entry map: same contents, wider table, and the two entries come out
+/// transposed. That is the whole defect, reproduced on demand instead of waited
+/// for — CI met it as two ten-byte runs swapped and nothing else changed.
+fn two_encodings_of_one_version() -> (loro::VersionVector, loro::VersionVector) {
+    const ONE: u64 = 0x9e37_79b9_7f4a_7c15;
+    const TWO: u64 = 0x5851_f42d_4c95_7f2d;
+    const FILLER: [u64; 2] = [0xdead_0000_0000_0000, 0xdead_0000_0000_0001];
+
+    let mut narrow = loro::VersionVector::new();
+    narrow.insert(ONE, 7);
+    narrow.insert(TWO, 11);
+
+    let mut wide = loro::VersionVector::new();
+    for peer in FILLER {
+        wide.insert(peer, 1);
+    }
+    wide.insert(ONE, 7);
+    wide.insert(TWO, 11);
+    for peer in FILLER {
+        wide.remove(&peer);
+    }
+
+    assert_eq!(narrow, wide, "the two hold the same version");
+    assert_ne!(
+        narrow.encode(),
+        wide.encode(),
+        "this test exists because one version has more than one encoding. If \
+         the pinned loro has started sorting `VersionVector::encode` the way it \
+         already sorts `Frontiers::encode`, the defect class is gone and this \
+         premise — not the comparison below — is what to retire",
+    );
+    (narrow, wide)
+}
+
+/// The stamp is read as a version, so the encoding it arrived in is irrelevant.
+///
+/// Before the fix this was `stored == current.encode()`, which on the transposed
+/// encoding declared an index stale, rebuilt it for nothing and — through the
+/// authority recheck that compared the same bytes — failed a read that nothing
+/// had disturbed.
+#[test]
+fn a_stamp_in_another_encoding_of_the_same_version_is_still_current() {
+    let (stored, current) = two_encodings_of_one_version();
+    let stored = stored.encode();
+
+    assert!(
+        indexed_version_is_current(Some(&stored), &current),
+        "same version, other encoding: the index is current",
+    );
+    assert_ne!(
+        stored.as_slice(),
+        current.encode().as_slice(),
+        "and the byte comparison the fix replaced would have said otherwise",
+    );
+}
+
+/// A version that really did move is not current, whichever way it is encoded.
+#[test]
+fn a_stamp_from_an_earlier_version_is_not_current() {
+    let (stale, mut moved) = two_encodings_of_one_version();
+    moved.insert(0x9e37_79b9_7f4a_7c15, 8);
+
+    assert!(!indexed_version_is_current(Some(&stale.encode()), &moved));
+}
+
+/// An unreadable stamp means *rebuild*, never panic and never fail the read.
+///
+/// A stamp nobody can decode vouches for nothing, and the two ways to get that
+/// wrong are opposite: trusting it serves a stale index, and raising on it turns
+/// one unreadable cache row into a refused reminder query. Rebuilding costs work
+/// and nothing else.
+#[test]
+fn an_absent_or_undecodable_stamp_is_not_current() {
+    let (version, _) = two_encodings_of_one_version();
+
+    assert!(!indexed_version_is_current(None, &version));
+    assert!(!indexed_version_is_current(Some(b""), &version));
+    assert!(!indexed_version_is_current(
+        Some(b"not a version vector"),
+        &version
+    ));
+    assert!(!indexed_version_is_current(
+        Some(&version.encode()[..3]),
+        &version
+    ));
+}

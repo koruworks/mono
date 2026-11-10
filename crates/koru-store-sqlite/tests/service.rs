@@ -485,8 +485,14 @@ fn a_workspace_row_marked_deleted_without_manifest_state_is_cleared_on_open() {
     );
 }
 
+/// The manifest replicates what it owns — the name and the appearance — and
+/// **no lifecycle**. Since catalog 13 the root unit is the only trash/restore
+/// authority and the manifest's `deleted_at` is a compatibility hint that
+/// never moves a Workspace holding a unit, which a provisioned replica does
+/// (root-catalog TECHNICAL.final §6; the lifecycle that does travel between
+/// devices is the root exchange of `koru-store-server`'s peer tests).
 #[test]
-fn manifest_replication_applies_archived_deleted_and_restored_lifecycle() {
+fn manifest_replication_applies_the_appearance_and_never_the_lifecycle() {
     let mut source = Fixture::new();
     let workspace = source.a_workspace();
     let manifest = source.store.manifest_id(workspace).unwrap();
@@ -522,7 +528,10 @@ fn manifest_replication_applies_archived_deleted_and_restored_lifecycle() {
         at(3),
     );
     let replicated = target.store.workspace_including_deleted(workspace).unwrap();
-    assert_eq!(replicated.deleted_at, Some(at(2)));
+    assert_eq!(
+        replicated.deleted_at, None,
+        "a manifest hint cannot trash a Workspace that holds a unit"
+    );
     assert!(replicated.archived);
     assert!(
         target.store.profiles().is_ok(),
@@ -547,7 +556,7 @@ fn manifest_replication_applies_archived_deleted_and_restored_lifecycle() {
             .unwrap()
             .iter()
             .any(|row| row.id == workspace),
-        "the restored workspace returns to the active catalog"
+        "the workspace stayed in the active catalog throughout"
     );
 }
 
@@ -619,8 +628,14 @@ fn workspace_sync_digest_repairs_membership_across_delete_and_restore() {
     assert_eq!(catalog.sync_document_digests(workspace).unwrap().len(), 2);
 }
 
+/// The descriptor is a bootstrap hint and never overwrites what is here:
+/// against an **existing** row only the content identity is checked, so a
+/// descriptor disagreeing about the Profile is simply ignored (root-catalog
+/// TECHNICAL.final §7.2). The Profile's immutable creation time is still
+/// guarded where a Profile really is being provisioned — a replica of a
+/// Workspace this device does not have.
 #[test]
-fn replica_provisioning_refuses_identity_collisions_without_overwriting() {
+fn replica_provisioning_ignores_a_stale_descriptor_and_guards_a_provisioned_profile() {
     let mut fixture = Fixture::new();
     let workspace = fixture.a_workspace();
     let record = fixture.store.workspace(workspace).unwrap();
@@ -636,12 +651,32 @@ fn replica_provisioning_refuses_identity_collisions_without_overwriting() {
     let mut conflicting = profile.clone();
     conflicting.created_at = at(99);
 
-    let error = fixture
+    // The row exists, so nothing of the descriptor is read beyond the
+    // manifest identity, and nothing is written.
+    fixture
         .store
         .provision_replica(&conflicting, &record, manifest, at(1))
-        .unwrap_err();
+        .unwrap();
+    assert_eq!(
+        fixture.store.profile(profile.id).unwrap().created_at,
+        profile.created_at
+    );
 
+    // A Workspace this device does not hold really provisions the Profile the
+    // placement names, and there the collision is refused.
+    let incoming = koru_store_core::Workspace::new(profile.id, "Incoming", at(2)).unwrap();
+    let error = fixture
+        .store
+        .provision_replica(&conflicting, &incoming, DocumentId::new(), at(2))
+        .unwrap_err();
     assert_eq!(error.code(), Code::ProfileExists);
+    assert!(
+        fixture
+            .store
+            .workspace_including_deleted(incoming.id)
+            .is_err(),
+        "a refused provisioning lists nothing"
+    );
     assert_eq!(
         fixture.store.profile(profile.id).unwrap().name,
         profile.name
@@ -1481,7 +1516,10 @@ fn removing_an_empty_profile_uses_soft_deletion_and_keeps_its_owned_content() {
     assert_eq!(retained.deleted_at, Some(at(3)));
     assert_eq!(
         f.store.restore_workspace(workspace).unwrap_err().code(),
-        Code::ProfileNotFound
+        // Since Plan 1.3 the Workspace route says which of the two it is: a
+        // Workspace whose Profile is gone from this device is recovered only
+        // by the Profile's own operation (STORE.md, "Batch restore").
+        Code::ProfileRemoved
     );
     assert_eq!(
         f.store.workspace_manifest_deletion(workspace).unwrap(),
@@ -1541,7 +1579,13 @@ fn purge_removes_only_deleted_workspaces_at_or_before_the_cutoff() {
     let expired_dir = f.dir.path().join("workspaces").join(expired.to_storage());
     let recent_dir = f.dir.path().join("workspaces").join(recent.to_storage());
 
-    assert_eq!(f.store.purge_deleted(at(10)).unwrap(), 1);
+    // Retention is per deletion fact: a cutoff of `at(10)` plus the default
+    // retention expires the deletion at `at(2)` and not the one at `at(20)`.
+    let cutoff = Timestamp::from_millis(at(10).millis() + koru_store_core::TRASH_RETENTION_MS);
+    let outcome = f.store.purge_deleted(cutoff).unwrap();
+    assert_eq!(outcome.purged, vec![expired]);
+    assert!(outcome.held.is_empty());
+    assert!(outcome.pending.is_empty());
     assert!(!expired_dir.exists());
     assert!(recent_dir.exists());
     assert_eq!(

@@ -82,6 +82,7 @@ fn surface_with_reply() -> ChatSurface {
         feedback: Vec::new(),
         usage: Vec::new(),
         reasoning_control: None,
+        agent_commands: None,
         attachments: Vec::new(),
     });
     let width = surface.conversation_rect().w;

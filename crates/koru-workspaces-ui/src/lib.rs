@@ -83,7 +83,10 @@ pub use action::{Action, Request};
 pub use controller::WorkspacesController;
 pub use links::{MANAGER_SCOPES, WorkspaceLinks};
 pub use pending::CommandId;
-pub use state::{Authority, Authorization, Availability, Group, Notice, ProfileRow, Row};
+pub use state::{
+    Authority, Authorization, Availability, DeletedProfileRow, Group, Notice, ProfileRow, Recovery,
+    Row, UnassignedRow,
+};
 
 /// The classifications [`links`] hands back, worded here.
 ///

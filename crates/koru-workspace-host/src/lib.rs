@@ -66,6 +66,7 @@ pub mod native_surface;
 pub mod preferences;
 mod profile_activation;
 mod profile_lifecycle_decision;
+mod profile_names;
 mod profile_runtime;
 pub mod profile_wait;
 pub mod reveal;
@@ -739,6 +740,20 @@ pub trait View {
     /// **The answer to [`PaneRequest::ChooseAiChatFolder`]** (AGENTUX UC8).
     /// Called only on a real choice; `true` when the view wants redrawing.
     fn ai_chat_folder_chosen(&mut self, _chosen: std::path::PathBuf) -> bool {
+        false
+    }
+
+    /// The answer to a Composer This computer file or folder picker.
+    fn ai_computer_path_chosen(&mut self, _chosen: std::path::PathBuf) -> bool {
+        false
+    }
+
+    /// A correlated Files import for a chat's Add to workspace choice.
+    fn ai_workspace_file_imported(
+        &mut self,
+        _op: uuid::Uuid,
+        _result: Result<koru_core::DocumentId, String>,
+    ) -> bool {
         false
     }
 
@@ -2440,11 +2455,17 @@ pub enum PaneRequest {
     RestoreLocalProfile {
         profile: ProfileId,
     },
-    /// Remove one local Profile through Agent/Store, optionally moving all of
-    /// its active Workspaces to Trash first.
+    /// Remove one local Profile. With `preview` — the deletion preview the
+    /// person confirmed over — this is the **shared Profile deletion batch**
+    /// (root-catalog §6.1): the Profile and every captured workspace go to
+    /// Trash in one Store transaction, restorable together. Without it, the
+    /// device-local removal: an empty Profile's row is hidden here, or a
+    /// resumed removal attempt soft-deletes each workspace first when
+    /// `delete_workspaces`.
     RemoveLocalProfile {
         profile: ProfileId,
         delete_workspaces: bool,
+        preview: Option<koru_api_client::ProfileDeletionPreview>,
     },
     /// Finish the recoverable local cascade only after Agent has durably
     /// acknowledged hosted deletion for this exact Profile.
@@ -2750,6 +2771,17 @@ pub enum PaneRequest {
         title: String,
         start: Option<std::path::PathBuf>,
     },
+    /// A Composer This computer choice; the view remembers the requesting
+    /// chat surface and whether it requested a file or a folder.
+    ChooseAiComputer {
+        title: String,
+        folder: bool,
+    },
+    ImportAiWorkspaceFile {
+        op: uuid::Uuid,
+        workspace: koru_core::WorkspaceId,
+        path: std::path::PathBuf,
+    },
     RenameProfile(ProfileId, String),
     SetProfileAppearance {
         id: ProfileId,
@@ -2986,6 +3018,8 @@ impl PaneRequest {
             Self::ChooseDelegateFolder { .. } => "request.choose_delegate_folder",
             Self::ChooseRecordingPath { .. } => "request.choose_recording_path",
             Self::ChooseAiChatFolder { .. } => "request.choose_ai_chat_folder",
+            Self::ChooseAiComputer { .. } => "request.choose_ai_computer",
+            Self::ImportAiWorkspaceFile { .. } => "request.import_ai_workspace_file",
             Self::RenameWorkspace(..) => "request.rename_workspace",
             Self::SetWorkspaceIcon { .. } => "request.workspace_icon",
             Self::ImportContent { .. } => "request.import_content",

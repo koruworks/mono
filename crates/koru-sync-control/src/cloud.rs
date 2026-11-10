@@ -41,6 +41,11 @@ pub const MAX_CLOUD_CONTROL_FRAME_BYTES: usize = 64 * 1024;
 pub const CLOUD_PERMIT_VERSION: u32 = 1;
 pub const CLOUD_WORKSPACE_DESCRIPTOR_VERSION: u32 = 1;
 pub const CLOUD_STATUS_VERSION: u32 = 1;
+/// The v2 permit and descriptor of root-catalog Plan 3.1 (TECHNICAL.final
+/// §7.3): separate admissions per scope, placement beside — not inside —
+/// content identity. Beside v1, which old clients keep issuing.
+pub const CLOUD_PERMIT_VERSION_V2: u32 = 2;
+pub const CLOUD_WORKSPACE_DESCRIPTOR_VERSION_V2: u32 = 2;
 
 /// Identity only, and deliberately **not** [`ReplicaDescriptor`], which also
 /// carries names and appearance. It comes from the hosted descriptor read
@@ -168,6 +173,379 @@ impl CloudPermitV1 {
         }
         Ok(())
     }
+}
+
+/// The v2 bootstrap descriptor: the same content identity as
+/// [`CloudWorkspaceDescriptorV1`] with the membership Profile gone and the
+/// Workspace's **placement as a projection of the committed account
+/// catalog** beside it (root-catalog TECHNICAL.final §7.3 "Hosted storage
+/// must separate owner account/workspace membership from placement").
+/// `placement` null is explicitly unassigned — a Workspace the v1 shape
+/// could not describe at all. It still comes from the hosted descriptor read
+/// or `read_cloud_bootstrap`, never from an invented manifest.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CloudWorkspaceDescriptorV2 {
+    pub version: u32,
+    pub workspace_id: CloudId,
+    pub workspace_incarnation_id: CloudId,
+    pub logical_replica_id: CloudId,
+    pub lineage_id: CloudId,
+    pub manifest_document_id: CloudId,
+    pub authorization_version: i64,
+    pub membership_epoch: i64,
+    pub cloud_access_epoch: i64,
+    pub placement: Option<CloudId>,
+    /// The catalog unit revision at which the placement was committed to the
+    /// hosted projection; a Profile-grant cache invalidates on it.
+    pub placement_revision: i64,
+}
+
+impl CloudWorkspaceDescriptorV2 {
+    /// Canonical UUIDv4 for every id, lineage equal to the incarnation,
+    /// positive epochs and a nonnegative placement revision. A placement
+    /// that is present must be a canonical v4 too; null is a value here,
+    /// not an omission.
+    pub fn validate(&self) -> Result<(), HostCloudError> {
+        if self.version != CLOUD_WORKSPACE_DESCRIPTOR_VERSION_V2 {
+            return Err(HostCloudError::DescriptorVersion);
+        }
+        if !self.workspace_id.is_v4()
+            || !self.workspace_incarnation_id.is_v4()
+            || !self.logical_replica_id.is_v4()
+            || !self.lineage_id.is_v4()
+            || !self.manifest_document_id.is_v4()
+            || self.placement.is_some_and(|profile| !profile.is_v4())
+        {
+            return Err(HostCloudError::DescriptorIdentity);
+        }
+        if self.lineage_id != self.workspace_incarnation_id {
+            return Err(HostCloudError::DescriptorLineage);
+        }
+        if self.authorization_version <= 0
+            || self.membership_epoch <= 0
+            || self.cloud_access_epoch <= 0
+            || self.placement_revision < 0
+        {
+            return Err(HostCloudError::DescriptorEpoch);
+        }
+        Ok(())
+    }
+
+    /// The v1 dataset principal of this Workspace, for the existing
+    /// handshake.
+    pub fn dataset(&self) -> CloudReplicaPrincipalV1 {
+        CloudReplicaPrincipalV1::Workspace {
+            workspace_id: self.workspace_id,
+            incarnation_id: self.workspace_incarnation_id,
+            logical_replica_id: self.logical_replica_id,
+        }
+    }
+}
+
+/// What one v2 permit admits (TECHNICAL.final §7.3 "separately versioned
+/// user-catalog, workspace, user-personal and optional Profile
+/// Identity/Private admissions, each with its own eligibility and authority
+/// generation"). A permit is for one scope; the `(workspace_permit,
+/// profile_permit)` pairing of v1 is gone — a Workspace is admitted on its
+/// own descriptor, membership and incarnation, and no Profile permit is
+/// required beside it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "scope", rename_all = "snake_case", deny_unknown_fields)]
+pub enum CloudPermitScopeV2 {
+    /// The account's root units: Profile and Workspace catalog units, over
+    /// the account catalog session. No v1 dataset: the session is the
+    /// scope's, not a replica's.
+    UserCatalog,
+    /// One Workspace's content. The descriptor's placement is a projection
+    /// for the UI and the grant cache, never an admission input.
+    Workspace {
+        descriptor: CloudWorkspaceDescriptorV2,
+    },
+    /// The account's personal v2 unit for one Workspace, over the account
+    /// catalog session. Follows the Workspace's policy; names no Profile.
+    UserPersonal { workspace_id: CloudId },
+    /// One Profile's Identity and Private units over its v1 Profile
+    /// dataset, eligible only while a Cloud-enabled Workspace is currently
+    /// placed under it (§4.4); never Personal, which is `UserPersonal`.
+    ProfileUnits {
+        dataset: CloudReplicaPrincipalV1,
+        /// Identity and/or Private of exactly this Profile.
+        allowed_profile_units: Vec<ProfileUnitRef>,
+    },
+}
+
+/// One bounded authority context for one scope. Like [`CloudPermitV1`], an
+/// admission limit, never proof that local content exists; unlike it,
+/// fenced by the scope's own `authority_generation` as well as the account
+/// generation, so a Profile-units permit issued before the last Cloud
+/// Workspace moved out is stale on its own, without re-issuing the
+/// Workspace's.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CloudPermitV2 {
+    pub version: u32,
+    pub permit_id: Uuid,
+    pub account_id: CloudId,
+    /// The account's catalog scope as the service minted it. `None` only
+    /// in the v1 compatibility window (root-catalog Plan 3.2): a service
+    /// that still answers v1 has minted no scope, and the permits a device
+    /// builds from a v1 token pair say so rather than invent one.
+    pub catalog_scope_id: Option<CloudId>,
+    pub scope: CloudPermitScopeV2,
+    pub account_generation: u64,
+    pub authority_generation: u64,
+    pub expires_at_seconds: i64,
+}
+
+impl CloudPermitV2 {
+    pub fn validate(&self) -> Result<(), HostCloudError> {
+        if self.version != CLOUD_PERMIT_VERSION_V2 {
+            return Err(HostCloudError::PermitVersion);
+        }
+        if self.permit_id.get_version_num() != 4
+            || !self.account_id.is_v4()
+            || self.catalog_scope_id.is_some_and(|scope| !scope.is_v4())
+        {
+            return Err(HostCloudError::PermitIdentity);
+        }
+        if self.account_generation == 0 || self.authority_generation == 0 {
+            return Err(HostCloudError::PermitGeneration);
+        }
+        if self.expires_at_seconds <= 0 {
+            return Err(HostCloudError::PermitExpiry);
+        }
+        match &self.scope {
+            CloudPermitScopeV2::UserCatalog => Ok(()),
+            CloudPermitScopeV2::Workspace { descriptor } => descriptor.validate(),
+            CloudPermitScopeV2::UserPersonal { workspace_id } => {
+                if !workspace_id.is_v4() {
+                    return Err(HostCloudError::PermitIdentity);
+                }
+                Ok(())
+            }
+            CloudPermitScopeV2::ProfileUnits {
+                dataset,
+                allowed_profile_units,
+            } => {
+                let CloudReplicaPrincipalV1::Profile { profile_id, .. } = dataset else {
+                    return Err(HostCloudError::PermitScope);
+                };
+                if !profile_id.is_v4() {
+                    return Err(HostCloudError::PermitIdentity);
+                }
+                // A v2 service never mints a permit that authorizes nothing,
+                // so an empty list is not a v2 permit. A permit read from
+                // the v1 shape is the one exception, and it is marked by the
+                // missing catalog scope: v1's list is "limited further by the
+                // actual grant", so an empty one is legal v1 and the frozen
+                // `host-control-v1` sequences freeze it as applied. Its
+                // Personal entry addresses nothing since catalog 13, which
+                // leaves the same empty set. Refusing it would refuse the
+                // whole page and withdraw the Identity and Private sync the
+                // v1 permit legitimately authorizes.
+                let v1_window = self.catalog_scope_id.is_none();
+                if (allowed_profile_units.is_empty() && !v1_window)
+                    || allowed_profile_units.len() > 2
+                {
+                    return Err(HostCloudError::PermitProfileUnits);
+                }
+                let mut seen = allowed_profile_units.clone();
+                seen.sort();
+                seen.dedup();
+                if seen.len() != allowed_profile_units.len() {
+                    return Err(HostCloudError::PermitProfileUnits);
+                }
+                for unit in allowed_profile_units {
+                    let profile = match unit {
+                        ProfileUnitRef::Identity { profile }
+                        | ProfileUnitRef::Private { profile } => profile,
+                        // Personal is `UserPersonal`, keyed by the Workspace;
+                        // the legacy private unit is never admitted to Cloud.
+                        ProfileUnitRef::Personal { .. } | ProfileUnitRef::LegacyPrivate { .. } => {
+                            return Err(HostCloudError::PermitProfileUnits);
+                        }
+                    };
+                    if profile.as_uuid().as_bytes() != profile_id.as_bytes() {
+                        return Err(HostCloudError::PermitProfileUnits);
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// The v1 dataset principal this permit's session is admitted under:
+    /// the Workspace's or the Profile's replica for the content scopes,
+    /// `None` for the two account-catalog scopes, whose session is the
+    /// catalog's own.
+    pub fn dataset(&self) -> Option<CloudReplicaPrincipalV1> {
+        match &self.scope {
+            CloudPermitScopeV2::Workspace { descriptor } => Some(descriptor.dataset()),
+            CloudPermitScopeV2::ProfileUnits { dataset, .. } => Some(*dataset),
+            CloudPermitScopeV2::UserCatalog | CloudPermitScopeV2::UserPersonal { .. } => None,
+        }
+    }
+
+    /// The Workspace a content permit is about: the Workspace scope's own
+    /// id, or the personal scope's Workspace. `None` for the catalog and the
+    /// Profile-units scopes.
+    pub fn workspace_id(&self) -> Option<CloudId> {
+        match &self.scope {
+            CloudPermitScopeV2::Workspace { descriptor } => Some(descriptor.workspace_id),
+            CloudPermitScopeV2::UserPersonal { workspace_id } => Some(*workspace_id),
+            CloudPermitScopeV2::UserCatalog | CloudPermitScopeV2::ProfileUnits { .. } => None,
+        }
+    }
+
+    /// The Profile a permit names **as a placement hint**: the Workspace
+    /// scope's projected placement, or the Profile whose units a
+    /// Profile-units permit admits. Never an admission input (root-catalog
+    /// TECHNICAL.final §7.3): the mode initializer reads it to know which
+    /// subjects the account covers, nothing else.
+    pub fn placement_profile(&self) -> Option<CloudId> {
+        match &self.scope {
+            CloudPermitScopeV2::Workspace { descriptor } => descriptor.placement,
+            CloudPermitScopeV2::ProfileUnits { dataset, .. } => match dataset {
+                CloudReplicaPrincipalV1::Profile { profile_id, .. } => Some(*profile_id),
+                CloudReplicaPrincipalV1::Workspace { .. } => None,
+            },
+            CloudPermitScopeV2::UserCatalog | CloudPermitScopeV2::UserPersonal { .. } => None,
+        }
+    }
+
+    /// The v2 reading of a v1 permit, for the compatibility window of
+    /// root-catalog Plan 3.2 (the contract's mapping: a v1 Workspace permit
+    /// is a v2 `workspace` permit whose placement is the v1 membership
+    /// Profile; a v1 Profile permit is a v2 `profile_units` permit over
+    /// Identity and Private only — its Personal unit is the v2
+    /// `user_personal` scope, which no v1 token carries, and the Store has
+    /// answered `None` for the v1 Personal address since catalog 13). The
+    /// authority generation is 1: a v1 service has none, and the account
+    /// generation alone fences it.
+    pub fn from_v1(permit: &CloudPermitV1) -> Result<Self, HostCloudError> {
+        permit.validate()?;
+        let scope = match (permit.dataset, &permit.workspace_descriptor) {
+            (CloudReplicaPrincipalV1::Workspace { .. }, Some(descriptor)) => {
+                CloudPermitScopeV2::Workspace {
+                    descriptor: CloudWorkspaceDescriptorV2::from_v1(descriptor),
+                }
+            }
+            (CloudReplicaPrincipalV1::Workspace { .. }, None) => {
+                return Err(HostCloudError::PermitDescriptorRequired);
+            }
+            (dataset @ CloudReplicaPrincipalV1::Profile { profile_id, .. }, _) => {
+                if profile_id != permit.profile_id {
+                    return Err(HostCloudError::PermitScope);
+                }
+                let allowed_profile_units: Vec<ProfileUnitRef> = permit
+                    .allowed_profile_units
+                    .iter()
+                    .filter(|unit| {
+                        matches!(
+                            unit,
+                            ProfileUnitRef::Identity { .. } | ProfileUnitRef::Private { .. }
+                        )
+                    })
+                    .cloned()
+                    .collect();
+                // An entry this device cannot serve any more authorizes
+                // nothing; it does not take the permit down with it, and a
+                // permit left with nothing is still the standing admission
+                // record v1 meant — see `validate`.
+                CloudPermitScopeV2::ProfileUnits {
+                    dataset,
+                    allowed_profile_units,
+                }
+            }
+        };
+        let converted = Self {
+            version: CLOUD_PERMIT_VERSION_V2,
+            permit_id: permit.permit_id,
+            account_id: permit.account_id,
+            catalog_scope_id: None,
+            scope,
+            account_generation: permit.account_generation,
+            authority_generation: 1,
+            expires_at_seconds: permit.expires_at_seconds,
+        };
+        converted.validate()?;
+        Ok(converted)
+    }
+}
+
+impl CloudWorkspaceDescriptorV2 {
+    /// The v1 descriptor read as v2: the membership Profile becomes the
+    /// placement projection at revision 0 — the v1 service answers it from
+    /// the same projection during the window (the contract's §4).
+    pub fn from_v1(descriptor: &CloudWorkspaceDescriptorV1) -> Self {
+        Self {
+            version: CLOUD_WORKSPACE_DESCRIPTOR_VERSION_V2,
+            workspace_id: descriptor.workspace_id,
+            workspace_incarnation_id: descriptor.workspace_incarnation_id,
+            logical_replica_id: descriptor.logical_replica_id,
+            lineage_id: descriptor.lineage_id,
+            manifest_document_id: descriptor.manifest_document_id,
+            authorization_version: descriptor.authorization_version,
+            membership_epoch: descriptor.membership_epoch,
+            cloud_access_epoch: descriptor.cloud_access_epoch,
+            placement: Some(descriptor.profile_id),
+            placement_revision: 0,
+        }
+    }
+}
+
+// ----------------------------------------------------- the root-unit join
+
+/// At most this many update frames in one root-unit control message, the
+/// bound `koru-account-wire::root_catalog::MAX_ROOT_UNIT_FRAMES` puts on the
+/// HTTP body the frames came from.
+pub const MAX_CLOUD_ROOT_FRAMES: usize = 64;
+
+/// At most this many units in one root inventory answer: Profiles plus
+/// Workspaces plus personal units of one account on one device.
+pub const MAX_CLOUD_ROOT_INVENTORY: usize = 4096;
+
+/// What the device holds as its account-scope binding, as
+/// `Store::account_binding` answers it, for the Agent to declare to the
+/// service (root-catalog Plan 3.2; TECHNICAL.final §4.1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CloudAccountBindingRef {
+    pub account_id: CloudId,
+    pub catalog_scope_id: CloudId,
+}
+
+/// One unit of the account path's root inventory: the unit and the frontier
+/// this device holds for it (an encoded Loro version vector).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CloudRootUnitState {
+    pub unit: koru_store_core::service::JoinUnit,
+    pub frontier: Vec<u8>,
+}
+
+/// What the Store's export boundary answered for one unit over the Cloud
+/// path: derived bytes, a hold (logged by id, never raw bytes), or no such
+/// unit here.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "outcome", rename_all = "snake_case", deny_unknown_fields)]
+pub enum CloudRootExport {
+    Published {
+        frames: Vec<Vec<u8>>,
+        redacted_ops: u32,
+    },
+    Held,
+    NotFound,
+}
+
+/// What the Store's staged join did with the service's frames for one unit
+/// (the peer protocol 6 receipt phases on the account relationship).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "outcome", rename_all = "snake_case", deny_unknown_fields)]
+pub enum CloudRootJoin {
+    Applied { frontier: Vec<u8> },
+    Pending { frontier: Vec<u8> },
 }
 
 /// Where one live permit's work currently stands. `Settled` is **not** durable
@@ -357,6 +735,9 @@ pub enum HostCloudError {
     PermitProfileUnits,
     PermitDescriptorRequired,
     PermitDescriptorForbidden,
+    /// A v2 permit whose scope and dataset disagree: a Profile-units scope
+    /// over a Workspace dataset, or the reverse.
+    PermitScope,
 }
 
 impl HostCloudError {
@@ -376,6 +757,7 @@ impl HostCloudError {
             Self::PermitProfileUnits => "cloud_permit_profile_units",
             Self::PermitDescriptorRequired => "cloud_permit_descriptor_required",
             Self::PermitDescriptorForbidden => "cloud_permit_descriptor_forbidden",
+            Self::PermitScope => "cloud_permit_scope",
         }
     }
 }

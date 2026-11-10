@@ -531,7 +531,14 @@ impl Fixture {
                     &entry
                         .for_account(&owner(account).account.to_string())
                         .unwrap(),
-                    credential(account).encode().unwrap(),
+                    // A slot as the code writes one: the token and the random
+                    // key a refresh of it must present as its idempotency
+                    // key, in the one value. Seeding the token alone is a slot
+                    // from a build that kept no key, which restore then has to
+                    // top up — a write this fixture would see as the vault
+                    // being rewritten behind it.
+                    crate::account::directory::encode_slot(&credential(account), &[account; 32])
+                        .unwrap(),
                 )
                 .unwrap();
         }
