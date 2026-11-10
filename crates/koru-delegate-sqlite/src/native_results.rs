@@ -109,6 +109,9 @@ pub struct PendingNativeResult {
 /// possession of an ID, snapshot or previous receipt grants none. No Store
 /// callbacks, SQL closures, connection handles or request bodies cross this port.
 pub trait NativeResultLedger {
+    /// Held effects may still commit; verified evidence still needs publication.
+    /// Neither condition permits releasing the Run's execution capacity.
+    fn native_effects_pending(&self, run: RunId) -> Result<bool, BotLedgerError>;
     fn install_native_policy(
         &mut self,
         barrier: &BotPolicyBarrier,

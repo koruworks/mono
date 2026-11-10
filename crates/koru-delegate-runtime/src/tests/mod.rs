@@ -193,6 +193,10 @@ impl RecordingStore {
 }
 
 impl RunStore for RecordingStore {
+    fn native_results(&mut self) -> Option<&mut dyn koru_delegate_sqlite::NativeResultLedger> {
+        Some(self)
+    }
+
     fn bots(&mut self) -> Option<&mut dyn koru_delegate_sqlite::BotLedger> {
         Some(self)
     }

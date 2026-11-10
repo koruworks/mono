@@ -39,6 +39,7 @@ const SCHEDULE_STREAM_QUEUE: usize = 16;
 
 #[derive(Clone)]
 pub struct Identity {
+    pub(crate) run_authorities: crate::authority::AuthorityProjection,
     pub launch_id: String,
     pub authority: String,
     pub device_id: String,
@@ -162,6 +163,18 @@ fn handle(
                         false,
                     )),
                 );
+                return;
+            }
+            if let koru_delegate_api::bots::BotCommand::ResolveRunAuthority { run, generation } =
+                command
+            {
+                let response = match identity.run_authorities.resolve(run, generation) {
+                    Ok(authority) => {
+                        Response::Bot(koru_delegate_api::bots::BotReply::RunAuthority { authority })
+                    }
+                    Err(failure) => Response::Failure(failure),
+                };
+                write(&stream, &response);
                 return;
             }
             Command::Bot {

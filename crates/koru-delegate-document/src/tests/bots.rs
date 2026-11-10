@@ -80,3 +80,27 @@ fn bot_result_and_delivery_binding_are_validated_before_writing() {
     value.bot = None;
     assert!(RunDocument::create(&value).is_err());
 }
+
+#[test]
+fn native_registration_is_idempotent_conflict_safe_and_bot_only() {
+    let mut expected = bot_header();
+    let reference = expected.native_results.remove(0);
+    let doc = RunDocument::create(&expected).unwrap();
+    doc.register_native_result(&reference).unwrap();
+    let version = doc.version();
+    doc.register_native_result(&reference).unwrap();
+    assert_eq!(doc.version(), version);
+    let mut changed = reference.clone();
+    changed.title.push_str(" changed");
+    assert!(doc.register_native_result(&changed).is_err());
+    assert_eq!(
+        doc.header().unwrap().native_results,
+        vec![reference.clone()]
+    );
+    assert!(
+        RunDocument::create(&header())
+            .unwrap()
+            .register_native_result(&reference)
+            .is_err()
+    );
+}

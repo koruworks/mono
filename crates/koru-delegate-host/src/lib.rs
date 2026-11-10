@@ -176,6 +176,7 @@ fn serve(
         roots::HostRoots::new(session_endpoint.clone(), settings()),
         context::ScheduleCapture::new(gateway.client.clone()),
     );
+    let run_authorities = authority::AuthorityProjection::default();
     let ports = Ports {
         store: Box::new(ledger.clone()),
         documents: Box::new(documents::StoreDocuments::new(gateway.client.clone())),
@@ -198,9 +199,10 @@ fn serve(
         // reads is `koru-settings`', so a rehearsal cannot read an
         // installation's.
         roots: Box::new(roots::HostRoots::new(session_endpoint, settings())),
-        mcp: Box::new(authority::GatewayAuthority::new(
+        mcp: Box::new(authority::GatewayAuthority::with_projection(
             gateway.client.clone(),
             mcp_base,
+            run_authorities.clone(),
         )),
         registrations: Box::new(authority::GatewayRegistrations::new(
             gateway.client.clone(),
@@ -256,6 +258,7 @@ fn serve(
             authority: bootstrap.authority().to_owned(),
             device_id: device.clone(),
             bot_authority: bootstrap.bot_authority().cloned(),
+            run_authorities,
         },
         commands,
         stop_tx,

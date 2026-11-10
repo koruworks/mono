@@ -64,7 +64,7 @@ pub use bots::{
     BotWorkingFolder, CapturedBotPolicy, ConfirmNativeResult, NativeResultDisposition,
     NativeResultIntentView, NativeResultKey, NativeResultKind, NativeResultObservation,
     NativeResultOperation, NativeResultReference, NativeResultRefusal, NativeResultStage,
-    PrepareNativeResult,
+    PrepareNativeResult, RunToolAuthority,
 };
 pub use context::{BlobKind, RunContextItem};
 pub use deletion::{ArtifactDisposition, FolderOutcome};

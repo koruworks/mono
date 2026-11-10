@@ -287,6 +287,35 @@ impl RunDocument {
         self.commit_value(K_RESULTS, to_stored(&results, Part::Results)?)
     }
 
+    /// Register a verified native result once. A repeated operation must carry
+    /// precisely its original evidence; later page edits never rewrite history.
+    pub fn register_native_result(
+        &self,
+        reference: &koru_delegate_core::NativeResultReference,
+    ) -> Result<()> {
+        self.writable()?;
+        let mut header = self.header()?;
+        if header.bot.is_none() || !reference.valid() {
+            return Err(RunDocumentError::Malformed { part: Part::Header });
+        }
+        if let Some(existing) = header
+            .native_results
+            .iter()
+            .find(|r| r.operation_id == reference.operation_id)
+        {
+            return if existing == reference {
+                Ok(())
+            } else {
+                Err(RunDocumentError::Malformed { part: Part::Header })
+            };
+        }
+        header.native_results.push(reference.clone());
+        self.commit_value(
+            "native_results",
+            to_stored(&header.native_results, Part::Header)?,
+        )
+    }
+
     /// One gesture on a finished run (D44). A register: the last write on
     /// any device wins, and it converges however many write it.
     pub fn set_rating(&self, rating: &RunRating) -> Result<()> {

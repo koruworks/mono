@@ -132,6 +132,13 @@ impl Orchestrator {
                     continue;
                 }
             };
+            if !row.retired && !row.phase.is_terminal() && !header.status.is_terminal() {
+                if let Some(device) = header.executing_device() {
+                    // Publish immutable discovery before recovery can wait on a
+                    // provider that synchronously asks for its tool catalog.
+                    self.refresh_run_tool_authority(run, device)?;
+                }
+            }
             recorded.push(DurableClaim {
                 run,
                 attempt: row.attempt,
@@ -142,7 +149,9 @@ impl Orchestrator {
                 attempt.is_bot = true;
                 attempt.session = row.provider_session.and_then(|key| key.session);
                 self.open(run)?.attempt = Some(attempt);
-                if self.bot_prove_end(run, true).unwrap_or(false) {
+                if self.bot_prove_end(run, true).unwrap_or(false)
+                    && !self.native_effects_pending(run).unwrap_or(true)
+                {
                     self.bot_end_attempt(run, AttemptPhase::Ended, false)?;
                     liveness.insert(row.attempt, Liveness::Ended);
                     report.reconciled.push(run);

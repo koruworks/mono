@@ -13,6 +13,8 @@
 //! [`SharedLedger`] locks only for one SQLite statement. No path holds the
 //! guard while it calls another port or waits on the actor rendezvous.
 
+mod bots;
+
 use std::sync::{Arc, Mutex};
 
 use koru_delegate_core::{
@@ -165,6 +167,13 @@ impl SharedLedger {
 }
 
 impl RunStore for SharedLedger {
+    fn bots(&mut self) -> Option<&mut dyn koru_delegate_sqlite::BotLedger> {
+        Some(self)
+    }
+    fn native_results(&mut self) -> Option<&mut dyn koru_delegate_sqlite::NativeResultLedger> {
+        Some(self)
+    }
+
     fn validate_intent(
         &self,
         request: &DelegationRequest,

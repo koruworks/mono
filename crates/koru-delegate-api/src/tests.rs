@@ -413,7 +413,7 @@ fn v6_carries_every_schedule_management_request_and_response() {
         let bytes = koru_ipc::frame::encode(WIRE_VERSION, &request).unwrap();
         let (version, decoded): (u8, Request) =
             koru_ipc::frame::read_frame(&mut bytes.as_slice()).unwrap();
-        assert_eq!(version, 7);
+        assert_eq!(version, 8);
         assert_eq!(decoded, request);
     }
 
@@ -436,7 +436,7 @@ fn v6_carries_every_schedule_management_request_and_response() {
         let bytes = koru_ipc::frame::encode(WIRE_VERSION, &response).unwrap();
         let (version, decoded): (u8, Response) =
             koru_ipc::frame::read_frame(&mut bytes.as_slice()).unwrap();
-        assert_eq!(version, 7);
+        assert_eq!(version, 8);
         assert_eq!(decoded, response);
     }
 }

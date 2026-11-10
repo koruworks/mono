@@ -25,6 +25,9 @@ use crate::{RunStore, ScheduleLedger, counters};
 use koru_delegate_document::ScheduleClaimAuthority;
 
 impl RunStore for RunsDb {
+    fn native_results(&mut self) -> Option<&mut dyn koru_delegate_sqlite::NativeResultLedger> {
+        Some(self)
+    }
     fn bots(&mut self) -> Option<&mut dyn koru_delegate_sqlite::BotLedger> {
         Some(self)
     }

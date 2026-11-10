@@ -164,3 +164,26 @@ fn native_core_reexport_preserves_the_frozen_ipc_seven_prepare_shape() {
     unknown["request"]["extra_authority"] = true.into();
     assert!(serde_json::from_value::<BotCommand>(unknown).is_err());
 }
+
+#[test]
+fn run_authority_lookup_has_no_caller_owner_and_refuses_unknown_fields() {
+    let mut value =
+        serde_json::json!({"command":"resolve_run_authority","run":Uuid::new_v4(),"generation":1});
+    let command: BotCommand = serde_json::from_value(value.clone()).unwrap();
+    assert!(command.owner().is_none());
+    value["owner"] = serde_json::json!({"device":Uuid::new_v4()});
+    assert!(serde_json::from_value::<BotCommand>(value).is_err());
+    let ordinary = BotReply::RunAuthority {
+        authority: koru_delegate_core::RunToolAuthority::Ordinary {},
+    };
+    assert_eq!(
+        serde_json::to_value(ordinary).unwrap(),
+        serde_json::json!({"result":"run_authority","authority":{"kind":"ordinary"}})
+    );
+    assert!(
+        serde_json::from_value::<koru_delegate_core::RunToolAuthority>(
+            serde_json::json!({"kind":"ordinary","owner":"guessed"})
+        )
+        .is_err()
+    );
+}

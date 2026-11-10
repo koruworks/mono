@@ -66,6 +66,10 @@ pub struct BotObservation {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BotCommand {
+    ResolveRunAuthority {
+        run: koru_delegate_core::RunId,
+        generation: koru_delegate_core::AttemptGeneration,
+    },
     Submit {
         submission: BotSubmission,
     },
@@ -193,7 +197,8 @@ impl BotCommand {
             | Self::EffectFence { fence } => Some(&fence.owner),
             Self::SynchronizePolicy { barrier } => Some(&barrier.key.owner),
             Self::ReconcilePolicyBarrier { key } => Some(&key.owner),
-            Self::PrepareNativeResult { .. }
+            Self::ResolveRunAuthority { .. }
+            | Self::PrepareNativeResult { .. }
             | Self::ReconcileNativeResult { .. }
             | Self::ConfirmNativeResult { .. } => None,
         }
@@ -210,6 +215,9 @@ impl std::fmt::Debug for BotCommand {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "result", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BotReply {
+    RunAuthority {
+        authority: koru_delegate_core::RunToolAuthority,
+    },
     Admission {
         admission: BotAdmissionView,
     },

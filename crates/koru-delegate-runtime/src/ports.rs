@@ -159,6 +159,10 @@ pub type PortResult<T> = Result<T, PortError>;
 /// test. The method set is the ledger's own; the port exists so the
 /// orchestrator can be driven with no file.
 pub trait RunStore: ScheduleLedger {
+    /// Native intent/effect evidence on the same sole-writer connection.
+    fn native_results(&mut self) -> Option<&mut dyn koru_delegate_sqlite::NativeResultLedger> {
+        None
+    }
     /// The same ledger connection's Bot domain. Ordinary fakes may omit it;
     /// Bot callers must return unavailable and never fall back to CreateRun.
     fn bots(&mut self) -> Option<&mut dyn koru_delegate_sqlite::BotLedger> {
@@ -1134,6 +1138,7 @@ pub trait Preamble {
 /// adapter — a second arithmetic for the working folder is a second answer
 /// to which paths a registration may name.
 pub struct McpLaunch<'a> {
+    pub authority: koru_delegate_core::RunToolAuthority,
     pub run: RunId,
     /// The attempt this token is for. A generation that moved is what makes
     /// the previous attempt's token answer `stale_generation`.
@@ -1152,6 +1157,17 @@ pub struct McpLaunch<'a> {
 /// The stable per-run MCP endpoint, its bearer and its tool allowlist
 /// (§7.3), filled by P1.11's run authority.
 pub trait McpEndpoints {
+    /// Publish immutable discovery metadata before a provider can synchronously
+    /// discover its tools. This grants no live effect authority.
+    fn publish_authority(
+        &mut self,
+        _run: RunId,
+        _generation: AttemptGeneration,
+        _authority: koru_delegate_core::RunToolAuthority,
+    ) -> PortResult<()> {
+        Ok(())
+    }
+
     /// Issue this attempt's authority — or advance the generation, when the
     /// run already has one — and answer with what the adapter must render:
     /// the endpoint, the bearer shown once, and the tools.

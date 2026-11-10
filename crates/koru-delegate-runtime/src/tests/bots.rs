@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
+mod native_results;
+
 use super::*;
 use koru_delegate_core::*;
 use koru_delegate_sqlite::*;

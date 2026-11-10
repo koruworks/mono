@@ -11,6 +11,11 @@ fn unavailable(code: &'static str) -> Failure {
 }
 fn bot_failure(error: RunError) -> Failure {
     match error {
+        RunError::Port(error) if error.code == "bot_native_effects_pending" => Failure::new(
+            error.code,
+            "A native result is still being reconciled.",
+            true,
+        ),
         RunError::Port(error) if error.code.starts_with("bot_") => {
             Failure::new(error.code, "The Bot operation was refused.", false)
         }
@@ -85,6 +90,49 @@ impl Actor {
         }
         let device = self.device;
         let reply = match command {
+            BotCommand::ResolveRunAuthority { run, generation } => BotReply::RunAuthority {
+                authority: self
+                    .orchestrator
+                    .resolve_run_tool_authority(run, generation, device)
+                    .map_err(bot_failure)?,
+            },
+            BotCommand::EffectFence { fence } => BotReply::EffectFence {
+                policy: self
+                    .orchestrator
+                    .native_effect_fence(&fence, device)
+                    .map_err(bot_failure)?,
+                fence,
+            },
+            BotCommand::SynchronizePolicy { barrier } => BotReply::PolicyBarrier {
+                receipt: self
+                    .orchestrator
+                    .synchronize_native_policy(barrier, device)
+                    .map_err(bot_failure)?,
+            },
+            BotCommand::ReconcilePolicyBarrier { key } => BotReply::PolicyBarrier {
+                receipt: self
+                    .orchestrator
+                    .reconcile_native_policy(&key, device)
+                    .map_err(bot_failure)?,
+            },
+            BotCommand::PrepareNativeResult { request } => BotReply::NativeResult {
+                intent: self
+                    .orchestrator
+                    .prepare_native_effect(&request, device)
+                    .map_err(bot_failure)?,
+            },
+            BotCommand::ReconcileNativeResult { key } => BotReply::NativeResult {
+                intent: self
+                    .orchestrator
+                    .reconcile_native_result(&key, device)
+                    .map_err(bot_failure)?,
+            },
+            BotCommand::ConfirmNativeResult { request } => BotReply::NativeResult {
+                intent: self
+                    .orchestrator
+                    .confirm_native_result(&request, device)
+                    .map_err(bot_failure)?,
+            },
             BotCommand::Submit { submission } => {
                 let run = submission.request.run;
                 let admission = self
@@ -258,5 +306,23 @@ impl Actor {
         if self.commands.send(Command::BotDrain).is_err() {
             self.bot_drain_pending = false;
         }
+    }
+}
+
+#[cfg(test)]
+mod native_reply_tests {
+    use super::*;
+    #[test]
+    fn pending_native_stop_is_retryable_failure_never_applied() {
+        let failure = bot_failure(
+            koru_delegate_runtime::PortError::new(
+                koru_delegate_runtime::Port::Store,
+                "bot_native_effects_pending",
+                "fixture",
+            )
+            .into(),
+        );
+        assert_eq!(failure.code, "bot_native_effects_pending");
+        assert!(failure.retryable);
     }
 }

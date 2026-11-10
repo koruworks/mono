@@ -13,6 +13,7 @@ mod control;
 mod create;
 mod deletion;
 mod events;
+mod native_results;
 mod record;
 mod restart;
 mod resume;
@@ -341,6 +342,8 @@ pub struct Orchestrator {
     pub(crate) options: Options,
     pub(crate) claims: ScopeClaims,
     pub(crate) runs: HashMap<RunId, RunState>,
+    // Bounded transient current-policy proofs; never reconstructed from ledger hashes.
+    native_policies: Vec<koru_delegate_core::BotPolicyBarrier>,
 }
 
 impl Orchestrator {
@@ -350,6 +353,7 @@ impl Orchestrator {
             options,
             claims: ScopeClaims::new(),
             runs: HashMap::new(),
+            native_policies: Vec::new(),
         }
     }
 

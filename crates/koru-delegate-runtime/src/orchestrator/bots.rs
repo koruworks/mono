@@ -359,6 +359,9 @@ impl Orchestrator {
         if terminate && !self.bot_prove_end(run, true)? {
             return Err(refused("bot_stop_unconfirmed"));
         }
+        if self.native_effects_pending(run)? {
+            return Err(refused("bot_native_effects_pending"));
+        }
         if !row.phase.is_terminal() {
             self.ports
                 .store

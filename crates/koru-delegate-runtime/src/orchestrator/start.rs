@@ -375,7 +375,16 @@ impl Orchestrator {
         // nothing ever starts holding a credential the gateway does not
         // know about — and a refusal fails the start rather than launching
         // a provider whose every tool call would answer 401.
+        let tool_authority = match self.resolve_run_tool_authority(
+            run,
+            generation,
+            header.executing_device().ok_or(RunError::UnknownRun)?,
+        ) {
+            Ok(authority) => authority,
+            Err(_) => return self.start_failed(run, FailureStage::Authority),
+        };
         let mut delegation = match self.ports.mcp.launch(McpLaunch {
+            authority: tool_authority,
             run,
             generation,
             workspace,

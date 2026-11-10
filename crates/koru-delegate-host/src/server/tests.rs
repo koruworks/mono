@@ -32,7 +32,7 @@ fn stale_wire_versions_cannot_reach_dispatch() {
             confirm: false,
         },
     ] {
-        for stale in [1, 3, 4, 6] {
+        for stale in [1, 3, 4, 6, 7] {
             let legacy = frame::encode(stale, &request).unwrap();
             assert!(
                 read_current_request(&mut legacy.as_slice())
@@ -65,6 +65,7 @@ fn bot_admission_requires_separate_capability_and_validated_device() {
         authority: "private-stop-authority-01234567890123456789".into(),
         device_id: uuid::Uuid::new_v4().to_string(),
         bot_authority: Some(capability.clone()),
+        run_authorities: Default::default(),
     };
     assert!(admits_bot(&identity, &capability));
     assert!(!admits_bot(
@@ -91,6 +92,7 @@ fn caller_owner_must_match_the_agents_validated_device() {
         authority: "different".into(),
         device_id: device.to_storage(),
         bot_authority: Some(capability.clone()),
+        run_authorities: Default::default(),
     };
     let mut value = serde_json::json!({
         "command":"reconcile",

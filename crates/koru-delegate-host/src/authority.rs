@@ -33,6 +33,9 @@ use koru_delegate_core::{
     AgentTurnId, ArtifactTitle, ArtifactVersionId, DeviceId, ResultReference, RunAttemptId, RunId,
     WorkspaceId,
 };
+mod projection;
+pub(crate) use projection::AuthorityProjection;
+
 use koru_delegate_runtime::{
     ArtifactRegistrations, McpEndpoints, McpLaunch, Port, PortError, PortResult,
 };
@@ -75,14 +78,20 @@ pub struct GatewayAuthority {
     /// not.
     base_override: Option<String>,
     tools: McpToolAllowlist,
+    projection: AuthorityProjection,
 }
 
 impl GatewayAuthority {
-    pub fn new(client: Client, base_override: Option<String>) -> Self {
+    pub(crate) fn with_projection(
+        client: Client,
+        base_override: Option<String>,
+        projection: AuthorityProjection,
+    ) -> Self {
         Self {
             client,
             base_override: base_override.map(|base| base.trim_end_matches('/').to_owned()),
             tools: allowlist(),
+            projection,
         }
     }
 
@@ -95,8 +104,36 @@ impl GatewayAuthority {
 }
 
 impl McpEndpoints for GatewayAuthority {
+    fn publish_authority(
+        &mut self,
+        run: RunId,
+        generation: koru_delegate_core::AttemptGeneration,
+        authority: koru_delegate_core::RunToolAuthority,
+    ) -> PortResult<()> {
+        self.projection
+            .publish(run, generation, authority)
+            .map_err(|e| PortError::new(Port::Mcp, e.code, "Run classification"))
+    }
     fn launch(&mut self, launch: McpLaunch<'_>) -> PortResult<DelegationLaunch> {
         let run = launch.run;
+        let tools = if matches!(
+            &launch.authority,
+            koru_delegate_core::RunToolAuthority::Bot { .. }
+        ) {
+            McpToolAllowlist::new(
+                [
+                    "search_documents",
+                    "read_document",
+                    "create_document",
+                    "edit_document",
+                ]
+                .into_iter()
+                .map(|name| name.parse().expect("native tool name")),
+            )
+            .expect("four native tools")
+        } else {
+            self.tools.clone()
+        };
         let run_workspace = RunWorkspace::new(launch.run_workspace)
             .map_err(|error| PortError::new(Port::Mcp, error.code(), "the run's working folder"))?;
         let artifacts = self.client.artifacts();
@@ -124,7 +161,7 @@ impl McpEndpoints for GatewayAuthority {
             Err(failure) => return Err(refusal("issue a run authority", &failure)),
         };
         let endpoint = self.endpoint(run, issued.url);
-        Ok(DelegationLaunch {
+        let delegation = DelegationLaunch {
             model: None,
             mcp_endpoint: endpoint
                 .parse()
@@ -132,9 +169,13 @@ impl McpEndpoints for GatewayAuthority {
             credential: Some(issued.token.parse().map_err(|_| {
                 PortError::new(Port::Mcp, "invalid_credential", "the endpoint bearer")
             })?),
-            tools: self.tools.clone(),
+            tools,
             resume: None,
-        })
+        };
+        // Nothing after publication can fail locally; failed construction does
+        // not remove an unrelated newer generation's classification.
+        self.publish_authority(run, launch.generation, launch.authority)?;
+        Ok(delegation)
     }
 
     /// Where the run worked, from the durable record — the only place this
@@ -155,6 +196,7 @@ impl McpEndpoints for GatewayAuthority {
     /// store, and a delete that silently left it there would be a delete
     /// that did not happen.
     fn forget(&mut self, run: RunId) -> PortResult<()> {
+        self.projection.remove(run, None);
         self.client
             .artifacts()
             .forget_run_authority(run)
@@ -163,6 +205,7 @@ impl McpEndpoints for GatewayAuthority {
     }
 
     fn revoke(&mut self, run: RunId) {
+        self.projection.remove(run, None);
         if let Err(failure) = self.client.artifacts().revoke_run_authority(run) {
             // Best effort, and said so in the port's doc comment: a
             // revocation that did not land leaves an authority whose run is
