@@ -369,6 +369,15 @@ pub struct AgentEventObservation {
     pub session_cursor: Option<StreamSequence>,
 }
 
+/// Initial managed-agent event cursor, before any event has been published.
+/// It is the [`AgentEventObservation::cursor`] of an empty stream: a baseline,
+/// never an emitted event, because publishing advances the cursor before it
+/// stamps the event. Other session/render stream families have their own
+/// cursor contracts.
+pub const AGENT_EVENT_INITIAL_CURSOR: u64 = 1;
+/// Sequence of the first emitted managed-agent event.
+pub const AGENT_EVENT_FIRST_SEQUENCE: u64 = AGENT_EVENT_INITIAL_CURSOR + 1;
+
 impl std::fmt::Debug for AgentEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let (kind, turn) = match self {

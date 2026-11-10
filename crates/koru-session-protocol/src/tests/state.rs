@@ -124,3 +124,13 @@ fn positive_counters_reject_zero() {
     assert_eq!(StreamSequence::new(0), Err(ErrorCode::InvalidRequest));
     assert!(serde_json::from_str::<ViewportGeneration>("0").is_err());
 }
+
+#[test]
+fn managed_agent_initial_cursor_precedes_the_first_emitted_event() {
+    let baseline = StreamSequence::new(AGENT_EVENT_INITIAL_CURSOR).unwrap();
+    assert_eq!(baseline.next().unwrap().get(), AGENT_EVENT_FIRST_SEQUENCE);
+    assert_eq!(
+        serde_json::to_value(baseline).unwrap(),
+        serde_json::json!(1)
+    );
+}

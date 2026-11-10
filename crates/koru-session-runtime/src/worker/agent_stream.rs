@@ -98,10 +98,9 @@ impl AgentStreamState {
         AgentEventObservation {
             events: self.replay.iter().cloned().collect(),
             cursor: self.sequence,
-            earlier_truncated: self
-                .replay
-                .front()
-                .is_some_and(|event| event.sequence.get() > 2),
+            earlier_truncated: self.replay.front().is_some_and(|event| {
+                event.sequence.get() > koru_session_protocol::AGENT_EVENT_FIRST_SEQUENCE
+            }),
             commands: None,
             session_cursor: None,
         }

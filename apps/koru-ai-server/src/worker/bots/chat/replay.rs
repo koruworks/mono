@@ -214,7 +214,10 @@ fn stage_observation(
             .is_none_or(|cursor| frame.sequence.get() > cursor)
     });
     if raw.is_empty() {
-        if observation.observation.cursor.get() > state.last_sequence.unwrap_or(0)
+        if observation.observation.cursor.get()
+            > state
+                .last_sequence
+                .unwrap_or(koru_session_protocol::AGENT_EVENT_INITIAL_CURSOR)
             && observation.observation.earlier_truncated
         {
             return Err(bot_route_error());
@@ -222,7 +225,11 @@ fn stage_observation(
         return Ok(None);
     }
     if observation.observation.earlier_truncated
-        && raw[0].sequence.get() != state.last_sequence.unwrap_or(0).saturating_add(1)
+        && raw[0].sequence.get()
+            != state
+                .last_sequence
+                .unwrap_or(koru_session_protocol::AGENT_EVENT_INITIAL_CURSOR)
+                .saturating_add(1)
     {
         return Err(bot_route_error());
     }
@@ -258,7 +265,10 @@ fn stage_observation(
             break;
         }
         if frame.session_id != fence.session
-            || frame.sequence.get() != cursor.unwrap_or(0).saturating_add(1)
+            || frame.sequence.get()
+                != cursor
+                    .unwrap_or(koru_session_protocol::AGENT_EVENT_INITIAL_CURSOR)
+                    .saturating_add(1)
         {
             return Err(bot_route_error());
         }

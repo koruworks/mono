@@ -41,7 +41,15 @@ fn observation_is_a_bounded_tail_with_an_atomic_resume_cursor() {
 #[test]
 fn a_complete_short_observation_is_not_marked_truncated() {
     let stats = SessionStats::new(false);
-    let mut stream = AgentStreamState::new(sequence(1));
+    let mut stream =
+        AgentStreamState::new(sequence(koru_session_protocol::AGENT_EVENT_INITIAL_CURSOR));
+    let empty = stream.observe();
+    assert!(empty.events.is_empty());
+    assert_eq!(
+        empty.cursor.get(),
+        koru_session_protocol::AGENT_EVENT_INITIAL_CURSOR
+    );
+    assert!(!empty.earlier_truncated);
     stream.publish(
         SessionId::mint(),
         AgentEvent::TurnStarted {
@@ -52,7 +60,11 @@ fn a_complete_short_observation_is_not_marked_truncated() {
     let observation = stream.observe();
     assert_eq!(observation.events.len(), 1);
     assert!(!observation.earlier_truncated);
-    assert_eq!(observation.cursor, sequence(2));
+    assert_eq!(
+        observation.cursor.get(),
+        koru_session_protocol::AGENT_EVENT_FIRST_SEQUENCE
+    );
+    assert_eq!(observation.events[0].sequence, observation.cursor);
 }
 
 #[test]

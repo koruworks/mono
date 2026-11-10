@@ -94,13 +94,115 @@ fn observation(chat: &LiveChat, first: u64, events: Vec<AgentEvent>) -> BotObser
 }
 
 #[test]
+fn real_initial_cursor_is_not_an_ack_and_first_event_is_processed_once() {
+    let (mut repo, id, chat) = setup();
+    let turn_id = chat.fence.as_ref().unwrap().turn.unwrap();
+    let mut empty = observation(&chat, s::AGENT_EVENT_FIRST_SEQUENCE, vec![]);
+    empty.observation.cursor = s::StreamSequence::new(s::AGENT_EVENT_INITIAL_CURSOR).unwrap();
+    assert!(
+        stage_observation(&repo, id, &chat, empty.clone())
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(repo.bot_replay_state(id).unwrap().last_sequence, None);
+    assert_eq!(repo.bot_reply_bytes(id).unwrap(), 0);
+    empty.observation.cursor = s::StreamSequence::new(s::AGENT_EVENT_FIRST_SEQUENCE).unwrap();
+    empty.observation.earlier_truncated = true;
+    assert!(stage_observation(&repo, id, &chat, empty).is_err());
+    for (first, why) in [
+        (
+            s::AGENT_EVENT_INITIAL_CURSOR,
+            "baseline is not an emitted event",
+        ),
+        (
+            s::AGENT_EVENT_FIRST_SEQUENCE + 1,
+            "first emitted event is missing",
+        ),
+    ] {
+        assert!(
+            stage_observation(
+                &repo,
+                id,
+                &chat,
+                observation(&chat, first, vec![AgentEvent::TurnStarted { turn_id }])
+            )
+            .is_err(),
+            "{why}"
+        );
+    }
+    let mut repeated = observation(
+        &chat,
+        s::AGENT_EVENT_FIRST_SEQUENCE,
+        vec![
+            AgentEvent::TurnStarted { turn_id },
+            AgentEvent::MessageDelta {
+                turn_id,
+                text: "repeated".into(),
+            },
+        ],
+    );
+    repeated.observation.events[1].sequence = repeated.observation.events[0].sequence;
+    assert!(
+        stage_observation(&repo, id, &chat, repeated).is_err(),
+        "a repeated sequence inside one observation is not contiguous"
+    );
+    let first = observation(
+        &chat,
+        s::AGENT_EVENT_FIRST_SEQUENCE,
+        vec![AgentEvent::TurnStarted { turn_id }],
+    );
+    let staged = stage_observation(&repo, id, &chat, first.clone())
+        .unwrap()
+        .unwrap();
+    repo.apply_bot_replay(&staged.batch, Timestamp::now())
+        .unwrap();
+    assert_eq!(
+        repo.bot_replay_state(id).unwrap().last_sequence,
+        Some(s::AGENT_EVENT_FIRST_SEQUENCE)
+    );
+    assert!(
+        stage_observation(&repo, id, &chat, first)
+            .unwrap()
+            .is_none()
+    );
+    for truncated in [false, true] {
+        let mut gap = observation(
+            &chat,
+            s::AGENT_EVENT_FIRST_SEQUENCE + 2,
+            vec![AgentEvent::MessageDelta {
+                turn_id,
+                text: "missing predecessor".into(),
+            }],
+        );
+        gap.observation.earlier_truncated = truncated;
+        assert!(stage_observation(&repo, id, &chat, gap).is_err());
+    }
+    let next = observation(
+        &chat,
+        s::AGENT_EVENT_FIRST_SEQUENCE + 1,
+        vec![AgentEvent::MessageDelta {
+            turn_id,
+            text: "next".into(),
+        }],
+    );
+    let staged = stage_observation(&repo, id, &chat, next).unwrap().unwrap();
+    repo.apply_bot_replay(&staged.batch, Timestamp::now())
+        .unwrap();
+    assert_eq!(repo.bot_reply_bytes(id).unwrap(), 4);
+    assert_eq!(
+        repo.bot_replay_state(id).unwrap().last_sequence,
+        Some(s::AGENT_EVENT_FIRST_SEQUENCE + 1)
+    );
+}
+
+#[test]
 fn replay_rollback_leaves_mapper_sources_and_live_choices_uninstalled() {
     let (mut repo, id, mut chat) = setup();
     let turn_id = chat.fence.as_ref().unwrap().turn.unwrap();
     let call = s::ToolCallId::mint();
     let native = observation(
         &chat,
-        1,
+        s::AGENT_EVENT_FIRST_SEQUENCE,
         vec![
             AgentEvent::MessageDelta {
                 turn_id,
@@ -162,7 +264,7 @@ fn replay_rollback_leaves_mapper_sources_and_live_choices_uninstalled() {
     ));
     let end = observation(
         &chat,
-        3,
+        s::AGENT_EVENT_FIRST_SEQUENCE + 2,
         vec![AgentEvent::ToolCompleted {
             turn_id,
             tool_call_id: call,
@@ -201,9 +303,21 @@ fn wrong_turn_gap_and_native_child_cannot_be_empty_checkpoints() {
             child_session_id: s::SessionId::mint(),
         },
     ] {
-        assert!(stage_observation(&repo, id, &chat, observation(&chat, 1, vec![event])).is_err());
+        assert!(
+            stage_observation(
+                &repo,
+                id,
+                &chat,
+                observation(&chat, s::AGENT_EVENT_FIRST_SEQUENCE, vec![event])
+            )
+            .is_err()
+        );
     }
-    let mut gap = observation(&chat, 2, vec![AgentEvent::TurnStarted { turn_id }]);
+    let mut gap = observation(
+        &chat,
+        s::AGENT_EVENT_FIRST_SEQUENCE + 1,
+        vec![AgentEvent::TurnStarted { turn_id }],
+    );
     assert!(stage_observation(&repo, id, &chat, gap.clone()).is_err());
     gap.observation.earlier_truncated = true;
     assert!(stage_observation(&repo, id, &chat, gap).is_err());
@@ -226,7 +340,7 @@ fn committed_cursor_recovers_lost_ack_and_terminal_delivery_without_double_usage
     };
     let native = observation(
         &chat,
-        1,
+        s::AGENT_EVENT_FIRST_SEQUENCE,
         vec![
             AgentEvent::MessageDelta {
                 turn_id,
@@ -242,7 +356,10 @@ fn committed_cursor_recovers_lost_ack_and_terminal_delivery_without_double_usage
         .unwrap();
     repo.fail_after_bot_replay_commit_for_fixture();
     assert!(commit_staged(&mut repo, &staged.batch).unwrap());
-    assert_eq!(repo.bot_replay_state(id).unwrap().last_sequence, Some(4));
+    assert_eq!(
+        repo.bot_replay_state(id).unwrap().last_sequence,
+        Some(s::AGENT_EVENT_FIRST_SEQUENCE + 3)
+    );
     let attempt = repo.attempt(id).unwrap().unwrap();
     assert_eq!(attempt.status, AttemptStatus::Complete);
     assert_eq!(attempt.usage.total_tokens, Some(25));

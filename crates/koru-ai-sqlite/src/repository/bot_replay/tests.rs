@@ -6,6 +6,7 @@ use koru_ai_core::bots::{
     Bot, BotAccess, BotConfig, BotId, BotPage, BotRequestId, DeviceId, UserScopeId,
 };
 use koru_delegate_core as delegate;
+use koru_delegate_core::{AGENT_EVENT_FIRST_SEQUENCE, AGENT_EVENT_INITIAL_CURSOR};
 use std::collections::BTreeSet;
 mod preparation;
 
@@ -149,7 +150,7 @@ fn batch(
         fence: fence.clone(),
         expected_after: after,
         events: vec![BotReplayEvent {
-            sequence: after.unwrap_or(0) + 1,
+            sequence: after.unwrap_or(AGENT_EVENT_INITIAL_CURSOR) + 1,
             turn: fence.turn,
             effects,
         }],
@@ -389,6 +390,73 @@ fn late_cursor_failure_rolls_back_text_tool_mode_completion_and_outbox() {
 }
 
 #[test]
+fn real_agent_first_event_and_missing_first_event_are_distinct() {
+    let (mut repo, turn, _, fence) = prepared();
+    assert_eq!(
+        repo.bot_replay_state(turn.attempt.id)
+            .unwrap()
+            .last_sequence,
+        None
+    );
+    for (sequence, why) in [
+        (
+            AGENT_EVENT_INITIAL_CURSOR,
+            "baseline is not an emitted event",
+        ),
+        (
+            AGENT_EVENT_FIRST_SEQUENCE + 1,
+            "first emitted event is missing",
+        ),
+    ] {
+        let mut invalid = batch(&turn, &fence, None, vec![text(&turn, "invalid")]);
+        invalid.events[0].sequence = sequence;
+        assert!(repo.apply_bot_replay(&invalid, at(3)).is_err(), "{why}");
+    }
+    assert_eq!(
+        repo.bot_replay_state(turn.attempt.id)
+            .unwrap()
+            .last_sequence,
+        None
+    );
+    assert_eq!(repo.bot_reply_bytes(turn.attempt.id).unwrap(), 0);
+    let first = batch(&turn, &fence, None, vec![text(&turn, "one")]);
+    assert_eq!(first.events[0].sequence, AGENT_EVENT_FIRST_SEQUENCE);
+    assert_eq!(
+        repo.apply_bot_replay(&first, at(4)).unwrap(),
+        BotReplayDisposition::Applied
+    );
+    assert_eq!(
+        repo.apply_bot_replay(&first, at(4)).unwrap(),
+        BotReplayDisposition::Duplicate
+    );
+    let mut gap = batch(
+        &turn,
+        &fence,
+        Some(AGENT_EVENT_FIRST_SEQUENCE),
+        vec![text(&turn, "gap")],
+    );
+    gap.events[0].sequence += 1;
+    assert!(repo.apply_bot_replay(&gap, at(5)).is_err());
+    let next = batch(
+        &turn,
+        &fence,
+        Some(AGENT_EVENT_FIRST_SEQUENCE),
+        vec![text(&turn, "two")],
+    );
+    repo.apply_bot_replay(&next, at(6)).unwrap();
+    assert_eq!(
+        repo.messages(turn.user_message.chat_id).unwrap()[1].markdown,
+        "onetwo"
+    );
+    assert_eq!(
+        repo.bot_replay_state(turn.attempt.id)
+            .unwrap()
+            .last_sequence,
+        Some(AGENT_EVENT_FIRST_SEQUENCE + 1)
+    );
+}
+
+#[test]
 fn duplicate_overlap_gap_and_foreign_fences_never_append_twice() {
     let (mut repo, turn, _, fence) = prepared();
     let first = batch(&turn, &fence, None, vec![text(&turn, "one")]);
@@ -399,13 +467,13 @@ fn duplicate_overlap_gap_and_foreign_fences_never_append_twice() {
     );
     let mut overlap = first.clone();
     overlap.events.push(BotReplayEvent {
-        sequence: 2,
+        sequence: AGENT_EVENT_FIRST_SEQUENCE + 1,
         turn: fence.turn,
         effects: vec![text(&turn, "bad")],
     });
     assert!(repo.apply_bot_replay(&overlap, at(4)).is_err());
-    let mut gap = batch(&turn, &fence, Some(1), vec![]);
-    gap.events[0].sequence = 3;
+    let mut gap = batch(&turn, &fence, Some(AGENT_EVENT_FIRST_SEQUENCE), vec![]);
+    gap.events[0].sequence = AGENT_EVENT_FIRST_SEQUENCE + 2;
     assert!(repo.apply_bot_replay(&gap, at(4)).is_err());
     for changed in [
         BotExecutionFence {
@@ -427,7 +495,12 @@ fn duplicate_overlap_gap_and_foreign_fences_never_append_twice() {
         );
         assert!(
             repo.apply_bot_replay(
-                &batch(&turn, &changed, Some(1), vec![text(&turn, "bad")]),
+                &batch(
+                    &turn,
+                    &changed,
+                    Some(AGENT_EVENT_FIRST_SEQUENCE),
+                    vec![text(&turn, "bad")]
+                ),
                 at(4)
             )
             .is_err()
@@ -436,7 +509,7 @@ fn duplicate_overlap_gap_and_foreign_fences_never_append_twice() {
     let mut turnless = batch(
         &turn,
         &fence,
-        Some(1),
+        Some(AGENT_EVENT_FIRST_SEQUENCE),
         vec![event(AiEvent::ContextUsage {
             attempt_id: turn.attempt.id,
             used: 4,
@@ -499,7 +572,7 @@ fn reconnect_resolves_random_tool_identity_and_multi_effect_event_is_atomic() {
     let finished = batch(
         &turn,
         &fence,
-        Some(1),
+        Some(AGENT_EVENT_FIRST_SEQUENCE),
         vec![
             text(&turn, "done"),
             BotReplayEffect::AdvanceTool {
@@ -524,7 +597,7 @@ fn reconnect_resolves_random_tool_identity_and_multi_effect_event_is_atomic() {
         repo.bot_replay_state(turn.attempt.id)
             .unwrap()
             .last_sequence,
-        Some(2)
+        Some(AGENT_EVENT_FIRST_SEQUENCE + 1)
     );
 }
 
@@ -583,7 +656,12 @@ fn completion_outbox_survives_restart_and_ack_clock_reversal() {
     );
     assert_eq!(
         repo.apply_bot_replay(
-            &batch(&turn, &fence, Some(1), vec![text(&turn, "late")]),
+            &batch(
+                &turn,
+                &fence,
+                Some(AGENT_EVENT_FIRST_SEQUENCE),
+                vec![text(&turn, "late")]
+            ),
             at(7)
         )
         .unwrap(),
@@ -593,7 +671,7 @@ fn completion_outbox_survives_restart_and_ack_clock_reversal() {
         repo.bot_replay_state(turn.attempt.id)
             .unwrap()
             .last_sequence,
-        Some(1)
+        Some(AGENT_EVENT_FIRST_SEQUENCE)
     );
 }
 
@@ -636,7 +714,7 @@ fn restart_and_gap_interrupt_without_reopening_or_advancing() {
             repo.bot_replay_state(turn.attempt.id)
                 .unwrap()
                 .last_sequence,
-            Some(1)
+            Some(AGENT_EVENT_FIRST_SEQUENCE)
         );
         assert_eq!(
             repo.bot_replay_state(turn.attempt.id).unwrap().stop_reason,
@@ -647,8 +725,16 @@ fn restart_and_gap_interrupt_without_reopening_or_advancing() {
             })
         );
         assert_eq!(
-            repo.apply_bot_replay(&batch(&turn, &fence, Some(1), vec![complete(&turn)]), at(6))
-                .unwrap(),
+            repo.apply_bot_replay(
+                &batch(
+                    &turn,
+                    &fence,
+                    Some(AGENT_EVENT_FIRST_SEQUENCE),
+                    vec![complete(&turn)]
+                ),
+                at(6)
+            )
+            .unwrap(),
             BotReplayDisposition::Terminal
         );
         assert!(
@@ -665,7 +751,7 @@ fn bounded_batches_and_wrong_effect_owners_refuse_without_writes() {
     let mut too_many = batch(&turn, &fence, None, vec![]);
     too_many.events = (1..=MAX_REPLAY_EVENTS + 1)
         .map(|n| BotReplayEvent {
-            sequence: n as u64,
+            sequence: n as u64 + AGENT_EVENT_INITIAL_CURSOR,
             turn: fence.turn,
             effects: vec![],
         })
@@ -792,7 +878,7 @@ fn explicit_terminal_cleanup_preserves_next_message_questions_and_rolls_back_wit
             &batch(
                 &turn,
                 &fence,
-                Some(1),
+                Some(AGENT_EVENT_FIRST_SEQUENCE),
                 vec![BotReplayEffect::Event {
                     event: terminal.clone(),
                     finalized_blocks: vec![],
@@ -813,7 +899,7 @@ fn explicit_terminal_cleanup_preserves_next_message_questions_and_rolls_back_wit
             &batch(
                 &turn,
                 &fence,
-                Some(1),
+                Some(AGENT_EVENT_FIRST_SEQUENCE),
                 vec![BotReplayEffect::Event {
                     event: terminal.clone(),
                     finalized_blocks: vec![],
@@ -829,7 +915,7 @@ fn explicit_terminal_cleanup_preserves_next_message_questions_and_rolls_back_wit
     let final_batch = batch(
         &turn,
         &fence,
-        Some(1),
+        Some(AGENT_EVENT_FIRST_SEQUENCE),
         vec![
             text(&turn, "final"),
             BotReplayEffect::Event {
@@ -860,7 +946,7 @@ fn explicit_terminal_cleanup_preserves_next_message_questions_and_rolls_back_wit
         repo.bot_replay_state(turn.attempt.id)
             .unwrap()
             .last_sequence,
-        Some(1)
+        Some(AGENT_EVENT_FIRST_SEQUENCE)
     );
     repo.connection
         .execute_batch("DROP TRIGGER reject_cursor")
@@ -907,12 +993,12 @@ fn one_batch_commits_interleaved_source_effects_blocks_and_notice_at_the_common_
         expected_after: None,
         events: vec![
             BotReplayEvent {
-                sequence: 1,
+                sequence: AGENT_EVENT_FIRST_SEQUENCE,
                 turn: fence.turn,
                 effects: vec![text(&turn, "alpha")],
             },
             BotReplayEvent {
-                sequence: 2,
+                sequence: AGENT_EVENT_FIRST_SEQUENCE + 1,
                 turn: fence.turn,
                 effects: vec![
                     event(AiEvent::ReasoningDelta {
@@ -924,12 +1010,12 @@ fn one_batch_commits_interleaved_source_effects_blocks_and_notice_at_the_common_
                 ],
             },
             BotReplayEvent {
-                sequence: 3,
+                sequence: AGENT_EVENT_FIRST_SEQUENCE + 2,
                 turn: None,
                 effects: vec![],
             },
             BotReplayEvent {
-                sequence: 4,
+                sequence: AGENT_EVENT_FIRST_SEQUENCE + 3,
                 turn: fence.turn,
                 effects: vec![
                     text(&turn, "omega"),
@@ -962,7 +1048,7 @@ fn one_batch_commits_interleaved_source_effects_blocks_and_notice_at_the_common_
         repo.bot_replay_state(turn.attempt.id)
             .unwrap()
             .last_sequence,
-        Some(4)
+        Some(AGENT_EVENT_FIRST_SEQUENCE + 3)
     );
     assert_eq!(
         repo.apply_bot_replay(&events, at(6)).unwrap(),

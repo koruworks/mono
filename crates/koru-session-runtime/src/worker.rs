@@ -485,7 +485,9 @@ impl SessionOwner {
                 }),
                 event_sequence: counter(1),
                 output_sequence: counter(1),
-                agent_stream: AgentStreamState::new(counter(1)),
+                agent_stream: AgentStreamState::new(counter(
+                    koru_session_protocol::AGENT_EVENT_INITIAL_CURSOR,
+                )),
                 agent_commands: None,
                 managed_attention: None,
                 controller: None,
@@ -638,7 +640,9 @@ impl SessionOwner {
                 terminal: None,
                 event_sequence: counter(1),
                 output_sequence: counter(1),
-                agent_stream: AgentStreamState::new(counter(1)),
+                agent_stream: AgentStreamState::new(counter(
+                    koru_session_protocol::AGENT_EVENT_INITIAL_CURSOR,
+                )),
                 agent_commands: None,
                 managed_attention: None,
                 controller: None,

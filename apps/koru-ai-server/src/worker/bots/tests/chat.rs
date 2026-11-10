@@ -116,10 +116,17 @@ impl BotDelegatePort for Native {
                     native
                         .into_iter()
                         .enumerate()
-                        .filter(|(n, _)| after.is_none_or(|cursor| (*n as u64) + 1 > cursor.get()))
+                        .filter(|(n, _)| {
+                            after.is_none_or(|cursor| {
+                                (*n as u64) + s::AGENT_EVENT_FIRST_SEQUENCE > cursor.get()
+                            })
+                        })
                         .map(|(n, event)| s::SequencedAgentEvent {
                             session_id: fence.session,
-                            sequence: s::StreamSequence::new(n as u64 + 1).unwrap(),
+                            sequence: s::StreamSequence::new(
+                                n as u64 + s::AGENT_EVENT_FIRST_SEQUENCE,
+                            )
+                            .unwrap(),
                             event,
                         })
                         .collect()
@@ -132,8 +139,10 @@ impl BotDelegatePort for Native {
                         fence,
                         observation: s::AgentEventObservation {
                             events,
-                            cursor: s::StreamSequence::new(if state.begin > 0 { 3 } else { 1 })
-                                .unwrap(),
+                            cursor: s::StreamSequence::new(
+                                s::AGENT_EVENT_INITIAL_CURSOR + if state.begin > 0 { 3 } else { 0 },
+                            )
+                            .unwrap(),
                             earlier_truncated: false,
                             commands: None,
                             session_cursor: None,

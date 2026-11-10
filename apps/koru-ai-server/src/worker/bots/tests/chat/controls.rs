@@ -100,14 +100,21 @@ impl BotDelegatePort for Interactive {
                         s::AgentEvent::TurnCompleted { turn_id }
                     });
                 }
-                let cursor = s::StreamSequence::new(native.len() as u64).unwrap();
+                let cursor =
+                    s::StreamSequence::new(s::AGENT_EVENT_INITIAL_CURSOR + native.len() as u64)
+                        .unwrap();
                 let events = native
                     .into_iter()
                     .enumerate()
-                    .filter(|(n, _)| after.is_none_or(|cursor| *n as u64 + 1 > cursor.get()))
+                    .filter(|(n, _)| {
+                        after.is_none_or(|cursor| {
+                            *n as u64 + s::AGENT_EVENT_FIRST_SEQUENCE > cursor.get()
+                        })
+                    })
                     .map(|(n, event)| s::SequencedAgentEvent {
                         session_id: fence.session,
-                        sequence: s::StreamSequence::new(n as u64 + 1).unwrap(),
+                        sequence: s::StreamSequence::new(n as u64 + s::AGENT_EVENT_FIRST_SEQUENCE)
+                            .unwrap(),
                         event,
                     })
                     .collect();

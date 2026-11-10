@@ -109,10 +109,10 @@ pub use turn::{TurnIdentity, TurnOriginator};
 pub use koru_device::DeviceId;
 pub use koru_events::EventId;
 pub use koru_session_protocol::{
-    AgentEventObservation, AgentTurnId, ApprovalChoiceId, ApprovalDecision, ApprovalId, Attachment,
-    AttachmentId, AttachmentSource, IdempotencyKey, PendingInput, ProjectId, ProviderKind,
-    QuestionAnswer, QuestionRequestId, SequencedAgentEvent, SessionId, SessionProfileKey,
-    StreamSequence,
+    AGENT_EVENT_FIRST_SEQUENCE, AGENT_EVENT_INITIAL_CURSOR, AgentEventObservation, AgentTurnId,
+    ApprovalChoiceId, ApprovalDecision, ApprovalId, Attachment, AttachmentId, AttachmentSource,
+    IdempotencyKey, PendingInput, ProjectId, ProviderKind, QuestionAnswer, QuestionRequestId,
+    SequencedAgentEvent, SessionId, SessionProfileKey, StreamSequence,
 };
 pub use koru_store_core::ids::DocumentVersionId;
 pub use koru_store_core::{BlobHash, DocumentId, ProfileId, WorkspaceId};

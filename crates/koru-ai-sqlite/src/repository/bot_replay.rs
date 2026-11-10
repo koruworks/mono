@@ -670,7 +670,7 @@ fn validate_batch(batch: &BotReplayBatch) -> Result<(), AiError> {
     }
     let mut next = batch
         .expected_after
-        .unwrap_or(0)
+        .unwrap_or(koru_delegate_core::AGENT_EVENT_INITIAL_CURSOR)
         .checked_add(1)
         .ok_or_else(invariant_failed)?;
     let mut effects = 0usize;
