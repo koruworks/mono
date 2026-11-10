@@ -1976,6 +1976,8 @@ pub enum Key {
     CloudConnectionConnecting,
     CloudConnectionRetrying,
     CloudConnectionConsent,
+    CloudConnectionUpdateRequired,
+    CloudConnectionAccountProblem,
     CloudSubscribeIntro,
     CloudFeatureBackup,
     CloudFeatureWebDocs,
@@ -3126,7 +3128,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2169] = [
+    pub const ALL: [Key; 2171] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4498,6 +4500,8 @@ impl Key {
         Key::CloudConnectionConnecting,
         Key::CloudConnectionRetrying,
         Key::CloudConnectionConsent,
+        Key::CloudConnectionUpdateRequired,
+        Key::CloudConnectionAccountProblem,
         Key::CloudSubscribeIntro,
         Key::CloudFeatureBackup,
         Key::CloudFeatureWebDocs,
@@ -15229,6 +15233,8 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::CloudConnectionConnecting, en: "Connecting to Koru Cloud…", es: "Conectando con Koru Cloud…", pt_br: "Conectando ao Koru Cloud…", de: "Verbindung mit Koru Cloud wird hergestellt…", fr: "Connexion à Koru Cloud…", ar: "جارٍ الاتصال بـ Koru Cloud…", zh_hans: "正在连接 Koru Cloud…", ja: "Koru Cloudに接続中…" },
     Row { key: Key::CloudConnectionRetrying, en: "Koru Cloud unavailable · local content is available", es: "Koru Cloud no disponible · contenido local disponible", pt_br: "Koru Cloud indisponível · conteúdo local disponível", de: "Koru Cloud nicht verfügbar · lokale Inhalte verfügbar", fr: "Koru Cloud indisponible · contenu local disponible", ar: "Koru Cloud غير متاح · المحتوى المحلي متاح", zh_hans: "Koru Cloud 不可用 · 本地内容仍可用", ja: "Koru Cloudを利用できません · ローカルの内容は利用できます" },
     Row { key: Key::CloudConnectionConsent, en: "Koru Cloud needs your approval", es: "Koru Cloud necesita tu aprobación", pt_br: "O Koru Cloud precisa da sua aprovação", de: "Koru Cloud benötigt deine Zustimmung", fr: "Koru Cloud nécessite votre accord", ar: "يحتاج Koru Cloud إلى موافقتك", zh_hans: "Koru Cloud 需要你的批准", ja: "Koru Cloudには承認が必要です" },
+    Row { key: Key::CloudConnectionUpdateRequired, en: "Update Koru to sync this", es: "Actualiza Koru para sincronizar esto", pt_br: "Atualize o Koru para sincronizar isto", de: "Aktualisiere Koru, um dies zu synchronisieren", fr: "Mettez Koru à jour pour synchroniser ceci", ar: "حدِّث Koru لمزامنة هذا", zh_hans: "请更新 Koru 以同步此内容", ja: "これを同期するにはKoruを更新してください" },
+    Row { key: Key::CloudConnectionAccountProblem, en: "Koru Cloud has a problem with your account", es: "Koru Cloud tiene un problema con tu cuenta", pt_br: "O Koru Cloud está com um problema na sua conta", de: "Koru Cloud hat ein Problem mit deinem Konto", fr: "Koru Cloud a un problème avec votre compte", ar: "يواجه Koru Cloud مشكلة في حسابك", zh_hans: "Koru Cloud 遇到账户问题", ja: "Koru Cloudでお使いのアカウントに問題があります" },
     Row { key: Key::CloudSubscribeIntro, en: "One subscription covers every profile on this device. Choose which ones to sync.", es: "Una suscripción cubre todos los perfiles de este dispositivo. Elige cuáles sincronizar.", pt_br: "Uma assinatura cobre todos os perfis deste dispositivo. Escolha quais sincronizar.", de: "Ein Abonnement deckt jedes Profil auf diesem Gerät ab. Wähle, welche synchronisiert werden.", fr: "Un seul abonnement couvre tous les profils de cet appareil. Choisissez ceux à synchroniser.", ar: "اشتراك واحد يغطي كل ملف شخصي على هذا الجهاز. اختر ما تريد مزامنته.", zh_hans: "一份订阅即可覆盖本设备上的所有配置文件。选择要同步的那些。", ja: "ひとつの登録でこのデバイスのすべてのプロファイルをカバーします。同期するものを選んでください。" },
     Row { key: Key::CloudFeatureBackup, en: "100 GB encrypted backup", es: "Copia de seguridad cifrada de 100 GB", pt_br: "Backup criptografado de 100 GB", de: "100 GB verschlüsseltes Backup", fr: "Sauvegarde chiffrée de 100 Go", ar: "نسخ احتياطي مشفّر بسعة 100 جيجابايت", zh_hans: "100 GB 加密备份", ja: "100 GBの暗号化バックアップ" },
     Row { key: Key::CloudFeatureWebDocs, en: "Web docs and public links", es: "Documentos web y enlaces públicos", pt_br: "Documentos na web e links públicos", de: "Web-Dokumente und öffentliche Links", fr: "Documents web et liens publics", ar: "مستندات على الويب وروابط عامة", zh_hans: "网页文档与公开链接", ja: "Webドキュメントと公開リンク" },

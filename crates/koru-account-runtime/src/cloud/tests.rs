@@ -346,6 +346,25 @@ struct World {
     /// The service's catalog (unit → frontier) and what a pull answers.
     service_units: BTreeMap<CloudUnitRefV2, Vec<u8>>,
     service_frames: HashMap<CloudUnitRefV2, Vec<Vec<u8>>>,
+    /// QUESTIONS.md Q12 (a), (b): what the service answers about one unit on
+    /// the pull and push routes — a refusal it worded itself, not an outage.
+    unit_refusals: HashMap<CloudUnitRefV2, Failure>,
+    /// Q12 (c): how many times the catalog route answers 428
+    /// `catalog_binding_required` before it serves. A large number is a
+    /// service that never stops asking.
+    binding_required: usize,
+    /// The same on the discovery route, so a test can have a **second**
+    /// route of one pass told the binding is missing after a binding that
+    /// just succeeded.
+    discover_binding_required: usize,
+    /// The binding route itself answers `catalog_binding_required`: run the
+    /// binding step, be told the binding is required, run it again — the
+    /// loop between the binding step and the route in its purest form.
+    binding_route_required: bool,
+    /// Q12 (d): service-side damage, on the route that holds the damaged
+    /// thing — the catalog's projection, and the account's binding.
+    projection_corrupt: bool,
+    binding_corrupt: bool,
     /// What a push is answered with, when not `Applied`.
     push_receipt: Option<CloudRootJoinReceiptV2>,
     pushed: Vec<CloudUnitRefV2>,
@@ -461,6 +480,42 @@ fn codeless_hosted_api(world: Arc<Mutex<World>>, status: u16) -> HostedApi {
     ))
 }
 
+/// The real hosted API over a transport that answers one HTTP status with
+/// the service's **own** error envelope. A refusal the service worded is
+/// what QUESTIONS.md Q12 is about, and reading it happens in the real client
+/// and the real mapping — the two places the defect lived.
+fn coded_hosted_api(world: Arc<Mutex<World>>, status: u16, code: &str) -> HostedApi {
+    struct Coded {
+        world: Arc<Mutex<World>>,
+        status: u16,
+        body: Vec<u8>,
+    }
+    impl koru_account_client::Transport for Coded {
+        fn send(
+            &self,
+            request: koru_account_client::HttpRequest,
+        ) -> Result<koru_account_client::HttpResponse, koru_account_client::TransportError>
+        {
+            lock(&self.world).note(format!(
+                "http:{:?}:{}:{}",
+                request.method, request.path_and_query, self.status
+            ));
+            Ok(koru_account_client::HttpResponse {
+                status: self.status,
+                body: self.body.clone(),
+            })
+        }
+    }
+    let body = format!(r#"{{"code":"{code}","message":"refused"}}"#).into_bytes();
+    HostedApi::new(koru_account_client::AccountClient::with_transport(
+        Arc::new(Coded {
+            world,
+            status,
+            body,
+        }),
+    ))
+}
+
 impl Api for FakeApi {
     fn discover(
         &mut self,
@@ -572,6 +627,12 @@ impl Api for FakeApi {
         if world.binding_conflict || held.is_some_and(|held| held.account_id != account()) {
             return Err(Failure::CatalogBindingConflict);
         }
+        if world.binding_corrupt {
+            return Err(Failure::AccountDamaged(AccountDamage::CatalogBinding));
+        }
+        if world.binding_route_required {
+            return Err(Failure::CatalogBindingRequired);
+        }
         Ok(CloudCatalogBindingV2 {
             version: Version2,
             account_id: account(),
@@ -588,6 +649,13 @@ impl Api for FakeApi {
     ) -> Result<CloudRootCatalogV2, Failure> {
         let mut world = lock(&self.0);
         world.note("catalog");
+        if world.binding_required > 0 {
+            world.binding_required -= 1;
+            return Err(Failure::CatalogBindingRequired);
+        }
+        if world.projection_corrupt {
+            return Err(Failure::AccountDamaged(AccountDamage::RootProjection));
+        }
         // A paged catalog: the first page names a cursor, a continuation
         // answers the last page. A test may cancel while the first is in
         // flight, which is the only way this loop ends without reading
@@ -626,6 +694,9 @@ impl Api for FakeApi {
     ) -> Result<CloudRootUnitUpdatesV2, Failure> {
         let mut world = lock(&self.0);
         world.note(format!("pull:{}", unit_label(unit)));
+        if let Some(refusal) = world.unit_refusals.get(&unit) {
+            return Err(refusal.clone());
+        }
         Ok(CloudRootUnitUpdatesV2 {
             version: Version2,
             unit,
@@ -641,6 +712,9 @@ impl Api for FakeApi {
     ) -> Result<CloudRootJoinReceiptV2, Failure> {
         let mut world = lock(&self.0);
         world.note(format!("push:{}", unit_label(updates.unit)));
+        if let Some(refusal) = world.unit_refusals.get(&updates.unit) {
+            return Err(refusal.clone());
+        }
         world.pushed.push(updates.unit);
         Ok(world
             .push_receipt
@@ -749,6 +823,13 @@ impl Api for FakeApi {
 }
 
 fn discovery_failure(world: &mut World) -> Result<(), Failure> {
+    // Q12 (c): a route of this pass told the binding is missing. On the
+    // discovery route it is the *second* such answer of a pass, which the
+    // ceiling must answer rather than bind for again.
+    if world.discover_binding_required > 0 {
+        world.discover_binding_required -= 1;
+        return Err(Failure::CatalogBindingRequired);
+    }
     if world.discover_failures > 0 {
         world.discover_failures -= 1;
         return Err(Failure::Offline);
@@ -1709,6 +1790,559 @@ fn another_codeless_status_is_not_read_as_a_missing_route() {
     );
 }
 
+// ----- a refusal the service worded (QUESTIONS.md Q12) -------------------
+
+/// The seven codes, through the **real** client and the **real** hosted
+/// mapping. Four of them used to fall through to `cloud_unavailable` and be
+/// retried for ever, so the defect lived entirely in this translation: a
+/// `Failure` injected into the fake would prove nothing about it.
+#[test]
+fn every_refusal_the_service_words_is_answered_as_that_refusal() {
+    let authority = authority("1");
+    let unit = CloudUnitRefV2::WorkspaceCatalog {
+        subject_id: workspace(1),
+    };
+    for (code, expected) in [
+        (ROOT_UNIT_FORMAT_TOO_NEW, Failure::UnitFormatTooNew),
+        (
+            ROOT_UNIT_INVALID,
+            Failure::UnitRefused(UnitRefusal::UnitInvalid),
+        ),
+        (
+            ROOT_EXPORT_REFUSED,
+            Failure::UnitRefused(UnitRefusal::ExportRefused),
+        ),
+        (
+            ROOT_UNIT_ADDRESS_INVALID,
+            Failure::UnitRefused(UnitRefusal::AddressInvalid),
+        ),
+    ] {
+        let mut api = coded_hosted_api(World::shared(), 409, code);
+        assert_eq!(
+            api.pull_root_unit(&authority, unit, Vec::new()).err(),
+            Some(expected),
+            "{code}"
+        );
+    }
+    assert_eq!(
+        coded_hosted_api(World::shared(), 428, CATALOG_BINDING_REQUIRED)
+            .root_catalog(&authority, None)
+            .err(),
+        Some(Failure::CatalogBindingRequired)
+    );
+    assert_eq!(
+        coded_hosted_api(World::shared(), 500, ROOT_PROJECTION_CORRUPT)
+            .root_catalog(&authority, None)
+            .err(),
+        Some(Failure::AccountDamaged(AccountDamage::RootProjection))
+    );
+    assert_eq!(
+        coded_hosted_api(World::shared(), 500, CATALOG_BINDING_CORRUPT)
+            .bind_catalog(&authority, None)
+            .err(),
+        Some(Failure::AccountDamaged(AccountDamage::CatalogBinding))
+    );
+    // **Only a 401 `unauthenticated` ends a session**, and none of the seven
+    // can: that path belongs to the refresh route alone.
+    assert_eq!(
+        coded_hosted_api(
+            World::shared(),
+            401,
+            koru_account_wire::ErrorCode::UNAUTHENTICATED
+        )
+        .bind_catalog(&authority, None)
+        .err(),
+        Some(Failure::SessionExpired)
+    );
+    // The service owner keeps generic integrity faults here, which is what
+    // makes the seven distinguishable by code at all.
+    assert_eq!(
+        coded_hosted_api(
+            World::shared(),
+            503,
+            koru_account_wire::ErrorCode::SERVER_UNAVAILABLE
+        )
+        .root_catalog(&authority, None)
+        .err(),
+        Some(Failure::NotReady)
+    );
+}
+
+/// Q12 (a): a unit a newer Koru wrote. The pass stops asking for it — this
+/// pass and every later one — keeps every other unit moving, and leaves the
+/// Profile a word a person can act on, which the surface draws as *Update
+/// Koru to sync this*. What it must not do is report an outage: retrying a
+/// format this build does not have is a machine repeating itself, and the
+/// unavailable line it produced could never tell anybody anything.
+#[test]
+fn a_unit_this_build_cannot_read_stops_and_asks_for_an_update() {
+    let world = one_hosted_pair();
+    let too_new = CloudUnitRefV2::ProfileCatalog {
+        subject_id: profile(1),
+    };
+    let readable = CloudUnitRefV2::WorkspaceCatalog {
+        subject_id: workspace(1),
+    };
+    {
+        let mut state = lock(&world);
+        for unit in [too_new, readable] {
+            state.service_units.insert(unit, vec![7]);
+            state.service_frames.insert(unit, vec![vec![1]]);
+            state.local_frontiers.insert(unit_label(unit), vec![3]);
+        }
+        state
+            .unit_refusals
+            .insert(too_new, Failure::UnitFormatTooNew);
+    }
+    let harness = Harness::start(world);
+    harness.control.update_authorization(authority("1"));
+    harness.wait_snapshot(|snapshot| snapshot.stage == Stage::Settled);
+    let log = harness.log();
+    assert_eq!(
+        log.iter()
+            .filter(|entry| *entry == "pull:profile:1")
+            .count(),
+        1,
+        "asked once: {log:?}"
+    );
+    assert_eq!(
+        lock(&harness.world).joined,
+        vec!["workspace:1"],
+        "one unit does not stop the pass: {log:?}"
+    );
+    let snapshot = harness.control.snapshot();
+    assert_eq!(
+        snapshot.deferred,
+        vec![Deferred {
+            profile_id: Some(profile(1)),
+            workspace_id: None,
+            code: ROOT_UNIT_FORMAT_TOO_NEW,
+            unit: Some(too_new),
+        }],
+        "the unit is in diagnostics by id, against the Profile it is about"
+    );
+    assert_eq!(
+        snapshot.failure_code, None,
+        "a unit this build cannot read is not an outage"
+    );
+    assert_eq!(
+        snapshot.retry_at_millis, None,
+        "and nothing is retried against it"
+    );
+    assert_eq!(
+        snapshot.records.len(),
+        2,
+        "content was admitted all the same"
+    );
+    let receipt = snapshot.discovery.expect("a receipt");
+    assert_eq!(
+        receipt.profiles[&profile(1)].deferred_code,
+        Some(ROOT_UNIT_FORMAT_TOO_NEW),
+        "the word the Profile's row reads"
+    );
+    // The next pass does not ask again: an older build is not answered by
+    // asking a second time.
+    harness.control.wake();
+    harness.tick_until(500, |world| world.contexts.len() == 2);
+    let log = harness.log();
+    assert_eq!(
+        log.iter()
+            .filter(|entry| *entry == "pull:profile:1")
+            .count(),
+        1,
+        "{log:?}"
+    );
+}
+
+/// (a) again, for a **Workspace's** unit: the prompt is attributed to the
+/// Profile this device last admitted the Workspace under, because that is
+/// the row a person is looking at when they are told to update. A Workspace
+/// with no placement yet is recorded by id alone and gains its prompt when
+/// the placement is known — the id is never guessed.
+#[test]
+fn a_workspace_units_update_prompt_follows_its_placement() {
+    let world = one_hosted_pair();
+    let unit = CloudUnitRefV2::WorkspaceCatalog {
+        subject_id: workspace(1),
+    };
+    {
+        let mut state = lock(&world);
+        state.service_units.insert(unit, vec![7]);
+        state.service_frames.insert(unit, vec![vec![1]]);
+        state.local_frontiers.insert(unit_label(unit), vec![3]);
+    }
+    let harness = Harness::start(world);
+    harness.control.update_authorization(authority("1"));
+    harness.wait_snapshot(|snapshot| snapshot.records.len() == 2);
+    // A newer Koru writes the unit between the two passes.
+    {
+        let mut state = lock(&harness.world);
+        state.service_units.insert(unit, vec![9]);
+        state.unit_refusals.insert(unit, Failure::UnitFormatTooNew);
+    }
+    harness.control.wake();
+    harness.tick_until(500, |world| world.contexts.len() == 2);
+    harness.wait_snapshot(|snapshot| !snapshot.deferred.is_empty());
+    let snapshot = harness.control.snapshot();
+    assert_eq!(
+        snapshot.deferred,
+        vec![Deferred {
+            profile_id: Some(profile(1)),
+            workspace_id: Some(workspace(1)),
+            code: ROOT_UNIT_FORMAT_TOO_NEW,
+            unit: Some(unit),
+        }],
+        "the Profile the Workspace is placed under is the one told to update"
+    );
+    assert_eq!(
+        snapshot.records.len(),
+        2,
+        "the Workspace's content keeps syncing; it is the unit that cannot"
+    );
+}
+
+/// Q12 (b): three refusals of one unit that no retry can change. That unit
+/// stops, the rest of the pass runs, and the id is in sync diagnostics —
+/// with **no Profile against it**, because there is nothing a person can do
+/// about it and a Profile's line must not start saying *unavailable* over a
+/// row that is only there to be answerable later.
+#[test]
+fn a_unit_the_service_refuses_stops_that_unit_and_nothing_else() {
+    for (refusal, code) in [
+        (UnitRefusal::UnitInvalid, ROOT_UNIT_INVALID),
+        (UnitRefusal::ExportRefused, ROOT_EXPORT_REFUSED),
+        (UnitRefusal::AddressInvalid, ROOT_UNIT_ADDRESS_INVALID),
+    ] {
+        let world = one_hosted_pair();
+        let refused = CloudUnitRefV2::WorkspaceCatalog {
+            subject_id: workspace(1),
+        };
+        let other = CloudUnitRefV2::ProfileCatalog {
+            subject_id: profile(1),
+        };
+        {
+            let mut state = lock(&world);
+            for unit in [refused, other] {
+                state.service_units.insert(unit, vec![7]);
+                state.service_frames.insert(unit, vec![vec![1]]);
+                state.local_frontiers.insert(unit_label(unit), vec![3]);
+            }
+            state
+                .unit_refusals
+                .insert(refused, Failure::UnitRefused(refusal));
+        }
+        let harness = Harness::start(world);
+        harness.control.update_authorization(authority("1"));
+        harness.wait_snapshot(|snapshot| snapshot.stage == Stage::Settled);
+        let snapshot = harness.control.snapshot();
+        assert_eq!(
+            snapshot.deferred,
+            vec![Deferred {
+                profile_id: None,
+                workspace_id: Some(workspace(1)),
+                code,
+                unit: Some(refused),
+            }],
+            "{code}: the id, and no prompt"
+        );
+        assert_eq!(snapshot.failure_code, None, "{code} is not an outage");
+        assert_eq!(snapshot.retry_at_millis, None, "{code} is not retried");
+        assert_eq!(
+            lock(&harness.world).joined,
+            vec!["profile:1"],
+            "{code}: everything else still syncs"
+        );
+        harness.control.wake();
+        harness.tick_until(500, |world| world.contexts.len() == 2);
+        let log = harness.log();
+        assert_eq!(
+            log.iter()
+                .filter(|entry| *entry == "pull:workspace:1")
+                .count(),
+            1,
+            "{code}: asked once and never again: {log:?}"
+        );
+    }
+}
+
+/// The push half of Q12 (b). A unit the service will not accept is dropped
+/// with its id, and the rest of this device's inventory still goes.
+#[test]
+fn a_refused_push_drops_that_unit_and_sends_the_rest() {
+    let world = one_hosted_pair();
+    let refused = CloudUnitRefV2::ProfileCatalog {
+        subject_id: profile(1),
+    };
+    {
+        let mut state = lock(&world);
+        for (unit, label) in [
+            (refused, "profile:1"),
+            (
+                CloudUnitRefV2::ProfileCatalog {
+                    subject_id: profile(2),
+                },
+                "profile:2",
+            ),
+        ] {
+            state.local_units.push(CloudRootUnitState {
+                unit: super::coordinator::join_unit(unit),
+                frontier: vec![5],
+            });
+            state.exports.insert(
+                label.into(),
+                CloudRootExport::Published {
+                    frames: vec![vec![1]],
+                    redacted_ops: 0,
+                },
+            );
+        }
+        state
+            .unit_refusals
+            .insert(refused, Failure::UnitRefused(UnitRefusal::ExportRefused));
+    }
+    let harness = Harness::start(world);
+    harness.control.update_authorization(authority("1"));
+    harness.wait_snapshot(|snapshot| snapshot.stage == Stage::Settled);
+    let snapshot = harness.control.snapshot();
+    assert_eq!(
+        snapshot.deferred,
+        vec![Deferred {
+            profile_id: None,
+            workspace_id: None,
+            code: ROOT_EXPORT_REFUSED,
+            unit: Some(refused),
+        }]
+    );
+    assert_eq!(snapshot.failure_code, None);
+    assert_eq!(
+        lock(&harness.world).pushed,
+        vec![CloudUnitRefV2::ProfileCatalog {
+            subject_id: profile(2)
+        }],
+        "the refused unit is dropped, the other is sent"
+    );
+}
+
+/// Q12 (c): the service names a precondition this client can satisfy by
+/// itself, so the binding step runs again and the call is made once more.
+/// Silently: a precondition the client meets is not news for a person.
+#[test]
+fn a_binding_precondition_binds_again_and_retries_once() {
+    let world = one_hosted_pair();
+    lock(&world).binding_required = 1;
+    let harness = Harness::start(world);
+    harness.control.update_authorization(authority("1"));
+    harness.wait_for(|world| world.opened.len() == 2);
+    harness.wait_snapshot(|snapshot| snapshot.stage == Stage::Settled);
+    let log = harness.log();
+    assert_eq!(
+        log.iter().filter(|entry| *entry == "bind").count(),
+        2,
+        "the generation's binding, then the one the route asked for: {log:?}"
+    );
+    assert_eq!(
+        log.iter().filter(|entry| *entry == "catalog").count(),
+        2,
+        "the route was asked once more, and only once: {log:?}"
+    );
+    let snapshot = harness.control.snapshot();
+    assert_eq!(snapshot.contract, Some(CloudContract::V2));
+    assert_eq!(
+        snapshot.failure_code, None,
+        "nothing is reported for a precondition the client satisfied"
+    );
+    assert!(snapshot.deferred.is_empty());
+}
+
+/// **One retry, and the second answer is unavailable.** A binding-required
+/// answer arriving immediately after a binding that just succeeded is not a
+/// precondition any more — the binding row vanished between the two calls —
+/// so the pass stops asking and backs off.
+///
+/// This is the *shape* of the allowance: two asks of the route per pass,
+/// with one run of the binding step between them, however long the service
+/// keeps saying it. The two tests below are the ones that fail if either
+/// half of the ceiling is taken out.
+#[test]
+fn a_service_that_keeps_asking_for_the_binding_retries_once_a_pass() {
+    let world = one_hosted_pair();
+    lock(&world).binding_required = usize::MAX;
+    let harness = Harness::start(world);
+    harness.control.update_authorization(authority("1"));
+    harness.wait_snapshot(|snapshot| snapshot.failure_code == Some(CLOUD_UNAVAILABLE));
+    let log = harness.log();
+    assert_eq!(
+        log.iter().filter(|entry| *entry == "catalog").count(),
+        2,
+        "asked, bound, asked once more, and stopped: {log:?}"
+    );
+    assert_eq!(
+        log.iter().filter(|entry| *entry == "bind").count(),
+        2,
+        "one rebind in the pass, not a loop of them: {log:?}"
+    );
+    let snapshot = harness.control.snapshot();
+    assert!(
+        snapshot.retry_at_millis.is_some(),
+        "the pass backs off rather than spinning"
+    );
+    // The backoff, not a counter, paces the next attempt — and that pass
+    // gets the same single allowance: it asks the route, binds once more,
+    // asks once more and stops. The generation is already bound, so the
+    // once-per-generation binding is not repeated.
+    //
+    // **Waiting for the second ask of that pass is the whole point.** The
+    // guard's absence shows up precisely between the two: the retried route
+    // answers binding-required again, which would bind and retry again for
+    // as long as the service keeps saying it, so without the ceiling this
+    // wait never ends and the counts below are never reached.
+    harness.tick_until(2_000, |world| {
+        world.log.iter().filter(|entry| entry == &"catalog").count() >= 4
+    });
+    let log = harness.log();
+    assert_eq!(
+        log.iter().filter(|entry| *entry == "catalog").count(),
+        4,
+        "the second pass asked twice and stopped, exactly as the first did: {log:?}"
+    );
+    assert_eq!(
+        log.iter().filter(|entry| *entry == "bind").count(),
+        3,
+        "one rebind in that pass, and nothing bound a third time: {log:?}"
+    );
+}
+
+/// **The loop between the binding step and the route, and the line that
+/// stops it.** The binding route itself answers *binding required*: run the
+/// binding step, be told the binding is required, run it again. The binding
+/// request goes through the same `authorized` as every other call, so the
+/// ceiling has to be taken *before* the binding step — which is why
+/// `binding_retried` is set first.
+///
+/// With it, the route is asked twice and the pass settles unavailable.
+/// Without it, this does not terminate at all: each binding-required answer
+/// to the binding step starts another binding step until the stack ends.
+#[test]
+fn the_binding_route_asking_for_the_binding_is_not_a_loop() {
+    let world = one_hosted_pair();
+    lock(&world).binding_route_required = true;
+    let harness = Harness::start(world);
+    harness.control.update_authorization(authority("1"));
+    harness.wait_snapshot(|snapshot| snapshot.failure_code == Some(CLOUD_UNAVAILABLE));
+    let log = harness.log();
+    assert_eq!(
+        log.iter().filter(|entry| *entry == "bind").count(),
+        2,
+        "the binding step ran once more and then stopped: {log:?}"
+    );
+    let snapshot = harness.control.snapshot();
+    assert_eq!(
+        snapshot.contract, None,
+        "nothing was bound, so no contract was learned"
+    );
+    assert!(snapshot.records.is_empty());
+    assert!(
+        snapshot.retry_at_millis.is_some(),
+        "the pass backs off rather than spinning"
+    );
+}
+
+/// **One run of the binding step belongs to a pass, not one per route.**
+/// The first route told the binding is missing has it put back and is
+/// retried; a second route told the same thing in the same pass is not
+/// naming a precondition any more — a binding that has just succeeded
+/// cannot be missing again — so it takes the ordinary unavailable path.
+///
+/// This is the test that fails if the ceiling is removed rather than
+/// recursing: without it the pass binds a third time, retries the second
+/// route, and settles as though nothing had happened.
+#[test]
+fn only_one_run_of_the_binding_step_belongs_to_a_pass() {
+    let world = one_hosted_pair();
+    {
+        let mut state = lock(&world);
+        state.binding_required = 1;
+        state.discover_binding_required = 1;
+    }
+    let harness = Harness::start(world);
+    harness.control.update_authorization(authority("1"));
+    harness.wait_snapshot(|snapshot| snapshot.failure_code == Some(CLOUD_UNAVAILABLE));
+    let log = harness.log();
+    assert_eq!(
+        log.iter().filter(|entry| *entry == "bind").count(),
+        2,
+        "the generation's binding and the one the catalog route asked for: {log:?}"
+    );
+    assert_eq!(
+        log.iter().filter(|entry| *entry == "catalog").count(),
+        2,
+        "the first route was retried behind that binding: {log:?}"
+    );
+    assert_eq!(
+        log.iter().filter(|entry| *entry == "discover").count(),
+        1,
+        "and the second route was answered, not bound for again: {log:?}"
+    );
+    let snapshot = harness.control.snapshot();
+    assert!(
+        snapshot.records.is_empty(),
+        "a pass that could not enumerate admits nothing"
+    );
+    assert!(snapshot.retry_at_millis.is_some());
+}
+
+/// Q12 (d): damage to the account's projection, which only an operator can
+/// repair. The client keeps asking — a client that stopped would never
+/// notice the repair — and the rest of the pass is not stalled by it; what
+/// changes is the word, because calling service damage an outage tells a
+/// person to go and check a connection that is fine.
+#[test]
+fn a_damaged_projection_is_retried_and_is_not_an_outage() {
+    let world = one_hosted_pair();
+    lock(&world).projection_corrupt = true;
+    let harness = Harness::start(world);
+    harness.control.update_authorization(authority("1"));
+    harness.wait_snapshot(|snapshot| snapshot.failure_code == Some(ROOT_PROJECTION_CORRUPT));
+    let snapshot = harness.control.snapshot();
+    assert_ne!(
+        snapshot.stage,
+        Stage::Offline,
+        "Koru Cloud is reachable; it is the account that is damaged"
+    );
+    assert!(
+        snapshot.retry_at_millis.is_some(),
+        "the retry is right: only an operator can repair it"
+    );
+    assert!(
+        snapshot
+            .discovery
+            .as_ref()
+            .expect("a receipt")
+            .automatic_retry
+    );
+    harness.wait_for(|world| world.opened.len() == 2);
+}
+
+/// The same for the account's binding: retried, and never worded as offline.
+/// Nothing is admitted under a binding the service says is damaged, so the
+/// Profile rows read the pass's own code rather than a stage.
+#[test]
+fn a_corrupt_binding_is_retried_and_is_not_an_outage() {
+    let world = one_hosted_pair();
+    lock(&world).binding_corrupt = true;
+    let harness = Harness::start(world);
+    harness.control.update_authorization(authority("1"));
+    harness.wait_snapshot(|snapshot| snapshot.failure_code == Some(CATALOG_BINDING_CORRUPT));
+    let snapshot = harness.control.snapshot();
+    assert_eq!(snapshot.stage, Stage::Unavailable, "never Offline");
+    assert!(snapshot.retry_at_millis.is_some());
+    assert_eq!(
+        snapshot.contract, None,
+        "a damaged binding is not a service that speaks v1"
+    );
+    assert!(snapshot.records.is_empty());
+}
+
 /// The root-unit join runs before any admission: Profile units then
 /// Workspace units are pulled from the service and pushed from the device,
 /// and the service's `Pending` is answered once more from its frontier.
@@ -2111,6 +2745,7 @@ fn a_removed_profile_loses_its_units_but_not_its_workspaces_content() {
             profile_id: Some(profile(1)),
             workspace_id: None,
             code: BOOTSTRAP_FAILED,
+            unit: None,
         }]
     );
 }

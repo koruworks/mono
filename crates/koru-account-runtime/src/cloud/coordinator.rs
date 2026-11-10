@@ -189,6 +189,17 @@ pub(super) struct Coordinator<A: Api, H: Host> {
     /// exchange that follows content.
     pub(super) service_units: BTreeMap<CloudUnitRefV2, Vec<u8>>,
     pub(super) local_units: BTreeMap<CloudUnitRefV2, Vec<u8>>,
+    /// Units the service refused terminally, with the code it refused them
+    /// with (QUESTIONS.md Q12 (a), (b)). **Asked once and then never again**:
+    /// a format this build cannot read and a unit the service will not serve
+    /// are not answered by asking a second time, and the pass carries on with
+    /// every other unit. A replaced generation clears it, because a new
+    /// authorization is a new question; a newer build clears it by existing.
+    pub(super) refused_units: BTreeMap<CloudUnitRefV2, &'static str>,
+    /// Q12 (c)'s ceiling: the binding step has already been run again during
+    /// this pass, so a further binding-required answer is not a precondition
+    /// this client can satisfy. Cleared at the top of every pass.
+    pub(super) binding_retried: bool,
     pub(super) records: BTreeMap<Uuid, StatusRecord>,
     deferred: Vec<Deferred>,
     deferred_failure: Option<Failure>,
@@ -232,6 +243,8 @@ impl<A: Api, H: Host> Coordinator<A, H> {
             catalog_scope_id: None,
             service_units: BTreeMap::new(),
             local_units: BTreeMap::new(),
+            refused_units: BTreeMap::new(),
+            binding_retried: false,
             records: BTreeMap::new(),
             deferred: Vec::new(),
             deferred_failure: None,
@@ -369,6 +382,9 @@ impl<A: Api, H: Host> Coordinator<A, H> {
         self.catalog_scope_id = None;
         self.service_units.clear();
         self.local_units.clear();
+        // A terminal per-unit refusal belongs to the authorization it was
+        // answered under: a new generation asks once more, and only once.
+        self.refused_units.clear();
         self.records.clear();
         self.deferred.clear();
         self.deferred_failure = None;
@@ -515,6 +531,10 @@ impl<A: Api, H: Host> Coordinator<A, H> {
         self.revision = self.revision.saturating_add(1);
         self.deferred.clear();
         self.deferred_failure = None;
+        // Q12 (c): one run of the binding step per pass. The next pass comes
+        // behind the backoff, which is the outer retry a service that keeps
+        // losing the binding row is answered with.
+        self.binding_retried = false;
         self.discovery_counts.clear();
         self.discovery_exhausted = false;
         for candidate in &self.carried {
@@ -878,6 +898,7 @@ impl<A: Api, H: Host> Coordinator<A, H> {
             profile_id: candidate.placement,
             workspace_id: Some(candidate.workspace_id),
             code,
+            unit: None,
         });
     }
 
@@ -899,6 +920,69 @@ impl<A: Api, H: Host> Coordinator<A, H> {
             profile_id: Some(profile),
             workspace_id: None,
             code,
+            unit: None,
+        });
+    }
+
+    /// A unit the service refused terminally (QUESTIONS.md Q12 (a), (b)):
+    /// remember it so nothing asks again, record it in sync diagnostics **by
+    /// unit id**, and let the pass carry on with everything else.
+    ///
+    /// **It is never merged into the pass's failure.** One unit must not
+    /// stop a pass, and a terminal refusal that became the pass's failure
+    /// would stop the account's retry of every other unit — the opposite of
+    /// what was decided.
+    ///
+    /// (a) is the one refusal a person can answer, so where the pass can
+    /// attribute it to a Profile it does: a Profile's own unit is that
+    /// Profile's, and a Workspace's unit is the placement this device last
+    /// admitted the Workspace under. That Profile's row then says *Update
+    /// Koru to sync this*. A Workspace this device has never admitted has no
+    /// placement yet, so the first pass records the id and the prompt
+    /// follows once the placement is known.
+    ///
+    /// (b) carries no Profile at all, by decision: there is nothing a person
+    /// can do about it, so it must not relabel a Profile's connection. The
+    /// id in the row is what makes it answerable later.
+    pub(super) fn defer_unit(&mut self, unit: CloudUnitRefV2, error: &Failure) {
+        let code = error.code();
+        self.refused_units.insert(unit, code);
+        let placement = match (error, unit) {
+            (Failure::UnitFormatTooNew, CloudUnitRefV2::ProfileCatalog { subject_id }) => {
+                Some(subject_id)
+            }
+            (
+                Failure::UnitFormatTooNew,
+                CloudUnitRefV2::WorkspaceCatalog { subject_id }
+                | CloudUnitRefV2::PersonalV2 { subject_id },
+            ) => self
+                .admissions
+                .get(&subject_id)
+                .and_then(|admission| admission.candidate.placement),
+            _ => None,
+        };
+        if let Some(profile) = placement {
+            self.discovery_counts
+                .entry(Some(profile))
+                .or_default()
+                .deferred_code
+                .get_or_insert(code);
+        }
+        tracing::info!(
+            target: "koru_cloud",
+            unit = ?unit,
+            code,
+            "cloud pass: the service refused this unit for good"
+        );
+        self.deferred.push(Deferred {
+            profile_id: placement,
+            workspace_id: match unit {
+                CloudUnitRefV2::WorkspaceCatalog { subject_id }
+                | CloudUnitRefV2::PersonalV2 { subject_id } => Some(subject_id),
+                CloudUnitRefV2::ProfileCatalog { .. } => None,
+            },
+            code,
+            unit: Some(unit),
         });
     }
 
@@ -911,6 +995,12 @@ impl<A: Api, H: Host> Coordinator<A, H> {
             Some(deferred) => Some(merge(failure, deferred)),
             None => failure,
         };
+        // Q12 (a), (b) are answered where the unit is asked for and are not
+        // merged into a pass's failure. One that reaches here came from a
+        // route that is not about a single unit, so it says nothing about a
+        // unit: stopping the account's retry on it would strand every other
+        // unit on one route's answer.
+        let failure = failure.map(not_per_unit);
         let automatic_retry = failure.as_ref().is_some_and(Failure::automatic);
         match failure {
             None => {
@@ -1396,6 +1486,17 @@ pub(super) fn merge(previous: Option<Failure>, next: Failure) -> Failure {
         Some(previous) if previous.automatic() && !next.automatic() => next,
         Some(previous) => previous,
         None => next,
+    }
+}
+
+/// A per-unit refusal is terminal **for its unit**, never for the account
+/// (QUESTIONS.md Q12 (a), (b)). Off its own route it carries no unit, so it
+/// is read as the ordinary unavailable answer rather than as a reason to
+/// stop retrying everything.
+pub(super) fn not_per_unit(failure: Failure) -> Failure {
+    match failure {
+        Failure::UnitFormatTooNew | Failure::UnitRefused(_) => Failure::Unavailable,
+        other => other,
     }
 }
 

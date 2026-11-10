@@ -33,6 +33,15 @@ impl<A: Api, H: Host> Coordinator<A, H> {
         if self.contract.is_some() {
             return Ok(());
         }
+        self.bind()
+    }
+
+    /// Run the binding step: declare what the Store holds and record what the
+    /// service answers. Q12 (c) calls this again mid-pass when a route says
+    /// the binding is a precondition, which is why it is separate from
+    /// [`Self::ensure_contract`]'s once-per-generation guard — a rebind has
+    /// to reach the route even though a contract is already known.
+    pub(super) fn bind(&mut self) -> Result<(), Failure> {
         let authority = self.current_authority()?;
         let held = self.host.account_binding()?;
         let declared = held.map(declared_binding).transpose()?;
@@ -117,7 +126,9 @@ impl<A: Api, H: Host> Coordinator<A, H> {
     /// device's eligible inventory, pulled (Profile units, then Workspace
     /// units) and pushed (the same order). A unit the Store refuses to admit
     /// or export is logged by id and skipped; a failed hosted call ends the
-    /// exchange and is retried with the pass.
+    /// exchange and is retried with the pass. A unit the **service** refuses
+    /// terminally is recorded by id and never asked for again this session
+    /// (QUESTIONS.md Q12 (a), (b)): one unit does not stop the pass.
     pub(super) fn exchange_root_units(&mut self, clock: &dyn Clock) -> Result<(), Failure> {
         self.ensure_catalog_permit(clock)?;
         let account = self.current_authority()?.owner.account;
@@ -384,6 +395,9 @@ impl<A: Api, H: Host> Coordinator<A, H> {
         theirs: &[u8],
         clock: &dyn Clock,
     ) -> Result<(), Failure> {
+        if self.refused_units.contains_key(&unit) {
+            return Ok(());
+        }
         let ours = match self.host.root_unit_frontier(join_unit(unit)) {
             Ok(ours) => ours,
             Err(error) => {
@@ -402,9 +416,19 @@ impl<A: Api, H: Host> Coordinator<A, H> {
             return Ok(());
         }
         self.gate(unit, clock)?;
-        let updates = self.authorized(|api, authority| {
+        let updates = match self.authorized(|api, authority| {
             api.pull_root_unit(authority, unit, ours.clone().unwrap_or_default())
-        })?;
+        }) {
+            Ok(updates) => updates,
+            // Q12 (a), (b): this unit is not coming, and asking again will
+            // not change that. It is recorded with its id and the pass goes
+            // on to the next unit.
+            Err(error @ (Failure::UnitFormatTooNew | Failure::UnitRefused(_))) => {
+                self.defer_unit(unit, &error);
+                return Ok(());
+            }
+            Err(error) => return Err(error),
+        };
         if updates.unit != unit {
             return Err(Failure::DatasetMismatch);
         }
@@ -446,6 +470,9 @@ impl<A: Api, H: Host> Coordinator<A, H> {
         ours: &[u8],
         clock: &dyn Clock,
     ) -> Result<(), Failure> {
+        if self.refused_units.contains_key(&unit) {
+            return Ok(());
+        }
         let theirs = self.service_units.get(&unit).cloned();
         if theirs.as_deref() == Some(ours) {
             return Ok(());
@@ -489,7 +516,7 @@ impl<A: Api, H: Host> Coordinator<A, H> {
             if frames.is_empty() {
                 return Ok(());
             }
-            let receipt = self.authorized(|api, authority| {
+            let receipt = match self.authorized(|api, authority| {
                 api.push_root_unit(
                     authority,
                     CloudRootUnitUpdatesV2 {
@@ -499,7 +526,17 @@ impl<A: Api, H: Host> Coordinator<A, H> {
                         projection_watermark: 0,
                     },
                 )
-            })?;
+            }) {
+                Ok(receipt) => receipt,
+                // Q12 (a), (b): the service will not take this unit, and a
+                // retry cannot change its mind. Recorded by id; the rest of
+                // the inventory still goes.
+                Err(error @ (Failure::UnitFormatTooNew | Failure::UnitRefused(_))) => {
+                    self.defer_unit(unit, &error);
+                    return Ok(());
+                }
+                Err(error) => return Err(error),
+            };
             match receipt {
                 CloudRootJoinReceiptV2::Applied {
                     frontier,

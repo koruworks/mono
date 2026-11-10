@@ -107,6 +107,32 @@ pub const CATALOG_BINDING_MISMATCH: &str = "catalog_binding_mismatch";
 /// (Plan 2.1's `placement_pending`); retried after the next root join.
 pub const PLACEMENT_PENDING: &str = "placement_pending";
 
+// ----- The service's own coded refusals (QUESTIONS.md Q12) ---------------
+//
+// Four answers the service words itself were read as a generic outage and
+// retried for ever. They are kept here **as the service spells them**: a
+// diagnostic then names what was actually answered, and a support
+// conversation can search for the same token on both sides.
+
+/// This build cannot read that unit's format — a newer Koru wrote it. Q12
+/// (a): the unit is dropped for this session and the person is told to
+/// update; retrying a format this build does not have is a machine
+/// repeating itself.
+pub const ROOT_UNIT_FORMAT_TOO_NEW: &str = "root_unit_format_too_new";
+/// The service will not serve or accept that one unit, and no retry can
+/// change it (Q12 (b)). Diagnostics only: there is nothing a person can do,
+/// and the unit's id is what makes it answerable later.
+pub const ROOT_UNIT_INVALID: &str = "root_unit_invalid";
+pub const ROOT_EXPORT_REFUSED: &str = "root_export_refused";
+pub const ROOT_UNIT_ADDRESS_INVALID: &str = "root_unit_address_invalid";
+/// 428: the route wants the account's catalog binding in place first. Q12
+/// (c): the binding step runs again and the call is retried **once**.
+pub const CATALOG_BINDING_REQUIRED: &str = "catalog_binding_required";
+/// Service-side damage only an operator can repair (Q12 (d)). Retried with
+/// backoff, and never worded as an outage.
+pub const ROOT_PROJECTION_CORRUPT: &str = "root_projection_corrupt";
+pub const CATALOG_BINDING_CORRUPT: &str = "catalog_binding_corrupt";
+
 /// Object-safe adapter boundary, mirroring [`crate::enrollment::Driver`], so
 /// the account service pushes the same authorization to both without knowing
 /// which effect port is behind either.
@@ -179,6 +205,57 @@ pub enum Failure {
     Content(ContentRefusal),
     /// No root placement this device can list the Workspace under yet.
     PlacementPending,
+    /// Q12 (a): the unit is in a format a newer Koru wrote. Terminal for
+    /// that unit, never for the pass — and the person is told to update,
+    /// because that is the only thing that can change the answer.
+    UnitFormatTooNew,
+    /// Q12 (b): the service refused that one unit for good. Terminal for the
+    /// unit and silent to the person; the id goes to sync diagnostics.
+    UnitRefused(UnitRefusal),
+    /// Q12 (c): a 428 naming the account binding as a precondition. The
+    /// binding step runs again and the call is retried once; a second one
+    /// takes the ordinary unavailable path.
+    CatalogBindingRequired,
+    /// Q12 (d): service-side damage to this account. Retried with backoff,
+    /// and worded as a problem with the account rather than an outage.
+    AccountDamaged(AccountDamage),
+}
+
+/// Which of the three terminal per-unit refusals the service answered. One
+/// enum rather than a `&str`, so only the service's three codes can be in a
+/// diagnostic, and each keeps its own word.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UnitRefusal {
+    UnitInvalid,
+    ExportRefused,
+    AddressInvalid,
+}
+
+impl UnitRefusal {
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::UnitInvalid => ROOT_UNIT_INVALID,
+            Self::ExportRefused => ROOT_EXPORT_REFUSED,
+            Self::AddressInvalid => ROOT_UNIT_ADDRESS_INVALID,
+        }
+    }
+}
+
+/// What the service says is damaged. Both read the same way to a person —
+/// Koru Cloud has a problem with this account — and keep their own code.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AccountDamage {
+    RootProjection,
+    CatalogBinding,
+}
+
+impl AccountDamage {
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::RootProjection => ROOT_PROJECTION_CORRUPT,
+            Self::CatalogBinding => CATALOG_BINDING_CORRUPT,
+        }
+    }
 }
 
 impl Failure {
@@ -200,10 +277,19 @@ impl Failure {
             Self::CatalogBindingMismatch => CATALOG_BINDING_MISMATCH,
             Self::Content(refusal) => refusal.code(),
             Self::PlacementPending => PLACEMENT_PENDING,
+            Self::UnitFormatTooNew => ROOT_UNIT_FORMAT_TOO_NEW,
+            Self::UnitRefused(refusal) => refusal.code(),
+            Self::CatalogBindingRequired => CATALOG_BINDING_REQUIRED,
+            Self::AccountDamaged(damage) => damage.code(),
         }
     }
     /// Revocation, expiry and a binding refusal are answered by a new
-    /// authorization or a person, not by a retry of the same request.
+    /// authorization or a person, not by a retry of the same request. The
+    /// two terminal per-unit refusals are here for completeness only: they
+    /// are answered where the unit is asked for and never become a pass's
+    /// failure, because one unit must not stop the pass (Q12 (a), (b)).
+    /// Service-side damage **is** retried: only an operator can repair it,
+    /// and a client that stopped asking would never notice the repair.
     fn automatic(&self) -> bool {
         !matches!(
             self,
@@ -211,6 +297,8 @@ impl Failure {
                 | Self::AccessRevoked
                 | Self::CatalogBindingConflict
                 | Self::CatalogBindingMismatch
+                | Self::UnitFormatTooNew
+                | Self::UnitRefused(_)
         )
     }
 }
@@ -666,6 +754,16 @@ pub struct Deferred {
     pub profile_id: Option<ProfileId>,
     pub workspace_id: Option<WorkspaceId>,
     pub code: &'static str,
+    /// The root unit this row is about, for the two terminal per-unit
+    /// refusals (QUESTIONS.md Q12 (a), (b)): the id is the whole point of
+    /// the row, because nothing else records *which* unit the service
+    /// refused. `None` on a deferred subject, which is named by the ids
+    /// above.
+    ///
+    /// A row for a refusal of Q12 (b) carries **no** `profile_id`: there is
+    /// nothing a person can do about it, so it must not relabel a Profile's
+    /// connection — it is a diagnostic, not a state.
+    pub unit: Option<CloudUnitRefV2>,
 }
 
 /// One coherent cached observation. A host-side diagnostic value, not an

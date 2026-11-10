@@ -7,7 +7,10 @@
 //! that a 503 `server_unavailable` from the descriptor read means "not ready
 //! yet", never "make something up". A 404 on a v2 catalog route means the
 //! service does not speak v2 yet (root-catalog Plan 3.2's window), and the
-//! two binding refusals keep their own words because they are terminal.
+//! two binding refusals keep their own words because they are terminal. So
+//! do the seven refusals of QUESTIONS.md Q12: a refusal the service worded
+//! is answered as that refusal, never flattened into an outage and retried
+//! for ever.
 
 use koru_account_client::{AccountAuthorization, AccountClient, ClientError};
 use koru_account_wire::cloud_sync::{SyncTokenRequestV1, SyncTokenResponseV1};
@@ -210,6 +213,18 @@ impl Api for HostedApi {
 /// are terminal for the account and keep their words. Nothing *but* a 404 is
 /// read as a missing route: every other codeless status keeps the reading it
 /// had while the status was being thrown away.
+///
+/// **A refusal the service worded is not an outage** (QUESTIONS.md Q12).
+/// Seven of its own codes used to fall through to [`Failure::Unavailable`]
+/// and be retried for ever, which is how a person ends up watching an
+/// unavailable line that can never tell them anything. Each now says what it
+/// is: a unit this build is too old to read (a), the three refusals of one
+/// unit that no retry can change (b), the binding precondition the client
+/// can satisfy itself (c), and service-side damage that is retried but never
+/// called an outage (d). Generic integrity faults stay on
+/// `server_unavailable`, so these seven are distinguishable by code alone —
+/// the status is never what tells them apart, and **only** a 401
+/// `unauthenticated` ends a session.
 fn failure(error: ClientError) -> Failure {
     match error {
         ClientError::Transport(_) => Failure::Offline,
@@ -219,6 +234,16 @@ fn failure(error: ClientError) -> Failure {
         ClientError::Api { status, code } => match (status, code.as_str()) {
             (_, CATALOG_BINDING_CONFLICT) => Failure::CatalogBindingConflict,
             (_, CATALOG_BINDING_MISMATCH) => Failure::CatalogBindingMismatch,
+            // Q12, before the status arms: a coded refusal says what it is,
+            // and a 403 or 404 carrying one of these codes is that refusal
+            // rather than a denied principal or a missing route.
+            (_, ROOT_UNIT_FORMAT_TOO_NEW) => Failure::UnitFormatTooNew,
+            (_, ROOT_UNIT_INVALID) => Failure::UnitRefused(UnitRefusal::UnitInvalid),
+            (_, ROOT_EXPORT_REFUSED) => Failure::UnitRefused(UnitRefusal::ExportRefused),
+            (_, ROOT_UNIT_ADDRESS_INVALID) => Failure::UnitRefused(UnitRefusal::AddressInvalid),
+            (_, CATALOG_BINDING_REQUIRED) => Failure::CatalogBindingRequired,
+            (_, ROOT_PROJECTION_CORRUPT) => Failure::AccountDamaged(AccountDamage::RootProjection),
+            (_, CATALOG_BINDING_CORRUPT) => Failure::AccountDamaged(AccountDamage::CatalogBinding),
             (401, _) => Failure::SessionExpired,
             (403, _) => Failure::Denied,
             (404, _) => Failure::RouteNotFound,
