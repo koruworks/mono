@@ -1487,3 +1487,264 @@ fn valid_legacy_repairs_conclusively_unusable_destination_but_never_unreadable_v
         }
     }
 }
+
+/// What `refresh_retry_key` used to be: blake3 over a fixed prefix and the
+/// refresh token itself. Holding the token was therefore enough to compute a
+/// valid exact retry and collect the sealed new pair out of the service's
+/// window, which is why Q11 step 2 replaced it with random bytes the device
+/// persists. Kept here as the value the stored key must never equal.
+fn derived_from_token(refresh_token: &str) -> [u8; 32] {
+    let mut input = Vec::with_capacity(38 + refresh_token.len());
+    input.extend_from_slice(b"koru.account.refresh-retry.v1\0");
+    input.extend_from_slice(refresh_token.as_bytes());
+    *blake3::hash(&input).as_bytes()
+}
+
+/// One account row, ready, holding `session` — written the way the code
+/// writes it, so the slot carries the retry key its next rotation must
+/// present. Answers the vault, the directory and that key.
+fn signed_in(
+    session: &str,
+) -> (
+    Arc<SessionCredentialStore>,
+    Arc<MemoryAccountDirectory>,
+    [u8; 32],
+) {
+    let vault = Arc::new(SessionCredentialStore::default());
+    let directory = Arc::new(MemoryAccountDirectory::new());
+    directory.retire_legacy(&legacy().namespace()).unwrap();
+    let mut persistence =
+        CredentialPersistence::new(vault.clone(), legacy(), Some(directory.clone()));
+    persistence
+        .replace(
+            &credential(session),
+            &mut PendingCredentialWrite::default(),
+            &mut inspector(),
+        )
+        .unwrap();
+    let key = persistence
+        .refresh_retry_key()
+        .expect("a stored credential is armed to rotate");
+    (vault, directory, key)
+}
+
+/// Q11 step 2. The key a rotation presents is random and lives in the slot
+/// beside the token it rotates, so it is durable before the request goes out
+/// and holding the token is not enough to produce it. The slot is still the
+/// credential it always was — `SessionCredential::decode` has to keep reading
+/// it, because every other reader of the vault wants only that.
+#[test]
+fn a_stored_slot_is_still_a_credential_and_holds_a_key_the_token_cannot_give() {
+    let (vault, _, first) = signed_in("old");
+    let entry = legacy()
+        .for_account(&owner(1, 1).account.to_string())
+        .unwrap();
+    let stored = vault.load(&entry).unwrap().unwrap();
+    assert_eq!(
+        SessionCredential::decode(&stored).unwrap().refresh_token,
+        "secret-old",
+        "the slot restores as the credential it is"
+    );
+    assert_eq!(decode_retry_key(&stored), Some(first));
+    assert_ne!(
+        first,
+        derived_from_token("secret-old"),
+        "a stolen refresh token must not be enough to compute its retry key"
+    );
+
+    let (_, _, second) = signed_in("old");
+    assert_ne!(
+        first, second,
+        "each stored pair gets its own key, so one rotation's retry buys nothing elsewhere"
+    );
+}
+
+/// The maintainer's 5.3-second window, in the part of it this change does not
+/// remove: the service has answered a rotation and the device stops inside the
+/// owner round trip `replace` still owes before the vault write. The new pair
+/// never reaches the vault — but it is not lost, because the next process
+/// presents the *same* token under the *same* key and the service answers the
+/// same rotation again. A freshly minted key would be a different rotation,
+/// and the pair really would be gone.
+#[test]
+fn a_rotation_lost_before_the_vault_write_is_replayed_under_the_same_key() {
+    let (vault, directory, armed) = signed_in("old");
+    let entry = legacy()
+        .for_account(&owner(1, 1).account.to_string())
+        .unwrap();
+
+    // A new process restores the stored pair and is armed with the key the
+    // vault holds beside it; that is the key its refresh will present.
+    let mut restarted =
+        CredentialPersistence::new(vault.clone(), legacy(), Some(directory.clone()));
+    assert_eq!(
+        restarted
+            .restore(&mut inspector())
+            .unwrap()
+            .unwrap()
+            .refresh_token,
+        "secret-old"
+    );
+    assert_eq!(restarted.refresh_retry_key(), Some(armed));
+
+    // The service answers the rotation; the device stops in the owner round
+    // trip, so nothing is written.
+    let mut stalled = inspector();
+    stalled.0.remove("new");
+    assert!(
+        restarted
+            .replace(
+                &credential("new"),
+                &mut PendingCredentialWrite::default(),
+                &mut stalled,
+            )
+            .is_err()
+    );
+    let stored = vault.load(&entry).unwrap().unwrap();
+    assert_eq!(
+        SessionCredential::decode(&stored).unwrap().refresh_token,
+        "secret-old",
+        "the superseded pair is what survived the stop"
+    );
+
+    // The process after the stop: same token, same key, so the refresh route
+    // replays that one rotation instead of asking for a new one.
+    let mut after_stop = CredentialPersistence::new(vault.clone(), legacy(), Some(directory));
+    assert_eq!(
+        after_stop
+            .restore(&mut inspector())
+            .unwrap()
+            .unwrap()
+            .refresh_token,
+        "secret-old"
+    );
+    assert_eq!(
+        after_stop.refresh_retry_key(),
+        Some(armed),
+        "the replay presents the key the lost rotation presented"
+    );
+
+    // The replay's answer is made durable, and it brings its own next key.
+    after_stop
+        .replace(
+            &credential("new"),
+            &mut PendingCredentialWrite::default(),
+            &mut inspector(),
+        )
+        .unwrap();
+    let rotated = vault
+        .load(
+            &legacy()
+                .for_account(&owner(1, 2).account.to_string())
+                .unwrap(),
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        SessionCredential::decode(&rotated).unwrap().refresh_token,
+        "secret-new"
+    );
+    assert_ne!(
+        decode_retry_key(&rotated),
+        Some(armed),
+        "the pair that replaced it does not reuse the spent key"
+    );
+}
+
+/// A slot written by a build that had no key of its own. Restore gives it one
+/// and makes it durable before handing the credential out, because a refresh
+/// of these bytes is the very next thing that happens; a second start reads
+/// that same key back rather than minting another.
+#[test]
+fn a_slot_written_without_a_key_is_given_one_durably_at_restore() {
+    let vault = Arc::new(SessionCredentialStore::default());
+    let directory = Arc::new(MemoryAccountDirectory::new());
+    let namespace = legacy().namespace();
+    directory.retire_legacy(&namespace).unwrap();
+    let row = directory.pending(&namespace, owner(1, 1)).unwrap();
+    let entry = legacy()
+        .for_account(&owner(1, 1).account.to_string())
+        .unwrap();
+    vault
+        .store(&entry, credential("old").encode().unwrap())
+        .unwrap();
+    directory
+        .ready(&namespace, &row, owner(1, 1), true, false)
+        .unwrap();
+    assert_eq!(
+        decode_retry_key(&vault.load(&entry).unwrap().unwrap()),
+        None
+    );
+
+    let mut first = CredentialPersistence::new(vault.clone(), legacy(), Some(directory.clone()));
+    first.restore(&mut inspector()).unwrap().unwrap();
+    let minted = first
+        .refresh_retry_key()
+        .expect("restore mints a missing key");
+    assert_eq!(
+        decode_retry_key(&vault.load(&entry).unwrap().unwrap()),
+        Some(minted),
+        "the key is durable before the credential is handed out"
+    );
+
+    let mut second = CredentialPersistence::new(vault.clone(), legacy(), Some(directory));
+    second.restore(&mut inspector()).unwrap().unwrap();
+    assert_eq!(
+        second.refresh_retry_key(),
+        Some(minted),
+        "a later start reads the stored key instead of minting a second one"
+    );
+}
+
+/// A retry key belongs to one stored pair. Writing the same pair again — a
+/// retried durability step, or a refresh the service answered without
+/// rotating — keeps it, because a rotation already in flight under that key
+/// has to stay replayable; only a new pair earns a new key.
+#[test]
+fn storing_the_same_pair_keeps_its_retry_key_and_a_new_pair_earns_its_own() {
+    let vault = Arc::new(SessionCredentialStore::default());
+    let directory = Arc::new(MemoryAccountDirectory::new());
+    directory.retire_legacy(&legacy().namespace()).unwrap();
+    let mut persistence =
+        CredentialPersistence::new(vault.clone(), legacy(), Some(directory.clone()));
+    let entry = legacy()
+        .for_account(&owner(1, 1).account.to_string())
+        .unwrap();
+
+    persistence
+        .replace(
+            &credential("old"),
+            &mut PendingCredentialWrite::default(),
+            &mut inspector(),
+        )
+        .unwrap();
+    let first = persistence.refresh_retry_key().unwrap();
+    let bytes = vault.load(&entry).unwrap().unwrap().expose().to_owned();
+
+    persistence
+        .replace(
+            &credential("old"),
+            &mut PendingCredentialWrite::default(),
+            &mut inspector(),
+        )
+        .unwrap();
+    assert_eq!(persistence.refresh_retry_key(), Some(first));
+    assert_eq!(
+        vault.load(&entry).unwrap().unwrap().expose(),
+        bytes,
+        "storing the pair it already holds leaves the slot as it was"
+    );
+
+    persistence
+        .replace(
+            &credential("second"),
+            &mut PendingCredentialWrite::default(),
+            &mut inspector(),
+        )
+        .unwrap();
+    assert_ne!(
+        persistence.refresh_retry_key(),
+        Some(first),
+        "a different pair rotates under a key of its own"
+    );
+}

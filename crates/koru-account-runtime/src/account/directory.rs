@@ -6,7 +6,8 @@ use super::{AccountService, ServiceError};
 use crate::identity::{
     AccountDirectorySnapshot, AccountOwner, DirectoryRecord, DirectoryState, SqliteTrustRepository,
 };
-use koru_oauth_credentials::{CredentialEntry, CredentialStore, SessionCredential};
+use crate::ports::{Entropy, SystemEntropy};
+use koru_oauth_credentials::{CredentialEntry, CredentialStore, SecretString, SessionCredential};
 use std::path::PathBuf;
 use std::sync::Arc;
 #[cfg(any(test, feature = "test-support"))]
@@ -123,6 +124,7 @@ impl AccountDirectory for MemoryAccountDirectory {
 
 pub struct CredentialPersistence {
     vault: Arc<dyn CredentialStore>,
+    entropy: Arc<dyn Entropy>,
     legacy: CredentialEntry,
     directory: Option<Arc<dyn AccountDirectory>>,
     active: Option<DirectoryRecord>,
@@ -137,6 +139,16 @@ pub struct CredentialPersistence {
     adopt_legacy: Arc<std::sync::atomic::AtomicBool>,
     discovered_records: Vec<DirectoryRecord>,
     discovery_required: bool,
+    /// The retry key read back from, or written into, the slot this
+    /// persistence last restored or replaced. It is what a refresh of those
+    /// stored bytes must present, and `None` means no key is durable for them,
+    /// so a rotation performed under one could not be replayed.
+    retry_key: Option<[u8; 32]>,
+    /// Which stored pair `retry_key` belongs to, as a digest rather than a
+    /// second copy of the secret. A key belongs to one token: a write that
+    /// stores the same token again keeps it, so a rotation already in flight
+    /// under it stays replayable, and only a new pair earns a new key.
+    armed_pair: Option<[u8; 32]>,
 }
 
 /// Exact replacement state stays in PendingDurability until all three effects
@@ -145,6 +157,71 @@ pub struct CredentialPersistence {
 pub struct PendingCredentialWrite {
     record: Option<DirectoryRecord>,
     vault_acknowledged: bool,
+    /// Minted once per replacement, so a retry of a delayed vault write stores
+    /// the same key the first attempt did rather than a second random one.
+    retry_key: Option<[u8; 32]>,
+}
+
+/// What one credential slot holds: the session credential's own JSON, plus the
+/// random key a refresh of *that* token must present as its idempotency key.
+///
+/// The two live in one vault value on purpose. The key is written in the same
+/// acknowledged write as the token it belongs to, so it is durable before any
+/// refresh can present it; clearing the slot clears both; and a process that
+/// restarts mid-rotation reads the key out of the very slot it reads the token
+/// from, which is what lets it replay the rotation the service already
+/// performed instead of losing it. `SessionCredential::decode` ignores the
+/// extra member, so every reader that wants only the credential is unchanged —
+/// `a_stored_slot_is_still_a_credential_and_holds_a_key_the_token_cannot_give`
+/// holds that.
+#[derive(serde::Serialize)]
+struct StoredSlot<'a> {
+    #[serde(flatten)]
+    credential: &'a SessionCredential,
+    refresh_retry_key: String,
+}
+
+#[derive(serde::Deserialize)]
+struct StoredRetryKey {
+    refresh_retry_key: Option<String>,
+}
+
+pub(crate) fn encode_slot(
+    credential: &SessionCredential,
+    retry_key: &[u8; 32],
+) -> Result<SecretString, ServiceError> {
+    let value = serde_json::to_string(&StoredSlot {
+        credential,
+        refresh_retry_key: base64::engine::Engine::encode(
+            &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+            retry_key,
+        ),
+    })
+    .map_err(|_| ServiceError::terminal("credential_invalid"))?;
+    SecretString::new(value).map_err(|_| ServiceError::terminal("credential_invalid"))
+}
+
+/// Which pair a retry key belongs to. A digest, so remembering it never means
+/// holding the secret twice.
+fn pair_fingerprint(credential: &SessionCredential) -> [u8; 32] {
+    let mut input = Vec::new();
+    input.extend_from_slice(credential.session_id.as_bytes());
+    input.push(0);
+    input.extend_from_slice(credential.refresh_token.as_bytes());
+    *blake3::hash(&input).as_bytes()
+}
+
+/// A slot written by a build that had no retry key of its own carries none;
+/// restore mints one for it rather than refusing the session.
+pub(super) fn decode_retry_key(secret: &SecretString) -> Option<[u8; 32]> {
+    let stored: StoredRetryKey = serde_json::from_str(secret.expose()).ok()?;
+    base64::engine::Engine::decode(
+        &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+        stored.refresh_retry_key?,
+    )
+    .ok()?
+    .try_into()
+    .ok()
 }
 
 impl CredentialPersistence {
@@ -156,6 +233,7 @@ impl CredentialPersistence {
         let legacy_ready = directory.is_none();
         Self {
             vault,
+            entropy: Arc::new(SystemEntropy),
             legacy,
             directory,
             active: None,
@@ -168,10 +246,76 @@ impl CredentialPersistence {
             adopt_legacy: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             discovered_records: Vec::new(),
             discovery_required: false,
+            retry_key: None,
+            armed_pair: None,
         }
     }
     pub fn owner(&self) -> Option<AccountOwner> {
         self.active.as_ref().map(|r| r.owner)
+    }
+    /// The durable idempotency key for a refresh of the credential this
+    /// persistence last handed out, which the worker arms on the service
+    /// before it can send one. `None` means no key reached the vault, and the
+    /// refresh then refuses rather than performing a rotation it could never
+    /// replay.
+    pub fn refresh_retry_key(&self) -> Option<[u8; 32]> {
+        self.retry_key
+    }
+    /// The armed key, topping the slot up if nothing is durable for these
+    /// bytes yet — a slot written by a build that had no key of its own, or
+    /// one whose top-up met a vault that was briefly unavailable. Already
+    /// armed, it answers without touching the vault.
+    pub fn ensure_refresh_retry_key(&mut self, credential: &SessionCredential) -> Option<[u8; 32]> {
+        if self.retry_key.is_none() {
+            let entry = match &self.active {
+                Some(record) => self.entry(record).ok()?,
+                None => self.legacy.clone(),
+            };
+            let stored = self
+                .load_slot_keyed(&entry)
+                .ok()
+                .flatten()
+                .and_then(|(_, key)| key);
+            self.arm_retry_key(&entry, credential, stored);
+        }
+        self.retry_key
+    }
+    fn mint_retry_key(&self) -> [u8; 32] {
+        let mut key = [0u8; 32];
+        self.entropy.fill_bytes(&mut key);
+        key
+    }
+    /// Arm the key a credential restore is about to hand out will rotate
+    /// under: the one its slot held, or, for a slot written by a build that
+    /// kept no key, a fresh one written into that slot now — before the
+    /// credential is handed to anything that could refresh it. A key that
+    /// cannot be made durable arms nothing: the session stays usable for
+    /// everything that is not a rotation, and the refresh refuses.
+    fn arm_retry_key(
+        &mut self,
+        entry: &CredentialEntry,
+        credential: &SessionCredential,
+        stored: Option<[u8; 32]>,
+    ) {
+        self.retry_key = None;
+        self.armed_pair = None;
+        if let Some(key) = stored {
+            self.retry_key = Some(key);
+            self.armed_pair = Some(pair_fingerprint(credential));
+            return;
+        }
+        let key = self.mint_retry_key();
+        if encode_slot(credential, &key)
+            .and_then(|value| {
+                self.vault
+                    .store(entry, value)
+                    .map_err(|_| ServiceError::retryable("credential_unavailable"))
+            })
+            .is_ok()
+        {
+            self.retry_key = Some(key);
+            self.armed_pair = Some(pair_fingerprint(credential));
+        }
     }
     /// The coordinator owns active selection. An inactive effect may update
     /// its credential slot but cannot select it when its acknowledgement arrives.
@@ -254,11 +398,23 @@ impl CredentialPersistence {
         &self,
         entry: &CredentialEntry,
     ) -> Result<Option<SessionCredential>, ServiceError> {
+        Ok(self
+            .load_slot_keyed(entry)?
+            .map(|(credential, _)| credential))
+    }
+    /// The slot's credential and the retry key stored beside it, from the one
+    /// load. A vault load is a platform round trip on a phone, so the key is
+    /// read where the token is read and never looked up again.
+    fn load_slot_keyed(
+        &self,
+        entry: &CredentialEntry,
+    ) -> Result<Option<(SessionCredential, Option<[u8; 32]>)>, ServiceError> {
         self.vault
             .load(entry)
             .map_err(|_| ServiceError::retryable("credential_unavailable"))?
             .map(|value| {
                 SessionCredential::decode(&value)
+                    .map(|credential| (credential, decode_retry_key(&value)))
                     .map_err(|_| ServiceError::terminal("credential_invalid"))
             })
             .transpose()
@@ -269,7 +425,13 @@ impl CredentialPersistence {
         service: &mut dyn AccountService,
     ) -> Result<Option<SessionCredential>, ServiceError> {
         let Some(directory) = self.directory.as_ref().cloned() else {
-            return self.load_slot(&self.legacy);
+            let Some((restored, retry_key)) = self.load_slot_keyed(&self.legacy)? else {
+                self.retry_key = None;
+                return Ok(None);
+            };
+            let legacy = self.legacy.clone();
+            self.arm_retry_key(&legacy, &restored, retry_key);
+            return Ok(Some(restored));
         };
         let namespace = self.legacy.namespace();
         let mut snapshot = directory.snapshot(&namespace)?;
@@ -299,11 +461,16 @@ impl CredentialPersistence {
         self.legacy_ready = snapshot.legacy_retired;
         self.repair = None;
         let mut selected = None;
+        // The retry key that came out of the same slot as `selected`, so the
+        // refresh that may rotate those bytes presents the key already stored
+        // beside them. `None` beside a selected credential means that slot
+        // holds no key yet and one has to be written before it is handed out.
+        let mut selected_key = None;
         let mut failures = std::collections::BTreeMap::new();
         for record in &snapshot.records {
             let selected_slot = snapshot.active == Some(record.owner.account);
-            match self.load_slot(&self.entry(record)?) {
-                Ok(Some(credential)) => match log_inspection(
+            match self.load_slot_keyed(&self.entry(record)?) {
+                Ok(Some((credential, slot_key))) => match log_inspection(
                     service.inspect_credential(&credential),
                     selected_slot,
                     record.version,
@@ -323,6 +490,7 @@ impl CredentialPersistence {
                                 version: record.version,
                             });
                             selected = Some(credential);
+                            selected_key = slot_key;
                         }
                     }
                     Ok(_) => {
@@ -337,9 +505,11 @@ impl CredentialPersistence {
                         // and the server keeps only the newest one current,
                         // so a rotation that was answered but never reached
                         // the vault is refused here while `refresh` can still
-                        // replay it under the idempotency key
-                        // `refresh_retry_key` derives from these same old
-                        // bytes. Hand the selected slot through and let the
+                        // replay it under the retry key stored in this very
+                        // slot beside those same old bytes — the key the lost
+                        // rotation itself presented, which is why the replay
+                        // is the same rotation and not a second one. Hand the
+                        // selected slot through and let the
                         // refresh route conclude: it is the one call that
                         // tells a revoked session apart from a superseded
                         // token, and it clears the vault and publishes
@@ -349,6 +519,7 @@ impl CredentialPersistence {
                         // longer decides the outcome.
                         if selected_slot && error.code == "credential_rejected" {
                             selected = Some(credential);
+                            selected_key = slot_key;
                         }
                         failures.insert(Some(record.owner.account), error);
                     }
@@ -371,13 +542,13 @@ impl CredentialPersistence {
         }
         let legacy_result = (|| -> Result<(), ServiceError> {
             if !snapshot.legacy_retired {
-                let legacy = match self.load_slot(&self.legacy) {
+                let legacy = match self.load_slot_keyed(&self.legacy) {
                     Ok(value) => value,
                     Err(error) if unusable(&error) => None,
                     Err(error) => return Err(error),
                 };
                 match legacy {
-                    Some(legacy) => {
+                    Some((legacy, legacy_key)) => {
                         let owner = match log_inspection(
                             service.inspect_credential(&legacy),
                             snapshot.active.is_none(),
@@ -410,26 +581,28 @@ impl CredentialPersistence {
                             .iter()
                             .find(|r| r.owner.account == owner.account);
                         let surviving = match existing {
-                            Some(record) => match self.load_slot(&self.entry(record)?) {
-                                Ok(Some(value)) => match service.inspect_credential(&value) {
-                                    Ok(actual) if actual.account == owner.account => {
-                                        Some((record.clone(), actual, value))
+                            Some(record) => match self.load_slot_keyed(&self.entry(record)?) {
+                                Ok(Some((value, slot_key))) => {
+                                    match service.inspect_credential(&value) {
+                                        Ok(actual) if actual.account == owner.account => {
+                                            Some((record.clone(), actual, value, slot_key))
+                                        }
+                                        Ok(_) => {
+                                            return Err(ServiceError::terminal(
+                                                "credential_owner_mismatch",
+                                            ));
+                                        }
+                                        Err(error) if unusable(&error) => None,
+                                        Err(error) => return Err(error),
                                     }
-                                    Ok(_) => {
-                                        return Err(ServiceError::terminal(
-                                            "credential_owner_mismatch",
-                                        ));
-                                    }
-                                    Err(error) if unusable(&error) => None,
-                                    Err(error) => return Err(error),
-                                },
+                                }
                                 Ok(None) => None,
                                 Err(error) if unusable(&error) => None,
                                 Err(error) => return Err(error),
                             },
                             None => None,
                         };
-                        if let Some((record, actual, value)) = surviving {
+                        if let Some((record, actual, value, slot_key)) = surviving {
                             directory.ready(&namespace, &record, actual, false, true)?;
                             if snapshot.active == Some(actual.account) {
                                 self.active = Some(DirectoryRecord {
@@ -438,17 +611,19 @@ impl CredentialPersistence {
                                     ..record
                                 });
                                 selected = Some(value);
+                                selected_key = slot_key;
                             }
                         } else {
                             let record = directory.pending(&namespace, owner)?;
                             let entry = self.entry(&record)?;
+                            // The bytes move to their account slot with the
+                            // retry key that belongs to them, so a rotation
+                            // in flight across this one-time migration is
+                            // still replayable. A legacy slot written before
+                            // keys existed has none, and gets one here.
+                            let carried = legacy_key.unwrap_or_else(|| self.mint_retry_key());
                             self.vault
-                                .store(
-                                    &entry,
-                                    legacy.encode().map_err(|_| {
-                                        ServiceError::terminal("credential_invalid")
-                                    })?,
-                                )
+                                .store(&entry, encode_slot(&legacy, &carried)?)
                                 .map_err(|_| ServiceError::retryable("credential_unavailable"))?;
                             let activate =
                                 (self.adopt_legacy.load(std::sync::atomic::Ordering::Acquire)
@@ -464,6 +639,7 @@ impl CredentialPersistence {
                             if activate {
                                 self.active = Some(record);
                                 selected = Some(legacy);
+                                selected_key = Some(carried);
                             }
                         }
                         failures.remove(&Some(owner.account));
@@ -496,6 +672,20 @@ impl CredentialPersistence {
             self.discovery_required = false;
         }
         self.legacy_ready = final_snapshot.legacy_retired;
+        // The credential about to be handed out can be refreshed, and a
+        // refresh may rotate it, so the key that rotation will present has to
+        // be durable now. It is the one that came out of the slot these bytes
+        // came from, which is what makes a replay after a stop present the
+        // same key the lost rotation did.
+        self.retry_key = None;
+        self.armed_pair = None;
+        if let Some(credential) = &selected {
+            let entry = match &self.active {
+                Some(record) => self.entry(record)?,
+                None => self.legacy.clone(),
+            };
+            self.arm_retry_key(&entry, credential, selected_key);
+        }
         if let Some((account, mut error)) = failures.into_iter().next() {
             error.code = match error.code {
                 "credential_missing" => "account_credential_missing",
@@ -517,16 +707,26 @@ impl CredentialPersistence {
         pending: &mut PendingCredentialWrite,
         service: &mut dyn AccountService,
     ) -> Result<(), ServiceError> {
+        // Minted before the write and kept with the pending write, so the key
+        // a later refresh of these bytes must present becomes durable in the
+        // same acknowledged write as the bytes themselves — no second write,
+        // and nothing to lose between the two. A write that stores a pair this
+        // persistence is already armed for keeps its key: the key belongs to
+        // the token, and replacing it would strand a rotation already in
+        // flight under it.
+        let retry_key = *pending
+            .retry_key
+            .get_or_insert_with(|| match self.retry_key {
+                Some(key) if self.armed_pair == Some(pair_fingerprint(credential)) => key,
+                _ => self.mint_retry_key(),
+            });
         let Some(directory) = self.directory.as_ref().cloned() else {
-            return self
-                .vault
-                .store(
-                    &self.legacy,
-                    credential
-                        .encode()
-                        .map_err(|_| ServiceError::terminal("credential_invalid"))?,
-                )
-                .map_err(|_| ServiceError::retryable("credential_unavailable"));
+            self.vault
+                .store(&self.legacy, encode_slot(credential, &retry_key)?)
+                .map_err(|_| ServiceError::retryable("credential_unavailable"))?;
+            self.retry_key = Some(retry_key);
+            self.armed_pair = Some(pair_fingerprint(credential));
+            return Ok(());
         };
         let namespace = self.legacy.namespace();
         if pending.record.is_none() {
@@ -552,15 +752,12 @@ impl CredentialPersistence {
         }
         if !pending.vault_acknowledged {
             self.vault
-                .store(
-                    &self.entry(record)?,
-                    credential
-                        .encode()
-                        .map_err(|_| ServiceError::terminal("credential_invalid"))?,
-                )
+                .store(&self.entry(record)?, encode_slot(credential, &retry_key)?)
                 .map_err(|_| ServiceError::retryable("credential_unavailable"))?;
             pending.vault_acknowledged = true;
         }
+        self.retry_key = Some(retry_key);
+        self.armed_pair = Some(pair_fingerprint(credential));
         directory.ready(
             &namespace,
             record,
@@ -593,6 +790,10 @@ impl CredentialPersistence {
         sign_out: bool,
     ) -> Result<(), ServiceError> {
         self.removed_owner = None;
+        // The key lives in the slot, so erasing the slot erases it. Nothing
+        // may be armed for bytes that no longer exist.
+        self.retry_key = None;
+        self.armed_pair = None;
         let Some(directory) = self.directory.as_ref().cloned() else {
             return self
                 .vault

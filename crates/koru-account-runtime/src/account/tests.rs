@@ -389,8 +389,14 @@ impl AccountService for CredentialService {
         })
     }
 }
-struct RestoreProbe(mpsc::Sender<(String, [u8; 32])>);
+struct RestoreProbe {
+    sent: mpsc::Sender<(String, Option<[u8; 32]>)>,
+    armed: Option<[u8; 32]>,
+}
 impl AccountService for RestoreProbe {
+    fn arm_refresh_retry_key(&mut self, key: Option<[u8; 32]>) {
+        self.armed = key;
+    }
     fn execute(
         &mut self,
         generation: u64,
@@ -400,11 +406,8 @@ impl AccountService for RestoreProbe {
         _: &mut dyn FnMut(ServiceProgress),
     ) -> Result<ServiceOutcome, ServiceError> {
         let restored = restored.unwrap();
-        self.0
-            .send((
-                restored.session_id.clone(),
-                refresh_retry_key(&restored.refresh_token),
-            ))
+        self.sent
+            .send((restored.session_id.clone(), self.armed))
             .unwrap();
         Ok(ServiceOutcome {
             state: AccountState {
@@ -419,18 +422,6 @@ impl AccountService for RestoreProbe {
         })
     }
 }
-#[test]
-fn retry_key_is_exact_stable_and_domain_separated() {
-    assert_eq!(
-        refresh_retry_key("seeded-token"),
-        refresh_retry_key("seeded-token")
-    );
-    assert_ne!(
-        refresh_retry_key("seeded-token"),
-        refresh_retry_key("other-token")
-    );
-}
-
 #[test]
 fn startup_capability_requires_configured_origin_and_durable_identity() {
     let descriptor = signed_descriptor();
@@ -815,17 +806,47 @@ fn retry_does_not_replace_the_visible_failure_with_refreshing() {
     );
     release_tx.send(()).unwrap();
 }
+/// A restart refreshes the stored session by itself, and the key that refresh
+/// will present is the one durably stored beside the token — not a value
+/// derived from the token, which is what let anyone holding a stolen refresh
+/// token collect the sealed new pair out of the service's retry window, and
+/// not a fresh value either, which would lose the rotation it is replaying.
 #[test]
-fn restart_automatically_refreshes_with_exact_retry_identity() {
+fn restart_automatically_refreshes_with_the_retry_key_stored_beside_the_token() {
     let entry = entry();
     let store = Arc::new(SessionCredentialStore::default());
     let record = SessionCredential::new("session-one".into(), "rotating-refresh".into()).unwrap();
+    // A slot written by a build that had no key of its own: the restore mints
+    // one and makes it durable before it can be presented.
     store.store(&entry, record.encode().unwrap()).unwrap();
     let (sent, received) = mpsc::channel();
-    let _control = AccountControl::start(RestoreProbe(sent), store, entry, |_| {});
+    let _control = AccountControl::start(
+        RestoreProbe { sent, armed: None },
+        store.clone(),
+        entry.clone(),
+        |_| {},
+    );
     let (session, retry_key) = received.recv_timeout(Duration::from_secs(1)).unwrap();
     assert_eq!(session, "session-one");
-    assert_eq!(retry_key, refresh_retry_key("rotating-refresh"));
+    let stored = store.load(&entry).unwrap().unwrap();
+    assert_eq!(
+        retry_key,
+        super::directory::decode_retry_key(&stored),
+        "the refresh presents the key the vault holds beside these bytes"
+    );
+    let key = retry_key.expect("a restored session is armed to rotate");
+    let derived = {
+        let mut input = Vec::new();
+        input.extend_from_slice(b"koru.account.refresh-retry.v1\0");
+        input.extend_from_slice(b"rotating-refresh");
+        *blake3::hash(&input).as_bytes()
+    };
+    assert_ne!(key, derived, "the key must not be derivable from the token");
+    assert_eq!(
+        SessionCredential::decode(&stored).unwrap().refresh_token,
+        "rotating-refresh",
+        "the slot still restores as the credential it is"
+    );
 }
 #[test]
 fn vault_failure_never_falls_back() {
@@ -1431,6 +1452,178 @@ impl Transport for StaleRegistrationTransport {
     }
 }
 
+/// `/refresh` plus the three registration routes, counted, with the devices
+/// call answerable as an outage. The device list it returns is stale, so a
+/// registration refresh is always owed after a rotation.
+struct RotationRegistrationTransport {
+    refreshes: AtomicUsize,
+    devices: AtomicUsize,
+    registrations: AtomicUsize,
+    devices_fail: AtomicBool,
+}
+impl RotationRegistrationTransport {
+    fn new() -> Self {
+        Self {
+            refreshes: AtomicUsize::new(0),
+            devices: AtomicUsize::new(0),
+            registrations: AtomicUsize::new(0),
+            devices_fail: AtomicBool::new(false),
+        }
+    }
+}
+impl Transport for RotationRegistrationTransport {
+    fn send(&self, request: HttpRequest) -> Result<HttpResponse, TransportError> {
+        let body = match (request.method, request.path_and_query.as_str()) {
+            (_, path) if path.ends_with("/refresh") => {
+                self.refreshes.fetch_add(1, Ordering::AcqRel);
+                serde_json::to_vec(&seeded_tokens("rotated-pair")).unwrap()
+            }
+            (HttpMethod::Get, "/v1/account/devices") => {
+                self.devices.fetch_add(1, Ordering::AcqRel);
+                if self.devices_fail.load(Ordering::Acquire) {
+                    return Ok(HttpResponse {
+                        status: 503,
+                        body: Vec::new(),
+                    });
+                }
+                let mut list = current_device_list();
+                list.devices[0].peer_protocol_version =
+                    Some(koru_sync_control::PEER_PROTOCOL_VERSION - 1);
+                serde_json::to_vec(&list).unwrap()
+            }
+            (HttpMethod::Post, "/v1/account/devices/challenge") => {
+                let registration: RegisterDeviceRequestV1 =
+                    serde_json::from_slice(&request.body).unwrap();
+                let challenge = koru_account_core::DeviceOwnershipChallenge {
+                    flow_id: AuthFlowId::mint(),
+                    parent_flow_id: None,
+                    device: koru_account_core::AccountDevice {
+                        descriptor: DeviceDescriptorV1::try_from(registration.descriptor).unwrap(),
+                        registration: koru_account_core::AccountDeviceRegistration {
+                            koru_identity_id: "30000000-0000-4000-8000-000000000003"
+                                .parse()
+                                .unwrap(),
+                            platform: registration.platform,
+                            app_version: registration.app_version,
+                            enrollment_protocol_version: registration.enrollment_protocol_version,
+                            peer_protocol_version: registration.peer_protocol_version,
+                            registered_at_millis: 1,
+                            last_seen_at_millis: 1,
+                            revoked_at_millis: None,
+                        },
+                    },
+                    expires_at_millis: 2_000_000_000_000,
+                    nonce: [9; 32],
+                };
+                serde_json::to_vec(&koru_account_wire::DeviceOwnershipChallengeResponseV1 {
+                    version: Version1,
+                    challenge: base64::engine::general_purpose::URL_SAFE_NO_PAD
+                        .encode(serde_json::to_vec(&challenge).unwrap()),
+                })
+                .unwrap()
+            }
+            (HttpMethod::Post, "/v1/account/devices") => {
+                self.registrations.fetch_add(1, Ordering::AcqRel);
+                let mut list = current_device_list();
+                serde_json::to_vec(&list.devices.remove(0)).unwrap()
+            }
+            route => panic!("unexpected rotation route: {route:?}"),
+        };
+        Ok(HttpResponse { status: 200, body })
+    }
+}
+
+fn rotating_service(
+    transport: Arc<RotationRegistrationTransport>,
+) -> (ProductionAccountService, crate::identity::DirectoryRecord) {
+    let mut service = ProductionAccountService::with_client(
+        AccountClient::with_transport(transport),
+        signed_descriptor(),
+        "test".into(),
+    );
+    let owner = crate::identity::AccountOwner {
+        account: "30000000-0000-4000-8000-000000000003".parse().unwrap(),
+        auth_identity: "40000000-0000-4000-8000-000000000004".parse().unwrap(),
+    };
+    service.durable_owner = Some(owner);
+    service.arm_refresh_retry_key(Some([61; 32]));
+    (
+        service,
+        crate::identity::DirectoryRecord {
+            owner,
+            state: crate::identity::DirectoryState::Ready,
+            version: 4,
+        },
+    )
+}
+
+/// Q11 step 1, the half that closes most of the window: the rotation the
+/// service answered comes back to the caller with **no further hosted call**
+/// between the answer and the vault write. The device-registration refresh —
+/// a devices call, and here a challenge and a registration too, the bulk of
+/// the 5.3 seconds measured on the maintainer's machine — used to run inside
+/// `refresh`, so a stop in it lost a rotation the service had already
+/// performed. It now runs on the acknowledgement, once the new pair is
+/// durable.
+#[test]
+fn a_rotation_is_in_hand_before_the_device_registration_refresh_is_attempted() {
+    let transport = Arc::new(RotationRegistrationTransport::new());
+    let (mut service, record) = rotating_service(transport.clone());
+    let presented = SessionCredential::new(
+        "20000000-0000-4000-8000-000000000002".into(),
+        "presented-refresh".into(),
+    )
+    .unwrap();
+
+    let rotated = service.refresh(&presented).unwrap();
+    assert_eq!(rotated.refresh_token, "rotated-pair");
+    assert_eq!(transport.refreshes.load(Ordering::Acquire), 1);
+    assert_eq!(
+        transport.devices.load(Ordering::Acquire),
+        0,
+        "nothing hosted may run between the answered rotation and the vault"
+    );
+
+    service.credential_owner_acknowledged(Some(record));
+    assert_eq!(
+        transport.registrations.load(Ordering::Acquire),
+        1,
+        "the registration refresh is paid once the new pair is durable"
+    );
+}
+
+/// The same move, in the failure that cost the maintainer every launch: the
+/// devices call fails. It used to propagate out of `refresh` with `?` and
+/// throw away the rotated pair, which is how a superseded token stayed in the
+/// vault. The pair now survives the failure, and the registration stays owed
+/// so a later acknowledgement attempts it again.
+#[test]
+fn a_failed_device_registration_refresh_no_longer_discards_the_rotated_pair() {
+    let transport = Arc::new(RotationRegistrationTransport::new());
+    transport.devices_fail.store(true, Ordering::Release);
+    let (mut service, record) = rotating_service(transport.clone());
+    let presented = SessionCredential::new(
+        "20000000-0000-4000-8000-000000000002".into(),
+        "presented-refresh".into(),
+    )
+    .unwrap();
+
+    let rotated = service.refresh(&presented).unwrap();
+    assert_eq!(rotated.refresh_token, "rotated-pair");
+    service.credential_owner_acknowledged(Some(record.clone()));
+    assert_eq!(transport.devices.load(Ordering::Acquire), 1);
+    assert_eq!(transport.registrations.load(Ordering::Acquire), 0);
+    assert!(
+        service.device_registration_due,
+        "a refused registration is still owed, not forgotten"
+    );
+
+    transport.devices_fail.store(false, Ordering::Release);
+    service.credential_owner_acknowledged(Some(record));
+    assert_eq!(transport.registrations.load(Ordering::Acquire), 1);
+    assert!(!service.device_registration_due);
+}
+
 #[test]
 fn saved_session_refreshes_stale_protocol_registration_without_another_login() {
     let transport = Arc::new(StaleRegistrationTransport(AtomicBool::new(false)));
@@ -1532,6 +1725,7 @@ fn refresh_and_restore_log_rotation_and_access_age_without_a_value() {
         "presented-refresh".into(),
     )
     .unwrap();
+    service.arm_refresh_retry_key(Some([54; 32]));
     let lines = account_log_lines(|| {
         let rotated = service.refresh(&presented).unwrap();
         service.credential_restored(&rotated, None);
@@ -2134,12 +2328,18 @@ fn rotated_refresh_is_replayed_exactly_until_vault_write_succeeds() {
     inner
         .store(
             &entry,
-            SessionCredential::new(
-                "20000000-0000-4000-8000-000000000002".into(),
-                "presented-refresh".into(),
+            // A slot as a current build writes one: the token and the retry
+            // key a refresh of it must present, in one value. The one allowed
+            // vault failure then falls where this test wants it, on the write
+            // of the rotated pair.
+            super::directory::encode_slot(
+                &SessionCredential::new(
+                    "20000000-0000-4000-8000-000000000002".into(),
+                    "presented-refresh".into(),
+                )
+                .unwrap(),
+                &[55; 32],
             )
-            .unwrap()
-            .encode()
             .unwrap(),
         )
         .unwrap();
@@ -2437,6 +2637,7 @@ fn expired_access_refreshes_and_persists_before_follow_up() {
     );
     service.access = Some(AccessToken("expired".into()));
     service.access_expires_at_millis = Some(1);
+    service.arm_refresh_retry_key(Some([51; 32]));
     let restored = SessionCredential::new(
         "20000000-0000-4000-8000-000000000002".into(),
         "presented-refresh".into(),
@@ -2468,6 +2669,7 @@ fn pending_proof_refreshes_access_before_exact_replay() {
     );
     service.access = Some(AccessToken("expired".into()));
     service.access_expires_at_millis = Some(1);
+    service.arm_refresh_retry_key(Some([52; 32]));
     service.pending_link = Some(Pending {
         command: AccountCommand::AddGoogle {
             profile_id: "40000000-0000-4000-8000-000000000004".into(),
@@ -2541,6 +2743,7 @@ fn known_refresh_revocation_disables_inbound_enrollment() {
         auth_identity: "30000000-0000-4000-8000-000000000001".parse().unwrap(),
     });
     service.durable_session_id = Some(restored.session_id.clone());
+    service.arm_refresh_retry_key(Some([53; 32]));
 
     assert_eq!(
         service.refresh(&restored).unwrap_err().code,

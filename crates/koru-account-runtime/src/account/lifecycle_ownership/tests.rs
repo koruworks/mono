@@ -147,6 +147,9 @@ fn delete(service: &mut ProductionAccountService) -> ServiceError {
 }
 fn retry(service: &mut ProductionAccountService) -> ServiceOutcome {
     let credential = SessionCredential::new(session().to_string(), "old-refresh".into()).unwrap();
+    // The worker arms the key the vault holds beside these bytes before any
+    // command can present it; a refresh without one refuses.
+    service.arm_refresh_retry_key(Some([44; 32]));
     service
         .execute(
             7,
