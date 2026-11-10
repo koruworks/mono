@@ -49,6 +49,9 @@ fn send(worker: &WorkerHandle, context: CommandContext, bot: &Bot) -> AiResponse
         .unwrap()
 }
 fn failed(stream: &AiResponseStream) {
+    ended(stream, false);
+}
+fn ended(stream: &AiResponseStream, cancelled: bool) {
     loop {
         let event = stream
             .events
@@ -56,7 +59,14 @@ fn failed(stream: &AiResponseStream) {
             .unwrap()
             .event;
         if event.is_terminal() {
-            assert!(matches!(event, PublicAiEvent::Failed { .. }), "{event:?}");
+            if cancelled {
+                assert!(
+                    matches!(event, PublicAiEvent::Cancelled { .. }),
+                    "{event:?}"
+                );
+            } else {
+                assert!(matches!(event, PublicAiEvent::Failed { .. }), "{event:?}");
+            }
             return;
         }
     }
@@ -153,6 +163,15 @@ fn automatic_malformed_replay_while_a_person_holds_the_session_selects_interrupt
     let stream = send(&worker, context, &bot);
     failed(&stream);
     held(&interrupts);
+    // Pending replies back off instead of polling at 4 Hz for the takeover:
+    // after two stalls the next attempt waits a full second.
+    let start = Instant::now();
+    assert!(!interrupts.recv_timeout(Duration::from_secs(10)).unwrap());
+    assert!(
+        start.elapsed() >= Duration::from_millis(700),
+        "{:?}",
+        start.elapsed()
+    );
     {
         let state = native.state.lock().unwrap();
         assert_eq!(state.stop_calls, 0);
@@ -170,6 +189,14 @@ fn automatic_malformed_replay_while_a_person_holds_the_session_selects_interrupt
             .unwrap()
             .status,
         AttemptStatus::Interrupted
+    );
+    // It failed for the replay gap: no frame past the baseline was committed.
+    assert!(
+        repository
+            .bot_replay_state(stream.accepted.attempt_id)
+            .unwrap()
+            .last_sequence
+            .is_none_or(|n| n <= s::AGENT_EVENT_INITIAL_CURSOR)
     );
     let state = native.state.lock().unwrap();
     assert_eq!(state.stop_calls, 0);
@@ -239,4 +266,68 @@ fn explicit_cancel_during_a_blocked_automatic_interrupt_uses_the_reserved_stop_l
     assert_eq!(state.interrupt_calls, 1);
     assert!(state.stop_calls >= 3);
     assert_eq!(state.begin, 1);
+}
+
+#[test]
+fn a_native_turn_cancellation_is_automatic_across_ai_restart_and_stop_still_reaches_the_owner() {
+    // A takeover "now" ends the Bot's turn at the takeover boundary; Esc in
+    // the borrowed agent ends it as a plain cancellation. Neither is Stop.
+    for reason in [s::CancelReason::TakeoverBoundary, s::CancelReason::Run] {
+        let (repository, authority, bot, context) = started();
+        let (interrupt_tx, interrupts) = sync_channel(64);
+        let (stop_tx, stops) = sync_channel(64);
+        let native = Arc::new(Native {
+            native_cancel: Some(reason),
+            hold_interrupt: AtomicBool::new(true),
+            interrupt_reports: Mutex::new(Some(interrupt_tx)),
+            stop_reports: Mutex::new(Some(stop_tx)),
+            ..Native::default()
+        });
+        let (worker, returned) = spawn(native.clone(), repository, authority.clone());
+        let stream = send(&worker, context.clone(), &bot);
+        ended(&stream, true);
+        held(&interrupts);
+        worker.shutdown();
+        let _ = worker.join();
+        let repository = returned.recv_timeout(Duration::from_secs(5)).unwrap();
+        let id = stream.accepted.attempt_id;
+        assert_eq!(
+            repository.attempt(id).unwrap().unwrap().status,
+            AttemptStatus::Cancelled
+        );
+        assert_eq!(repository.bot_replay_state(id).unwrap().stop_reason, None);
+        // Durable Cancelled without the recorded owner Stop restarts as Interrupt.
+        let (restarted, returned) = spawn(native.clone(), repository, authority);
+        held(&interrupts);
+        {
+            let state = native.state.lock().unwrap();
+            assert_eq!(state.stop_calls, 0);
+            assert!(!state.stopped);
+            assert_eq!(state.begin, 1);
+        }
+        // The person's Stop on that attempt still reaches the owner at once,
+        // and reports the status the attempt durably ended with.
+        let (reply, response) = sync_channel(1);
+        restarted
+            .client()
+            .send(WorkerCommand::CancelAttempt {
+                context,
+                attempt: id,
+                reply,
+            })
+            .unwrap();
+        assert_eq!(
+            response
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap()
+                .unwrap()
+                .status,
+            AttemptStatus::Cancelled
+        );
+        stops.recv_timeout(Duration::from_secs(5)).unwrap();
+        restarted.shutdown();
+        let _ = restarted.join();
+        let _ = returned.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(native.state.lock().unwrap().begin, 1);
+    }
 }

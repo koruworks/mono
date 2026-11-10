@@ -20,6 +20,23 @@ enum Finish {
     Stop,
     Interrupt,
 }
+/// The highest doubling of a finishing chat's retry delay: 250 ms << 7 is
+/// 32 s, the owner's own cleanup backoff cap.
+const FINISH_BACKOFF_MAX_ROUND: u32 = 7;
+/// A finishing chat whose owner reply made no progress (pending, refused or
+/// a failed reconcile) waits longer each time instead of polling at 4 Hz for
+/// a whole takeover. Any applied finishing command resets it, and so does a
+/// person's Stop.
+fn finishing_backoff(round: u32) -> Duration {
+    Duration::from_millis(250) * (1u32 << round.min(FINISH_BACKOFF_MAX_ROUND))
+}
+/// Only a person's Stop records Cancelled with the local owner-unavailable
+/// stop reason (`cancel_bot_chat`). A native turn cancellation, such as a
+/// takeover "now" or Esc in the borrowed agent, replays Cancelled and leaves
+/// the stop reason empty: it is an automatic outcome, not owner intent.
+fn person_stopped(replay: &koru_ai_core::bots::replay::BotReplayState) -> bool {
+    replay.stop_reason == Some(koru_ai_core::bots::replay::BotReplayStop::OwnerUnavailable)
+}
 pub(in crate::worker) struct LiveChat {
     pub(super) submission: BotSubmission,
     pub(super) input: PendingInput,
@@ -31,6 +48,12 @@ pub(in crate::worker) struct LiveChat {
     due: Instant,
     busy: bool,
     control_busy: bool,
+    /// The in-flight non-control job runs on the normal administration pool
+    /// (automatic reconciliation), not in the provider Bot slot. Recorded at
+    /// dispatch: a person's Stop may change `finishing` while it is in flight.
+    automatic: bool,
+    /// Consecutive finishing replies that made no progress.
+    retries: u32,
     finishing: Option<Finish>,
 }
 impl LiveChat {
@@ -70,6 +93,8 @@ impl LiveChat {
             due: Instant::now(),
             busy: false,
             control_busy: false,
+            automatic: false,
+            retries: 0,
             finishing: None,
         }
     }
@@ -141,6 +166,8 @@ impl WorkerState {
                 due: Instant::now(),
                 busy: false,
                 control_busy: false,
+                automatic: false,
+                retries: 0,
                 finishing: None,
             },
         );
@@ -168,13 +195,14 @@ impl WorkerState {
                 chat.finishing == Some(Finish::Interrupt) && !chat.busy && chat.due <= now
             });
         // Automatic reconciliation runs on the normal administration pool, so
-        // an in-flight interruption does not occupy the provider Bot slot.
+        // an in-flight automatic job never occupies the provider Bot slot,
+        // even after a person's Stop changed that chat's disposition.
         if !control
             && !automatic
             && self
                 .bot_chats
                 .values()
-                .any(|chat| chat.busy && chat.finishing != Some(Finish::Interrupt))
+                .any(|chat| chat.busy && !chat.automatic)
         {
             return;
         }
@@ -266,6 +294,7 @@ impl WorkerState {
                 chat.control_busy = true;
             } else {
                 chat.busy = true;
+                chat.automatic = automatic;
             }
         } else {
             chat.due = now + Duration::from_millis(250);
@@ -279,13 +308,44 @@ impl WorkerState {
             chat.control_busy = false;
         } else {
             chat.busy = false;
+            chat.automatic = false;
         }
         chat.due = Instant::now() + Duration::from_millis(250);
         if chat.finishing == Some(Finish::Stop) && !step.administrative {
             self.bot_chats.insert(step.attempt, chat);
             return;
         }
+        // A finishing command's only success is Applied. A pending, refused or
+        // failed reply (including a refused reconcile) backs off; a reconcile
+        // that only leads back to the same command neither resets nor grows it.
+        let finishing = chat.finishing.is_some();
+        let progressed = finishing
+            && matches!(
+                (&step.phase, &step.result),
+                (
+                    Phase::Stop | Phase::Interrupt | Phase::Delivery,
+                    Ok(BotReply::Applied)
+                )
+            );
+        let stalled = finishing
+            && match (&step.phase, &step.result) {
+                (_, Err(_)) => true,
+                (Phase::Stop | Phase::Interrupt | Phase::Delivery, Ok(reply)) => {
+                    !matches!(reply, BotReply::Applied)
+                }
+                _ => false,
+            };
+        // The identical recovery scope was already retained by the first
+        // stalled reply; a repeat would only churn the shared gate.
+        let repeat = stalled && chat.retries > 0;
+        if stalled {
+            chat.retries = (chat.retries + 1).min(FINISH_BACKOFF_MAX_ROUND);
+            chat.due = Instant::now() + finishing_backoff(chat.retries);
+        } else if progressed {
+            chat.retries = 0;
+        }
         let recovery = match &step.phase {
+            _ if repeat => None,
             Phase::Stop => Some(koru_delegate_core::NativeDrainReason::OwnerStop),
             Phase::Interrupt => Some(koru_delegate_core::NativeDrainReason::RunRecovery),
             Phase::Delivery => Some(koru_delegate_core::NativeDrainReason::TerminalTurn),
@@ -303,7 +363,7 @@ impl WorkerState {
                 reason,
             );
         }
-        if matches!(&step.phase, Phase::Delivery) {
+        if !repeat && matches!(&step.phase, Phase::Delivery) {
             let provenance = &chat.submission.provenance;
             recovery_admitted &= self.queue_native_recovery(
                 provenance.owner,
@@ -564,8 +624,8 @@ impl WorkerState {
         self.work_terminal(id);
         Ok(AttemptStatus::Cancelled)
     }
-    /// A person's Stop after an automatic interruption or failure already ended
-    /// the AI attempt. The stronger Stop reaches the owner on the reserved lane
+    /// A person's Stop after an automatic interruption, failure or native turn
+    /// cancellation already ended the AI attempt. The stronger Stop reaches the owner on the reserved lane
     /// at once, without waiting for an in-flight automatic reply. The attempt's
     /// durable status is left as it ended: recording Cancelled over it needs a
     /// schema change (its terminal status is absorbing), so nothing claims it.
@@ -582,6 +642,20 @@ impl WorkerState {
         let state = self.repository.bot_replay_state(id).map_err(ai_failure)?;
         self.request_bot_stop(id, &receipt.intent.submission, state.fence);
         Ok(status)
+    }
+    /// Whether a Bot attempt already ended without the person's Stop, so a
+    /// Stop pressed now must still reach the owner: an automatic Interrupted
+    /// or Failed outcome, or a natively cancelled turn (takeover "now", Esc).
+    pub(in crate::worker) fn bot_ended_without_stop(
+        &self,
+        id: InferenceAttemptId,
+        status: AttemptStatus,
+    ) -> Result<bool, AiError> {
+        Ok(match status {
+            AttemptStatus::Interrupted | AttemptStatus::Failed => true,
+            AttemptStatus::Cancelled => !person_stopped(&self.repository.bot_replay_state(id)?),
+            _ => false,
+        })
     }
     fn request_bot_stop(
         &mut self,
@@ -600,10 +674,14 @@ impl WorkerState {
             due: Instant::now(),
             busy: false,
             control_busy: false,
+            automatic: false,
+            retries: 0,
             finishing: Some(Finish::Stop),
         });
+        // A person's Stop is never delayed by an automatic backoff.
         chat.finishing = Some(Finish::Stop);
         chat.phase = Phase::Admission;
+        chat.retries = 0;
         chat.due = Instant::now();
     }
     pub(in crate::worker) fn recover_bot_chats(&mut self) {
@@ -638,9 +716,16 @@ impl WorkerState {
             let Ok(replay) = self.repository.bot_replay_state(id) else {
                 continue;
             };
+            // Durable Cancelled alone is not a person's Stop: a takeover "now"
+            // also cancels the native turn. Only the recorded owner Stop
+            // selects the stronger route after a restart.
             let finish = match self.repository.attempt(id) {
                 Ok(Some(attempt)) if attempt.status == AttemptStatus::Cancelled => {
-                    Some(Finish::Stop)
+                    Some(if person_stopped(&replay) {
+                        Finish::Stop
+                    } else {
+                        Finish::Interrupt
+                    })
                 }
                 Ok(Some(attempt))
                     if matches!(
@@ -673,6 +758,8 @@ impl WorkerState {
                     due: Instant::now(),
                     busy: false,
                     control_busy: false,
+                    automatic: false,
+                    retries: 0,
                     finishing: finish,
                 },
             );

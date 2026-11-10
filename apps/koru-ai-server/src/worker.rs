@@ -4708,13 +4708,12 @@ impl WorkerState {
                 .map_err(ai_failure)?
                 .is_some();
         if bot
-            && matches!(
-                attempt.status,
-                AttemptStatus::Interrupted | AttemptStatus::Failed
-            )
+            && self
+                .bot_ended_without_stop(attempt_id, attempt.status)
+                .map_err(ai_failure)?
         {
-            // Automatic interruption ended the attempt; the person's Stop is
-            // still the stronger owner command for the Run.
+            // Automatic interruption or a native turn cancellation ended the
+            // attempt; the person's Stop is still the stronger owner command.
             return self.stop_interrupted_bot_chat(attempt_id, attempt.status);
         }
         if attempt.status.is_terminal() {

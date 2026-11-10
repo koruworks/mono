@@ -25,6 +25,7 @@ struct Native {
     hold_stop: bool,
     replay_failure: bool,
     hold_observation: bool,
+    native_cancel: Option<s::CancelReason>,
 }
 #[derive(Default)]
 struct NativeState {
@@ -141,7 +142,10 @@ impl BotDelegatePort for Native {
                             turn_id,
                             text: "NATIVE-REPLY".into(),
                         },
-                        if self.fail_first && state.begin == 1 {
+                        if let Some(reason) = self.native_cancel {
+                            // A takeover "now" or Esc in the borrowed agent.
+                            s::AgentEvent::TurnCancelled { turn_id, reason }
+                        } else if self.fail_first && state.begin == 1 {
                             s::AgentEvent::TurnFailed {
                                 turn_id,
                                 error: s::SessionFailure {

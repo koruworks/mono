@@ -280,3 +280,15 @@ fn stop_precedes_a_full_interactive_queue_and_rejected_interaction_can_retry() {
             .is_err()
     );
 }
+
+#[test]
+fn finishing_backoff_doubles_from_the_poll_interval_to_the_owner_cap() {
+    assert_eq!(finishing_backoff(0), Duration::from_millis(250));
+    assert_eq!(finishing_backoff(1), Duration::from_millis(500));
+    assert_eq!(finishing_backoff(4), Duration::from_secs(4));
+    assert_eq!(
+        finishing_backoff(FINISH_BACKOFF_MAX_ROUND),
+        Duration::from_secs(32)
+    );
+    assert_eq!(finishing_backoff(40), Duration::from_secs(32));
+}
