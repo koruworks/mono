@@ -23,4 +23,5 @@ uuid.workspace = true
 url.workspace = true
 
 [dev-dependencies]
+koru-delegate-core = { path = "../koru-delegate-core" }
 tempfile.workspace = true
