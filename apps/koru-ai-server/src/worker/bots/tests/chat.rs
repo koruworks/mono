@@ -119,10 +119,12 @@ impl BotDelegatePort for Native {
                             fence,
                             observation: s::AgentEventObservation {
                                 events: Vec::new(),
+                                // Holding stays at the baseline; a failure reports
+                                // a truncated first event past it (a replay gap).
                                 cursor: s::StreamSequence::new(if self.replay_failure {
-                                    2
+                                    s::AGENT_EVENT_FIRST_SEQUENCE
                                 } else {
-                                    1
+                                    s::AGENT_EVENT_INITIAL_CURSOR
                                 })
                                 .unwrap(),
                                 earlier_truncated: self.replay_failure,
