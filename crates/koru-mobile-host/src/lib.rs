@@ -3226,8 +3226,43 @@ impl MobileReplicationStore {
             // grants by current placement, all-data by scope. The
             // transport-mode gate is deliberately not asked here, as it is
             // not for blobs on this host (D238/D258): Android has no mode
-            // toggle, so a gate here would be a silent outage.
+            // toggle, so a gate on the *content* path — serving bytes a peer
+            // already knows about, and admitting the bytes a peer sends back
+            // — would be a silent outage on every phone, where every row sits
+            // at migration 12's `local_only` seed and nothing can promote it.
+            //
+            // **Describing a subject is not on that list.** A path that would
+            // put a name, a placement, a manifest or a document list in front
+            // of a peer goes through [`Self::describe_workspace`], which asks
+            // the mode question the desktop asks. Nothing about a Local-only
+            // subject may leave, toggle or no toggle (§3.5 decision 5).
             root_exchange::authorize_workspace(store, &peer, workspace)?;
+            peer.with_fence(|| task(store))
+        })
+    }
+
+    /// [`Self::with_workspace`] **plus §4.4's transport gate**, for every
+    /// answer that would tell a peer something *about* a Workspace rather
+    /// than hand it bytes it already asked for by id.
+    ///
+    /// One shared predicate with the desktop
+    /// (`root_exchange::admit_peer_description`), so the two answering
+    /// adapters cannot drift: a Local-only Workspace is described to nobody,
+    /// and because the grant check runs first the refusal cannot announce
+    /// what it is refusing.
+    fn describe_workspace<R, F>(
+        &self,
+        peer: &AuthenticatedPeer,
+        workspace: WorkspaceId,
+        task: F,
+    ) -> Result<R, StoreFailure>
+    where
+        R: Send + 'static,
+        F: FnOnce(&mut koru_store_server::WorkerStore) -> Result<R, StoreFailure> + Send + 'static,
+    {
+        let peer = peer.clone();
+        self.with_store(move |store| {
+            root_exchange::admit_peer_description(store, &peer, workspace)?;
             peer.with_fence(|| task(store))
         })
     }
@@ -3324,6 +3359,13 @@ impl ReplicationStore for MobileReplicationStore {
                 let mut result = Vec::new();
                 for profile in store.profiles().map_err(map_store)? {
                     if !peer.all_data && !peer.authorized_profiles.contains(&profile.id) {
+                        continue;
+                    }
+                    // §4.4, as on the desktop: a Profile whose device-local
+                    // mode closes the peer path lists none of its units. Its
+                    // name is in the identity unit, and nothing about a
+                    // Local-only subject leaves.
+                    if root_exchange::admit_peer_profile(store, profile.id).is_err() {
                         continue;
                     }
                     for state in store.profile_unit_states(profile.id).map_err(map_store)? {
@@ -3479,7 +3521,12 @@ impl ReplicationStore for MobileReplicationStore {
                 let workspaces = store.workspaces_including_deleted().map_err(map_store)?;
                 let mut result = Vec::new();
                 for workspace in workspaces {
-                    if root_exchange::authorize_workspace(store, &peer, workspace.id).is_err() {
+                    // Authorized by the root-aware rule, and only while this
+                    // device's mode admits the peer path for it (§4.4): a
+                    // Local-only Workspace is not a row in this list, so a
+                    // peer never learns it exists and never asks for its
+                    // inventory.
+                    if root_exchange::admit_peer_description(store, &peer, workspace.id).is_err() {
                         continue;
                     }
                     let placement = store
@@ -3664,7 +3711,12 @@ impl ReplicationStore for MobileReplicationStore {
         workspace: WorkspaceId,
     ) -> Result<WorkspaceInventory, StoreFailure> {
         let all_data = peer.all_data;
-        self.with_workspace(peer, workspace, move |store| {
+        // **Describing, not serving** (§3.5 decision 5, §4.4): the answer
+        // below carries the Workspace's name, its placement Profile's whole
+        // identity, its manifest id and every document it holds. A Local-only
+        // Workspace is not described at all, and is absent from
+        // [`Self::catalog`] so no peer asks.
+        self.describe_workspace(peer, workspace, move |store| {
             let record = store
                 .workspace_including_deleted(workspace)
                 .map_err(map_store)?;
@@ -5052,6 +5104,164 @@ mod tests {
         let unknown_error = adapter.inventory(&peer, WorkspaceId::new()).unwrap_err();
         assert_eq!(unrelated_error.code, "unauthorized_workspace");
         assert_eq!(unknown_error.code, unrelated_error.code);
+    }
+
+    // ------------------------- §4.4 on the phone's answering path
+
+    /// One phone holding one Profile, one Workspace named `Original` with a
+    /// document in it, and the all-data relationship of the same person's
+    /// other device. Every `local_transport_modes` row sits exactly where
+    /// migration 12 seeds it — `local_only` — because nothing but a person
+    /// promotes one (D258).
+    #[allow(clippy::type_complexity)]
+    fn peer_description_fixture() -> (
+        tempfile::TempDir,
+        Arc<MobileHost>,
+        MobileReplicationStore,
+        AuthenticatedPeer,
+        ProfileId,
+        WorkspaceId,
+        DocumentId,
+    ) {
+        let directory = tempfile::tempdir().unwrap();
+        let host =
+            MobileHost::open(directory.path().to_path_buf(), [71; 64], "Phone", true).unwrap();
+        let (profile, workspace, document) = with_test_store(&host, |store| {
+            let at = Timestamp::from_millis(1_770_000_000_000);
+            let profile = store
+                .create_profile(
+                    "Profile",
+                    None,
+                    None,
+                    koru_store_core::Locale::parse("en").unwrap(),
+                    at,
+                )
+                .unwrap();
+            let workspace = store.create_workspace(profile.id, "Original", at).unwrap();
+            let (document, _) = store
+                .create_document(workspace.id, "Plan", "page", None, None, at)
+                .unwrap();
+            (profile.id, workspace.id, document)
+        });
+        let adapter = MobileReplicationStore {
+            store: host.store.clone(),
+        };
+        let endpoint = koru_device::ReplicationEndpointSecret::generate();
+        let peer = AuthenticatedPeer {
+            relationship_id: koru_device::RelationshipId::new(),
+            device_id: DeviceId::new(),
+            endpoint_id: endpoint.endpoint_id(),
+            all_data: true,
+            authorized_profiles: Default::default(),
+            authorized_workspaces: [workspace].into_iter().collect(),
+            authorization_fence: koru_replication::protocol::AuthorizationFence::active(),
+            display_name: None,
+            incompatible: false,
+            peer_protocol: Some(koru_sync_control::PEER_PROTOCOL_VERSION),
+        };
+        (directory, host, adapter, peer, profile, workspace, document)
+    }
+
+    /// **The leak this test exists to stop** (root-catalog TECHNICAL.final
+    /// §3.5 decision 5, §4.4). With this host's Workspace at the seeded
+    /// `local_only`, the other device asked for an inventory and got one:
+    /// `workspace_sync … name=Original … action="inventory_recv" documents=1`.
+    /// The phone's answering path asked the grant question and never the
+    /// transport one, so the name, the Profile's identity, the manifest id
+    /// and the document list all crossed to a peer for a subject about which
+    /// nothing may leave this device.
+    ///
+    /// An `all_data` grant is authorization, not a transport-policy override
+    /// (§4.4), so the strongest grant there is still gets nothing.
+    ///
+    /// **And it is withheld by being absent.** The catalog has no row for it,
+    /// no Profile unit names it, and the refusal an entitled peer would get
+    /// if it asked by UUID anyway is the typed `mode_refuses_transport` the
+    /// blob plane and the desktop already return — never a shape of its own.
+    #[test]
+    fn a_local_only_workspace_is_described_to_no_peer() {
+        let (_dir, _host, adapter, peer, _profile, workspace, _document) =
+            peer_description_fixture();
+
+        // 1. Not a row: an all-data peer is told of nothing, so it never
+        //    learns there is a Workspace it is not being told about.
+        assert!(
+            adapter.catalog(&peer).unwrap().is_empty(),
+            "a Local-only Workspace must be indistinguishable from one that is not here"
+        );
+        // 2. No Profile unit either — the Profile's name lives in its
+        //    identity unit, and the ceiling closes the whole group.
+        assert!(adapter.profiles(&peer).unwrap().is_empty());
+        // 3. And asked outright, no description: not the name, not the
+        //    manifest, not the documents.
+        assert_eq!(
+            adapter.inventory(&peer, workspace).unwrap_err().code,
+            koru_replication::protocol::MODE_REFUSES_TRANSPORT
+        );
+    }
+
+    /// The legitimate case, unchanged: a Workspace the person has opened to
+    /// peers is described exactly as before — the catalog row with its
+    /// current placement, and an inventory carrying the name, the manifest
+    /// and every document — and the Profile's units are listed with it.
+    #[test]
+    fn a_workspace_opened_to_peers_is_described_in_full() {
+        let (_dir, host, adapter, peer, profile, workspace, document) = peer_description_fixture();
+        // What the desktop's Profile prompt commits (D258); the phone stands
+        // in for the person who answered.
+        with_test_store(&host, move |store| {
+            store
+                .choose_transport_mode(
+                    profile,
+                    koru_store_core::transport::TransportMode::P2p,
+                    true,
+                )
+                .unwrap()
+        });
+
+        let catalog = adapter.catalog(&peer).unwrap();
+        assert_eq!(catalog.len(), 1);
+        assert_eq!(catalog[0].workspace_id, workspace);
+        assert_eq!(catalog[0].profile_id, profile);
+        assert!(!adapter.profiles(&peer).unwrap().is_empty());
+
+        let inventory = adapter.inventory(&peer, workspace).unwrap();
+        assert_eq!(inventory.replica.workspace_name, "Original");
+        assert_eq!(inventory.replica.profile_id, profile);
+        assert!(
+            inventory
+                .documents
+                .iter()
+                .any(|entry| entry.document_id == document)
+        );
+        assert!(inventory.documents.iter().any(|entry| entry.is_manifest));
+    }
+
+    /// Turning the switch back off closes the description again, on the same
+    /// rows and without a restart: the gate reads the *effective* mode each
+    /// time it is asked rather than remembering an earlier answer, which is
+    /// what makes a restrictive choice stop a description already in flight.
+    #[test]
+    fn closing_the_switch_again_closes_the_description_again() {
+        let (_dir, host, adapter, peer, profile, workspace, _document) = peer_description_fixture();
+        with_test_store(&host, move |store| {
+            use koru_store_core::transport::TransportMode;
+            store
+                .choose_transport_mode(profile, TransportMode::P2p, true)
+                .unwrap();
+            assert_eq!(store.workspaces().unwrap().len(), 1);
+            // The group goes down together, as the prompt lowers it.
+            store
+                .choose_transport_mode(profile, TransportMode::LocalOnly, true)
+                .unwrap()
+        });
+
+        assert!(adapter.catalog(&peer).unwrap().is_empty());
+        assert!(adapter.profiles(&peer).unwrap().is_empty());
+        assert_eq!(
+            adapter.inventory(&peer, workspace).unwrap_err().code,
+            koru_replication::protocol::MODE_REFUSES_TRANSPORT
+        );
     }
 
     #[test]

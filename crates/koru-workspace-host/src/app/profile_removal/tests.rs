@@ -41,3 +41,185 @@ fn a_stale_preview_is_its_own_failure_for_the_page_to_re_ask_on() {
         assert_ne!(CascadeFailure::StalePreview.code(), other.code());
     }
 }
+
+// ------------------------------- the Profile a deletion elsewhere was for
+
+fn summary(id: koru_core::ProfileId, name: &str) -> koru_core::ProfileSummary {
+    koru_core::ProfileSummary {
+        id,
+        name: name.to_owned(),
+        ..Default::default()
+    }
+}
+
+fn a_profile() -> koru_core::ProfileId {
+    koru_core::ProfileId::from_uuid(uuid::Uuid::from_u128(0x5eed))
+}
+
+fn another_profile() -> koru_core::ProfileId {
+    koru_core::ProfileId::from_uuid(uuid::Uuid::from_u128(0xfeed))
+}
+
+/// **The name has to be read while the row is still there.** A removal is
+/// what takes the catalog row away, so the name is captured when the removal
+/// is first observed; the open Profile's own document is what outlives the
+/// row, and is the only source left on the path whose trigger *is* the row's
+/// absence.
+#[test]
+fn an_observed_name_comes_from_the_catalog_row_or_the_open_profile_document() {
+    let profile = a_profile();
+    let catalog = vec![summary(profile, "Work"), summary(another_profile(), "Home")];
+    assert_eq!(
+        observed_profile_name_in(&catalog, profile, None).as_deref(),
+        Some("Work")
+    );
+    // The row is gone: the open Profile's document still names it.
+    assert_eq!(
+        observed_profile_name_in(&[], profile, Some("Work".to_owned())).as_deref(),
+        Some("Work")
+    );
+    // Neither source has it, and nothing is invented in its place.
+    assert_eq!(observed_profile_name_in(&[], profile, None), None);
+    // A blank name is no name, from either source.
+    assert_eq!(
+        observed_profile_name_in(&[summary(profile, "  ")], profile, None),
+        None
+    );
+    assert_eq!(
+        observed_profile_name_in(&[summary(profile, "")], profile, Some("Work".to_owned()))
+            .as_deref(),
+        Some("Work")
+    );
+}
+
+/// The name that was captured is the name the person reads, in quotes.
+#[test]
+fn a_known_name_is_the_notice_the_person_reads() {
+    let notice = profile_deleted_elsewhere_notice(
+        koru_i18n::Lang::En,
+        DeletedProfile::new(Some("Work"), false),
+    );
+    assert!(
+        notice.starts_with("\u{201c}Work\u{201d} was deleted from Koru"),
+        "{notice}"
+    );
+    assert!(
+        notice.contains("Another trusted device deleted this Profile."),
+        "{notice}"
+    );
+    assert!(notice.contains("It no longer syncs."), "{notice}");
+    assert!(
+        notice.contains("remain recoverable for 30 days"),
+        "{notice}"
+    );
+    assert!(!notice.contains("{}"), "{notice}");
+}
+
+/// **An unknown name is a different sentence, not a stand-in name.** The
+/// defect this replaced showed `\u{201c}This Profile\u{201d} was deleted from
+/// Koru`, which reads as the name of a Profile nobody has.
+#[test]
+fn an_unknown_name_is_written_without_a_name_rather_than_given_a_fake_one() {
+    for (profile, expected_opening) in [
+        (
+            DeletedProfile::new(None, true),
+            "The Profile you were using was deleted from Koru",
+        ),
+        (
+            DeletedProfile::new(None, false),
+            "A Profile on this device was deleted from Koru",
+        ),
+        // An empty or blank captured name is an unknown name, not a Profile
+        // called nothing in quotes.
+        (
+            DeletedProfile::new(Some("   "), true),
+            "The Profile you were using was deleted from Koru",
+        ),
+    ] {
+        let notice = profile_deleted_elsewhere_notice(koru_i18n::Lang::En, profile);
+        assert!(notice.starts_with(expected_opening), "{notice}");
+        assert!(!notice.contains("This Profile\u{201d}"), "{notice}");
+        assert!(!notice.contains('\u{201c}'), "{notice}");
+        assert!(!notice.contains('\u{201d}'), "{notice}");
+        assert!(!notice.contains("{}"), "{notice}");
+        // The substance is kept whether or not the name is known.
+        assert!(notice.contains("It no longer syncs."), "{notice}");
+        assert!(
+            notice.contains("remain recoverable for 30 days"),
+            "{notice}"
+        );
+    }
+}
+
+/// The unknown-name notice still says which Profile is meant as far as this
+/// device can: the one that was open, or else the Workspaces now in the Trash.
+#[test]
+fn an_unknown_name_still_points_at_the_profile_it_can() {
+    let in_use =
+        profile_deleted_elsewhere_notice(koru_i18n::Lang::En, DeletedProfile::new(None, true));
+    assert!(in_use.contains("you were using"), "{in_use}");
+    let other =
+        profile_deleted_elsewhere_notice(koru_i18n::Lang::En, DeletedProfile::new(None, false));
+    assert!(
+        other.contains("those Workspaces are the ones that belonged to it"),
+        "{other}"
+    );
+}
+
+/// **Both branches are translated.** The peer branch wrote English with
+/// `format!`; it now reads the same table its sibling does, so every language
+/// gets its own sentence and none of the three shapes is another's.
+#[test]
+fn the_notice_is_translated_in_every_language_for_every_shape() {
+    for lang in koru_i18n::Lang::ALL {
+        let named = profile_deleted_elsewhere_notice(lang, DeletedProfile::new(Some("Work"), true));
+        assert_eq!(
+            named,
+            koru_i18n::fill(
+                koru_i18n::t(lang, koru_i18n::Key::ProfileDeletedOnAnotherDevice),
+                &["Work"]
+            )
+        );
+        assert!(named.contains("Work"), "{named}");
+        assert!(!named.contains("{}"), "{named}");
+        let in_use = profile_deleted_elsewhere_notice(lang, DeletedProfile::new(None, true));
+        let other = profile_deleted_elsewhere_notice(lang, DeletedProfile::new(None, false));
+        assert_eq!(
+            in_use,
+            koru_i18n::t(lang, koru_i18n::Key::ProfileInUseDeletedOnAnotherDevice)
+        );
+        assert_eq!(
+            other,
+            koru_i18n::t(
+                lang,
+                koru_i18n::Key::ProfileWithoutNameDeletedOnAnotherDevice
+            )
+        );
+        for notice in [&named, &in_use, &other] {
+            // A title line and a body, as the hardcoded message had.
+            assert!(notice.contains("\n\n"), "{notice}");
+        }
+        assert_ne!(in_use, other);
+        if lang != koru_i18n::Lang::En {
+            // Not the English string under another tag.
+            assert_ne!(
+                in_use,
+                koru_i18n::t(
+                    koru_i18n::Lang::En,
+                    koru_i18n::Key::ProfileInUseDeletedOnAnotherDevice
+                ),
+                "{}",
+                lang.tag()
+            );
+            assert_ne!(
+                other,
+                koru_i18n::t(
+                    koru_i18n::Lang::En,
+                    koru_i18n::Key::ProfileWithoutNameDeletedOnAnotherDevice
+                ),
+                "{}",
+                lang.tag()
+            );
+        }
+    }
+}

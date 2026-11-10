@@ -33,6 +33,10 @@ impl LiveReplicationStore {
     /// current placement, all-data by scope), then §4.4's transport gate (a
     /// Local-only Workspace is neither listed, served nor admitted over the
     /// peer path), then the relationship fence around the Store call.
+    ///
+    /// The first two are `root_exchange::admit_peer_description`, the one
+    /// predicate the phone's adapter asks for the same answers, so the two
+    /// cannot drift apart over which half of §4.4 they keep.
     fn with_workspace<T>(
         &self,
         peer: &AuthenticatedPeer,
@@ -40,8 +44,7 @@ impl LiveReplicationStore {
         operation: impl FnOnce(&mut KoruStore) -> Result<T, StoreFailure>,
     ) -> Result<T, StoreFailure> {
         let mut store = self.state.store.lock().map_err(|_| failed("internal"))?;
-        root_exchange::authorize_workspace(&store, peer, workspace)?;
-        root_exchange::admit_peer_subject(&store, workspace)?;
+        root_exchange::admit_peer_description(&store, peer, workspace)?;
         peer.with_fence(|| operation(&mut store))
     }
 
@@ -415,9 +418,7 @@ impl ReplicationStore for LiveReplicationStore {
                 // Authorized by the root-aware rule, and only while this
                 // device's mode admits the peer path for it (§4.4): a
                 // Local-only Workspace is not a row in this list.
-                if root_exchange::authorize_workspace(&store, peer, workspace.id).is_err()
-                    || root_exchange::admit_peer_subject(&store, workspace.id).is_err()
-                {
+                if root_exchange::admit_peer_description(&store, peer, workspace.id).is_err() {
                     continue;
                 }
                 let placement = store
@@ -1545,6 +1546,76 @@ mod tests {
                 .unwrap_err()
                 .code,
             koru_cloud_blob::BlobCode::ModeRefusesTransport.as_str()
+        );
+    }
+
+    /// **The same rule stated as the privacy rule it is** (root-catalog
+    /// TECHNICAL.final §3.5 decision 5, §4.4): a Local-only Workspace is not
+    /// *described* to a peer — not its name, not its placement Profile's
+    /// identity, not its manifest id, not its document list — and the
+    /// strongest grant there is does not change that, because `all_data` is
+    /// authorization and not a transport-policy override.
+    ///
+    /// The paired assertion on the phone's adapter is
+    /// `koru_mobile_host`'s `a_local_only_workspace_is_described_to_no_peer`;
+    /// both go through `root_exchange::admit_peer_description` so the two
+    /// answering adapters cannot keep different halves of the rule.
+    #[test]
+    fn a_local_only_workspace_is_described_to_no_peer() {
+        use koru_store_core::transport::TransportMode;
+        let (_dir, state, adapter, _uuid_peer, profile, workspace, _blob) = peer_blob_fixture();
+        let document = state
+            .store
+            .lock()
+            .unwrap()
+            .create_document(
+                workspace,
+                "Plan",
+                "page",
+                None,
+                None,
+                Timestamp::from_millis(1_770_000_000_001),
+            )
+            .unwrap()
+            .0;
+        let endpoint = ReplicationEndpointSecret::generate();
+        let all_data = AuthenticatedPeer {
+            relationship_id: RelationshipId::new(),
+            device_id: DeviceId::new(),
+            endpoint_id: endpoint.endpoint_id(),
+            all_data: true,
+            authorized_profiles: [profile].into_iter().collect(),
+            authorized_workspaces: [workspace].into_iter().collect(),
+            authorization_fence: koru_replication::protocol::AuthorizationFence::active(),
+            display_name: None,
+            incompatible: false,
+            peer_protocol: Some(koru_sync_control::PEER_PROTOCOL_VERSION),
+        };
+
+        // Open first, so the assertions below are about the mode and not
+        // about a fixture that never worked: the full description crosses.
+        open_transfers(&state, workspace, TransportMode::P2p);
+        let described = adapter.inventory(&all_data, workspace).unwrap();
+        assert_eq!(described.replica.workspace_name, "W");
+        assert!(
+            described
+                .documents
+                .iter()
+                .any(|entry| entry.document_id == document)
+        );
+        assert_eq!(adapter.catalog(&all_data).unwrap().len(), 1);
+        assert!(!adapter.profiles(&all_data).unwrap().is_empty());
+
+        // Now the person closes it. Nothing about the subject leaves.
+        open_transfers(&state, workspace, TransportMode::LocalOnly);
+        assert!(
+            adapter.catalog(&all_data).unwrap().is_empty(),
+            "withheld by absence: a peer must not learn there is something it is not told"
+        );
+        assert!(adapter.profiles(&all_data).unwrap().is_empty());
+        assert_eq!(
+            adapter.inventory(&all_data, workspace).unwrap_err().code,
+            koru_replication::protocol::MODE_REFUSES_TRANSPORT
         );
     }
 

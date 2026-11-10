@@ -69,8 +69,8 @@ use koru_workspace::session;
 use modifiers::reconcile_physical_modifiers;
 use modifiers::{current_modifier_state, modifiers_after_key_release, modifiers_with_pressed_keys};
 use profile_removal::{
-    HostedProfileRemovalSource, ProfileCascadeCompletion, ProfileOfflineCompletion,
-    ProfileRemovalCleanup,
+    HostedProfileRemoval, HostedProfileRemovalSource, ProfileCascadeCompletion,
+    ProfileOfflineCompletion, ProfileRemovalCleanup,
 };
 
 /// Window chrome theme from the preference. `None` follows the OS and is what
@@ -2482,7 +2482,12 @@ struct App<H: Host> {
     profile_removal_tx: mpsc::Sender<ProfileRemovalCleanup>,
     profile_removal_rx: mpsc::Receiver<ProfileRemovalCleanup>,
     profile_removals_in_flight: HashSet<koru_core::ProfileId>,
-    hosted_profile_removals: HashMap<koru_core::ProfileId, HostedProfileRemovalSource>,
+    /// Keyed by Profile, and carrying the name read when the removal was
+    /// *first observed*: by the time a cleanup completion is processed the
+    /// catalog row is usually gone, and for a deletion that arrived from
+    /// another device it always is, so a name looked up then is no name at
+    /// all.
+    hosted_profile_removals: HashMap<koru_core::ProfileId, HostedProfileRemoval>,
     profile_offline_tx: mpsc::Sender<ProfileOfflineCompletion>,
     profile_offline_rx: mpsc::Receiver<ProfileOfflineCompletion>,
     profile_offline_in_flight: HashSet<koru_core::ProfileId>,
@@ -2493,7 +2498,12 @@ struct App<H: Host> {
     remote_deletion_tx: mpsc::Sender<profile_removal::RemoteDeletionCheck>,
     remote_deletion_rx: mpsc::Receiver<profile_removal::RemoteDeletionCheck>,
     remote_deletion_checks_in_flight: HashSet<koru_core::ProfileId>,
-    remote_profile_deletions: HashSet<koru_core::ProfileId>,
+    /// The confirmed shared deletions, each with the name read when the
+    /// deletion was observed. The catalog row is gone *by construction* on
+    /// this path — its absence is the trigger — so the name comes from the
+    /// open Profile's own document, and is `None` only for a Profile that
+    /// never had one.
+    remote_profile_deletions: HashMap<koru_core::ProfileId, Option<String>>,
     profile_bindings_in_flight: HashSet<koru_core::ProfileId>,
     connected_profile_creation_tx: mpsc::Sender<OnboardingCreation>,
     connected_profile_creation_rx: mpsc::Receiver<OnboardingCreation>,
@@ -5752,7 +5762,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
             remote_deletion_tx,
             remote_deletion_rx,
             remote_deletion_checks_in_flight: HashSet::new(),
-            remote_profile_deletions: HashSet::new(),
+            remote_profile_deletions: HashMap::new(),
             profile_bindings_in_flight: HashSet::new(),
             connected_profile_creation_tx,
             connected_profile_creation_rx,
@@ -9296,12 +9306,16 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 profile,
                 discovered_after_offline,
             } => {
+                let name = self.observed_profile_name(profile);
                 self.hosted_profile_removals.insert(
                     profile,
-                    if discovered_after_offline {
-                        HostedProfileRemovalSource::Reconciliation
-                    } else {
-                        HostedProfileRemovalSource::Origin
+                    HostedProfileRemoval {
+                        source: if discovered_after_offline {
+                            HostedProfileRemovalSource::Reconciliation
+                        } else {
+                            HostedProfileRemovalSource::Origin
+                        },
+                        name,
                     },
                 );
                 self.start_profile_cascade(profile);
@@ -18757,9 +18771,20 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                     self.restore_from_tray();
                     self.open_support(event_loop);
                 }
+                // The Agent's report is the first this window hears of the
+                // deletion, and the last moment the Profile's name can still
+                // be read: the catalog refresh that follows drops its row,
+                // and the notice is worded at the end of a cleanup that runs
+                // after that.
                 crate::AgentAsk::ProfileLifecycleDeleted(profile) => {
-                    self.hosted_profile_removals
-                        .insert(profile, HostedProfileRemovalSource::Peer);
+                    let name = self.observed_profile_name(profile);
+                    self.hosted_profile_removals.insert(
+                        profile,
+                        HostedProfileRemoval {
+                            source: HostedProfileRemovalSource::Peer,
+                            name,
+                        },
+                    );
                     self.start_profile_cascade(profile);
                 }
             }

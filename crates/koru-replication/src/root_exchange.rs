@@ -385,10 +385,46 @@ pub fn authorize_workspace<C: Catalog, B: Backend>(
     Ok(())
 }
 
+/// **The one question an adapter asks before it describes a Workspace to a
+/// peer** — a catalog row, an inventory, a name, a manifest id, a document
+/// list — in the order the two halves have to be asked:
+///
+/// 1. [`authorize_workspace`]: may this peer know the subject at all (§7.2)?
+///    A peer that may not gets `unauthorized_workspace`, which is also what a
+///    Workspace this device does not hold answers, so existence never leaks.
+/// 2. [`admit_peer_subject`]: does the subject's own device-local transport
+///    admission allow the peer path (§3.5, §4.4)? A Local-only Workspace is
+///    described to nobody: not its name, not its placement, not its manifest,
+///    not its documents. An `all_data` grant is authorization, not a
+///    transport-policy override (§4.4).
+///
+/// The order is why this is one function rather than two calls each adapter
+/// remembers: asked the other way round, a peer with no grant at all would
+/// learn `mode_refuses_transport` and with it that the subject exists. Asked
+/// this way, a withheld Workspace is simply **absent** — it is in no catalog
+/// row, no count and no digest, so an entitled peer never asks about it and
+/// an unentitled one cannot tell it apart from a Workspace that is not here.
+///
+/// Both answering adapters — the desktop daemon's `LiveReplicationStore` and
+/// the phone's `MobileReplicationStore` — go through here, so neither can
+/// keep half of the rule while the other keeps both.
+pub fn admit_peer_description<C: Catalog, B: Backend>(
+    store: &Store<C, B>,
+    peer: &AuthenticatedPeer,
+    workspace: WorkspaceId,
+) -> Result<(), StoreFailure> {
+    authorize_workspace(store, peer, workspace)?;
+    admit_peer_subject(store, workspace)
+}
+
 /// §4.4's gate on a Workspace for the peer path: may anything about it be
 /// listed, served, requested or admitted over a peer right now? The
 /// Store's one question, with the blob contract's spelling for a closed
 /// mode and the Store's own code for an inconsistent row.
+///
+/// A caller that is about to *describe* the subject asks
+/// [`admit_peer_description`] instead, which puts the grant check in front of
+/// this one so a refusal cannot announce what it is refusing.
 pub fn admit_peer_subject<C: Catalog, B: Backend>(
     store: &Store<C, B>,
     workspace: WorkspaceId,
