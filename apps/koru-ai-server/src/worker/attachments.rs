@@ -107,7 +107,7 @@ impl WorkerState {
     ) -> ApiResult<koru_ai_core::ProfileId> {
         authorize(&context, AiScope::Chat)?;
         self.admit_chat_work(Some(chat))?;
-        let chat = self.require_attachment_chat(chat)?;
+        let chat = self.require_attachment_chat(&context, chat)?;
         let granted = self
             .repository
             .chat_tool_policy(chat.id)
@@ -141,7 +141,7 @@ impl WorkerState {
     ) -> ApiResult<Option<AttachmentRecord>> {
         authorize(&context, AiScope::Chat)?;
         self.admit_chat_work(Some(chat))?;
-        self.require_attachment_chat(chat)?;
+        self.require_attachment_chat(&context, chat)?;
         match self.repository.attachment(id).map_err(ai_failure)? {
             Some(record) if record.chat_id != chat => Err(attachment_failure(
                 attachment_codes::CONFLICT,
@@ -161,7 +161,7 @@ impl WorkerState {
     ) -> ApiResult<StageAnswer> {
         authorize(&context, AiScope::Chat)?;
         self.admit_chat_work(Some(record.chat_id))?;
-        self.require_attachment_chat(record.chat_id)?;
+        self.require_attachment_chat(&context, record.chat_id)?;
         let id = record.attachment.id;
         if let Some(origin) = &record.attachment.origin {
             // A revoked grant while the blocking copy ran cannot publish a
@@ -230,10 +230,16 @@ impl WorkerState {
             .collect()
     }
 
-    fn require_attachment_chat(&self, chat: ChatId) -> ApiResult<Chat> {
+    /// Read through the command's own access: an ordinary chat as before, a
+    /// Bot chat only with the prepared proof that authorizes it (P1.5).
+    fn require_attachment_chat(
+        &self,
+        context: &super::bots::CommandContext,
+        chat: ChatId,
+    ) -> ApiResult<Chat> {
         let chat = self
             .repository
-            .chat(chat)
+            .chat_with_access(chat, &self.bot_read_access(context)?)
             .map_err(ai_failure)?
             .ok_or_else(not_found)?;
         if !is_agent_provider(&chat.current_model.provider) {

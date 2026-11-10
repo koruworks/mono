@@ -284,13 +284,8 @@ impl WorkerState {
         if self.bot_delegate.is_none() {
             return Err(bot_failure(BotError::Unavailable));
         }
-        if matches!(&preparation,BotChatPreparation::Turn(turn) if !turn.attachment_ids.is_empty())
-        {
-            return Err(failure(
-                "unsupported_capability",
-                "Bot attachment delivery is not available yet.",
-                false,
-            ));
+        if let BotChatPreparation::Turn(turn) = &preparation {
+            super::attachments::admit(&self.attachments_for_send(chat, &turn.attachment_ids)?)?;
         }
         let proof = context
             .prepared

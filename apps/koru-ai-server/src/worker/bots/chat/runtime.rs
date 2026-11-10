@@ -9,6 +9,8 @@ mod tests;
 enum Phase {
     Admission,
     Ready,
+    /// Native pictures, after the pre-turn Observe and before Begin.
+    Stage,
     Begin,
     Observe,
     Delivery,
@@ -55,6 +57,7 @@ pub(in crate::worker) struct LiveChat {
     /// Consecutive finishing replies that made no progress.
     retries: u32,
     finishing: Option<Finish>,
+    pub(super) staging: super::attachments::Staging,
 }
 impl LiveChat {
     pub(super) fn control_fence(&self) -> Option<BotExecutionFence> {
@@ -96,6 +99,7 @@ impl LiveChat {
             automatic: false,
             retries: 0,
             finishing: None,
+            staging: Default::default(),
         }
     }
 }
@@ -103,6 +107,8 @@ pub(in crate::worker) struct StepJob {
     attempt: InferenceAttemptId,
     phase: Phase,
     command: DelegateCommand,
+    /// A staged picture's bytes, read here on the pool thread.
+    ingest: Option<super::attachments::IngestRead>,
     administrative: bool,
     port: Arc<dyn BotDelegatePort>,
 }
@@ -114,15 +120,22 @@ pub(in crate::worker) struct StepResult {
 }
 impl StepJob {
     pub(in crate::worker) fn run(self) -> StepResult {
-        let result = catch_unwind(AssertUnwindSafe(|| self.port.execute(self.command)))
-            .unwrap_or_else(|_| {
-                Err(koru_delegate_api::Failure {
-                    code: "bot_unavailable".into(),
-                    message: "Bot owner unavailable.".into(),
-                    retryable: true,
-                    details: Default::default(),
-                })
-            });
+        let (port, ingest, command) = (self.port, self.ingest, self.command);
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            let command = match ingest {
+                Some(read) => read.load(command)?,
+                None => command,
+            };
+            port.execute(command)
+        }))
+        .unwrap_or_else(|_| {
+            Err(koru_delegate_api::Failure {
+                code: "bot_unavailable".into(),
+                message: "Bot owner unavailable.".into(),
+                retryable: true,
+                details: Default::default(),
+            })
+        });
         StepResult {
             attempt: self.attempt,
             phase: self.phase,
@@ -153,6 +166,7 @@ impl WorkerState {
         if input.text.len() > MAX_REPLAY_BYTES || self.bot_chats.len() >= PROVIDER_QUEUE_CAPACITY {
             return Err(context_too_large());
         }
+        let staging = super::attachments::plan(&request, &self.attachments);
         self.bot_chats.insert(
             id,
             LiveChat {
@@ -169,6 +183,7 @@ impl WorkerState {
                 automatic: false,
                 retries: 0,
                 finishing: None,
+                staging,
             },
         );
         let bot = self
@@ -225,6 +240,7 @@ impl WorkerState {
             return;
         };
         let chat = self.bot_chats.get_mut(&id).expect("selected chat");
+        let mut ingest = None;
         let command = match chat.phase {
             Phase::Admission => DelegateCommand::Reconcile {
                 key: BotSubmissionKey {
@@ -246,6 +262,16 @@ impl WorkerState {
                         .last_sequence
                         .and_then(|n| koru_session_protocol::StreamSequence::new(n).ok()),
                 }
+            }
+            Phase::Stage => {
+                if chat.finishing.is_some() {
+                    return;
+                }
+                let Some(step) = chat.staging.next(chat.fence.as_ref()) else {
+                    return;
+                };
+                ingest = step.read;
+                step.command
             }
             Phase::Begin => DelegateCommand::BeginTurn {
                 fence: chat.fence.clone().expect("ready fence"),
@@ -273,6 +299,7 @@ impl WorkerState {
             attempt: id,
             phase: chat.phase.clone(),
             command,
+            ingest,
             port,
             administrative: control,
         };
@@ -290,6 +317,9 @@ impl WorkerState {
             self.provider_pool.try_submit_bot(job)
         };
         if sent {
+            if matches!(chat.phase, Phase::Stage) {
+                chat.staging.mark_sent(chat.fence.as_ref());
+            }
             if control {
                 chat.control_busy = true;
             } else {
@@ -329,6 +359,9 @@ impl WorkerState {
             );
         let stalled = finishing
             && match (&step.phase, &step.result) {
+                // A late picture-staging reply is neither finishing progress
+                // nor a stalled finishing command.
+                (Phase::Stage, _) => false,
                 (_, Err(_)) => true,
                 (Phase::Stop | Phase::Interrupt | Phase::Delivery, Ok(reply)) => {
                     !matches!(reply, BotReply::Applied)
@@ -429,6 +462,15 @@ impl WorkerState {
                 }
             }
             chat.phase = Phase::Admission;
+            return Ok(true);
+        }
+        if matches!(phase, Phase::Stage) {
+            // Before the generic retryable arm below: retrying a staging step
+            // would resend an ingest whose reply was lost. Staging lists it.
+            if self.apply_bot_stage(id, chat, result)? {
+                chat.phase = Phase::Begin;
+                chat.due = Instant::now();
+            }
             return Ok(true);
         }
         let reply = match result {
@@ -533,7 +575,12 @@ impl WorkerState {
                 }
                 // Observation is attached before initial input. Retained pre-turn
                 // frames remain unacknowledged until the turn identity is bound.
-                chat.phase = Phase::Begin;
+                // Native pictures are staged against this Session first.
+                chat.phase = if self.bot_stage_settled(id, chat) {
+                    Phase::Begin
+                } else {
+                    Phase::Stage
+                };
                 chat.due = Instant::now();
             }
             (Phase::Begin, BotReply::Turn { turn }) => {
@@ -677,6 +724,7 @@ impl WorkerState {
             automatic: false,
             retries: 0,
             finishing: Some(Finish::Stop),
+            staging: Default::default(),
         });
         // A person's Stop is never delayed by an automatic backoff.
         chat.finishing = Some(Finish::Stop);
@@ -761,6 +809,7 @@ impl WorkerState {
                     automatic: false,
                     retries: 0,
                     finishing: finish,
+                    staging: Default::default(),
                 },
             );
         }

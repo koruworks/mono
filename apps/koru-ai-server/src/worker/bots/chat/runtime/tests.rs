@@ -28,6 +28,7 @@ fn control_job(port: Arc<dyn BotDelegatePort>) -> ProviderAdminJob {
         attempt: InferenceAttemptId::new(),
         phase: Phase::Stop,
         administrative: true,
+        ingest: None,
         command: DelegateCommand::Stop {
             key: koru_delegate_core::BotRunKey {
                 owner: koru_delegate_core::BotOwner {
@@ -179,6 +180,7 @@ fn native_stop_runs_while_both_providers_and_normal_admin_are_blocked() {
             attempt: InferenceAttemptId::new(),
             phase: Phase::Admission,
             command: DelegateCommand::Reconcile { key: key.clone() },
+            ingest: None,
             administrative: false,
             port: blocked.clone()
         }));
@@ -191,6 +193,7 @@ fn native_stop_runs_while_both_providers_and_normal_admin_are_blocked() {
             attempt: expected,
             phase: Phase::Stop,
             administrative: true,
+            ingest: None,
             command: DelegateCommand::Stop {
                 key: koru_delegate_core::BotRunKey {
                     owner: key.owner,

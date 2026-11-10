@@ -443,6 +443,12 @@ fn guard_command(
                     | WorkerCommand::UpdateChatModel { .. }
                     | WorkerCommand::UpdateChatAgentSettings { .. }
                     | WorkerCommand::BranchChat { .. }
+                    // The ordinary chat's own attachment staging (P1.5);
+                    // what a Bot Send may deliver is decided by its `admit`.
+                    | WorkerCommand::AttachmentAdmission { .. }
+                    | WorkerCommand::WorkspaceCopyAdmission { .. }
+                    | WorkerCommand::StageAttachment { .. }
+                    | WorkerCommand::RemoveStagedAttachment { .. }
             ) || matches!(&command,WorkerCommand::CancelAttempt {attempt,..}
                     if repository.bot_submission_for_attempt(*attempt).map_err(ai_failure)?.is_some());
             if !command.bot_read_only() && !implemented {

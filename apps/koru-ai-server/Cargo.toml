@@ -12,6 +12,7 @@ name = "koru-ai-server"
 path = "src/main.rs"
 
 [dependencies]
+base64.workspace = true
 blake3.workspace = true
 bytes.workspace = true
 image = { version = "0.25", default-features = false, features = ["gif", "jpeg", "png", "webp"] }

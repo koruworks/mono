@@ -9,6 +9,7 @@ use koru_delegate_api::bots::{BotCommand as DelegateCommand, BotDelegatePort, Bo
 use koru_delegate_core::{BotAdmissionState, BotSubmissionKey};
 use koru_session_protocol::{AgentEvent, PendingInput};
 
+mod attachments;
 mod controls;
 mod preparation;
 mod questions;
@@ -16,6 +17,7 @@ mod replay;
 mod runtime;
 mod settings;
 mod steering;
+pub(in crate::worker) use attachments::MAX_LISTINGS as MAX_PICTURE_LISTINGS;
 pub(in crate::worker) use controls::{
     ControlJob, ControlReadJob, ControlReadResult, ControlResult,
 };

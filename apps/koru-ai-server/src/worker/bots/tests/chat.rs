@@ -5,6 +5,7 @@ use koru_delegate_api::bots::{BotCommand as D, BotDelegatePort, BotObservation, 
 use koru_delegate_core as d;
 use koru_session_protocol as s;
 use std::sync::Mutex;
+mod attachments;
 mod controls;
 mod interruption;
 mod questions;

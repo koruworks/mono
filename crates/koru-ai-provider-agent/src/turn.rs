@@ -464,16 +464,13 @@ fn deliver_pictures(
     mut remove: impl FnMut(AttachmentId),
 ) -> Delivered {
     let mut delivered = Delivered::default();
-    for attachment in attachments {
-        if attachment.kind != AttachmentKind::Image {
-            continue;
-        }
+    for attachment in native_pictures(attachments) {
         let Some(native) = attachment.native.as_deref() else {
             delivered.as_files = true;
             continue;
         };
         match ingest(native) {
-            Ok(ingested) if ingested.delivery_mode == DeliveryMode::NativeStructured => {
+            Ok(ingested) if delivers_natively(&ingested) => {
                 tracing::debug!(
                     target: "koru_ai::agent",
                     attachment_id = %ingested.id,
@@ -506,6 +503,20 @@ fn deliver_pictures(
         }
     }
     delivered
+}
+
+/// The message's attachments that may go natively: its pictures. Shared by
+/// the ordinary turn and the Bot route, so both pick the same ones.
+pub fn native_pictures(attachments: &[AttachmentInput]) -> impl Iterator<Item = &AttachmentInput> {
+    attachments
+        .iter()
+        .filter(|attachment| attachment.kind == AttachmentKind::Image)
+}
+
+/// Whether the session took an ingested picture natively, rather than
+/// leaving it to go by its path.
+pub fn delivers_natively(ingested: &Attachment) -> bool {
+    ingested.delivery_mode == DeliveryMode::NativeStructured
 }
 
 fn remove_session_copy(

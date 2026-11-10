@@ -55,6 +55,7 @@ pub mod mapping;
 pub fn compose_delegated_prompt(request: &koru_ai_core::AiRequest) -> String {
     turn::compose_prompt(request, true)
 }
+pub use turn::{delivers_natively, native_pictures};
 mod turn;
 
 pub use control::{AgentCatalog, AgentSessions, CommandListingUpdate, EndOutcome, EnsuredSession};
