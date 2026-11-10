@@ -5264,6 +5264,7 @@ name = "koru-ai-sqlite"
 version = "0.0.3"
 dependencies = [
  "koru-ai-core",
+ "koru-delegate-core",
  "koru-sqlite",
  "rusqlite",
  "serde_json",
