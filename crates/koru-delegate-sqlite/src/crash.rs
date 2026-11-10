@@ -22,6 +22,15 @@ use crate::LedgerError;
 /// A consequential write. One per repository method that changes a row.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum WriteOp {
+    AdmitBot,
+    ApplyBotBarrier,
+    ReserveBot,
+    ActivateBot,
+    SetBotActive,
+    SettleBot,
+    PrepareBotInitialSend,
+    AcknowledgeBotInitialSend,
+    RecordBotDelivery,
     RecordIntent,
     SatisfyIntent,
     AbandonIntent,
@@ -52,7 +61,16 @@ pub enum WriteOp {
 }
 
 impl WriteOp {
-    pub const ALL: [Self; 23] = [
+    pub const ALL: [Self; 32] = [
+        Self::AdmitBot,
+        Self::ApplyBotBarrier,
+        Self::ReserveBot,
+        Self::ActivateBot,
+        Self::SetBotActive,
+        Self::SettleBot,
+        Self::PrepareBotInitialSend,
+        Self::AcknowledgeBotInitialSend,
+        Self::RecordBotDelivery,
         Self::RecordIntent,
         Self::SatisfyIntent,
         Self::AbandonIntent,

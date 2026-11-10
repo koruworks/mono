@@ -89,6 +89,17 @@ impl RunsDb {
         op: WriteOp,
         body: impl FnOnce(&Transaction<'_>, i64) -> Result<T, LedgerError>,
     ) -> Result<T, LedgerError> {
+        self.write_with_error(op, body)
+    }
+
+    /// Domain-specific refusals use the same transaction and crash boundary.
+    /// In particular, an error from the body must roll back, not become a
+    /// successful transaction containing an `Err` result.
+    pub(crate) fn write_with_error<T, E: From<LedgerError>>(
+        &mut self,
+        op: WriteOp,
+        body: impl FnOnce(&Transaction<'_>, i64) -> Result<T, E>,
+    ) -> Result<T, E> {
         #[cfg(not(any(test, feature = "crash-points")))]
         let _ = op;
         #[cfg(any(test, feature = "crash-points"))]
@@ -107,6 +118,27 @@ impl RunsDb {
         #[cfg(any(test, feature = "crash-points"))]
         self.crash.check(op, crate::Moment::AfterCommit)?;
         Ok(out)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn in_memory(clock: Box<dyn Clock>) -> Self {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        for migration in db::MIGRATIONS {
+            conn.execute_batch(migration.sql).unwrap();
+        }
+        Self {
+            conn,
+            clock,
+            crash: crate::crash::CrashArm::default(),
+        }
+    }
+
+    /// Simulate losing the writer's volatile crash state while retaining its
+    /// committed database. Tests never open a file or a real Store.
+    #[cfg(test)]
+    pub(crate) fn restart_in_memory(&mut self) {
+        self.crash = crate::crash::CrashArm::default();
     }
 }
 
