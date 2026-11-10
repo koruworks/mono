@@ -86,8 +86,7 @@ impl ColumnPlace {
             )),
             TabView::Run(run) => run.run().map(Self::Run),
             TabView::Result(result) => result.version().map(Self::Result),
-            TabView::AiChat(view) => view.chat_id().map(Self::Chat),
-            _ => None,
+            _ => view.chat_id().map(Self::Chat),
         }
     }
 }
@@ -1019,8 +1018,7 @@ impl MainView {
             return false;
         }
         // Standing still is not a jump.
-        if matches!(&self.tabs().active_tab().view, TabView::AiChat(view) if view.chat_id() == Some(id))
-        {
+        if self.tabs().active_tab().view.chat_id() == Some(id) {
             self.move_active_chat_to(id, block);
             return true;
         }
@@ -1028,9 +1026,7 @@ impl MainView {
             group
                 .tabs()
                 .iter()
-                .position(
-                    |tab| matches!(&tab.view, TabView::AiChat(view) if view.chat_id() == Some(id)),
-                )
+                .position(|tab| tab.view.chat_id() == Some(id))
                 .map(|index| (path, index))
         });
         if let Some((path, index)) = showing {
@@ -1053,7 +1049,7 @@ impl MainView {
         block: Option<koru_ai_ui::MessageBlockId>,
     ) {
         if block.is_some()
-            && let TabView::AiChat(view) = &mut self.tabs_mut().active_mut().view
+            && let Some(view) = self.tabs_mut().active_mut().view.chat_view_mut()
         {
             view.open_link(id, block);
         }

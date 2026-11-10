@@ -110,6 +110,33 @@ impl From<crate::canvas_view::CanvasView> for TabView {
 }
 
 impl TabView {
+    /// **The AI chat this tab shows**, whatever arm holds it. The window's
+    /// passes that are about *a chat* — which one a tab is on, its status,
+    /// what it asked the window to do, the settings pushed to it — ask this
+    /// rather than matching [`Self::AiChat`], so a container that embeds a
+    /// chat joins them by answering here. Input, drawing and the tab's own
+    /// face still go through the arm itself.
+    pub fn chat_view(&self) -> Option<&AiChatView> {
+        match self {
+            Self::AiChat(view) => Some(view),
+            _ => None,
+        }
+    }
+
+    /// [`Self::chat_view`], to change it.
+    pub fn chat_view_mut(&mut self) -> Option<&mut AiChatView> {
+        match self {
+            Self::AiChat(view) => Some(view),
+            _ => None,
+        }
+    }
+
+    /// The chat [`Self::chat_view`] is on; `None` for a tab with no chat
+    /// and for a new chat not made yet.
+    pub fn chat_id(&self) -> Option<koru_ai_ui::ChatId> {
+        self.chat_view().and_then(AiChatView::chat_id)
+    }
+
     /// Whether a drag this view owns is in flight.
     ///
     /// The container stops forwarding pointer moves once the pointer leaves the

@@ -378,7 +378,7 @@ impl MainView {
     pub(super) fn save_favorite_models_from_chat(&mut self) -> bool {
         let mut asked = self.ai_chat.take_favorite_models_request();
         self.each_tab_mut(|tab| {
-            if let TabView::AiChat(view) = &mut tab.view
+            if let Some(view) = tab.view.chat_view_mut()
                 && let Some(list) = view.take_favorite_models_request()
             {
                 asked = Some(list);
@@ -467,14 +467,14 @@ impl MainView {
         changed |= self.ai_chat.set_agent_defaults(defaults.clone());
         changed |= self.ai_chat.set_agent_order(order.clone());
         changed |= self.ai_chat.set_favorite_models(favorites.clone());
-        changed |= self.each_tab_mut(|tab| match &mut tab.view {
-            TabView::AiChat(view) => {
+        changed |= self.each_tab_mut(|tab| match tab.view.chat_view_mut() {
+            Some(view) => {
                 let hidden = view.set_hidden_agents(keys.clone());
                 let defaults = view.set_agent_defaults(defaults.clone());
                 let favorites = view.set_favorite_models(favorites.clone());
                 view.set_agent_order(order.clone()) || hidden || defaults || favorites
             }
-            _ => false,
+            None => false,
         });
         changed
     }

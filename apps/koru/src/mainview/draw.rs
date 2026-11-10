@@ -704,7 +704,7 @@ impl MainView {
             }
             Some(super::LiftedViewer::AiPane) => self.ai_chat.draw_lifted_viewer(scene, root),
             Some(super::LiftedViewer::AiTab(_)) => {
-                if let TabView::AiChat(view) = self.active_view() {
+                if let Some(view) = self.active_view().chat_view_mut() {
                     view.draw_lifted_viewer(scene, root);
                 }
             }

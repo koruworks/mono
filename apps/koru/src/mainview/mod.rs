@@ -5994,7 +5994,7 @@ impl MainView {
                 // Read here, on the pass every chat's news already arrives
                 // on, and a comparison of a few strings until one moves.
                 group_relabeled |= tab.refresh_ai_chat_face();
-                if let TabView::AiChat(view) = &mut tab.view {
+                if let Some(view) = tab.view.chat_view_mut() {
                     list_changed |= view.take_chat_list_changed();
                 }
             }
@@ -6011,10 +6011,7 @@ impl MainView {
         }
         self.explore.start_chats(crate::search::gateway_root());
         // The open chat wears the card: the AI chat tab in front, if one is.
-        let current = match &self.tabs().active_tab().view {
-            TabView::AiChat(view) => view.chat_id(),
-            _ => None,
-        };
+        let current = self.tabs().active_tab().view.chat_id();
         let surface = self.explore.chats_mut();
         surface.set_now(epoch_millis());
         changed |= surface.set_current(current);
@@ -6044,7 +6041,7 @@ impl MainView {
         self.ai_chat.set_profile(profile);
         for (_, group) in self.panes.iter_groups_mut() {
             for tab in group.tabs_mut().iter_mut() {
-                if let TabView::AiChat(view) = &mut tab.view {
+                if let Some(view) = tab.view.chat_view_mut() {
                     view.set_profile(profile);
                 }
             }
@@ -6065,7 +6062,7 @@ impl MainView {
         let mut emptied = Vec::new();
         for (_, group) in self.panes.iter_groups_mut() {
             for tab in group.tabs_mut().iter_mut() {
-                if let TabView::AiChat(view) = &mut tab.view
+                if let Some(view) = tab.view.chat_view_mut()
                     && let Some(chat) = view.take_wants_open_elsewhere()
                 {
                     asked.push(chat);
@@ -6142,6 +6139,10 @@ impl MainView {
 
     /// Close every AI chat tab in this window seated on `chat`. Back to
     /// front, so closing one does not renumber the next.
+    ///
+    /// The `AiChat` arm only, not [`TabView::chat_view`]: this answers the
+    /// Chats view's ordinary delete, and a chat a container embeds is
+    /// removed through that container's own owner, never closed by it.
     fn close_ai_chat_tabs(&mut self, chat: koru_ai_ui::ChatId) -> bool {
         let doomed: Vec<usize> = (0..self.tabs().len())
             .rev()
@@ -7326,10 +7327,13 @@ impl MainView {
         if self.ai_visible() && self.ai_chat.viewer_open() {
             return Some(LiftedViewer::AiPane);
         }
-        let open = matches!(
-            &self.panes.focused().active_tab().view,
-            TabView::AiChat(view) if view.viewer_open()
-        );
+        let open = self
+            .panes
+            .focused()
+            .active_tab()
+            .view
+            .chat_view()
+            .is_some_and(|view| view.viewer_open());
         open.then(|| self.focused_pane_rect())
             .flatten()
             .map(LiftedViewer::AiTab)
@@ -7345,8 +7349,9 @@ impl MainView {
             LiftedViewer::Document(_) | LiftedViewer::AiTab(_) => {
                 match &self.panes.focused().active_tab().view {
                     TabView::Leaf(leaf) => leaf.viewer_semantics(lang),
-                    TabView::AiChat(view) => view.viewer_semantics(lang),
-                    _ => None,
+                    view => view
+                        .chat_view()
+                        .and_then(|chat| chat.viewer_semantics(lang)),
                 }
             }
         }
@@ -7360,8 +7365,9 @@ impl MainView {
             Some(LiftedViewer::AiPane) => self.ai_chat.viewer_act(action),
             Some(_) => match self.tabs_mut().active_view() {
                 TabView::Leaf(leaf) => leaf.viewer_act(action),
-                TabView::AiChat(view) => view.viewer_act(action),
-                _ => false,
+                view => view
+                    .chat_view_mut()
+                    .is_some_and(|chat| chat.viewer_act(action)),
             },
         }
     }
@@ -7389,13 +7395,13 @@ impl MainView {
                     (TabView::Leaf(leaf), ViewerZoom::Wheel(delta, x, y)) => {
                         View::zoom_wheel(leaf, delta, x - pane.x, y - pane.y)
                     }
-                    (TabView::AiChat(view), ViewerZoom::Key(intent)) => {
-                        view.viewer_zoom_key(key(intent))
-                    }
-                    (TabView::AiChat(view), ViewerZoom::Wheel(delta, x, y)) => {
-                        view.viewer_zoom_wheel(delta, x - pane.x, y - pane.y)
-                    }
-                    _ => false,
+                    (view, zoom) => match (view.chat_view_mut(), zoom) {
+                        (Some(view), ViewerZoom::Key(intent)) => view.viewer_zoom_key(key(intent)),
+                        (Some(view), ViewerZoom::Wheel(delta, x, y)) => {
+                            view.viewer_zoom_wheel(delta, x - pane.x, y - pane.y)
+                        }
+                        (None, _) => false,
+                    },
                 }
             }
         })
@@ -7431,11 +7437,14 @@ impl MainView {
                 origin: (pane.x, pane.y),
                 size,
             })),
-            TabView::AiChat(view) => view.set_viewer_lift(Some(koru_ai_ui::ViewerLift {
-                origin: (pane.x, pane.y),
-                size,
-            })),
-            _ => {}
+            view => {
+                if let Some(view) = view.chat_view_mut() {
+                    view.set_viewer_lift(Some(koru_ai_ui::ViewerLift {
+                        origin: (pane.x, pane.y),
+                        size,
+                    }));
+                }
+            }
         }
     }
 
@@ -9913,7 +9922,7 @@ impl MainView {
             Some(LiftedViewer::AiTab(pane)) => {
                 let mods = self.mods;
                 let (view, doc) = self.tabs_mut().active_mut().doc(ws);
-                if let TabView::AiChat(chat) = view {
+                if let Some(chat) = view.chat_view_mut() {
                     View::set_mods(chat, mods);
                     return View::mouse_down(chat, doc, x - pane.x, y - pane.y, ctrl);
                 }
@@ -10411,7 +10420,7 @@ impl MainView {
             Some(LiftedViewer::AiPane) => return self.ai_chat.mouse_up(),
             Some(LiftedViewer::AiTab(_)) => {
                 let (view, doc) = self.tabs_mut().active_mut().doc(ws);
-                if let TabView::AiChat(chat) = view {
+                if let Some(chat) = view.chat_view_mut() {
                     return View::mouse_up(chat, doc);
                 }
             }
@@ -11226,7 +11235,7 @@ impl View for MainView {
             }
             Some(LiftedViewer::AiTab(pane)) => {
                 self.tooltip.set_hover(None, Instant::now());
-                if let TabView::AiChat(chat) = self.tabs_mut().active_view() {
+                if let Some(chat) = self.tabs_mut().active_view().chat_view_mut() {
                     return View::mouse_move(chat, x - pane.x, y - pane.y);
                 }
             }
@@ -11280,7 +11289,7 @@ impl View for MainView {
         match self.lifted_viewer() {
             Some(LiftedViewer::AiPane) => return self.ai_chat.mouse_double_click(x, y),
             Some(LiftedViewer::AiTab(pane)) => {
-                if let TabView::AiChat(chat) = self.tabs_mut().active_view() {
+                if let Some(chat) = self.tabs_mut().active_view().chat_view_mut() {
                     return View::mouse_double_click(chat, ws, x - pane.x, y - pane.y);
                 }
             }
@@ -11554,7 +11563,7 @@ impl View for MainView {
                 return;
             }
             Some(LiftedViewer::AiTab(_)) => {
-                if let TabView::AiChat(chat) = self.tabs_mut().active_view() {
+                if let Some(chat) = self.tabs_mut().active_view().chat_view_mut() {
                     View::scroll_by(chat, delta);
                 }
                 return;
@@ -11657,7 +11666,7 @@ impl View for MainView {
         match self.lifted_viewer() {
             Some(LiftedViewer::AiPane) => return self.ai_chat.cursor_icon(),
             Some(LiftedViewer::AiTab(_)) => {
-                if let TabView::AiChat(chat) = &self.panes.focused().active_tab().view {
+                if let Some(chat) = self.panes.focused().active_tab().view.chat_view() {
                     return View::cursor_icon(chat);
                 }
             }
@@ -12307,7 +12316,7 @@ impl View for MainView {
         match source {
             AiChatFolderSource::Pane => self.ai_chat.computer_path_chosen(kind, chosen),
             AiChatFolderSource::AiChatTab => {
-                if let TabView::AiChat(view) = self.tabs_mut().active_view() {
+                if let Some(view) = self.tabs_mut().active_view().chat_view_mut() {
                     view.computer_path_chosen(kind, chosen)
                 } else {
                     false
@@ -12330,7 +12339,7 @@ impl View for MainView {
             AiChatFolderSource::AiChatTab => {
                 for (_, group) in self.panes.iter_groups_mut() {
                     for tab in group.tabs_mut().iter_mut() {
-                        if let TabView::AiChat(view) = &mut tab.view
+                        if let Some(view) = tab.view.chat_view_mut()
                             && view.chat_id() == Some(chat)
                         {
                             return view.workspace_file_imported(op, result);
@@ -15598,7 +15607,7 @@ impl MainView {
                 Some(LiftedViewer::AiPane) => return self.ai_chat.key(key, text, mods),
                 Some(LiftedViewer::AiTab(_)) => {
                     let (view, doc) = self.tabs_mut().active_mut().doc(ws);
-                    if let TabView::AiChat(chat) = view {
+                    if let Some(chat) = view.chat_view_mut() {
                         return View::key(chat, doc, key, text, mods);
                     }
                 }
@@ -16671,19 +16680,19 @@ impl MainView {
     /// Alt+click asks the same place chooser used by document references.
     fn open_pending_ai_document(&mut self) -> bool {
         let place = self.ai_chat.take_place_document_request().or_else(|| {
-            match self.tabs_mut().active_view() {
-                TabView::AiChat(view) => view.take_place_document_request(),
-                _ => None,
-            }
+            self.tabs_mut()
+                .active_view()
+                .chat_view_mut()
+                .and_then(|view| view.take_place_document_request())
         });
         if let Some(link) = place {
             return self.open_ai_document_link(link, true);
         }
         let link = self.ai_chat.take_open_document_request().or_else(|| {
-            match self.tabs_mut().active_view() {
-                TabView::AiChat(view) => view.take_open_document_request(),
-                _ => None,
-            }
+            self.tabs_mut()
+                .active_view()
+                .chat_view_mut()
+                .and_then(|view| view.take_open_document_request())
         });
         let Some(link) = link else {
             return false;
@@ -16714,10 +16723,10 @@ impl MainView {
     /// loading preview now so the click has an immediate visible answer.
     fn open_pending_ai_attachment(&mut self) -> bool {
         let request = self.ai_chat.take_attachment_open_request().or_else(|| {
-            match self.tabs_mut().active_view() {
-                TabView::AiChat(view) => view.take_attachment_open_request(),
-                _ => None,
-            }
+            self.tabs_mut()
+                .active_view()
+                .chat_view_mut()
+                .and_then(|view| view.take_attachment_open_request())
         });
         let Some(request) = request else {
             return false;
@@ -16752,10 +16761,11 @@ impl MainView {
     /// `PaneRequest::RevealPath` Runs' *Open location* sends.
     fn reveal_paths_from_chat(&mut self) {
         let pane = self.ai_chat.take_reveal_path_request();
-        let tab = match self.tabs_mut().active_view() {
-            TabView::AiChat(view) => view.take_reveal_path_request(),
-            _ => None,
-        };
+        let tab = self
+            .tabs_mut()
+            .active_view()
+            .chat_view_mut()
+            .and_then(|view| view.take_reveal_path_request());
         for path in pane.into_iter().chain(tab) {
             self.ask_pane(koru_workspace_host::PaneRequest::RevealPath(path));
         }
@@ -16766,10 +16776,11 @@ impl MainView {
     /// providers, the same page *Agents › Manage…* opens.
     fn open_agent_settings_from_chat(&mut self) -> bool {
         let pane = self.ai_chat.take_agent_settings_request();
-        let tab = match self.tabs_mut().active_view() {
-            TabView::AiChat(view) => view.take_agent_settings_request(),
-            _ => false,
-        };
+        let tab = self
+            .tabs_mut()
+            .active_view()
+            .chat_view_mut()
+            .is_some_and(|view| view.take_agent_settings_request());
         (pane || tab) && self.open_settings_page(koru_settings_ui::PageId::AgentProviders)
     }
 
@@ -16780,6 +16791,8 @@ impl MainView {
     /// An agent chat asked for its working folder: hand the native picker to
     /// the shell and remember who asked, so the answer returns to the same
     /// surface. Either the pane's surface or the active AI chat tab may ask.
+    /// The `AiChat` arm only: a chat a container embeds works in a folder
+    /// that container's owner sets, so it never asks here.
     fn ask_pending_ai_chat_folder(&mut self) {
         let (request, source) = if let Some(request) = self.ai_chat.take_working_folder_request() {
             (Some(request), AiChatFolderSource::Pane)
@@ -16806,7 +16819,7 @@ impl MainView {
     fn ask_pending_ai_computer(&mut self) {
         let (request, source) = if let Some(request) = self.ai_chat.take_computer_picker_request() {
             (Some(request), AiChatFolderSource::Pane)
-        } else if let TabView::AiChat(view) = self.tabs_mut().active_view() {
+        } else if let Some(view) = self.tabs_mut().active_view().chat_view_mut() {
             (
                 view.take_computer_picker_request(),
                 AiChatFolderSource::AiChatTab,
@@ -16835,7 +16848,7 @@ impl MainView {
         let (request, source) = if let Some(request) = self.ai_chat.take_workspace_import_request()
         {
             (Some(request), AiChatFolderSource::Pane)
-        } else if let TabView::AiChat(view) = self.tabs_mut().active_view() {
+        } else if let Some(view) = self.tabs_mut().active_view().chat_view_mut() {
             (
                 view.take_workspace_import_request(),
                 AiChatFolderSource::AiChatTab,

@@ -842,9 +842,7 @@ impl MainView {
             group
                 .tabs()
                 .iter()
-                .position(
-                    |tab| matches!(&tab.view, TabView::AiChat(view) if view.chat_id() == Some(chat)),
-                )
+                .position(|tab| tab.view.chat_id() == Some(chat))
                 .map(|index| (path, index))
         })
     }
@@ -942,7 +940,7 @@ impl MainView {
         let moved = tab.id;
         self.split_with(tab, side);
         if block.is_some()
-            && let TabView::AiChat(view) = &mut self.tabs_mut().active_mut().view
+            && let Some(view) = self.tabs_mut().active_mut().view.chat_view_mut()
         {
             view.open_link(id, block);
         }
@@ -1008,7 +1006,7 @@ impl MainView {
     fn ensure_working_tab(&mut self) -> bool {
         // Opening from a chat keeps the conversation in place and gives the
         // selected document its own tab, even if another working tab exists.
-        if matches!(self.tabs().active_tab().view, TabView::AiChat(_)) {
+        if self.tabs().active_tab().view.chat_view().is_some() {
             return false;
         }
         if self.tabs().active_tab().is_reusable() {

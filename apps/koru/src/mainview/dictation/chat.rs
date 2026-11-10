@@ -37,7 +37,6 @@ use koru_workspace_host::voice_devices;
 use koru_workspace_host::voice_prefs::{self, InputChoice};
 
 use crate::mainview::MainView;
-use crate::mainview::tab::TabView;
 use crate::mainview::tab_rules::KoruTabs;
 
 /// Which chat composer a dictation is going into.
@@ -88,22 +87,22 @@ impl MainView {
     fn chat_surface(&self, which: ChatDictation) -> Option<&ChatSurface> {
         match which {
             ChatDictation::Pane => Some(&self.ai_chat),
-            ChatDictation::Tab(index) => match self.tabs().get(index).map(|tab| &tab.view) {
-                Some(TabView::AiChat(view)) => Some(view.dictation_surface()),
-                _ => None,
-            },
+            ChatDictation::Tab(index) => self
+                .tabs()
+                .get(index)
+                .and_then(|tab| tab.view.chat_view())
+                .map(|view| view.dictation_surface()),
         }
     }
 
     fn chat_surface_mut(&mut self, which: ChatDictation) -> Option<&mut ChatSurface> {
         match which {
             ChatDictation::Pane => Some(&mut self.ai_chat),
-            ChatDictation::Tab(index) => {
-                match self.tabs_mut().get_mut(index).map(|tab| &mut tab.view) {
-                    Some(TabView::AiChat(view)) => Some(view.dictation_surface_mut()),
-                    _ => None,
-                }
-            }
+            ChatDictation::Tab(index) => self
+                .tabs_mut()
+                .get_mut(index)
+                .and_then(|tab| tab.view.chat_view_mut())
+                .map(|view| view.dictation_surface_mut()),
         }
     }
 
@@ -113,7 +112,7 @@ impl MainView {
     pub(crate) fn chat_tab_takes_dictation(&self) -> bool {
         !self.blockers().is_blocking()
             && !(self.ai_visible() && self.ai_focused)
-            && matches!(self.tabs().active_tab().view, TabView::AiChat(_))
+            && self.tabs().active_tab().view.chat_view().is_some()
     }
 
     /// Perform `action` on the composer of the chat tab at `tab`.
@@ -156,7 +155,7 @@ impl MainView {
                 // chat lets its row go. Free — one `Option` each.
                 let mut changed = self.ai_chat.show_dictation(None, now);
                 for tab in self.tabs_mut().iter_mut() {
-                    if let TabView::AiChat(view) = &mut tab.view {
+                    if let Some(view) = tab.view.chat_view_mut() {
                         changed |= view.dictation_surface_mut().show_dictation(None, now);
                     }
                 }
@@ -196,10 +195,11 @@ impl MainView {
     pub(crate) fn chat_meter_wanted(&self) -> bool {
         (self.ai_visible() && self.ai_chat.microphone_meter_wanted())
             || self.panes.iter_groups().any(|(_, group)| {
-                matches!(
-                    &group.active_tab().view,
-                    TabView::AiChat(view) if view.dictation_surface().microphone_meter_wanted()
-                )
+                group
+                    .active_tab()
+                    .view
+                    .chat_view()
+                    .is_some_and(|view| view.dictation_surface().microphone_meter_wanted())
             })
     }
 
@@ -208,7 +208,7 @@ impl MainView {
     pub(crate) fn push_chat_meter_level(&mut self, level: u8) -> bool {
         let mut changed = self.ai_chat.set_microphone_level(level);
         for (_, group) in self.panes.iter_groups_mut() {
-            if let TabView::AiChat(view) = group.active_view() {
+            if let Some(view) = group.active_view().chat_view_mut() {
                 changed |= view.dictation_surface_mut().set_microphone_level(level);
             }
         }
@@ -223,7 +223,7 @@ impl MainView {
         let mut changed = self.ai_chat.set_microphones(microphones.clone());
         for (_, group) in self.panes.iter_groups_mut() {
             for tab in group.iter_tabs_mut() {
-                if let TabView::AiChat(view) = &mut tab.view {
+                if let Some(view) = tab.view.chat_view_mut() {
                     changed |= view
                         .dictation_surface_mut()
                         .set_microphones(microphones.clone());
@@ -244,7 +244,7 @@ impl MainView {
     /// mirrors follow them and the next dictation records from the device.
     pub(crate) fn serve_chat_microphones(&mut self) -> bool {
         let mut asks = self.ai_chat.take_microphone_asks();
-        if let TabView::AiChat(view) = self.tabs_mut().active_view() {
+        if let Some(view) = self.tabs_mut().active_view().chat_view_mut() {
             asks.extend(view.dictation_surface_mut().take_microphone_asks());
         }
         if asks.is_empty() {
@@ -281,10 +281,10 @@ impl MainView {
             self.ai_focused = true;
             return true;
         }
-        match self.tabs_mut().active_view() {
-            TabView::AiChat(view) => view.dictation_surface_mut().take_wants_dictation(),
-            _ => false,
-        }
+        self.tabs_mut()
+            .active_view()
+            .chat_view_mut()
+            .is_some_and(|view| view.dictation_surface_mut().take_wants_dictation())
     }
 }
 

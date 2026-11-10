@@ -184,7 +184,7 @@ impl MainView {
         // **A chat tab is a place** (D102), on the run arm's terms: its
         // identity is its chat. A new chat not sent yet names none and is not
         // somewhere to be sent back to — a draft's rule.
-        if let TabView::AiChat(view) = &tab.view {
+        if let Some(view) = tab.view.chat_view() {
             let chat = view.chat_id()?;
             let stand_in = NodeId::from_uuid(uuid::Uuid::from_u64_pair(0, tab.id));
             return Some(Spot {
@@ -452,7 +452,7 @@ impl MainView {
     /// recorded scroll, applied when its read lands. Nothing here stops or
     /// touches a running reply: the tab is selected, never reseated.
     fn restore_chat_spot(&mut self, chat: koru_ai_ui::ChatId, tab: u64, scroll: f32) -> bool {
-        let on_chat = |candidate: &super::tab::Tab| matches!(&candidate.view, TabView::AiChat(view) if view.chat_id() == Some(chat));
+        let on_chat = |candidate: &super::tab::Tab| candidate.view.chat_id() == Some(chat);
         let find = |want: &dyn Fn(&super::tab::Tab) -> bool| {
             self.panes.iter_groups().find_map(|(path, group)| {
                 group
@@ -478,7 +478,7 @@ impl MainView {
         if !self.open_ai_chat_tab_for(chat) {
             return false;
         }
-        if let TabView::AiChat(view) = self.tabs_mut().active_view() {
+        if let Some(view) = self.tabs_mut().active_view().chat_view_mut() {
             view.restore_conversation_scroll(scroll);
         }
         true

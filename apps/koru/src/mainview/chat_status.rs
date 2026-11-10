@@ -33,7 +33,9 @@ use std::time::Instant;
 use koru_ai_ui::{ChatId, MessageId};
 use koru_chats_ui::{ChatStatus, SeenBook};
 
-use super::{MainView, TabView, epoch_millis};
+#[cfg(test)]
+use super::TabView;
+use super::{MainView, epoch_millis};
 
 /// **The process's book**, and its session line as last rendered. One book,
 /// because every window of the process shows the same chats to the same
@@ -127,7 +129,7 @@ impl MainView {
         for (path, group) in self.panes.iter_groups_mut() {
             let active = group.active();
             for (index, tab) in group.tabs_mut().iter_mut().enumerate() {
-                let TabView::AiChat(view) = &mut tab.view else {
+                let Some(view) = tab.view.chat_view_mut() else {
                     continue;
                 };
                 if !(path == focused && index == active) {
@@ -226,7 +228,7 @@ impl MainView {
         let mut turning = false;
         for (_, group) in self.panes.iter_groups_mut() {
             for tab in group.tabs_mut().iter_mut() {
-                if let TabView::AiChat(view) = &mut tab.view {
+                if let Some(view) = tab.view.chat_view_mut() {
                     // Opened on what is new, or the divider of a look
                     // before put away.
                     if let Some((chat, from)) = divider_for(view.chat_id()) {
@@ -270,7 +272,7 @@ impl MainView {
         for (path, group) in self.panes.iter_groups() {
             let active = group.active();
             for (index, tab) in group.tabs().iter().enumerate() {
-                let TabView::AiChat(view) = &tab.view else {
+                let Some(view) = tab.view.chat_view() else {
                     continue;
                 };
                 turning |= view.status().animating(self.reduced_motion);
