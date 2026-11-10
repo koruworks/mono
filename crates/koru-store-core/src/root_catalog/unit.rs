@@ -11,7 +11,7 @@ use uuid::Uuid;
 use super::lifecycle::{DeletionRecord, Facts, Placement, PurgeRecord, RestoreRecord};
 use super::{
     CatalogUnitRef, CatalogUnitRefusal as Refusal, K_PROFILE_ID, K_SCHEMA_VERSION, K_UNIT_KIND,
-    K_WORKSPACE_ID, R_META, Staged, validation,
+    K_WORKSPACE_ID, PlacementConcurrency, R_META, Staged, validation,
 };
 use crate::ids::{DeletionId, ProfileId, RestoreId, WorkspaceId};
 use crate::unit_doc::{UnitAddress, UnitDoc};
@@ -307,6 +307,35 @@ impl WorkspaceCatalogUnit {
     /// The current register, or `None` while placement is pending.
     pub fn placement(&self) -> Option<Placement> {
         self.facts().placement()
+    }
+
+    /// **Q10 case 3's detection.** The placement writes this unit's history
+    /// gained since `before` that are *concurrent* with `operation` — an
+    /// operation this device recorded earlier, typically its own bootstrap
+    /// repair — each with the placement its own history reads.
+    ///
+    /// Three answers, not a boolean:
+    /// [`PlacementConcurrency::Unknown`] when `operation` is not in this
+    /// history at all, which must never read as a conflict;
+    /// [`PlacementConcurrency::Ordered`] when every added write either saw
+    /// it or is in its past, and whether one of them also saw every rival in
+    /// `recorded` and so answers the question already; and
+    /// [`PlacementConcurrency::Concurrent`] when one did neither *and*
+    /// touched the register — whether or not the merged value moved, because
+    /// in the case this is for it does not.
+    pub fn placement_writes_concurrent_with(
+        &self,
+        before: &VersionVector,
+        operation: loro::ID,
+        recorded: &[loro::ID],
+    ) -> PlacementConcurrency {
+        super::concurrency::placement_writes_concurrent_with(
+            &self.inner.doc,
+            before,
+            &self.version(),
+            operation,
+            recorded,
+        )
     }
 
     /// Write the whole `{profile_id, move_id}` record in one commit.

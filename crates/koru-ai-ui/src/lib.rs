@@ -14,9 +14,9 @@ use std::time::{Duration, Instant};
 
 use koru_ai_core::{
     AiErrorClass, AiProviderId, AiSurface, AiUsage, Chat, ChatRole, ContextRef,
-    DocumentDestination, DocumentExportId, DocumentId, InferenceAttemptId, MessageState,
-    ModelSelection, ReasoningChoice, ReasoningControl, SourceLink, ToolActivity,
-    ToolActivityStatus, ToolInvocationId, ToolMode, UsageReport, WebSearchPhase, WorkspaceId,
+    DocumentDestination, DocumentExportId, InferenceAttemptId, MessageState, ModelSelection,
+    ReasoningChoice, ReasoningControl, SourceLink, ToolActivity, ToolActivityStatus,
+    ToolInvocationId, ToolMode, UsageReport, WebSearchPhase, WorkspaceId,
 };
 
 pub use chats::ChatElsewhere;
@@ -24,6 +24,7 @@ pub use chats::ChatElsewhere;
 /// [`ChatSurface::recent_chats`] carry without taking a `koru-ai-core`
 /// dependency of its own.
 pub use koru_ai_core::ChatId;
+pub use koru_ai_core::DocumentId;
 /// Re-exported so a host can open a chat at one of its blocks — a chat link
 /// or a search hit — without a `koru-ai-core` dependency of its own.
 pub use koru_ai_core::MessageBlockId;
@@ -44,10 +45,16 @@ use koru_draw::geometry::Rect;
 use koru_draw::icons;
 use koru_draw::text::TextEngine;
 use koru_draw::theme::{self, Brush};
+use koru_draw::tween::Tween;
 use koru_draw::{scene, theme::role};
 use koru_ui::button::{ActionButton, ActionStyle, ButtonRole};
+use koru_ui::choice::{Choice, ChoiceOutcome};
 use koru_ui::confirm::{Confirm, Outcome as ConfirmOutcome};
+use koru_ui::context_chip::{ContextChip, ContextState};
 use koru_ui::icon_button::{IconButton, State as IconButtonState};
+use koru_ui::logo::KoruLogo;
+use koru_ui::popover::{PopoverAlign, PopoverShell};
+use koru_ui::split_button::SplitButton;
 use koru_ui::text_input::{InputStyle, TextInput};
 use koru_ui::tooltip::{Tooltip, TooltipContent};
 use koru_ui::{Menu, PulsingDots, TextArea, Typed};
@@ -74,15 +81,44 @@ pub(crate) fn chat_text_layout(engine: &mut TextEngine, text: &str, max_w: f32) 
     engine.simple_layout_wrapped_in(text, role::ui(), theme::chat_stack(), max_w)
 }
 
+/// Paint only the glyph through a transform, so its button and hit area stay still.
+fn paint_turning_caret(
+    canvas: &mut Scene,
+    root: Affine,
+    engine: &mut TextEngine,
+    rect: Rect,
+    size: f32,
+    turn: f32,
+    color: vello::peniko::Color,
+) {
+    let layout = engine.icon_layout(icons::CARET_DOWN, size);
+    let x = rect.x + (rect.w - layout.width()) * 0.5;
+    let y = rect.y + (rect.h - layout.height()) * 0.5;
+    let turned = root
+        * Affine::rotate_about(
+            (turn.clamp(0.0, 1.0) * std::f32::consts::PI) as f64,
+            (
+                (x + layout.width() * 0.5) as f64,
+                (y + layout.height() * 0.5) as f64,
+            ),
+        );
+    scene::draw_layout(canvas, turned, &layout, x, y, Some(color));
+}
+
 mod agents;
 mod approval_modes;
 mod attachments;
 mod chat_status;
 mod chats;
 mod composer;
+mod composer_band;
+mod composer_plus;
+mod composer_shell;
+mod context_window;
 mod dictation;
 mod doc_links;
 mod effort;
+mod file_citations;
 mod layout_cache;
 mod link_card;
 mod live_markdown;
@@ -105,7 +141,10 @@ mod work_view;
 pub use agents::{AgentDefaults, agent_key, provider_mark};
 pub use approval_modes::NewChatPermission;
 pub use attachments::ViewerLift;
+pub use attachments::{AttachmentOpenRequest, AttachmentPreview};
 pub use composer::{ChatComposer, ComposedMessage};
+pub use composer_plus::ComputerPickerKind;
+pub use composer_plus::WorkspaceImportRequest;
 pub use dictation::{DictationPress, DictationShown};
 pub use microphone::{MicrophoneAsk, MicrophoneDevice, Microphones};
 pub use model_picker::FavoriteModel;
@@ -113,13 +152,14 @@ pub use model_picker::FavoriteModel;
 use agents::{AgentStatus, agent_chip_label, agent_row_body, agent_row_title, is_agent_row};
 use koru_ai_core::AGENT_DEFAULT_MODEL;
 use layout_cache::{BlockLayout, MessageInput, MessageLayout, RebuildStats};
-use quote_pills::{AddPill, ContextDocumentPill, PillStrip, ResponseMenuItem, pill_band_height};
+use quote_pills::{AddPill, ResponseMenuItem};
 use reader::{Command, DestinationOption, POLL_INTERVAL, Reader, SendError, Update};
 use usage::{format_usage_report, message_content_height, message_height, usage_line};
 
 const PAD: f32 = 14.0;
 const FIELD_H: f32 = 36.0;
 const BUTTON_H: f32 = ActionButton::H;
+const COMPOSER_ICON_SIZE: f32 = theme::IconSize::M.px(theme::Profile::Desktop);
 const CARD_GAP: f32 = 10.0;
 /// The space under an agent's notice line (D69), as under a work line.
 const NOTICE_GAP: f32 = 6.0;
@@ -165,10 +205,12 @@ const COMPOSER_TOOLBAR_H: f32 = BUTTON_H;
 /// `COMPOSER_PAD_X` and sits `COMPOSER_PAD_BOTTOM` above the bottom, with
 /// `COMPOSER_TEXT_GAP` between the last line and the row. It used to be the
 /// chrome field padding, 7 px, which left the words flush with the border.
-const COMPOSER_PAD_X: f32 = 16.0;
-const COMPOSER_PAD_TOP: f32 = 12.0;
-const COMPOSER_TEXT_GAP: f32 = 4.0;
-const COMPOSER_PAD_BOTTOM: f32 = 8.0;
+const COMPOSER_PAD_X: f32 = 20.0;
+const COMPOSER_PAD_TOP: f32 = 20.0;
+const COMPOSER_TEXT_GAP: f32 = 16.0;
+const COMPOSER_PAD_BOTTOM: f32 = 14.0;
+/// Clear the shared raised shadow's 20 px spread and 3 px downward offset.
+const COMPOSER_BOTTOM_MARGIN: f32 = 24.0;
 /// **The quiet row under the composer box**, left-aligned with it: an agent
 /// chat's folder, small and dim, the way a checkout is named under a prompt.
 /// `COMPOSER_FOOTER_GAP` below the box, `COMPOSER_FOOTER_H` tall; a chat with
@@ -257,6 +299,10 @@ impl Drop for OpenAiCredentialRequest {
 enum Focus {
     None,
     Composer,
+    /// The send half of an agent chat's split button.
+    SendArrow,
+    /// The send button's independently enabled approval-mode menu target.
+    ModeChevron,
     /// A reply's *Worked for …* header: Enter or Space opens it.
     Work(MessageId),
     /// An agent's waiting questions (koru-ai D108): the card's own cursor
@@ -392,6 +438,36 @@ struct SentMessage {
     /// It came from the queue, so a refusal sends it back there rather than
     /// into the composer.
     from_queue: bool,
+    /// A recalled entry being sent. If refused, it returns to the walk and
+    /// Down still recovers the draft that was present before recall.
+    recalled_from: Option<(usize, Vec<HistoryInput>)>,
+}
+
+/// A send that has not yet appeared in a transcript read. Its identity is
+/// filled by the accepted response, so equal text remains two history steps.
+#[derive(Clone, Debug)]
+struct LocalInput {
+    chat: ChatId,
+    message_id: Option<MessageId>,
+    markdown: String,
+    attachments: Vec<koru_ai_core::ChatAttachment>,
+}
+
+#[derive(Clone, Debug)]
+struct HistoryInput {
+    markdown: String,
+    attachments: Vec<koru_ai_core::ChatAttachment>,
+}
+
+/// The exact composer context whose workspace grants were requested. A late
+/// acknowledgement may only release this message, in this chat and workspace.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct GrantKey {
+    chat: ChatId,
+    markdown: String,
+    documents: Vec<DocumentId>,
+    attachments: Vec<koru_ai_core::ChatAttachmentId>,
+    current: Option<WorkspaceId>,
 }
 
 /// One AI conversation surface, usable as a window body or in Koru's context
@@ -453,6 +529,9 @@ pub struct ChatSurface {
     titles_requested: HashSet<DocumentId>,
     /// A chip or a titled link was clicked: the document the host should open.
     open_document_request: Option<koru_link::KoruLink>,
+    place_document_request: Option<koru_link::KoruLink>,
+    pointer_mods: ModifiersState,
+    pressed_alt: bool,
     conversation_hit_rect: Rect,
     /// The workspace-access panel's filter, shared with the leaf that draws
     /// it (D106).
@@ -537,7 +616,19 @@ pub struct ChatSurface {
     /// a new chat and does not want the active tab's document pre-attached.
     suppress_next_document_context: bool,
     context_workspace: Option<WorkspaceId>,
-    pill_strip: PillStrip,
+    recent_documents: Vec<(DocumentId, String)>,
+    plus_menu: Option<Menu<composer_plus::PlusItem>>,
+    computer_picker_request: Option<ComputerPickerKind>,
+    computer_file_choice: Option<(std::path::PathBuf, Choice)>,
+    workspace_import_request: Option<WorkspaceImportRequest>,
+    pending_workspace_import_grant: Option<(uuid::Uuid, WorkspaceImportRequest)>,
+    workspace_imports: HashMap<koru_ai_core::ChatAttachmentId, WorkspaceImportRequest>,
+    workspace_import_documents: HashMap<koru_ai_core::ChatAttachmentId, DocumentId>,
+    completed_workspace_pills: HashMap<ChatId, Vec<(DocumentId, String)>>,
+    pending_computer_reference: Option<(ChatId, std::path::PathBuf, koru_ai_core::AttachmentKind)>,
+    chip_band: composer_band::ChipBand,
+    chip_scroll: f32,
+    composer_shell: Option<composer_shell::Shell>,
     /// *Add to chat* over a reply's selection (D88).
     add_pill: AddPill,
     response_menu_anchor: Option<Rect>,
@@ -547,6 +638,12 @@ pub struct ChatSurface {
     model_options_open: bool,
     model_option_offset: usize,
     chat_model_open: bool,
+    context_window_open: bool,
+    context_window_usage: HashMap<ChatId, (u64, u64)>,
+    model_chevron: Tween,
+    microphone_chevron: Tween,
+    send_chevron: Tween,
+    send_chevron_reveal: Tween,
     /// The model picker's rail, query, highlight and scroll
     /// ([`model_picker`]), reset each time it opens.
     picker: model_picker::PickerState,
@@ -559,7 +656,6 @@ pub struct ChatSurface {
     /// The row the keyboard is on in the open approval-mode list.
     approval_mode_focus: Option<usize>,
     /// The approval-mode chip's width as last drawn: its icon, name and caret.
-    approval_mode_chip_w: f32,
     /// The workspace-access chip's width as last measured: its label, caret
     /// and padding (D107).
     tool_access_chip_w: f32,
@@ -671,13 +767,21 @@ pub struct ChatSurface {
     stop_armed_at: Option<Instant>,
     /// What this surface sent, by chat, so Up can recall a message before
     /// the transcript that carries it has been read back.
-    sent_inputs: Vec<(ChatId, String)>,
+    sent_inputs: Vec<LocalInput>,
     /// Where Up and Down stand in [`ChatSurface::input_history`]; `None`
     /// is the message being typed.
     history_cursor: Option<usize>,
+    /// Frozen while walking so an arriving reply cannot retarget an index.
+    history_entries: Option<Vec<HistoryInput>>,
     /// The message being typed when Up first left it, whole, for Down to
     /// give back past the newest.
     history_draft: Option<composer::Draft>,
+    history_attachment_draft: Option<Vec<attachments::Draft>>,
+    history_chat: Option<ChatId>,
+    /// Active staged copies, by new id. Late completions after leaving the
+    /// walk are removed rather than surfaced in the next draft.
+    recall_restages: HashMap<koru_ai_core::ChatAttachmentId, ChatId>,
+    recall_retired: HashMap<koru_ai_core::ChatAttachmentId, ChatId>,
     /// The empty chat's greeting: which of [`GREETINGS`], and the chat it
     /// was picked for, so it holds still while shown and a new chat gets a
     /// new one.
@@ -695,6 +799,8 @@ pub struct ChatSurface {
     /// The message just sent, whole, until the service accepts it: put
     /// back in the composer if the send does not go.
     sent_message: Option<SentMessage>,
+    pending_grants: Option<(GrantKey, uuid::Uuid)>,
+    grants_ready: Option<GrantKey>,
     /// A title lookup is with the reader; one at a time, so background
     /// lookups never crowd a person's own command out of its queue.
     titles_in_flight: bool,
@@ -704,6 +810,7 @@ pub struct ChatSurface {
     /// A picture tile clicked whose bytes are being fetched and decoded:
     /// the chat, the attachment and its name.
     viewer_opening: Option<(ChatId, koru_ai_core::ChatAttachmentId, String)>,
+    attachment_open_request: Option<attachments::AttachmentOpenRequest>,
     /// Where the viewer lives when a host lifts it over the window.
     viewer_lift: Option<attachments::ViewerLift>,
     /// The sent pictures' tiles as last drawn, for a click to open one.
@@ -770,11 +877,31 @@ impl ChatSurface {
     }
 
     /// A document chip, or a document link in the conversation, was clicked.
-    /// The host opens the document as a tab.
+    /// The host opens the document in a new tab.
     pub fn take_open_document_request(&mut self) -> Option<koru_link::KoruLink> {
         self.composer
             .take_open_request()
             .or_else(|| self.open_document_request.take())
+    }
+
+    /// An Alt+clicked document asks the host to show its place chooser.
+    pub fn take_place_document_request(&mut self) -> Option<koru_link::KoruLink> {
+        self.composer
+            .take_place_request()
+            .or_else(|| self.place_document_request.take())
+    }
+
+    pub fn set_mods(&mut self, mods: ModifiersState) {
+        self.pointer_mods = mods;
+        self.composer.set_mods(mods);
+    }
+
+    fn request_document_open(&mut self, link: koru_link::KoruLink) {
+        if self.pressed_alt {
+            self.place_document_request = Some(link);
+        } else {
+            self.open_document_request = Some(link);
+        }
     }
 
     /// Show the provider setup, for a host that arrives here from its own
@@ -861,7 +988,7 @@ impl ChatSurface {
             live_usage: None,
             live_sources: Vec::new(),
             open_searches: HashSet::new(),
-            web_search_armed: false,
+            web_search_armed: true,
             chip_label_w: 0.0,
             folder_button_w: 0.0,
             live_reasoning: String::new(),
@@ -886,6 +1013,9 @@ impl ChatSurface {
             document_titles: HashMap::new(),
             titles_requested: HashSet::new(),
             open_document_request: None,
+            place_document_request: None,
+            pointer_mods: ModifiersState::empty(),
+            pressed_alt: false,
             conversation_hit_rect: Rect::new(14.0, PAD, 432.0, 500.0),
             workspace_search,
             fresh_chat_wanted: false,
@@ -930,7 +1060,19 @@ impl ChatSurface {
             dismissed_context_document: None,
             suppress_next_document_context: false,
             context_workspace: None,
-            pill_strip: PillStrip::default(),
+            recent_documents: Vec::new(),
+            plus_menu: None,
+            computer_picker_request: None,
+            computer_file_choice: None,
+            workspace_import_request: None,
+            pending_workspace_import_grant: None,
+            workspace_imports: HashMap::new(),
+            workspace_import_documents: HashMap::new(),
+            completed_workspace_pills: HashMap::new(),
+            pending_computer_reference: None,
+            chip_band: composer_band::ChipBand::default(),
+            chip_scroll: 0.0,
+            composer_shell: None,
             add_pill: AddPill::default(),
             response_menu_anchor: None,
             credential_request: None,
@@ -939,13 +1081,18 @@ impl ChatSurface {
             model_options_open: false,
             model_option_offset: 0,
             chat_model_open: false,
+            context_window_open: false,
+            context_window_usage: HashMap::new(),
+            model_chevron: Tween::new(theme::GLYPH_MORPH_MS, false),
+            microphone_chevron: Tween::new(theme::GLYPH_MORPH_MS, false),
+            send_chevron: Tween::new(theme::GLYPH_MORPH_MS, false),
+            send_chevron_reveal: Tween::new(theme::GLYPH_MORPH_MS, false),
             picker,
             picker_tooltip: Tooltip::default(),
             tool_access_open: false,
             tool_mode_open: false,
             approval_mode_open: false,
             approval_mode_focus: None,
-            approval_mode_chip_w: 0.0,
             tool_access_chip_w: 0.0,
             agent_modes: HashMap::new(),
             modes_asked: HashMap::new(),
@@ -999,17 +1146,25 @@ impl ChatSurface {
             stop_armed_at: None,
             sent_inputs: Vec::new(),
             history_cursor: None,
+            history_entries: None,
             history_draft: None,
+            history_attachment_draft: None,
+            history_chat: None,
+            recall_restages: HashMap::new(),
+            recall_retired: HashMap::new(),
             greeting: None,
             strips: attachments::Strips::default(),
             attachment_work,
             thumbnails: attachments::ThumbCache::default(),
             pending_user_tiles: Vec::new(),
             sent_message: None,
+            pending_grants: None,
+            grants_ready: None,
             titles_in_flight: false,
             clipboard_reading: false,
             viewer: None,
             viewer_opening: None,
+            attachment_open_request: None,
             viewer_lift: None,
             card_tile_hits: Vec::new(),
             queues: queue::Queues::default(),
@@ -1124,15 +1279,6 @@ impl ChatSurface {
         self.dismissed_context_document = None;
     }
 
-    fn context_document_pill(&self) -> Option<ContextDocumentPill> {
-        self.context_document
-            .as_ref()
-            .map(|(id, title)| ContextDocumentPill {
-                document_id: *id,
-                title: title.clone(),
-            })
-    }
-
     /// Tell an embedded surface which workspace its host is currently showing.
     /// The workspace is presented first and becomes the initial grant for each
     /// chat; users may still remove it afterwards.
@@ -1142,7 +1288,6 @@ impl ChatSurface {
         }
         self.context_workspace = workspace;
         self.prioritize_context_workspace();
-        self.select_context_workspace_if_needed();
         true
     }
 
@@ -1336,7 +1481,6 @@ impl ChatSurface {
             self.picker_tooltip.maintenance_deadline(),
             self.queue_tooltip.maintenance_deadline(),
             self.skill_tooltip().maintenance_deadline(),
-            self.pill_strip.maintenance_deadline(),
             self.composer.maintenance_deadline(),
             self.dictation_deadline(),
             self.attachment_deadline(),
@@ -1380,6 +1524,10 @@ impl ChatSurface {
             changed = true;
         }
         changed |= self.copy_feedback.maintain(_now);
+        changed |= self.model_chevron.advance(_now);
+        changed |= self.microphone_chevron.advance(_now);
+        changed |= self.send_chevron.advance(_now);
+        changed |= self.send_chevron_reveal.advance(_now);
         changed |= self.link_card.maintain(_now);
         changed |= self.web_search_tooltip.maintain(_now);
         changed |= self.picker_tooltip.maintain(_now);
@@ -1394,7 +1542,7 @@ impl ChatSurface {
         if let Some(open) = &mut self.viewer {
             changed |= open.viewer.maintain(_now);
         }
-        changed | self.pill_strip.maintain(_now)
+        changed
     }
 
     /// Let an embedding host release a staged turn only after Store reports no
@@ -1426,11 +1574,14 @@ impl ChatSurface {
 
     pub fn animating(&self) -> bool {
         self.copy_feedback.animating(Instant::now())
+            || self.model_chevron.animating()
+            || self.microphone_chevron.animating()
+            || self.send_chevron.animating()
+            || self.send_chevron_reveal.animating()
             || self.web_search_tooltip.animating(Instant::now())
             || self.picker_tooltip.animating(Instant::now())
             || self.queue_tooltip.animating(Instant::now())
             || self.skill_tooltip().animating(Instant::now())
-            || self.pill_strip.animating(Instant::now())
             || self.dictation_animating(Instant::now())
             || self.pulse.as_ref().is_some_and(PulsingDots::animating)
     }
@@ -1439,7 +1590,10 @@ impl ChatSurface {
         if let Some(cursor) = self.viewer_cursor() {
             return cursor;
         }
-        if self.confirm.is_some() || self.response_menu.is_some() {
+        if let Some((_, choice)) = &self.computer_file_choice {
+            return choice.cursor();
+        }
+        if self.confirm.is_some() || self.response_menu.is_some() || self.plus_menu.is_some() {
             return CursorIcon::Default;
         }
         let p = self.pointer;
@@ -1520,6 +1674,12 @@ impl ChatSurface {
                 CursorIcon::Text
             };
         }
+        if !self.showing_setup()
+            && self.composer_text_rect().contains(p.0, p.1)
+            && self.composer.over_inline_pill()
+        {
+            return CursorIcon::Default;
+        }
         if self
             .tool_access_search_rect()
             .is_some_and(|rect| rect.contains(p.0, p.1))
@@ -1566,6 +1726,12 @@ impl ChatSurface {
             let outcome = confirm.key(key);
             return self.finish_confirmation(outcome);
         }
+        if let Some(handled) = self.computer_choice_key(key) {
+            return handled;
+        }
+        if let Some(handled) = self.plus_menu_key(key) {
+            return handled;
+        }
         if let Some(handled) = self.quote_key(key, text, mods) {
             return handled;
         }
@@ -1573,6 +1739,10 @@ impl ChatSurface {
         // and footer (§9.5).
         if let Some(handled) = self.picker_key(key, text, mods) {
             return handled;
+        }
+        if self.context_window_open && matches!(key, Key::Named(NamedKey::Escape)) {
+            self.context_window_open = false;
+            return true;
         }
         if self.tool_access_open && self.focus == Focus::WorkspaceSearch {
             if matches!(key, Key::Named(NamedKey::Escape)) {
@@ -1658,6 +1828,40 @@ impl ChatSurface {
         {
             return handled;
         }
+        // The split button is an independent keyboard stop. Its menu remains
+        // reachable with an empty draft, when the send action is disabled.
+        if let Some(handled) = self.approval_modes_key(key, mods) {
+            return handled;
+        }
+        if matches!(self.focus, Focus::SendArrow | Focus::ModeChevron) {
+            if self.approval_mode_button().is_none() {
+                self.focus = Focus::Composer;
+            } else if mods.is_empty() {
+                match key {
+                    Key::Named(NamedKey::Tab) => {
+                        self.focus = if self.focus == Focus::SendArrow {
+                            Focus::ModeChevron
+                        } else {
+                            Focus::Composer
+                        };
+                        return true;
+                    }
+                    Key::Named(NamedKey::Enter | NamedKey::Space) => {
+                        if self.focus == Focus::SendArrow {
+                            return self.activate_send_button();
+                        }
+                        self.approval_mode_open = true;
+                        self.approval_mode_focus = None;
+                        return true;
+                    }
+                    Key::Named(NamedKey::Escape) => {
+                        self.focus = Focus::Composer;
+                        return true;
+                    }
+                    _ => self.focus = Focus::Composer,
+                }
+            }
+        }
         // **A modifier pressed on its own is not typing** (D90's Ctrl+L
         // bug): the shell hands this surface the Ctrl of `Ctrl+L` as a key
         // of its own, and taking it as the keyboard arriving in the composer
@@ -1677,6 +1881,17 @@ impl ChatSurface {
         ) {
             return false;
         }
+        if self.focus == Focus::Composer
+            && mods.is_empty()
+            && matches!(key, Key::Named(NamedKey::Tab))
+            && self.approval_presentation().is_some()
+            && self.send_mode() != queue::SendMode::Stop
+            && !self.skill_list_open()
+            && !self.composer.picker_open()
+        {
+            self.focus = Focus::SendArrow;
+            return true;
+        }
         if self.focus != Focus::Composer {
             self.focus = Focus::Composer;
         }
@@ -1695,10 +1910,6 @@ impl ChatSurface {
         // once it has closed.
         if self.composer.picker_open() {
             return self.composer_key(key, text, mods);
-        }
-        // The open approval-mode list takes Up, Down, Enter and Escape.
-        if let Some(handled) = self.approval_modes_key(key, mods) {
-            return handled;
         }
         // **Shift+Tab steps the approval mode** (koru-ai D7) — after the
         // composer: an outdent wins wherever there is one to make.
@@ -1746,6 +1957,12 @@ impl ChatSurface {
                 return self.composer.insert_break();
             }
             if !koru_keys::is_chord(mods) && !mods.alt_key() {
+                if !self.composer.composing()
+                    && !self.composer_has_content()
+                    && self.shown_queue().is_some()
+                {
+                    return self.queue_action(queue::QueueHit::Steer(0));
+                }
                 return self.send_composer();
             }
         }
@@ -1881,38 +2098,49 @@ impl ChatSurface {
         let Some(document) = self.stored_open_document() else {
             return false;
         };
-        self.open_document_request = Some(koru_link::KoruLink::Document {
+        self.request_document_open(koru_link::KoruLink::Document {
             document: document.as_uuid(),
             node: None,
         });
         true
     }
 
-    /// What Up walks back through, oldest first: this chat's messages from
-    /// the person, then what this surface sent that the transcript does not
-    /// carry yet. The same message twice in a row is one step.
-    fn input_history(&self) -> Vec<String> {
+    /// What Up walks back through, oldest first: each user message by its
+    /// identity, then local sends the transcript has not returned yet.
+    fn input_history(&self) -> Vec<HistoryInput> {
         let Some(transcript) = &self.transcript else {
             return Vec::new();
         };
-        let mut asked: Vec<(u32, &str)> = transcript
+        let mut asked: Vec<_> = transcript
             .messages
             .iter()
             .filter(|message| message.role == ChatRole::User)
-            .map(|message| (message.ordinal, message.markdown.as_str()))
             .collect();
-        asked.sort_by_key(|(ordinal, _)| *ordinal);
-        let mut entries: Vec<String> = asked
+        asked.sort_by_key(|message| message.ordinal);
+        let mut entries: Vec<HistoryInput> = asked
             .iter()
-            .map(|(_, markdown)| (*markdown).to_owned())
+            .map(|message| HistoryInput {
+                markdown: message.markdown.clone(),
+                attachments: transcript
+                    .attachments
+                    .iter()
+                    .filter(|attachment| attachment.message_id == Some(message.id))
+                    .cloned()
+                    .collect(),
+            })
             .collect();
-        for (chat, sent) in &self.sent_inputs {
-            if *chat == transcript.chat.id && !asked.iter().any(|(_, known)| known == sent) {
-                entries.push(sent.clone());
+        for sent in &self.sent_inputs {
+            if sent.chat == transcript.chat.id
+                && sent
+                    .message_id
+                    .is_none_or(|id| !asked.iter().any(|message| message.id == id))
+            {
+                entries.push(HistoryInput {
+                    markdown: sent.markdown.clone(),
+                    attachments: sent.attachments.clone(),
+                });
             }
         }
-        entries.retain(|entry| !entry.trim().is_empty());
-        entries.dedup();
         entries
     }
 
@@ -1929,7 +2157,10 @@ impl ChatSurface {
     /// its lines before going on, and the walk read as stopping at the
     /// newest message.
     fn recall_input(&mut self, older: bool) -> bool {
-        let entries = self.input_history();
+        let entries = self
+            .history_entries
+            .clone()
+            .unwrap_or_else(|| self.input_history());
         let next = match (self.history_cursor, older) {
             (None, false) => return false,
             (None, true) if entries.is_empty() => return false,
@@ -1944,20 +2175,29 @@ impl ChatSurface {
             Some(index) => {
                 if self.history_cursor.is_none() {
                     self.history_draft = Some(self.composer.stash());
+                    if let Some(chat) = self.current_chat_id() {
+                        self.history_chat = Some(chat);
+                        self.history_attachment_draft = Some(self.strips.take(chat));
+                    }
+                    self.history_entries = Some(entries.clone());
                 }
                 self.history_cursor = Some(index);
+                if let Some(chat) = self.current_chat_id() {
+                    self.replace_recalled_attachments(chat, &entries[index].attachments);
+                }
                 // The chips come back as chips, named as the conversation
                 // names them: the caption sent, a title looked up since, or
                 // the word an unknown one reads as.
                 let titles = &self.document_titles;
                 let untitled = koru_i18n::t(self.lang, koru_i18n::Key::AiDocumentLinkUntitled);
-                self.composer.set_message(&entries[index], |document| {
-                    titles
-                        .get(&document)
-                        .filter(|title| !title.trim().is_empty())
-                        .cloned()
-                        .unwrap_or_else(|| untitled.to_owned())
-                });
+                self.composer
+                    .set_message(&entries[index].markdown, |document| {
+                        titles
+                            .get(&document)
+                            .filter(|title| !title.trim().is_empty())
+                            .cloned()
+                            .unwrap_or_else(|| untitled.to_owned())
+                    });
                 if older {
                     self.composer.caret_to_start();
                 }
@@ -1973,7 +2213,17 @@ impl ChatSurface {
     /// began, chips, quotes and caret as they were: Down past the newest,
     /// and Escape while walking.
     fn leave_input_walk(&mut self) -> bool {
+        if let Some(chat) = self.history_chat {
+            self.replace_recalled_attachments(chat, &[]);
+            if let Some(drafts) = self.history_attachment_draft.take() {
+                for draft in drafts {
+                    self.strips.push(chat, draft);
+                }
+            }
+        }
         self.history_cursor = None;
+        self.history_entries = None;
+        self.history_chat = None;
         match self.history_draft.take() {
             Some(draft) => self.composer.unstash(draft),
             None => self.composer.clear(),
@@ -1983,13 +2233,70 @@ impl ChatSurface {
 
     /// Forget where Up and Down stood — after a send, or on another chat.
     fn forget_input_walk(&mut self) {
+        if let Some(chat) = self.history_chat {
+            self.replace_recalled_attachments(chat, &[]);
+        }
+        if let (Some(chat), Some(drafts)) = (
+            self.history_chat.take(),
+            self.history_attachment_draft.take(),
+        ) {
+            for draft in drafts {
+                self.strips.push(chat, draft);
+            }
+        }
         self.history_cursor = None;
+        self.history_entries = None;
         self.history_draft = None;
+    }
+
+    /// Replace only the transient staged copies of the current history
+    /// entry. A late result sees its id absent and deletes its copy.
+    fn replace_recalled_attachments(
+        &mut self,
+        chat: ChatId,
+        sources: &[koru_ai_core::ChatAttachment],
+    ) {
+        for draft in self.strips.take(chat) {
+            if self.recall_restages.remove(&draft.id).is_some()
+                && draft.state == attachments::DraftState::Storing
+            {
+                self.recall_retired.insert(draft.id, chat);
+            }
+            self.attachment_work.remove(chat, draft.id);
+            self.thumbnails.remove(draft.id);
+        }
+        for source in sources {
+            let id = koru_ai_core::ChatAttachmentId::new();
+            self.recall_restages.insert(id, chat);
+            self.strips
+                .push(chat, attachments::Draft::restaged(source, id));
+            let queued = if source.source == koru_ai_core::AttachmentSource::Path {
+                if let Some(draft) = self.strips.draft_mut(chat, id) {
+                    self.attachment_work.put(chat, draft);
+                }
+                true
+            } else {
+                self.queue_command(Command::Restage(chat, source.id, id))
+            };
+            if !queued {
+                self.recall_restages.remove(&id);
+                if let Some(draft) = self.strips.draft_mut(chat, id) {
+                    draft.state = attachments::DraftState::Failed { retryable: true };
+                }
+            }
+        }
     }
 
     pub fn mouse_down(&mut self, x: f32, y: f32) -> bool {
         self.pointer = (x, y);
+        self.pressed_alt = self.pointer_mods == ModifiersState::ALT;
         if let Some(handled) = self.viewer_mouse_down(x, y) {
+            return handled;
+        }
+        if let Some(handled) = self.computer_choice_mouse_down(x, y) {
+            return handled;
+        }
+        if let Some(handled) = self.plus_menu_mouse_down(x, y) {
             return handled;
         }
         if let Some(handled) = self.response_menu_mouse_down(x, y) {
@@ -2055,9 +2362,6 @@ impl ChatSurface {
         // Escape does, and then does whatever it does.
         if !self.composer.contains(x, y) {
             self.composer.close_picker();
-        }
-        if self.pill_mouse_down(x, y) {
-            return true;
         }
         if self
             .stored_open_rect()
@@ -2155,39 +2459,6 @@ impl ChatSurface {
                 return self.toggle_tool_workspace(workspace);
             }
         }
-        if self.tool_access_button().contains(x, y) {
-            self.chat_model_open = false;
-            self.tool_mode_open = false;
-            self.tool_workspace_offset = 0;
-            self.tool_access_open = !self.tool_access_open;
-            self.workspace_search.set_text(&mut self.engine, "");
-            self.focus = if self.tool_access_open && self.tool_access_filtered() {
-                Focus::WorkspaceSearch
-            } else {
-                Focus::Composer
-            };
-            return true;
-        }
-        if self.folder_editable()
-            && self
-                .folder_button()
-                .is_some_and(|button| button.contains(x, y))
-        {
-            self.chat_model_open = false;
-            self.tool_access_open = false;
-            self.tool_mode_open = false;
-            if let Some(transcript) = &self.transcript {
-                self.working_folder_request = Some(WorkingFolderRequest {
-                    chat: transcript.chat.id,
-                    start: transcript
-                        .chat
-                        .agent_working_folder
-                        .as_deref()
-                        .map(std::path::PathBuf::from),
-                });
-            }
-            return true;
-        }
         if self
             .tool_mode_button()
             .is_some_and(|button| button.contains(x, y))
@@ -2215,7 +2486,21 @@ impl ChatSurface {
             self.web_search_tooltip.clear();
             return true;
         }
-        if self.chat_model_button().contains(x, y) {
+        if self
+            .context_indicator_button()
+            .is_some_and(|button| button.contains(x, y))
+        {
+            self.context_window_open = !self.context_window_open;
+            self.chat_model_open = false;
+            return true;
+        }
+        if let Some(panel) = self.context_window_panel() {
+            self.context_window_open = false;
+            if panel.rect.contains(x, y) {
+                return true;
+            }
+        }
+        if self.chat_model_selector_button().contains(x, y) {
             if self.chat_model_open {
                 self.tool_access_open = false;
                 self.tool_mode_open = false;
@@ -2245,24 +2530,8 @@ impl ChatSurface {
         if let Some(hit) = self.queue_hit_at(x, y) {
             return self.queue_action(hit);
         }
-        if self.reply_busy() && self.send_button().contains(x, y) {
-            // **Queue** while the composer holds something, **Stop** while
-            // it is empty ([`queue::SendMode`]).
-            match (self.send_mode(), self.attempt) {
-                (queue::SendMode::Stop, Some(attempt)) => {
-                    return self.send_command(Command::Cancel(attempt));
-                }
-                _ => {
-                    self.queue_composer();
-                    return true;
-                }
-            }
-        } else if self.send_button().contains(x, y) {
-            // Off while the chat waits for a model: the chip is the way on.
-            if !self.awaiting_model() {
-                self.send_composer();
-            }
-            return true;
+        if self.send_button().contains(x, y) {
+            return self.activate_send_button();
         }
         if let Some(hit) = self.work_hit_at(x, y) {
             if let work_view::WorkHit::Header(message) = hit {
@@ -2319,9 +2588,16 @@ impl ChatSurface {
     /// Follow a link the person clicked in the conversation: a Koru document
     /// goes to the host to open, a web address to the browser.
     fn follow_link(&mut self, url: &str) -> bool {
+        if let Some(path) = file_citations::path_from_link(url) {
+            if let Some(chat) = self.shown_chat_id() {
+                self.attachment_open_request =
+                    Some(attachments::AttachmentOpenRequest::local_file(chat, path));
+            }
+            return true;
+        }
         match koru_link::parse(url) {
             Ok(link @ koru_link::KoruLink::Document { .. }) => {
-                self.open_document_request = Some(link);
+                self.request_document_open(link);
                 true
             }
             _ => {
@@ -2406,10 +2682,11 @@ impl ChatSurface {
                 self.link_card.hide();
                 // `koru_ui`'s own test guard does not reach this crate's
                 // tests, which must not write the real clipboard.
+                let address = file_citations::address_for_card(&url);
                 #[cfg(test)]
-                tests::COPIED.with(|copied| copied.borrow_mut().push(url.clone()));
+                tests::COPIED.with(|copied| copied.borrow_mut().push(address.clone()));
                 #[cfg(not(test))]
-                koru_ui::clipboard::put_plain(&url);
+                koru_ui::clipboard::put_plain(&address);
                 self.show_copy_feedback(koru_i18n::t(self.lang, koru_i18n::Key::AiLinkCopied));
             }
             LinkCardHit::Action => {
@@ -2486,6 +2763,15 @@ impl ChatSurface {
             self.response_menu_anchor = None;
             changed = true;
         }
+        if self.plus_menu.take().is_some() {
+            changed = true;
+        }
+        if self.skill_list_open() {
+            changed |= self.dismiss_skill_list();
+        }
+        if self.computer_file_choice.take().is_some() {
+            changed = true;
+        }
         if self.confirm.take().is_some() {
             changed = true;
         }
@@ -2495,6 +2781,15 @@ impl ChatSurface {
     pub fn mouse_move(&mut self, x: f32, y: f32) -> bool {
         if let Some(changed) = self.viewer_mouse_move(x, y) {
             return changed;
+        }
+        if let Some((_, choice)) = &mut self.computer_file_choice {
+            self.pointer = (x, y);
+            return choice.mouse_move(
+                &mut self.engine,
+                (self.viewport.w, self.viewport.h),
+                x - self.viewport.x,
+                y - self.viewport.y,
+            );
         }
         let old = self.cursor_icon();
         let old_control_hover = self.control_hover_at(self.pointer.0, self.pointer.1);
@@ -2513,6 +2808,9 @@ impl ChatSurface {
             Instant::now(),
         ) | self.dictation_hover(old_pointer, x, y)
             | self.skill_tooltip_hover(x, y);
+        if let Some(changed) = self.plus_menu_mouse_move(x, y) {
+            return changed || old != self.cursor_icon();
+        }
         if let Some(changed) = self.response_menu_mouse_move(x, y, old) {
             return changed;
         }
@@ -2540,7 +2838,7 @@ impl ChatSurface {
             );
             return changed || old != self.cursor_icon();
         }
-        let pill_changed = self.pill_strip_mouse_move(x, y) | self.add_pill_mouse_move(x, y);
+        let pill_changed = self.add_pill_mouse_move(x, y);
         let old_response_hover = self.response_hover;
         let old_message_hover = self.response_message_hover;
         let old_tool_hover = self.tool_activity_hover;
@@ -2630,6 +2928,7 @@ impl ChatSurface {
                 self.follow_link(&url);
             }
         }
+        self.pressed_alt = false;
         // A drag through a reply let go: *Add to chat* over what it chose.
         if selected {
             self.show_add_pill();
@@ -2640,6 +2939,15 @@ impl ChatSurface {
     pub fn mouse_double_click(&mut self, x: f32, y: f32) -> bool {
         if let Some(handled) = self.viewer_double_click(x, y) {
             return handled;
+        }
+        if let Some(handled) = self.card_folder_double_click(x, y) {
+            return handled;
+        }
+        if !self.showing_setup() {
+            self.composer_rect();
+            if let Some(handled) = self.strip_mouse_double_click(x, y) {
+                return handled;
+            }
         }
         if !self.showing_setup() && self.composer.contains(x, y) {
             return self.composer.mouse_double_click(x, y);
@@ -2685,6 +2993,22 @@ impl ChatSurface {
         // Over the composer's open picker, or over its own lines once they
         // overflow, the wheel is the composer's.
         let (px, py) = self.pointer;
+        let chips = self.chip_band.band_rect(
+            self.composer_hit_rect.x + COMPOSER_PAD_X,
+            self.composer_hit_rect.y + COMPOSER_PAD_TOP,
+            (self.composer_hit_rect.w - COMPOSER_PAD_X * 2.0).max(1.0),
+        );
+        if !self.showing_setup() && chips.contains(px, py) && self.chip_band.max_scroll() > 0.0 {
+            let dy = match delta {
+                MouseScrollDelta::LineDelta(_, y) => y * (self.chip_band.shown_height / 3.0),
+                MouseScrollDelta::PixelDelta(p) => p.y as f32,
+            };
+            let next = (self.chip_scroll - dy).clamp(0.0, self.chip_band.max_scroll());
+            let changed = (next - self.chip_scroll).abs() > f32::EPSILON;
+            self.chip_scroll = next;
+            self.chip_band.scroll = next;
+            return changed;
+        }
         if !self.showing_setup() && self.skill_scroll(px, py, delta) {
             return true;
         }
@@ -2870,9 +3194,25 @@ impl ChatSurface {
                 (self.viewport.w, self.viewport.h),
             );
         }
+        if let Some((_, choice)) = &self.computer_file_choice {
+            choice.draw(
+                canvas,
+                root * Affine::translate((self.viewport.x as f64, self.viewport.y as f64)),
+                &mut self.engine,
+                (self.viewport.w, self.viewport.h),
+            );
+        }
         let menu_viewport = self.menu_viewport();
         if let Some(menu) = &self.response_menu {
             menu.draw(canvas, root, &mut self.engine, menu_viewport, &[true, true]);
+        }
+        if let Some(menu) = &self.plus_menu {
+            let enabled: Vec<_> = menu
+                .items()
+                .iter()
+                .map(koru_ui::menu::MenuItem::selectable)
+                .collect();
+            menu.draw(canvas, root, &mut self.engine, menu_viewport, &enabled);
         }
         self.draw_unlifted_viewer(canvas, root);
     }
@@ -3063,7 +3403,7 @@ impl ChatSurface {
                     .min(self.destinations.len().saturating_sub(1));
                 self.scroll_loaded_chat_to_bottom = transcript.is_some();
                 self.transcript = transcript;
-                self.select_context_workspace_if_needed();
+                self.prime_skill_list();
                 self.messages_dirty = true;
                 // A saved OpenAI credential is enough to discover the
                 // account-scoped model catalog, even when another provider is
@@ -3109,9 +3449,7 @@ impl ChatSurface {
                 let chat = transcript.chat.id;
                 self.remember_chat(&transcript.chat, true);
                 self.transcript = Some(transcript);
-                if made.is_none() {
-                    self.select_context_workspace_if_needed();
-                }
+                self.prime_skill_list();
                 self.usage_report = None;
                 self.question_navigation = None;
                 self.question_navigation_anchor = None;
@@ -3123,6 +3461,15 @@ impl ChatSurface {
                 if self.paste_after_create.take() == Some(chat) {
                     self.begin_attachment_paste();
                 }
+                if self
+                    .pending_computer_reference
+                    .as_ref()
+                    .is_some_and(|(pending, _, _)| *pending == chat)
+                    && let Some((_, path, kind)) = self.pending_computer_reference.take()
+                {
+                    self.add_draft(chat, attachments::Draft::reference(path, kind));
+                }
+                self.insert_completed_workspace_pills(chat);
             }
             Update::CreateFailed(chat, failure) => {
                 // The chat on screen is a stand-in again, so the next send
@@ -3146,6 +3493,15 @@ impl ChatSurface {
                 self.refuse_chat_elsewhere(&transcript.chat);
             }
             Update::Transcript(transcript) => {
+                // The transcript is authoritative after a read; discard an
+                // in-memory pair from a prior turn of this chat.
+                self.context_window_usage.remove(&transcript.chat.id);
+                self.sent_inputs.retain(|sent| {
+                    sent.chat != transcript.chat.id
+                        || sent.message_id.is_none_or(|id| {
+                            !transcript.messages.iter().any(|message| message.id == id)
+                        })
+                });
                 self.waiting = false;
                 self.attempt = None;
                 self.pending_assistant_message_id = None;
@@ -3170,11 +3526,10 @@ impl ChatSurface {
                 if changed_chat {
                     self.forget_input_walk();
                     self.live_offsets.clear();
+                    self.web_search_armed = true;
                 }
                 self.transcript = Some(transcript);
-                if changed_chat {
-                    self.select_context_workspace_if_needed();
-                }
+                self.prime_skill_list();
                 self.usage_report = None;
                 self.question_navigation = None;
                 self.question_navigation_anchor = None;
@@ -3186,6 +3541,7 @@ impl ChatSurface {
                     if changed_chat {
                         self.queue_shown_again(chat);
                     }
+                    self.insert_completed_workspace_pills(chat);
                     self.after_reply(chat);
                 }
             }
@@ -3201,6 +3557,16 @@ impl ChatSurface {
                 }
             }
             Update::ModelUpdated(chat, reasoning_control) => {
+                let previous_skill_source = self.skill_source();
+                let model_changed = self.transcript.as_ref().is_some_and(|transcript| {
+                    transcript.chat.id == chat.id
+                        && (transcript.chat.current_model.provider != chat.current_model.provider
+                            || transcript.chat.current_model.requested_model
+                                != chat.current_model.requested_model)
+                });
+                if model_changed {
+                    self.context_window_usage.remove(&chat.id);
+                }
                 let chat_id = chat.id;
                 self.waiting = false;
                 // The picker stays open over a model chosen in it (D66): its
@@ -3214,6 +3580,13 @@ impl ChatSurface {
                 {
                     transcript.chat = chat;
                     transcript.reasoning_control = reasoning_control;
+                }
+                if self.skill_source() != previous_skill_source {
+                    if let Some(transcript) = &mut self.transcript {
+                        transcript.agent_commands = None;
+                    }
+                    self.prime_skill_list();
+                    self.sync_skill_list();
                 }
                 self.settle_after_choice();
                 self.status =
@@ -3273,6 +3646,152 @@ impl ChatSurface {
                     self.status = Some("Workspace access updated for this chat.".into());
                 }
             }
+            Update::GrantsAdded { chat, op, result } => {
+                if let Some((pending_op, request)) = self.pending_workspace_import_grant.take() {
+                    if pending_op == op && request.chat == chat {
+                        match result {
+                            Ok(policy) => {
+                                if let Some(transcript) = &mut self.transcript
+                                    && transcript.chat.id == chat
+                                {
+                                    transcript.tool_policy = policy;
+                                }
+                                if let Some(document) = self
+                                    .workspace_import_documents
+                                    .get(&request.attachment)
+                                    .copied()
+                                {
+                                    self.copy_imported_workspace_file(&request, document);
+                                } else {
+                                    self.workspace_import_request = Some(request);
+                                }
+                            }
+                            Err(message) => {
+                                tracing::debug!(target: "koru_ai::ui", op = %op, reason = %message, "workspace grant for file failed");
+                                if let Some(draft) = self.strips.draft_mut(chat, request.attachment)
+                                {
+                                    draft.state =
+                                        attachments::DraftState::Failed { retryable: true };
+                                }
+                                self.status = Some(
+                                    koru_i18n::t(self.lang, koru_i18n::Key::AiComputerGrantFailed)
+                                        .to_owned(),
+                                );
+                            }
+                        }
+                        return true;
+                    }
+                    self.pending_workspace_import_grant = Some((pending_op, request));
+                }
+                let Some((key, pending_op)) = self.pending_grants.take() else {
+                    return false;
+                };
+                if pending_op != op || key.chat != chat {
+                    self.pending_grants = Some((key, pending_op));
+                    return false;
+                }
+                self.waiting = self.message_on_its_way();
+                if self.shown_chat_id() != Some(chat) {
+                    return true;
+                }
+                match result {
+                    Ok(policy) => {
+                        if let Some(transcript) = &mut self.transcript {
+                            transcript.tool_policy = policy;
+                        }
+                        let current = self.composer.message();
+                        let chips: Vec<_> = current.documents.iter().map(|(id, _)| *id).collect();
+                        let documents: Vec<_> = self
+                            .turn_refs(&chips)
+                            .0
+                            .iter()
+                            .filter_map(|reference| match reference {
+                                ContextRef::Document { document_id } => Some(*document_id),
+                                ContextRef::MessageBlock { .. } => None,
+                            })
+                            .collect();
+                        if current.markdown.trim() == key.markdown
+                            && self.context_workspace == key.current
+                            && documents == key.documents
+                            && self
+                                .strip()
+                                .iter()
+                                .map(|draft| draft.id)
+                                .collect::<Vec<_>>()
+                                == key.attachments
+                        {
+                            self.grants_ready = Some(key);
+                            self.send_composer();
+                        }
+                    }
+                    Err(message) => self.status = Some(message),
+                }
+            }
+            Update::Restaged { new_id, result } => {
+                if let Some(chat) = self.recall_restages.get(&new_id).copied() {
+                    if let Some(draft) = self.strips.draft_mut(chat, new_id) {
+                        match result {
+                            Ok(attachment) if attachment.id == new_id => {
+                                draft.state = attachments::DraftState::Stored;
+                                draft.byte_count = attachment.byte_count;
+                                draft.size = attachment.dimensions;
+                            }
+                            Ok(_) => {
+                                draft.state = attachments::DraftState::Failed { retryable: false };
+                                self.status = Some(
+                                    koru_i18n::t(self.lang, koru_i18n::Key::AiAttachmentFailed)
+                                        .to_owned(),
+                                );
+                                self.attachment_work.remove(chat, new_id);
+                            }
+                            Err(message) => {
+                                draft.state = attachments::DraftState::Failed { retryable: false };
+                                self.status = Some(message);
+                            }
+                        }
+                    } else if result.is_ok() {
+                        self.attachment_work.remove(chat, new_id);
+                    }
+                } else if let Some(chat) = self.recall_retired.remove(&new_id)
+                    && result.is_ok()
+                {
+                    self.attachment_work.remove(chat, new_id);
+                }
+            }
+            Update::AttachmentCopied { chat, id, result } => {
+                let request = self.workspace_imports.get(&id).cloned();
+                let copied = result
+                    .as_ref()
+                    .ok()
+                    .map(|attachment| attachment.file_name.clone());
+                let copy_failed = result.is_err();
+                if let Some(request) = request {
+                    self.on_stored(request.chat, id, result);
+                    if copy_failed && self.shown_chat_id() == Some(request.chat) {
+                        self.status = Some(
+                            koru_i18n::t(self.lang, koru_i18n::Key::AiComputerCopyFailed)
+                                .to_owned(),
+                        );
+                    }
+                    if let Some(title) = copied {
+                        self.workspace_imports.remove(&id);
+                        if let Some(document) = self.workspace_import_documents.remove(&id) {
+                            if self.shown_chat_id() == Some(request.chat) {
+                                self.composer.insert_document(document, &title);
+                            } else {
+                                self.completed_workspace_pills
+                                    .entry(request.chat)
+                                    .or_default()
+                                    .push((document, title));
+                            }
+                        }
+                    }
+                } else if result.is_ok()
+                    && !self.strips.get(chat).iter().any(|draft| draft.id == id)
+                {
+                    self.attachment_work.remove(chat, id);
+                }
+            }
             Update::ToolActivity(activity) => {
                 // A decision response is not the end of the provider turn;
                 // keep polling the stream until its terminal event arrives.
@@ -3298,9 +3817,6 @@ impl ChatSurface {
                 } else {
                     transcript
                 };
-                if transcript.is_none() {
-                    self.pill_strip.clear_tooltip();
-                }
                 self.waiting = false;
                 self.attempt = None;
                 self.pending_assistant_message_id = None;
@@ -3318,6 +3834,7 @@ impl ChatSurface {
                 }
                 self.chats = chats;
                 self.transcript = transcript;
+                self.prime_skill_list();
                 self.usage_report = None;
                 self.question_navigation = None;
                 self.question_navigation_anchor = None;
@@ -3329,6 +3846,17 @@ impl ChatSurface {
                 }
             }
             Update::Accepted(accepted) => {
+                if let Some(chat) = self.current_chat_id() {
+                    self.context_window_usage.remove(&chat);
+                }
+                if let Some(sent) = self
+                    .sent_inputs
+                    .iter_mut()
+                    .rev()
+                    .find(|sent| sent.message_id.is_none())
+                {
+                    sent.message_id = Some(accepted.user_message_id);
+                }
                 self.sent_message = None;
                 self.attempt = Some(accepted.attempt_id);
                 self.pending_assistant_message_id = Some(accepted.assistant_message_id);
@@ -3351,11 +3879,30 @@ impl ChatSurface {
                     PublicAiEvent::Usage { usage, .. } => {
                         self.live_usage = Some(usage.clone());
                     }
+                    PublicAiEvent::ContextUsage {
+                        attempt_id,
+                        used,
+                        size,
+                    } => {
+                        if self.attempt == Some(*attempt_id)
+                            && let Some(chat) = self.current_chat_id()
+                        {
+                            self.context_window_usage.insert(chat, (*used, *size));
+                        }
+                    }
                     PublicAiEvent::ToolActivity { activity, .. } => {
                         self.upsert_tool_activity(activity.clone());
                     }
                     PublicAiEvent::AgentNotice { notice, .. } => {
                         self.upsert_agent_notice(notice.clone());
+                    }
+                    PublicAiEvent::AgentCommands { chat, commands, .. } => {
+                        if let Some(transcript) = self.transcript.as_mut()
+                            && transcript.chat.id == *chat
+                        {
+                            transcript.agent_commands = Some(commands.clone());
+                            self.sync_skill_list();
+                        }
                     }
                     PublicAiEvent::Notice { notice, .. } => {
                         self.status = Some(match notice {
@@ -3742,7 +4289,7 @@ impl ChatSurface {
                     "AI UI steer was taken by the running reply"
                 );
                 self.waiting = self.attempt.is_some();
-                self.steer_accepted();
+                self.steer_accepted(response.user_message_id);
             }
             Update::SteerFailed(failure) => {
                 self.waiting = self.attempt.is_some();
@@ -3793,6 +4340,17 @@ impl ChatSurface {
             }
         }
         true
+    }
+
+    fn insert_completed_workspace_pills(&mut self, chat: ChatId) {
+        if self.shown_chat_id() != Some(chat) {
+            return;
+        }
+        if let Some(pills) = self.completed_workspace_pills.remove(&chat) {
+            for (document, title) in pills {
+                self.composer.insert_document(document, &title);
+            }
+        }
     }
 
     fn remember_chat(&mut self, chat: &Chat, promote: bool) {
@@ -3934,35 +4492,6 @@ impl ChatSurface {
         }
     }
 
-    fn select_context_workspace_if_needed(&mut self) -> bool {
-        let Some(workspace) = self.context_workspace else {
-            return false;
-        };
-        let Some((chat, mode, mut workspace_ids)) = self.transcript.as_ref().map(|transcript| {
-            (
-                transcript.chat.id,
-                transcript.tool_policy.mode,
-                transcript.tool_policy.workspace_ids.clone(),
-            )
-        }) else {
-            return false;
-        };
-        if workspace_ids.contains(&workspace) {
-            return false;
-        }
-        workspace_ids.insert(0, workspace);
-        if let Some(transcript) = &mut self.transcript {
-            transcript.tool_policy.workspace_ids = workspace_ids.clone();
-        }
-        self.send_command(Command::UpdateToolPolicy(
-            chat,
-            UpdateChatToolPolicyRequest {
-                mode,
-                workspace_ids,
-            },
-        ))
-    }
-
     fn toggle_tool_workspace(&mut self, workspace: WorkspaceId) -> bool {
         let Some(policy) = self
             .transcript
@@ -4025,8 +4554,8 @@ impl ChatSurface {
         self.scroll_to_pending_question = false;
         self.scroll_loaded_chat_to_bottom = false;
         self.transcript = Some(chat);
+        self.prime_skill_list();
         self.unmade_chat = Some(id);
-        self.select_context_workspace_if_needed();
         self.messages_dirty = true;
     }
 
@@ -4209,7 +4738,7 @@ impl ChatSurface {
     /// one. The pick is remembered as what new chats start on — the choice
     /// the setup used to save — so the next chat opens on it.
     pub(crate) fn start_chat_on(&mut self, model: ModelSelection) -> bool {
-        self.web_search_armed = false;
+        self.web_search_armed = true;
         let sent = match &self.transcript {
             // A chat with no message yet takes it: the service's, or the
             // stand-in of one not made yet, which keeps it here.
@@ -4412,21 +4941,97 @@ impl ChatSurface {
         if markdown.is_empty() && !self.has_strip() {
             return false;
         }
+        let chips: Vec<DocumentId> = message
+            .documents
+            .iter()
+            .map(|(document, _)| *document)
+            .collect();
+        let (explicit_refs, overflowed) = self.turn_refs(&chips);
         // A new chat is made by its first message, never before: the
         // create is queued ahead of the message.
         if !self.make_unmade_chat() {
             return true;
         }
+        if self.transcript.as_ref().is_some_and(|transcript| {
+            agents::is_agent_provider(&transcript.chat.current_model.provider)
+        }) {
+            let key = GrantKey {
+                chat: chat_id,
+                markdown: markdown.clone(),
+                documents: explicit_refs
+                    .iter()
+                    .filter_map(|reference| match reference {
+                        ContextRef::Document { document_id } => Some(*document_id),
+                        ContextRef::MessageBlock { .. } => None,
+                    })
+                    .collect(),
+                attachments: self.strip().iter().map(|draft| draft.id).collect(),
+                current: self.context_workspace,
+            };
+            if self.grants_ready.as_ref() == Some(&key) {
+                self.grants_ready = None;
+            } else if key.current.is_some() || !key.documents.is_empty() {
+                if self
+                    .pending_grants
+                    .as_ref()
+                    .is_some_and(|(pending, _)| *pending == key)
+                {
+                    return true;
+                }
+                let op = uuid::Uuid::new_v4();
+                if self.queue_command(Command::AddGrants(
+                    chat_id,
+                    key.current,
+                    key.documents.clone(),
+                    op,
+                )) {
+                    self.pending_grants = Some((key, op));
+                }
+                return true;
+            }
+        }
         // Not while an attachment is still being stored, or could not be.
         let Some(sent_attachments) = self.take_attachments_for_send(chat_id) else {
             return true;
         };
-        let attachment_ids = sent_attachments.iter().map(|draft| draft.id).collect();
+        for draft in &sent_attachments {
+            self.recall_restages.remove(&draft.id);
+        }
+        let attachment_ids: Vec<_> = sent_attachments.iter().map(|draft| draft.id).collect();
+        let history_attachments: Vec<_> = sent_attachments
+            .iter()
+            .map(|draft| koru_ai_core::ChatAttachment {
+                id: draft.id,
+                message_id: None,
+                ordinal: None,
+                kind: draft.kind,
+                source: draft.source,
+                file_name: draft.file_name.clone(),
+                media_type: String::new(),
+                byte_count: draft.byte_count,
+                dimensions: draft.size,
+                origin: draft.origin.clone(),
+                reference_path: draft.reference_path.clone(),
+                created_at: koru_ai_core::Timestamp::now(),
+            })
+            .collect();
         self.usage_report = None;
-        // A chip's caption is the document's title as it was chosen: the sent
-        // card reads it at once, before any lookup.
+        // A node link may be a task whose pill caption is its task label.
+        // The same document can appear elsewhere in this chat, so only a
+        // document-only link may seed the document title cache. Node links
+        // use the Store title lookup when no title is known yet.
+        let node_documents: HashSet<DocumentId> = koru_link::wrapped(&markdown)
+            .into_iter()
+            .filter_map(|token| match token.link {
+                koru_link::KoruLink::Document {
+                    document,
+                    node: Some(_),
+                } => Some(DocumentId::from_uuid(document)),
+                _ => None,
+            })
+            .collect();
         for (document, title) in &message.documents {
-            if !title.trim().is_empty() {
+            if !title.trim().is_empty() && !node_documents.contains(document) {
                 self.document_titles.insert(*document, title.clone());
             }
         }
@@ -4444,19 +5049,12 @@ impl ChatSurface {
                 let (read, _) = doc_links::titled(&typed, &self.document_titles, untitled);
                 title_from_message(&read)
             });
-        let chips: Vec<DocumentId> = message
-            .documents
-            .iter()
-            .map(|(document, _)| *document)
-            .collect();
-        let (explicit_refs, overflowed) = self.turn_refs(&chips);
         // A message sent by hand resumes a paused queue: what is queued
         // follows it.
         if !self.sending_queued {
             self.queues.resume(chat_id);
         }
         self.pending_user = Some(markdown.clone());
-        self.pill_strip.clear_tooltip();
         self.pulse = Some(PulsingDots::new(Instant::now()));
         self.live_usage = None;
         self.live_sources.clear();
@@ -4474,6 +5072,13 @@ impl ChatSurface {
         self.draft.clear();
         // Set aside whole rather than cleared: a send that does not go puts
         // the message back as it was, chips and undo included.
+        let recalled_from = self.history_cursor.zip(self.history_entries.clone());
+        let prior_draft = recalled_from
+            .as_ref()
+            .and_then(|_| self.history_draft.take());
+        let prior_attachments = recalled_from
+            .as_ref()
+            .and_then(|_| self.history_attachment_draft.take());
         self.sent_message = Some(SentMessage {
             chat: chat_id,
             composer: self.composer.stash(),
@@ -4481,11 +5086,23 @@ impl ChatSurface {
             markdown: markdown.clone(),
             documents: !chips.is_empty() || !message.skills.is_empty(),
             from_queue: self.sending_queued,
+            recalled_from,
         });
         self.forget_input_walk();
-        if !markdown.is_empty() {
-            self.sent_inputs.push((chat_id, markdown.clone()));
+        if let Some(draft) = prior_draft {
+            self.composer.unstash(draft);
         }
+        if let Some(drafts) = prior_attachments {
+            for draft in drafts {
+                self.strips.push(chat_id, draft);
+            }
+        }
+        self.sent_inputs.push(LocalInput {
+            chat: chat_id,
+            message_id: None,
+            markdown: markdown.clone(),
+            attachments: history_attachments,
+        });
         self.messages_dirty = true;
         let request = SendTurnRequest {
             operation_id: uuid::Uuid::new_v4(),
@@ -4493,7 +5110,7 @@ impl ChatSurface {
             surface: SURFACE,
             markdown,
             explicit_refs,
-            web_search: self.web_search_armed,
+            web_search: self.web_search_armed && self.web_search_available(),
             // The chip sets the chat's persisted effort (R5); no per-turn
             // override rides the request.
             reasoning_override: None,
@@ -4535,6 +5152,15 @@ impl ChatSurface {
     /// red — and the reason is said. Something typed since is kept rather
     /// than overwritten.
     fn give_back_sent(&mut self, failure: Option<&koru_ai_wire::Failure>) {
+        if let Some(sent) = self.sent_message.as_ref() {
+            if let Some(index) = self.sent_inputs.iter().rposition(|input| {
+                input.chat == sent.chat
+                    && input.message_id.is_none()
+                    && input.markdown == sent.markdown
+            }) {
+                self.sent_inputs.remove(index);
+            }
+        }
         self.waiting = false;
         self.attempt = None;
         self.pending_assistant_message_id = None;
@@ -4553,6 +5179,18 @@ impl ChatSurface {
         let Some(sent) = self.sent_message.take() else {
             return;
         };
+        if let Some((index, entries)) = &sent.recalled_from
+            && self.shown_chat_id() == Some(sent.chat)
+        {
+            self.history_draft = Some(self.composer.stash());
+            self.history_attachment_draft = Some(self.strips.take(sent.chat));
+            self.history_entries = Some(entries.clone());
+            self.history_cursor = Some(*index);
+            self.history_chat = Some(sent.chat);
+            for draft in &sent.attachments {
+                self.recall_restages.insert(draft.id, sent.chat);
+            }
+        }
         if sent.from_queue {
             self.requeue_refused(
                 sent.chat,
@@ -5099,6 +5737,46 @@ impl ChatSurface {
     fn composer_rect(&mut self) -> Rect {
         let content = self.content_rect();
         let width = content.w.max(MIN_COMPOSER_W);
+        let available = (width - COMPOSER_PAD_X * 2.0).max(1.0);
+        let max_chip_w = available.min(composer_band::MAX_CHIP_W);
+        let mut chip_widths = Vec::new();
+        if let Some((_, title)) = &self.context_document {
+            chip_widths.push(
+                ContextChip {
+                    label: title,
+                    secondary: "",
+                    icon: icons::DOCUMENT,
+                    state: ContextState::Ready,
+                }
+                .width(&mut self.engine, max_chip_w),
+            );
+        }
+        let drafts = self.strip().to_vec();
+        for draft in &drafts {
+            let label = draft.chip_label();
+            chip_widths.push(
+                ContextChip {
+                    label: &label,
+                    secondary: "",
+                    icon: self.attachment_chip_icon(draft),
+                    state: self.attachment_chip_state(draft),
+                }
+                .width(&mut self.engine, max_chip_w),
+            );
+        }
+        self.chip_band = composer_band::ChipBand::layout(
+            &chip_widths,
+            available,
+            ContextChip {
+                label: "",
+                secondary: "",
+                icon: icons::DOCUMENT,
+                state: ContextState::Ready,
+            }
+            .height(),
+            self.chip_scroll,
+        );
+        self.chip_scroll = self.chip_band.scroll;
         // One to eight visual lines of the composer's own text, then it
         // scrolls — measured by the editor at this width.
         let text_h = self
@@ -5118,7 +5796,7 @@ impl ChatSurface {
         // The quiet row under the box, when there is one, is part of the
         // block: the box stands on it rather than on the window's edge.
         let below = self.composer_footer_h();
-        let bottom = self.viewport.y + self.viewport.h - PAD - below - height;
+        let bottom = self.viewport.y + self.viewport.h - COMPOSER_BOTTOM_MARGIN - below - height;
         let y = if self.chat_is_empty() {
             // The greeting, the composer and its row as one block, centred;
             // never lower than where the composer sits once the chat has begun.
@@ -5129,6 +5807,25 @@ impl ChatSurface {
         };
         let rect = Rect::new(content.x, y, width, height);
         self.composer_hit_rect = rect;
+        let mode_name = (self.send_mode() != queue::SendMode::Stop)
+            .then(|| self.approval_presentation())
+            .flatten()
+            .map(|(row, _)| row.title);
+        self.composer_shell = Some(composer_shell::layout(
+            rect,
+            self.strip_band(),
+            text_h,
+            koru_i18n::t(self.lang, koru_i18n::Key::AiComposerAddContext),
+            self.send_button_name(),
+            mode_name.as_deref(),
+            self.dictation
+                .offered
+                .then(|| koru_i18n::t(self.lang, koru_i18n::Key::AiDictate)),
+            self.dictation
+                .microphone
+                .offered
+                .then(|| koru_i18n::t(self.lang, koru_i18n::Key::AiMicrophoneChoose)),
+        ));
         if below > 0.0 {
             // The folder control is as wide as what it shows.
             let label = self.folder_label_shown();
@@ -5157,6 +5854,9 @@ impl ChatSurface {
     /// toolbar row. The editor insets its words by the same padding
     /// ([`composer`]).
     fn composer_text_rect(&self) -> Rect {
+        if let Some(shell) = &self.composer_shell {
+            return shell.text();
+        }
         // Below the strip of attachments, when the message has any.
         let band = self.strip_band();
         Rect::new(
@@ -5173,19 +5873,12 @@ impl ChatSurface {
         let footer_h = self
             .footer_layouts(content.w)
             .map_or(0.0, |(words, _)| words.height() + 5.0);
-        let context_document = self.context_document_pill();
         let top = self.chat_top();
         let rect = Rect::new(
             content.x,
             top,
             content.w,
-            (composer.y
-                - COMPOSER_GAP
-                - pill_band_height(context_document.as_ref())
-                - self.queue_band_h()
-                - footer_h
-                - top)
-                .max(1.0),
+            (composer.y - COMPOSER_GAP - self.queue_band_h() - footer_h - top).max(1.0),
         );
         self.conversation_hit_rect = rect;
         rect
@@ -5215,6 +5908,9 @@ impl ChatSurface {
     /// The send (and stop) button, in the composer's bottom-right corner,
     /// inset by the composer's own padding like the toolbar beside it.
     fn send_button(&self) -> Rect {
+        if let Some(shell) = &self.composer_shell {
+            return shell.send();
+        }
         let composer = self.composer_hit_rect;
         let side = BUTTON_H;
         Rect::new(
@@ -5330,12 +6026,7 @@ impl ChatSurface {
         };
         let mut model = transcript.chat.current_model.clone();
         model.requested_model = requested_model;
-        if model.provider.as_str() != AiProviderId::OPENAI
-            || !(model.requested_model.starts_with("gpt-5")
-                || model.requested_model.starts_with("gpt-4.1"))
-        {
-            self.web_search_armed = false;
-        }
+        self.web_search_armed = true;
         // A reasoning level belongs to a model's capability set. Carrying a
         // level from the previous model can make an otherwise valid switch
         // fail, so a model-only choice returns to the provider default.
@@ -5350,11 +6041,41 @@ impl ChatSurface {
         let toolbar = self.composer_toolbar_rect();
         // As wide as its label wants, up to half the toolbar; the mode
         // control gives way to its left.
-        let width = (self.chip_label_w + 44.0)
+        let ring_width = if self.transcript.is_some() {
+            BUTTON_H + 2.0
+        } else {
+            0.0
+        };
+        let width = (self.chip_label_w + 44.0 + ring_width)
             .max(78.0)
             .min((toolbar.w * 0.5).max(78.0))
             .min(toolbar.w);
         Rect::new(toolbar.x + toolbar.w - width, toolbar.y, width, toolbar.h)
+    }
+
+    fn context_indicator_button(&self) -> Option<Rect> {
+        self.context_indicator_rect(self.chat_model_button())
+    }
+
+    fn chat_model_selector_button(&self) -> Rect {
+        self.model_selector_rect(self.chat_model_button())
+    }
+
+    fn model_selector_rect(&self, model: Rect) -> Rect {
+        let lead_width = self
+            .context_indicator_rect(model)
+            .map_or(0.0, |rect| rect.w + 2.0);
+        Rect::new(model.x + lead_width, model.y, model.w - lead_width, model.h)
+    }
+
+    fn context_indicator_rect(&self, model: Rect) -> Option<Rect> {
+        self.transcript.as_ref()?;
+        Some(Rect::new(model.x, model.y, BUTTON_H, model.h))
+    }
+
+    fn context_progress(&self) -> Option<f32> {
+        let (used, size) = self.reported_context_usage()?;
+        Some(used as f32 / size as f32)
     }
 
     /// Whether the composer has its quiet row below: an agent chat's folder
@@ -5362,10 +6083,7 @@ impl ChatSurface {
     /// chosen folder stays named, and a chat left in the home folder, the
     /// default, shows nothing — and the row takes no room.
     fn shows_composer_footer(&self) -> bool {
-        self.transcript.as_ref().is_some_and(|transcript| {
-            agents::is_agent_provider(&transcript.chat.current_model.provider)
-                && (self.folder_editable() || transcript.chat.agent_working_folder.is_some())
-        })
+        false
     }
 
     /// The height the quiet row takes under the composer, its gap included:
@@ -5382,6 +6100,7 @@ impl ChatSurface {
     /// left-aligned with it. Derived from the box ([`Self::composer_rect`]),
     /// which leaves room for it, so drawing, hit-testing and the hover
     /// cursor all read the same place.
+    #[cfg(test)]
     fn composer_footer_rect(&self) -> Option<Rect> {
         if !self.shows_composer_footer() {
             return None;
@@ -5402,6 +6121,7 @@ impl ChatSurface {
     /// with that message, and from then on a chosen folder stays named here,
     /// unpressable. A chat left in the home folder, the default, shows
     /// nothing here once it has begun.
+    #[cfg(test)]
     fn folder_button(&self) -> Option<Rect> {
         let row = self.composer_footer_rect()?;
         Some(Rect::new(
@@ -5410,14 +6130,6 @@ impl ChatSurface {
             self.folder_button_w.max(60.0).min(row.w),
             row.h,
         ))
-    }
-
-    /// Whether the folder can still be chosen: an agent chat with no message.
-    fn folder_editable(&self) -> bool {
-        self.transcript.as_ref().is_some_and(|transcript| {
-            agents::is_agent_provider(&transcript.chat.current_model.provider)
-                && transcript.messages.is_empty()
-        })
     }
 
     /// [`folder_label`](Self::folder_label) cut with an ellipsis to fit the
@@ -5553,31 +6265,25 @@ impl ChatSurface {
         }
         self.transcript.as_ref()?;
         let toolbar = self.composer_toolbar_rect();
-        Some(Rect::new(toolbar.x, toolbar.y, toolbar.h, toolbar.h))
+        Some(Rect::new(
+            toolbar.x + toolbar.h + 6.0,
+            toolbar.y,
+            toolbar.h,
+            toolbar.h,
+        ))
     }
 
     fn web_search_button(&self) -> Option<Rect> {
-        if !self.web_search_available() {
-            return None;
-        }
-        let toolbar = self.composer_toolbar_rect();
-        let x = self
-            .privacy_button()
-            .map_or(toolbar.x, |privacy| privacy.x + privacy.w + 6.0);
-        Some(Rect::new(x, toolbar.y, toolbar.h, toolbar.h))
+        None
     }
 
     /// The composer's toolbar row: inside its padding, left of the send
     /// button.
     fn composer_toolbar_rect(&self) -> Rect {
         let composer = self.composer_hit_rect;
-        // Left of the microphone's chevron where the host offers a choice of
-        // microphone (D103) — its slot is kept whether or not it shows —
-        // else of the microphone, else of send.
-        let send = self
-            .mic_chooser_slot()
-            .or_else(|| self.mic_button())
-            .unwrap_or_else(|| self.send_button());
+        // Left of the fixed microphone. Its chooser reserves the lane after
+        // it, so revealing the chevron moves neither the model nor send.
+        let send = self.mic_button().unwrap_or_else(|| self.send_button());
         let x = composer.x + COMPOSER_PAD_X;
         Rect::new(
             x,
@@ -5585,6 +6291,20 @@ impl ChatSurface {
             (send.x - x - 6.0).max(1.0),
             COMPOSER_TOOLBAR_H,
         )
+    }
+
+    /// A toolbar menu follows the control that opened it, including when
+    /// the composer grows taller or moves between the center and the foot.
+    fn toolbar_popover(&self, anchor: Rect, width: f32, height: f32, align: PopoverAlign) -> Rect {
+        PopoverShell::anchored(anchor, self.viewport, width, height, align).rect
+    }
+
+    fn plus_button(&self) -> Rect {
+        if let Some(shell) = &self.composer_shell {
+            return shell.plus();
+        }
+        let toolbar = self.composer_toolbar_rect();
+        Rect::new(toolbar.x, toolbar.y, toolbar.h, toolbar.h)
     }
 
     fn tool_access_button(&self) -> Rect {
@@ -5599,7 +6319,7 @@ impl ChatSurface {
         let x = self
             .web_search_button()
             .or_else(|| self.privacy_button())
-            .map_or(toolbar.x, |icon| icon.x + icon.w + 6.0);
+            .map_or(toolbar.x + toolbar.h + 6.0, |icon| icon.x + icon.w + 6.0);
         // **It hugs its label** (D107): its padding, the label and the
         // caret, as the approval-mode chip does — never a wider button
         // with the label centred in it — up to its widest, and never into
@@ -5618,6 +6338,7 @@ impl ChatSurface {
     /// The workspace-access chip's label as drawn in `chip`: whole when it
     /// fits, elided to the room its padding and caret leave when it does
     /// not.
+    #[cfg(test)]
     fn tool_access_label_shown(&mut self, label: &str, chip: Rect) -> String {
         if self.tool_access_chip_w <= chip.w + 0.01 {
             return label.to_owned();
@@ -5739,6 +6460,7 @@ impl ChatSurface {
         }
     }
 
+    #[cfg(test)]
     fn tool_access_label(&self) -> String {
         use koru_i18n::Key;
         let Some(transcript) = &self.transcript else {
@@ -5987,15 +6709,14 @@ impl ChatSurface {
             {
                 return Some((5, 8));
             }
-            if self.chat_model_button().contains(x, y) {
-                return Some((5, 5));
-            }
-            if self.folder_editable()
-                && self
-                    .folder_button()
-                    .is_some_and(|button| button.contains(x, y))
+            if self
+                .context_indicator_button()
+                .is_some_and(|button| button.contains(x, y))
             {
                 return Some((5, 12));
+            }
+            if self.chat_model_selector_button().contains(x, y) {
+                return Some((5, 5));
             }
             if self
                 .web_search_button()
@@ -6008,9 +6729,6 @@ impl ChatSurface {
                 .is_some_and(|rect| rect.contains(x, y))
             {
                 return Some((5, 11));
-            }
-            if self.tool_access_button().contains(x, y) {
-                return Some((5, 6));
             }
             if self
                 .tool_mode_button()
@@ -6066,6 +6784,314 @@ impl ChatSurface {
         }
     }
 
+    fn activate_send_button(&mut self) -> bool {
+        if self.reply_busy() {
+            // Queue while the composer holds something, Stop while it is
+            // empty. Pointer and keyboard use this same route.
+            match (self.send_mode(), self.attempt) {
+                (queue::SendMode::Stop, Some(attempt)) => {
+                    return self.send_command(Command::Cancel(attempt));
+                }
+                _ => {
+                    self.queue_composer();
+                    return true;
+                }
+            }
+        }
+        if !self.awaiting_model() {
+            self.send_composer();
+        }
+        true
+    }
+
+    fn paint_composer_box(&self, canvas: &mut Scene, root: Affine, rect: Rect) {
+        let p = theme::p();
+        scene::floating_panel(
+            canvas,
+            root,
+            rect.x,
+            rect.y,
+            rect.w,
+            rect.h,
+            &scene::Panel::popover(18.0).border(if self.focus == Focus::Composer {
+                p.focus_ring
+            } else {
+                p.panel_border
+            }),
+        );
+    }
+
+    fn paint_composer_text(&mut self, canvas: &mut Scene, root: Affine) {
+        let focused = self.focus == Focus::Composer;
+        let placeholder = koru_i18n::t(self.lang, self.composer_placeholder_key());
+        self.composer.set_focused(focused);
+        self.composer
+            .draw(canvas, root, focused, self.pointer, placeholder);
+    }
+
+    fn composer_placeholder_key(&self) -> koru_i18n::Key {
+        if !self.chat_is_empty() {
+            koru_i18n::Key::AiComposerContinuePlaceholder
+        } else if self
+            .transcript
+            .as_ref()
+            .is_some_and(|chat| agents::is_agent_provider(&chat.chat.current_model.provider))
+        {
+            koru_i18n::Key::AiComposerAgentPlaceholder
+        } else {
+            koru_i18n::Key::AiComposerPlaceholder
+        }
+    }
+
+    /// Paint the controls whose model and microphone widths depend on the
+    /// current chat. The plus and send have their own element targets.
+    fn paint_composer_toolbar_content(
+        &mut self,
+        canvas: &mut Scene,
+        root: Affine,
+        composer: Rect,
+        model_button: Rect,
+        mode_button: Option<Rect>,
+    ) -> bool {
+        if self.draw_dictation_row(canvas, root) {
+            self.draw_reasoning_drawer(canvas, root, composer);
+            return true;
+        }
+        if let Some(mode_button) = mode_button {
+            ActionButton::new(
+                self.tool_mode_label(),
+                ActionStyle::Ghost,
+                Some(icons::CARET_DOWN),
+            )
+            .draw(
+                canvas,
+                root,
+                &mut self.engine,
+                mode_button,
+                mode_button.contains(self.pointer.0, self.pointer.1),
+            );
+        }
+        if let Some(privacy) = self.privacy_button() {
+            let private = self
+                .transcript
+                .as_ref()
+                .is_some_and(|transcript| transcript.chat.private);
+            IconButton::new(icons::DETECTIVE, privacy)
+                .with_state(IconButtonState {
+                    hovered: privacy.contains(self.pointer.0, self.pointer.1),
+                    active: private,
+                    disabled: false,
+                })
+                .draw(canvas, root, &mut self.engine);
+        }
+        if let Some(search) = self.web_search_button() {
+            IconButton::new(icons::GLOBE, search)
+                .with_state(IconButtonState {
+                    hovered: search.contains(self.pointer.0, self.pointer.1),
+                    active: self.web_search_armed,
+                    disabled: false,
+                })
+                .draw(canvas, root, &mut self.engine);
+        }
+        self.draw_reasoning_drawer(canvas, root, composer);
+        let koru_chat = self.koru_chat();
+        let model_label = self.chip_label();
+        let model_caret =
+            (!koru_chat || self.effort_control().is_some()).then_some(icons::CARET_DOWN);
+        let caret_width = model_caret.map_or(0.0, |caret| {
+            ActionButton::GAP
+                + self
+                    .engine
+                    .icon_layout(caret, ActionButton::ICON_SIZE)
+                    .width()
+        });
+        // The shell is taken while its frame paints. Recomputing the model
+        // button here would use fallback send geometry and shift the ring.
+        let indicator = self.context_indicator_rect(model_button);
+        let selector = self.model_selector_rect(model_button);
+        let lead_width = selector.x - model_button.x;
+        let shown_label = self.engine.elided(
+            &model_label,
+            role::row(),
+            (model_button.w - lead_width - ActionButton::PAD_X * 2.0 - caret_width).max(0.0),
+        );
+        let hovered = selector.contains(self.pointer.0, self.pointer.1);
+        self.model_chevron.set(self.chat_model_open, Instant::now());
+        if model_caret.is_some() {
+            if hovered {
+                scene::fill(
+                    canvas,
+                    root,
+                    theme::p().hover_tint,
+                    &scene::rrect(
+                        selector.x,
+                        selector.y,
+                        selector.w,
+                        selector.h,
+                        ActionButton::RADIUS,
+                    ),
+                );
+            }
+            let text_w = self.engine.simple_layout(&shown_label, role::row()).width();
+            ActionButton::new(&shown_label, ActionStyle::Ghost, None).draw(
+                canvas,
+                root,
+                &mut self.engine,
+                Rect::new(
+                    model_button.x + lead_width,
+                    model_button.y,
+                    model_button.w - lead_width - caret_width,
+                    model_button.h,
+                ),
+                false,
+            );
+            let content_x = model_button.x
+                + lead_width
+                + (model_button.w - lead_width - text_w - caret_width) * 0.5;
+            let caret_rect = Rect::new(
+                content_x + text_w + ActionButton::GAP,
+                model_button.y,
+                caret_width - ActionButton::GAP,
+                model_button.h,
+            );
+            paint_turning_caret(
+                canvas,
+                root,
+                &mut self.engine,
+                caret_rect,
+                ActionButton::ICON_SIZE,
+                self.model_chevron.progress(),
+                theme::p().text,
+            );
+        } else {
+            ActionButton::new(&shown_label, ActionStyle::Ghost, None).draw(
+                canvas,
+                root,
+                &mut self.engine,
+                Rect::new(
+                    model_button.x + lead_width,
+                    model_button.y,
+                    model_button.w - lead_width,
+                    model_button.h,
+                ),
+                hovered,
+            );
+        }
+        if let Some(rect) = indicator {
+            let ring_inset = theme::Space::S0_5.px(theme::Profile::Desktop);
+            let _indicator = koru_draw::inspect::scope(
+                "ComposerContextIndicator",
+                "element",
+                root,
+                scene::rect(rect.x, rect.y, rect.w, rect.h),
+                |record| record.property("action", "open context window", "button"),
+            );
+            koru_ui::progress_ring::ProgressRing::new(self.context_progress()).draw(
+                canvas,
+                root,
+                Rect::new(
+                    rect.x + ring_inset,
+                    rect.y + ring_inset,
+                    rect.w - ring_inset * 2.0,
+                    rect.h - ring_inset * 2.0,
+                ),
+            );
+            if let Some(transcript) = &self.transcript {
+                let mark = Rect::new(
+                    rect.x + (rect.w - COMPOSER_ICON_SIZE) * 0.5,
+                    rect.y + (rect.h - COMPOSER_ICON_SIZE) * 0.5,
+                    COMPOSER_ICON_SIZE,
+                    COMPOSER_ICON_SIZE,
+                );
+                model_picker::draw_provider_mark(
+                    canvas,
+                    root,
+                    &mut self.engine,
+                    &transcript.chat.current_model.provider,
+                    agents::is_agent_provider(&transcript.chat.current_model.provider),
+                    mark,
+                    theme::p().text,
+                );
+            }
+        }
+        false
+    }
+
+    fn paint_composer_plus(&mut self, canvas: &mut Scene, root: Affine, plus: Rect) {
+        IconButton::new(icons::PLUS, plus)
+            .with_state(IconButtonState {
+                hovered: plus.contains(self.pointer.0, self.pointer.1),
+                active: self.plus_menu.is_some(),
+                disabled: false,
+            })
+            .draw(canvas, root, &mut self.engine);
+    }
+
+    fn paint_composer_send(&mut self, canvas: &mut Scene, root: Affine, send: Rect) {
+        let mode = self.send_mode();
+        let enabled = match mode {
+            queue::SendMode::Stop => true,
+            queue::SendMode::Queue => self.composer_has_content(),
+            queue::SendMode::Send => !self.awaiting_model() && self.composer_has_content(),
+        };
+        draw_composer_action(
+            canvas,
+            root,
+            &mut self.engine,
+            send,
+            mode,
+            enabled,
+            send.contains(self.pointer.0, self.pointer.1),
+        );
+    }
+
+    fn paint_composer_split(&mut self, canvas: &mut Scene, root: Affine, rect: Rect) {
+        let Some((row, tone)) = self.approval_presentation() else {
+            return;
+        };
+        let mode = self.send_mode();
+        let enabled = match mode {
+            queue::SendMode::Stop => true,
+            queue::SendMode::Queue => self.composer_has_content(),
+            queue::SendMode::Send => !self.awaiting_model() && self.composer_has_content(),
+        };
+        let mut button = SplitButton {
+            rect,
+            tone,
+            action_enabled: enabled,
+            action_hot: false,
+            action_focused: self.focus == Focus::SendArrow,
+            menu_hot: false,
+            menu_focused: self.focus == Focus::ModeChevron,
+            menu_open: self.approval_mode_open,
+            reveal: self.send_chevron_reveal.progress(),
+            chevron_turn: self.send_chevron.progress(),
+        };
+        button.action_hot = button
+            .action_rect()
+            .contains(self.pointer.0, self.pointer.1);
+        button.menu_hot = button.menu_rect().contains(self.pointer.0, self.pointer.1);
+        let now = Instant::now();
+        self.send_chevron.set(self.approval_mode_open, now);
+        self.send_chevron_reveal.set(
+            button.menu_hot || button.menu_focused || button.menu_open,
+            now,
+        );
+        button.reveal = self.send_chevron_reveal.progress();
+        button.chevron_turn = self.send_chevron.progress();
+        button.draw(
+            canvas,
+            root,
+            &mut self.engine,
+            if mode == queue::SendMode::Queue {
+                icons::CLOCK
+            } else {
+                icons::ARROW_UP
+            },
+            row.icon,
+        );
+    }
+
     fn draw_chat(&mut self, canvas: &mut Scene, root: Affine) {
         let p = theme::p();
         // **No title row.** A chat's name is its tab's in a workspace and
@@ -6076,27 +7102,11 @@ impl ChatSurface {
         self.draw_add_pill(canvas, root);
         let composer = self.composer_rect();
         self.draw_greeting(canvas, root);
-        let pill_band = self.pill_band_rect();
-        let context_document = self.context_document_pill();
-        self.pill_strip.draw(
-            canvas,
-            root,
-            &mut self.engine,
-            context_document.as_ref(),
-            pill_band,
-            self.viewport,
-            Instant::now(),
-        );
         self.draw_queue(canvas, root);
         self.stored_open_link = None;
         let content = self.content_rect();
         if let Some((layout, open)) = self.footer_layouts(content.w) {
-            let context_document = self.context_document_pill();
-            let y = composer.y
-                - COMPOSER_GAP
-                - pill_band_height(context_document.as_ref())
-                - self.queue_band_h()
-                - layout.height();
+            let y = composer.y - COMPOSER_GAP - self.queue_band_h() - layout.height();
             scene::draw_layout(canvas, root, &layout, content.x, y, Some(p.text_dim));
             // *Open* after a stored reply (D78): a link in the accent, as
             // the chat's other links are, lit under the pointer.
@@ -6115,240 +7125,49 @@ impl ChatSurface {
                 self.stored_open_link = Some(hit);
             }
         }
-        // **The composer is one component** in the inspector, every primitive
-        // it paints inside it: the box, the text, the toolbar's controls and
-        // the folder row under the box — so a review sees `KoruComposer` and
-        // its parts rather than loose fills and strokes.
-        let footer_row = self.composer_footer_rect();
-        let whole = match footer_row {
-            Some(row) => Rect::new(
-                composer.x,
-                composer.y,
-                composer.w,
-                row.y + row.h - composer.y,
-            ),
-            None => composer,
-        };
-        let _composer = koru_draw::inspect::scope(
-            "KoruComposer",
-            "component",
-            root,
-            scene::rect(whole.x, whole.y, whole.w, whole.h),
-            |r| {
-                r.property("radius", 8.0, "box corners");
-                r.property("pad x", COMPOSER_PAD_X, "text and toolbar inset");
-                r.property("pad top", COMPOSER_PAD_TOP, "above the text");
-                r.property("pad bottom", COMPOSER_PAD_BOTTOM, "below the toolbar");
-            },
-        );
-        {
-            let _box = koru_draw::inspect::scope(
-                "ComposerBox",
-                "part",
-                root,
-                scene::rect(composer.x, composer.y, composer.w, composer.h),
-                |_| {},
-            );
-            scene::fill(
-                canvas,
-                root,
-                p.panel_bg,
-                &scene::rrect(composer.x, composer.y, composer.w, composer.h, 8.0),
-            );
-            scene::stroke(
-                canvas,
-                root,
-                if self.focus == Focus::Composer {
-                    p.focus_ring
-                } else {
-                    p.panel_border
-                },
-                theme::BORDER_W,
-                &scene::rrect(composer.x, composer.y, composer.w, composer.h, 8.0),
-            );
-        }
-        self.draw_strip(canvas, root, composer);
-        {
-            let text = self.composer_text_rect();
-            let _text = koru_draw::inspect::scope(
-                "ComposerText",
-                "part",
-                root,
-                scene::rect(text.x, text.y, text.w, text.h),
-                |r| r.property("editor", "koru-editor", "a private document"),
-            );
-            let focused = self.focus == Focus::Composer;
-            self.composer.set_focused(focused);
-            self.composer.draw(
-                canvas,
-                root,
-                focused,
-                self.pointer,
-                koru_i18n::t(self.lang, koru_i18n::Key::AiComposerPlaceholder),
-            );
-        }
-        'toolbar: {
-            let toolbar = Rect::new(
-                composer.x,
-                composer.y + composer.h - COMPOSER_PAD_BOTTOM - COMPOSER_TOOLBAR_H,
-                composer.w,
-                COMPOSER_TOOLBAR_H,
-            );
-            let _toolbar = koru_draw::inspect::scope(
-                "ComposerToolbar",
-                "part",
-                root,
-                scene::rect(toolbar.x, toolbar.y, toolbar.w, toolbar.h),
-                |_| {},
-            );
-            // **Recording** (D103): the row is the waveform, the timer, ✕
-            // and ■ — none of the toolbar's controls, and no send.
-            if self.draw_dictation_row(canvas, root) {
-                self.draw_reasoning_drawer(canvas, root, composer);
-                break 'toolbar;
-            }
-            self.draw_mic(canvas, root);
-            let send = self.send_button();
-            let mode = self.send_mode();
-            // Off while the chat waits for a model, whatever is typed.
-            let send_enabled = match mode {
-                queue::SendMode::Stop => true,
-                queue::SendMode::Queue => self.composer_has_content(),
-                queue::SendMode::Send => !self.awaiting_model() && self.composer_has_content(),
-            };
-            let name = self.send_button_name();
-            let _send = koru_draw::inspect::scope(
-                name,
-                "button",
-                root,
-                scene::rect(send.x, send.y, send.w, send.h),
-                |r| r.property("accessible name", name, "caller label"),
-            );
-            draw_composer_action(
-                canvas,
-                root,
-                &mut self.engine,
-                send,
-                mode,
-                send_enabled,
-                send.contains(self.pointer.0, self.pointer.1),
-            );
-            drop(_send);
-            let chip_label = self.chip_label();
-            self.chip_label_w = self.engine.simple_layout(&chip_label, role::row()).width();
-            // The workspace-access chip hugs its label (D107): measured
-            // first, so its button is as wide as what it draws.
-            let access_label = self.tool_access_label();
-            self.tool_access_chip_w =
-                ActionButton::new(&access_label, ActionStyle::Ghost, Some(icons::CARET_DOWN))
-                    .width(&mut self.engine);
-            let access_button = self.tool_access_button();
-            let access_label = self.tool_access_label_shown(&access_label, access_button);
-            ActionButton::new(&access_label, ActionStyle::Ghost, Some(icons::CARET_DOWN)).draw(
-                canvas,
-                root,
-                &mut self.engine,
-                access_button,
-                access_button.contains(self.pointer.0, self.pointer.1),
-            );
-            self.draw_approval_mode_chip(canvas, root);
-            if let Some(mode_button) = self.tool_mode_button() {
-                ActionButton::new(
-                    self.tool_mode_label(),
-                    ActionStyle::Ghost,
-                    Some(icons::CARET_DOWN),
-                )
-                .draw(
-                    canvas,
-                    root,
-                    &mut self.engine,
-                    mode_button,
-                    mode_button.contains(self.pointer.0, self.pointer.1),
-                );
-            }
-            if let Some(privacy) = self.privacy_button() {
-                let private = self
-                    .transcript
-                    .as_ref()
-                    .is_some_and(|transcript| transcript.chat.private);
-                IconButton::new(icons::DETECTIVE, privacy)
-                    .with_state(IconButtonState {
-                        hovered: privacy.contains(self.pointer.0, self.pointer.1),
-                        active: private,
-                        disabled: false,
-                    })
-                    .draw(canvas, root, &mut self.engine);
-            }
-            if let Some(search) = self.web_search_button() {
-                IconButton::new(icons::GLOBE, search)
-                    .with_state(IconButtonState {
-                        hovered: search.contains(self.pointer.0, self.pointer.1),
-                        active: self.web_search_armed,
-                        disabled: false,
-                    })
-                    .draw(canvas, root, &mut self.engine);
-            }
-            self.draw_reasoning_drawer(canvas, root, composer);
-            let model_button = self.chat_model_button();
-            let koru_chat = self.koru_chat();
-            let model_label = self.chip_label();
-            let model_caret =
-                (!koru_chat || self.effort_control().is_some()).then_some(icons::CARET_DOWN);
-            ActionButton::new(&model_label, ActionStyle::Ghost, model_caret).draw(
-                canvas,
-                root,
-                &mut self.engine,
-                model_button,
-                model_button.contains(self.pointer.0, self.pointer.1),
-            );
-        }
-        if let Some(footer_row) = footer_row {
-            let _row = koru_draw::inspect::scope(
-                "ComposerFolderRow",
-                "part",
-                root,
-                scene::rect(footer_row.x, footer_row.y, footer_row.w, footer_row.h),
-                |_| {},
-            );
-            if let Some(folder) = self.folder_button() {
-                // Quiet, under the box: the icon and the name in the meta face,
-                // dim; a hover tint while the folder can still be chosen.
-                let hovered =
-                    self.folder_editable() && folder.contains(self.pointer.0, self.pointer.1);
-                if hovered {
-                    scene::fill(
-                        canvas,
-                        root,
-                        p.hover_tint,
-                        &scene::rrect(folder.x, folder.y, folder.w, folder.h, 4.0),
-                    );
+        // The shell frame resolves the box, band, editor and toolbar from
+        // current state. Its ancestry stays open while each mutable host part
+        // paints, so F12 sees the editor and every control under KoruComposer.
+        let chip_label = self.chip_label();
+        self.chip_label_w = self.engine.simple_layout(&chip_label, role::row()).width();
+        let model_button = self.chat_model_button();
+        let mode_button = self.tool_mode_button();
+        let microphone_choice_shown = self.mic_chooser_button().is_some();
+        let shell = self.composer_shell.take().expect("composer was laid out");
+        let mut recording = false;
+        shell
+            .frame
+            .paint_host(&shell.tree, canvas, root, |node, canvas, root| {
+                match node.name {
+                    "ComposerBox" => self.paint_composer_box(canvas, root, node.rect),
+                    "ComposerContextBand" => self.draw_strip(canvas, root, node.rect),
+                    "ComposerText" => self.paint_composer_text(canvas, root),
+                    "ComposerToolbar" => {
+                        recording = self.paint_composer_toolbar_content(
+                            canvas,
+                            root,
+                            composer,
+                            model_button,
+                            mode_button,
+                        );
+                    }
+                    "ComposerMicrophoneChoice" if !recording => {
+                        self.draw_mic_chooser(canvas, root, node.rect, microphone_choice_shown);
+                    }
+                    "ComposerMicrophone" if !recording => self.draw_mic(canvas, root, node.rect),
+                    "ComposerAddContext" if !recording => {
+                        self.paint_composer_plus(canvas, root, node.rect);
+                    }
+                    "ComposerSplitButton" if !recording => {
+                        self.paint_composer_split(canvas, root, node.rect);
+                    }
+                    "ComposerSend" if !recording && shell.mode().is_none() => {
+                        self.paint_composer_send(canvas, root, node.rect);
+                    }
+                    _ => {}
                 }
-                let colour = if hovered { p.text } else { p.text_dim };
-                let icon = self
-                    .engine
-                    .icon_layout(icons::FOLDER, ActionButton::ICON_SIZE);
-                let shown = self.folder_label_shown();
-                let label = self.engine.simple_layout(&shown, role::meta());
-                let x = folder.x + ActionButton::PAD_X;
-                scene::draw_layout_first_line(
-                    canvas,
-                    root,
-                    &icon,
-                    x,
-                    folder.y + (folder.h - icon.height()) * 0.5,
-                    Some(colour),
-                );
-                scene::draw_layout_first_line(
-                    canvas,
-                    root,
-                    &label,
-                    x + icon.width() + ActionButton::GAP,
-                    folder.y + (folder.h - label.height()) * 0.5,
-                    Some(colour),
-                );
-            }
-        }
-        drop(_composer);
+            });
+        self.composer_shell = Some(shell);
         // A link's card (D95): over the transcript and the composer, under
         // the pickers and panes that float over both.
         self.link_card.draw(
@@ -6360,6 +7179,7 @@ impl ChatSurface {
             Instant::now(),
         );
         self.draw_model_picker(canvas, root);
+        self.draw_context_window(canvas, root);
         self.draw_tool_mode_picker(canvas, root);
         self.draw_approval_mode_picker(canvas, root);
         self.draw_tool_access_picker(canvas, root);
@@ -6390,23 +7210,35 @@ impl ChatSurface {
         self.draw_skill_list(canvas, root);
     }
 
-    /// An empty chat's greeting: one line at the title size, centred over
-    /// the composer — at the foot of the (empty) conversation, so it sits
-    /// above the pills and the status line like the messages would.
+    /// An empty chat's greeting: the Koru mark and question at the same
+    /// title size, centered together above the composer.
     fn draw_greeting(&mut self, canvas: &mut Scene, root: Affine) {
         let Some(key) = self.greeting() else {
             return;
         };
         let area = self.conversation_rect();
-        let mut layout =
-            self.engine
-                .simple_layout_wrapped(koru_i18n::t(self.lang, key), role::title(), area.w);
-        layout.align(
-            parley::Alignment::Center,
-            parley::AlignmentOptions::default(),
-        );
+        let title = role::title();
+        let logo_size = title.metrics.size;
+        let gap = theme::Space::S2.px(theme::Profile::Desktop);
+        let text_max = (area.w - logo_size - gap).max(1.0);
+        let greeting = koru_i18n::t(self.lang, key);
+        let natural = self.engine.simple_layout(greeting, title);
+        let text_width = natural.width().min(text_max);
+        let layout = if natural.width() <= text_max {
+            natural
+        } else {
+            self.engine.simple_layout_wrapped(greeting, title, text_max)
+        };
+        let x = area.x + (area.w - logo_size - gap - text_width).max(0.0) * 0.5;
         let y = (area.y + area.h - GREETING_GAP - layout.height()).max(area.y);
-        scene::draw_layout(canvas, root, &layout, area.x, y, Some(theme::p().text));
+        let logo_y = y + (layout.height() - logo_size) * 0.5;
+        let (logo_x, text_x) = if self.lang.is_rtl() {
+            (x + text_width + gap, x)
+        } else {
+            (x, x + logo_size + gap)
+        };
+        KoruLogo::new(logo_size).draw(canvas, root, logo_x, logo_y);
+        scene::draw_layout(canvas, root, &layout, text_x, y, Some(theme::p().text));
     }
 
     /// **Where an agent chat moved to another of its agent's models**: the
@@ -6577,7 +7409,7 @@ impl ChatSurface {
                     // The person's own message carries its chips as
                     // `[[koru://doc/…]]`; they read as titled links.
                     let (mut display, links) = if message.role == ChatRole::User {
-                        doc_links::titled(
+                        doc_links::titled_for_message(
                             &quote_pills::quote_bars(&display),
                             &self.document_titles,
                             untitled,
@@ -6893,6 +7725,11 @@ impl ChatSurface {
                 attachments: Vec::new(),
             }));
         }
+        for message in &mut messages {
+            for tile in &mut message.attachments {
+                tile.measure_chip(&mut self.engine, message.wrap_width);
+            }
+        }
         self.message_layouts = messages;
         self.position_conversation_items();
         self.message_width = width;
@@ -6944,7 +7781,7 @@ impl ChatSurface {
     ) -> MessageLayout {
         let untitled = koru_i18n::t(self.lang, koru_i18n::Key::AiDocumentLinkUntitled);
         let user_width = message_wrap_width(ChatRole::User, width);
-        let (display, links) = doc_links::titled(
+        let (display, links) = doc_links::titled_for_message(
             &quote_pills::quote_bars(markdown),
             &self.document_titles,
             untitled,
@@ -7178,7 +8015,7 @@ impl ChatSurface {
                         p.row_selected,
                         &scene::rrect(card.x, card.y, card.w, card.h, 8.0),
                     );
-                    // Its pictures under its words, drawn once the cards are.
+                    // Its attachment pills under its words, drawn once the cards are.
                     if !message.attachments.is_empty() {
                         let top = if message.display.trim().is_empty() {
                             card.y + PAD
@@ -7228,6 +8065,16 @@ impl ChatSurface {
                             card.y + PAD,
                             Some(p.text),
                         );
+                        if message.role == ChatRole::User {
+                            draw_user_document_icons(
+                                canvas,
+                                root,
+                                &mut self.engine,
+                                message,
+                                card.x + PAD,
+                                card.y + PAD,
+                            );
+                        }
                     }
                 } else {
                     let mut block_y = card.y + PAD;
@@ -8422,7 +9269,7 @@ impl ChatSurface {
                         message_id: message,
                         surface: SURFACE,
                         explicit_refs,
-                        web_search: self.web_search_armed,
+                        web_search: self.web_search_armed && self.web_search_available(),
                         reasoning_override: None,
                         replace_pinned_documents: true,
                     },
@@ -9047,6 +9894,42 @@ fn message_card(area: Rect, y: f32, h: f32, message: &MessageLayout) -> Rect {
     Rect::new(area.x + area.w - width, y, width, h)
 }
 
+fn draw_user_document_icons(
+    canvas: &mut Scene,
+    root: Affine,
+    engine: &mut TextEngine,
+    message: &MessageLayout,
+    ox: f32,
+    oy: f32,
+) {
+    let icon = engine.icon_layout(icons::DOCUMENT, 13.0);
+    for link in &message.links {
+        let end = link.range.start + doc_links::CHIP_LEAD.len();
+        if message.display.get(link.range.start..end) != Some(doc_links::CHIP_LEAD) {
+            continue;
+        }
+        let selection = Selection::new(
+            Cursor::from_byte_index(&message.layout, link.range.start, Affinity::Downstream),
+            Cursor::from_byte_index(&message.layout, end, Affinity::Upstream),
+        );
+        let mut drawn = false;
+        selection.geometry_with(&message.layout, |box_, _| {
+            if drawn {
+                return;
+            }
+            drawn = true;
+            scene::draw_layout(
+                canvas,
+                root,
+                &icon,
+                ox + box_.x0 as f32 + ((box_.x1 - box_.x0) as f32 - icon.width()) * 0.5,
+                oy + box_.y0 as f32 + ((box_.y1 - box_.y0) as f32 - icon.height()) * 0.5,
+                Some(theme::p().accent),
+            );
+        });
+    }
+}
+
 fn tool_activity_action_rects(row: Rect) -> [Rect; 2] {
     let approve_w = 78.0;
     let deny_w = 58.0;
@@ -9172,6 +10055,8 @@ fn render_chat_block(
     markdown: &str,
     max_w: f32,
 ) -> BlockLayout {
+    let projected = file_citations::project(markdown, false);
+    let shown_markdown = projected.as_ref();
     if let Some(image) = generated_image_spec(markdown) {
         return BlockLayout {
             id,
@@ -9187,7 +10072,7 @@ fn render_chat_block(
     // A bare `https://…` in a reply is a link (D95): the chat follows
     // what it draws as one.
     let styles = koru_markdown::Styles::chat().with_bare_links();
-    match koru_markdown::render_block(engine, markdown, max_w, &styles) {
+    match koru_markdown::render_block(engine, shown_markdown, max_w, &styles) {
         koru_markdown::Rendered::Text {
             text,
             layout,
@@ -9487,6 +10372,7 @@ fn unmade_transcript(model: ModelSelection) -> ChatTranscript {
         usage: Vec::new(),
         sources: Vec::new(),
         reasoning_control: None,
+        agent_commands: None,
         attachments: Vec::new(),
     }
 }
@@ -9711,6 +10597,7 @@ mod tests {
             feedback: Vec::new(),
             usage: Vec::new(),
             reasoning_control: None,
+            agent_commands: None,
             attachments: Vec::new(),
         }
     }
@@ -9763,6 +10650,354 @@ mod tests {
         let surface = ChatSurface::new();
         assert!(surface.reader.is_none());
         assert!(surface.maintenance_deadline().is_none());
+    }
+
+    #[test]
+    fn composer_placeholder_drops_shortcut_hints_after_the_first_message() {
+        let mut surface = ChatSurface::new();
+        assert_eq!(
+            surface.composer_placeholder_key(),
+            koru_i18n::Key::AiComposerPlaceholder
+        );
+        surface.transcript = Some(transcript());
+        surface
+            .transcript
+            .as_mut()
+            .unwrap()
+            .chat
+            .current_model
+            .provider = AiProviderId::parse("agent-claude").unwrap();
+        assert_eq!(
+            surface.composer_placeholder_key(),
+            koru_i18n::Key::AiComposerAgentPlaceholder
+        );
+        surface.pending_user = Some("Hello".into());
+        assert_eq!(
+            surface.composer_placeholder_key(),
+            koru_i18n::Key::AiComposerContinuePlaceholder
+        );
+        surface.pending_user = None;
+        let transcript = surface.transcript.as_mut().unwrap();
+        let message = user_message(transcript, "Hello");
+        transcript.messages.push(message);
+        assert_eq!(
+            surface.composer_placeholder_key(),
+            koru_i18n::Key::AiComposerContinuePlaceholder
+        );
+    }
+
+    #[test]
+    fn workspace_file_choice_retries_import_and_copy_with_one_operation() {
+        let mut surface = ChatSurface::new();
+        let (reader, commands, _updates) = Reader::test_pair();
+        surface.reader = Some(reader);
+        let mut chat = transcript();
+        chat.chat.current_model.provider = AiProviderId::parse("agent-claude").unwrap();
+        let chat_id = chat.chat.id;
+        surface.transcript = Some(chat);
+        let workspace = WorkspaceId::new();
+        surface.context_workspace = Some(workspace);
+
+        assert!(
+            surface
+                .computer_path_chosen(ComputerPickerKind::File, PathBuf::from("C:/fixture.pdf"),)
+        );
+        assert!(surface.finish_computer_file_choice(ChoiceOutcome::Chosen(0)));
+        let Command::AddGrants(granted_chat, Some(granted_workspace), _, op) =
+            commands.recv_timeout(Duration::from_millis(50)).unwrap()
+        else {
+            panic!("grant must precede import");
+        };
+        assert_eq!((granted_chat, granted_workspace), (chat_id, workspace));
+        let draft = &surface.strips.get(chat_id)[0];
+        let id = draft.id;
+        assert_eq!(draft.state, attachments::DraftState::Storing);
+        assert!(surface.take_workspace_import_request().is_none());
+
+        let policy = koru_ai_core::ChatToolPolicy {
+            chat_id,
+            mode: koru_ai_core::ToolMode::Manual,
+            workspace_ids: vec![workspace],
+        };
+        surface.apply_update(Update::GrantsAdded {
+            chat: chat_id,
+            op: uuid::Uuid::new_v4(),
+            result: Ok(policy.clone()),
+        });
+        assert!(surface.take_workspace_import_request().is_none());
+        surface.apply_update(Update::GrantsAdded {
+            chat: chat_id,
+            op,
+            result: Ok(policy.clone()),
+        });
+        let first = surface.take_workspace_import_request().unwrap();
+        assert_eq!((first.op, first.attachment), (op, id));
+        assert!(surface.workspace_file_imported(op, Err("transient import failure".into())));
+        assert_eq!(
+            surface.strips.get(chat_id)[0].state,
+            attachments::DraftState::Failed { retryable: true }
+        );
+
+        assert!(surface.retry_workspace_import(chat_id, id));
+        let Command::AddGrants(_, _, _, retry_op) =
+            commands.recv_timeout(Duration::from_millis(50)).unwrap()
+        else {
+            panic!("retry must recheck the grant");
+        };
+        assert_eq!(retry_op, op);
+        surface.apply_update(Update::GrantsAdded {
+            chat: chat_id,
+            op,
+            result: Ok(policy.clone()),
+        });
+        let retry = surface.take_workspace_import_request().unwrap();
+        assert_eq!((retry.op, retry.attachment), (op, id));
+
+        let document = DocumentId::new();
+        assert!(surface.workspace_file_imported(op, Ok(document)));
+        let Command::CopyWorkspaceFile(copied_chat, copy) =
+            commands.recv_timeout(Duration::from_millis(50)).unwrap()
+        else {
+            panic!("copy must follow import");
+        };
+        assert_eq!(
+            (copied_chat, copy.id, copy.document),
+            (chat_id, id, document)
+        );
+        surface.apply_update(Update::AttachmentCopied {
+            chat: chat_id,
+            id,
+            result: Err(koru_ai_wire::Failure {
+                code: "workspace_file_unavailable".into(),
+                message: "copy failed".into(),
+                retryable: true,
+                details: Default::default(),
+            }),
+        });
+        assert_eq!(
+            surface.strips.get(chat_id)[0].state,
+            attachments::DraftState::Failed { retryable: true }
+        );
+
+        assert!(surface.retry_workspace_import(chat_id, id));
+        let Command::AddGrants(_, _, _, retry_op) =
+            commands.recv_timeout(Duration::from_millis(50)).unwrap()
+        else {
+            panic!("retry must recheck the grant");
+        };
+        assert_eq!(retry_op, op);
+        surface.apply_update(Update::GrantsAdded {
+            chat: chat_id,
+            op,
+            result: Ok(policy),
+        });
+        assert!(
+            surface.take_workspace_import_request().is_none(),
+            "known document skips import"
+        );
+        let Command::CopyWorkspaceFile(_, copy_again) =
+            commands.recv_timeout(Duration::from_millis(50)).unwrap()
+        else {
+            panic!("retry should copy the known file");
+        };
+        assert_eq!(copy_again, copy);
+
+        surface.apply_update(Update::AttachmentCopied {
+            chat: chat_id,
+            id,
+            result: Ok(koru_ai_core::ChatAttachment {
+                id,
+                message_id: None,
+                ordinal: None,
+                kind: koru_ai_core::AttachmentKind::File,
+                source: koru_ai_core::AttachmentSource::Workspace,
+                file_name: "fixture.pdf".into(),
+                media_type: "application/pdf".into(),
+                byte_count: 12,
+                dimensions: None,
+                origin: Some(koru_ai_core::WorkspaceFileOrigin {
+                    workspace_id: workspace,
+                    document_id: document,
+                }),
+                reference_path: None,
+                created_at: koru_ai_core::Timestamp::now(),
+            }),
+        });
+        assert_eq!(
+            surface.strips.get(chat_id)[0].state,
+            attachments::DraftState::Stored
+        );
+        assert_eq!(
+            surface.composer.message().documents,
+            vec![(document, "fixture.pdf".into())]
+        );
+    }
+
+    #[test]
+    fn plus_menu_opens_file_folder_and_working_folder_pickers_directly() {
+        let mut surface = ChatSurface::new();
+        let mut chat = transcript();
+        chat.chat.current_model.provider = AiProviderId::parse("agent-claude").unwrap();
+        let chat_id = chat.chat.id;
+        surface.transcript = Some(chat);
+        surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 700.0));
+        surface.composer_rect();
+
+        surface.open_plus_menu();
+        assert_eq!(
+            surface
+                .plus_menu
+                .as_ref()
+                .unwrap()
+                .panel(surface.menu_viewport())
+                .w,
+            430.0
+        );
+        let items = surface.plus_menu.as_ref().unwrap().items();
+        assert!(
+            items
+                .iter()
+                .all(|item| !koru_ui::menu::MenuItem::has_submenu(item)
+                    || matches!(item, composer_plus::PlusItem::Recent(_)))
+        );
+        let file = items
+            .iter()
+            .position(|item| matches!(item, composer_plus::PlusItem::UploadFiles(_)))
+            .unwrap();
+        assert!(surface.choose_plus_item(file));
+        assert_eq!(
+            surface.take_computer_picker_request(),
+            Some(ComputerPickerKind::File)
+        );
+
+        surface.open_plus_menu();
+        let folder = surface
+            .plus_menu
+            .as_ref()
+            .unwrap()
+            .items()
+            .iter()
+            .position(|item| matches!(item, composer_plus::PlusItem::AddFolder(_)))
+            .unwrap();
+        assert!(surface.choose_plus_item(folder));
+        assert!(surface.plus_menu.is_none());
+        assert_eq!(
+            surface.take_computer_picker_request(),
+            Some(ComputerPickerKind::Folder)
+        );
+
+        surface.open_plus_menu();
+        let folder = surface
+            .plus_menu
+            .as_ref()
+            .unwrap()
+            .items()
+            .iter()
+            .position(|item| matches!(item, composer_plus::PlusItem::WorkInProject(..)))
+            .unwrap();
+        assert!(surface.choose_plus_item(folder));
+        assert_eq!(
+            surface.take_working_folder_request(),
+            Some(WorkingFolderRequest {
+                chat: chat_id,
+                start: None
+            })
+        );
+        assert!(surface.take_computer_picker_request().is_none());
+    }
+
+    #[test]
+    fn plus_file_action_imports_to_the_current_workspace() {
+        let mut surface = ChatSurface::new();
+        let (reader, commands, _updates) = Reader::test_pair();
+        surface.reader = Some(reader);
+        let mut chat = transcript();
+        chat.chat.current_model.provider = AiProviderId::parse("agent-claude").unwrap();
+        let chat_id = chat.chat.id;
+        surface.transcript = Some(chat);
+        let workspace = WorkspaceId::new();
+        surface.context_workspace = Some(workspace);
+        surface.composer_rect();
+
+        surface.open_plus_menu();
+        let file = surface
+            .plus_menu
+            .as_ref()
+            .unwrap()
+            .items()
+            .iter()
+            .position(|item| matches!(item, composer_plus::PlusItem::UploadFiles(_)))
+            .unwrap();
+        assert!(surface.choose_plus_item(file));
+        assert_eq!(
+            surface.take_computer_picker_request(),
+            Some(ComputerPickerKind::File)
+        );
+        assert!(
+            surface
+                .computer_path_chosen(ComputerPickerKind::File, PathBuf::from("C:/fixture.pdf"),)
+        );
+        assert!(surface.computer_file_choice.is_some());
+        assert!(surface.finish_computer_file_choice(ChoiceOutcome::Chosen(0)));
+        assert!(surface.computer_file_choice.is_none());
+        assert!(matches!(
+            commands.recv_timeout(Duration::from_millis(50)).unwrap(),
+            Command::AddGrants(chat, Some(granted), _, _) if chat == chat_id && granted == workspace
+        ));
+    }
+
+    #[test]
+    fn folder_reference_is_attachment_only_and_recall_mints_a_fresh_path_row() {
+        let mut surface = ChatSurface::new();
+        let (reader, commands, _updates) = Reader::test_pair();
+        surface.reader = Some(reader);
+        let mut chat = transcript();
+        chat.chat.current_model.provider = AiProviderId::parse("agent-claude").unwrap();
+        let chat_id = chat.chat.id;
+        surface.transcript = Some(chat);
+        surface.validated_ready = true;
+        let path = PathBuf::from("C:/Project/日本語 folder");
+        assert!(surface.computer_path_chosen(ComputerPickerKind::Folder, path.clone()));
+        let source_id = surface.strips.get(chat_id)[0].id;
+        assert_eq!(
+            surface.strips.get(chat_id)[0].reference_path.as_deref(),
+            Some(path.to_str().unwrap())
+        );
+        surface.on_stored(
+            chat_id,
+            source_id,
+            Ok(koru_ai_core::ChatAttachment {
+                id: source_id,
+                message_id: None,
+                ordinal: None,
+                kind: koru_ai_core::AttachmentKind::Folder,
+                source: koru_ai_core::AttachmentSource::Path,
+                file_name: "日本語 folder".into(),
+                media_type: "inode/directory".into(),
+                byte_count: 0,
+                dimensions: None,
+                origin: None,
+                reference_path: Some(path.to_string_lossy().into_owned()),
+                created_at: koru_ai_core::Timestamp::now(),
+            }),
+        );
+        assert!(surface.send_composer());
+        assert!(commands
+            .try_iter()
+            .any(|command| matches!(command, Command::Send(request) if request.attachment_ids == vec![source_id])));
+        let recalled = surface.sent_inputs.last().unwrap().attachments.clone();
+        assert_eq!(
+            recalled[0].reference_path.as_deref(),
+            Some(path.to_str().unwrap())
+        );
+        surface.replace_recalled_attachments(chat_id, &recalled);
+        let fresh = &surface.strips.get(chat_id)[0];
+        assert_ne!(fresh.id, source_id);
+        assert_eq!(fresh.source, koru_ai_core::AttachmentSource::Path);
+        assert_eq!(
+            fresh.reference_path.as_deref(),
+            Some(path.to_str().unwrap())
+        );
     }
 
     #[test]
@@ -9877,6 +11112,163 @@ mod tests {
             Command::Send(request) => assert!(request.explicit_refs.is_empty()),
             _ => panic!("composer send must issue a turn"),
         }
+    }
+
+    #[test]
+    fn agent_send_waits_for_its_matching_workspace_grant() {
+        let mut surface = ChatSurface::new();
+        let (reader, commands, _updates) = Reader::test_pair();
+        let mut transcript = transcript();
+        transcript.chat.current_model.provider = AiProviderId::parse("agent-codex").unwrap();
+        let chat = transcript.chat.id;
+        let workspace = WorkspaceId::new();
+        let mut policy = transcript.tool_policy.clone();
+        policy.workspace_ids = vec![workspace];
+        surface.reader = Some(reader);
+        surface.transcript = Some(transcript);
+        surface.context_workspace = Some(workspace);
+        surface.composer.set_text("Ship this");
+
+        assert!(surface.send_composer());
+        let Command::AddGrants(actual_chat, current, documents, op) =
+            commands.recv_timeout(Duration::from_millis(50)).unwrap()
+        else {
+            panic!("the grant must precede the turn");
+        };
+        assert_eq!(actual_chat, chat);
+        assert_eq!(current, Some(workspace));
+        assert!(documents.is_empty());
+        assert!(commands.try_recv().is_err());
+        assert_eq!(surface.composer.text(), "Ship this");
+
+        surface.apply_update(Update::GrantsAdded {
+            chat,
+            op: uuid::Uuid::new_v4(),
+            result: Ok(policy.clone()),
+        });
+        assert!(commands.try_recv().is_err(), "an unrelated ack cannot send");
+        assert_eq!(surface.composer.text(), "Ship this");
+
+        surface.apply_update(Update::GrantsAdded {
+            chat,
+            op,
+            result: Ok(policy),
+        });
+        assert!(matches!(
+            commands.recv_timeout(Duration::from_millis(50)).unwrap(),
+            Command::Send(_)
+        ));
+    }
+
+    #[test]
+    fn task_node_link_grants_its_containing_document_before_send() {
+        let mut surface = ChatSurface::new();
+        let (reader, commands, _updates) = Reader::test_pair();
+        let mut transcript = transcript();
+        transcript.chat.current_model.provider = AiProviderId::parse("agent-codex").unwrap();
+        let chat = transcript.chat.id;
+        let policy = transcript.tool_policy.clone();
+        let document = DocumentId::new();
+        let node = koru_core::NodeId::new();
+        surface.reader = Some(reader);
+        surface.transcript = Some(transcript);
+        surface.document_titles.insert(document, "Plan".into());
+        surface
+            .composer
+            .set_message(&format!("[[koru://doc/{document}#{node}]]"), |_| {
+                "Ship café".into()
+            });
+        assert!(surface.send_composer());
+        let Command::AddGrants(actual, _, documents, op) =
+            commands.recv_timeout(Duration::from_millis(50)).unwrap()
+        else {
+            panic!("document grant precedes task send");
+        };
+        assert_eq!(actual, chat);
+        assert_eq!(documents, vec![document]);
+        assert!(commands.try_recv().is_err());
+        surface.apply_update(Update::GrantsAdded {
+            chat,
+            op,
+            result: Ok(policy),
+        });
+        let Command::Send(request) = commands.recv_timeout(Duration::from_millis(50)).unwrap()
+        else {
+            panic!("task turn follows grant acknowledgement");
+        };
+        assert_eq!(
+            request.explicit_refs,
+            vec![ContextRef::Document {
+                document_id: document
+            }]
+        );
+        assert_eq!(surface.document_titles.get(&document).unwrap(), "Plan");
+    }
+
+    #[test]
+    fn refused_grant_keeps_the_draft_and_never_queues_send() {
+        let mut surface = ChatSurface::new();
+        let (reader, commands, _updates) = Reader::test_pair();
+        let mut transcript = transcript();
+        transcript.chat.current_model.provider = AiProviderId::parse("agent-codex").unwrap();
+        let chat = transcript.chat.id;
+        surface.reader = Some(reader);
+        surface.transcript = Some(transcript);
+        surface.context_workspace = Some(WorkspaceId::new());
+        surface.composer.set_text("Keep this draft");
+        assert!(surface.send_composer());
+        let Command::AddGrants(_, _, _, op) =
+            commands.recv_timeout(Duration::from_millis(50)).unwrap()
+        else {
+            panic!("grant expected");
+        };
+        surface.apply_update(Update::GrantsAdded {
+            chat,
+            op,
+            result: Err("A workspace is not in this chat's profile.".into()),
+        });
+        assert_eq!(surface.composer.text(), "Keep this draft");
+        assert!(commands.try_recv().is_err());
+        assert_eq!(
+            surface.status.as_deref(),
+            Some("A workspace is not in this chat's profile.")
+        );
+        assert!(!surface.waiting);
+    }
+
+    #[test]
+    fn a_grant_ack_does_not_send_attachments_added_while_it_was_pending() {
+        let mut surface = ChatSurface::new();
+        let (reader, commands, _updates) = Reader::test_pair();
+        let mut transcript = transcript();
+        transcript.chat.current_model.provider = AiProviderId::parse("agent-codex").unwrap();
+        let chat = transcript.chat.id;
+        let mut policy = transcript.tool_policy.clone();
+        let workspace = WorkspaceId::new();
+        policy.workspace_ids = vec![workspace];
+        surface.reader = Some(reader);
+        surface.transcript = Some(transcript);
+        surface.context_workspace = Some(workspace);
+        surface.composer.set_text("Keep the revised draft");
+        assert!(surface.send_composer());
+        let Command::AddGrants(_, _, _, op) = commands.try_recv().unwrap() else {
+            panic!("grant expected");
+        };
+        surface.strips.push(
+            chat,
+            attachments::Draft::from_path(
+                std::path::PathBuf::from("notes.pdf"),
+                koru_ai_core::AttachmentSource::FilePicker,
+            ),
+        );
+        surface.apply_update(Update::GrantsAdded {
+            chat,
+            op,
+            result: Ok(policy),
+        });
+        assert!(commands.try_recv().is_err());
+        assert_eq!(surface.composer.text(), "Keep the revised draft");
+        assert_eq!(surface.strip().len(), 1);
     }
 
     #[test]
@@ -10236,13 +11628,19 @@ mod tests {
     fn picking_an_agent_with_no_chat_waits_for_the_first_message() {
         let (surface, commands, _updates) = unmade_claude_chat();
         let claude = AiProviderId::parse("agent-claude").unwrap();
-        let Command::SelectProvider(selected) =
-            commands.recv_timeout(Duration::from_millis(50)).unwrap()
-        else {
-            panic!("the choice is remembered, and nothing is made");
+        let selected = loop {
+            match commands.recv_timeout(Duration::from_millis(50)).unwrap() {
+                Command::DiscoverCommands(..) => continue,
+                Command::SelectProvider(selected) => break selected,
+                _ => panic!("the choice is remembered, and nothing is made"),
+            }
         };
         assert_eq!(selected.provider, claude);
-        assert!(commands.try_recv().is_err(), "no chat is made by a pick");
+        assert!(
+            std::iter::from_fn(|| commands.try_recv().ok())
+                .all(|command| matches!(command, Command::DiscoverCommands(..))),
+            "no chat is made by a pick"
+        );
         assert!(surface.chat_unmade());
         assert_eq!(
             surface
@@ -10364,15 +11762,14 @@ mod tests {
         );
     }
 
-    /// **What is chosen on a chat not made yet stays with it**: the folder
-    /// is kept on the stand-in, and follows the create when the first
-    /// message makes the chat, ahead of the message.
+    /// An existing host folder choice stays with a not-yet-created chat even
+    /// though the composer no longer offers a folder chooser.
     #[test]
     fn a_new_chats_folder_is_kept_until_its_first_message() {
         let (mut surface, commands, _updates) = unmade_claude_chat();
         while commands.try_recv().is_ok() {}
         let chat = surface.transcript.as_ref().unwrap().chat.id;
-        assert!(surface.shows_composer_footer(), "the folder can be chosen");
+        assert!(!surface.shows_composer_footer(), "no folder row is shown");
         assert!(surface.working_folder_chosen(chat, "D:/work/koru".into()));
         assert!(commands.try_recv().is_err(), "kept here, not sent");
         assert_eq!(surface.folder_label(), "koru");
@@ -10643,9 +12040,22 @@ mod tests {
         surface.validated_ready = true;
         surface.composer_rect();
 
-        let button = surface.web_search_button().expect("gpt-5.4 can search");
-        assert!(surface.mouse_down(button.x + button.w / 2.0, button.y + button.h / 2.0));
+        assert!(surface.web_search_available());
+        assert!(surface.web_search_armed, "web search starts on");
+        surface.open_plus_menu();
+        let search = surface
+            .plus_menu
+            .as_ref()
+            .unwrap()
+            .items()
+            .iter()
+            .position(|item| matches!(item, composer_plus::PlusItem::SearchWeb(_, true)))
+            .expect("the available OpenAI chat offers web search in +");
+        assert!(surface.choose_plus_item(search));
+        assert!(!surface.web_search_armed);
+        assert!(surface.choose_plus_item(search));
         assert!(surface.web_search_armed);
+        assert!(surface.key(&Key::Named(NamedKey::Escape), None, ModifiersState::empty(),));
         assert!(surface.key(
             &Key::Character("q".into()),
             Some("question"),
@@ -10704,7 +12114,17 @@ mod tests {
             requested_model: "qwen3:4b".into(),
             default_reasoning: ReasoningChoice::Default,
         };
-        assert!(surface.web_search_button().is_none());
+        assert!(!surface.web_search_available());
+        surface.open_plus_menu();
+        assert!(
+            !surface
+                .plus_menu
+                .as_ref()
+                .unwrap()
+                .items()
+                .iter()
+                .any(|item| matches!(item, composer_plus::PlusItem::SearchWeb(..)))
+        );
     }
 
     /// **A reply's picture from a file is asked of the disk loader** (the
@@ -11010,6 +12430,39 @@ mod tests {
         let block = render_chat_block(&mut engine, MessageBlockId::new(), source, 300.0);
         assert!(block.table.is_none());
         assert_eq!(block.text, source);
+    }
+
+    #[test]
+    fn a_codex_file_citation_renders_as_a_link_without_changing_its_source() {
+        let source =
+            "See :codex-file-citation{path=\"C:/Users/Ada/Letter.txt\" purpose=\"source\"}.";
+        let mut engine = TextEngine::new();
+        let block = render_chat_block(&mut engine, MessageBlockId::new(), source, 500.0);
+        assert_eq!(block.markdown, source);
+        assert_eq!(block.text, "See Source: Letter.txt.");
+        assert_eq!(block.links.len(), 1);
+        assert_eq!(
+            file_citations::path_from_link(&block.links[0].url),
+            Some(std::path::PathBuf::from("C:/Users/Ada/Letter.txt"))
+        );
+    }
+
+    #[test]
+    fn clicking_a_local_citation_asks_the_host_for_an_in_window_preview() {
+        let mut surface = ChatSurface::new();
+        surface.transcript = Some(transcript());
+        let shown = file_citations::project(
+            ":codex-file-citation{path=\"C:/Users/Ada/Letter.txt\" purpose=\"source\"}",
+            false,
+        );
+        let url = shown.split("](").nth(1).unwrap().split(')').next().unwrap();
+        assert!(surface.follow_link(url));
+        let request = surface.take_attachment_open_request().unwrap();
+        assert_eq!(
+            request.reference_path,
+            Some(std::path::PathBuf::from("C:/Users/Ada/Letter.txt"))
+        );
+        assert_eq!(request.preview, AttachmentPreview::Text);
     }
 
     #[test]
@@ -11570,13 +13023,14 @@ mod tests {
     }
 
     #[test]
-    fn embedded_context_workspace_is_first_and_initially_selected() {
+    fn embedded_context_workspace_is_prioritized_and_granted_before_send() {
         let mut surface = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
         let current = WorkspaceId::new();
         let other = WorkspaceId::new();
         let mut transcript = transcript();
         let chat = transcript.chat.id;
+        transcript.chat.current_model.provider = AiProviderId::parse("agent-codex").unwrap();
         transcript.tool_policy.workspace_ids = vec![other];
         surface.reader = Some(reader);
         surface.transcript = Some(transcript);
@@ -11594,46 +13048,57 @@ mod tests {
                 .unwrap()
                 .tool_policy
                 .workspace_ids,
-            vec![current, other]
+            vec![other]
         );
+        assert!(
+            commands.try_recv().is_err(),
+            "selection cannot replace another window's grants"
+        );
+        surface.composer.set_text("Send from here");
+        assert!(surface.send_composer());
         match commands.recv_timeout(Duration::from_millis(50)).unwrap() {
-            Command::UpdateToolPolicy(actual, request) => {
+            Command::AddGrants(actual, selected, documents, _) => {
                 assert_eq!(actual, chat);
-                assert_eq!(request.mode, ToolMode::Manual);
-                assert_eq!(request.workspace_ids, vec![current, other]);
+                assert_eq!(selected, Some(current));
+                assert!(documents.is_empty());
             }
-            _ => panic!("context selection must persist as an ordinary policy update"),
+            _ => panic!("send must request an atomic union"),
         }
         assert!(!surface.set_context_workspace(Some(current)));
         assert!(commands.try_recv().is_err());
     }
 
     #[test]
-    fn composer_footer_separates_workspace_approval_and_model_controls() {
+    fn composer_footer_keeps_search_in_plus_and_separates_approval_and_model() {
         let mut surface = ChatSurface::new();
         let mut transcript = transcript();
         transcript.chat.current_model.requested_model = "gpt-5.5".into();
         surface.transcript = Some(transcript);
 
         let toolbar = surface.composer_toolbar_rect();
-        let workspace = surface.tool_access_button();
+        let plus = surface.plus_button();
         surface.lang = koru_i18n::Lang::En;
         let approval = surface
             .tool_mode_button()
             .expect("a Koru-run chat has the mode chip");
         let model = surface.chat_model_button();
-        // The private mark is hidden for now
-        // (`koru_features::PRIVATE_CHAT_BUTTON_SHOWN`): the globe takes its
-        // place at the toolbar's left edge.
+        // The private mark is hidden for now; search is in the plus menu.
         assert_eq!(surface.privacy_button(), None);
-        let search = surface
-            .web_search_button()
-            .expect("gpt-5.5 supports search");
+        assert!(surface.web_search_button().is_none());
+        surface.open_plus_menu();
+        assert!(
+            surface
+                .plus_menu
+                .as_ref()
+                .unwrap()
+                .items()
+                .iter()
+                .any(|item| matches!(item, composer_plus::PlusItem::SearchWeb(_, true)))
+        );
 
-        assert_eq!(search.x, toolbar.x);
+        assert_eq!(plus.x, toolbar.x);
         assert!((model.x + model.w - toolbar.x - toolbar.w).abs() < 0.01);
-        assert!(search.x + search.w < workspace.x);
-        assert!(workspace.x + workspace.w < approval.x);
+        assert!(plus.x + plus.w < approval.x);
         assert!(approval.x + approval.w < model.x);
         assert_eq!(surface.tool_access_label(), "0 spaces");
         assert_eq!(surface.tool_mode_label(), "Manual");
@@ -11901,7 +13366,7 @@ mod tests {
     }
 
     #[test]
-    fn the_sent_message_reads_the_chip_as_a_titled_link() {
+    fn the_sent_message_keeps_a_document_icon_and_titled_link() {
         let mut surface = ChatSurface::new();
         let (reader, commands, updates) = Reader::test_pair();
         surface.reader = Some(reader);
@@ -11921,12 +13386,26 @@ mod tests {
             .iter()
             .find(|message| message.role == ChatRole::User)
             .expect("the optimistic card");
-        assert_eq!(pending.display, "Summarise Budget 2026");
+        assert_eq!(
+            pending.display,
+            format!("Summarise {}Budget 2026", doc_links::CHIP_LEAD)
+        );
         assert_eq!(
             &pending.display[pending.links[0].range.clone()],
-            "Budget 2026"
+            format!("{}Budget 2026", doc_links::CHIP_LEAD)
         );
         assert_eq!(pending.links[0].url, format!("koru://doc/{document}"));
+        let icon_start = pending.links[0].range.start;
+        let icon_end = icon_start + doc_links::CHIP_LEAD.len();
+        let selection = Selection::new(
+            Cursor::from_byte_index(&pending.layout, icon_start, Affinity::Downstream),
+            Cursor::from_byte_index(&pending.layout, icon_end, Affinity::Upstream),
+        );
+        let mut icon_widths = Vec::new();
+        selection.geometry_with(&pending.layout, |box_, _| {
+            icon_widths.push(box_.x1 - box_.x0);
+        });
+        assert!(icon_widths.iter().any(|width| *width >= 12.0));
 
         // The durable card in another window, which never saw the chip: the
         // fallback word, then the title once the reader finds it.
@@ -11940,7 +13419,10 @@ mod tests {
         other.transcript = Some(transcript);
         other.rebuild_messages(400.0);
         let durable = &other.message_layouts[0];
-        assert_eq!(durable.display, "Summarise Document");
+        assert_eq!(
+            durable.display,
+            format!("Summarise {}Document", doc_links::CHIP_LEAD)
+        );
         match commands.recv_timeout(Duration::from_millis(50)).unwrap() {
             Command::DocumentTitles(asked) => assert_eq!(asked, vec![document]),
             _ => panic!("the title is asked of the reader thread"),
@@ -11952,7 +13434,10 @@ mod tests {
             )])) || other.messages_dirty
         );
         other.rebuild_messages(400.0);
-        assert_eq!(other.message_layouts[0].display, "Summarise Budget 2026");
+        assert_eq!(
+            other.message_layouts[0].display,
+            format!("Summarise {}Budget 2026", doc_links::CHIP_LEAD)
+        );
         let _ = updates;
     }
 
@@ -12011,6 +13496,23 @@ mod tests {
         );
         assert!(surface.follow_link("https://example.com"));
         assert_eq!(surface.take_open_document_request(), None);
+    }
+
+    #[test]
+    fn alt_click_on_a_sent_document_asks_for_the_place_chooser() {
+        let mut surface = ChatSurface::new();
+        let document = DocumentId::new();
+        surface.set_mods(ModifiersState::ALT);
+        surface.mouse_down(0.0, 0.0);
+        assert!(surface.follow_link(&format!("koru://doc/{document}")));
+        assert_eq!(surface.take_open_document_request(), None);
+        assert_eq!(
+            surface.take_place_document_request(),
+            Some(koru_link::KoruLink::Document {
+                document: document.as_uuid(),
+                node: None,
+            })
+        );
     }
 
     #[test]
@@ -12399,149 +13901,75 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_agent_chat_offers_its_folder_and_the_host_answers_it() {
+    fn an_agent_chat_keeps_its_folder_without_a_composer_chooser() {
         let mut surface = ChatSurface::new();
-        let (reader, commands, _updates) = Reader::test_pair();
-        surface.reader = Some(reader);
         surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 600.0));
         let mut transcript = transcript();
         transcript.chat.current_model.provider = AiProviderId::parse("agent-codex").unwrap();
         transcript.chat.current_model.requested_model = AGENT_DEFAULT_MODEL.into();
-        let chat = transcript.chat.id;
         surface.transcript = Some(transcript);
         surface.validated_ready = true;
         surface.composer_rect();
-
-        let button = surface
-            .folder_button()
-            .expect("an agent chat with no message offers its folder");
-        assert_eq!(surface.folder_label(), "Home folder");
-        assert!(surface.mouse_down(button.x + 2.0, button.y + 2.0));
-        let request = surface.take_working_folder_request().unwrap();
-        assert_eq!(request.chat, chat);
-        assert!(request.start.is_none());
+        assert!(surface.folder_button().is_none());
         assert!(surface.take_working_folder_request().is_none());
-
-        assert!(surface.working_folder_chosen(chat, std::path::PathBuf::from("D:/work/koru")));
-        match commands.recv_timeout(Duration::from_millis(50)).unwrap() {
-            Command::UpdateFolder(id, request) => {
-                assert_eq!(id, chat);
-                assert_eq!(request.folder.as_deref(), Some("D:/work/koru"));
-            }
-            _ => panic!("expected the folder update command"),
-        }
-
-        let mut chosen = surface.transcript.clone().unwrap().chat;
-        chosen.agent_working_folder = Some("D:/work/koru".into());
-        surface.apply_update(Update::FolderUpdated(chosen));
-        assert_eq!(surface.folder_label(), "koru");
-
-        // With a message on the chat the chooser is gone: the agent started there.
-        let transcript = surface.transcript.as_mut().unwrap();
-        transcript.messages.push(koru_ai_core::Message {
-            id: MessageId::new(),
-            chat_id: chat,
-            ordinal: 0,
-            role: ChatRole::User,
-            state: MessageState::Complete,
-            markdown: "hello".into(),
-            origin_message_id: None,
-            provider: None,
-            requested_model: None,
-            resolved_model: None,
-            error_class: None,
-            created_at: koru_ai_core::Timestamp::from_millis(2),
-            completed_at: None,
-        });
-        // With a message on the chat the choice is closed — the agent started
-        // there — but the chosen folder stays named, and a press asks nothing.
-        assert!(!surface.folder_editable());
-        // The composer is at the bottom now that the chat has begun.
-        surface.composer_rect();
-        let button = surface
-            .folder_button()
-            .expect("a chosen folder stays named after the first message");
-        assert_eq!(surface.folder_label(), "koru");
-        surface.mouse_down(button.x + 2.0, button.y + 2.0);
-        assert!(surface.take_working_folder_request().is_none());
-        // Left in the home folder, a begun chat names none.
+        assert!(
+            surface
+                .transcript
+                .as_ref()
+                .unwrap()
+                .chat
+                .agent_working_folder
+                .is_none()
+        );
         surface
             .transcript
             .as_mut()
             .unwrap()
             .chat
-            .agent_working_folder = None;
+            .agent_working_folder = Some("D:/work/koru".into());
+        surface.draw_chat(&mut Scene::new(), Affine::IDENTITY);
+        assert_eq!(
+            surface
+                .transcript
+                .as_ref()
+                .unwrap()
+                .chat
+                .agent_working_folder
+                .as_deref(),
+            Some("D:/work/koru"),
+        );
         assert!(surface.folder_button().is_none());
     }
 
-    /// **An agent chat's folder sits under the composer, not in it.** The
-    /// quiet row is left-aligned with the box and below it, inside the
-    /// window in both of the composer's places; a press there asks for a
-    /// folder and a press in the box does not; the toolbar closes up where
-    /// the folder used to be. A chat with no folder to show gives the row
-    /// no room.
     #[test]
-    fn the_folder_sits_under_the_composer_left_aligned() {
+    fn the_composer_has_no_folder_footer_in_either_position() {
         let mut surface = ChatSurface::new();
         surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 700.0));
         let mut transcript = transcript();
         transcript.chat.current_model.provider = AiProviderId::parse("agent-codex").unwrap();
         transcript.chat.current_model.requested_model = AGENT_DEFAULT_MODEL.into();
-        let chat = transcript.chat.id;
         surface.transcript = Some(transcript);
         surface.validated_ready = true;
-
-        // Centred: the greeting, the box and the row are one block.
-        let composer = surface.composer_rect();
-        let folder = surface
-            .folder_button()
-            .expect("an empty agent chat offers its folder");
-        let row = surface.composer_footer_rect().expect("the row is shown");
-        assert_eq!(folder.x, composer.x);
-        assert_eq!(row.x, composer.x);
-        assert_eq!(folder.y, composer.y + composer.h + COMPOSER_FOOTER_GAP);
-        assert!(folder.w < composer.w);
-        let above = role::title().metrics.line_height + GREETING_GAP + COMPOSER_GAP;
-        let middle = (composer.y - above + folder.y + folder.h) * 0.5;
-        assert!((middle - surface.viewport.h * 0.5).abs() < 1.0);
-        let (fx, fy) = (folder.x + folder.w * 0.5, folder.y + folder.h * 0.5);
-        assert!(!composer.contains(fx, fy), "the folder is outside the box");
-
-        // The toolbar no longer holds it. An agent chat has no mode chip:
-        // its policy is not Koru's to enforce.
-        assert!(surface.tool_mode_button().is_none());
-        let access = surface.tool_access_button();
-        let model = surface.chat_model_button();
-        assert!(access.x + access.w < model.x);
-        assert!(!access.contains(fx, fy) && !model.contains(fx, fy));
-
-        // Hit where it is drawn, and only there.
-        assert_eq!(surface.control_hover_at(fx, fy), Some((5, 12)));
-        let text = surface.composer_text_rect();
-        surface.mouse_down(text.x + 40.0, text.y + text.h * 0.5);
-        assert!(surface.take_working_folder_request().is_none());
-        assert!(surface.mouse_down(fx, fy));
-        assert_eq!(surface.take_working_folder_request().unwrap().chat, chat);
-
-        // At the bottom, the row stands on the window's padding.
-        surface.pending_user = Some("hello".to_owned());
-        let composer = surface.composer_rect();
-        let folder = surface.folder_button().expect("still choosable");
-        assert_eq!(folder.x, composer.x);
-        assert_eq!(folder.y + folder.h, surface.viewport.h - PAD);
-        let conversation = surface.conversation_rect();
-        assert!(conversation.y + conversation.h < composer.y);
-
-        // Begun in the home folder: no row, and no room kept for it.
-        surface.pending_user = None;
-        let message = user_message(surface.transcript.as_ref().unwrap(), "hello");
-        surface.transcript.as_mut().unwrap().messages.push(message);
-        let composer = surface.composer_rect();
+        let empty = surface.composer_rect();
         assert!(surface.composer_footer_rect().is_none());
         assert!(surface.folder_button().is_none());
-        assert_eq!(composer.y + composer.h, surface.viewport.h - PAD);
+        surface.pending_user = Some("hello".into());
+        let active = surface.composer_rect();
+        assert!(active.y > empty.y);
+        assert_eq!(
+            active.y + active.h,
+            surface.viewport.h - COMPOSER_BOTTOM_MARGIN
+        );
+        let shadow = scene::panel_bounds(
+            active.x,
+            active.y,
+            active.w,
+            active.h,
+            scene::Elevation::Raised,
+        );
+        assert!(shadow.y + shadow.h <= surface.viewport.h);
+        assert!(surface.composer_footer_rect().is_none());
     }
-
     #[test]
     fn a_running_agent_check_is_followed_up_while_the_picker_shows_it() {
         let mut surface = ChatSurface::new();
@@ -13184,6 +14612,92 @@ mod tests {
     }
 
     #[test]
+    fn the_context_ring_stays_at_the_model_chips_leading_edge_while_painting() {
+        let mut surface = ChatSurface::new();
+        let (reader, _commands, _updates) = Reader::test_pair();
+        surface.reader = Some(reader);
+        surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 600.0));
+        let mut chat = transcript();
+        chat.chat.current_model.provider = AiProviderId::parse("agent-codex").unwrap();
+        surface.transcript = Some(chat);
+        surface.validated_ready = true;
+        surface.offer_dictation(true);
+        surface.offer_microphone_choice(true);
+
+        let root = Affine::IDENTITY;
+        let capture =
+            koru_draw::inspect::Frame::begin(1, root, scene::rect(0.0, 0.0, 900.0, 600.0));
+        surface.draw(&mut Scene::new(), root);
+        let painted = capture
+            .finish()
+            .records
+            .into_iter()
+            .find(|record| record.name == "ComposerContextIndicator")
+            .expect("painted context ring")
+            .rect();
+        let model = surface.chat_model_button();
+        assert_eq!(painted.x0 as f32, model.x);
+        assert_eq!(painted.y0 as f32, model.y);
+        assert_eq!(painted.x1 as f32, model.x + BUTTON_H);
+    }
+
+    #[test]
+    fn the_context_ring_opens_details_without_opening_the_model_picker() {
+        let mut surface = ChatSurface::new();
+        surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 600.0));
+        surface.transcript = Some(transcript());
+        surface.composer_rect();
+
+        let indicator = surface.context_indicator_button().expect("chat ring");
+        assert_eq!(surface.context_progress(), None);
+        assert!(surface.mouse_down(indicator.x + 2.0, indicator.y + 2.0));
+        assert!(surface.context_window_panel().is_some());
+        assert!(!surface.chat_model_open);
+
+        assert!(surface.mouse_down(indicator.x + 2.0, indicator.y + 2.0));
+        assert!(surface.context_window_panel().is_none());
+    }
+
+    #[test]
+    fn context_logo_and_model_selector_have_separate_hover_targets() {
+        let mut surface = ChatSurface::new();
+        surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 600.0));
+        surface.transcript = Some(transcript());
+        surface.composer_rect();
+
+        let logo = surface.context_indicator_button().unwrap();
+        let model = surface.chat_model_selector_button();
+        assert!(logo.x + logo.w < model.x);
+        assert_eq!(
+            surface.control_hover_at(logo.x + 2.0, logo.y + 2.0),
+            Some((5, 12))
+        );
+        assert_eq!(
+            surface.control_hover_at(model.x + 2.0, model.y + 2.0),
+            Some((5, 5))
+        );
+        assert!(!model.contains(logo.x + 2.0, logo.y + 2.0));
+    }
+
+    #[test]
+    fn the_context_popover_starts_at_the_icon_and_stays_in_view() {
+        let mut surface = ChatSurface::new();
+        surface.set_viewport(Rect::new(0.0, 0.0, 2000.0, 700.0));
+        surface.transcript = Some(transcript());
+        surface.composer_rect();
+        surface.context_window_open = true;
+
+        let indicator = surface.context_indicator_button().unwrap();
+        let panel = surface.context_window_panel().unwrap().rect;
+        let gap = theme::overlay::popover().anchor_gap;
+        assert!((panel.x - indicator.x).abs() < 0.5);
+        assert!(
+            (panel.y - indicator.y - indicator.h - gap).abs() < 0.5
+                || (indicator.y - panel.y - panel.h - gap).abs() < 0.5
+        );
+    }
+
+    #[test]
     fn the_chip_reads_the_effort_and_a_stop_sets_the_chats_default() {
         let mut surface = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
@@ -13208,7 +14722,7 @@ mod tests {
         assert_eq!(surface.chip_label(), "gpt-5.5 · Medium");
 
         let chip = surface.chat_model_button();
-        assert!(surface.mouse_down(chip.x + 2.0, chip.y + 2.0));
+        assert!(surface.mouse_down(chip.x + BUTTON_H + 4.0, chip.y + 2.0));
         let control = surface.effort_control().cloned().unwrap();
         let high = surface
             .picker_segment_rect(ReasoningChoice::Level(ReasoningLevel::High))
@@ -13264,7 +14778,7 @@ mod tests {
         assert!(surface.web_search_button().is_none());
 
         let chip = surface.chat_model_button();
-        assert!(surface.mouse_down(chip.x + 2.0, chip.y + 2.0));
+        assert!(surface.mouse_down(chip.x + BUTTON_H + 4.0, chip.y + 2.0));
         assert!(
             surface.chat_model_open,
             "the chip opens even with no model list"
@@ -13468,8 +14982,8 @@ mod tests {
 
     /// **The private mark is hidden for now** (the user, 2026-11-03:
     /// `koru_features::PRIVATE_CHAT_BUTTON_SHOWN`): the composer's toolbar
-    /// has none, a press where it sat makes nothing private, and the globe
-    /// starts at the toolbar's left. A chat that is already private still
+    /// has none, a press on the plus menu makes nothing private, and web
+    /// search lives in that menu. A chat that is already private still
     /// takes the service's answer and stays private.
     #[test]
     fn the_private_mark_is_hidden_and_a_private_chat_stays_private() {
@@ -13485,13 +14999,20 @@ mod tests {
         surface.draw_chat(&mut Scene::new(), Affine::IDENTITY);
         assert_eq!(surface.privacy_button(), None);
         let toolbar = surface.composer_toolbar_rect();
-        let first = surface
-            .web_search_button()
-            .expect("gpt-5.5 supports search");
-        assert_eq!(first.x, toolbar.x, "the globe keeps the left edge");
-        // Where the mask sat is the globe now: a press there arms search
-        // and makes nothing private.
-        surface.mouse_down(toolbar.x + 2.0, toolbar.y + toolbar.h * 0.5);
+        let plus = surface.plus_button();
+        assert_eq!(plus.x, toolbar.x, "the context button keeps the left edge");
+        assert!(surface.web_search_button().is_none());
+        surface.open_plus_menu();
+        assert!(
+            surface
+                .plus_menu
+                .as_ref()
+                .unwrap()
+                .items()
+                .iter()
+                .any(|item| matches!(item, composer_plus::PlusItem::SearchWeb(_, true)))
+        );
+        assert!(surface.web_search_armed);
         assert!(
             !matches!(
                 commands.recv_timeout(Duration::from_millis(50)),
@@ -13708,8 +15229,8 @@ mod tests {
 
     /// **Up walks back through what was asked, Down walks forward**, and
     /// past the newest gives back the message being typed. The source is the
-    /// chat's own messages and what this surface sent since; the same
-    /// message twice in a row is one step.
+    /// chat's own messages and what this surface sent since; equal text in
+    /// distinct messages remains two steps.
     #[test]
     fn up_and_down_walk_the_messages_asked_and_give_the_draft_back() {
         let mut surface = ChatSurface::new();
@@ -13740,14 +15261,16 @@ mod tests {
         assert_eq!(walk(&mut surface, NamedKey::ArrowUp), "second");
         assert_eq!(
             walk(&mut surface, NamedKey::ArrowUp),
-            "first",
-            "one step for a repeat"
+            "second",
+            "a repeated message keeps its own step"
         );
+        assert_eq!(walk(&mut surface, NamedKey::ArrowUp), "first");
         assert_eq!(
             walk(&mut surface, NamedKey::ArrowUp),
             "first",
             "the oldest holds"
         );
+        assert_eq!(walk(&mut surface, NamedKey::ArrowDown), "second");
         assert_eq!(walk(&mut surface, NamedKey::ArrowDown), "second");
         assert_eq!(walk(&mut surface, NamedKey::ArrowDown), "third");
         assert_eq!(
@@ -13959,6 +15482,29 @@ mod tests {
         assert!(surface.stop_armed_at.is_none(), "no stop was armed");
     }
 
+    #[test]
+    fn sending_a_recalled_message_preserves_the_original_draft_on_success_or_refusal() {
+        let (mut surface, commands) = walked_chat(&["older"]);
+        surface.composer.set_text("unfinished draft");
+        assert!(surface.recall_input(true));
+        assert_eq!(surface.composer.text(), "older");
+        assert!(surface.send_composer());
+        assert!(matches!(
+            commands.recv_timeout(Duration::from_millis(50)).unwrap(),
+            Command::Send(_)
+        ));
+        assert_eq!(surface.composer.text(), "unfinished draft");
+        surface.apply_update(Update::SendFailed(koru_ai_wire::Failure {
+            code: "ai_unavailable".into(),
+            message: "Try again.".into(),
+            retryable: true,
+            details: Default::default(),
+        }));
+        assert_eq!(surface.composer.text(), "older");
+        assert!(surface.recall_input(false));
+        assert_eq!(surface.composer.text(), "unfinished draft");
+    }
+
     /// **A recalled message keeps its chips**, as the draft does: Up gives
     /// back the document it named as a chip, captioned with the title the
     /// conversation reads it under, so sending it again carries the document.
@@ -13990,6 +15536,157 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    #[test]
+    fn attachment_only_history_restages_fresh_ids_and_returns_the_draft() {
+        let mut surface = ChatSurface::new();
+        let (reader, commands, _updates) = Reader::test_pair();
+        surface.reader = Some(reader);
+        let mut chat = transcript();
+        let message = user_message(&chat, "");
+        let source = koru_ai_core::ChatAttachment {
+            id: koru_ai_core::ChatAttachmentId::new(),
+            message_id: Some(message.id),
+            ordinal: Some(0),
+            kind: koru_ai_core::AttachmentKind::File,
+            source: koru_ai_core::AttachmentSource::Clipboard,
+            file_name: "notes.pdf".into(),
+            media_type: "application/pdf".into(),
+            byte_count: 12,
+            dimensions: None,
+            origin: None,
+            reference_path: None,
+            created_at: koru_ai_core::Timestamp::from_millis(2),
+        };
+        chat.messages.push(message);
+        chat.attachments.push(source.clone());
+        let chat_id = chat.chat.id;
+        surface.transcript = Some(chat);
+        surface.validated_ready = true;
+        surface.composer.set_text("my draft");
+
+        assert!(surface.recall_input(true));
+        let Command::Restage(restage_chat, restage_source, first) =
+            commands.recv_timeout(Duration::from_millis(50)).unwrap()
+        else {
+            panic!("recall must restage bytes")
+        };
+        assert_eq!((restage_chat, restage_source), (chat_id, source.id));
+        assert_ne!(first, source.id);
+        assert_eq!(surface.strip()[0].id, first);
+        assert_eq!(surface.composer.text(), "");
+        surface.apply_update(Update::Restaged {
+            new_id: first,
+            result: Ok(koru_ai_core::ChatAttachment {
+                id: first,
+                ..source.clone()
+            }),
+        });
+        assert_eq!(surface.strip()[0].state, attachments::DraftState::Stored);
+
+        assert!(surface.recall_input(false));
+        assert_eq!(surface.composer.text(), "my draft");
+        assert!(surface.strip().is_empty());
+        assert!(surface.recall_input(true));
+        let Command::Restage(_, _, second) =
+            commands.recv_timeout(Duration::from_millis(50)).unwrap()
+        else {
+            panic!("a second recall needs another staged id")
+        };
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn document_and_attachment_share_a_bounded_composer_band() {
+        let mut surface = ChatSurface::new();
+        let mut chat = transcript();
+        chat.chat.current_model.provider = AiProviderId::parse("agent-codex").unwrap();
+        let chat_id = chat.chat.id;
+        surface.transcript = Some(chat);
+        surface.validated_ready = true;
+        surface.set_viewport(Rect::new(0.0, 0.0, 280.0, 650.0));
+        let document = DocumentId::new();
+        surface.set_context_document(Some((document, "Planning".into())));
+        for i in 0..8 {
+            surface.strips.push(
+                chat_id,
+                attachments::Draft::from_path(
+                    std::path::PathBuf::from(format!("attachment-{i}.pdf")),
+                    koru_ai_core::AttachmentSource::FilePicker,
+                ),
+            );
+        }
+        let composer = surface.composer_rect();
+        assert_eq!(surface.chip_band.rects.len(), 9);
+        assert!(surface.chip_band.max_scroll() > 0.0);
+        let chip_h = surface.chip_band.rects[0].h;
+        assert_eq!(
+            surface.chip_band.shown_height,
+            chip_h * 3.0 + composer_band::GAP * 2.0,
+        );
+        let first = surface
+            .chip_band
+            .chip_rect(
+                0,
+                composer.x + COMPOSER_PAD_X,
+                composer.y + COMPOSER_PAD_TOP,
+            )
+            .unwrap();
+        let doc_chip = ContextChip {
+            label: "Planning",
+            secondary: "",
+            icon: icons::DOCUMENT,
+            state: ContextState::Ready,
+        };
+        let close = doc_chip.remove_rect(first);
+        assert_eq!(
+            surface.strip_mouse_down(close.x + close.w * 0.5, close.y + close.h * 0.5),
+            Some(true)
+        );
+        assert!(surface.context_document.is_none());
+        assert_eq!(surface.strip().len(), 8);
+    }
+
+    #[test]
+    fn leaving_a_recall_drops_a_late_restage_completion() {
+        let mut surface = ChatSurface::new();
+        let (reader, commands, _updates) = Reader::test_pair();
+        surface.reader = Some(reader);
+        let mut chat = transcript();
+        let message = user_message(&chat, "same");
+        let source = koru_ai_core::ChatAttachment {
+            id: koru_ai_core::ChatAttachmentId::new(),
+            message_id: Some(message.id),
+            ordinal: Some(0),
+            kind: koru_ai_core::AttachmentKind::File,
+            source: koru_ai_core::AttachmentSource::Clipboard,
+            file_name: "notes.pdf".into(),
+            media_type: "application/pdf".into(),
+            byte_count: 12,
+            dimensions: None,
+            origin: None,
+            reference_path: None,
+            created_at: koru_ai_core::Timestamp::from_millis(2),
+        };
+        chat.messages.push(message);
+        chat.attachments.push(source.clone());
+        surface.transcript = Some(chat);
+        surface.validated_ready = true;
+        assert!(surface.recall_input(true));
+        let Command::Restage(_, _, new_id) =
+            commands.recv_timeout(Duration::from_millis(50)).unwrap()
+        else {
+            panic!("restage")
+        };
+        assert!(surface.recall_input(false));
+        assert!(surface.strip().is_empty());
+        surface.apply_update(Update::Restaged {
+            new_id,
+            result: Ok(source),
+        });
+        assert!(surface.strip().is_empty());
+        assert!(!surface.recall_retired.contains_key(&new_id));
     }
 
     /// **An empty chat greets the person**, with one line picked when the
@@ -14033,6 +15730,60 @@ mod tests {
         );
     }
 
+    #[test]
+    fn the_empty_chat_greeting_draws_the_title_sized_koru_mark() {
+        let mut surface = ChatSurface::new();
+        surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 700.0));
+        surface.composer_rect();
+        let capture = koru_draw::inspect::Frame::begin(
+            1,
+            Affine::IDENTITY,
+            scene::rect(0.0, 0.0, 900.0, 700.0),
+        );
+        surface.draw_greeting(&mut Scene::new(), Affine::IDENTITY);
+        let snapshot = capture.finish();
+        let logo = snapshot
+            .records
+            .iter()
+            .find(|record| record.name == "KoruLogo")
+            .unwrap();
+        let rect = logo.rect();
+        assert_eq!(rect.width() as f32, role::title().metrics.size);
+        assert!(rect.y1 <= surface.composer_hit_rect.y as f64);
+    }
+
+    #[test]
+    fn the_plus_menu_opens_below_an_empty_chat_and_above_a_begun_one() {
+        let mut surface = ChatSurface::new();
+        surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 900.0));
+        surface.transcript = Some(transcript());
+        surface.composer_rect();
+        surface.open_plus_menu();
+        let empty_panel = surface
+            .plus_menu
+            .as_ref()
+            .unwrap()
+            .panel(surface.menu_viewport());
+        let empty_button = surface.plus_button();
+        assert!(empty_panel.y >= empty_button.y + empty_button.h);
+
+        surface.pending_user = Some("Plan the launch".into());
+        surface.composer_rect();
+        surface.open_plus_menu();
+        let begun_panel = surface
+            .plus_menu
+            .as_ref()
+            .unwrap()
+            .panel(surface.menu_viewport());
+        let begun_button = surface.plus_button();
+        assert!(begun_panel.y + begun_panel.h <= begun_button.y);
+        assert!(
+            (begun_button.y - begun_panel.y - begun_panel.h - theme::overlay::popover().anchor_gap)
+                .abs()
+                < 0.5
+        );
+    }
+
     /// **The composer starts in the middle, then moves to the bottom.** While
     /// the chat is empty the greeting and the composer are one centred block;
     /// once a message is on its way the composer sits at the bottom. The send
@@ -14046,7 +15797,7 @@ mod tests {
         surface.validated_ready = true;
 
         let centred = surface.composer_rect();
-        let bottom = surface.viewport.h - PAD - centred.h;
+        let bottom = surface.viewport.h - COMPOSER_BOTTOM_MARGIN - centred.h;
         let above = role::title().metrics.line_height + GREETING_GAP + COMPOSER_GAP;
         let middle = (centred.y - above + centred.y + centred.h) * 0.5;
         assert!((middle - surface.viewport.h * 0.5).abs() < 1.0);
@@ -14086,7 +15837,7 @@ mod tests {
     }
 
     /// **The composer is one component in the inspector**, its box, text,
-    /// toolbar and folder row parts under it, and every primitive it paints
+    /// toolbar parts under it, and every primitive it paints
     /// — the box's fill and stroke among them — inside one of those.
     #[test]
     fn the_composer_is_one_component_with_its_parts_inside() {
@@ -14119,26 +15870,22 @@ mod tests {
             }
             false
         };
-        for part in [
-            "ComposerBox",
-            "ComposerText",
-            "ComposerToolbar",
-            "ComposerFolderRow",
-        ] {
+        let the_box = records
+            .iter()
+            .position(|r| r.name == "ComposerBox")
+            .expect("the box is drawn");
+        assert_eq!(records[the_box].parent, Some(composer));
+        for part in ["ComposerText", "ComposerToolbar"] {
             let i = records
                 .iter()
                 .position(|r| r.name == part)
                 .unwrap_or_else(|| panic!("{part} is drawn"));
             assert_eq!(
                 records[i].parent,
-                Some(composer),
-                "{part} is the composer's part"
+                Some(the_box),
+                "{part} is inside the composer's box"
             );
         }
-        let the_box = records
-            .iter()
-            .position(|r| r.name == "ComposerBox")
-            .unwrap();
         let primitives: Vec<usize> = records
             .iter()
             .enumerate()
@@ -14150,6 +15897,49 @@ mod tests {
             "the box's fill and stroke are inside it"
         );
         assert!(primitives.into_iter().all(under));
+    }
+
+    #[test]
+    fn painted_model_stays_left_of_the_microphone() {
+        use koru_draw::inspect;
+        let mut surface = ChatSurface::new();
+        surface.set_viewport(Rect::new(0.0, 0.0, 560.0, 600.0));
+        let mut chat = transcript();
+        chat.chat.current_model.requested_model = "a-long-model-name-for-layout".into();
+        surface.transcript = Some(chat);
+        surface.validated_ready = true;
+        surface.offer_dictation(true);
+        surface.offer_microphone_choice(true);
+        let capture =
+            inspect::Frame::begin(1, Affine::IDENTITY, scene::rect(0.0, 0.0, 560.0, 600.0));
+        surface.draw(&mut Scene::new(), Affine::IDENTITY);
+        let records = capture.finish().records;
+        let microphone = records
+            .iter()
+            .find(|record| record.name == "ComposerMicrophone")
+            .expect("microphone in the composer frame")
+            .rect();
+        let (model_index, model_record) = records
+            .iter()
+            .enumerate()
+            .filter(|record| {
+                record.1.name == "KoruButton"
+                    && record.1.rect().y0 >= microphone.y0
+                    && record.1.rect().y1 <= microphone.y1
+            })
+            .max_by(|a, b| a.1.rect().x1.total_cmp(&b.1.rect().x1))
+            .expect("model control painted in the toolbar");
+        let model = model_record.rect();
+        let label = records
+            .iter()
+            .find(|record| record.name == "Button label" && record.parent == Some(model_index))
+            .expect("model label painted inside the control")
+            .rect();
+        assert!(
+            model.x1 <= microphone.x0,
+            "model control overlaps microphone"
+        );
+        assert!(label.x1 <= microphone.x0, "model text overlaps microphone");
     }
 
     /// **What a chat is doing, for the marks outside it** (D83): working

@@ -246,7 +246,7 @@ pub const REGISTRY: &[SettingSpec] = &[
         storage: StorageClass::Roaming,
         backing: Backing::PreferencesConf,
         kind: ValueKind::Flag,
-        doc: "Whether a pinned window keeps its title bar.",
+        doc: "Whether pinned tabs show their titles. Selecting an option updates open pins and sets the default for new pins.",
     },
     SettingSpec {
         field: "popout_close",

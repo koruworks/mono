@@ -105,12 +105,125 @@ fn start(control: &mut AcpControl) -> AgentCapabilities {
         .start(AgentStart::fresh(SessionId::mint(), None))
         .unwrap()
 }
+
+#[test]
+fn acp_usage_update_reports_current_context_even_between_turns() {
+    let mut h = harness(FakeAcpConfig::default(), None, None);
+    start(&mut h.control);
+    h.control.events.clear();
+    h.injected.lock().unwrap().push_back(json!({
+        "jsonrpc":"2.0", "method":"session/update", "params":{
+            "sessionId":SESSION,
+            "update":{"sessionUpdate":"usage_update","used":48_000,"size":475_000}
+        }
+    }));
+    assert_eq!(
+        h.control.next_event(Duration::from_millis(1)).unwrap(),
+        Some(AgentEvent::ContextUsage {
+            used: 48_000,
+            size: 475_000,
+        })
+    );
+    assert_eq!(h.control.context_usage, Some((48_000, 475_000)));
+}
+
+#[test]
+fn commands_before_session_answer_and_live_empty_update_are_authoritative() {
+    let mut h = harness(FakeAcpConfig::default(), None, None);
+    let notice = |session: &str, commands: Value| {
+        json!({"jsonrpc":"2.0","method":"session/update","params":{
+            "sessionId":session,"update":{
+                "sessionUpdate":"available_commands_update",
+                "availableCommands":commands
+            }
+        }})
+    };
+    h.injected.lock().unwrap().push_back(notice(
+        SESSION,
+        json!([{"name":"review-pr","description":"Review the PR","input":{"hint":"target"}},
+            {"name":"two words","description":"invalid"}]),
+    ));
+    start(&mut h.control);
+    let first = h.control.next_event(Duration::ZERO).unwrap().unwrap();
+    let AgentEvent::CommandsUpdated { commands } = first else {
+        panic!("the pre-session listing must be retained");
+    };
+    assert_eq!(commands.len(), 1);
+    assert_eq!(commands[0].name, "review-pr");
+    assert_eq!(
+        commands[0].kind,
+        koru_session_protocol::AgentCommandKind::Command
+    );
+    assert_eq!(commands[0].input_hint.as_deref(), Some("target"));
+
+    h.control.events.clear();
+
+    h.injected
+        .lock()
+        .unwrap()
+        .push_back(notice("other-session", json!([])));
+    assert!(
+        h.control
+            .next_event(Duration::from_millis(1))
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(h.control.live_commands.as_ref().unwrap().len(), 1);
+
+    h.injected
+        .lock()
+        .unwrap()
+        .push_back(notice(SESSION, json!([])));
+    let empty = h
+        .control
+        .next_event(Duration::from_millis(1))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        empty,
+        AgentEvent::CommandsUpdated {
+            commands: Vec::new()
+        }
+    );
+    assert_eq!(h.control.live_commands, Some(Vec::new()));
+}
+
+#[test]
+fn command_probe_finishes_on_first_update_and_cleans_up() {
+    let mut h = harness(FakeAcpConfig::default(), None, None);
+    h.injected.lock().unwrap().push_back(json!({
+        "jsonrpc":"2.0", "method":"session/update", "params":{
+            "sessionId":SESSION,
+            "update":{"sessionUpdate":"available_commands_update","availableCommands":[
+                {"name":"review-pr","description":"Review"}
+            ]}
+        }
+    }));
+    let deadline = Instant::now() + Duration::from_secs(1);
+    h.control.probe_deadline = Some(deadline);
+    let listed = h.control.commands_until(deadline).unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].name, "review-pr");
+    h.control.shutdown().unwrap();
+    assert_eq!(h.state.lock().unwrap().shutdowns, 1);
+}
+
+#[test]
+fn command_probe_without_a_listing_returns_empty_at_its_deadline() {
+    let mut h = harness(FakeAcpConfig::default(), None, None);
+    let deadline = Instant::now() + Duration::from_millis(5);
+    h.control.probe_deadline = Some(deadline);
+    assert!(h.control.commands_until(deadline).unwrap().is_empty());
+    h.control.shutdown().unwrap();
+    assert_eq!(h.state.lock().unwrap().shutdowns, 1);
+}
 fn input(turn_id: AgentTurnId) -> AgentInput {
     AgentInput {
         model: None,
         turn_id,
         text: "<prompt>".into(),
         attachments: Vec::new(),
+        references: Vec::new(),
         mode: None,
         fast: None,
         reasoning: None,
@@ -821,6 +934,38 @@ fn ten_one_mebibyte_pictures_fit_the_prompt_frame_while_reads_stay_bounded() {
             media_type: "image/png".into(),
         });
     }
+    assert_eq!(
+        h.control.prompt(&input).unwrap_err().code,
+        ErrorCode::InputTooLarge
+    );
+}
+
+#[test]
+fn reference_only_prompt_is_a_bounded_text_line_with_unicode_path() {
+    let mut h = harness(FakeAcpConfig::default(), None, None);
+    start(&mut h.control);
+    let mut input = input(AgentTurnId::mint());
+    input.text.clear();
+    input.references.push(koru_session_protocol::PathReference {
+        kind: koru_session_protocol::PathReferenceKind::Folder,
+        path: std::env::temp_dir()
+            .join("folder with spaces 文書")
+            .display()
+            .to_string(),
+    });
+    let prompt = h.control.prompt(&input).unwrap();
+    assert_eq!(prompt.len(), 1);
+    assert_eq!(prompt[0]["type"], "text");
+    assert!(
+        prompt[0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("folder with spaces 文書")
+    );
+    let original_fingerprint = input::fingerprint(&input);
+    input.references[0].kind = koru_session_protocol::PathReferenceKind::File;
+    assert_ne!(input::fingerprint(&input), original_fingerprint);
+    h.control.config.maximum_prompt_frame_bytes = 10;
     assert_eq!(
         h.control.prompt(&input).unwrap_err().code,
         ErrorCode::InputTooLarge

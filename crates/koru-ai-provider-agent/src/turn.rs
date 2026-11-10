@@ -133,6 +133,53 @@ pub(crate) fn start(
 
     let client = SessionClient::connect(&provider.endpoint, PRODUCT, offer())
         .map_err(|error| session_error("connect", error))?;
+    let references: Vec<koru_session_protocol::PathReference> = if answering.is_some() {
+        Vec::new()
+    } else {
+        request
+            .messages
+            .last()
+            .into_iter()
+            .flat_map(|message| &message.attachments)
+            .filter_map(|attachment| {
+                attachment
+                    .reference
+                    .as_ref()
+                    .map(|path| koru_session_protocol::PathReference {
+                        kind: if attachment.kind == koru_ai_core::AttachmentKind::Folder {
+                            koru_session_protocol::PathReferenceKind::Folder
+                        } else {
+                            koru_session_protocol::PathReferenceKind::File
+                        },
+                        path: path.clone(),
+                    })
+            })
+            .collect()
+    };
+    if !references.is_empty() && !client.supports_path_references() {
+        return Err(AiError::new(
+            AiErrorClass::Configuration,
+            "This Koru Agent is older than the app; restart Koru.",
+            false,
+        ));
+    }
+    let copied_attachment_count = request.messages.last().map_or(0, |message| {
+        message
+            .attachments
+            .iter()
+            .filter(|attachment| attachment.reference.is_none())
+            .count()
+    });
+    if references.len() + copied_attachment_count
+        > koru_ai_core::attachments::MAX_ATTACHMENTS_PER_MESSAGE
+        || references.iter().any(|reference| !reference.valid())
+    {
+        return Err(AiError::new(
+            AiErrorClass::Configuration,
+            "A local file or folder path is invalid.",
+            false,
+        ));
+    }
     let (lease, render) = client
         .attach_live(
             ensured.session,
@@ -248,6 +295,7 @@ pub(crate) fn start(
             idempotency_key: IdempotencyKey::mint(),
             text: text.clone(),
             attachment_ids,
+            references: references.clone(),
             mode: mode.clone(),
             fast,
             reasoning: turn_reasoning,
@@ -668,13 +716,19 @@ pub(crate) fn compose_prompt(request: &AiRequest, fresh: bool) -> String {
     }
     if let Some(last) = last {
         text.push_str(&last.markdown);
-        if !last.attachments.is_empty() {
+        let copied: Vec<_> = last
+            .attachments
+            .iter()
+            .filter(|attachment| attachment.reference.is_none())
+            .cloned()
+            .collect();
+        if !copied.is_empty() {
             if !last.markdown.trim().is_empty() {
                 text.push_str("\n\n");
             }
             text.push_str(&attachment_block(
                 "Attached to this message (stored on this computer; read a file from disk if you need it):",
-                &last.attachments,
+                &copied,
             ));
         }
     }
@@ -687,12 +741,19 @@ pub(crate) fn compose_prompt(request: &AiRequest, fresh: bool) -> String {
 pub(crate) fn attachment_block(heading: &str, attachments: &[AttachmentInput]) -> String {
     let mut block = String::from(heading);
     for attachment in attachments {
+        let location = attachment.reference.clone().or_else(|| {
+            attachment
+                .path
+                .as_ref()
+                .map(|path| path.display().to_string())
+        });
+        let Some(location) = location else { continue };
         block.push_str(&format!(
             "\n- {} — {}, {} — {}",
             attachment.file_name,
             attachment.media_type,
             human_size(attachment.byte_count),
-            attachment.path.display()
+            location
         ));
     }
     block
@@ -874,6 +935,7 @@ impl TurnStream {
                     idempotency_key: steer.key,
                     text: steer.text,
                     attachment_ids: Vec::new(),
+                    references: Vec::new(),
                     mode: None,
                     fast: None,
                     reasoning: None,
@@ -933,6 +995,13 @@ impl TurnStream {
         let attempt_id = self.attempt;
         match event {
             AgentEvent::TurnStarted { turn_id } if turn_id == self.turn => {}
+            AgentEvent::ContextUsage { used, size } if size > 0 => {
+                self.queued.push_back(AiEvent::ContextUsage {
+                    attempt_id,
+                    used,
+                    size,
+                });
+            }
             AgentEvent::MessageDelta { turn_id, text } if turn_id == self.turn => {
                 self.queued.push_back(AiEvent::TextDelta {
                     attempt_id,
@@ -1514,7 +1583,8 @@ mod tests {
             },
             byte_count: 2_516_582,
             native: (kind == AttachmentKind::Image).then(|| path.clone()),
-            path,
+            path: Some(path),
+            reference: None,
         }
     }
 
@@ -1546,11 +1616,11 @@ mod tests {
         assert!(text.starts_with("What is in these?\n\nAttached to this message"));
         assert!(text.contains(&format!(
             "- shot.png — image/png, 2.4 MB — {}",
-            picture.path.display()
+            picture.path.as_ref().unwrap().display()
         )));
         assert!(text.contains(&format!(
             "- report.pdf — application/pdf, 2.4 MB — {}",
-            report.path.display()
+            report.path.as_ref().unwrap().display()
         )));
 
         // A message of attachments only is the block alone.
@@ -1569,7 +1639,7 @@ mod tests {
         request.messages[0].attachments = vec![earlier.clone()];
         let fresh = compose_prompt(&request, true);
         assert!(fresh.contains("**Person:**\nLook\nAttached to that message:"));
-        assert!(fresh.contains(&earlier.path.display().to_string()));
+        assert!(fresh.contains(&earlier.path.as_ref().unwrap().display().to_string()));
         assert!(fresh.ends_with("And now?"));
         // A session that saw it already is not told again.
         assert_eq!(compose_prompt(&request, false), "And now?");

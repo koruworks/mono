@@ -26,6 +26,10 @@ tracing.workspace = true
 
 [dev-dependencies]
 tempfile = { workspace = true }
+# Tests only: the relationship and move ids the root-catalog service takes as
+# plain UUIDs. The library itself names them through `koru-store-core`'s id
+# types and has no use for the crate.
+uuid = { workspace = true }
 koru-device = { path = "../koru-device" }
 koru-replication = { path = "../koru-replication" }
 # `tests/run_document.rs` drives a delegated Run document through this store

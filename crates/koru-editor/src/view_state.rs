@@ -228,6 +228,7 @@ impl Reference {
             }
             koru_link::KoruLink::Chat { chat, block } => Self::Chat(ChatTarget { chat, block }),
             koru_link::KoruLink::Node(node) => Self::Node(NodeId::from_uuid(node)),
+            koru_link::KoruLink::Skill { .. } | koru_link::KoruLink::Command { .. } => return None,
         })
     }
 }

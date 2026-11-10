@@ -336,6 +336,75 @@ impl Frame {
         self.paint_el(root, &mut next, scene, transform, engine);
     }
 
+    /// Paint a host-owned surface through this frame's element ancestry.
+    ///
+    /// Some embedded controls own mutable state and cannot be stored in a
+    /// frame's `'static` leaf adapter. The host paints those controls at the
+    /// frame's measured rectangles while the corresponding inspector scope is
+    /// open. The callback runs before a node's children, in tree order.
+    pub fn paint_host(
+        &self,
+        root: &El,
+        scene: &mut Scene,
+        transform: Affine,
+        mut paint: impl FnMut(&Node, &mut Scene, Affine),
+    ) {
+        let mut next = 0;
+        self.paint_host_el(root, &mut next, scene, transform, &mut paint);
+    }
+
+    fn paint_host_el(
+        &self,
+        el: &El,
+        next: &mut usize,
+        scene: &mut Scene,
+        transform: Affine,
+        paint: &mut impl FnMut(&Node, &mut Scene, Affine),
+    ) {
+        let index = *next;
+        let Some(node) = self.nodes.get(index) else {
+            *next += 1;
+            return;
+        };
+        if let Some(clip) = node.clip
+            && {
+                let seen = intersect(node.extent, clip);
+                seen.w <= 0.0 || seen.h <= 0.0
+            }
+        {
+            Self::skip_el(el, next);
+            return;
+        }
+        *next += 1;
+        let rect = node.rect;
+        let _record = inspect::scope_at(
+            el.name,
+            "element",
+            transform,
+            scene::rect(rect.x, rect.y, rect.w, rect.h),
+            el.site,
+            |record| super::record::describe(self, index, el, record),
+        );
+        paint(node, scene, transform);
+        if matches!(el.kind, Kind::Scroll(_)) {
+            let view = node.viewport.unwrap_or(rect);
+            scene.push_clip_layer(
+                peniko::Fill::NonZero,
+                transform,
+                &scene::rect(view.x, view.y, view.w, view.h),
+            );
+            let _clip = inspect::clip(transform, scene::rect(view.x, view.y, view.w, view.h));
+            for child in &el.children {
+                self.paint_host_el(child, next, scene, transform, paint);
+            }
+            scene.pop_layer();
+        } else {
+            for child in &el.children {
+                self.paint_host_el(child, next, scene, transform, paint);
+            }
+        }
+    }
+
     /// Step over `el`'s subtree without painting it: a row scrolled wholly
     /// out of its viewport costs nothing to draw.
     fn skip_el(el: &El, next: &mut usize) {

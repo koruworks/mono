@@ -2383,6 +2383,12 @@ impl View for ManagerView {
         fn on_workspace_switched(&mut self, ws: &Workspace, settings: &Settings);
         fn recording_path_chosen(&mut self, chosen: std::path::PathBuf) -> bool;
         fn ai_chat_folder_chosen(&mut self, chosen: std::path::PathBuf) -> bool;
+        fn ai_computer_path_chosen(&mut self, chosen: std::path::PathBuf) -> bool;
+        fn ai_workspace_file_imported(
+            &mut self,
+            op: uuid::Uuid,
+            result: Result<koru_core::DocumentId, String>,
+        ) -> bool;
         fn recording_event(&mut self, event: koru_workspace_host::RecordingEvent) -> bool;
         fn take_recording_telemetry(&mut self) -> Option<koru_recording::SessionTelemetry>;
         fn set_file_fetching(&mut self, file: koru_core::DocumentId, fetching: bool);

@@ -33,6 +33,15 @@ impl<A: Api, H: Host> Coordinator<A, H> {
         if self.contract.is_some() {
             return Ok(());
         }
+        self.bind()
+    }
+
+    /// Run the binding step: declare what the Store holds and record what the
+    /// service answers. Q12 (c) calls this again mid-pass when a route says
+    /// the binding is a precondition, which is why it is separate from
+    /// [`Self::ensure_contract`]'s once-per-generation guard — a rebind has
+    /// to reach the route even though a contract is already known.
+    pub(super) fn bind(&mut self) -> Result<(), Failure> {
         let authority = self.current_authority()?;
         let held = self.host.account_binding()?;
         let declared = held.map(declared_binding).transpose()?;
@@ -117,7 +126,9 @@ impl<A: Api, H: Host> Coordinator<A, H> {
     /// device's eligible inventory, pulled (Profile units, then Workspace
     /// units) and pushed (the same order). A unit the Store refuses to admit
     /// or export is logged by id and skipped; a failed hosted call ends the
-    /// exchange and is retried with the pass.
+    /// exchange and is retried with the pass. A unit the **service** refuses
+    /// terminally is recorded by id and never asked for again this session
+    /// (QUESTIONS.md Q12 (a), (b)): one unit does not stop the pass.
     pub(super) fn exchange_root_units(&mut self, clock: &dyn Clock) -> Result<(), Failure> {
         self.ensure_catalog_permit(clock)?;
         let account = self.current_authority()?.owner.account;
@@ -137,7 +148,12 @@ impl<A: Api, H: Host> Coordinator<A, H> {
 
         let mut remote = BTreeMap::new();
         let mut after = None;
-        loop {
+        // Whether this loop read the service's **whole** catalog. Q10's
+        // repair turns on it, so the loop says it rather than leaving it to
+        // be inferred from control having reached the next line: a cancelled
+        // pass returns from inside, and a `break` added later for any other
+        // reason has to name its own answer.
+        let complete = loop {
             if self.cancel.cancelled() {
                 return Ok(());
             }
@@ -147,9 +163,9 @@ impl<A: Api, H: Host> Coordinator<A, H> {
             }
             match page.next {
                 Some(cursor) => after = Some(cursor),
-                None => break,
+                None => break true,
             }
-        }
+        };
         self.service_units = remote;
 
         // Pull: what Cloud holds that this device does not have yet, root
@@ -171,6 +187,14 @@ impl<A: Api, H: Host> Coordinator<A, H> {
                 self.pull_unit(account, unit, &theirs, clock)?;
             }
         }
+        // Q10's exit from the v1 window, after the pulls and before the push.
+        // Here, and only here, three things are true at once: the service
+        // answered the v2 contract, its whole catalog has been read, and any
+        // unit it holds has already been joined. A Workspace this device holds
+        // with no unit at all therefore proves no unit exists on the service
+        // or here, and the unit Q7 withheld is published at once — so the
+        // push below carries it in this same pass.
+        self.repair_withheld_units(complete);
         // Push: what this device may export that Cloud does not hold at
         // this frontier.
         for kind in [
@@ -191,6 +215,61 @@ impl<A: Api, H: Host> Coordinator<A, H> {
             }
         }
         Ok(())
+    }
+
+    /// Publish the Workspace unit the v1 Cloud window withheld, for every
+    /// Workspace this device holds with no unit at all (QUESTIONS.md Q10,
+    /// case 1 of the decision; Q7 is what withheld it).
+    ///
+    /// The three conditions are all checked here rather than in the host, so
+    /// the one place that knows them is the one that decides:
+    ///
+    /// - `complete` — the pagination loop ended because the next cursor was
+    ///   absent. A partial read cannot establish that the service holds no
+    ///   unit for a Workspace, only that none has been seen yet.
+    /// - the service answered [`CloudContract::V2`]. The account-scope
+    ///   binding is not a substitute: a 404 never unsets it, so a bound device
+    ///   can still be running the v1 pair path for this generation.
+    /// - the pass was not cancelled. A cancelled pass returns before the
+    ///   pulls finish, so reaching here already implies it; saying it again
+    ///   costs one comparison and makes a cancelled pass unable to repair
+    ///   even if the loops above are ever restructured.
+    ///
+    /// A Store refusal is logged and the pass carries on, as every other
+    /// Store refusal in this module is: the repair is a repair, and the next
+    /// pass asks again under the same three conditions.
+    fn repair_withheld_units(&mut self, complete: bool) {
+        if !complete || self.contract != Some(CloudContract::V2) || self.cancel.cancelled() {
+            return;
+        }
+        match self.host.repair_bootstrap_units() {
+            Ok(outcome) => {
+                if outcome.repaired == 0 {
+                    return;
+                }
+                tracing::info!(
+                    target: "koru_cloud",
+                    repaired = outcome.repaired,
+                    "cloud pass: root units withheld by the v1 window published"
+                );
+                // The push below reads `local_units`, which was captured
+                // before the repair: without this the new units would wait a
+                // whole pass for no reason.
+                self.local_units = outcome
+                    .inventory
+                    .units
+                    .iter()
+                    .map(|state| (unit_ref(state.unit), state.frontier.clone()))
+                    .collect();
+            }
+            Err(error) => {
+                tracing::info!(
+                    target: "koru_cloud",
+                    code = error.code(),
+                    "cloud pass: withheld root units not published"
+                );
+            }
+        }
     }
 
     /// Personal units after content (§7.3): for every admitted Workspace
@@ -316,6 +395,9 @@ impl<A: Api, H: Host> Coordinator<A, H> {
         theirs: &[u8],
         clock: &dyn Clock,
     ) -> Result<(), Failure> {
+        if self.refused_units.contains_key(&unit) {
+            return Ok(());
+        }
         let ours = match self.host.root_unit_frontier(join_unit(unit)) {
             Ok(ours) => ours,
             Err(error) => {
@@ -334,9 +416,19 @@ impl<A: Api, H: Host> Coordinator<A, H> {
             return Ok(());
         }
         self.gate(unit, clock)?;
-        let updates = self.authorized(|api, authority| {
+        let updates = match self.authorized(|api, authority| {
             api.pull_root_unit(authority, unit, ours.clone().unwrap_or_default())
-        })?;
+        }) {
+            Ok(updates) => updates,
+            // Q12 (a), (b): this unit is not coming, and asking again will
+            // not change that. It is recorded with its id and the pass goes
+            // on to the next unit.
+            Err(error @ (Failure::UnitFormatTooNew | Failure::UnitRefused(_))) => {
+                self.defer_unit(unit, &error);
+                return Ok(());
+            }
+            Err(error) => return Err(error),
+        };
         if updates.unit != unit {
             return Err(Failure::DatasetMismatch);
         }
@@ -378,6 +470,9 @@ impl<A: Api, H: Host> Coordinator<A, H> {
         ours: &[u8],
         clock: &dyn Clock,
     ) -> Result<(), Failure> {
+        if self.refused_units.contains_key(&unit) {
+            return Ok(());
+        }
         let theirs = self.service_units.get(&unit).cloned();
         if theirs.as_deref() == Some(ours) {
             return Ok(());
@@ -421,7 +516,7 @@ impl<A: Api, H: Host> Coordinator<A, H> {
             if frames.is_empty() {
                 return Ok(());
             }
-            let receipt = self.authorized(|api, authority| {
+            let receipt = match self.authorized(|api, authority| {
                 api.push_root_unit(
                     authority,
                     CloudRootUnitUpdatesV2 {
@@ -431,7 +526,17 @@ impl<A: Api, H: Host> Coordinator<A, H> {
                         projection_watermark: 0,
                     },
                 )
-            })?;
+            }) {
+                Ok(receipt) => receipt,
+                // Q12 (a), (b): the service will not take this unit, and a
+                // retry cannot change its mind. Recorded by id; the rest of
+                // the inventory still goes.
+                Err(error @ (Failure::UnitFormatTooNew | Failure::UnitRefused(_))) => {
+                    self.defer_unit(unit, &error);
+                    return Ok(());
+                }
+                Err(error) => return Err(error),
+            };
             match receipt {
                 CloudRootJoinReceiptV2::Applied {
                     frontier,

@@ -495,6 +495,7 @@ async fn send_pending(
                     idempotency_key: request.idempotency_key,
                     text: request.text,
                     attachment_ids: request.attachment_ids,
+                    references: request.references,
                     mode: None,
                     fast: None,
                     reasoning: None,

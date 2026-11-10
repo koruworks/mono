@@ -75,14 +75,23 @@ mod pins;
 mod preparation;
 mod removal;
 mod replacement;
+mod root_conflict;
 mod root_lifecycle;
 mod root_move;
+mod root_repair;
 pub use pins::PinnedWorkspace;
 pub use replacement::{ListingState, MovedWorkspace, RemovedWorkspace, Replacement};
+pub use root_conflict::{
+    BootstrapPlacementConflict, K_BOOTSTRAP_CONFLICT_PREFIX, RivalPlacement, bootstrap_conflict_key,
+};
 pub use root_lifecycle::{
-    BatchPhase, DeletedProfile, K_ROOT_CATALOG_BATCH_PREFIX, ProfileDeletionBatch,
-    ProfileDeletionJob, ProfileDeletionPreview, ProfileRestoreOutcome, PurgeOutcome,
-    UnassignedReason, UnassignedWorkspace, batch_job_key, expires_at,
+    BatchPhase, DeletedProfile, K_PURGED_SUBJECT_EXPORT_PREFIX, K_ROOT_CATALOG_BATCH_PREFIX,
+    ProfileDeletionBatch, ProfileDeletionJob, ProfileDeletionPreview, ProfileRestoreOutcome,
+    PurgeOutcome, PurgedSubjectExport, UnassignedReason, UnassignedWorkspace, batch_job_key,
+    expires_at, purged_subject_export_key,
+};
+pub use root_repair::{
+    BootstrapRepair, K_BOOTSTRAP_REPAIR_PREFIX, RepairedWorkspace, bootstrap_repair_key,
 };
 mod profile_projection;
 pub use preparation::{CreateProfileWithWorkspace, CreatedProfile, FirstWorkspace};
@@ -98,7 +107,9 @@ mod transport_modes;
 pub use transport_modes::TransportModeChoice;
 mod updates;
 mod welcome_progress;
-pub use profile_units::{build_reminder_index, read_personal_reminder_inputs};
+pub use profile_units::{
+    build_reminder_index, indexed_version_is_current, read_personal_reminder_inputs,
+};
 pub use welcome_progress::{WELCOME_QUERY_MAX, valid_welcome_row};
 
 /// A staged repository a Restore resumes: open, with the document rows it
@@ -521,13 +532,37 @@ pub struct IdentityCommitted {
 
 /// How a replica provisioning may place a Workspace this device holds no
 /// root unit for (root-catalog TECHNICAL.final §7.2). A held unit always
-/// wins over either.
+/// wins over any of these.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ReplicaPlacement {
-    /// The descriptor's owner may seed the unit: the Cloud bootstrap before
-    /// M3, or a Profile-granted peer whose hint names a granted Profile this
-    /// device holds.
+    /// The descriptor's owner may seed the unit: a Profile-granted peer
+    /// whose hint names a granted Profile this device holds.
     Hint(ProfileId),
+    /// The descriptor's owner places the **row** and nothing else: the
+    /// content is provisioned, the projection names that Profile, and **no
+    /// Workspace unit is published** (root-catalog QUESTIONS.md Q7). For the
+    /// Cloud bootstrap of the v1 window only, whose service has no root units
+    /// to join and whose hint is the legacy owner column no client writes any
+    /// more: publishing it would race the first real unit from a linked
+    /// device by Loro's map ordering and could win over a move the person
+    /// already made. A unit-less Workspace is the one state the placement
+    /// reads tolerate — `root_placement` answers `None` and
+    /// `placed_workspaces` falls back to the projection — so the first real
+    /// unit to arrive becomes the only placement, by the ordinary join. A
+    /// later local move creates the unit as a first move does.
+    ///
+    /// **Withholding is not forever, and only one thing may end it.**
+    /// `Store::repair_bootstrap_units` publishes this unit — Q10's correction
+    /// of Q7, because otherwise an account whose only reachable device
+    /// bootstrapped this way keeps the Workspace out of
+    /// `root_export_inventory` permanently. It is allowed to because its
+    /// caller has established the one fact that makes republishing the hint
+    /// honest: a Cloud pass ran under the v2 contract, read the service's
+    /// **full** inventory and finished its pulls, so no unit exists anywhere
+    /// to race. Any other "repair units for rows that have none" job would
+    /// undo this decision by republishing the legacy owner column against a
+    /// unit still in flight. Nothing enforces that but this paragraph.
+    HintWithoutUnit(ProfileId),
     /// Only an already-known root placement may place it; otherwise the
     /// provisioning is pending until a root unit arrives — the rule for the
     /// same person's device (which sends the unit first) and for a
@@ -1407,12 +1442,12 @@ impl<C: Catalog, B: Backend> Store<C, B> {
     /// container only; the peer's manifest snapshot/update must still traverse
     /// [`apply_update`](Self::apply_update) and [`flush`](Self::flush).
     ///
-    /// The legacy signature: the descriptor's owner is admitted as a
-    /// bootstrap hint that may seed the Workspace's root unit when this
-    /// device holds none — the Cloud bootstrap path before M3, and a
-    /// Profile-granted peer whose grant the adapter has already checked.
-    /// Root placement still wins when a unit is held. The negotiated peer
-    /// path calls [`Self::provision_replica_placed`] and chooses the rule.
+    /// The legacy signature, unchanged: the descriptor's owner is admitted
+    /// as a bootstrap hint that may seed the Workspace's root unit when this
+    /// device holds none — a Profile-granted peer whose grant the adapter
+    /// has already checked. Root placement still wins when a unit is held.
+    /// The negotiated peer path and the Cloud bootstrap call
+    /// [`Self::provision_replica_placed`] and choose the rule.
     pub fn provision_replica(
         &mut self,
         profile: &Profile,
@@ -1447,6 +1482,7 @@ impl<C: Catalog, B: Backend> Store<C, B> {
     /// | yes, placed under a Profile not held, hidden, or a Holder | any | `PlacementPending` — pending/recovery, never a stale Profile |
     /// | yes, explicitly unassigned | any | `PlacementPending` (see the module's judgment calls) |
     /// | no | `Hint(p)` | seeded under `p` by a fresh unit published with the row |
+    /// | no | `HintWithoutUnit(p)` | the row under `p`, **no unit** — the v1 Cloud window (QUESTIONS.md Q7) |
     /// | no | `KnownOnly` | `PlacementPending` — the sync pass retries after root units |
     ///
     /// What is kept unchanged: the manifest identity guard on an existing
@@ -1454,10 +1490,12 @@ impl<C: Catalog, B: Backend> Store<C, B> {
     /// immutable-creation-time guard for a Profile that really is being
     /// provisioned (the one the resolved placement names, when `profile`
     /// describes it), and the "manifest already belongs elsewhere" check.
-    /// The row, its routing and — when no unit was held — its unit are
-    /// published in one catalog transaction (`Catalog::publish_replica`),
-    /// closing Plan 1.3's "only replicas lack a unit". Nothing here creates
-    /// a Workspace of its own or a default.
+    /// The row, its routing and — when no unit was held and the rule
+    /// publishes one — its unit are published in one catalog transaction
+    /// (`Catalog::publish_replica`), closing Plan 1.3's "only replicas lack
+    /// a unit" for every rule but `HintWithoutUnit`, whose whole point is to
+    /// leave the placement to the first unit that really arrives. Nothing
+    /// here creates a Workspace of its own or a default.
     pub fn provision_replica_placed(
         &mut self,
         profile: Option<&Profile>,
@@ -1508,7 +1546,7 @@ impl<C: Catalog, B: Backend> Store<C, B> {
                 return Ok(ProvisionedReplica::PlacementPending);
             }
             None => match placement {
-                ReplicaPlacement::Hint(owner) => owner,
+                ReplicaPlacement::Hint(owner) | ReplicaPlacement::HintWithoutUnit(owner) => owner,
                 ReplicaPlacement::KnownOnly => {
                     tracing::info!(
                         workspace = %workspace.id,
@@ -1595,6 +1633,15 @@ impl<C: Catalog, B: Backend> Store<C, B> {
                 record.deleted_at = root_lifecycle::earliest_active_deletion(unit);
                 None
             }
+            // The v1 Cloud window (QUESTIONS.md Q7): the row, its owner
+            // projection and its manifest routing are published below exactly
+            // as they are for every other rule, and no unit with them, so the
+            // first real unit from a linked device is the only placement this
+            // Workspace ever has. Until it arrives the `workspaces.owner`
+            // projection written here is the only evidence of where the
+            // Workspace is, which is what the placement reads already expect
+            // of a unit-less row.
+            None if matches!(placement, ReplicaPlacement::HintWithoutUnit(_)) => None,
             None => Some(crate::ports::RootCatalogUnitCommit {
                 unit: crate::root_catalog::CatalogUnitRef::Workspace {
                     workspace: record.id,
@@ -2095,13 +2142,35 @@ impl<C: Catalog, B: Backend> Store<C, B> {
                 "that workspace is in the trash; restore it before moving it",
             ));
         }
-        if workspace.owner == to {
+        if self.already_placed_under(id, workspace.owner, to)? {
             return Ok(workspace);
         }
         workspace.owner = to;
         workspace.position = self.next_workspace_position(to)?;
         self.commit_root_move(&workspace)?;
         Ok(workspace)
+    }
+
+    /// **Whether a move to `to` has nothing to do.** The `workspaces.owner`
+    /// projection alone cannot answer it: a placement that named a Profile
+    /// this device cannot see — a deleted one, a hidden one, a Holder — is
+    /// projected late, so an Unassigned Workspace can carry a row that
+    /// already names the destination while the root says otherwise. Asking
+    /// the root placement too is what makes "moving one is the ordinary
+    /// move" true for the recovery routes (root-catalog TECHNICAL.final §6.2,
+    /// §6.3). A Workspace with no unit has only the projection, and keeps
+    /// answering from it.
+    fn already_placed_under(
+        &self,
+        workspace: WorkspaceId,
+        owner: ProfileId,
+        to: ProfileId,
+    ) -> Result<bool> {
+        let root_agrees = match self.root_placement(workspace)? {
+            Some(placement) => placement.profile == Some(to),
+            None => true,
+        };
+        Ok(root_agrees && owner == to)
     }
 
     fn next_workspace_position(&self, owner: ProfileId) -> Result<i64> {

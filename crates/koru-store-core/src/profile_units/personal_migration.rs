@@ -105,7 +105,11 @@ pub enum PersonalMigrationRefusal {
     UnsupportedContainer { owner: ProfileId, container: String },
     /// An id referenced a peer the source's own version vector does not hold.
     UnmappedPeer { owner: ProfileId, peer: u64 },
-    /// Two different inputs digest to the same 64-bit peer.
+    /// Two peers of one migration are the same 64-bit id: two different
+    /// inputs digesting to it, or a derived namespace landing on the fresh
+    /// v2 writer — or that writer on a peer the held unit already has —
+    /// whose counters are taken. Loro does not refuse such a history, it
+    /// merges it as one broken one, so the migration refuses it here.
     PeerCollision { derived: u64 },
     /// A digest landed on the one PeerID Loro refuses.
     ReservedPeer { owner: ProfileId, original: u64 },
@@ -440,6 +444,20 @@ pub fn admit_legacy_source(
     fresh_writer: u64,
 ) -> crate::errors::Result<(PersonalManifest, SourceReceipt)> {
     let workspace = existing.workspace();
+    // The candidate's writer must be new to the held unit as well: it starts
+    // at counter 0, and any peer the unit already holds has that counter.
+    if existing
+        .inner
+        .doc
+        .oplog_vv()
+        .get(&fresh_writer)
+        .is_some_and(|counter| *counter > 0)
+    {
+        return Err(PersonalMigrationRefusal::PeerCollision {
+            derived: fresh_writer,
+        }
+        .into());
+    }
     let normalized = normalize_legacy_source(source, workspace)?;
     detect_conflicts(&existing.inner.doc, &normalized)?;
     let candidate = assemble(workspace, std::slice::from_ref(&normalized), fresh_writer)?;
@@ -711,6 +729,19 @@ fn assemble(
     sources: &[NormalizedSource],
     writer_peer: u64,
 ) -> Result<PersonalManifest> {
+    // The writer is "fresh unique" (step 5) against the namespaces too: it
+    // authors the header at counter 0, so a derived peer equal to it would
+    // have its own first operations overwritten — Loro merges that as one
+    // discontinuous history instead of refusing it.
+    for source in sources {
+        for mapping in &source.receipt.peers {
+            if mapping.derived == writer_peer {
+                return Err(PersonalMigrationRefusal::PeerCollision {
+                    derived: writer_peer,
+                });
+            }
+        }
+    }
     let candidate = PersonalManifest::create_v2(workspace, writer_peer)
         .map_err(|_| PersonalMigrationRefusal::Crdt)?;
     for source in sources {

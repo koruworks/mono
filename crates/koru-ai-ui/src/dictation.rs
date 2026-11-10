@@ -65,13 +65,13 @@ use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
 use koru_draw::theme::{Ink, Profile, Space, roles};
 use koru_draw::{icons, scene};
-use koru_ui::icon_button::{self, IconButton, Metrics, State as IconButtonState};
+use koru_ui::icon_button::{self, Metrics, State as IconButtonState};
 use koru_ui::tooltip::{Tooltip, TooltipContent};
 use vello::Scene;
 use vello::kurbo::Affine;
 use winit::keyboard::{Key, NamedKey};
 
-use super::{COMPOSER_PAD_X, ChatSurface, Focus};
+use super::{COMPOSER_ICON_SIZE, COMPOSER_PAD_X, ChatSurface, Focus};
 
 /// The loudest level a host reports: `koru_voice::LevelBucket::MAX`. Written
 /// here rather than linked, because this crate links no voice crate — the
@@ -158,7 +158,7 @@ pub(crate) struct ComposerDictation {
     /// The host can dictate into this composer — it owns a controller and
     /// voice is available on this installation. Without it there is no
     /// microphone, though a dictation the host routes here is still shown.
-    offered: bool,
+    pub(crate) offered: bool,
     /// The microphone was pressed; the host begins a dictation and takes it.
     wants: bool,
     live: Option<Recording>,
@@ -369,9 +369,22 @@ impl ChatSurface {
         if !self.dictation.offered {
             return None;
         }
+        if let Some(shell) = &self.composer_shell {
+            return shell.microphone();
+        }
         let send = self.send_button();
         let gap = Space::S2.px(Profile::Desktop);
-        Some(Rect::new(send.x - gap - send.w, send.y, send.w, send.h))
+        let choice_width = if self.dictation.microphone.offered {
+            Metrics::COMPACT.control_width() + Space::S0_5.px(Profile::Desktop)
+        } else {
+            0.0
+        };
+        Some(Rect::new(
+            send.x - gap - choice_width - send.w,
+            send.y,
+            send.w,
+            send.h,
+        ))
     }
 
     /// The recording row: the footer's whole width inside the composer's
@@ -466,21 +479,26 @@ impl ChatSurface {
     }
 
     /// The microphone, beside the send button, while nothing is recording.
-    pub(crate) fn draw_mic(&mut self, canvas: &mut Scene, root: Affine) {
+    pub(crate) fn draw_mic(&mut self, canvas: &mut Scene, root: Affine, mic: Rect) {
         if self.dictation.live.is_some() {
             return;
         }
-        let Some(mic) = self.mic_button() else {
-            return;
-        };
-        IconButton::new(icons::MICROPHONE, mic)
-            .with_state(IconButtonState {
+        icon_button::draw_with(
+            canvas,
+            root,
+            &mut self.engine,
+            mic,
+            icons::MICROPHONE,
+            IconButtonState {
                 hovered: mic.contains(self.pointer.0, self.pointer.1),
                 active: false,
                 disabled: false,
-            })
-            .draw(canvas, root, &mut self.engine);
-        self.draw_mic_chooser(canvas, root);
+            },
+            Metrics {
+                icon_size: COMPOSER_ICON_SIZE,
+                ..Metrics::STANDARD
+            },
+        );
     }
 
     /// The tooltip over the microphone, ✕ or ■.

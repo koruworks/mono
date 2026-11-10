@@ -990,9 +990,14 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             Some(json(&receipt)?),
         )];
         let (placement_changed, lifecycle_changed) = match unit {
-            CatalogUnitRef::Workspace { workspace } => {
-                self.commit_workspace_root_import(scope, workspace, &candidate, write, state)?
-            }
+            CatalogUnitRef::Workspace { workspace } => self.commit_workspace_root_import(
+                scope,
+                workspace,
+                &candidate,
+                &staged.before,
+                write,
+                state,
+            )?,
             CatalogUnitRef::Profile { profile } => {
                 let changed =
                     self.commit_profile_root_import(scope, profile, &candidate, write, state)?;
@@ -1034,12 +1039,23 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         scope: UserScopeId,
         workspace: WorkspaceId,
         candidate: &[u8],
+        before_version: &VersionVector,
         write: RootUnitWrite,
-        state: Vec<(String, Option<String>)>,
+        mut state: Vec<(String, Option<String>)>,
     ) -> Result<(bool, bool)> {
         let unit = CatalogUnitRef::Workspace { workspace };
         let before = self.effective_workspace_unit(workspace)?;
         let after = WorkspaceCatalogUnit::from_snapshot(candidate, workspace, self.peer_id)?;
+        // **Q10 case 3**, before any projection: a placement write concurrent
+        // with this device's own bootstrap repair leaves the merged value
+        // alone and records that the Workspace was filed in two places, so
+        // the person can be asked which Profile they meant. The gate is that
+        // a concurrent operation touched the placement at all — *not* that
+        // the merged placement changed, which in the dangerous case it does
+        // not. `service::root_conflict` has the whole rule.
+        if let Some(row) = self.bootstrap_conflict_state(workspace, &after, before_version)? {
+            state.push(row);
+        }
         let placement_before = before
             .as_ref()
             .and_then(WorkspaceCatalogUnit::placement)

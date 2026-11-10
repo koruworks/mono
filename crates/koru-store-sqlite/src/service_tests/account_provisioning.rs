@@ -158,7 +158,7 @@ fn closed_workspace_index_repairs_by_source_version_and_never_reports_missing_as
     let (version, rows) = koru_store_core::service::build_reminder_index(&source).unwrap();
     assert!(
         store
-            .publish_reminder_index(&source, &version, &rows)
+            .publish_reminder_index(&source, &version.encode(), &rows)
             .unwrap()
     );
     assert_eq!(
@@ -176,7 +176,7 @@ fn closed_workspace_index_repairs_by_source_version_and_never_reports_missing_as
         .unwrap();
     assert!(
         !store
-            .publish_reminder_index(&source, &version, &rows)
+            .publish_reminder_index(&source, &version.encode(), &rows)
             .unwrap()
     );
     assert_eq!(

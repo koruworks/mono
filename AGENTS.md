@@ -65,6 +65,12 @@ documentation does not say*, and it is filed by area rather than repeated here:
   lands — proposed in a public issue, as [below](#proposing-a-change-and-recording-a-decision).
 - **Touching chrome?** [docs/features/design/DESIGN.md](docs/features/design/DESIGN.md), and every floating
   surface goes through `scene::floating_panel`.
+- **Designing or redesigning any surface?** The three rules it is built to —
+  written as elements (rows and columns, padding and spacing from the
+  tokens), made of reusable components, every primitive nested inside its
+  parent in the inspector — are in
+  [DESIGN.md → Rules a surface is built to](docs/features/design/DESIGN.md#rules-a-surface-is-built-to).
+  A review reads the F12 tree against them before accepting the work.
 - **Adding a source file?** It starts with `// SPDX-License-Identifier: MPL-2.0`
   (or the language's comment form); `python scripts/checks/spdx-headers.py` adds it,
   and `--check` lists what is missing. Never on third-party or generated

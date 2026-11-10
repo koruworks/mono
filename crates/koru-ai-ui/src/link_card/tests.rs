@@ -95,6 +95,7 @@ fn surface_with(markdown: &str) -> ChatSurface {
         feedback: Vec::new(),
         usage: Vec::new(),
         reasoning_control: None,
+        agent_commands: None,
         attachments: Vec::new(),
     });
     surface.validated_ready = true;

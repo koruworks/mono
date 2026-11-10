@@ -1135,3 +1135,274 @@ fn a_failed_prompt_write_claims_nothing_and_holds_the_guard_closed() {
         "a failed write must not look like a saved one",
     );
 }
+
+// ------------------------------------- linking is the choice (D258 amended)
+
+use koru_store_core::root_catalog::CatalogUnitRef;
+use koru_store_core::service::RootGrant;
+
+/// An `all_data` peer's grant: the same person's other device, over the peer
+/// path. It is what a linked phone and a linked desktop ask each other with.
+fn peer_grant() -> RootGrant<'static> {
+    RootGrant {
+        path: TransportPath::Peer,
+        ..RootGrant::account()
+    }
+}
+
+/// Join this device to an account, exactly as sign-in does. This is the act
+/// the seeded default now reads — not the platform, and not evidence.
+fn link_to_account(store: &mut RealStore) {
+    store
+        .bind_account_scope(
+            koru_store_core::ids::UserScopeId::new().as_uuid(),
+            koru_store_core::ids::UserScopeId::new().as_uuid(),
+            1,
+        )
+        .unwrap();
+}
+
+fn unit_listed(store: &RealStore, unit: CatalogUnitRef) -> bool {
+    store
+        .root_export_inventory(&peer_grant())
+        .unwrap()
+        .units
+        .iter()
+        .any(|(listed, _)| *listed == unit)
+}
+
+/// The seed is read when the row is written, so a restart must find the
+/// committed value and not re-decide it.
+fn still_p2p_after_restart(directory: &std::path::Path, profile: ProfileId, ws: WorkspaceId) {
+    let reopened = durable_store(directory);
+    for subject in [
+        TransportSubject::Profile(profile),
+        TransportSubject::Workspace(ws),
+    ] {
+        assert_eq!(
+            reopened.transport_mode(subject).unwrap().mode,
+            TransportMode::P2p,
+            "{subject:?}",
+        );
+    }
+}
+
+/// **The phone case.** Nothing on a phone can answer the Profile prompt, so
+/// before this a Workspace created there was withheld for ever and its root
+/// unit could never reach the person's other devices. Linking is the choice:
+/// a subject created afterwards admits the peer path with nobody answering
+/// anything.
+#[test]
+fn a_subject_created_on_a_linked_device_admits_peers_with_no_prompt_answered() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = durable_store(dir.path());
+    link_to_account(&mut store);
+
+    let (profile, workspace) = profile_and_workspace(&mut store);
+
+    for subject in [
+        TransportSubject::Profile(profile),
+        TransportSubject::Workspace(workspace),
+    ] {
+        let admission = store.transport_admission(subject).unwrap();
+        assert_eq!(admission.mode, TransportMode::P2p, "{subject:?}");
+        assert!(
+            !admission.explicit_choice,
+            "{subject:?} was seeded, not chosen",
+        );
+        assert!(!admission.ceiling_mismatch, "{subject:?}");
+        assert!(
+            store.admit_transport(subject, TransportPath::Peer).is_ok(),
+            "{subject:?} refuses the peer path",
+        );
+        // Linking two of the person's own devices is not consent to Cloud.
+        assert_eq!(
+            store
+                .admit_transport(subject, TransportPath::Cloud)
+                .unwrap_err()
+                .code(),
+            Code::Forbidden,
+            "{subject:?}",
+        );
+    }
+
+    // And the root unit — the foundation this was about — actually leaves.
+    let unit = CatalogUnitRef::Workspace { workspace };
+    assert!(
+        store
+            .eligible_export_source(unit, TransportPath::Peer)
+            .unwrap()
+            .is_some(),
+    );
+    assert!(unit_listed(&store, unit));
+    assert_eq!(
+        store.root_export_inventory(&peer_grant()).unwrap().held,
+        0,
+        "a linked device withheld a unit anyway"
+    );
+    assert!(
+        store
+            .exportable_profiles(&peer_grant())
+            .unwrap()
+            .contains(&profile)
+    );
+    still_p2p_after_restart(dir.path(), profile, workspace);
+}
+
+/// **Nothing the person already has is promoted.** Linking says what to do
+/// with subjects made from now on; reaching back over the existing rows would
+/// reverse D258 for data that was created under it.
+#[test]
+fn a_subject_created_before_linking_keeps_its_mode() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = durable_store(dir.path());
+    let (profile, workspace) = profile_and_workspace(&mut store);
+
+    link_to_account(&mut store);
+
+    for subject in [
+        TransportSubject::Profile(profile),
+        TransportSubject::Workspace(workspace),
+    ] {
+        let state = store.transport_mode(subject).unwrap();
+        assert_eq!(state.mode, TransportMode::LocalOnly, "{subject:?}");
+        assert_eq!(state.revision, 1, "{subject:?} was rewritten");
+        assert_eq!(
+            store
+                .admit_transport(subject, TransportPath::Peer)
+                .unwrap_err()
+                .code(),
+            Code::Forbidden,
+            "{subject:?}",
+        );
+    }
+    let unit = CatalogUnitRef::Workspace { workspace };
+    assert_eq!(
+        store
+            .eligible_export_source(unit, TransportPath::Peer)
+            .unwrap(),
+        None
+    );
+
+    // A Workspace created after linking under that same unpromoted Profile is
+    // **capped at it** rather than seeded above it: a child over its ceiling
+    // is a `ceiling_mismatch`, which stops the transport rather than opening
+    // it. The Profile prompt is still the way out for rows that predate the
+    // linking, and on a phone that surface does not exist yet.
+    let later = store.create_workspace(profile, "after", at()).unwrap().id;
+    let state = store
+        .transport_mode(TransportSubject::Workspace(later))
+        .unwrap();
+    assert_eq!(state.mode, TransportMode::LocalOnly);
+    assert!(
+        !store
+            .transport_admission(TransportSubject::Workspace(later))
+            .unwrap()
+            .ceiling_mismatch,
+    );
+}
+
+/// **Turning one subject off still turns it all the way off**, which is the
+/// fix that landed before this and must not be weakened: a Local-only subject
+/// is not described to a peer at all — not its unit, not its name, not its
+/// placement.
+#[test]
+fn a_local_only_choice_on_a_linked_device_still_hides_the_subject_entirely() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = durable_store(dir.path());
+    link_to_account(&mut store);
+    let (profile, workspace) = profile_and_workspace(&mut store);
+    let unit = CatalogUnitRef::Workspace { workspace };
+    let profile_unit = CatalogUnitRef::Profile { profile };
+    assert!(unit_listed(&store, unit));
+
+    // The person turns this Workspace off.
+    store
+        .set_transport_mode(set(
+            TransportSubject::Workspace(workspace),
+            1,
+            TransportMode::LocalOnly,
+        ))
+        .unwrap();
+
+    let state = store
+        .transport_mode(TransportSubject::Workspace(workspace))
+        .unwrap();
+    assert_eq!(state.mode, TransportMode::LocalOnly);
+    assert!(state.explicit_choice, "a choice, outranking the seed");
+    for path in [TransportPath::Peer, TransportPath::Cloud] {
+        assert_eq!(
+            store.eligible_export_source(unit, path).unwrap(),
+            None,
+            "{path:?}"
+        );
+    }
+    assert!(!unit_listed(&store, unit), "the withheld unit was listed");
+
+    // Turning the **Profile** off hides its own unit and its name with it: it
+    // is in no exportable set, so a unit naming it elsewhere is redacted.
+    store
+        .set_transport_mode(set(
+            TransportSubject::Profile(profile),
+            1,
+            TransportMode::LocalOnly,
+        ))
+        .unwrap();
+    assert!(
+        !store
+            .exportable_profiles(&peer_grant())
+            .unwrap()
+            .contains(&profile),
+    );
+    assert!(!unit_listed(&store, profile_unit));
+    assert_eq!(
+        store
+            .eligible_export_source(profile_unit, TransportPath::Peer)
+            .unwrap(),
+        None
+    );
+}
+
+/// The desktop's prompt is untouched: it still commits the Profile and its
+/// children as one group, over the linkage seed as readily as over Local-only.
+#[test]
+fn the_profile_prompt_still_raises_a_linked_device_to_cloud_in_one_group() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = durable_store(dir.path());
+    link_to_account(&mut store);
+    let (profile, workspace) = profile_and_workspace(&mut store);
+    let chosen = store.create_workspace(profile, "mine", at()).unwrap().id;
+    store
+        .set_transport_mode(set(
+            TransportSubject::Workspace(chosen),
+            1,
+            TransportMode::LocalOnly,
+        ))
+        .unwrap();
+
+    let answer = store
+        .choose_transport_mode(profile, TransportMode::Cloud, true)
+        .unwrap();
+
+    assert!(answer.profile.wrote());
+    assert_eq!(answer.workspaces_moved, 1, "the seeded default came along");
+    assert_eq!(
+        answer.workspaces_left_alone, 1,
+        "the Workspace the person chose for was left alone"
+    );
+    for subject in [
+        TransportSubject::Profile(profile),
+        TransportSubject::Workspace(workspace),
+    ] {
+        let admission = store.transport_admission(subject).unwrap();
+        assert_eq!(admission.mode, TransportMode::Cloud, "{subject:?}");
+        assert!(admission.explicit_choice, "{subject:?}");
+    }
+    assert_eq!(
+        store
+            .transport_admission(TransportSubject::Workspace(chosen))
+            .unwrap()
+            .mode,
+        TransportMode::LocalOnly,
+    );
+}

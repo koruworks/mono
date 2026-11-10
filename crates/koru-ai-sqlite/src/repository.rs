@@ -352,6 +352,38 @@ impl AiPersistence for Repository {
         Ok(Some(policy))
     }
 
+    fn add_chat_workspace_grants(
+        &mut self,
+        chat: ChatId,
+        workspace_ids: &[WorkspaceId],
+        granted_at: Timestamp,
+    ) -> Result<Option<ChatToolPolicy>, AiError> {
+        let mut workspace_ids = workspace_ids.to_vec();
+        workspace_ids.sort_unstable();
+        workspace_ids.dedup();
+        let transaction = self.connection.transaction().map_err(storage_failed)?;
+        if query_chat_tool_policy(&transaction, chat)?.is_none() {
+            return Ok(None);
+        }
+        for workspace in workspace_ids {
+            transaction
+                .execute(
+                    "INSERT OR IGNORE INTO chat_workspace_grants
+                        (chat_id, workspace_id, granted_at_ms)
+                     VALUES (?1, ?2, ?3)",
+                    params![
+                        chat.to_storage(),
+                        workspace.to_storage(),
+                        granted_at.millis()
+                    ],
+                )
+                .map_err(storage_failed)?;
+        }
+        let policy = query_chat_tool_policy(&transaction, chat)?.ok_or_else(storage_missing)?;
+        transaction.commit().map_err(storage_failed)?;
+        Ok(Some(policy))
+    }
+
     fn chat(&self, id: ChatId) -> Result<Option<Chat>, AiError> {
         query_chat(&self.connection, id)
     }
@@ -1682,6 +1714,20 @@ impl AiPersistence for Repository {
                     )
                     .map_err(storage_failed)?;
             }
+            AiEvent::ContextUsage { used, size, .. } => {
+                transaction
+                    .execute(
+                        "UPDATE inference_attempts
+                            SET context_used_tokens = ?2, context_limit_tokens = ?3
+                          WHERE id = ?1",
+                        params![
+                            attempt_id.to_storage(),
+                            required_u64(*used)?,
+                            required_u64(*size)?,
+                        ],
+                    )
+                    .map_err(storage_failed)?;
+            }
             AiEvent::ToolCalls { at, .. } => {
                 // Tool-call details become their own sanitized durable records
                 // in the workspace-tool migration. Until then this event keeps
@@ -1893,6 +1939,7 @@ fn ai_event_transaction_name(event: &AiEvent) -> &'static str {
         AiEvent::TextDelta { .. } => "apply_coalesced_text",
         AiEvent::ReasoningDelta { .. } => "apply_coalesced_reasoning",
         AiEvent::Usage { .. } => "apply_usage",
+        AiEvent::ContextUsage { .. } => "apply_context_usage",
         AiEvent::ToolCalls { .. } => "apply_tool_calls",
         AiEvent::ToolActivity { .. } => "apply_tool_activity",
         AiEvent::AgentActivity { .. } => "apply_agent_activity",
@@ -1986,7 +2033,8 @@ const ATTEMPT_COLUMNS: &str = "id, operation_id, chat_id, assistant_message_id,
     first_token_at_ms, completed_at_ms, request_payload_bytes, context_payload_bytes,
     message_count, context_document_count, context_message_block_count, prompt_tokens,
     cached_prompt_tokens, completion_tokens, reasoning_tokens, total_tokens, usage_source,
-    stop_reason, error_class, provider_response_id, web_search_requested, web_search_calls";
+    stop_reason, error_class, provider_response_id, web_search_requested, web_search_calls,
+    context_used_tokens, context_limit_tokens";
 
 fn query_chat(connection: &Connection, id: ChatId) -> Result<Option<Chat>, AiError> {
     connection
@@ -2287,11 +2335,12 @@ fn insert_attempt(connection: &Connection, attempt: &InferenceAttempt) -> Result
                 context_document_count, context_message_block_count, prompt_tokens,
                 cached_prompt_tokens, completion_tokens, reasoning_tokens, total_tokens,
                 usage_source, stop_reason, error_class, provider_response_id,
-                web_search_requested, web_search_calls
+                web_search_requested, web_search_calls, context_used_tokens,
+                context_limit_tokens
              ) VALUES (
                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
                 ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26,
-                ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35
+                ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37
              )",
             params![
                 attempt.id.to_storage(),
@@ -2329,6 +2378,8 @@ fn insert_attempt(connection: &Connection, attempt: &InferenceAttempt) -> Result
                 attempt.provider_response_id,
                 attempt.web_search_requested,
                 i64::from(attempt.web_search_calls),
+                optional_u64(attempt.context_used_tokens)?,
+                optional_u64(attempt.context_limit_tokens)?,
             ],
         )
         .map_err(storage_failed)?;
@@ -2575,6 +2626,8 @@ fn attempt_from_row(row: &Row<'_>) -> rusqlite::Result<InferenceAttempt> {
             total_tokens: optional_nonnegative_u64(row, 28)?,
             source: optional_usage_source(row, 29)?.unwrap_or(UsageSource::Unavailable),
         },
+        context_used_tokens: optional_nonnegative_u64(row, 35)?,
+        context_limit_tokens: optional_nonnegative_u64(row, 36)?,
         stop_reason: row.get(30)?,
         error_class: optional_error_class(row, 31)?,
         provider_response_id: row.get(32)?,

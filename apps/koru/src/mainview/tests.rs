@@ -12621,6 +12621,141 @@ fn an_open_settings_tab_adopts_a_preference_changed_elsewhere() {
     assert!(opened.pinned_show_title());
 }
 
+/// Settings may be the only utility tab open. Its choice must reach the next
+/// pin and survive closing Settings before the session is captured.
+#[test]
+fn pinned_title_choice_reaches_new_pins_without_welcome_or_settings_open() {
+    let (mut view, _) = on_document();
+    assert!(view.close(0), "close Welcome");
+    assert!(view.open_settings_tab());
+    let TabView::Settings(settings) = &mut view.tabs_mut().active_mut().view else {
+        panic!("Settings is active");
+    };
+    settings.surface_mut().adopt_preferences(
+        koru_draw::theme::ViewMode::Full,
+        None,
+        true,
+        koru_settings::CloseBehaviorChoice::Background,
+    );
+    view.perform_settings_request(koru_settings_ui::Request::SetPinnedShowTitle(true));
+    assert!(view.close(1), "close Settings");
+
+    assert!(pin_active_document(&mut view));
+    assert!(view.tabs().get(0).unwrap().show_title);
+    let mut saved = Settings::default();
+    View::capture(&view, &mut saved);
+    assert!(saved.pinned_show_title);
+}
+
+#[test]
+fn an_external_pinned_title_preference_reaches_new_pins_without_welcome() {
+    let (mut view, mut workspace) = on_document();
+    assert!(view.close(0), "close Welcome");
+    assert!(pin_active_document(&mut view));
+    assert!(!view.tabs().get(0).unwrap().show_title);
+    View::adopt_preferences(
+        &mut view,
+        &Settings {
+            pinned_show_title: true,
+            ..Settings::default()
+        },
+    );
+    assert!(view.tabs().get(0).unwrap().show_title);
+    let other = a_document(&mut workspace.ws, "Other");
+    view.open_node(&workspace.ws, other);
+    assert!(pin_active_document(&mut view));
+    assert!(view.tabs().get(1).unwrap().show_title);
+}
+
+/// The setting is a strip-wide choice, including pins outside the focused
+/// split. Individual menu overrides hold until a Settings option is selected.
+#[test]
+fn pinned_title_setting_updates_existing_pins_in_every_pane() {
+    use crate::mainview::panes::SplitDir;
+
+    let (mut view, mut workspace) = on_document();
+    let notes = view.tabs().active_tab().id;
+    let notes = view
+        .panes
+        .take_tab_by_id(&PanePath::root(), notes)
+        .expect("take Notes into the right pane");
+    view.panes.split(&PanePath::root(), SplitDir::Right, notes);
+    let right = PanePath::root().child(1);
+    view.panes.set_focus(right.clone());
+    assert!(pin_active_document(&mut view));
+    assert!(
+        view.open_settings_tab(),
+        "the other pane keeps a Settings tab"
+    );
+
+    let left = PanePath::root().child(0);
+    view.panes.set_focus(left.clone());
+    let other = a_document(&mut workspace.ws, "Other");
+    view.open_node(&workspace.ws, other);
+    assert!(pin_active_document(&mut view));
+    assert!(view.open_settings_tab());
+    let TabView::Settings(settings) = &mut view.tabs_mut().active_mut().view else {
+        panic!("Settings is active");
+    };
+    settings.surface_mut().adopt_preferences(
+        koru_draw::theme::ViewMode::Full,
+        None,
+        true,
+        koru_settings::CloseBehaviorChoice::Background,
+    );
+    view.perform_settings_request(koru_settings_ui::Request::SetPinnedShowTitle(true));
+    let mut saved = Settings::default();
+    View::capture(&view, &mut saved);
+    assert!(
+        saved.pinned_show_title,
+        "a stale Settings tab cannot undo it"
+    );
+
+    for path in [&left, &right] {
+        let group = view.panes.group_mut(path).unwrap();
+        group.ensure_widths(&mut view.engine);
+        assert!(group.tabs().get(0).unwrap().show_title);
+        assert!(group.widths[0] > koru_draw::theme::TAB_PINNED_W);
+    }
+    assert!(view.set_pinned_title(0, false), "override the left pin");
+    view.perform_settings_request(koru_settings_ui::Request::SetPinnedShowTitle(true));
+    let left_pin = view.panes.group(&left).unwrap().tabs().get(0).unwrap();
+    assert!(left_pin.show_title, "reselecting the option reapplies it");
+
+    // Choosing icon-only also reaches the other pane.
+    let TabView::Settings(settings) = &mut view.tabs_mut().active_mut().view else {
+        panic!("Settings is active");
+    };
+    settings.surface_mut().adopt_preferences(
+        koru_draw::theme::ViewMode::Full,
+        None,
+        false,
+        koru_settings::CloseBehaviorChoice::Background,
+    );
+    view.perform_settings_request(koru_settings_ui::Request::SetPinnedShowTitle(false));
+    let right_pin = view.panes.group(&right).unwrap().tabs().get(0).unwrap();
+    assert!(!right_pin.show_title);
+    view.perform_settings_request(koru_settings_ui::Request::SetPinnedShowTitle(true));
+    let left_pin = view.panes.group(&left).unwrap().tabs().get(0).unwrap();
+    assert!(left_pin.show_title);
+}
+
+#[test]
+fn startup_pinned_preference_keeps_a_saved_title_override() {
+    let (mut view, _) = on_document();
+    assert!(pin_active_document(&mut view));
+    assert!(!view.tabs().get(0).unwrap().show_title);
+    View::adopt_startup_preferences(
+        &mut view,
+        &Settings {
+            pinned_show_title: true,
+            ..Settings::default()
+        },
+    );
+    assert!(!view.tabs().get(0).unwrap().show_title);
+    assert!(view.preferences.pinned_show_title);
+}
+
 #[test]
 fn feedback_opens_as_a_singleton_tab() {
     crate::feedback::draft::reset();
@@ -13630,6 +13765,108 @@ fn opening_ai_setup_from_settings_is_a_chat_tab_not_the_setup() {
     };
     assert!(!chat.setup_open(), "no door opens the provider setup");
     assert_eq!(v.ai_visible(), panel_was, "the side panel did not move");
+}
+
+#[test]
+fn chat_document_link_opens_a_new_tab_and_keeps_the_chat_tab() {
+    let (mut view, workspace) = on_document();
+    let document = koru_core::DocumentId::new();
+    let original_document_at = view.tabs().active();
+    view.tabs_mut()
+        .get_mut(original_document_at)
+        .unwrap()
+        .document = Some(document);
+    assert!(view.open_ai_chat_tab());
+    let chat_at = view.tabs().active();
+    let before = view.tabs().len();
+    let link = koru_link::KoruLink::Document {
+        document: document.as_uuid(),
+        node: None,
+    };
+
+    assert!(view.open_ai_document_link(link, false));
+    assert_eq!(
+        view.pending_lands.back().copied(),
+        Some((document, OpenWhere::NewTab))
+    );
+    assert!(matches!(view.tabs().active_tab().view, TabView::AiChat(_)));
+    assert!(View::show_active_document(
+        &mut view,
+        &workspace.ws,
+        Some(document),
+    ));
+    assert_eq!(view.tabs().len(), before + 1);
+    assert_eq!(
+        view.tabs().get(original_document_at).unwrap().document,
+        Some(document),
+        "the existing document tab was not reused"
+    );
+    assert!(matches!(
+        view.tabs().get(chat_at).unwrap().view,
+        TabView::AiChat(_)
+    ));
+}
+
+#[test]
+fn alt_click_on_a_chat_document_link_opens_the_split_selector() {
+    use crate::mainview::place_chooser::PlaceTarget;
+    let (mut view, workspace) = on_document();
+    assert!(view.open_ai_chat_tab());
+    let document = koru_core::DocumentId::new();
+    let node = koru_core::NodeId::new();
+    let at = (260.0, 240.0);
+    view.pointer = at;
+    let before = view.pending_lands.len();
+
+    assert!(view.open_ai_document_link(
+        koru_link::KoruLink::Document {
+            document: document.as_uuid(),
+            node: Some(node.as_uuid()),
+        },
+        true,
+    ));
+    let ask = view.place_chooser.as_ref().expect("split selector");
+    assert_eq!(
+        ask.target,
+        PlaceTarget::Reference(koru_editor::Reference::Document(
+            koru_editor::trigger::DocumentTarget {
+                document,
+                node: Some(node),
+            }
+        ))
+    );
+    assert_eq!(ask.chooser.at(), at);
+    assert_eq!(view.pending_lands.len(), before, "wait for a place");
+    assert!(view.choose_place(&workspace.ws, koru_ui::place_chooser::Place::Right));
+    assert_eq!(
+        view.pending_lands.back().copied(),
+        Some((document, OpenWhere::Split(koru_editor::SplitSide::Right)))
+    );
+}
+
+#[test]
+fn computer_file_picker_returns_to_the_requesting_chat_host() {
+    let (mut view, _workspace) = container();
+    view.ai_computer_ask = Some((
+        AiChatFolderSource::Pane,
+        koru_ai_ui::ComputerPickerKind::File,
+    ));
+    assert!(View::ai_computer_path_chosen(
+        &mut view,
+        std::path::PathBuf::from("C:/fixture.pdf"),
+    ));
+    assert!(view.ai_computer_ask.is_none());
+
+    assert!(view.open_ai_chat_tab());
+    view.ai_computer_ask = Some((
+        AiChatFolderSource::AiChatTab,
+        koru_ai_ui::ComputerPickerKind::File,
+    ));
+    assert!(View::ai_computer_path_chosen(
+        &mut view,
+        std::path::PathBuf::from("C:/fixture.pdf"),
+    ));
+    assert!(view.ai_computer_ask.is_none());
 }
 
 /// **The page's `…` replaces the ✦.** It opens a menu whose one row,

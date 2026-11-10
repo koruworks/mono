@@ -195,9 +195,24 @@ async fn profile_units_bootstrap_identity_private_then_workspace_then_personal()
     .await;
     assert!(!result.retry_all, "{:?}", result.retry_error_code);
     assert!(result.failed_workspaces.is_empty());
+    // The order this test is about is the units'. Every pass also folds
+    // pending root overlays before it frames anything (§4.3), so that step
+    // leads the log; asserting the unit order through it keeps this test
+    // about bootstrap rather than about everything a pass does.
+    let events = target.unit_events.lock().unwrap().clone();
     assert_eq!(
-        *target.unit_events.lock().unwrap(),
-        ["identity", "private", "workspace", "personal"]
+        events.first().copied(),
+        Some("publication_job"),
+        "{events:?}"
+    );
+    assert_eq!(
+        events
+            .iter()
+            .copied()
+            .filter(|event| *event != "publication_job")
+            .collect::<Vec<_>>(),
+        ["identity", "private", "workspace", "personal"],
+        "{events:?}"
     );
     assert_eq!(
         *source.unit_versions.lock().unwrap(),

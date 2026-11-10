@@ -25,9 +25,10 @@
 
 mod common;
 
-// Most tests below predate the zero-Profile shell and are about documents, not
-// onboarding. Give those fixtures an explicit Profile while keeping production
-// launch honest. Tests of the empty catalog call the real functions directly.
+// Most tests below predate the zero-Profile shell and the zero-workspace
+// Profile, and are about documents, not onboarding. Give those fixtures an
+// explicit Profile and an explicit workspace while keeping production launch
+// honest. Tests of the empty catalog call the real functions directly.
 mod launch_workspace {
     pub use ::koru_workspace::*;
 
@@ -63,11 +64,50 @@ mod launch_workspace {
             }
         }
 
+        /// The same, plus the workspace launch used to invent for itself.
+        ///
+        /// **Nothing creates a workspace for you any more** (root-catalog
+        /// Plan 1.3, decision D17): `ensure_live_workspace` answers `Empty`,
+        /// and an empty Profile is a valid, permanent state until a person
+        /// creates a workspace. The fixtures below are about documents, so the
+        /// harness creates the one workspace the old launch created — under the
+        /// same name, this time because a test asked for it — and each test
+        /// goes on testing its own subject.
+        ///
+        /// Only the two *ensuring* launches get this. The `_empty` variants are
+        /// the app-startup path and stay untouched, because the tests that use
+        /// them are about the welcome state and must still see nothing.
+        fn open_with_a_workspace(
+            segment: &str,
+            root: Option<&Path>,
+            open: impl Fn() -> koru_store_core::Result<StoreLaunch>,
+        ) -> koru_store_core::Result<OpenedFromStore> {
+            let opened = open_after_explicit_profile(segment, root, &open)?;
+            if opened.has_workspace {
+                return Ok(opened);
+            }
+            let owner = opened.profile.id().ok_or_else(|| {
+                koru_store_core::Error::new(
+                    koru_store_core::Code::Internal,
+                    "the opened Profile has no id to own a workspace",
+                )
+            })?;
+            create_workspace(segment, root, owner, "My Workspace")?;
+            let opened = open_after_explicit_profile(segment, root, &open)?;
+            if !opened.has_workspace {
+                return Err(koru_store_core::Error::new(
+                    koru_store_core::Code::Internal,
+                    "created workspace was not visible to the next launch",
+                ));
+            }
+            Ok(opened)
+        }
+
         pub fn open_from_store(
             segment: &str,
             root: Option<&Path>,
         ) -> koru_store_core::Result<OpenedFromStore> {
-            open_after_explicit_profile(segment, root, || {
+            open_with_a_workspace(segment, root, || {
                 ::koru_workspace::fromstore::open_from_store(segment, root)
             })
         }
@@ -77,7 +117,7 @@ mod launch_workspace {
             root: Option<&Path>,
             wanted: Option<WorkspaceId>,
         ) -> koru_store_core::Result<OpenedFromStore> {
-            open_after_explicit_profile(segment, root, || {
+            open_with_a_workspace(segment, root, || {
                 ::koru_workspace::fromstore::open_from_store_preferring(segment, root, wanted)
             })
         }
@@ -884,13 +924,19 @@ fn app_startup_can_show_welcome_without_silently_creating_a_workspace() {
     assert_eq!(store.client().profiles().expect("profiles").len(), 1);
 }
 
+/// **Still the all-archived case, not the empty Profile.** The harness creates
+/// the workspace explicitly now that launch never does
+/// ([`open_with_a_workspace`]); the welcome state asserted below is therefore
+/// the one reached by archiving the only workspace there is. The empty Profile
+/// is the subject of
+/// `app_startup_can_show_welcome_without_silently_creating_a_workspace`.
 #[test]
 fn app_startup_shows_welcome_when_every_workspace_is_archived() {
     let root = root_for("launch-archived-only");
     let _store = Store::start(&root);
 
     let first = koru_workspace::fromstore::open_from_store(segment(), Some(&root))
-        .expect("create the initial workspace");
+        .expect("the harness workspace this test then archives");
     let archived = first.current;
     koru_workspace::fromstore::set_workspace_appearance(
         segment(),
@@ -917,10 +963,15 @@ fn app_startup_shows_welcome_when_every_workspace_is_archived() {
     );
 }
 
-/// A second launch finds what the first one made rather than making more.
+/// A second launch finds the workspace that is already there rather than
+/// adding another beside it.
 ///
-/// The failure this guards is a launch that creates a workspace every time,
-/// which looks fine once and gives you nine workspaces by Friday.
+/// The failure this was written for — a launch that creates a workspace every
+/// time, which looks fine once and gives you nine workspaces by Friday — can no
+/// longer happen at all: launch creates nothing (Plan 1.3, D17), and the one
+/// workspace here was created explicitly by the harness. What is still worth
+/// asserting, and still the name on the tin, is the other half: selection
+/// reopens the existing row, so the count does not grow across launches.
 #[test]
 fn a_second_launch_reopens_rather_than_creating_again() {
     let root = root_for("launch-again");

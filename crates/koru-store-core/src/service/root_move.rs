@@ -44,10 +44,18 @@
 //! Since Plan 2.1 a replica a peer provisions does too
 //! (`Store::provision_replica_placed`: the root unit received from the peer
 //! places it, or a fresh unit is published with the row), and remote root
-//! units are joined through `root_sync.rs`. A Workspace with no unit is a
-//! row from before catalog 13's seed or a bundle staged and never published;
-//! it is read from the projection, as the only evidence there is, and gains
-//! its unit on its first move or lifecycle write.
+//! units are joined through `root_sync.rs`. A Workspace with no unit is one
+//! the Cloud bootstrap of the v1 window provisioned under
+//! `ReplicaPlacement::HintWithoutUnit` (QUESTIONS.md Q7); the 12 to 13
+//! migration seeds a unit for every row that exists when it runs, and a
+//! bundle staged and never published has no catalog row at all, so neither
+//! is in this state. Such a row is read from the projection, as the only
+//! evidence there is, and gains its unit on a move that places it under a
+//! different Profile, or on a lifecycle write. A move to the Profile it
+//! already reads as writes nothing (`already_placed_under`), so the person
+//! re-filing it where it already looks filed is not the way out — which is
+//! why `root_repair.rs` publishes the withheld unit at the one moment the
+//! device can honestly conclude no unit exists anywhere (QUESTIONS.md Q10).
 
 use super::*;
 use crate::ports::{RootCatalogOverlay, RootCatalogUnitCommit, RootCatalogUnitRow, RootUnitWrite};
@@ -564,6 +572,16 @@ impl<C: Catalog, B: Backend> Store<C, B> {
     /// ([`Self::publish_pending_overlay`]) so the export never carries a
     /// placement the device has already superseded.
     ///
+    /// A **purged** subject has no mode row left — step 5 of the purge takes
+    /// it, the key is `ON DELETE RESTRICT` — while its unit row stays with
+    /// the purge evidence (§6.4). For that one case the answer comes from
+    /// the choice the purge recorded beside its evidence
+    /// ([`Store::purged_subject_export`]), so the evidence leaves exactly
+    /// where the subject itself would have the moment before the purge, and
+    /// a returning stale replica can be refused. A subject purged before
+    /// that record existed has none, and the missing row stays the storage
+    /// error it was: held, never admitted by default.
+    ///
     /// Redaction of historical Profile references is the export module's
     /// business, not this method's: these are the bytes it starts from.
     pub fn eligible_export_source(
@@ -571,12 +589,7 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         unit: CatalogUnitRef,
         path: TransportPath,
     ) -> Result<Option<Vec<u8>>> {
-        let admission = self.transport_admission(transport_subject(unit))?;
-        let allowed = match path {
-            TransportPath::Peer => admission.allows_peer(),
-            TransportPath::Cloud => admission.allows_cloud(),
-        };
-        if !allowed {
+        if !self.export_admitted(unit, path)? {
             return Ok(None);
         }
         let scope = self.catalog.local_user_scope()?;
@@ -587,6 +600,33 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             .catalog
             .root_catalog_unit(scope, unit)?
             .map(|row| row.snapshot))
+    }
+
+    /// Whether `unit`'s subject admits `path` right now: its mode row, or —
+    /// only when that row is gone — the admission its purge recorded. A
+    /// Profile's row is never removed by a purge, so a Profile with no row
+    /// is the storage error it always was, and so is a Workspace purged
+    /// without a record.
+    fn export_admitted(&self, unit: CatalogUnitRef, path: TransportPath) -> Result<bool> {
+        let admission = match self.transport_admission(transport_subject(unit)) {
+            Ok(admission) => admission,
+            Err(error) if error.code() == Code::CorruptState => {
+                let purged = unit
+                    .workspace()
+                    .map(|workspace| self.purged_subject_export(workspace))
+                    .transpose()?
+                    .flatten();
+                return match purged {
+                    Some(record) => Ok(record.allows(path)),
+                    None => Err(error),
+                };
+            }
+            Err(error) => return Err(error),
+        };
+        Ok(match path {
+            TransportPath::Peer => admission.allows_peer(),
+            TransportPath::Cloud => admission.allows_cloud(),
+        })
     }
 }
 

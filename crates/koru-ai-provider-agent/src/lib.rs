@@ -50,7 +50,7 @@ mod control;
 mod joined;
 mod turn;
 
-pub use control::{AgentCatalog, AgentSessions, EndOutcome, EnsuredSession};
+pub use control::{AgentCatalog, AgentSessions, CommandListingUpdate, EndOutcome, EnsuredSession};
 
 /// The product name this crate's connections announce to the host.
 pub const PRODUCT: &str = "koru-ai-agent";

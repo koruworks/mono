@@ -678,7 +678,9 @@ pub fn run(
             koru_link::KoruLink::Chat { chat, block } => {
                 waker.wake(crate::event::AgentEvent::ChatLink { chat, block });
             }
-            koru_link::KoruLink::Node(_) => {}
+            koru_link::KoruLink::Node(_)
+            | koru_link::KoruLink::Skill { .. }
+            | koru_link::KoruLink::Command { .. } => {}
         }
     }
 

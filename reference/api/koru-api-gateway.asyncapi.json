@@ -118,6 +118,74 @@
   },
   "components": {
     "schemas": {
+      "AgentCommand": {
+        "description": "**One entry an agent offers.** `name` is what the person's message says\nand what goes back; `description` is one line about it, empty when the\nagent gave none; `display_name` is the agent's own name to show, when it\ngives one.",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "display_name": {
+            "nullable": true,
+            "type": "string"
+          },
+          "input_hint": {
+            "description": "What the entry takes after its name, in the agent's words, when it\nsays. No skill has one; it is the ACP command's `input.hint`.",
+            "nullable": true,
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/AgentCommandKind"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "kind"
+        ],
+        "type": "object"
+      },
+      "AgentCommandKind": {
+        "description": "**Where an entry comes from**: the folder's own, the person's, what the\nagent ships, what an administrator set. A picker lists the first two\ngroups first and the last two together ([`AgentCommandKind::group`]).",
+        "oneOf": [
+          {
+            "description": "An ACP `available_commands_update` entry invoked by `/name`.",
+            "enum": [
+              "command"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "A skill of the folder the agent works in (Codex's `repo` scope).",
+            "enum": [
+              "repo_skill"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "A skill of the person's own (`user`).",
+            "enum": [
+              "user_skill"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "A skill the agent ships with (`system`).",
+            "enum": [
+              "system_skill"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "A skill an administrator installed (`admin`).",
+            "enum": [
+              "admin_skill"
+            ],
+            "type": "string"
+          }
+        ]
+      },
       "AgentTurnId": {
         "format": "uuid",
         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
@@ -264,6 +332,28 @@
       "SessionEvent": {
         "description": "Lifecycle and low-volume facts for one session. Render content has its own\nbounded [`crate::RenderUpdate`] stream.",
         "oneOf": [
+          {
+            "description": "Protocol v23. The live session's current command listing, including an\nauthoritative empty listing.",
+            "properties": {
+              "commands": {
+                "items": {
+                  "$ref": "#/components/schemas/AgentCommand"
+                },
+                "type": "array"
+              },
+              "kind": {
+                "enum": [
+                  "commands_updated"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "commands"
+            ],
+            "type": "object"
+          },
           {
             "properties": {
               "byte_count": {

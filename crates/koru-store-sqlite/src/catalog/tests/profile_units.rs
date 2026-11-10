@@ -241,7 +241,10 @@ fn profile_addressed_units_stay_distinct_and_the_v1_personal_address_is_honest()
     // Legacy, identity and private are listed under the Profile; no
     // personal unit is, because none is keyed by a Profile any more.
     assert_eq!(c.profile_units(profile.id).unwrap().len(), 3);
-    assert_eq!(c.profile_units(other.id).unwrap().len(), 1);
+    assert!(
+        c.profile_units(other.id).unwrap().is_empty(),
+        "a Profile nobody initialized has units of nobody else"
+    );
     assert_eq!(c.profile_unit(unit).unwrap(), None);
     // Every v1 personal write names the v2 replacement and writes nothing.
     assert_eq!(

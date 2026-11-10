@@ -456,6 +456,10 @@ impl Orchestrator {
             // An agent's questions (koru-ai D108): a run's sessions are not
             // created to draw them, so its agent declines and none arrive.
             AgentEvent::QuestionsRequired { .. } | AgentEvent::QuestionsResolved { .. } => {}
+            // Command listings belong to the interactive chat catalog.
+            AgentEvent::CommandsUpdated { .. } => {}
+            // Current context occupancy is a chat presentation signal.
+            AgentEvent::ContextUsage { .. } => {}
         }
         Ok(HandleOutcome::Continue)
     }

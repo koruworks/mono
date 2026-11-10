@@ -100,7 +100,7 @@ impl Space {
     }
 
     /// Logical units under `profile`.
-    pub fn px(self, profile: Profile) -> f32 {
+    pub const fn px(self, profile: Profile) -> f32 {
         match profile {
             Profile::Desktop => match self {
                 Self::S0 => 0.0,
@@ -208,7 +208,7 @@ impl IconSize {
         }
     }
 
-    pub fn px(self, profile: Profile) -> f32 {
+    pub const fn px(self, profile: Profile) -> f32 {
         let Profile::Desktop = profile;
         match self {
             Self::XS => 12.0,
@@ -438,6 +438,8 @@ colour_roles! {
         /// Words that are an offer: the Profiles page's *Subscribe to Koru
         /// Cloud*.
         Accent => accent,
+        /// Agent modes that accept edits or approve safe actions.
+        Success => success,
         /// Words and glyphs that warn: the chat's *Full access* approval
         /// mode (koru-ai D7, D105). The status foreground §3.4 of
         /// ELEMENTS.final names, verified in every registered theme.

@@ -130,6 +130,24 @@ fn known_modes_are_worded_and_the_rest_keep_the_agents_own() {
     assert_eq!(titles, ["Build", "Plan"]);
 }
 
+#[test]
+fn claudes_full_advertised_mode_list_is_visible_and_selectable() {
+    let (mut surface, _commands) = surface();
+    surface.approval_mode_open = true;
+    let rows = surface.approval_mode_rows();
+    let panel = surface.approval_mode_panel().unwrap();
+    assert_eq!(rows.len(), 6);
+    assert!(panel.y >= surface.viewport.y);
+    assert!(panel.y + panel.h <= surface.viewport.y + surface.viewport.h);
+    for index in 0..rows.len() {
+        let rect = surface.approval_mode_row_rect(index).unwrap();
+        assert_eq!(
+            surface.approval_mode_row_at(rect.x + rect.w * 0.5, rect.y + rect.h * 0.5),
+            Some(index)
+        );
+    }
+}
+
 /// Every language words every mode: none falls back to English by accident.
 #[test]
 fn every_language_words_the_modes() {
@@ -137,6 +155,8 @@ fn every_language_words_the_modes() {
         let rows = rows(lang, &agent("agent-claude"), &claude_modes());
         assert!(rows.iter().all(|row| !row.title.is_empty()));
         assert!(rows[..5].iter().all(|row| row.help.is_some()));
+        assert!(!t(lang, Words::AiAgentModeAppliesThisChat).is_empty());
+        assert!(!t(lang, Words::AiAgentModeChangeDefault).is_empty());
     }
 }
 
@@ -239,7 +259,7 @@ fn the_at_picker_keeps_shift_tab() {
     assert_eq!(mode_of(&surface).as_deref(), Some("default"));
 }
 
-/// The chip opens the list above the composer; a row chooses its mode and
+/// The chip opens the list beside its toolbar position; a row chooses its mode and
 /// closes the list; Escape closes it too; Full access is only ever chosen
 /// by a press.
 #[test]
@@ -253,8 +273,8 @@ fn the_list_opens_upward_and_a_press_chooses() {
     );
     let panel = surface.approval_mode_panel().expect("open");
     assert!(
-        panel.y + panel.h <= surface.composer_hit_rect.y,
-        "it opens upward"
+        panel.y + panel.h <= chip.y,
+        "it opens above the clicked control"
     );
     let full_access = surface
         .approval_mode_rows()
@@ -283,6 +303,74 @@ fn codex_modes() -> ListedModes {
         ],
         default: Some("ask".into()),
     }
+}
+
+#[test]
+fn send_tone_follows_each_approval_role() {
+    let (mut surface, _commands) = surface();
+    let tone = |surface: &ChatSurface| surface.approval_presentation().unwrap().1;
+    assert_eq!(tone(&surface), SplitTone::Accent);
+    assert!(surface.choose_approval_mode("acceptEdits"));
+    assert_eq!(tone(&surface), SplitTone::Success);
+    assert!(surface.choose_approval_mode("auto"));
+    assert_eq!(tone(&surface), SplitTone::Neutral);
+    assert!(surface.choose_approval_mode("bypassPermissions"));
+    assert_eq!(tone(&surface), SplitTone::Warning);
+
+    surface
+        .transcript
+        .as_mut()
+        .unwrap()
+        .chat
+        .current_model
+        .provider = agent("agent-codex");
+    surface
+        .agent_modes
+        .insert(agent("agent-codex"), codex_modes());
+    assert!(surface.choose_approval_mode("auto-review"));
+    assert_eq!(tone(&surface), SplitTone::Success);
+}
+
+#[test]
+fn keyboard_reaches_mode_menu_with_an_empty_draft_and_footer_opens_settings() {
+    let (mut surface, _commands) = surface();
+    assert!(!surface.composer_has_content());
+    assert!(surface.key(&Key::Named(NamedKey::Tab), None, ModifiersState::empty()));
+    assert_eq!(surface.focus, Focus::SendArrow);
+    assert!(surface.key(&Key::Named(NamedKey::Tab), None, ModifiersState::empty()));
+    assert_eq!(surface.focus, Focus::ModeChevron);
+    assert!(surface.key(&Key::Named(NamedKey::Enter), None, ModifiersState::empty()));
+    assert!(surface.approval_mode_open);
+    assert!(surface.key(&Key::Named(NamedKey::Escape), None, ModifiersState::empty()));
+    assert!(!surface.approval_mode_open);
+    assert_eq!(surface.focus, Focus::ModeChevron);
+    assert!(surface.key(&Key::Named(NamedKey::Space), None, ModifiersState::empty()));
+    surface.approval_mode_focus = Some(surface.approval_mode_rows().len());
+    assert!(surface.key(&Key::Named(NamedKey::Enter), None, ModifiersState::empty()));
+    assert!(surface.take_agent_settings_request());
+    assert_eq!(surface.focus, Focus::Composer);
+}
+
+#[test]
+fn stop_and_non_agent_chats_keep_the_plain_action() {
+    let (mut surface, _commands) = surface();
+    assert!(surface.composer_shell.as_ref().unwrap().mode().is_some());
+    surface.attempt = Some(InferenceAttemptId::new());
+    surface.composer_rect();
+    assert_eq!(surface.send_mode(), crate::queue::SendMode::Stop);
+    assert!(surface.composer_shell.as_ref().unwrap().mode().is_none());
+    assert!(surface.approval_mode_button().is_none());
+
+    surface.attempt = None;
+    surface
+        .transcript
+        .as_mut()
+        .unwrap()
+        .chat
+        .current_model
+        .provider = AiProviderId::parse(AiProviderId::OPENAI).unwrap();
+    surface.composer_rect();
+    assert!(surface.composer_shell.as_ref().unwrap().mode().is_none());
 }
 
 fn opencode_modes() -> ListedModes {
@@ -434,10 +522,10 @@ fn a_new_chat_starts_from_the_default_not_the_last_mode_used() {
         "an explicit Yolo carries into a new chat"
     );
     assert!(surface.make_unmade_chat());
-    assert!(matches!(
-        commands.recv_timeout(Duration::from_millis(50)).unwrap(),
-        Command::Create(_)
-    ));
+    let created = std::iter::from_fn(|| commands.try_recv().ok())
+        .find(|command| !matches!(command, Command::DiscoverCommands(..)))
+        .or_else(|| commands.recv_timeout(Duration::from_millis(50)).ok());
+    assert!(matches!(created, Some(Command::Create(_))));
     assert_eq!(chosen(&commands).as_deref(), Some("bypassPermissions"));
     // Shift+Tab still never steps to it.
     let rows = surface.approval_mode_rows();
@@ -678,8 +766,8 @@ fn an_agent_with_no_modes_is_not_asked_forever() {
 }
 
 /// **The composer's toolbar for a Claude chat** holds, left to right, the
-/// spaces the chat may read, the approval-mode chip naming its mode, the
-/// model chip and the send button — each where it is drawn and hit, none
+/// context button, the approval-mode chip naming its mode, the model chip
+/// and the send button — each where it is drawn and hit, none
 /// over another. No globe: web search is an OpenAI model's.
 #[test]
 fn a_claude_chats_toolbar_holds_spaces_mode_model_and_send() {
@@ -696,19 +784,18 @@ fn a_claude_chats_toolbar_holds_spaces_mode_model_and_send() {
     );
     assert!(surface.web_search_button().is_none());
     let toolbar = surface.composer_toolbar_rect();
-    let spaces = surface.tool_access_button();
-    let mode = surface.approval_mode_button().expect("the mode chip");
+    let plus = surface.plus_button();
+    let mode = surface
+        .approval_mode_button()
+        .expect("the mode menu target");
     let model = surface.chat_model_button();
     let send = surface.send_button();
-    assert_eq!(spaces.x, toolbar.x, "the spaces start the row");
-    for (left, right) in [(spaces, mode), (mode, model), (model, send)] {
+    assert_eq!(plus.x, toolbar.x, "the context button starts the row");
+    for (left, right) in [(plus, model), (model, send), (send, mode)] {
         assert!(left.w > 0.0 && right.w > 0.0);
         assert!(left.x + left.w <= right.x, "{left:?} runs into {right:?}");
     }
-    assert!(
-        mode.w >= surface.approval_mode_chip_w.min(toolbar.w * 0.4),
-        "the chip is as wide as its words"
-    );
+    assert_eq!(mode.w, koru_ui::split_button::SplitButton::MENU_W);
 }
 
 /// The open list with the pointer on *Ask first* and the keyboard on
@@ -721,6 +808,31 @@ fn open_list() -> ChatSurface {
     let row = surface.approval_mode_row_rect(0).expect("the first row");
     surface.pointer = (row.x + 20.0, row.y + row.h * 0.5);
     surface
+}
+
+#[test]
+fn permission_list_follows_the_control_as_the_composer_moves() {
+    let (mut surface, _commands) = surface();
+    surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 1100.0));
+    surface.composer_rect();
+    surface.approval_mode_open = true;
+    let empty_panel = surface.approval_mode_panel().unwrap();
+    let empty_chip = surface.approval_mode_button().unwrap();
+    assert!(empty_panel.y >= empty_chip.y + empty_chip.h);
+
+    surface.pending_user = Some("Plan the launch".into());
+    surface.composer_rect();
+    let begun_panel = surface.approval_mode_panel().unwrap();
+    let begun_chip = surface.approval_mode_button().unwrap();
+    assert!(begun_panel.y + begun_panel.h <= begun_chip.y);
+    assert!(
+        (begun_chip.y
+            - begun_panel.y
+            - begun_panel.h
+            - koru_draw::theme::overlay::popover().anchor_gap)
+            .abs()
+            < 0.5
+    );
 }
 
 /// The frame node at `index`'s first descendant named `name`.
@@ -758,7 +870,7 @@ fn every_row_sits_where_the_arithmetic_put_it() {
     let near = |a: f32, b: f32, what: &str| assert!((a - b).abs() < 0.01, "{what}: {a}, not {b}");
     near(
         panel.h,
-        rows.len() as f32 * MODE_ROW_H + PANEL_PAD * 2.0,
+        rows.len() as f32 * MODE_ROW_H + PANEL_PAD * 2.0 + FOOTER_H,
         "panel height",
     );
     let profile = koru_draw::theme::Profile::Desktop;

@@ -20,8 +20,10 @@ pub use koru_draw::split_leading_emoji;
 
 /// Draw a page emoji centred in an [`PAGE_ICON_SLOT`]-wide slot at `icon_x`.
 ///
-/// When `label_baseline` is set (y of the label's baseline), the emoji is
-/// baseline-aligned to it; otherwise it is vertically centred in `row`.
+/// When `label_centre_y` is set, centre the emoji's visible ink on the label's
+/// text centre. Emoji font metrics put the baseline below the apparent centre,
+/// so aligning baselines makes the icon look low beside a title. With no label,
+/// centre the ink in `row`.
 pub fn draw_page_emoji(
     scene: &mut Scene,
     root: Affine,
@@ -29,20 +31,15 @@ pub fn draw_page_emoji(
     icon: &str,
     icon_x: f32,
     row: Rect,
-    label_baseline: Option<f32>,
+    label_centre_y: Option<f32>,
 ) {
     let emoji_style = theme::TextStyle::new(
         theme::TextMetrics::new(PAGE_EMOJI_SIZE, PAGE_EMOJI_SIZE * 1.25),
         theme::FontWeight::Medium,
     );
     let glyph = engine.simple_layout(icon, emoji_style);
-    let glyph_y = match (
-        label_baseline,
-        glyph.lines().next().map(|line| line.metrics().baseline),
-    ) {
-        (Some(label_bl), Some(emoji_bl)) => label_bl - emoji_bl,
-        _ => row.y + (row.h - glyph.height()) * 0.5,
-    };
+    let centre_y = label_centre_y.unwrap_or(row.y + row.h * 0.5);
+    let glyph_y = scene::centre_y_in(&glyph, Rect::new(icon_x, centre_y, PAGE_ICON_SLOT, 0.0));
     scene::draw_layout(
         scene,
         root,

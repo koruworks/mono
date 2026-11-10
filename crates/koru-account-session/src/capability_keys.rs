@@ -54,6 +54,28 @@ impl TokenCapabilityKeyRing {
         ))
     }
 
+    /// Sign a catalog scope credential (`user_catalog`, `user_personal`):
+    /// the v2 sync token for a scope with no dataset. The caller has already
+    /// read the account's binding and the scope's current generation; no
+    /// worker admits this credential until a catalog session kind exists
+    /// (root-catalog-cloud-v2, "What the private service implements", 3).
+    pub fn sign_catalog_scope_credential(
+        &self,
+        issuer: &str,
+        claims: &crate::cloud::catalog::CatalogScopeCredentialClaimsV2,
+    ) -> Result<crate::cloud::issuance::SignedSyncCredential, CryptoError> {
+        crate::cloud::catalog::validate_signing_claims(self.region, issuer, claims)?;
+        let token = self
+            .ring
+            .sign_compact(crate::cloud::catalog::CATALOG_SCOPE_SYNC_TYPE, claims)?;
+        if token.compact.expose_secret().len() > crate::cloud::MAX_COMPACT_BYTES {
+            return Err(CryptoError::InvalidInput);
+        }
+        Ok(crate::cloud::issuance::SignedSyncCredential::new(
+            token, claims.exp,
+        ))
+    }
+
     /// Sign an MCP access token (`at+jwt`, `koru:mcp:access:v1`). The caller
     /// has already checked the code or refresh token, the connection's live
     /// state and the entitlement, and narrowed the scope to the ceiling

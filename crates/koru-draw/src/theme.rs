@@ -262,6 +262,9 @@ pub struct Palette {
     /// The colour a primary action wears — the one button in a dialog that
     /// means "go ahead". Chrome only; nothing a document stores.
     pub accent: Color,
+    /// An agent approval mode that accepts edits or approves safe actions.
+    /// This is UI state, never a stored document colour.
+    pub success: Color,
     /// Text on top of [`accent`](Self::accent).
     pub on_accent: Color,
     /// A translucent overlay that dims whatever sits behind a modal dialog.
@@ -425,6 +428,7 @@ const LIGHT_TABLE: Palette = Palette {
     spell: rgb(0xC7, 0x4E, 0x47),
 
     accent: rgb(0x3B, 0x6B, 0xB5),
+    success: rgb(0x2D, 0x7A, 0x48),
     on_accent: rgb(0xFF, 0xFF, 0xFF),
     chart: [
         rgb(0x9E, 0xC1, 0xF2),
@@ -602,6 +606,7 @@ pub static DARK: Palette = Palette {
     spell: rgb(0xD8, 0x73, 0x6B),
 
     accent: rgb(0x6F, 0xA3, 0xD8),
+    success: rgb(0x78, 0xCC, 0x91),
     on_accent: rgb(0x12, 0x12, 0x12),
     chart: [
         rgb(0x2F, 0x5D, 0x9E),

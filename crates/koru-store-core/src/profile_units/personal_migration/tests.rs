@@ -99,6 +99,29 @@ fn peers_of(doc: &PersonalManifest) -> BTreeSet<u64> {
         .collect()
 }
 
+/// The namespace map `normalize_legacy_source` builds for one source: every
+/// peer of its history, mapped by the §5.2 step 2 digest.
+///
+/// A legacy row holds **two** peers, not one. `PersonalManifest::create`
+/// commits the v1 header under the peer the empty document started with, and
+/// only then did the old `personal_candidate` call `set_peer_id(store peer)`;
+/// every later operation carries the Store's one peer. Step 2 gives *every*
+/// original PeerID its own namespace, so one source contributes two derived
+/// peers — the header's and the Store's.
+fn peer_map(unit: &PersonalManifest) -> BTreeMap<u64, u64> {
+    let owner = unit.owner().unwrap();
+    let workspace = unit.workspace();
+    peers_of(unit)
+        .into_iter()
+        .map(|peer| (peer, derive_peer(owner, workspace, peer)))
+        .collect()
+}
+
+/// The namespaces one source's peers become.
+fn derived_peers(unit: &PersonalManifest) -> BTreeSet<u64> {
+    peer_map(unit).into_values().collect()
+}
+
 #[test]
 fn the_peer_digest_is_the_documented_blake3_prefix() {
     let owner = ProfileId::new();
@@ -217,21 +240,38 @@ fn a_single_source_migrates_with_its_values_ids_and_tombstones_intact() {
         VersionVector::decode(&migrated.indexed_version).unwrap(),
         doc.version()
     );
-    // No legacy peer survives; the receipt says what each became.
+    // No legacy peer survives, each one of them got its own namespace, and
+    // the only peer the migration adds is the one fresh v2 writer of step 5.
     let derived = derive_peer(owner, workspace, STORE_PEER);
-    assert_eq!(peers_of(&doc), [derived, 77].into_iter().collect());
+    let originals = peers_of(&unit);
+    assert_eq!(originals.len(), 2, "the v1 header peer and the Store peer");
+    assert!(originals.contains(&STORE_PEER));
+    let mut expected = derived_peers(&unit);
+    assert!(expected.contains(&derived));
+    assert!(expected.insert(77), "the writer is not a derived peer");
+    assert_eq!(peers_of(&doc), expected);
+    assert!(peers_of(&doc).is_disjoint(&originals));
     let receipt = &migrated.receipt;
     assert_eq!(receipt.workspace, workspace);
     assert_eq!(receipt.digest_domain, PEER_DIGEST_DOMAIN);
     assert_eq!(receipt.writer_peer_id, 77);
     assert_eq!(receipt.sources.len(), 1);
+    // The mapping is total over the source's peers and names each once, so a
+    // reader of the receipt can recompute every id the unit now holds.
     assert_eq!(
         receipt.sources[0].peers,
-        [PeerMapping {
-            original: STORE_PEER,
-            derived,
-        }]
+        originals
+            .iter()
+            .map(|original| PeerMapping {
+                original: *original,
+                derived: derive_peer(owner, workspace, *original),
+            })
+            .collect::<Vec<_>>()
     );
+    assert!(receipt.sources[0].peers.contains(&PeerMapping {
+        original: STORE_PEER,
+        derived,
+    }));
     assert!(receipt.sources[0].change_count > 0);
     assert!(
         receipt.sources[0]
@@ -304,16 +344,19 @@ fn two_units_under_one_store_peer_with_overlapping_counters_keep_both_histories(
     assert_eq!(attributes["also"], text("b"));
     assert!(!doc.reminder(a_rule.id).unwrap().deleted);
     assert!(doc.reminder(b_rule.id).unwrap().deleted);
-    assert_eq!(
-        peers_of(&doc),
-        [
-            derive_peer(a_owner, workspace, STORE_PEER),
-            derive_peer(b_owner, workspace, STORE_PEER),
-            9,
-        ]
-        .into_iter()
-        .collect()
-    );
+    // Each source brings one namespace per peer of its own history — its v1
+    // header peer and the Store peer both sources shared — and the merged
+    // unit adds exactly one peer of its own, the fresh v2 writer of step 5.
+    let mut expected: BTreeSet<u64> = derived_peers(&a)
+        .union(&derived_peers(&b))
+        .copied()
+        .collect();
+    assert_eq!(expected.len(), 4, "two legacy peers per source, kept apart");
+    assert!(expected.contains(&derive_peer(a_owner, workspace, STORE_PEER)));
+    assert!(expected.contains(&derive_peer(b_owner, workspace, STORE_PEER)));
+    assert!(expected.insert(9), "one fresh writer, not one per source");
+    assert_eq!(peers_of(&doc), expected);
+    assert!(!peers_of(&doc).contains(&STORE_PEER));
     // Sources are processed in canonical Profile order whatever the input order.
     let owners: Vec<_> = migrated.receipt.sources.iter().map(|s| s.owner).collect();
     let mut sorted = owners.clone();
@@ -579,13 +622,17 @@ fn an_unsupported_operation_kind_refuses_the_whole_source() {
     doc.commit();
     let exported = doc
         .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv());
-    let peers: BTreeMap<u64, u64> = [(STORE_PEER, derive_peer(owner, workspace, STORE_PEER))]
-        .into_iter()
-        .collect();
-    assert!(matches!(
-        transcode(exported, &peers, owner),
-        Err(PersonalMigrationRefusal::UnsupportedOp { kind: "text", .. })
-    ));
+    // The whole namespace map the normalizer would build, so the text op is
+    // the only thing left for the transcoder to object to: a map short of
+    // the header's peer refuses for `UnmappedPeer` and proves nothing here.
+    let peers = peer_map(&unit);
+    assert!(peers.contains_key(&STORE_PEER));
+    match transcode(exported, &peers, owner).map(|(_, ops)| ops) {
+        Err(PersonalMigrationRefusal::UnsupportedOp { owner: o, kind }) => {
+            assert_eq!((o, kind), (owner, "text"));
+        }
+        other => panic!("a text operation was not refused: {other:?}"),
+    }
     // Whereas the plain map history of a valid unit transcodes fully.
     let clean = legacy(owner, workspace);
     clean
@@ -598,21 +645,27 @@ fn an_unsupported_operation_kind_refuses_the_whole_source() {
             &VersionVector::default(),
             &clean.inner.doc.oplog_vv(),
         );
-    let before = serde_json::to_value(&exported).unwrap();
+    let peers = peer_map(&clean);
+    let before = serde_json::to_value(&exported).unwrap().to_string();
     let (after, ops) = transcode(exported, &peers, owner).unwrap();
     assert!(ops > 0);
-    let after = serde_json::to_value(&after).unwrap();
-    // Counters, lamports, keys and values are untouched; only peers moved.
-    let strip = |value: &serde_json::Value| {
-        let mut text = value.to_string();
-        text = text.replace(
-            &format!("@{}", derive_peer(owner, workspace, STORE_PEER)),
-            "@P",
-        );
-        text.replace(&format!("@{STORE_PEER}"), "@P")
-    };
-    assert_eq!(strip(&before), strip(&after));
-    assert!(!after.to_string().contains(&format!("@{STORE_PEER}")));
+    let after = serde_json::to_value(&after).unwrap().to_string();
+    // Counters, lamports, keys and values are untouched and nothing but a
+    // peer moved: putting every derived peer back — every id in this form is
+    // `counter@peer` followed by `"` or, inside a container id, by `:` —
+    // reproduces the exported history byte for byte.
+    let mut inverted = after.clone();
+    for (original, derived) in &peers {
+        for tail in ['"', ':'] {
+            inverted =
+                inverted.replace(&format!("@{derived}{tail}"), &format!("@{original}{tail}"));
+        }
+    }
+    assert_eq!(inverted, before);
+    for original in peers.keys() {
+        assert!(!after.contains(&format!("@{original}\"")));
+        assert!(!after.contains(&format!("@{original}:")));
+    }
     // A compressed peer table is refused rather than guessed at.
     let compressed = clean
         .inner
@@ -652,6 +705,42 @@ fn a_truncated_digest_collision_refuses_the_batch() {
         Error::from(PersonalMigrationRefusal::ReservedPeer { owner, original: 1 }).code(),
         Code::CrdtRejected
     );
+}
+
+/// The fresh v2 writer is a peer like any other: if it is one of the derived
+/// namespaces, the header it authors at counter zero takes the counters that
+/// namespace's own first operations need. Loro does not refuse the result —
+/// before this was checked it either swallowed the legacy operations or
+/// panicked inside its DAG on a discontinuous Lamport — so the migration
+/// refuses the batch instead of writing a half-imported unit.
+#[test]
+fn a_writer_colliding_with_a_derived_namespace_refuses_the_batch() {
+    let workspace = WorkspaceId::new();
+    let owner = ProfileId::new();
+    let unit = legacy(owner, workspace);
+    let target = entity(workspace);
+    unit.set_personal_attribute(&target, "k", &text("v"))
+        .unwrap();
+    unit.put_reminder_rule(&floating_rule(&target)).unwrap();
+    for writer in derived_peers(&unit) {
+        assert!(matches!(
+            migrate_personal_sources(workspace, vec![source(&unit)], writer),
+            Err(PersonalMigrationRefusal::PeerCollision { derived }) if derived == writer
+        ));
+    }
+    // A writer of its own is all it takes.
+    let fresh = migrate_personal_sources(workspace, vec![source(&unit)], 4_243).unwrap();
+    assert_eq!(
+        load(&fresh, workspace).personal_attributes(&target).len(),
+        1
+    );
+    // The same hazard on the later-source path: a writer the held unit has.
+    let held = load(&fresh, workspace);
+    for taken in peers_of(&held) {
+        let error = admit_legacy_source(&held, &source(&unit), taken).unwrap_err();
+        assert_eq!(error.code(), Code::CrdtRejected);
+    }
+    assert!(admit_legacy_source(&held, &source(&unit), 4_244).is_ok());
 }
 
 #[test]

@@ -634,7 +634,7 @@ impl TextEngine {
     fn pill_label(&mut self, text: &str, fg: Brush, style: PillTextStyle) -> Layout<Brush> {
         self.shaped(
             text,
-            theme::body_stack(),
+            style.stack,
             Setting {
                 size: style.size,
                 line_height: LineHeight::Absolute(style.line_height),

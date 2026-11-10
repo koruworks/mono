@@ -170,9 +170,18 @@ pub struct ListChatsResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ReportedContextUsage {
+    pub used: u64,
+    pub size: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct MessageUsage {
     pub message_id: MessageId,
     pub usage: AiUsage,
+    /// The latest active-context report from the attempt for this reply.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<ReportedContextUsage>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -204,6 +213,10 @@ pub struct ChatTranscript {
     /// chip can read and set it; `None` where the model advertises none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_control: Option<koru_ai_core::ReasoningControl>,
+    /// The live session's current command listing; an empty list is authoritative.
+    /// `None` lets the composer use its short-lived bootstrap catalog.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_commands: Option<Vec<AgentCommandView>>,
     /// Every attachment of the chat: those sent with a message, in message
     /// and ordinal order, then the staged ones not yet sent.
     #[serde(default)]
@@ -217,6 +230,33 @@ pub struct ChatAttachmentResponse {
     pub attachment: ChatAttachment,
 }
 
+/// Copy the bytes of a sent attachment into a new staged attachment of the
+/// same chat. The caller mints an id for this recall attempt.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RestageAttachmentRequest {
+    pub new_id: koru_ai_core::ChatAttachmentId,
+}
+
+/// Stage a local path for an agent without reading or copying its contents.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReferenceAttachmentRequest {
+    pub id: koru_ai_core::ChatAttachmentId,
+    pub kind: AttachmentKind,
+    pub path: String,
+}
+
+/// Copy a Files document into a chat attachment. The id is minted before
+/// import so a retry can finish the same operation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FromWorkspaceAttachmentRequest {
+    pub id: koru_ai_core::ChatAttachmentId,
+    pub workspace: koru_ai_core::WorkspaceId,
+    pub document: koru_ai_core::DocumentId,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct RemoveAttachmentResponse {
     /// Whether a staged attachment existed and was removed.
@@ -227,6 +267,12 @@ pub struct RemoveAttachmentResponse {
 #[serde(deny_unknown_fields)]
 pub struct UpdateChatToolPolicyRequest {
     pub mode: ToolMode,
+    pub workspace_ids: Vec<WorkspaceId>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AddChatWorkspaceGrantsRequest {
     pub workspace_ids: Vec<WorkspaceId>,
 }
 
@@ -501,6 +547,11 @@ pub enum PublicAiEvent {
         attempt_id: InferenceAttemptId,
         usage: AiUsage,
     },
+    ContextUsage {
+        attempt_id: InferenceAttemptId,
+        used: u64,
+        size: u64,
+    },
     ToolActivity {
         attempt_id: InferenceAttemptId,
         activity: ToolActivity,
@@ -510,6 +561,12 @@ pub enum PublicAiEvent {
     AgentNotice {
         attempt_id: InferenceAttemptId,
         notice: koru_ai_core::AgentNotice,
+    },
+    /// A local agent changed the current session's command listing.
+    AgentCommands {
+        attempt_id: InferenceAttemptId,
+        chat: ChatId,
+        commands: Vec<AgentCommandView>,
     },
     /// A one-line fact about the attempt the surface shows and nothing
     /// stores: a local agent could not be reattached and a replacement was
@@ -554,8 +611,10 @@ impl PublicAiEvent {
             | Self::TextDelta { attempt_id, .. }
             | Self::ReasoningDelta { attempt_id, .. }
             | Self::Usage { attempt_id, .. }
+            | Self::ContextUsage { attempt_id, .. }
             | Self::ToolActivity { attempt_id, .. }
             | Self::AgentNotice { attempt_id, .. }
+            | Self::AgentCommands { attempt_id, .. }
             | Self::WebSearch { attempt_id, .. }
             | Self::Citation { attempt_id, .. }
             | Self::Completed { attempt_id, .. }
@@ -611,6 +670,15 @@ impl TryFrom<AiEvent> for PublicAiEvent {
                 at,
             },
             AiEvent::Usage { attempt_id, usage } => Self::Usage { attempt_id, usage },
+            AiEvent::ContextUsage {
+                attempt_id,
+                used,
+                size,
+            } => Self::ContextUsage {
+                attempt_id,
+                used,
+                size,
+            },
             AiEvent::ToolActivity {
                 attempt_id,
                 activity,
@@ -778,6 +846,8 @@ pub struct AgentCommandView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
     pub kind: AgentCommandKindView,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_hint: Option<String>,
 }
 
 /// Where an entry comes from, in the order a picker lists them.
@@ -786,6 +856,8 @@ pub struct AgentCommandView {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum AgentCommandKindView {
+    /// A provider command invoked by `/name`.
+    Command,
     /// A skill of the folder the agent works in.
     RepoSkill,
     /// A skill of the person's own.
@@ -1000,6 +1072,7 @@ mod tests {
             usage: Vec::new(),
             sources: Vec::new(),
             reasoning_control: None,
+            agent_commands: None,
             attachments: Vec::new(),
         }
     }
@@ -1096,6 +1169,29 @@ mod tests {
 
         let decoded = serde_json::from_value::<ChatTranscript>(response).unwrap();
         assert!(decoded.usage.is_empty());
+    }
+
+    #[test]
+    fn older_message_usage_without_context_still_decodes() {
+        let entry = MessageUsage {
+            message_id: MessageId::new(),
+            usage: AiUsage::default(),
+            context: None,
+        };
+        let mut value = serde_json::to_value(&entry).unwrap();
+        assert!(value.get("context").is_none());
+        let decoded = serde_json::from_value::<MessageUsage>(value.clone()).unwrap();
+        assert_eq!(decoded, entry);
+
+        value["context"] = serde_json::json!({"used": 48_000, "size": 258_400});
+        let decoded = serde_json::from_value::<MessageUsage>(value).unwrap();
+        assert_eq!(
+            decoded.context,
+            Some(ReportedContextUsage {
+                used: 48_000,
+                size: 258_400,
+            })
+        );
     }
 
     #[test]

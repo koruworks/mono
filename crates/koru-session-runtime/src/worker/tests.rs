@@ -1002,3 +1002,61 @@ fn a_refused_level_tells_the_client_it_was_the_level() {
     ));
     assert_eq!(model.message, ErrorCode::ProviderModelUnavailable.as_str());
 }
+#[test]
+fn current_commands_survive_agent_event_tail_eviction() {
+    use koru_session_protocol::{AgentCommand, AgentCommandKind, AgentEvent};
+
+    let mut harness = harness();
+    let handle = harness.owner.handle();
+    {
+        let mut state = handle.shared.lock();
+        state.summary.mode = SessionMode::Managed {
+            provider: ProviderKind::from_str("codex").unwrap(),
+        };
+    }
+    let listing = vec![AgentCommand {
+        name: "review-pr".into(),
+        description: "Review".into(),
+        display_name: None,
+        input_hint: None,
+        kind: AgentCommandKind::Command,
+    }];
+    handle
+        .shared
+        .apply_agent_event(AgentEvent::CommandsUpdated {
+            commands: listing.clone(),
+        });
+    let turn_id = koru_session_protocol::AgentTurnId::mint();
+    for _ in 0..300 {
+        handle.shared.apply_agent_event(AgentEvent::MessageDelta {
+            turn_id,
+            text: "x".into(),
+        });
+    }
+    let observed = handle.observe_agent_events().unwrap();
+    assert!(observed.earlier_truncated);
+    assert!(
+        observed
+            .events
+            .iter()
+            .all(|event| !matches!(event.event, AgentEvent::CommandsUpdated { .. }))
+    );
+    assert_eq!(observed.commands, Some(listing));
+    let lifecycle = handle.subscribe_events_from(observed.session_cursor);
+    assert!(matches!(lifecycle.try_recv(), Err(StreamReadError::Empty)));
+    handle
+        .shared
+        .apply_agent_event(AgentEvent::CommandsUpdated {
+            commands: Vec::new(),
+        });
+    let SessionEventUpdate::Event(next) = lifecycle.try_recv().unwrap() else {
+        panic!("the lifecycle watch must receive the next command listing");
+    };
+    assert_eq!(
+        next.event,
+        koru_session_protocol::SessionEvent::CommandsUpdated {
+            commands: Vec::new()
+        }
+    );
+    harness.owner.shutdown();
+}

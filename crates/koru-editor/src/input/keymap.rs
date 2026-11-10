@@ -280,9 +280,8 @@ pub const DEFAULT: &[(Chord, Action)] = &[
         Chord::new(On::Letter('6'), C, S, false),
         Action::ToggleCallout,
     ),
-    // Ctrl+`\`, and Ctrl+Space is bound to nothing at all. Space is a character
-    // key, and a chord on it competes with typing one in a way no other chord
-    // here does — `\` is unclaimed, next to Enter, and never typed by accident.
+    // Ctrl+`\`. Ctrl+Space belongs only to an open @ picker overlay, not the
+    // ordinary editor: Space is a character key and must remain text here.
     (
         Chord::new(On::Letter('\\'), C, false, false),
         Action::ClearFormatting,
@@ -800,6 +799,11 @@ mod tests {
     fn every_editor_shortcut_in_the_registry_resolves_here() {
         use koru_keys::{Layer, On as KOn, registry};
         for entry in registry::of_layer(Layer::Editor) {
+            // The @ picker owns this chord only while its overlay is open.
+            // The ordinary editor must leave Ctrl+Space unclaimed.
+            if entry.id == koru_keys::ShortcutId::WidenEntityScope {
+                continue;
+            }
             let key = match entry.chord.on {
                 KOn::Named(n) => Key::Named(n),
                 KOn::Letter(c) => Key::Character(c.to_string().into()),

@@ -503,6 +503,26 @@ fn manage_and_the_pickers_plus_open_agent_providers() {
     assert!(showing_agent_providers(&view));
 }
 
+/// The split-button footer emits the same request as the model picker. Both
+/// embedded chat hosts land on the Agent providers card, not the Settings
+/// overview. The surface suite tests the footer's pointer and keyboard path.
+#[test]
+fn split_mode_footer_reaches_agent_providers_from_pane_and_chat_tab() {
+    let mut view = MainView::new();
+    view.ai_chat.ask_for_agent_settings();
+    assert!(view.open_agent_settings_from_chat());
+    assert!(showing_agent_providers(&view));
+
+    let mut view = MainView::new();
+    assert!(view.open_ai_chat_tab());
+    let TabView::AiChat(chat) = view.active_view() else {
+        panic!("chat tab is active");
+    };
+    chat.dictation_surface_mut().ask_for_agent_settings();
+    assert!(view.open_agent_settings_from_chat());
+    assert!(showing_agent_providers(&view));
+}
+
 /// **The picker's favorites are stored roaming and reach every chat**
 /// (D46): a star pressed in a chat is one Global patch through the
 /// window's link — the roaming half, `preferences.conf` — and the stored

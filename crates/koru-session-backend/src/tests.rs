@@ -489,7 +489,18 @@ fn v10_managed_and_presented_capabilities_are_explicit() {
     // before; the events read as more events.
     // **v22 is a turn's model**: an input may carry one. A terminal view
     // sends none.
-    assert_eq!(offer.versions.max, 22);
+    // **v23 is path references**: a terminal view sends none and does not
+    // offer their capability.
+    // **v24 is provider-reported context usage**: an agent's stream may
+    // carry how much of its context window is occupied. There is no
+    // capability for it, so there is nothing here to decline; a terminal
+    // view simply reads it as one more event.
+    assert_eq!(offer.versions.max, 24);
+    assert!(
+        !offer
+            .capabilities
+            .supports(koru_session_protocol::capability::PATH_REFERENCES)
+    );
     assert!(
         !offer
             .capabilities

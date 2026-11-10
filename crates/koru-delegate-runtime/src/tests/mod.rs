@@ -668,6 +668,8 @@ impl Default for SessionScript {
                 events: Vec::new(),
                 cursor: StreamSequence::new(1).unwrap(),
                 earlier_truncated: false,
+                commands: None,
+                session_cursor: None,
             },
             attach_fails: false,
             lookup_sequence: VecDeque::new(),

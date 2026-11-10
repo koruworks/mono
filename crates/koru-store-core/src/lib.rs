@@ -113,9 +113,9 @@ pub use service::{
 pub use temporal::{CalendarDate, FloatingDateTime, TemporalValue, ZonedDateTime};
 pub use text::Locale;
 pub use transport::{
-    EffectiveTransportMode, InitializeTransportMode, SetTransportMode, SharingEvidence,
-    TransportMode, TransportModeCommit, TransportModeRequest, TransportModeState, TransportPath,
-    TransportSubject,
+    DeviceLinkage, EffectiveTransportMode, InitializeTransportMode, SetTransportMode,
+    SharingEvidence, TransportMode, TransportModeCommit, TransportModeRequest, TransportModeState,
+    TransportPath, TransportSubject, seeded_child_mode,
 };
 pub use version::{
     API_VERSION, BUNDLE_FORMAT_VERSION, CAPABILITIES, CATALOG_SCHEMA_VERSION, CRDT_SCHEMA_VERSION,

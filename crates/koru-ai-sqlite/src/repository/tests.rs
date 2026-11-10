@@ -187,6 +187,36 @@ fn chat_tool_policy_defaults_deny_all_and_replaces_the_complete_grant_set() {
 }
 
 #[test]
+fn adding_grants_unions_without_changing_mode_or_existing_grants() {
+    let mut repository = Repository::in_memory().unwrap();
+    let chat_id = ChatId::new();
+    repository.create_chat(&chat(chat_id, 0)).unwrap();
+    let a = WorkspaceId::new();
+    let b = WorkspaceId::new();
+    let c = WorkspaceId::new();
+    repository
+        .replace_chat_tool_policy(chat_id, ToolMode::Auto, &[a], at(1))
+        .unwrap();
+    repository
+        .add_chat_workspace_grants(chat_id, &[b, b], at(2))
+        .unwrap();
+    let policy = repository
+        .add_chat_workspace_grants(chat_id, &[c, a], at(3))
+        .unwrap()
+        .unwrap();
+    let mut expected = vec![a, b, c];
+    expected.sort_unstable();
+    assert_eq!(policy.mode, ToolMode::Auto);
+    assert_eq!(policy.workspace_ids, expected);
+    assert!(
+        repository
+            .add_chat_workspace_grants(ChatId::new(), &[a], at(4))
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
 fn tool_audit_keeps_only_stable_targets_and_public_failure_context() {
     let mut repository = Repository::in_memory().unwrap();
     let chat_id = ChatId::new();
@@ -446,6 +476,8 @@ fn turn(chat_id: ChatId, operation_id: Uuid, offset: i64) -> PendingTurn {
             context_document_count: 0,
             context_message_block_count: 0,
             usage: AiUsage::default(),
+            context_used_tokens: None,
+            context_limit_tokens: None,
             stop_reason: None,
             error_class: None,
             provider_response_id: None,
@@ -459,6 +491,48 @@ fn repository_with_chat() -> (Repository, ChatId) {
     let chat_id = ChatId::new();
     repository.create_chat(&chat(chat_id, 0)).unwrap();
     (repository, chat_id)
+}
+
+#[test]
+fn reported_context_is_durable_and_separate_from_response_usage() {
+    let (mut repository, chat_id) = repository_with_chat();
+    let pending = turn(chat_id, Uuid::new_v4(), 1);
+    let attempt_id = pending.attempt.id;
+    repository.begin_turn(&pending).unwrap();
+    repository
+        .apply_event(
+            &AiEvent::ContextUsage {
+                attempt_id,
+                used: 173_700,
+                size: 258_400,
+            },
+            &[],
+        )
+        .unwrap();
+
+    let saved = repository.attempt(attempt_id).unwrap().unwrap();
+    assert_eq!(saved.context_used_tokens, Some(173_700));
+    assert_eq!(saved.context_limit_tokens, Some(258_400));
+    assert_eq!(saved.usage, AiUsage::default());
+
+    repository
+        .apply_event(
+            &AiEvent::Usage {
+                attempt_id,
+                usage: AiUsage {
+                    prompt_tokens: Some(56_000),
+                    total_tokens: Some(58_000),
+                    source: UsageSource::ProviderReported,
+                    ..AiUsage::default()
+                },
+            },
+            &[],
+        )
+        .unwrap();
+    let saved = repository.attempt(attempt_id).unwrap().unwrap();
+    assert_eq!(saved.context_used_tokens, Some(173_700));
+    assert_eq!(saved.context_limit_tokens, Some(258_400));
+    assert_eq!(saved.usage.prompt_tokens, Some(56_000));
 }
 
 fn complete_turn(
@@ -1774,11 +1848,35 @@ fn staged(chat_id: ChatId, name: &str, offset: i64) -> koru_ai_core::AttachmentR
             byte_count: 1_024,
             dimensions: Some((40, 30)),
             origin: None,
+            reference_path: None,
             created_at: at(offset),
         },
         has_sent_copy: false,
         content_blake3: "a".repeat(64),
     }
+}
+
+#[test]
+fn path_reference_round_trips_and_removes_without_file_cleanup() {
+    let (mut repository, chat) = repository_with_chat();
+    let mut record = staged(chat, "folder", 1);
+    record.attachment.kind = koru_ai_core::AttachmentKind::Folder;
+    record.attachment.source = koru_ai_core::AttachmentSource::Path;
+    record.attachment.media_type = "inode/directory".into();
+    record.attachment.byte_count = 0;
+    record.attachment.dimensions = None;
+    record.attachment.reference_path = Some("C:/资料 folder".into());
+    repository.stage_attachment(&record).unwrap();
+    assert_eq!(
+        repository.attachment(record.attachment.id).unwrap(),
+        Some(record.clone())
+    );
+    assert_eq!(
+        repository
+            .remove_staged_attachment(chat, record.attachment.id)
+            .unwrap(),
+        RemovedAttachment::Removed { had_files: false }
+    );
 }
 
 #[test]
@@ -1865,7 +1963,7 @@ fn only_a_staged_attachment_can_be_removed() {
         repository
             .remove_staged_attachment(chat_id, draft.attachment.id)
             .unwrap(),
-        RemovedAttachment::Removed
+        RemovedAttachment::Removed { had_files: true }
     );
     assert_eq!(
         repository

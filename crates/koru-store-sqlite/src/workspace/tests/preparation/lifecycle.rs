@@ -307,8 +307,8 @@ fn a_failed_lifecycle_publication_changes_nothing_and_a_restore_needs_its_owner(
     assert_eq!(f.row(w).deleted_at, None);
     assert_eq!(
         f.store.workspace_manifest_deletion(w).unwrap(),
-        None,
-        "no hint before the commit"
+        Some(None),
+        "no hint before the commit: the manifest still records no deletion"
     );
     assert!(f.store.workspace(w).is_ok(), "still open and live");
 
@@ -607,7 +607,14 @@ fn a_workspace_placed_into_a_deleted_profile_after_capture_stays_live_and_is_una
         "a captured target is in the Trash, not unassigned"
     );
     // A normal move recovers it; restoring P would too.
+    // The row still named Q — the projection of the concurrent move into P
+    // was deferred — so this move is only "nothing to do" if the question is
+    // asked of the projection instead of the root placement.
     f.store.move_workspace(late, q).unwrap();
+    assert_eq!(
+        f.store.root_placement(late).unwrap().unwrap().profile,
+        Some(q)
+    );
     assert!(f.store.unassigned_workspaces().unwrap().is_empty());
 
     // The other reasons.

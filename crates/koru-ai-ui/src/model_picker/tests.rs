@@ -347,11 +347,10 @@ fn the_context_is_read_only_once_the_chat_has_begun() {
         Some(t(koru_i18n::Lang::En, Key::AiModelContextLockedAfterStart))
     );
 }
-// D12: the picker opens upward, above the composer and end-aligned with
-/// the chip, as the workspace and tool-approval panels do — and below the
-/// chip only when the window has no room above.
+/// The picker follows its model chip on either side of a centered or bottom
+/// composer; a cramped viewport still keeps it visible.
 #[test]
-fn the_picker_opens_above_the_composer_unless_there_is_no_room() {
+fn the_picker_follows_the_composers_empty_and_begun_positions() {
     let mut surface = surface();
     on_agent(
         &mut surface,
@@ -359,14 +358,26 @@ fn the_picker_opens_above_the_composer_unless_there_is_no_room() {
         "sonnet",
         ReasoningChoice::Default,
     );
+    surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 1400.0));
+    surface.composer_rect();
+    open(&mut surface);
+    let centered = surface.picker_geometry().unwrap().panel;
+    let chip = surface.chat_model_button();
+    assert!(centered.y >= chip.y + chip.h, "below the centered chip");
+    assert!(centered.y + centered.h <= surface.viewport.y + surface.viewport.h);
+    surface.close_picker();
+
     // A chat under way: the composer at the window's foot.
     surface.pending_user = Some("Plan the launch".into());
     surface.composer_rect();
     open(&mut surface);
     let panel = surface.picker_geometry().unwrap().panel;
     let chip = surface.chat_model_button();
-    let composer = surface.composer_hit_rect;
-    assert!(panel.y + panel.h <= composer.y, "above the composer");
+    assert!(panel.y + panel.h <= chip.y, "above the bottom chip");
+    assert!(
+        (chip.y - panel.y - panel.h - theme::overlay::popover().anchor_gap).abs() < 0.5,
+        "the panel is close to the chip"
+    );
     assert!(
         (panel.x + panel.w - (chip.x + chip.w)).abs() < 0.5,
         "end-aligned"
@@ -376,7 +387,6 @@ fn the_picker_opens_above_the_composer_unless_there_is_no_room() {
     // A composer near the window's top has no room above it: the picker
     // hangs from the chip instead.
     surface.composer_hit_rect = Rect::new(20.0, 60.0, 600.0, 100.0);
-    assert!(!surface.fits_above_composer(panel.h));
     open(&mut surface);
     let low = surface.picker_geometry().unwrap().panel;
     let chip = surface.chat_model_button();
@@ -1056,6 +1066,69 @@ fn the_rail_is_hidden_once_the_chat_has_begun() {
         surface.picker_entry(),
         Some(RailEntry::Agent(agent("agent-claude")))
     );
+}
+
+#[test]
+fn long_agent_rail_pages_to_the_last_agents_inside_the_panel() {
+    let mut surface = picker_with_everything();
+    let agents = [
+        ("agent-claude", "Claude"),
+        ("agent-opencode", "OpenCode"),
+        ("agent-grok", "Grok"),
+        ("agent-kimi", "Kimi"),
+        ("agent-codex", "Codex"),
+        ("agent-copilot", "Copilot"),
+        ("agent-qwen", "Qwen"),
+        ("agent-antigravity", "Antigravity"),
+        ("agent-muse", "Muse"),
+        ("agent-devin", "Devin"),
+    ];
+    surface.settings = Some(settings(&agents, Some("agent-claude")));
+    for (id, _) in agents {
+        surface.agent_status.insert(agent(id), AgentStatus::Ready);
+    }
+    surface.picker.rail_offset = 0;
+    let all = surface.picker_marks();
+    assert!(all.len() > RAIL_PAGE);
+    let first = surface.picker_spec();
+    assert_eq!(first.marks.len(), RAIL_PAGE);
+    assert!(!first.rail_previous && first.rail_next && !first.manage);
+    let first_geometry = surface.picker_geometry().unwrap();
+    assert!(first_geometry.panel.h < 350.0);
+    let next = surface
+        .picker_frame()
+        .unwrap()
+        .2
+        .node(elements::RAIL_NEXT_KEY)
+        .unwrap()
+        .rect;
+    assert!(
+        first_geometry
+            .panel
+            .contains(next.x + next.w / 2.0, next.y + next.h / 2.0)
+    );
+    surface.picker_mouse_down(next.x + next.w / 2.0, next.y + next.h / 2.0);
+    let last = surface.picker_spec();
+    assert!(last.rail_previous && !last.rail_next && last.manage);
+    assert!(
+        surface
+            .picker_visible_rail()
+            .contains(&RailEntry::Agent(agent("agent-muse")))
+    );
+    assert!(
+        surface
+            .picker_visible_rail()
+            .contains(&RailEntry::Agent(agent("agent-devin")))
+    );
+    let previous = surface
+        .picker_frame()
+        .unwrap()
+        .2
+        .node(elements::RAIL_PREVIOUS_KEY)
+        .unwrap()
+        .rect;
+    surface.picker_mouse_down(previous.x + previous.w / 2.0, previous.y + previous.h / 2.0);
+    assert_eq!(surface.picker_visible_rail(), all[..RAIL_PAGE]);
 }
 
 /// **A begun chat on a built-in provider keeps its own models, and may

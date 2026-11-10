@@ -604,10 +604,14 @@ fn scopes_round_trip_and_unknown_ones_grant_nothing() {
 #[test]
 fn store_state_is_a_key_value_that_overwrites() {
     let mut c = catalog();
-    assert_eq!(c.state("peer_id").unwrap(), None);
-    c.set_state("peer_id", "12345").unwrap();
-    c.set_state("peer_id", "67890").unwrap();
-    assert_eq!(c.state("peer_id").unwrap().as_deref(), Some("67890"));
+    // `peer_id` is no longer an arbitrary key: catalog 13's migration mints
+    // the Store peer and the local user scope when the file is created.
+    assert!(c.state("peer_id").unwrap().is_some());
+    let key = "tests.a_key_the_catalog_does_not_own";
+    assert_eq!(c.state(key).unwrap(), None);
+    c.set_state(key, "12345").unwrap();
+    c.set_state(key, "67890").unwrap();
+    assert_eq!(c.state(key).unwrap().as_deref(), Some("67890"));
 }
 
 // ------------------------------------------------------------------ schema

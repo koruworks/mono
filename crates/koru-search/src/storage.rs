@@ -606,10 +606,13 @@ impl SearchIndex {
         // arrived here looking exactly like a box nobody had typed in, and was
         // answered with the recently-opened documents. It is the worst shape a
         // wrong answer can take: plausible rows, no error, and they change when
-        // you open something else rather than when you change the filter.
+        // you open something else rather than when you change the filter. A
+        // picker's explicit kind filter is also a question: it lists that kind
+        // when the window has no recent documents.
         if normalize(query.text.trim()).text.is_empty()
             && query.tags.is_empty()
             && query.attributes.is_empty()
+            && !(query.entity_picker && !query.kinds.is_empty())
         {
             return self.recents(query, updating);
         }

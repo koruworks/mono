@@ -23,7 +23,9 @@
 //!   job:  store_state root_catalog.batch.<batch>   job:  phase → restored
 //!
 //! purge_deleted(before)              per expired Workspace unit, each step restartable
-//!   1 unit: purged += {at}           2 evict readers   3 retire THIS scope's personal row
+//!   1 unit: purged += {at}, and with it
+//!     store_state root_catalog.purged_subject_export.<W>: {peer, cloud}
+//!                                    2 evict readers   3 retire THIS scope's personal row
 //!   4 backend bytes                  5 row and derived rows; the unit row stays
 //! ```
 //!
@@ -55,7 +57,7 @@ use crate::root_catalog::{
     CatalogUnitKind, CatalogUnitRef, DeletionRecord, ProfileCatalogUnit, PurgeRecord,
     RestoreRecord, WorkspaceCatalogUnit,
 };
-use crate::transport::TransportSubject;
+use crate::transport::{TransportPath, TransportSubject};
 use serde::{Deserialize, Serialize};
 
 /// Prefix of the `store_state` key a Profile deletion's application job is
@@ -68,6 +70,53 @@ pub const K_ROOT_CATALOG_BATCH_PREFIX: &str = "root_catalog.batch.";
 
 pub fn batch_job_key(batch: BatchId) -> String {
     format!("{K_ROOT_CATALOG_BATCH_PREFIX}{}", batch.to_storage())
+}
+
+/// Prefix of the `store_state` key that keeps a purged Workspace's last
+/// effective export admission: `root_catalog.purged_subject_export.<id>`,
+/// JSON of [`PurgedSubjectExport`].
+///
+/// **Why there is a key at all.** Step 5 of the purge removes the
+/// Workspace's `local_transport_modes` row — it must, the foreign key is
+/// `ON DELETE RESTRICT` — while the unit row stays with its purge evidence
+/// (§6.4). Without a record of the choice, every later export of that unit
+/// asks a row that is gone, reads `CorruptState` and holds, so the evidence
+/// §6.4 requires for refusing a stale replica's resurrection could never
+/// reach the returning device. The choice outlives the row here: the
+/// subject's own answer to "may this leave on the peer path / on the Cloud
+/// path", as [`Store::transport_admission`] gave it the moment before the
+/// purge, and nothing else. Device-local, in the journal §4.2 already
+/// points at for a private record, never replicated.
+pub const K_PURGED_SUBJECT_EXPORT_PREFIX: &str = "root_catalog.purged_subject_export.";
+
+pub fn purged_subject_export_key(workspace: WorkspaceId) -> String {
+    format!("{K_PURGED_SUBJECT_EXPORT_PREFIX}{}", workspace.to_storage())
+}
+
+/// What a purged Workspace's unit may still do, recorded in the purge's own
+/// transaction. Two booleans, because two is what an export asks: §4.4's
+/// ladder is already collapsed into them by the effective admission, and
+/// keeping the mode itself would invite a later reader to re-derive a
+/// ceiling from a Profile that has moved on.
+///
+/// A Local-only subject records `false, false` and its evidence stays on
+/// this device, exactly as its placement always did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct PurgedSubjectExport {
+    /// The subject admitted a paired device at the purge.
+    pub peer: bool,
+    /// The subject admitted the account's Cloud at the purge.
+    pub cloud: bool,
+}
+
+impl PurgedSubjectExport {
+    pub fn allows(self, path: TransportPath) -> bool {
+        match path {
+            TransportPath::Peer => self.peer,
+            TransportPath::Cloud => self.cloud,
+        }
+    }
 }
 
 /// Where a Profile-deletion batch has got to on this device.
@@ -305,6 +354,56 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             targets,
             phase: BatchPhase::Deleted,
         }))
+    }
+
+    /// What the purge recorded about a Workspace's export admission, or
+    /// `None` when there is no record: either the subject was never purged,
+    /// or it was purged by a build that did not keep one. **The absence is
+    /// not permission.** [`Store::eligible_export_source`] reads it as the
+    /// missing mode row it is and holds, which is what that build already
+    /// did; inventing a default here would decide a person's privacy from
+    /// the fact that nobody wrote it down.
+    pub fn purged_subject_export(
+        &self,
+        workspace: WorkspaceId,
+    ) -> Result<Option<PurgedSubjectExport>> {
+        self.catalog
+            .state(&purged_subject_export_key(workspace))?
+            .map(|json| {
+                serde_json::from_str(&json).map_err(|_| {
+                    Error::new(
+                        Code::CorruptState,
+                        "a purged subject's export record is not decodable",
+                    )
+                })
+            })
+            .transpose()
+    }
+
+    /// The `store_state` row of [`Self::purged_subject_export`], read from
+    /// the mode row while it is still there, for the publication that
+    /// commits the purge evidence. The two travel together or not at all:
+    /// evidence without the record could never leave this device, and a
+    /// record without evidence would describe a purge that did not happen.
+    fn plan_purged_subject_export(
+        &self,
+        workspace: WorkspaceId,
+    ) -> Result<(String, Option<String>)> {
+        // The effective admission, fence included: it is the only value a
+        // transport check may branch on (`transport.rs`), and it is what the
+        // move planner beside this already takes its durable decision from.
+        let admission = self.transport_admission(TransportSubject::Workspace(workspace))?;
+        let record = PurgedSubjectExport {
+            peer: admission.allows_peer(),
+            cloud: admission.allows_cloud(),
+        };
+        let json = serde_json::to_string(&record).map_err(|e| {
+            Error::new(
+                Code::Internal,
+                format!("a purged subject's export record is not serializable: {e}"),
+            )
+        })?;
+        Ok((purged_subject_export_key(workspace), Some(json)))
     }
 
     fn job_state(job: &ProfileDeletionJob) -> Result<(String, Option<String>)> {
@@ -946,10 +1045,13 @@ impl<C: Catalog, B: Backend> Store<C, B> {
     /// Permanently remove the content of every Workspace whose active
     /// deletion has passed its retention at `before` (`at_ms + retention_ms
     /// <= before`), per Workspace and in this order, each step restartable
-    /// on the next pass: (1) the purge fact on the unit, committed first so
-    /// the intent survives a crash; (2) open readers evicted; (3) this
-    /// scope's personal row and due rows retired — the only authorized path
-    /// around the `RESTRICT` key, and only for this scope and this Workspace;
+    /// on the next pass: (1) the purge fact on the unit **and the subject's
+    /// export admission** ([`purged_subject_export_key`]), committed first
+    /// and together so the intent survives a crash and the evidence can
+    /// still leave once step 5 has taken the mode row; (2) open readers
+    /// evicted; (3) this scope's personal row and due rows retired — the
+    /// only authorized path around the `RESTRICT` key, and only for this
+    /// scope and this Workspace;
     /// (4) backend bytes; (5) the `workspaces` row and its derived rows. The
     /// unit row stays with its evidence (§6.4). A personal unit under another
     /// scope holds only its own Workspace; a failed step leaves that Workspace
@@ -1034,12 +1136,17 @@ impl<C: Catalog, B: Backend> Store<C, B> {
                 }
                 Ok(())
             })?;
+            // Step 5 takes the mode row with it (`ON DELETE RESTRICT`), so
+            // the choice is recorded here, in the evidence's own
+            // transaction: the evidence §6.4 asks for is of no use on a
+            // returning device if it can never travel.
+            let export = self.plan_purged_subject_export(workspace)?;
             self.catalog.publish_root(
                 scope,
                 &RootPublication {
                     units: vec![write],
                     projections: Vec::new(),
-                    state: Vec::new(),
+                    state: vec![export],
                 },
             )?;
             tracing::info!(workspace = %workspace, "root lifecycle: purge evidence recorded");

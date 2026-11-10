@@ -86,6 +86,10 @@ const NOT_CRATES: &[(&str, &str, &[&str])] = &[
 /// the test fails if one becomes one, so the list cannot hide a real crate.
 const HOSTED: &[&str] = &[
     "koru-public-api",
+    // The hosted MCP host, a role of the public API's image
+    // (docs/cloud-platform/mcp/HOST.md, which says so and points at the
+    // private repository); the in-repo MCP crate is `koru-mcp-server`.
+    "koru-mcp-host",
     "koru-metrics-server",
     "koru-account-api",
     "koru-account-apple",

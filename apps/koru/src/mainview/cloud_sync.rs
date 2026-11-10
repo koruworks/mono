@@ -116,6 +116,17 @@ pub enum Connection {
     /// the Profile says it — a row whose last pass completed included, which
     /// would otherwise read *Synced* beneath an unavailable Profile.
     Unavailable,
+    /// Koru Cloud answered that something of this account is damaged on its
+    /// side (root-catalog QUESTIONS.md Q12 (d)): `root_projection_corrupt`
+    /// or `catalog_binding_corrupt`. The client keeps retrying — only an
+    /// operator can repair it — but it is **not** an outage, and saying
+    /// *unavailable* sent a person to check a connection that is fine.
+    AccountProblem,
+    /// A unit of this account is in a format this build cannot read
+    /// (Q12 (a), `root_unit_format_too_new`). Everything else still syncs,
+    /// so this is the Profile's line and not a stop: the one honest answer
+    /// is that the person needs a newer Koru.
+    NeedsUpdate,
 }
 
 impl Connection {
@@ -129,6 +140,21 @@ impl Connection {
         if account.stage == AccountStage::NotConfigured {
             return Self::NotConfigured;
         }
+        let row = account
+            .cloud_profiles
+            .iter()
+            .find(|row| row.profile_id == profile_id);
+        let discovery = row.and_then(|row| row.discovery.as_ref());
+        // **A refusal Koru Cloud worded itself is not an outage** (Q12). The
+        // pass's own code says which one it is, and it is read before the
+        // generic *unavailable*: both of these look like a refusal to serve
+        // from the outside, and both used to be told as one.
+        if discovery
+            .and_then(|discovery| discovery.failure_code.as_deref())
+            .is_some_and(service_damaged)
+        {
+            return Self::AccountProblem;
+        }
         if refused
             || matches!(
                 account.stage,
@@ -137,12 +163,17 @@ impl Connection {
         {
             return Self::Unavailable;
         }
-        match account
-            .cloud_profiles
-            .iter()
-            .find(|row| row.profile_id == profile_id)
-            .map(|row| row.stage)
+        // One unit of this Profile needs a newer build. The pass is
+        // otherwise healthy, so this reads ahead of the stage — a deferred
+        // unit makes the Profile *retrying*, which would say *unavailable*
+        // for ever about something no retry can fix.
+        if discovery
+            .and_then(|discovery| discovery.deferred_code.as_deref())
+            .is_some_and(|code| code == UNIT_FORMAT_TOO_NEW)
         {
+            return Self::NeedsUpdate;
+        }
+        match row.map(|row| row.stage) {
             Some(CloudConnectionStage::Syncing) => Self::Syncing,
             Some(CloudConnectionStage::Retrying) => Self::Unavailable,
             Some(CloudConnectionStage::WaitingForConsent) => Self::WaitingForConsent,
@@ -151,10 +182,18 @@ impl Connection {
     }
 
     /// Whether Koru Cloud serves this Profile nothing right now — it is
-    /// unavailable, or this build has none. Every row under the Profile then
-    /// ends in the Profile's sentence, a completed one included.
+    /// unavailable, damaged on the service's side, or this build has none.
+    /// Every row under the Profile then ends in the Profile's sentence, a
+    /// completed one included.
+    ///
+    /// **A build that needs updating is not among them**: one unit cannot be
+    /// read and everything else is syncing, so a workspace that *is* synced
+    /// still says so and only the Profile's line carries the prompt.
     pub fn is_stopped(self) -> bool {
-        matches!(self, Self::Unavailable | Self::NotConfigured)
+        matches!(
+            self,
+            Self::Unavailable | Self::NotConfigured | Self::AccountProblem
+        )
     }
 
     pub fn key(self) -> Key {
@@ -164,6 +203,8 @@ impl Connection {
             Self::WaitingForConsent => Key::CloudConnectionConsent,
             Self::NotConfigured => Key::CloudNotConfigured,
             Self::Unavailable => Key::CloudConnectionRetrying,
+            Self::AccountProblem => Key::CloudConnectionAccountProblem,
+            Self::NeedsUpdate => Key::CloudConnectionUpdateRequired,
         }
     }
 
@@ -180,6 +221,19 @@ pub(crate) fn refuses_service(code: &str) -> bool {
         code,
         "cloud_unavailable" | "sync_unavailable" | "cloud_worker_unavailable"
     )
+}
+
+/// A unit written by a newer Koru than this build can read (root-catalog
+/// QUESTIONS.md Q12 (a)). Spelled as the service spells it, which is also
+/// what the pass puts in its diagnostics.
+const UNIT_FORMAT_TOO_NEW: &str = "root_unit_format_too_new";
+
+/// Whether the code says Koru Cloud has damage of its own on this account
+/// (Q12 (d)): the projection or the account's catalog binding. Retried, and
+/// never worded as an outage — telling a person to check their connection
+/// about service-side damage sends them to look at the wrong thing.
+pub(crate) fn service_damaged(code: &str) -> bool {
+    matches!(code, "root_projection_corrupt" | "catalog_binding_corrupt")
 }
 
 /// One selected file, as the window knows it before asking anything.
@@ -764,6 +818,11 @@ pub(crate) fn hold_sentence(lang: Lang, code: &str) -> String {
         // Koru Cloud refusing to serve is the Profile's connection, not a
         // hold on this Workspace, so it reads as the Profile row reads.
         code if refuses_service(code) => Some(Connection::Unavailable.key()),
+        // The same for the two refusals Koru Cloud words itself (Q12): they
+        // are about the account and this build, not about this Workspace,
+        // and each already has its sentence.
+        code if service_damaged(code) => Some(Connection::AccountProblem.key()),
+        UNIT_FORMAT_TOO_NEW => Some(Connection::NeedsUpdate.key()),
         _ => None,
     };
     match key {

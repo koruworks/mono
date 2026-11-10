@@ -257,6 +257,10 @@ pub struct AttrFilter {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SearchQuery {
     pub text: String,
+    /// Restrict results to document/file titles and live task nodes for an @ picker.
+    /// This is a query shape over the existing projection, not a stored index.
+    #[serde(default)]
+    pub entity_picker: bool,
     /// Empty means every workspace the index knows. **The caller resolves a
     /// profile to this**; the index has never heard of one.
     #[serde(default)]
@@ -322,6 +326,7 @@ impl Default for SearchQuery {
     fn default() -> Self {
         Self {
             text: String::new(),
+            entity_picker: false,
             workspaces: Vec::new(),
             excluded_workspaces: Vec::new(),
             kinds: Vec::new(),

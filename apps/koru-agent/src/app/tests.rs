@@ -3669,3 +3669,269 @@ fn an_agent_cli_choice_with_nothing_behind_it_is_refused_with_a_code() {
         }
     }
 }
+
+// ----------------------------------------------- the organization sync status
+//
+// **What the Agent owes Plan 2.2 is a faithful carry, and nothing else.** The
+// reading per subject is made in the sync pass, merged there through
+// `RootSyncState::worse`, and arrives here on the daemon's status frame. This
+// side maps it to the wire's vocabulary and sends it to every connection —
+// which means the two ways to lose it are a push that never leaves and a
+// mapping that renames a state on the way out. Both are asserted below, and
+// both were invisible: `lifecycle` taught two cases to *skip* `Push::RootSync`
+// as ambient noise and nothing asserted it is sent at all.
+
+/// The one subject that the ranking exists for: a Profile this device has
+/// paused in its own settings **and** that the peer holds back for privacy.
+///
+/// Spelled through `worse` rather than as a literal, because what the Agent
+/// must carry is whatever the merge produces — the defect this guards was a
+/// held reading overwriting the paused one instead of merging with it, and a
+/// hand-written `PausedBySettings` here would still pass if the ranking were
+/// reversed tomorrow.
+fn paused_here_and_held_there() -> koru_sync_control::RootSyncState {
+    koru_sync_control::RootSyncState::PausedBySettings.worse(koru_sync_control::RootSyncState::Held)
+}
+
+/// The `Push::RootSync` this connection was sent, or a failure naming what it
+/// was sent instead.
+fn root_sync_pushed(
+    which: &str,
+    queue: &std::sync::mpsc::Receiver<FromAgent>,
+) -> koru_agent_wire::RootSyncStatus {
+    let frames = drained(queue);
+    frames
+        .iter()
+        .find_map(|frame| match frame {
+            FromAgent::Push {
+                body: Push::RootSync { status },
+            } => Some(status.clone()),
+            _ => None,
+        })
+        .unwrap_or_else(|| {
+            panic!("the {which} connection was never told the organization sync status: {frames:?}")
+        })
+}
+
+/// **A status change is told to every connection, with the states the daemon
+/// read** — including the one a person acts on differently: a subject paused
+/// by this device's settings and held on the other machine is
+/// `PausedBySettings`, because the setting is the thing this person can
+/// change and the hold is not.
+#[test]
+fn an_organization_sync_change_reaches_every_connection_as_the_daemon_read_it() {
+    let mut agent = agent();
+    let peer = koru_device::DeviceId::new();
+    let paused_and_held = ProfileId::new();
+    let mismatched = WorkspaceId::new();
+    let settled = WorkspaceId::new();
+    agent.set_sync_control(crate::service::SyncControl::for_test(
+        koru_sync_control::ControlStatus {
+            root_sync: vec![
+                koru_sync_control::RootSyncSubject {
+                    peer,
+                    profile: Some(paused_and_held),
+                    workspace: None,
+                    state: paused_here_and_held_there(),
+                },
+                koru_sync_control::RootSyncSubject {
+                    peer,
+                    profile: None,
+                    workspace: Some(mismatched),
+                    state: koru_sync_control::RootSyncState::BlockedByMismatch,
+                },
+                koru_sync_control::RootSyncSubject {
+                    peer,
+                    profile: None,
+                    workspace: Some(settled),
+                    state: koru_sync_control::RootSyncState::UpToDate,
+                },
+            ],
+            ..Default::default()
+        },
+    ));
+
+    // Two windows, because "broadcast" is the design and one connection
+    // cannot tell a broadcast from a reply.
+    let first = ConnectionId(90);
+    let second = ConnectionId(91);
+    let (first_connection, first_queue) = Connection::for_test(first);
+    let (second_connection, second_queue) = Connection::for_test(second);
+    agent.connections.push(first_connection);
+    agent.connections.push(second_connection);
+
+    agent.wake(AgentEvent::RootSyncChanged);
+
+    let expected = vec![
+        koru_agent_wire::RootSyncSubject {
+            peer_device_id: peer.to_storage(),
+            profile_id: Some(paused_and_held.to_storage()),
+            workspace_id: None,
+            state: koru_agent_wire::RootSyncState::PausedBySettings,
+        },
+        koru_agent_wire::RootSyncSubject {
+            peer_device_id: peer.to_storage(),
+            profile_id: None,
+            workspace_id: Some(mismatched.to_storage()),
+            state: koru_agent_wire::RootSyncState::BlockedByMismatch,
+        },
+        koru_agent_wire::RootSyncSubject {
+            peer_device_id: peer.to_storage(),
+            profile_id: None,
+            workspace_id: Some(settled.to_storage()),
+            state: koru_agent_wire::RootSyncState::UpToDate,
+        },
+    ];
+    for (which, queue) in [("first", &first_queue), ("second", &second_queue)] {
+        let status = root_sync_pushed(which, queue);
+        assert_eq!(
+            status.subjects, expected,
+            "the {which} connection was told something other than the daemon's reading"
+        );
+        assert_eq!(
+            status.subjects[0].state,
+            koru_agent_wire::RootSyncState::PausedBySettings,
+            "a subject paused here and held there is reported as the setting this person \
+             can change, never as the peer's hold"
+        );
+    }
+}
+
+/// **Every reading crosses as itself.** Five states in, five distinct states
+/// out: nothing is renamed, nothing is collapsed into its neighbour, and
+/// nothing is dropped for want of an arm.
+///
+/// This is the second way the ranking can be lost. The merge can be right and
+/// the subject still arrive as `Held` if the mapping out of the daemon's
+/// vocabulary sends `PausedBySettings` there — which a reader of the window
+/// could not tell from the defect in the merge.
+#[test]
+fn every_organization_sync_reading_crosses_the_wire_as_itself() {
+    let readings = [
+        (
+            koru_sync_control::RootSyncState::UpToDate,
+            koru_agent_wire::RootSyncState::UpToDate,
+        ),
+        (
+            koru_sync_control::RootSyncState::Pending,
+            koru_agent_wire::RootSyncState::Pending,
+        ),
+        (
+            koru_sync_control::RootSyncState::PausedBySettings,
+            koru_agent_wire::RootSyncState::PausedBySettings,
+        ),
+        (
+            koru_sync_control::RootSyncState::BlockedByMismatch,
+            koru_agent_wire::RootSyncState::BlockedByMismatch,
+        ),
+        (
+            koru_sync_control::RootSyncState::Held,
+            koru_agent_wire::RootSyncState::Held,
+        ),
+    ];
+
+    let mut agent = agent();
+    let peer = koru_device::DeviceId::new();
+    let subjects: Vec<_> = readings
+        .iter()
+        .map(|(read, _)| koru_sync_control::RootSyncSubject {
+            peer,
+            profile: Some(ProfileId::new()),
+            workspace: None,
+            state: *read,
+        })
+        .collect();
+    agent.set_sync_control(crate::service::SyncControl::for_test(
+        koru_sync_control::ControlStatus {
+            root_sync: subjects.clone(),
+            ..Default::default()
+        },
+    ));
+    let connection = ConnectionId(92);
+    let (live, queue) = Connection::for_test(connection);
+    agent.connections.push(live);
+
+    agent.wake(AgentEvent::RootSyncChanged);
+
+    let status = root_sync_pushed("only", &queue);
+    assert_eq!(status.subjects.len(), readings.len(), "a subject was lost");
+    for ((read, wire), sent) in readings.iter().zip(&status.subjects) {
+        assert_eq!(sent.state, *wire, "{read:?} did not cross as itself");
+    }
+}
+
+/// **A window that opens mid-pass is told at once**, rather than waiting for
+/// the next change — which may never come, because the states it would show
+/// are exactly the ones that sit still (`PausedBySettings`,
+/// `BlockedByMismatch`, `Held`).
+#[test]
+fn a_window_arriving_mid_pass_is_told_the_organization_sync_status_on_hello() {
+    let mut agent = agent();
+    let peer = koru_device::DeviceId::new();
+    let paused_and_held = WorkspaceId::new();
+    agent.set_sync_control(crate::service::SyncControl::for_test(
+        koru_sync_control::ControlStatus {
+            root_sync: vec![koru_sync_control::RootSyncSubject {
+                peer,
+                profile: None,
+                workspace: Some(paused_and_held),
+                state: paused_here_and_held_there(),
+            }],
+            ..Default::default()
+        },
+    ));
+    let connection = ConnectionId(93);
+    let (live, queue) = Connection::for_test(connection);
+    agent.connections.push(live);
+
+    agent.said(
+        connection,
+        1,
+        Request::Hello {
+            profile: ProfileId::new().to_storage(),
+            workspace: paused_and_held.to_storage(),
+            profile_name: "Personal".into(),
+            workspace_name: "Notes".into(),
+            pinned: Vec::new(),
+            reopen_claim: None,
+        },
+        std::time::Duration::ZERO,
+    );
+
+    let status = root_sync_pushed("arriving", &queue);
+    assert_eq!(
+        status.subjects,
+        vec![koru_agent_wire::RootSyncSubject {
+            peer_device_id: peer.to_storage(),
+            profile_id: None,
+            workspace_id: Some(paused_and_held.to_storage()),
+            state: koru_agent_wire::RootSyncState::PausedBySettings,
+        }],
+        "the arriving window was told something other than the daemon's reading"
+    );
+}
+
+/// **No sync-control session is silence, not an empty reading.** A build with
+/// no device identity has no daemon to have read anything, and an empty
+/// `RootSyncStatus` would say "nothing is out of step with anybody", which is
+/// a different and wrong thing to tell a window.
+#[test]
+fn an_agent_with_no_sync_control_says_nothing_about_organization_sync() {
+    let mut agent = agent();
+    let connection = ConnectionId(94);
+    let (live, queue) = Connection::for_test(connection);
+    agent.connections.push(live);
+
+    agent.wake(AgentEvent::RootSyncChanged);
+
+    let frames = drained(&queue);
+    assert!(
+        !frames.iter().any(|frame| matches!(
+            frame,
+            FromAgent::Push {
+                body: Push::RootSync { .. }
+            }
+        )),
+        "an Agent with no sync control invented a reading: {frames:?}"
+    );
+}

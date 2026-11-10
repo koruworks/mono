@@ -7,7 +7,9 @@ license.workspace = true
 publish = false
 description = "The koru:// URL: one parser, one writer, and nothing else."
 
-# **One dependency, and that is the point.**
+# Keep this below the UI and model. Agent links use the session protocol's
+# existing name validator so a durable pill cannot carry a name the transport
+# would refuse. I4 records the resulting dependency for maintainer review.
 #
 # Four very different things need to agree about what a Koru link says: the
 # Markdown exporter writes one, the Markdown importer reads one, the agent
@@ -20,3 +22,4 @@ description = "The koru:// URL: one parser, one writer, and nothing else."
 # their own edge with `from_uuid`.
 [dependencies]
 uuid = { workspace = true }
+koru-session-protocol = { path = "../koru-session-protocol" }

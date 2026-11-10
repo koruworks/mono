@@ -7610,8 +7610,9 @@ impl ExploreView {
                 icon_colour,
             );
         } else if let Some(icon) = &row.icon {
-            let label_bl = label_metrics.map(|m| label_y + m.baseline);
-            draw_page_emoji(scene, root, engine, icon, icon_x, r, label_bl);
+            let label_centre_y =
+                label_metrics.map(|m| label_y + m.baseline - (m.ascent - m.descent) * 0.5);
+            draw_page_emoji(scene, root, engine, icon, icon_x, r, label_centre_y);
         } else {
             // Every row under Canvases is a canvas; its row wears the glyph the
             // section's icon and the canvas's tab wear.

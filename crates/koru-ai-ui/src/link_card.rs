@@ -218,7 +218,11 @@ impl LinkCard {
         let Some(hovered) = &mut self.hovered else {
             return;
         };
-        let label = link_card_label(engine, &hovered.link.url, bounds.w);
+        let label = link_card_label(
+            engine,
+            &crate::file_citations::address_for_card(&hovered.link.url),
+            bounds.w,
+        );
         let card = match hovered.drawn {
             Some(card) => LinkCardGeom::in_rect(card.rect),
             None => link_card_geom(label.width(), label.height(), hovered.link.anchor, bounds),

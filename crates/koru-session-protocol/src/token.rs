@@ -200,6 +200,8 @@ pub mod capability {
     /// the request and read past the skills, sending `$name` as words with
     /// nothing behind it.
     pub const AGENT_COMMANDS: &str = "agent-commands";
+    /// v23 local file and folder paths delivered without copying bytes.
+    pub const PATH_REFERENCES: &str = "path-references";
 
     pub const ALL: &[&str] = &[
         CONTROLLER_LEASES,
@@ -235,5 +237,6 @@ pub mod capability {
         LAUNCH_RESUME,
         MANAGED_QUESTIONS,
         AGENT_COMMANDS,
+        PATH_REFERENCES,
     ];
 }

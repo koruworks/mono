@@ -28,3 +28,9 @@ pub(crate) const ROW_INSET: Tagged<Space> = Tagged::new("SKILL_ROW_INSET", Space
 
 /// Between a skill's name and its line: 2.
 pub(crate) const WORDS_GAP: Tagged<Space> = Tagged::new("SKILL_WORDS_GAP", Space::S0_5);
+
+/// Placeholder bars while an agent list is arriving.
+pub(crate) const LOADING_BAR_HEIGHT: Metric = Metric::new("SKILL_LOADING_BAR_H", 9.0);
+pub(crate) const LOADING_TITLE_WIDE: Metric = Metric::new("SKILL_LOADING_TITLE_WIDE", 142.0);
+pub(crate) const LOADING_TITLE_SHORT: Metric = Metric::new("SKILL_LOADING_TITLE_SHORT", 94.0);
+pub(crate) const LOADING_LINE_WIDTH: Metric = Metric::new("SKILL_LOADING_LINE_W", 236.0);

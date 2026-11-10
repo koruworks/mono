@@ -369,6 +369,7 @@ fn text_only_default_does_not_advertise_or_accept_images() {
                 kind: AttachmentKind::Image,
                 media_type: "image/png".into(),
             }],
+            references: Vec::new(),
             mode: None,
             fast: None,
             reasoning: None,
@@ -385,6 +386,55 @@ fn text_only_default_does_not_advertise_or_accept_images() {
             .iter()
             .any(|message| { message.get("method").and_then(Value::as_str) == Some("turn/start") })
     );
+}
+
+#[test]
+fn reference_only_turn_uses_text_line_and_kind_changes_fingerprint() {
+    let (mut control, state) = replay_control(
+        initialize_frames(false),
+        Arc::new(NoopAttachmentPathResolver),
+    );
+    control
+        .start(AgentStart {
+            session_id: SessionId::mint(),
+            parent_session_id: None,
+            resume: None,
+        })
+        .unwrap();
+    let mut input = AgentInput {
+        model: None,
+        turn_id: AgentTurnId::mint(),
+        text: String::new(),
+        attachments: Vec::new(),
+        references: vec![koru_session_protocol::PathReference {
+            kind: koru_session_protocol::PathReferenceKind::Folder,
+            path: std::env::temp_dir()
+                .join("folder with spaces 文書")
+                .display()
+                .to_string(),
+        }],
+        mode: None,
+        fast: None,
+        reasoning: None,
+        skills: Vec::new(),
+    };
+    let original_fingerprint = input_fingerprint(&input);
+    assert_eq!(
+        control.submit(input.clone()).unwrap_err().code,
+        ErrorCode::ProviderUnavailable
+    );
+    let sent = state.lock().unwrap();
+    let turn = sent
+        .sent
+        .iter()
+        .find(|message| message["method"] == "turn/start")
+        .unwrap();
+    let payload = turn.to_string();
+    assert!(payload.contains("Local Folder path:"), "{payload}");
+    assert!(payload.contains("folder with spaces 文書"), "{payload}");
+    drop(sent);
+    input.references[0].kind = koru_session_protocol::PathReferenceKind::File;
+    assert_ne!(input_fingerprint(&input), original_fingerprint);
 }
 
 #[test]
@@ -411,6 +461,7 @@ fn an_unknown_turn_start_outcome_is_never_resent_and_kind_is_idempotent_data() {
             kind: AttachmentKind::Image,
             media_type: "image/png".into(),
         }],
+        references: Vec::new(),
         mode: None,
         fast: None,
         reasoning: None,
@@ -778,6 +829,7 @@ fn offline_replay(
             kind: AttachmentKind::Image,
             media_type: "image/png".into(),
         }],
+        references: Vec::new(),
         mode: None,
         fast: None,
         reasoning: None,
@@ -859,6 +911,10 @@ fn offline_replay(
         }
         event => panic!("unexpected event: {event:?}"),
     }
+    assert!(matches!(
+        next(&mut control),
+        AgentEvent::ContextUsage { size, .. } if size > 0
+    ));
     let approval_id = match next(&mut control) {
         AgentEvent::ApprovalRequired {
             turn_id: observed,
@@ -1007,6 +1063,7 @@ fn offline_replay(
             turn_id: cancelled,
             text: "cancel fixture".into(),
             attachments: Vec::new(),
+            references: Vec::new(),
             mode: None,
             fast: None,
             reasoning: None,
@@ -1017,6 +1074,10 @@ fn offline_replay(
         next(&mut control),
         AgentEvent::TurnStarted { turn_id: cancelled }
     );
+    assert!(matches!(
+        next(&mut control),
+        AgentEvent::ContextUsage { .. }
+    ));
     assert!(matches!(
         next(&mut control),
         AgentEvent::ProviderState { .. }
@@ -1308,6 +1369,7 @@ fn live_codex_text_and_image_smoke_is_opt_in() {
                 kind: AttachmentKind::Image,
                 media_type: "image/png".into(),
             }],
+            references: Vec::new(),
             mode: None,
             fast: None,
             reasoning: None,
@@ -1424,6 +1486,74 @@ fn usage_frame(turn: &str, input: u64, output: u64, cached: Option<u64>) -> Valu
     })
 }
 
+#[test]
+fn codex_context_uses_last_usage_and_reported_window_not_cumulative_total() {
+    let mut frames = initialize_frames(false);
+    frames.push(turn_started(4, "t1"));
+    let mut usage = usage_frame("t1", 10_000, 100, None);
+    usage["params"]["tokenUsage"]["last"]["totalTokens"] = json!(48);
+    usage["params"]["tokenUsage"]["modelContextWindow"] = json!(475);
+    frames.push(usage);
+    let (mut control, _) = replay_control(frames, Arc::new(NoopAttachmentPathResolver));
+    control
+        .start(AgentStart::fresh(SessionId::mint(), None))
+        .unwrap();
+    control
+        .submit(AgentInput {
+            model: None,
+            turn_id: AgentTurnId::mint(),
+            text: "context".into(),
+            attachments: Vec::new(),
+            references: Vec::new(),
+            mode: None,
+            fast: None,
+            reasoning: None,
+            skills: Vec::new(),
+        })
+        .unwrap();
+    let mut context = None;
+    while let Some(event) = control.next_event(Duration::ZERO).unwrap() {
+        if let AgentEvent::ContextUsage { used, size } = event {
+            context = Some((used, size));
+        }
+    }
+    assert_eq!(context, Some((48, 475)));
+}
+
+#[test]
+fn codex_retains_context_from_an_unmapped_usage_turn() {
+    let mut frames = initialize_frames(false);
+    let mut replayed = usage_frame("old-turn", 10_000, 100, None);
+    replayed["params"]["tokenUsage"]["last"]["totalTokens"] = json!(48);
+    replayed["params"]["tokenUsage"]["modelContextWindow"] = json!(475);
+    frames.push(replayed);
+    frames.push(turn_started(4, "t1"));
+    let (mut control, _) = replay_control(frames, Arc::new(NoopAttachmentPathResolver));
+    control
+        .start(AgentStart::fresh(SessionId::mint(), None))
+        .unwrap();
+    control
+        .submit(AgentInput {
+            model: None,
+            turn_id: AgentTurnId::mint(),
+            text: "context".into(),
+            attachments: Vec::new(),
+            references: Vec::new(),
+            mode: None,
+            fast: None,
+            reasoning: None,
+            skills: Vec::new(),
+        })
+        .unwrap();
+    let mut context = None;
+    while let Some(event) = control.next_event(Duration::ZERO).unwrap() {
+        if let AgentEvent::ContextUsage { used, size } = event {
+            context = Some((used, size));
+        }
+    }
+    assert_eq!(context, Some((48, 475)));
+}
+
 fn turn_completed(turn: &str, status: &str) -> Value {
     json!({
         "method": "turn/completed",
@@ -1490,6 +1620,7 @@ fn codex_usage_is_normalized_to_one_replacing_total_per_turn() {
             turn_id: first,
             text: "first".into(),
             attachments: Vec::new(),
+            references: Vec::new(),
             mode: None,
             fast: None,
             reasoning: None,
@@ -1545,6 +1676,7 @@ fn codex_usage_is_normalized_to_one_replacing_total_per_turn() {
             turn_id: second,
             text: "second".into(),
             attachments: Vec::new(),
+            references: Vec::new(),
             mode: None,
             fast: None,
             reasoning: None,
@@ -1585,6 +1717,7 @@ fn codex_usage_is_normalized_to_one_replacing_total_per_turn() {
             turn_id: attempt,
             text: "again".into(),
             attachments: Vec::new(),
+            references: Vec::new(),
             mode: None,
             fast: None,
             reasoning: None,
@@ -1683,6 +1816,7 @@ fn live_codex_reaches_a_stub_mcp_endpoint_when_opted_in() {
             turn_id,
             text: "Reply with the single word OK.".into(),
             attachments: Vec::new(),
+            references: Vec::new(),
             mode: None,
             fast: None,
             reasoning: None,
@@ -2428,6 +2562,7 @@ fn steering_adds_text_to_the_running_turn_with_its_native_id_and_only_then() {
             turn_id,
             text: "start".into(),
             attachments: Vec::new(),
+            references: Vec::new(),
             mode: None,
             fast: None,
             reasoning: None,
@@ -2441,6 +2576,7 @@ fn steering_adds_text_to_the_running_turn_with_its_native_id_and_only_then() {
             turn_id,
             text: "also this".into(),
             attachments: Vec::new(),
+            references: Vec::new(),
             mode: None,
             fast: None,
             reasoning: None,
@@ -2464,6 +2600,7 @@ fn steering_adds_text_to_the_running_turn_with_its_native_id_and_only_then() {
             turn_id: AgentTurnId::mint(),
             text: "x".into(),
             attachments: Vec::new(),
+            references: Vec::new(),
             mode: None,
             fast: None,
             reasoning: None,
@@ -2478,6 +2615,7 @@ fn steering_adds_text_to_the_running_turn_with_its_native_id_and_only_then() {
             turn_id,
             text: "late".into(),
             attachments: Vec::new(),
+            references: Vec::new(),
             mode: None,
             fast: None,
             reasoning: None,
@@ -2532,6 +2670,7 @@ fn the_chats_mode_starts_the_thread_and_every_turn_carries_its_own() {
         turn_id: AgentTurnId::mint(),
         text: "<prompt>".into(),
         attachments: Vec::new(),
+        references: Vec::new(),
         mode: mode.map(|mode| mode.parse().unwrap()),
         fast: None,
         reasoning: None,
@@ -2660,6 +2799,7 @@ fn fast_mode_is_the_models_fast_tier_on_the_thread_and_each_turn() {
                     turn_id: AgentTurnId::mint(),
                     text: "<prompt>".into(),
                     attachments: Vec::new(),
+                    references: Vec::new(),
                     mode: None,
                     fast: *fast,
                     reasoning: None,
@@ -2745,6 +2885,7 @@ fn a_chosen_effort_rides_every_turn_and_an_unlisted_one_is_refused() {
                     turn_id: AgentTurnId::mint(),
                     text: "<prompt>".into(),
                     attachments: Vec::new(),
+                    references: Vec::new(),
                     mode: None,
                     fast: None,
                     reasoning: None,
@@ -2824,6 +2965,7 @@ fn a_level_chosen_after_the_start_rides_the_next_turn() {
         turn_id: AgentTurnId::mint(),
         text: "<prompt>".into(),
         attachments: Vec::new(),
+        references: Vec::new(),
         mode: None,
         fast: None,
         reasoning,
@@ -2899,6 +3041,7 @@ fn a_model_chosen_after_the_start_rides_the_next_turn() {
         turn_id: AgentTurnId::mint(),
         text: "<prompt>".into(),
         attachments: Vec::new(),
+        references: Vec::new(),
         mode: None,
         fast: None,
         reasoning,

@@ -286,11 +286,7 @@ impl Overlay {
                 if p.scrolls() && local_x >= bar_x {
                     return None;
                 }
-                let local_y = local_y - p.field_band();
-                let row = ((local_y - koru_draw::theme::PANEL_PAD - entity_picker::HEADER_H)
-                    / koru_draw::theme::ROW_H)
-                    .floor();
-                (row >= 0.0).then(|| p.visible_item(row as usize))?
+                p.item_at(local_y)
             }
             Self::Tag(t) => t.item_at(local_y - koru_draw::theme::PANEL_PAD),
             Self::List(l) => l.item_at(local_y - koru_draw::theme::PANEL_PAD),

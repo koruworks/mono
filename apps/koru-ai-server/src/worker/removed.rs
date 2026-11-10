@@ -71,6 +71,7 @@ impl WorkerCommand {
             | Self::ToolSearchChats { .. }
             | Self::ToolReadChat { .. }
             | Self::UpdateChatToolPolicy { .. }
+            | Self::AddChatWorkspaceGrants { .. }
             | Self::ReadChatToolPolicy { .. }
             | Self::DeleteChat { .. }
             | Self::ClearHistory { .. }
@@ -109,6 +110,7 @@ impl WorkerCommand {
             | Self::UpdateChatFolder { chat, .. }
             | Self::UpdateChatAgentSettings { chat, .. }
             | Self::UpdateChatToolPolicy { chat, .. }
+            | Self::AddChatWorkspaceGrants { chat, .. }
             | Self::ReadChatToolPolicy { chat, .. }
             | Self::DeleteChat { chat, .. }
             | Self::BranchChat { chat, .. }
@@ -163,6 +165,7 @@ impl WorkerCommand {
             Self::ToolSearchChats { reply, .. } => answer(reply, failure),
             Self::ToolReadChat { reply, .. } => answer(reply, failure),
             Self::UpdateChatToolPolicy { reply, .. } => answer(reply, failure),
+            Self::AddChatWorkspaceGrants { reply, .. } => answer(reply, failure),
             Self::ReadChatToolPolicy { reply, .. } => answer(reply, failure),
             Self::Usage { reply, .. } => answer(reply, failure),
             Self::DeleteChat { reply, .. } => answer(reply, failure),

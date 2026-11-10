@@ -638,6 +638,36 @@ impl protocol::ReplicationStore for InventoryStore {
         Ok(0)
     }
 
+    /// This device's own reading of the subjects it holds, as the real Store
+    /// answers it (`root_exchange::root_sync_admissions`): the same mode row
+    /// that makes [`Self::admit_peer_subject`] refuse is what the pass seeds
+    /// `PausedBySettings` from, so a double that refuses the one but stays
+    /// silent on the other would let the status report the peer's reason for
+    /// this device's own setting.
+    fn root_sync_admissions(
+        &self,
+    ) -> Result<Vec<protocol::RootSubjectAdmission>, protocol::StoreFailure> {
+        let allows_peer = !self.peer_subject_blocked.load(Ordering::SeqCst);
+        Ok(vec![
+            protocol::RootSubjectAdmission {
+                subject: protocol::CatalogUnitRef::Profile {
+                    profile: ProfileId::from_uuid(self.workspace.as_uuid()),
+                },
+                allows_peer: true,
+                ceiling_mismatch: false,
+                overlay_pending: false,
+            },
+            protocol::RootSubjectAdmission {
+                subject: protocol::CatalogUnitRef::Workspace {
+                    workspace: self.workspace,
+                },
+                allows_peer,
+                ceiling_mismatch: false,
+                overlay_pending: false,
+            },
+        ])
+    }
+
     fn root_catalog(
         &self,
         peer: &protocol::AuthenticatedPeer,
@@ -1816,6 +1846,15 @@ impl RequestTransport for CatalogThenPendingInventory {
                     }],
                 }),
                 protocol::PeerFrame::InventoryRequest { .. } => std::future::pending().await,
+                // An all-data peer is asked for its root catalog before any
+                // inventory (§7.2). This double holds no root units, which
+                // makes the root exchange a no-op whatever the digests say,
+                // so the pass reaches the inventory this test is about.
+                protocol::PeerFrame::RootCatalogRequest => Ok(protocol::PeerFrame::RootCatalog {
+                    digest: vec![99],
+                    units: Vec::new(),
+                    personal: Vec::new(),
+                }),
                 other => panic!("unexpected scripted request: {other:?}"),
             }
         })
@@ -1866,6 +1905,14 @@ impl RequestTransport for CatalogThenProfileGone {
                 }),
                 protocol::PeerFrame::InventoryRequest { .. } => Ok(protocol::PeerFrame::Error {
                     code: "profile_not_found".into(),
+                }),
+                // As above: no root units, so the root exchange neither
+                // reschedules the pass nor contributes an error code, and
+                // `profile_not_found` is still the one the test reads.
+                protocol::PeerFrame::RootCatalogRequest => Ok(protocol::PeerFrame::RootCatalog {
+                    digest: vec![99],
+                    units: Vec::new(),
+                    personal: Vec::new(),
                 }),
                 other => panic!("unexpected scripted request: {other:?}"),
             }

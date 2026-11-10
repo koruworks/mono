@@ -59,8 +59,12 @@ async fn call(
     (status, body)
 }
 
+/// The verb's own scope is the whole grant, and nothing is manufactured for
+/// the Profile the removal empties (root-catalog Plan 1.2; STORE.md "Removal
+/// with a required replacement"). The `name` the routes still accept is
+/// unused, so there is no replacement to name in any language.
 #[tokio::test]
-async fn replacing_routes_require_the_verb_only_and_publish_localized_durable_replacement() {
+async fn replacing_routes_require_the_verb_only_and_manufacture_no_replacement() {
     for (route, scope) in [
         ("archive", Scope::DestroyWorkspaces),
         ("delete", Scope::DestroyWorkspaces),
@@ -77,18 +81,20 @@ async fn replacing_routes_require_the_verb_only_and_publish_localized_durable_re
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
-        assert_eq!(body["replacement"]["state"], "created");
-        assert_eq!(body["replacement"]["workspace"]["name"], "Arbeitsbereich");
+        // The source Profile held only this workspace, so it is left empty.
         assert_eq!(
-            body["replacement"]["workspace"]["owner"],
-            source.owner.to_storage()
+            body["replacement"]["state"], "not_needed",
+            "{route}: {body}"
+        );
+        assert!(
+            body["replacement"]["workspace"].is_null(),
+            "{route}: {body}"
         );
         assert!(changed.has_changed().unwrap());
-        let mut store = state.store.lock().unwrap();
+        let store = state.store.lock().unwrap();
         let rows = store.workspaces_including_deleted().unwrap();
-        assert_eq!(rows.len(), 2);
-        let replacement = rows.into_iter().find(|row| row.id != source.id).unwrap();
-        assert!(store.manifest_id(replacement.id).is_ok());
+        assert_eq!(rows.len(), 1, "{route}: a workspace was manufactured");
+        assert_eq!(rows[0].id, source.id);
     }
 }
 
@@ -112,8 +118,14 @@ async fn ordinary_management_cannot_remove_or_trigger_replacement() {
     }
 }
 
+/// Two removals racing for the same Profile's last two workspaces: both
+/// lifecycle commits land, nothing is manufactured for the Profile they
+/// empty, and whatever either one reports as a replacement is a workspace
+/// that was really live when it looked (root-catalog Plan 1.2). Which one
+/// still sees its sibling depends on who takes the store first, so the test
+/// pins the honesty of both answers rather than a particular one.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn competing_removals_publish_one_replacement_for_the_owner() {
+async fn competing_removals_publish_no_replacement_and_empty_the_owner() {
     for (route, scope) in [
         ("archive", Scope::DestroyWorkspaces),
         ("delete", Scope::DestroyWorkspaces),
@@ -144,32 +156,59 @@ async fn competing_removals_publish_one_replacement_for_the_owner() {
             }));
         }
         ready.wait().await;
-        let mut created = 0;
+        let live = [first.id.to_storage(), second.id.to_storage()];
         for request in requests {
             let (status, body) = request.await.unwrap();
             assert_eq!(status, StatusCode::OK, "{route}: {body}");
-            created += usize::from(body["replacement"]["state"] == "created");
+            let answer = body["replacement"]["state"].clone();
+            match answer.as_str() {
+                // The sibling was live when this operation looked at it, even
+                // if the competing removal retired it a moment later.
+                Some("existing") => {
+                    let selected = body["replacement"]["workspace"]["id"].clone();
+                    assert!(
+                        live.iter().any(|id| selected == id.as_str()),
+                        "{route}: selected a workspace nobody created: {body}"
+                    );
+                }
+                // The competitor got there first and the Profile is empty.
+                Some("not_needed") => {}
+                _ => panic!("{route}: no replacement is ever manufactured: {body}"),
+            }
         }
-        assert_eq!(
-            created, 1,
-            "{route}: one operation prepares the replacement"
-        );
-        let mut store = state.store.lock().unwrap();
+        let store = state.store.lock().unwrap();
         let rows = store.workspaces_including_deleted().unwrap();
+        let mut ids: Vec<_> = rows.iter().map(|row| row.id).collect();
+        ids.sort_unstable();
+        let mut expected = vec![first.id, second.id];
+        expected.sort_unstable();
+        assert_eq!(ids, expected, "{route}: a workspace was manufactured");
+        // Both lifecycle commits landed, and an emptied Profile is a valid
+        // state: nobody creates one back.
         let remaining: Vec<_> = rows
             .iter()
             .filter(|row| row.owner == first.owner && !row.archived && row.deleted_at.is_none())
             .collect();
-        assert_eq!(remaining.len(), 1, "{route}: the owner stays usable");
-        assert_ne!(remaining[0].id, first.id);
-        assert_ne!(remaining[0].id, second.id);
-        assert!(store.manifest_id(remaining[0].id).is_ok());
+        assert!(
+            remaining.is_empty(),
+            "{route}: a removal did not commit: {remaining:?}"
+        );
     }
 }
 
+/// The source Profile keeps a second live workspace, so the forced delete
+/// and its retry both have one to **select** (`Replacement::Existing`): the
+/// only route-level cover for selection, and what makes the retry's answer
+/// comparable with the first one's.
 #[tokio::test]
 async fn delete_force_closes_rooms_and_retry_can_read_retained_trash() {
     let (state, source, _) = fixture();
+    let sibling = state
+        .store
+        .lock()
+        .unwrap()
+        .create_workspace(source.owner, "Sibling", now())
+        .unwrap();
     let room = crate::rooms::Room::Manifest(source.id);
     let who = state.rooms.next_connection();
     let (frames, _) = tokio::sync::mpsc::unbounded_channel();
@@ -197,7 +236,11 @@ async fn delete_force_closes_rooms_and_retry_can_read_retained_trash() {
     assert_eq!(status, StatusCode::OK);
     assert!(closed.try_recv().is_ok());
     assert!(!state.rooms.join(room, who, frames));
-    let replacement = body["replacement"]["workspace"]["id"].clone();
+    assert_eq!(body["replacement"]["state"], "existing", "{body}");
+    assert_eq!(
+        body["replacement"]["workspace"]["id"],
+        sibling.id.to_storage()
+    );
     let (status, body) = call(
         &state,
         source.id,
@@ -207,8 +250,15 @@ async fn delete_force_closes_rooms_and_retry_can_read_retained_trash() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
+    // The retry reads the workspace retained in Trash and selects the same
+    // live sibling again; nothing is created for either answer.
+    assert_eq!(body["workspace"]["id"], source.id.to_storage(), "{body}");
+    assert!(!body["workspace"]["deleted_at"].is_null(), "{body}");
     assert_eq!(body["replacement"]["state"], "existing");
-    assert_eq!(body["replacement"]["workspace"]["id"], replacement);
+    assert_eq!(
+        body["replacement"]["workspace"]["id"],
+        sibling.id.to_storage()
+    );
 }
 
 #[tokio::test]

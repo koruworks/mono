@@ -392,6 +392,7 @@ impl CodexControl {
                         turn_id: pending.turn_id,
                         text: reply_text(&pending.questions, answers),
                         attachments: Vec::new(),
+                        references: Vec::new(),
                         mode: None,
                         fast: None,
                         reasoning: None,

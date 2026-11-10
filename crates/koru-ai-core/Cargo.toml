@@ -12,6 +12,7 @@ default = []
 schema = ["dep:schemars", "koru-store-core/schema"]
 
 [dependencies]
+koru-link = { path = "../koru-link" }
 koru-store-core = { path = "../koru-store-core" }
 pulldown-cmark.workspace = true
 schemars = { workspace = true, optional = true }

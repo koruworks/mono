@@ -703,6 +703,15 @@ fn expired_selection_and_retry_refresh_exactly_and_wait_for_credential_acknowled
         let mut service = service(port.clone(), authority_a());
         service.client = AccountClient::with_transport(hosted.clone());
         service.access_expires_at_millis = Some(1);
+        // Nothing is sent until the key this rotation would be replayed under
+        // is durable, because a rotation that cannot be replayed is a session
+        // that cannot be recovered.
+        let unarmed = execute(&mut service, command.clone()).err().unwrap();
+        assert_eq!(unarmed.code, "credential_unavailable");
+        assert!(unarmed.retryable);
+        assert!(hosted.refreshes.lock().unwrap().is_empty());
+        let armed = [7u8; 32];
+        service.arm_refresh_retry_key(Some(armed));
         let outcome = execute(&mut service, command.clone()).unwrap();
         assert_eq!(outcome.follow_up, Some(command.clone()));
         let CredentialChange::Replace(credential) = outcome.credential else {
@@ -744,7 +753,8 @@ fn expired_selection_and_retry_refresh_exactly_and_wait_for_credential_acknowled
         assert_eq!(refreshes[0].refresh_token.0, "refresh-only");
         assert_eq!(
             refreshes[0].idempotency_key,
-            RefreshIdempotencyKey::from_bytes(refresh_retry_key("refresh-only"))
+            RefreshIdempotencyKey::from_bytes(armed),
+            "the refresh presents exactly the armed durable key"
         );
     }
 }

@@ -12,6 +12,7 @@ use crate::AttachmentPathResolver;
 /// Each request of the levels walk (D16) may take what a discovery
 /// session's start does: setting Claude's model rebuilds its options.
 const WALK_TIMEOUT: Duration = Duration::from_secs(20);
+const COMMAND_TIMEOUT: Duration = Duration::from_secs(20);
 
 #[derive(Clone)]
 pub struct AcpCompatibilityProbe {
@@ -147,6 +148,23 @@ impl ManagedProviderFactory for AcpFactory {
         )
     }
 
+    fn discover_commands(
+        &self,
+        executable: OsString,
+        working_directory: PathBuf,
+    ) -> Result<Vec<koru_session_protocol::AgentCommand>, ProviderFailure> {
+        let executable = crate::providers::resolve_probe_executable(&executable)
+            .map(|resolved| self.choose_executable(resolved))
+            .unwrap_or(executable);
+        AcpCompatibilityProbe::new(
+            self.route.clone(),
+            executable,
+            working_directory,
+            Arc::clone(&self.attachment_paths),
+        )
+        .session_commands()
+    }
+
     fn catalog_source(&self) -> CatalogSource {
         self.route.dialect.catalog_source()
     }
@@ -248,6 +266,83 @@ impl ManagedProviderFactory for AcpFactory {
             control: Box::new(AcpControl::new(config)),
             wake,
         })
+    }
+}
+
+impl AcpCompatibilityProbe {
+    /// A bounded, disposable session catches notifications from process start,
+    /// including those sent before the session/new answer.
+    pub(super) fn session_commands(
+        &self,
+    ) -> Result<Vec<koru_session_protocol::AgentCommand>, ProviderFailure> {
+        let deadline = Instant::now() + COMMAND_TIMEOUT;
+        let version = self.version(ProbeLimits {
+            timeout: COMMAND_TIMEOUT,
+            ..ProbeLimits::default()
+        });
+        let version = match version {
+            Ok(version) => version,
+            Err(error) if error.diagnostic == ProviderDiagnostic::Timeout => {
+                return Ok(Vec::new());
+            }
+            Err(error) => return Err(error),
+        };
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Ok(Vec::new());
+        }
+        let mut config = AcpConfig::new(
+            self.route.clone(),
+            self.executable.clone(),
+            self.working_directory.clone(),
+            version,
+            self.attachment_paths.clone(),
+        )?
+        .with_limits(ProbeLimits {
+            timeout: remaining,
+            ..ProbeLimits::default()
+        })?;
+        // A probe owns no conversation. Closing it kills the process tree at
+        // once, including a child that ignores EOF, instead of spending the
+        // whole discovery budget a second time in graceful shutdown.
+        config.shutdown_timeout = Duration::ZERO;
+        let mut control = AcpControl::new(config);
+        control.probe_deadline = Some(deadline);
+        let result = control.commands_until(deadline);
+        let _ = control.shutdown();
+        result
+    }
+}
+
+impl AcpControl {
+    pub(super) fn commands_until(
+        &mut self,
+        deadline: Instant,
+    ) -> Result<Vec<koru_session_protocol::AgentCommand>, ProviderFailure> {
+        let started = self.start(AgentStart::fresh(SessionId::mint(), None));
+        if let Some(commands) = self.live_commands.clone() {
+            Ok(commands)
+        } else if deadline <= Instant::now() {
+            Ok(Vec::new())
+        } else {
+            match started {
+                Ok(_) => {}
+                Err(error) if error.diagnostic == ProviderDiagnostic::Timeout => {
+                    return Ok(Vec::new());
+                }
+                Err(error) => return Err(error),
+            }
+            loop {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    break Ok(Vec::new());
+                }
+                let _ = self.next_event(remaining)?;
+                if let Some(commands) = self.live_commands.clone() {
+                    break Ok(commands);
+                }
+            }
+        }
     }
 }
 

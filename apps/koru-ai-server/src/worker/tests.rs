@@ -38,6 +38,30 @@ fn context() -> RequestContext {
     }
 }
 
+#[test]
+fn grant_targets_must_belong_to_the_chats_profile() {
+    let profile = koru_ai_core::ProfileId::new();
+    let other = koru_ai_core::ProfileId::new();
+    let home = WorkspaceId::new();
+    let office = WorkspaceId::new();
+    let catalog = koru_ai_core::ProfileCatalog {
+        profiles: vec![profile, other],
+        workspace_owners: [(home, profile), (office, other)].into(),
+    };
+    assert!(grant_targets_in_profile(&catalog, profile, &[]));
+    assert!(grant_targets_in_profile(&catalog, profile, &[home, home]));
+    assert!(!grant_targets_in_profile(
+        &catalog,
+        profile,
+        &[home, office]
+    ));
+    assert!(!grant_targets_in_profile(
+        &catalog,
+        profile,
+        &[WorkspaceId::new()]
+    ));
+}
+
 fn provider_context() -> RequestContext {
     RequestContext {
         principal: AiPrincipal {
@@ -597,16 +621,31 @@ fn mock_provider_completes_through_bounded_worker_and_real_database() {
     unavailable_duplicate.usage = AiUsage::default();
     let mut latest_reported_duplicate = persisted_attempt.clone();
     latest_reported_duplicate.usage.completion_tokens = Some(999);
+    latest_reported_duplicate.context_used_tokens = Some(173_700);
+    latest_reported_duplicate.context_limit_tokens = Some(258_400);
     let resolved = transcript_usage(
         &transcript.messages,
         vec![
             persisted_attempt,
-            unavailable_duplicate,
+            unavailable_duplicate.clone(),
             latest_reported_duplicate.clone(),
         ],
     );
     assert_eq!(resolved.len(), 1);
     assert_eq!(resolved[0].usage, latest_reported_duplicate.usage);
+    assert_eq!(
+        resolved[0].context,
+        Some(ReportedContextUsage {
+            used: 173_700,
+            size: 258_400,
+        })
+    );
+
+    let superseded = transcript_usage(
+        &transcript.messages,
+        vec![latest_reported_duplicate, unavailable_duplicate],
+    );
+    assert!(superseded.is_empty());
 
     let replay = send(&client, chat_id, operation_id);
     assert!(replay.accepted.replayed);
@@ -2641,11 +2680,12 @@ fn picked_skills_ride_an_agent_message_and_nothing_else() {
     .spawn()
     .unwrap();
     let client = worker.client();
-    let with_skills = |chat_id: ChatId, skills: &[&str]| SendTurnRequest {
+    let with_skills = |chat_id: ChatId, skills: &[&str]| {
+        SendTurnRequest {
         operation_id: Uuid::new_v4(),
         chat_id,
         surface: AiSurface::Standalone,
-        markdown: "Use $review-pr".into(),
+        markdown: r"Use [[koru://skill/review-pr]] with \[[koru://skill/review-pr]] and literal $review-pr".into(),
         explicit_refs: Vec::new(),
         web_search: false,
         reasoning_override: None,
@@ -2654,6 +2694,7 @@ fn picked_skills_ride_an_agent_message_and_nothing_else() {
         attachment_ids: Vec::new(),
         answers: None,
         skills: skills.iter().map(|name| (*name).to_owned()).collect(),
+    }
     };
 
     let plain = create_chat(&client);
@@ -2692,8 +2733,21 @@ fn picked_skills_ride_an_agent_message_and_nothing_else() {
     assert_eq!(request.options.agent_skills, vec!["review-pr".to_owned()]);
     assert_eq!(
         request.messages.last().unwrap().markdown,
-        "Use $review-pr",
-        "the message keeps its $name text"
+        "Use $review-pr with [[koru://skill/review-pr]] and literal $review-pr",
+        "only the selected link renders as invocation text"
+    );
+    assert_eq!(
+        wait_for_terminal(&client, stream.accepted.attempt_id),
+        AttemptStatus::Complete
+    );
+    let mut followup = with_skills(agent, &[]);
+    followup.markdown = "Then [[koru://command/issue%2342]] now".into();
+    let stream = client.send_turn(context(), followup).unwrap();
+    let replayed = requests.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert_eq!(replayed.messages[0].markdown, request.messages[0].markdown);
+    assert_eq!(
+        replayed.messages.last().unwrap().markdown,
+        "Then /issue#42 now"
     );
     assert_eq!(
         wait_for_terminal(&client, stream.accepted.attempt_id),
@@ -3779,4 +3833,61 @@ fn a_missing_route_with_the_agent_present_is_a_missing_adapter() {
         status(Some(A::Checking), || panic!("not asked")).1,
         Some("agent_checking")
     );
+}
+#[test]
+fn live_command_listings_keep_chat_and_session_generations_separate() {
+    use koru_ai_provider_agent::CommandListingUpdate;
+    use koru_session_protocol::{AgentCommand, AgentCommandKind, SessionId};
+
+    let first_chat = ChatId::new();
+    let second_chat = ChatId::new();
+    let first_session = SessionId::mint();
+    let replacement = SessionId::mint();
+    let command = |name: &str| AgentCommand {
+        name: name.to_owned(),
+        description: String::new(),
+        display_name: None,
+        input_hint: None,
+        kind: AgentCommandKind::Command,
+    };
+    let update = |chat, session, generation, commands| CommandListingUpdate {
+        chat,
+        session,
+        generation,
+        commands,
+    };
+    let mut listings = HashMap::new();
+    accept_command_listing(
+        &mut listings,
+        update(first_chat, first_session, 1, Some(vec![command("first")])),
+    )
+    .unwrap();
+    accept_command_listing(
+        &mut listings,
+        update(
+            second_chat,
+            SessionId::mint(),
+            2,
+            Some(vec![command("other")]),
+        ),
+    )
+    .unwrap();
+    assert_eq!(listings[&first_chat].2.as_ref().unwrap()[0].name, "first");
+    accept_command_listing(
+        &mut listings,
+        update(first_chat, first_session, 1, Some(Vec::new())),
+    )
+    .unwrap();
+    assert!(listings[&first_chat].2.as_ref().unwrap().is_empty());
+    accept_command_listing(&mut listings, update(first_chat, replacement, 3, None)).unwrap();
+    assert!(listings[&first_chat].2.is_none());
+    assert!(
+        accept_command_listing(
+            &mut listings,
+            update(first_chat, first_session, 1, Some(vec![command("stale")])),
+        )
+        .is_none()
+    );
+    assert!(listings[&first_chat].2.is_none());
+    assert_eq!(listings[&second_chat].2.as_ref().unwrap()[0].name, "other");
 }

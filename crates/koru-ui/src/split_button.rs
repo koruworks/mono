@@ -1,0 +1,280 @@
+// SPDX-License-Identifier: MPL-2.0
+
+//! A compact primary action with an independently enabled menu target.
+//! Geometry, hit testing and painting share one split. The caller owns the
+//! actions, focus order and the menu; this component knows only their states.
+
+use koru_draw::geometry::Rect;
+use koru_draw::text::TextEngine;
+use koru_draw::{icons, inspect, scene, theme};
+use vello::Scene;
+use vello::kurbo::Affine;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SplitTone {
+    Accent,
+    Success,
+    Neutral,
+    Warning,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SplitPart {
+    Action,
+    Menu,
+}
+
+/// The shared split-button geometry. `rect` includes both targets; the menu
+/// keeps its own hit area even when the action is disabled.
+#[derive(Clone, Copy, Debug)]
+pub struct SplitButton {
+    pub rect: Rect,
+    pub tone: SplitTone,
+    pub action_enabled: bool,
+    pub action_hot: bool,
+    pub action_focused: bool,
+    pub menu_hot: bool,
+    pub menu_focused: bool,
+    pub menu_open: bool,
+    /// Animated reveal of the right lane, independent of its fixed hit area.
+    pub reveal: f32,
+    /// Animated half-turn of the menu chevron when its panel opens.
+    pub chevron_turn: f32,
+}
+
+impl SplitButton {
+    const PAD: f32 = theme::Space::S1_5.px(theme::Profile::Desktop);
+    const ICON_SIZE: f32 = theme::IconSize::M.px(theme::Profile::Desktop);
+    const CHEVRON_SIZE: f32 = theme::IconSize::XS.px(theme::Profile::Desktop);
+    const DIVIDER_W: f32 = theme::BORDER_W as f32;
+    // 6 + 16 + 6 | 6 + 16 + 6; hover adds a 12 px chevron and 6 px edge.
+    pub const ACTION_W: f32 = Self::PAD + Self::ICON_SIZE + Self::PAD + Self::DIVIDER_W;
+    pub const RESTING_MENU_W: f32 = Self::PAD + Self::ICON_SIZE + Self::PAD;
+    pub const MENU_W: f32 = Self::RESTING_MENU_W + Self::CHEVRON_SIZE + Self::PAD;
+    pub const H: f32 = crate::button::ActionButton::H;
+    pub const W: f32 = Self::ACTION_W + Self::MENU_W;
+
+    pub fn action_rect(self) -> Rect {
+        Rect::new(self.rect.x, self.rect.y, Self::ACTION_W, self.rect.h)
+    }
+
+    pub fn menu_rect(self) -> Rect {
+        Rect::new(
+            self.rect.x + Self::ACTION_W,
+            self.rect.y,
+            self.rect.w - Self::ACTION_W,
+            self.rect.h,
+        )
+    }
+
+    /// The painted pill grows to the right without moving either icon.
+    pub fn painted_rect(self) -> Rect {
+        Rect::new(
+            self.rect.x,
+            self.rect.y,
+            Self::ACTION_W
+                + Self::RESTING_MENU_W
+                + (Self::MENU_W - Self::RESTING_MENU_W) * self.reveal.clamp(0.0, 1.0),
+            self.rect.h,
+        )
+    }
+
+    pub fn hit(self, x: f32, y: f32) -> Option<SplitPart> {
+        if self.action_rect().contains(x, y) {
+            Some(SplitPart::Action)
+        } else if self.menu_rect().contains(x, y) {
+            Some(SplitPart::Menu)
+        } else {
+            None
+        }
+    }
+
+    /// Draw the action glyph, mode icon and a chevron on hover or focus.
+    /// The menu icon remains visible at rest as the mode badge.
+    #[track_caller]
+    pub fn draw(
+        self,
+        canvas: &mut Scene,
+        root: Affine,
+        engine: &mut TextEngine,
+        glyph: char,
+        badge: char,
+    ) {
+        let _scope = inspect::scope(
+            "KoruSplitButton",
+            "component",
+            root,
+            scene::rect(self.rect.x, self.rect.y, self.rect.w, self.rect.h),
+            |record| {
+                record.property("tone", format!("{:?}", self.tone), "SplitTone");
+                record.property("action enabled", self.action_enabled, "caller state");
+                record.property(
+                    "menu focused / open",
+                    format!("{} / {}", self.menu_focused, self.menu_open),
+                    "caller state",
+                );
+            },
+        );
+        let p = theme::p();
+        let fill = match self.tone {
+            SplitTone::Accent => p.accent,
+            SplitTone::Success => p.success,
+            SplitTone::Neutral => p.row_selected,
+            SplitTone::Warning => p.notice_fg,
+        };
+        let painted = self.painted_rect();
+        let shape = scene::rrect(painted.x, painted.y, painted.w, painted.h, painted.h * 0.5);
+        scene::fill(canvas, root, fill, &shape);
+        let action = self.action_rect();
+        let menu = self.menu_rect();
+        if self.action_hot && self.action_enabled {
+            scene::fill(
+                canvas,
+                root,
+                p.hover_tint,
+                &scene::rect(action.x, action.y, action.w, action.h),
+            );
+        }
+        if self.action_focused {
+            scene::stroke(
+                canvas,
+                root,
+                p.focus_ring,
+                theme::BORDER_W * 2.0,
+                &scene::rrect(action.x, action.y, action.w, action.h, action.h * 0.5),
+            );
+        }
+        if self.menu_focused {
+            scene::stroke(
+                canvas,
+                root,
+                p.focus_ring,
+                theme::BORDER_W * 2.0,
+                &scene::rrect(menu.x, menu.y, menu.w, menu.h, menu.h * 0.5),
+            );
+        }
+        scene::fill(
+            canvas,
+            root,
+            p.panel_border,
+            &scene::rect(
+                menu.x - Self::DIVIDER_W,
+                menu.y + Self::PAD,
+                Self::DIVIDER_W,
+                menu.h - Self::PAD * 2.0,
+            ),
+        );
+        let ink = if self.tone == SplitTone::Neutral {
+            p.text
+        } else {
+            p.on_accent
+        };
+        // An unavailable send is already inert and has no action hover. Keep
+        // its glyph legible against the filled tone even with an empty draft.
+        let action_ink = ink;
+        let action_icon = engine.icon_layout(glyph, Self::ICON_SIZE);
+        scene::draw_layout_first_line(
+            canvas,
+            root,
+            &action_icon,
+            action.x + Self::PAD + (Self::ICON_SIZE - action_icon.width()) * 0.5,
+            action.y + (action.h - action_icon.height()) * 0.5,
+            Some(action_ink),
+        );
+        let badge_icon = engine.icon_layout(badge, Self::ICON_SIZE);
+        let badge_x = menu.x + Self::PAD + (Self::ICON_SIZE - badge_icon.width()) * 0.5;
+        scene::draw_layout_first_line(
+            canvas,
+            root,
+            &badge_icon,
+            badge_x,
+            menu.y + (menu.h - badge_icon.height()) * 0.5,
+            Some(ink),
+        );
+        if self.reveal > 0.0 {
+            let caret = engine.icon_layout(icons::CARET_DOWN, Self::CHEVRON_SIZE);
+            let x = painted.x + painted.w - Self::PAD - Self::CHEVRON_SIZE
+                + (Self::CHEVRON_SIZE - caret.width()) * 0.5;
+            let y = menu.y + (menu.h - caret.height()) * 0.5;
+            let cx = x + caret.width() * 0.5;
+            let cy = y + caret.height() * 0.5;
+            let turned = root
+                * Affine::rotate_about(
+                    (self.chevron_turn.clamp(0.0, 1.0) * std::f32::consts::PI) as f64,
+                    (cx as f64, cy as f64),
+                );
+            scene::draw_layout_first_line(
+                canvas,
+                turned,
+                &caret,
+                x,
+                y,
+                Some(ink.with_alpha(self.reveal.clamp(0.0, 1.0))),
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn disabled_action_keeps_an_independent_menu_target() {
+        let button = SplitButton {
+            rect: Rect::new(10.0, 20.0, SplitButton::W, SplitButton::H),
+            tone: SplitTone::Success,
+            action_enabled: false,
+            action_hot: false,
+            action_focused: false,
+            menu_hot: false,
+            menu_focused: false,
+            menu_open: false,
+            reveal: 0.0,
+            chevron_turn: 0.0,
+        };
+        assert_eq!(button.hit(20.0, 30.0), Some(SplitPart::Action));
+        assert_eq!(button.hit(50.0, 30.0), Some(SplitPart::Menu));
+        assert_eq!(
+            button.action_rect().x + button.action_rect().w,
+            button.menu_rect().x
+        );
+        assert_eq!(
+            button.menu_rect().x + button.menu_rect().w,
+            button.rect.x + button.rect.w
+        );
+    }
+
+    #[test]
+    fn hover_extends_the_pill_right_without_moving_its_targets() {
+        let idle = SplitButton {
+            rect: Rect::new(10.0, 20.0, SplitButton::W, SplitButton::H),
+            tone: SplitTone::Warning,
+            action_enabled: false,
+            action_hot: false,
+            action_focused: false,
+            menu_hot: false,
+            menu_focused: false,
+            menu_open: false,
+            reveal: 0.0,
+            chevron_turn: 0.0,
+        };
+        let hot = SplitButton {
+            menu_hot: true,
+            reveal: 1.0,
+            ..idle
+        };
+        let halfway = SplitButton { reveal: 0.5, ..hot };
+        assert_eq!(idle.action_rect(), hot.action_rect());
+        assert_eq!(idle.menu_rect(), hot.menu_rect());
+        assert_eq!(idle.painted_rect().x, hot.painted_rect().x);
+        assert!(idle.painted_rect().w < hot.painted_rect().w);
+        assert!(idle.painted_rect().w < halfway.painted_rect().w);
+        assert!(halfway.painted_rect().w < hot.painted_rect().w);
+        assert_eq!(hot.painted_rect().w, SplitButton::W);
+        assert_eq!(SplitButton::ACTION_W, 29.0);
+        assert_eq!(SplitButton::RESTING_MENU_W, 28.0);
+        assert_eq!(idle.painted_rect().w, 57.0);
+        assert_eq!(SplitButton::W, 75.0);
+    }
+}

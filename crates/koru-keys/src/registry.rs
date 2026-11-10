@@ -339,6 +339,8 @@ pub enum ShortcutId {
     SaveDiagramAs,
     InsertLink,
     EmojiPicker,
+    /// Widen an open @ picker from this workspace to every live workspace.
+    WidenEntityScope,
     DeleteRows,
     Copy,
     Cut,
@@ -1004,6 +1006,12 @@ pub const REGISTRY: &[Shortcut] = &[
         Layer::Editor,
         "Emoji",
         Chord::new(named(NamedKey::Space), PRIMARY_SHIFT),
+    ),
+    s(
+        ShortcutId::WidenEntityScope,
+        Layer::Editor,
+        "Search all workspaces in @ picker",
+        Chord::new(named(NamedKey::Space), CTRL),
     ),
     s(
         ShortcutId::DeleteRows,

@@ -117,20 +117,8 @@ impl MainView {
         true
     }
 
-    /// Explore click: reuse the working tab, never a pin or a draft.
+    /// Explore click: reuse a working tab, except when a chat is active.
     pub(super) fn open_from_explore(&mut self, ws: &WorkspaceDoc, node: NodeId) -> bool {
-        // **An AI chat tab consumes an Explore click as context**, rather than
-        // being replaced by the document it names.
-        if matches!(self.tabs_mut().active_view(), TabView::AiChat(_)) {
-            if let Some((root, _)) = Self::resolve_target(ws, node) {
-                let document = koru_store_core::DocumentId::from_uuid(root.as_uuid());
-                let title = koru_workspace::name_of(ws, root);
-                if let TabView::AiChat(view) = self.tabs_mut().active_view() {
-                    view.set_context_document(Some((document, title)));
-                }
-                return true;
-            }
-        }
         if self.try_explore_store_document(node) {
             return true;
         }
@@ -1018,6 +1006,11 @@ impl MainView {
     }
 
     fn ensure_working_tab(&mut self) -> bool {
+        // Opening from a chat keeps the conversation in place and gives the
+        // selected document its own tab, even if another working tab exists.
+        if matches!(self.tabs().active_tab().view, TabView::AiChat(_)) {
+            return false;
+        }
         if self.tabs().active_tab().is_reusable() {
             return true;
         }

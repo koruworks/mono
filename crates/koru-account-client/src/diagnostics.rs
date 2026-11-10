@@ -27,6 +27,9 @@ impl Failure {
                 TransportError::ResponseTooLarge => "response_too_large",
             },
             ClientError::Api { code, .. } => safe_api_code(code),
+            // The status travels beside this as `http_status`; the body that
+            // was not an envelope never reaches a log line.
+            ClientError::ApiWithoutCode { .. } => "api_without_code",
             ClientError::RateLimited { .. } => ErrorCode::RATE_LIMITED,
         };
         Self { status, code }

@@ -194,7 +194,7 @@ fn index(store: &mut Store<SqliteCatalog, FaultBackend>, profile: ProfileId) {
         let (version, rows) = build_reminder_index(&candidate).unwrap();
         assert!(
             store
-                .publish_reminder_index(&candidate, &version, &rows)
+                .publish_reminder_index(&candidate, &version.encode(), &rows)
                 .unwrap()
         );
     }
@@ -306,14 +306,15 @@ fn a_move_to_the_same_owner_leaves_the_unit_alone_two_moves_advance_it_and_a_sta
     let (a, w) = f.cloud_pair();
     let a2 = f.cloud_profile("A2");
     let a3 = f.cloud_profile("A3");
-    assert!(
-        f.unit(w).is_none(),
-        "creation publishes no root unit yet (Plan 1.3); the first move does"
-    );
+    let created = f
+        .unit(w)
+        .expect("creation publishes the unit with its row (Plan 1.3)");
+    assert_eq!(created.revision, 1);
+    assert_eq!(f.durable_placement(w).unwrap().profile, Some(a));
 
     f.store.move_workspace(w, a2).unwrap();
     let first = f.unit(w).unwrap();
-    assert_eq!(first.revision, 1);
+    assert_eq!(first.revision, 2);
     assert_eq!(f.durable_placement(w).unwrap().profile, Some(a2));
     assert!(
         f.overlay(w).is_none(),
@@ -327,12 +328,13 @@ fn a_move_to_the_same_owner_leaves_the_unit_alone_two_moves_advance_it_and_a_sta
 
     f.store.move_workspace(w, a3).unwrap();
     let second = f.unit(w).unwrap();
-    assert_eq!(second.revision, 2);
+    assert_eq!(second.revision, 3);
     assert_ne!(second.snapshot, first.snapshot);
     assert_eq!(f.durable_placement(w).unwrap().profile, Some(a3));
 
-    // The compare-and-set: a write that read revision 1 cannot land on 2,
-    // and the projection it carried does not land either.
+    // The compare-and-set: a write that read the revision `first` had cannot
+    // land on the one after it, and the projection it carried does not land
+    // either.
     let mut stale_row = f.store.workspace(w).unwrap();
     stale_row.owner = a;
     let refused = f
@@ -344,7 +346,7 @@ fn a_move_to_the_same_owner_leaves_the_unit_alone_two_moves_advance_it_and_a_sta
                 commit: RootCatalogUnitCommit {
                     unit: CatalogUnitRef::Workspace { workspace: w },
                     snapshot: first.snapshot.clone(),
-                    expected_revision: Some(1),
+                    expected_revision: Some(first.revision),
                 },
                 clear_overlay: false,
             },
@@ -363,8 +365,12 @@ fn a_failed_root_publication_leaves_owner_unit_overlay_and_generation_untouched(
     let a2 = f.cloud_profile("A2");
     let generation = f.store.policy_generation();
 
+    // The unit exists from creation (Plan 1.3), so the placement write is the
+    // compare-and-set *update* of that row: arming `BEFORE INSERT` here would
+    // inject no fault at all.
+    let created = f.unit(w).expect("creation published the unit");
     for fault in [
-        "BEFORE INSERT ON root_catalog_units",
+        "BEFORE UPDATE ON root_catalog_units",
         "BEFORE UPDATE ON workspaces",
     ] {
         f.fail_on(fault);
@@ -375,7 +381,12 @@ fn a_failed_root_publication_leaves_owner_unit_overlay_and_generation_untouched(
         );
         f.recover();
         assert_eq!(f.store.workspace(w).unwrap().owner, a, "{fault}");
-        assert!(f.unit(w).is_none(), "{fault}: the unit insert rolled back");
+        assert_eq!(
+            f.unit(w).unwrap(),
+            created,
+            "{fault}: the placement write rolled back"
+        );
+        assert_eq!(f.durable_placement(w).unwrap().profile, Some(a), "{fault}");
         assert!(f.overlay(w).is_none(), "{fault}");
         assert_eq!(
             f.store.policy_generation(),
@@ -393,7 +404,7 @@ fn a_failed_root_publication_leaves_owner_unit_overlay_and_generation_untouched(
     }
 
     f.store.move_workspace(w, a2).unwrap();
-    assert_eq!(f.unit(w).unwrap().revision, 1);
+    assert_eq!(f.unit(w).unwrap().revision, 2);
     assert_ne!(f.store.policy_generation(), generation);
 
     // The overlay path fails the same way: the private row is the only
@@ -404,7 +415,7 @@ fn a_failed_root_publication_leaves_owner_unit_overlay_and_generation_untouched(
     f.recover();
     assert_eq!(f.store.workspace(w).unwrap().owner, a2);
     assert!(f.overlay(w).is_none());
-    assert_eq!(f.unit(w).unwrap().revision, 1);
+    assert_eq!(f.unit(w).unwrap().revision, 2);
 }
 
 // ---------------------------------------------------- the private overlay
@@ -501,7 +512,10 @@ fn a_move_into_a_private_profile_waits_in_an_overlay_and_is_published_when_both_
         .unwrap();
     assert!(f.overlay(w).is_none(), "cleared with the publication");
     let published = f.unit(w).unwrap();
-    assert_eq!(published.revision, 2);
+    assert_eq!(
+        published.revision, 3,
+        "creation, the first move, then the overlay's publication"
+    );
     assert_eq!(
         f.durable_placement(w),
         Some(private),
@@ -530,6 +544,16 @@ fn a_workspace_with_no_unit_moved_into_a_private_profile_exists_only_in_its_over
  {
     let mut f = Root::new();
     let (_a, w) = f.cloud_pair();
+    // A Workspace from before catalog 13 that the seed never reached: the one
+    // unit-less state STORE.md still tolerates. Creation publishes a unit
+    // since Plan 1.3, so the state is made here by removing that row.
+    f.control
+        .execute(
+            "DELETE FROM root_catalog_units WHERE unit_kind = 'workspace_catalog'",
+            [],
+        )
+        .unwrap();
+    assert!(f.unit(w).is_none());
     let b = f.profile("B");
     f.store.move_workspace(w, b).unwrap();
     assert!(f.unit(w).is_none());
@@ -566,8 +590,11 @@ fn a_placement_under_a_holder_reads_as_unassigned() {
     f.store.create_reminder(a, &rule).unwrap();
     assert_eq!(f.store.reminders(a).unwrap().len(), 1);
 
-    // What the migration seeds for a legacy Workspace owned by a Holder row.
+    // What the migration seeds for a legacy Workspace owned by a Holder row,
+    // written over the unit creation published (Plan 1.3) as the migration
+    // would have written it in its place.
     let holder = Profile::holder(Locale::default(), at()).unwrap();
+    let created = f.unit(w).expect("creation published the unit").revision;
     let mut catalog = f.catalog();
     catalog.put_profile(&holder).unwrap();
     catalog
@@ -576,7 +603,7 @@ fn a_placement_under_a_holder_reads_as_unassigned() {
             &[RootCatalogUnitCommit {
                 unit: CatalogUnitRef::Workspace { workspace: w },
                 snapshot: seed_workspace_unit(w, holder.id, None, f.store.peer_id()).unwrap(),
-                expected_revision: None,
+                expected_revision: Some(created),
             }],
         )
         .unwrap();
@@ -864,7 +891,14 @@ fn the_account_scope_binds_once_refuses_a_second_account_and_gates_export_by_pat
     assert!(!listed.contains(&CatalogUnitRef::Profile {
         profile: p2p_profile
     }));
-    assert_eq!(inventory.held, 0, "a hidden subject is not even a number");
+    // `held` counts only what the recipient could have known: the P2P-only
+    // Workspace is one the account grant covers and the mode withholds, so it
+    // is a number; the Profile the grant cannot see — and therefore its unit —
+    // is not even that. Two would mean the hidden Profile had been counted.
+    assert_eq!(
+        inventory.held, 1,
+        "the hidden Profile's unit was counted as well"
+    );
     let peer_grant = RootGrant {
         path: TransportPath::Peer,
         ..RootGrant::account()
@@ -950,4 +984,528 @@ fn the_account_scope_binds_once_refuses_a_second_account_and_gates_export_by_pat
             .code(),
         Code::Forbidden
     );
+}
+
+// ------------------- Q10: the unit the v1 Cloud window withheld
+
+use koru_store_core::model::Workspace;
+use koru_store_core::service::{ProvisionedReplica, ReplicaPlacement, RootGrant};
+
+/// A Workspace this device bootstrapped from Cloud during the v1 window: the
+/// content and the row exist, placed under `profile` by the descriptor's
+/// legacy owner column, and **no** Workspace unit was published
+/// (`ReplicaPlacement::HintWithoutUnit`, QUESTIONS.md Q7).
+fn window_bootstrap(f: &mut Root, profile: ProfileId, name: &str) -> WorkspaceId {
+    let row = Workspace::new(profile, name, at()).unwrap();
+    let provisioned = f
+        .store
+        .provision_replica_placed(
+            None,
+            &row,
+            DocumentId::new(),
+            ReplicaPlacement::HintWithoutUnit(profile),
+            at(),
+        )
+        .unwrap();
+    assert_eq!(provisioned, ProvisionedReplica::Ready);
+    assert!(f.unit(row.id).is_none(), "the window withholds the unit");
+    row.id
+}
+
+#[test]
+fn the_repair_publishes_the_withheld_unit_placed_by_the_hint_with_a_fresh_move_id() {
+    let mut f = Root::new();
+    let profile = f.cloud_profile("A");
+    let workspace = window_bootstrap(&mut f, profile, "W");
+    // Before the repair the Workspace is absent from the account's export
+    // inventory, which is the whole defect: no Cloud placement for it.
+    let listed = |f: &Root| -> bool {
+        f.store
+            .root_export_inventory(&RootGrant::account())
+            .unwrap()
+            .units
+            .iter()
+            .any(|(unit, _)| *unit == CatalogUnitRef::Workspace { workspace })
+    };
+    assert!(!listed(&f));
+
+    let repaired = f.store.repair_bootstrap_units(at()).unwrap();
+
+    assert_eq!(repaired.len(), 1);
+    assert_eq!(repaired[0].workspace, workspace);
+    assert!(repaired[0].durable, "a Cloud Profile admits export");
+    let placement = f.durable_placement(workspace).expect("the unit exists now");
+    assert_eq!(
+        placement.profile,
+        Some(profile),
+        "placed by the hint the row projected"
+    );
+    assert_eq!(placement.move_id, repaired[0].repair.move_id);
+    assert_ne!(
+        placement.move_id,
+        seeded_move_id(workspace),
+        "a fresh move id, never the deterministic seed two devices would agree on"
+    );
+    assert!(listed(&f), "the Workspace is in the export inventory now");
+    // The row itself did not move: the repair writes a unit, not a placement
+    // change, so there is nothing to project.
+    let row = f.store.workspace_including_deleted(workspace).unwrap();
+    assert_eq!(row.owner, profile);
+}
+
+#[test]
+fn the_journal_record_identifies_the_repair_operation_and_survives_a_restart() {
+    let mut f = Root::new();
+    let profile = f.cloud_profile("A");
+    let workspace = window_bootstrap(&mut f, profile, "W");
+
+    let repaired = f.store.repair_bootstrap_units(at()).unwrap();
+    let written = repaired[0].repair;
+    f.restart();
+
+    let record = f
+        .store
+        .bootstrap_repair(workspace)
+        .unwrap()
+        .expect("the record is durable");
+    assert_eq!(record, written);
+    assert_eq!(record.profile, profile);
+    assert_eq!(record.at_ms, at().millis());
+    // The identity is the one operation `set_placement` wrote, and it names a
+    // place in the unit's own history — which is what the later concurrency
+    // check compares an arriving placement write against.
+    let row = f.unit(workspace).unwrap();
+    let doc = loro::LoroDoc::new();
+    doc.import(&row.snapshot).unwrap();
+    assert_eq!(doc.oplog_frontiers(), record.frontiers());
+    assert_eq!(
+        doc.cmp_frontiers(&record.frontiers(), &doc.oplog_frontiers()),
+        Ok(Some(std::cmp::Ordering::Equal)),
+        "the recorded operation is in the published unit's history"
+    );
+    assert!(
+        f.store
+            .bootstrap_repair(WorkspaceId::new())
+            .unwrap()
+            .is_none(),
+        "one key per Workspace; an untouched Workspace has no record"
+    );
+}
+
+#[test]
+fn a_workspace_that_already_has_a_unit_is_never_repaired() {
+    let mut f = Root::new();
+    let (profile, ordinary) = f.cloud_pair();
+    let withheld = window_bootstrap(&mut f, profile, "W2");
+    let before = f.unit(ordinary).expect("creation publishes a unit");
+
+    let repaired = f.store.repair_bootstrap_units(at()).unwrap();
+
+    assert_eq!(
+        repaired.iter().map(|one| one.workspace).collect::<Vec<_>>(),
+        vec![withheld],
+        "only the unit-less row is a candidate"
+    );
+    assert_eq!(
+        f.unit(ordinary).unwrap(),
+        before,
+        "the Workspace that had a unit was not rewritten, revision included"
+    );
+    assert!(f.store.bootstrap_repair(ordinary).unwrap().is_none());
+
+    // And the repair does not run twice: the row now has a unit, so a second
+    // pass finds no candidate and leaves the first record exactly as it was.
+    let first = f.store.bootstrap_repair(withheld).unwrap().unwrap();
+    assert!(f.store.repair_bootstrap_units(at()).unwrap().is_empty());
+    assert_eq!(f.store.bootstrap_repair(withheld).unwrap().unwrap(), first);
+}
+
+#[test]
+fn a_local_only_hint_profile_repairs_into_the_private_overlay_and_stays_out_of_the_inventory() {
+    let mut f = Root::new();
+    // Migration 12 seeds every row Local-only and only a person opens it, so
+    // this is the ordinary state of a Profile nobody has answered for.
+    let profile = f.profile("A");
+    let workspace = window_bootstrap(&mut f, profile, "W");
+
+    let repaired = f.store.repair_bootstrap_units(at()).unwrap();
+
+    assert_eq!(repaired.len(), 1);
+    assert!(
+        !repaired[0].durable,
+        "the destination Profile's ceiling routes the write"
+    );
+    assert!(
+        f.unit(workspace).is_none(),
+        "the durable bytes are untouched"
+    );
+    let overlay = f.overlay(workspace).expect("the write is in the overlay");
+    assert_eq!(
+        repaired[0].repair.writer_peer, overlay.writer_peer_id,
+        "the record names the writer the operation was actually authored under"
+    );
+    // Q5/D258: the Local-only rule working, not a residual defect. The
+    // placement is live on this device and leaves it nowhere.
+    assert_eq!(
+        f.store
+            .root_placement(workspace)
+            .unwrap()
+            .map(|p| p.profile),
+        Some(Some(profile))
+    );
+    assert!(
+        !f.store
+            .root_export_inventory(&RootGrant::account())
+            .unwrap()
+            .units
+            .iter()
+            .any(|(unit, _)| *unit == CatalogUnitRef::Workspace { workspace })
+    );
+    // And the existing pending-overlay path publishes it once the person
+    // answers the Profile prompt for the Profile and its Workspaces (D258) —
+    // the transport-mode commit runs that publication itself.
+    f.store
+        .choose_transport_mode(profile, TransportMode::Cloud, true)
+        .unwrap();
+    assert!(f.overlay(workspace).is_none());
+    assert_eq!(
+        f.durable_placement(workspace).unwrap().move_id,
+        repaired[0].repair.move_id,
+        "the repair's own placement is what finally leaves the device"
+    );
+    assert_eq!(
+        f.store.bootstrap_repair(workspace).unwrap().unwrap(),
+        repaired[0].repair,
+        "publishing the overlay does not rewrite the record"
+    );
+    assert!(
+        f.store
+            .root_export_inventory(&RootGrant::account())
+            .unwrap()
+            .units
+            .iter()
+            .any(|(unit, _)| *unit == CatalogUnitRef::Workspace { workspace })
+    );
+}
+
+#[test]
+fn a_trashed_unit_less_workspace_is_left_to_the_lifecycle_writers() {
+    let mut f = Root::new();
+    let profile = f.cloud_profile("A");
+    let mut row = Workspace::new(profile, "W", at()).unwrap();
+    row.deleted_at = Some(at());
+    f.store
+        .provision_replica_placed(
+            None,
+            &row,
+            DocumentId::new(),
+            ReplicaPlacement::HintWithoutUnit(profile),
+            at(),
+        )
+        .unwrap();
+    assert!(f.unit(row.id).is_none());
+
+    assert!(f.store.repair_bootstrap_units(at()).unwrap().is_empty());
+
+    assert!(
+        f.unit(row.id).is_none(),
+        "a live placement must not be asserted over a row that is in the Trash"
+    );
+    assert!(f.store.bootstrap_repair(row.id).unwrap().is_none());
+}
+
+// ------------- Q10 case 3: the Workspace that was filed in two places
+
+use koru_store_core::service::{
+    BootstrapRepair, RootJoinOutcome, bootstrap_conflict_key, bootstrap_repair_key,
+};
+use uuid::Uuid;
+
+/// **The absent device of Q10**: it held a real unit all along, in a lineage
+/// of its own, placed under `profile`. It was offline across the whole v1
+/// window and the recovering device's inventory read, so its placement is
+/// concurrent with the repair by construction — two disjoint histories.
+fn absent_device(f: &Root, workspace: WorkspaceId, profile: ProfileId) -> (Vec<u8>, Uuid) {
+    assert!(
+        f.unit(workspace).is_some(),
+        "the repair has already published this device's unit"
+    );
+    let unit = WorkspaceCatalogUnit::create(workspace, 9_001).unwrap();
+    let move_id = DocumentId::new().as_uuid();
+    unit.set_placement(Some(profile), move_id).unwrap();
+    (unit.snapshot().unwrap(), move_id)
+}
+
+/// The account relationship every inbound root frame in this block arrives
+/// on; the Cloud path, as a bound device uses it.
+fn bound_account(f: &mut Root) -> Uuid {
+    let account = UserScopeId::new().as_uuid();
+    f.store
+        .bind_account_scope(account, UserScopeId::new().as_uuid(), at().millis())
+        .unwrap();
+    account
+}
+
+/// Stage and commit one Workspace unit's frames as that relationship, the
+/// one path every arriving root unit funnels through.
+fn arrives(f: &mut Root, account: Uuid, workspace: WorkspaceId, frames: &[Vec<u8>]) {
+    let unit = CatalogUnitRef::Workspace { workspace };
+    let staged = f.store.stage_root_unit(account, unit, frames).unwrap();
+    assert!(!staged.is_pending(), "a complete unit needs no ancestors");
+    let outcome = f
+        .store
+        .commit_staged_root_unit(account, staged, None)
+        .unwrap();
+    assert!(matches!(outcome, RootJoinOutcome::Applied { .. }));
+}
+
+/// A repaired Workspace, its hint Profile, a second Profile to be filed
+/// under, and the bound account.
+fn repaired_workspace(f: &mut Root) -> (WorkspaceId, ProfileId, ProfileId, Uuid) {
+    let hint = f.cloud_profile("A");
+    let elsewhere = f.cloud_profile("B");
+    let workspace = window_bootstrap(f, hint, "W");
+    let repaired = f.store.repair_bootstrap_units(at()).unwrap();
+    assert_eq!(repaired.len(), 1);
+    let account = bound_account(f);
+    (workspace, hint, elsewhere, account)
+}
+
+#[test]
+fn a_placement_write_concurrent_with_the_repair_is_recorded_and_survives_a_restart() {
+    let mut f = Root::new();
+    let (workspace, hint, elsewhere, account) = repaired_workspace(&mut f);
+    let repair = f.store.bootstrap_repair(workspace).unwrap().unwrap();
+    let (snapshot, rival_move) = absent_device(&f, workspace, elsewhere);
+
+    arrives(&mut f, account, workspace, &[snapshot]);
+
+    f.restart();
+    let record = f
+        .store
+        .bootstrap_placement_conflict(workspace)
+        .unwrap()
+        .expect("the record is durable");
+    assert_eq!(
+        record.repaired_profile, hint,
+        "the Profile the repair asserted, taken from its record"
+    );
+    assert_eq!(record.repair_move_id, repair.move_id);
+    assert_eq!(record.rivals.len(), 1);
+    assert_eq!(
+        record.rivals[0].profile,
+        Some(elsewhere),
+        "and the Profile the arriving write asserted: both sides of the question"
+    );
+    assert_eq!(record.rivals[0].move_id, rival_move);
+    assert!(
+        record.rivals[0].at_ms > 0,
+        "noticed at a real time on this device"
+    );
+    // The merged value stands, whichever way Loro's map ordering went, and
+    // the record is written either way: comparing the move ids is how part
+    // three tells which of the two is in force.
+    let standing = f.store.root_placement(workspace).unwrap().unwrap();
+    assert!(
+        standing.move_id == repair.move_id || standing.move_id == rival_move,
+        "nothing here rewrites a placement"
+    );
+    // A second arrival of the same frames changes nothing: the unit already
+    // has them, so there is no import to judge.
+    let (again, _) = (f.unit(workspace).unwrap().snapshot, ());
+    arrives(&mut f, account, workspace, &[again]);
+    assert_eq!(
+        f.store.bootstrap_placement_conflict(workspace).unwrap(),
+        Some(record.clone())
+    );
+
+    // The person answers: their move is ordinary, and this is its other half.
+    f.store
+        .clear_bootstrap_placement_conflict(workspace)
+        .unwrap();
+    assert_eq!(
+        f.store.bootstrap_placement_conflict(workspace).unwrap(),
+        None
+    );
+    f.store
+        .clear_bootstrap_placement_conflict(workspace)
+        .unwrap();
+    assert_eq!(
+        f.store.bootstrap_repair(workspace).unwrap(),
+        Some(repair),
+        "clearing the question does not forget that the repair happened"
+    );
+}
+
+#[test]
+fn a_placement_write_that_already_saw_the_repair_records_nothing() {
+    let mut f = Root::new();
+    let (workspace, _, elsewhere, account) = repaired_workspace(&mut f);
+    // The other device imported the repaired unit and then moved the
+    // Workspace: a causal successor, which is clear and stays automatic.
+    let row = f.unit(workspace).unwrap();
+    let seen = WorkspaceCatalogUnit::from_snapshot(&row.snapshot, workspace, 9_001).unwrap();
+    let from = seen.version();
+    let answer = DocumentId::new().as_uuid();
+    seen.set_placement(Some(elsewhere), answer).unwrap();
+
+    arrives(
+        &mut f,
+        account,
+        workspace,
+        &[seen.updates_since(&from).unwrap()],
+    );
+
+    assert_eq!(
+        f.store.bootstrap_placement_conflict(workspace).unwrap(),
+        None,
+        "it saw the repair, so there is nothing ambiguous to ask about"
+    );
+    assert_eq!(
+        f.store.root_placement(workspace).unwrap().unwrap().move_id,
+        answer,
+        "and the causal successor simply wins"
+    );
+}
+
+#[test]
+fn an_arriving_move_that_saw_both_placements_clears_the_question() {
+    let mut f = Root::new();
+    let (workspace, _, elsewhere, account) = repaired_workspace(&mut f);
+    let (snapshot, _) = absent_device(&f, workspace, elsewhere);
+    arrives(&mut f, account, workspace, &[snapshot]);
+    assert!(
+        f.store
+            .bootstrap_placement_conflict(workspace)
+            .unwrap()
+            .is_some()
+    );
+
+    // A device holding the merged unit moves the Workspace. It was authored
+    // where both placements were visible, so it is the answer the question
+    // would have asked for, and asking again would be worse than useless.
+    let row = f.unit(workspace).unwrap();
+    let both = WorkspaceCatalogUnit::from_snapshot(&row.snapshot, workspace, 9_002).unwrap();
+    let from = both.version();
+    both.set_placement(Some(elsewhere), DocumentId::new().as_uuid())
+        .unwrap();
+
+    arrives(
+        &mut f,
+        account,
+        workspace,
+        &[both.updates_since(&from).unwrap()],
+    );
+
+    assert_eq!(
+        f.store.bootstrap_placement_conflict(workspace).unwrap(),
+        None,
+        "answered elsewhere, and cleared in the commit that carried the answer"
+    );
+}
+
+#[test]
+fn an_orphaned_repair_identity_records_nothing_rather_than_a_false_conflict() {
+    let mut f = Root::new();
+    let (workspace, _, elsewhere, account) = repaired_workspace(&mut f);
+    // A device's writer id is re-minted without being persisted when its
+    // stored row cannot be parsed, so a recorded identity can be orphaned.
+    let mut orphaned = f.store.bootstrap_repair(workspace).unwrap().unwrap();
+    orphaned.writer_peer = 7_777;
+    let mut catalog = f.catalog();
+    catalog
+        .set_state(
+            &bootstrap_repair_key(workspace),
+            &serde_json::to_string(&orphaned).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        f.store.bootstrap_repair(workspace).unwrap(),
+        Some(orphaned),
+        "the Store reads the orphaned record"
+    );
+    let (snapshot, _) = absent_device(&f, workspace, elsewhere);
+
+    arrives(&mut f, account, workspace, &[snapshot]);
+
+    assert_eq!(
+        f.store.bootstrap_placement_conflict(workspace).unwrap(),
+        None,
+        "an identity this history never had is a do-not-know, never a conflict"
+    );
+}
+
+#[test]
+fn a_concurrent_write_that_agrees_with_the_hint_asks_nothing() {
+    let mut f = Root::new();
+    let (workspace, hint, _, account) = repaired_workspace(&mut f);
+    // The absent device filed the Workspace in the same place the hint did.
+    // The lineages are disjoint and the move ids differ, but two devices
+    // agreeing on a placement is clear and stays automatic (rule D).
+    let (snapshot, _) = absent_device(&f, workspace, hint);
+
+    arrives(&mut f, account, workspace, &[snapshot]);
+
+    assert_eq!(
+        f.store.bootstrap_placement_conflict(workspace).unwrap(),
+        None
+    );
+    assert_eq!(
+        f.store.root_placement(workspace).unwrap().unwrap().profile,
+        Some(hint),
+        "both sides said the same thing, so the merge cannot be wrong"
+    );
+}
+
+#[test]
+fn a_workspace_this_device_never_repaired_imports_exactly_as_before() {
+    let mut f = Root::new();
+    let (profile, workspace) = f.cloud_pair();
+    let elsewhere = f.cloud_profile("B");
+    let account = bound_account(&mut f);
+    assert_eq!(f.store.bootstrap_repair(workspace).unwrap(), None);
+    let before = f.durable_placement(workspace).unwrap();
+    let (snapshot, rival_move) = absent_device(&f, workspace, elsewhere);
+
+    arrives(&mut f, account, workspace, &[snapshot]);
+
+    assert_eq!(
+        f.store.bootstrap_placement_conflict(workspace).unwrap(),
+        None,
+        "no repair record, no detection: the ordinary commit is untouched"
+    );
+    let standing = f.store.root_placement(workspace).unwrap().unwrap();
+    assert!(standing.move_id == before.move_id || standing.move_id == rival_move);
+    assert!(f.store.workspace_including_deleted(workspace).is_ok());
+    let _ = profile;
+}
+
+#[test]
+fn the_conflict_record_is_a_second_row_beside_the_repairs_own() {
+    let mut f = Root::new();
+    let (workspace, _, elsewhere, account) = repaired_workspace(&mut f);
+    let (snapshot, _) = absent_device(&f, workspace, elsewhere);
+    arrives(&mut f, account, workspace, &[snapshot]);
+
+    let catalog = f.catalog();
+    assert!(
+        catalog
+            .state(&bootstrap_conflict_key(workspace))
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        catalog
+            .state(&bootstrap_repair_key(workspace))
+            .unwrap()
+            .is_some(),
+        "one row per Workspace for each fact, neither overwriting the other"
+    );
+    let _: BootstrapRepair = serde_json::from_str(
+        &catalog
+            .state(&bootstrap_repair_key(workspace))
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
 }

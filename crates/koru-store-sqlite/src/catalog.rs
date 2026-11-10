@@ -35,10 +35,11 @@ use koru_store_core::ports::{
 };
 use koru_store_core::profile_units::ProfileUnitRef;
 use koru_store_core::root_catalog::{CatalogUnitKind, CatalogUnitRef};
+use koru_store_core::service::{K_ACCOUNT_SCOPE, K_PEER_SCOPE_PREFIX};
 use koru_store_core::text::Locale;
 use koru_store_core::transport::{
-    self, TransportMode, TransportModeCommit, TransportModeGroup, TransportModeRequest,
-    TransportModeState, TransportSubject,
+    self, DeviceLinkage, TransportMode, TransportModeCommit, TransportModeGroup,
+    TransportModeRequest, TransportModeState, TransportSubject, seeded_child_mode,
 };
 use koru_store_core::version::CATALOG_SCHEMA_VERSION;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
@@ -2051,21 +2052,60 @@ fn write_profile_projection(connection: &Connection, profile: &Profile) -> Resul
     seed_profile_transport_mode(connection, profile.id)
 }
 
-/// Give a Profile its Local-only default row if it has not got one.
+/// **Has the person linked this device to anything of their own?**
+///
+/// Two `store_state` keys answer it, and both are written by the person doing
+/// something deliberate rather than by anything this device infers:
+///
+/// - [`K_ACCOUNT_SCOPE`] — `Store::bind_account_scope`, written once when this
+///   device's catalog is bound to the account the person signed in to.
+/// - [`K_PEER_SCOPE_PREFIX`]`<relationship>` — `Store::bind_peer_scope`,
+///   written once per `all_data` relationship with another device the person
+///   has paired this one with.
+///
+/// Those are the honest predicate for *"the person linked this device"*, and
+/// the reason the seed can ask it at all is that they live in `catalog.db`,
+/// beside `local_transport_modes` — so the question is answered inside the
+/// same transaction that writes the row, with no second authority and no
+/// platform check standing in for a person's act.
+///
+/// `substr` rather than `LIKE`: the prefix contains `_`, which `LIKE` reads as
+/// a wildcard, and a key-space test must not match keys that merely look like
+/// these.
+fn device_linkage(connection: &Connection) -> Result<DeviceLinkage> {
+    let linked: bool = connection
+        .query_row(
+            "SELECT EXISTS(
+               SELECT 1 FROM store_state
+                WHERE key = ?1 OR substr(key, 1, length(?2)) = ?2
+             )",
+            params![K_ACCOUNT_SCOPE, K_PEER_SCOPE_PREFIX],
+            |row| row.get(0),
+        )
+        .map_err(sql_failed)?;
+    Ok(DeviceLinkage::from_linked(linked))
+}
+
+/// Give a Profile its default transport-mode row if it has not got one.
 ///
 /// `DO NOTHING` rather than an upsert, and that is the whole point: this runs on
 /// every projection write, and a re-registration must never reset a mode
-/// somebody chose. The seeded value is the one migration 12 wrote for the
-/// Profiles that already existed.
+/// somebody chose — nor re-decide a seed made under a different linkage.
+///
+/// The seeded value is Local-only on a standalone device, exactly as migration
+/// 12 wrote it; on a device the person has linked it is P2P, because **linking
+/// is the choice** ([`DeviceLinkage`]). It lands as a default either way, so a
+/// person who then sets this Profile Local-only outranks it.
 fn seed_profile_transport_mode(connection: &Connection, profile: ProfileId) -> Result<()> {
+    let seeded = device_linkage(connection)?.seeded_mode();
     connection
         .execute(
             "INSERT INTO local_transport_modes
                (subject_kind, subject_id, owner_profile_id, workspace_id,
                 mode, explicit_choice, revision)
-             VALUES ('profile', ?1, ?1, NULL, 'local_only', 0, 1)
+             VALUES ('profile', ?1, ?1, NULL, ?2, 0, 1)
              ON CONFLICT(subject_kind, subject_id) DO NOTHING",
-            params![profile.to_storage()],
+            params![profile.to_storage(), seeded.as_storage()],
         )
         .map_err(sql_failed)?;
     Ok(())
@@ -2365,9 +2405,10 @@ fn write_workspace_projection(tx: &Connection, workspace: &Workspace) -> Result<
             "owner profile is absent or locally removed",
         ));
     }
-    // **A new Workspace is seeded at its Profile's own choice**, and at
-    // Local-only when nobody has made one. An existing Workspace keeps
-    // its choice and only has its owner projection corrected.
+    // **A new Workspace is seeded at its Profile's own choice**, and at the
+    // linkage default capped by that Profile's row when nobody has made one
+    // ([`seeded_child_mode`]). An existing Workspace keeps its choice and only
+    // has its owner projection corrected.
     //
     // This is not the evidence path D258 withdrew, and the difference is
     // the whole of why it is here: the value copied is a *person's*
@@ -2378,6 +2419,13 @@ fn write_workspace_projection(tx: &Connection, workspace: &Workspace) -> Result<
     // halves would disagree and the symptom would be pictures that never
     // arrive in a Workspace whose documents do.
     //
+    // The decision itself is in `koru_store_core::transport`, as a pure
+    // function over the Profile's row, so what it decides is testable without
+    // a database. Read in Rust rather than as a `COALESCE`, because the cap is
+    // a comparison on the ladder and SQL would compare the mode tokens as
+    // text — where `'cloud' < 'local_only' < 'p2p'` alphabetically, which is
+    // not the order of anything.
+    //
     // It lands as a **default**, not a choice: the person can still set
     // this Workspace Local-only, and that choice then outranks everything
     // for the reason every other rule here exists.
@@ -2386,22 +2434,46 @@ fn write_workspace_projection(tx: &Connection, workspace: &Workspace) -> Result<
     // **not** repaired here -- the effective read reports the mismatch and
     // the affected transport stops, because silently lowering a choice is
     // the failure contract 3 exists to prevent.
+    let linkage = device_linkage(tx)?;
+    let owner_row: Option<(String, bool)> = tx
+        .query_row(
+            "SELECT mode, explicit_choice FROM local_transport_modes
+              WHERE subject_kind = 'profile' AND subject_id = ?1",
+            params![workspace.owner.to_storage()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(sql_failed)?;
+    let seeded = match owner_row {
+        Some((mode, explicit_choice)) => seeded_child_mode(
+            &TransportModeState {
+                subject: TransportSubject::Profile(workspace.owner),
+                owner: workspace.owner,
+                mode: TransportMode::parse(&mode)?,
+                explicit_choice,
+                revision: 1,
+            },
+            linkage,
+        ),
+        // Unreachable through any write that goes through this file — every
+        // `profiles` row is written by `write_profile_projection`, which seeds
+        // the Profile's mode row in the same transaction. Local-only is what
+        // the `COALESCE` this replaced answered, and the honest answer for a
+        // child whose ceiling cannot be read is the closed one.
+        None => TransportMode::LocalOnly,
+    };
     tx.execute(
         "INSERT INTO local_transport_modes
                (subject_kind, subject_id, owner_profile_id, workspace_id,
                 mode, explicit_choice, revision)
-             SELECT 'workspace', ?1, ?2, ?1,
-                    COALESCE(
-                      (SELECT owner.mode FROM local_transport_modes owner
-                        WHERE owner.subject_kind = 'profile'
-                          AND owner.subject_id = ?2
-                          AND owner.explicit_choice = 1),
-                      'local_only'),
-                    0, 1
-              WHERE 1
+             VALUES ('workspace', ?1, ?2, ?1, ?3, 0, 1)
              ON CONFLICT(subject_kind, subject_id)
                DO UPDATE SET owner_profile_id = excluded.owner_profile_id",
-        params![workspace.id.to_storage(), workspace.owner.to_storage()],
+        params![
+            workspace.id.to_storage(),
+            workspace.owner.to_storage(),
+            seeded.as_storage()
+        ],
     )
     .map_err(sql_failed)?;
     Ok(())

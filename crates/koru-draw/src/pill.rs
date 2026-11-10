@@ -60,17 +60,27 @@ impl PillKind {
 
 /// Typography inherited from the block that contains a pill.
 ///
-/// Both values are part of the cache key: a title and a body paragraph may
-/// contain the same document reference, but they must not share a visual.
+/// Size, line height and font stack are part of the cache key: a title, body
+/// paragraph and chat composer may name the same document with different text.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct PillTextStyle {
     pub size: f32,
     pub line_height: f32,
+    pub stack: &'static str,
 }
 
 impl PillTextStyle {
-    pub const fn new(size: f32, line_height: f32) -> Self {
-        Self { size, line_height }
+    pub fn new(size: f32, line_height: f32) -> Self {
+        Self {
+            size,
+            line_height,
+            stack: theme::body_stack(),
+        }
+    }
+
+    pub const fn with_stack(mut self, stack: &'static str) -> Self {
+        self.stack = stack;
+        self
     }
 
     pub fn body() -> Self {
@@ -78,8 +88,8 @@ impl PillTextStyle {
         Self::new(body.size, body.line_height)
     }
 
-    fn key(self) -> (u32, u32) {
-        (self.size.to_bits(), self.line_height.to_bits())
+    fn key(self) -> (u32, u32, &'static str) {
+        (self.size.to_bits(), self.line_height.to_bits(), self.stack)
     }
 }
 
@@ -104,7 +114,7 @@ pub struct PillVisual {
     pub icon: Option<Layout<Brush>>,
 }
 
-pub(crate) type PillKey = (PillKind, String, Option<String>, u32, u32);
+pub(crate) type PillKey = (PillKind, String, Option<String>, u32, u32, &'static str);
 
 /// Visuals keyed by every input that affects shaping or icon choice.
 #[derive(Default)]
@@ -126,13 +136,14 @@ impl PillCache {
         url: Option<&str>,
         style: PillTextStyle,
     ) -> Option<&PillVisual> {
-        let (size, line_height) = style.key();
+        let (size, line_height, stack) = style.key();
         self.0.get(&(
             kind,
             label.to_owned(),
             url.map(str::to_owned),
             size,
             line_height,
+            stack,
         ))
     }
 
@@ -142,13 +153,14 @@ impl PillCache {
         url: Option<&str>,
         style: PillTextStyle,
     ) -> PillKey {
-        let (size, line_height) = style.key();
+        let (size, line_height, stack) = style.key();
         (
             kind,
             label.to_owned(),
             url.map(str::to_owned),
             size,
             line_height,
+            stack,
         )
     }
 }

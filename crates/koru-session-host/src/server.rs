@@ -181,6 +181,13 @@ impl ConnectionProtocol {
     fn turn_model(&self) -> bool {
         self.version >= koru_session_protocol::TURN_MODEL_PROTOCOL_VERSION
     }
+
+    fn path_references(&self) -> bool {
+        self.version >= koru_session_protocol::PATH_REFERENCES_PROTOCOL_VERSION
+            && self
+                .capabilities
+                .supports(koru_session_protocol::capability::PATH_REFERENCES)
+    }
 }
 
 struct AttachmentResourceLifecycle {
@@ -966,6 +973,8 @@ fn handle_request(
                 Err(failure(ErrorCode::CapabilityNotNegotiated))
             } else if input.needs_turn_model() && !protocol.turn_model() {
                 // A turn's model is v22.
+                Err(failure(ErrorCode::CapabilityNotNegotiated))
+            } else if input.needs_path_references() && !protocol.path_references() {
                 Err(failure(ErrorCode::CapabilityNotNegotiated))
             } else {
                 with_session(state, session_id, |session| {

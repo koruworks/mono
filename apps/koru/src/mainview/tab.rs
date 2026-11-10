@@ -1571,14 +1571,18 @@ impl Tab {
     /// unsaved post. **A terminal or agent session is another**: it is a
     /// running process with a scrollback, not a view over a document, so
     /// clicking a document while it is active opens the document in a tab of
-    /// its own and the session stays exactly as it was. Trash, Manage,
+    /// its own and the session stays exactly as it was. AI chats likewise
+    /// keep their conversation when a document is opened. Trash, Manage,
     /// What's new and ordinary document tabs are reusable.
     pub fn is_reusable(&self) -> bool {
         !self.is_pinned()
             && self.draft.is_none()
             && !matches!(
                 self.view,
-                TabView::Welcome(_) | TabView::Socials(_) | TabView::Session(_)
+                TabView::Welcome(_)
+                    | TabView::Socials(_)
+                    | TabView::Session(_)
+                    | TabView::AiChat(_)
             )
     }
 

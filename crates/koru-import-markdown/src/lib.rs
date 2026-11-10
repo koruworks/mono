@@ -1599,7 +1599,9 @@ fn koru_link_spans(text: &str) -> Vec<(usize, usize, Attr)> {
             koru_link::KoruLink::Chat { .. } => {
                 Attr::labelled("link", AttrValue::Url(inner.to_owned()), "Koru AI chat")
             }
-            koru_link::KoruLink::Node(_) => continue,
+            koru_link::KoruLink::Node(_)
+            | koru_link::KoruLink::Skill { .. }
+            | koru_link::KoruLink::Command { .. } => continue,
         };
         spans.push((open, end, attr));
     }

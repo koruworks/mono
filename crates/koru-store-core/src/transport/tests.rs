@@ -585,3 +585,80 @@ fn absent_evidence_never_demotes_a_verified_default() {
         .promotes(&row)
     );
 }
+
+// ------------------------------------------------- linking is the choice
+
+#[test]
+fn a_standalone_device_seeds_local_only_and_a_linked_one_admits_peers() {
+    assert_eq!(
+        DeviceLinkage::Standalone.seeded_mode(),
+        TransportMode::LocalOnly
+    );
+    assert_eq!(DeviceLinkage::Linked.seeded_mode(), TransportMode::P2p);
+    assert!(DeviceLinkage::Linked.seeded_mode().allows_peer());
+    // **Linking is not consent to Cloud.** Two of the person's own devices
+    // talking to each other is what they asked for; a hosted copy is still the
+    // Profile prompt's business and nothing else's (D258).
+    assert!(!DeviceLinkage::Linked.seeded_mode().allows_cloud());
+    assert_eq!(DeviceLinkage::default(), DeviceLinkage::Standalone);
+    assert_eq!(DeviceLinkage::from_linked(true), DeviceLinkage::Linked);
+    assert_eq!(DeviceLinkage::from_linked(false), DeviceLinkage::Standalone);
+}
+
+#[test]
+fn a_childs_seed_takes_an_explicit_profile_choice_whichever_way_it_points() {
+    for linkage in [DeviceLinkage::Standalone, DeviceLinkage::Linked] {
+        // The person answered the prompt: that answer is what a child created
+        // under it starts at, above *or* below the linkage default.
+        assert_eq!(
+            seeded_child_mode(&profile_row(TransportMode::Cloud, true, 4), linkage),
+            TransportMode::Cloud,
+        );
+        assert_eq!(
+            seeded_child_mode(&profile_row(TransportMode::LocalOnly, true, 4), linkage),
+            TransportMode::LocalOnly,
+            "a Profile somebody turned off does not get re-opened by linkage",
+        );
+    }
+}
+
+#[test]
+fn an_unspoken_profile_hands_down_the_linkage_default_capped_at_its_own_row() {
+    // Profile seeded before linking, Workspace created after. The Profile row
+    // is **not** promoted, so the cap is what the child gets: seeding it P2P
+    // here would be a `ceiling_mismatch`, which stops the transport instead of
+    // opening it.
+    assert_eq!(
+        seeded_child_mode(
+            &profile_row(TransportMode::LocalOnly, false, 1),
+            DeviceLinkage::Linked
+        ),
+        TransportMode::LocalOnly,
+    );
+    // Profile seeded after linking: both rows admit the peer path, and no
+    // mismatch exists to report.
+    assert_eq!(
+        seeded_child_mode(
+            &profile_row(TransportMode::P2p, false, 1),
+            DeviceLinkage::Linked
+        ),
+        TransportMode::P2p,
+    );
+    // Standalone is exactly what it was before this existed.
+    assert_eq!(
+        seeded_child_mode(
+            &profile_row(TransportMode::LocalOnly, false, 1),
+            DeviceLinkage::Standalone
+        ),
+        TransportMode::LocalOnly,
+    );
+    // A default the withdrawn evidence path had raised is still only a
+    // default, so the linkage seed caps the child rather than copying it.
+    assert_eq!(
+        seeded_child_mode(
+            &profile_row(TransportMode::Cloud, false, 2),
+            DeviceLinkage::Linked
+        ),
+        TransportMode::P2p,
+    );
+}

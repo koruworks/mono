@@ -41,8 +41,9 @@ impl crate::ChatSurface {
     /// under the list. A begun chat's has no rail: no marks and no **+**.
     pub(super) fn picker_spec(&self) -> Spec {
         let hide_rail = self.picker_rail_hidden();
-        let rail = self.picker_marks();
+        let rail = self.picker_visible_rail();
         let dividers = rail_dividers(&rail);
+        let (rail_previous, rail_next) = self.picker_rail_pages();
         let selected = self.picker_entry();
         let query = self.picker_query();
         // A query's results span every entry (D67): no mark reads as the
@@ -83,7 +84,9 @@ impl crate::ChatSurface {
                     selected: !searching && selected.as_ref() == Some(entry),
                 })
                 .collect(),
-            manage: self.agent_settings_offered && !hide_rail,
+            manage: self.agent_settings_offered && !hide_rail && !rail_next,
+            rail_previous,
+            rail_next,
             refresh: match &selected {
                 Some(RailEntry::Agent(agent)) => Some(!self.refresh_enabled(agent)),
                 _ => None,

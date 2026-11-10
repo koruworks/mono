@@ -23,7 +23,63 @@ impl<A: Api, H: Host> Coordinator<A, H> {
                 return call(&mut self.api, &current);
             }
         }
+        if result.as_ref().err() == Some(&Failure::CatalogBindingRequired) {
+            return self.rebound(call);
+        }
         result
+    }
+
+    /// QUESTIONS.md Q12 (c): the route named a precondition this client can
+    /// satisfy by itself, so the binding step runs again and the call is
+    /// made once more. No message — a precondition the client meets is not
+    /// news for a person.
+    ///
+    /// **The ceiling is here, and it is the whole allowance.** A
+    /// binding-required answer arriving immediately after a binding that
+    /// just succeeded can only mean the binding row vanished between the two
+    /// calls, which is not a precondition this client can meet: it takes the
+    /// ordinary unavailable path and the pass backs off.
+    ///
+    /// It is two things, and each stops a different loop:
+    ///
+    /// - **The retried call is made here, not through
+    ///   [`Self::authorized`]**, so one retry is structurally all there is.
+    ///   The answer to it cannot start a second rebind, and the `match`
+    ///   below turns a second binding-required into unavailable.
+    /// - **`binding_retried` is set *before* the binding step**, which is
+    ///   what stops the loop between the binding step and the route: the
+    ///   binding request goes through `authorized` itself, so a service that
+    ///   answers *binding required* to the binding route would otherwise
+    ///   bind, be told to bind, and bind again without end. It also holds
+    ///   the allowance to one for the whole pass, so a second route told the
+    ///   same thing is answered rather than bound for again.
+    ///
+    /// It is cleared at the top of each pass, so the backoff — not a counter
+    /// — is what paces the next attempt.
+    fn rebound<T>(
+        &mut self,
+        call: impl Fn(&mut A, &EnrollmentAuthorization) -> Result<T, Failure>,
+    ) -> Result<T, Failure> {
+        if self.binding_retried {
+            return Err(Failure::Unavailable);
+        }
+        self.binding_retried = true;
+        tracing::info!(
+            target: "koru_cloud",
+            "cloud pass: the service asked for the catalog binding; binding and retrying once"
+        );
+        let outcome = match self.bind() {
+            Ok(()) => {
+                let authority = self.current_authority()?;
+                call(&mut self.api, &authority)
+            }
+            Err(error) => Err(error),
+        };
+        match outcome {
+            // The second answer is not a precondition any more.
+            Err(Failure::CatalogBindingRequired) => Err(Failure::Unavailable),
+            other => other,
+        }
     }
 
     /// Re-admit one session's scope and replace its permit on the host.

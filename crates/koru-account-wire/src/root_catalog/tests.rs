@@ -8,10 +8,10 @@ use serde_json::{Value, json};
 use super::*;
 use crate::{Access, Method, RequestLocation, RouteId, is_route_path, route_by_id, route_for};
 
-const ACCOUNT: &str = "10000000-0000-4000-8000-000000000001";
-const SCOPE: &str = "20000000-0000-4000-8000-000000000002";
-const PROFILE: &str = "30000000-0000-4000-8000-000000000003";
-const WORKSPACE: &str = "40000000-0000-4000-8000-000000000004";
+const ACCOUNT: &str = "10000000-0000-4000-8000-00000000000a";
+const SCOPE: &str = "20000000-0000-4000-8000-00000000000b";
+const PROFILE: &str = "30000000-0000-4000-8000-00000000000c";
+const WORKSPACE: &str = "40000000-0000-4000-8000-00000000000d";
 
 fn account() -> KoruIdentityId {
     ACCOUNT.parse().unwrap()
@@ -73,13 +73,18 @@ fn the_binding_request_declares_only_what_the_device_holds_and_is_strict() {
         // Ids are canonical v4.
         json!({"version": 2, "held": {"account_id": ACCOUNT.to_uppercase(), "catalog_scope_id": SCOPE}}),
         json!({"version": 2, "held": {"account_id": ACCOUNT, "catalog_scope_id": "20000000-0000-1000-8000-000000000002"}}),
-        json!({"version": 2}),
     ] {
         assert!(
             serde_json::from_value::<CloudCatalogBindingRequestV2>(invalid.clone()).is_err(),
             "{invalid}"
         );
     }
+    // An absent `held` reads as nothing held, as every optional field of a
+    // v1 request body does (`AccountCreationRequestV1::pkce_verifier`).
+    assert_eq!(
+        serde_json::from_value::<CloudCatalogBindingRequestV2>(json!({"version": 2})).unwrap(),
+        fresh
+    );
     let binding = CloudCatalogBindingV2 {
         version: Version2,
         account_id: account(),
@@ -88,8 +93,21 @@ fn the_binding_request_declares_only_what_the_device_holds_and_is_strict() {
         binding_generation: 1,
     };
     let json = round_trip(&binding);
+    // The **set** of keys, sorted here rather than read in the order the
+    // object happens to carry: `serde_json` keeps insertion order only with
+    // its `preserve_order` feature, which this crate does not ask for but
+    // workspace feature unification turns on, so the order differs between
+    // `cargo test -p koru-account-wire` and `cargo test --workspace`. The
+    // contract is which fields a binding answer carries, not their order.
+    let mut keys = json
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    keys.sort_unstable();
     assert_eq!(
-        json.as_object().unwrap().keys().collect::<Vec<_>>(),
+        keys,
         [
             "account_id",
             "binding_generation",
@@ -97,8 +115,6 @@ fn the_binding_request_declares_only_what_the_device_holds_and_is_strict() {
             "catalog_scope_id",
             "version"
         ]
-        .iter()
-        .collect::<Vec<_>>()
     );
 }
 
@@ -427,10 +443,16 @@ fn the_discovery_receipt_groups_by_current_placement_and_says_its_coverage() {
     ] {
         round_trip(&coverage);
     }
-    assert!(
-        serde_json::from_value::<CloudCoverageV2>(json!({"state": "complete", "pending": []}))
-            .is_err()
-    );
+    // A state that names a payload needs it. (The unit `complete` ignores
+    // siblings: serde's internally tagged unit variants accept any map once
+    // the tag matches, whatever `deny_unknown_fields` says, as
+    // `app_connections`' `pending` does; coverage is read, never sent.)
+    for incomplete in [json!({"state": "partial"}), json!({"state": "held"})] {
+        assert!(
+            serde_json::from_value::<CloudCoverageV2>(incomplete.clone()).is_err(),
+            "{incomplete}"
+        );
+    }
 }
 
 #[test]

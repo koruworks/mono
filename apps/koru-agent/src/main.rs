@@ -202,7 +202,13 @@ fn main() {
                 Ok(link) => link,
                 Err(why) => fatal(&format!("{url}: {}", describe(why))),
             };
-            match koru_agent::client::open_link(&paths, link) {
+            if matches!(
+                &link,
+                koru_link::KoruLink::Skill { .. } | koru_link::KoruLink::Command { .. }
+            ) {
+                fatal("an agent skill or command link is only meaningful in a chat");
+            }
+            match koru_agent::client::open_link(&paths, link.clone()) {
                 // Handed over. This process is done, and the agent it handed to
                 // is the one with the windows.
                 Ok(true) => {}
@@ -211,8 +217,15 @@ fn main() {
                 // launched this process with a desktop-interactive token, which
                 // is exactly what an agent needs.
                 Ok(false) => {
-                    match koru_agent::run(paths.clone(), true, false, None, None, Some(link), None)
-                    {
+                    match koru_agent::run(
+                        paths.clone(),
+                        true,
+                        false,
+                        None,
+                        None,
+                        Some(link.clone()),
+                        None,
+                    ) {
                         Ok(()) => {}
                         // Lost the bind to an agent that started in between. It is
                         // there now, so hand over and stand down -- the same
@@ -381,6 +394,7 @@ fn describe(why: koru_link::LinkError) -> &'static str {
         koru_link::LinkError::NotKoru => "not a koru:// link",
         koru_link::LinkError::UnknownForm => "not a koru:// link this build understands",
         koru_link::LinkError::BadId => "a koru:// link whose id is not a uuid",
+        koru_link::LinkError::BadName => "a koru:// agent link whose name is not valid",
         koru_link::LinkError::Illegal => "a koru:// link carrying characters that are not allowed",
     }
 }

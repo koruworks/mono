@@ -453,8 +453,17 @@ impl Shell {
         let out = loop {
             match koru_ipc::frame::read_raw(&mut read) {
                 Ok((_, raw)) => match koru_ipc::frame::decode::<FromAgent>(&raw) {
+                    // The ambient pushes a connection earns whatever it
+                    // asked for: a Shortcut per Hello (protocol 11),
+                    // reminder diagnostics, and the organization sync
+                    // status, which is broadcast to every window whenever
+                    // it changes (root-catalog Plan 2.2). A test waiting
+                    // for *its* push must not be answered by one of these.
                     Ok(FromAgent::Push {
-                        body: Push::Shortcut { .. } | Push::ReminderDiagnostics { .. },
+                        body:
+                            Push::Shortcut { .. }
+                            | Push::ReminderDiagnostics { .. }
+                            | Push::RootSync { .. },
                     }) => continue,
                     Ok(FromAgent::Push { body }) => break Some(body),
                     _ => break None,
@@ -464,6 +473,47 @@ impl Shell {
         };
         koru_ipc::set_timeouts(&self.stream, Some(READ_DEADLINE));
         out
+    }
+
+    /// The `Push::RootSync` this shell is sent, or `None` if none arrives
+    /// within `within`.
+    ///
+    /// **The mirror of [`Shell::next_push`]**, which skips exactly this push
+    /// as ambient noise so that a test waiting for *its* delivery is not
+    /// answered by one. A case that asserts the organization sync status
+    /// *arrives* has to be the one that keeps it, and nothing else here can
+    /// see it at all.
+    ///
+    /// **It consumes the shell and reads on a thread of its own**, because
+    /// the deadline has to be one the standard library guarantees.
+    /// `koru_ipc::set_timeouts` deliberately ignores a platform that refuses
+    /// a socket timeout, so a blocking read is not a bounded wait — and this
+    /// was measured, not reasoned: a first draft read the socket directly,
+    /// passed, and then hung for twenty minutes against an agent deliberately
+    /// broken to send nothing. A gate that hangs instead of failing is worse
+    /// than no gate, because a leaked harness reads as a suite in which every
+    /// test passed and then blocked for ever.
+    fn root_sync_within(self, within: Duration) -> Option<koru_agent_wire::RootSyncStatus> {
+        let (sent, received) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            loop {
+                let mut read = &self.stream;
+                match koru_ipc::frame::read_raw(&mut read) {
+                    Ok((_, raw)) => match koru_ipc::frame::decode::<FromAgent>(&raw) {
+                        Ok(FromAgent::Push {
+                            body: Push::RootSync { status },
+                        }) => {
+                            let _ = sent.send(status);
+                            return;
+                        }
+                        Ok(_) => continue,
+                        Err(_) => return,
+                    },
+                    Err(_) => return,
+                }
+            }
+        });
+        received.recv_timeout(within).ok()
     }
 
     fn say_hello(&mut self, profile: &str, workspace: &str) -> Response {
@@ -683,6 +733,55 @@ fn a_shell_that_says_hello_is_in_the_registry() {
         panic!("not a status");
     };
     assert_eq!(shells, 1, "the shell did not land in the registry");
+}
+
+/// **Every connected shell is *told* the organization sync status** — it is a
+/// delivery, not something a window has to ask for (root-catalog Plan 2.2).
+///
+/// Two tests above teach `next_push` and a silence assertion to *skip*
+/// `Push::RootSync` as ambient noise, and skipping was the only thing this
+/// suite knew about it: nothing asserted it is ever sent. A regression that
+/// stopped sending it — `root_sync_push` returning `None`, the Hello arm
+/// losing its `push_root_sync_to`, the broadcast losing a connection — would
+/// have left every case here passing, because an ambient push nobody asserts
+/// on is indistinguishable from one that never arrives.
+///
+/// **What this case can reach and what it cannot.** It drives real agents
+/// over real sockets, so the states it can observe are the ones this machine
+/// is actually in: one device, no peer, therefore no subject. The push's
+/// *contents* — a subject both paused by this device's settings and held on
+/// the other machine arriving as `PausedBySettings` rather than `Held` — are
+/// asserted in `app::tests`, which can hand the Agent a daemon status
+/// without a second machine to pair with. What is asserted here is the half
+/// that needs a socket: that the frame crosses it, to every connection, with
+/// a status whose shape the window can read.
+#[test]
+fn every_connected_shell_is_told_the_organization_sync_status() {
+    let agent = Agent::start();
+    let mut first = agent.shell();
+    assert_eq!(first.say_hello(P, W1), Response::Ok);
+    // A second shell, on a profile of its own, so "every connection" is a
+    // state this test is actually in rather than a claim about one.
+    let mut second = agent.shell();
+    assert_eq!(second.say_hello(P2, W2), Response::Ok);
+
+    for (which, shell) in [("first", first), ("second", second)] {
+        let status = shell
+            .root_sync_within(Duration::from_secs(10))
+            .unwrap_or_else(|| {
+                panic!("the {which} shell was never told the organization sync status")
+            });
+        for subject in &status.subjects {
+            assert!(
+                !subject.peer_device_id.is_empty(),
+                "a subject the {which} shell was sent names no peer: {subject:?}"
+            );
+            assert!(
+                subject.profile_id.is_some() != subject.workspace_id.is_some(),
+                "exactly one of profile and workspace is a subject: {subject:?}"
+            );
+        }
+    }
 }
 
 /// **Disconnect is EOF and nothing else** — no heartbeat, no liveness poll. A
@@ -1841,6 +1940,7 @@ fn public_sessions_client_streams_raw_output_and_delivers_an_image_path() {
                 controller_lease: lease.token,
                 text: "echo PUBLIC_CLIENT_IMAGE".into(),
                 attachment_ids: vec![attachment.id],
+                references: Vec::new(),
             },
         )
         .unwrap();
@@ -1950,6 +2050,7 @@ fn public_client_attaches_an_image_to_a_managed_codex_prompt() {
                 controller_lease: lease.token,
                 text: "PUBLIC_MANAGED_PROMPT_SENTINEL".into(),
                 attachment_ids: vec![attachment.id],
+                references: Vec::new(),
             },
         )
         .unwrap();
@@ -2099,14 +2200,20 @@ fn the_shell_that_was_active_last_receives_the_target() {
     // with a channel deadline the standard library guarantees.
     let (sent, received) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        // Skip the ambient Shortcut push every Hello earns (protocol 11);
-        // silence here means "no *delivery*", not "no frame of any kind".
+        // Skip the ambient pushes a connection earns regardless of routing:
+        // the Shortcut every Hello earns (protocol 11), reminder
+        // diagnostics, and the organization sync status, which is broadcast
+        // to every window by design (root-catalog Plan 2.2). Silence here
+        // means "no *delivery*", not "no frame of any kind", so anything
+        // else arriving — a `Push::Open` above all — still fails this.
         loop {
             let frame = second.next_frame();
             if matches!(
                 frame,
                 FromAgent::Push {
-                    body: Push::Shortcut { .. } | Push::ReminderDiagnostics { .. }
+                    body: Push::Shortcut { .. }
+                        | Push::ReminderDiagnostics { .. }
+                        | Push::RootSync { .. }
                 }
             ) {
                 continue;

@@ -462,6 +462,59 @@ fn live_named_routes_list_session_models_when_opted_in() {
     }
 }
 
+/// Opt-in command probe against the installed Claude ACP wrapper. It sends no
+/// prompt and reports only counts; names can be private to this machine.
+#[test]
+fn live_claude_command_probe_is_bounded_when_opted_in() {
+    if !koru_env::switch(koru_env::name::KORU_LIVE_PROVIDER_SMOKE) {
+        return;
+    }
+    let tree = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
+    let parent = tree.join("target/generic-factory-probes");
+    std::fs::create_dir_all(&parent).unwrap();
+    let cwd = tempfile::tempdir_in(&parent).unwrap();
+    let mut route = AcpRoute::claude_code();
+    #[cfg(windows)]
+    {
+        let node = koru_session_profiles::resolve_executable("node").expect("Node installed");
+        let windows = std::path::PathBuf::from(std::env::var_os("SystemRoot").unwrap());
+        let path = std::env::join_paths([
+            node.parent().unwrap().to_path_buf(),
+            windows.join("System32"),
+            windows,
+        ])
+        .unwrap();
+        route.environment.push(("PATH".into(), path));
+    }
+    let factory = AcpFactory::new(route, Arc::new(NoopAttachmentPathResolver));
+    let started = Instant::now();
+    let result = ManagedProviderFactory::discover_commands(
+        &factory,
+        "claude-agent-acp".into(),
+        cwd.path().to_owned(),
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(25),
+        "the whole command probe must finish near its 20-second budget"
+    );
+    match result {
+        Ok(commands) => {
+            assert!(commands.iter().all(|command| {
+                command.kind == koru_session_protocol::AgentCommandKind::Command
+            }));
+            eprintln!("claude_commands: count={}", commands.len());
+        }
+        Err(error) => eprintln!(
+            "claude_commands: stage={:?}, diagnostic={:?}",
+            error.stage, error.diagnostic
+        ),
+    }
+}
+
 /// Opt-in: each installed route starts a session with the desktop MCP
 /// bridge beside it, exactly as a chat's session does — `koru-mcp serve
 /// --stdio` from this tree's `target/debug` — and shuts down. No prompt.

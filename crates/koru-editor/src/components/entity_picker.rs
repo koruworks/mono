@@ -15,9 +15,10 @@ use super::Outcome;
 use super::text_field::TextField;
 use crate::trigger::{DocumentTarget, PillSpec, Trigger};
 
-pub const HEADER_H: f32 = 38.0;
+/// Quiet scope guidance below the selectable rows.
+pub const FOOTER_H: f32 = 28.0;
 pub const MAX_ROWS: usize = 7;
-/// The height of the own-query band a move-mode picker adds above the header.
+/// The height of the own-query band a move-mode picker adds above the rows.
 pub const FIELD_H: f32 = 36.0;
 
 /// The band's rect, panel-local. Mirrors `emoji_picker::search_rect`'s shape:
@@ -50,6 +51,22 @@ pub struct EntitySearchRequest {
     pub workspaces: Vec<WorkspaceId>,
 }
 
+impl EntitySearchRequest {
+    /// Resolve an empty mention once for every host. Window recents win; when
+    /// there are none, a document-kind filter asks the search index for the
+    /// scoped document list without turning an ordinary blank search into a
+    /// whole-corpus query.
+    pub fn with_document_fallback(mut self, has_recents: bool) -> Option<Self> {
+        if self.query.trim().is_empty() {
+            if has_recents {
+                return None;
+            }
+            self.query = "doc:".into();
+        }
+        Some(self)
+    }
+}
+
 /// Which list the picker is showing.
 ///
 /// An enum rather than a set of booleans because the row arithmetic — how
@@ -60,8 +77,6 @@ pub struct EntitySearchRequest {
 pub enum Stage {
     /// Matching documents, plus the pinned "new page" row.
     Documents,
-    /// The workspace-scope checklist, opened from the header chip.
-    Workspaces,
     /// Headings of one document, entered by typing `#`.
     Headings(Headings),
 }
@@ -103,6 +118,8 @@ pub struct EntityPicker {
     pub workspaces: Vec<WorkspaceChoice>,
     pub selected_workspaces: Vec<WorkspaceId>,
     pub current_workspace: Option<WorkspaceId>,
+    /// Ctrl+Space widens the current-workspace search for this picker only.
+    pub widened_scope: bool,
     pub sel: usize,
     pub first: usize,
     pub stage: Stage,
@@ -164,6 +181,7 @@ impl Clone for EntityPicker {
             workspaces: self.workspaces.clone(),
             selected_workspaces: self.selected_workspaces.clone(),
             current_workspace: self.current_workspace,
+            widened_scope: self.widened_scope,
             sel: self.sel,
             first: self.first,
             stage: self.stage.clone(),
@@ -193,6 +211,7 @@ impl EntityPicker {
             workspaces: Vec::new(),
             selected_workspaces: Vec::new(),
             current_workspace: None,
+            widened_scope: false,
             sel: 0,
             first: 0,
             stage: Stage::Documents,
@@ -299,6 +318,14 @@ impl EntityPicker {
         text: Option<&str>,
         mods: ModifiersState,
     ) -> Outcome {
+        if koru_keys::registry::REGISTRY
+            .iter()
+            .find(|shortcut| shortcut.id == koru_keys::ShortcutId::WidenEntityScope)
+            .is_some_and(|shortcut| shortcut.chord.matches(key, text, mods))
+        {
+            self.widen_scope();
+            return Outcome::Consumed;
+        }
         let named = match key {
             Key::Named(n) => Some(*n),
             _ => None,
@@ -331,18 +358,12 @@ impl EntityPicker {
         Outcome::Consumed
     }
 
-    /// Whether the workspace-scope checklist is the visible list.
-    pub fn filter_open(&self) -> bool {
-        self.stage == Stage::Workspaces
-    }
-
     pub fn row_count(&self) -> usize {
         self.total_count().max(1).min(MAX_ROWS)
     }
 
     fn total_count(&self) -> usize {
         match &self.stage {
-            Stage::Workspaces => self.workspaces.len(),
             // Always at least one row: with no headings it is the row that
             // says so, and choosing it commits the document-level pill. That
             // is what keeps the empty case out of the key handling entirely.
@@ -363,7 +384,7 @@ impl EntityPicker {
     pub fn height(&self) -> f32 {
         koru_draw::theme::PANEL_PAD * 2.0
             + self.field_band()
-            + HEADER_H
+            + FOOTER_H
             + self.row_count() as f32 * koru_draw::theme::ROW_H
     }
 
@@ -396,29 +417,16 @@ impl EntityPicker {
         }
         let mut changed = self.current_workspace != Some(current) || self.workspaces != workspaces;
         let selected_before = self.selected_workspaces.clone();
-        // The picker opens before the Store catalog necessarily arrives. Keep
-        // the current workspace as a bootstrap scope so the first request can
-        // be sent; when that request brings back the catalog, expand this
-        // provisional one-workspace selection to the real all-active default.
-        let bootstrap_scope =
-            self.workspaces.is_empty() && self.selected_workspaces.as_slice() == [current];
-        let had_all = !self.workspaces.is_empty()
-            && self
-                .workspaces
-                .iter()
-                .all(|workspace| self.selected_workspaces.contains(&workspace.id));
         self.current_workspace = Some(current);
         self.workspaces = workspaces;
-        self.selected_workspaces
-            .retain(|id| self.workspaces.iter().any(|workspace| workspace.id == *id));
-        if self.workspaces.is_empty() {
-            self.selected_workspaces.push(current);
-        } else if self.selected_workspaces.is_empty() || had_all || bootstrap_scope {
+        if (self.widened_scope || self.link_mode) && !self.workspaces.is_empty() {
             self.selected_workspaces = self
                 .workspaces
                 .iter()
                 .map(|workspace| workspace.id)
                 .collect();
+        } else {
+            self.selected_workspaces = vec![current];
         }
         if self.selected_workspaces != selected_before {
             self.loading = true;
@@ -426,6 +434,18 @@ impl EntityPicker {
             changed = true;
         }
         changed
+    }
+
+    pub fn widen_scope(&mut self) -> bool {
+        if self.widened_scope || self.headings().is_some() {
+            return false;
+        }
+        self.widened_scope = true;
+        if let Some(current) = self.current_workspace {
+            let workspaces = self.workspaces.clone();
+            self.set_context(current, workspaces);
+        }
+        true
     }
 
     /// Take the query as it now reads in the document, and follow it.
@@ -579,14 +599,14 @@ impl EntityPicker {
         })
     }
 
-    /// File the container-fed recents for an empty move-mode query.
+    /// File the container-fed recents for an empty query in any picker mode.
     ///
     /// **Compares first.** This is called from the per-gesture sync, and a
     /// feed that answered "changed" for an identical list would invalidate,
     /// redraw, sync, and feed again — a redraw loop pinned at full speed,
     /// which is what "@ blocks the UI" turned out to be.
     pub fn set_recent_results(&mut self, hits: Vec<DocumentChoice>) -> bool {
-        if !((self.move_mode || self.link_mode) && self.document_query.trim().is_empty()) {
+        if !self.document_query.trim().is_empty() {
             return false;
         }
         if self.hits == hits && !self.loading {
@@ -622,34 +642,13 @@ impl EntityPicker {
         }
     }
 
-    pub fn click(&mut self, local_x: f32, local_y: f32, panel_w: f32) -> Outcome {
+    pub fn click(&mut self, _local_x: f32, local_y: f32, _panel_w: f32) -> Outcome {
         // The own-query band sits above everything; clicks in it are routed to
         // `click_field` by the overlay before this is asked, so the geometry
         // below only has to look past it.
         let local_y = local_y - self.field_band();
         let pad = koru_draw::theme::PANEL_PAD;
-        if local_y >= pad && local_y < pad + HEADER_H {
-            // The compact chip occupies the header; keeping the whole header a
-            // target also makes it forgiving at high display scaling.
-            if local_x >= pad && local_x <= panel_w - pad {
-                self.stage = match std::mem::replace(&mut self.stage, Stage::Documents) {
-                    Stage::Workspaces => Stage::Documents,
-                    Stage::Documents => Stage::Workspaces,
-                    // The scope chooses which workspaces to *search*, and the
-                    // heading stage has stopped searching -- it is inside one
-                    // document. Changing scope underneath it would mean
-                    // discarding the anchor, so the chip is inert here.
-                    Stage::Headings(headings) => {
-                        self.stage = Stage::Headings(headings);
-                        return Outcome::Consumed;
-                    }
-                };
-                self.sel = 0;
-                self.first = 0;
-            }
-            return Outcome::Consumed;
-        }
-        let row = ((local_y - pad - HEADER_H) / koru_draw::theme::ROW_H).floor();
+        let row = ((local_y - pad) / koru_draw::theme::ROW_H).floor();
         if row < 0.0 {
             return Outcome::Consumed;
         }
@@ -678,27 +677,6 @@ impl EntityPicker {
                 },
             ));
         }
-        if self.filter_open() {
-            let Some(workspace) = self.workspaces.get(i) else {
-                return Outcome::Consumed;
-            };
-            if let Some(at) = self
-                .selected_workspaces
-                .iter()
-                .position(|id| *id == workspace.id)
-            {
-                // Never allow an empty scope: the visible check cannot turn
-                // into an accidental machine-global search.
-                if self.selected_workspaces.len() > 1 {
-                    self.selected_workspaces.remove(at);
-                }
-            } else {
-                self.selected_workspaces.push(workspace.id);
-            }
-            self.loading = true;
-            self.dirty = true;
-            return Outcome::Consumed;
-        }
         if let Some(hit) = self.hits.get(i) {
             return Outcome::Commit(if hit.is_file {
                 PillSpec::file(hit.title.clone(), hit.target)
@@ -713,17 +691,19 @@ impl EntityPicker {
     }
 
     pub fn scope_label(&self) -> String {
-        match self.selected_workspaces.as_slice() {
-            [only] => self
-                .workspaces
-                .iter()
-                .find(|w| w.id == *only)
-                .map(|w| w.name.clone())
-                .unwrap_or_else(|| "This workspace".into()),
-            many if many.len() == self.workspaces.len() && !many.is_empty() => {
-                "All workspaces".into()
-            }
-            _ => "Workspaces".into(),
+        if self.widened_scope || self.link_mode {
+            koru_i18n::t(koru_i18n::current(), koru_i18n::Key::EntityScopeAll).into()
+        } else {
+            self.current_workspace
+                .and_then(|only| {
+                    self.workspaces
+                        .iter()
+                        .find(|w| w.id == only)
+                        .map(|w| w.name.clone())
+                })
+                .unwrap_or_else(|| {
+                    koru_i18n::t(koru_i18n::current(), koru_i18n::Key::EntityScopeCurrent).into()
+                })
         }
     }
 
@@ -733,7 +713,6 @@ impl EntityPicker {
 
     fn scroll_len(&self) -> usize {
         match &self.stage {
-            Stage::Workspaces => self.workspaces.len(),
             Stage::Headings(headings) => headings.shown.len(),
             Stage::Documents => self.hits.len(),
         }
@@ -742,7 +721,7 @@ impl EntityPicker {
     fn visible_scroll_rows(&self) -> usize {
         let capacity = match self.stage {
             // Neither list pins a row beneath it.
-            Stage::Workspaces | Stage::Headings(_) => MAX_ROWS,
+            Stage::Headings(_) => MAX_ROWS,
             // Add new page is pinned below the scrolling result rows.
             Stage::Documents => self.doc_capacity(),
         };
@@ -761,7 +740,7 @@ impl EntityPicker {
         let (x, _) = super::command_menu::scrollbar_column(panel_w);
         Rect::new(
             x + 4.0,
-            koru_draw::theme::PANEL_PAD + self.field_band() + HEADER_H,
+            koru_draw::theme::PANEL_PAD + self.field_band(),
             super::command_menu::SCROLLBAR_W,
             self.visible_scroll_rows() as f32 * koru_draw::theme::ROW_H,
         )
@@ -815,15 +794,6 @@ impl EntityPicker {
     /// Map a physical panel row to the stable selection index. The add action
     /// is pinned after the visible hits, even while the hits themselves scroll.
     pub(super) fn visible_item(&self, row: usize) -> Option<usize> {
-        if self.filter_open() {
-            return (row
-                < self
-                    .workspaces
-                    .len()
-                    .saturating_sub(self.first)
-                    .min(MAX_ROWS))
-            .then_some(self.first + row);
-        }
         if let Stage::Headings(headings) = &self.stage {
             let visible = headings
                 .shown
@@ -849,15 +819,15 @@ impl EntityPicker {
     }
 
     /// The item under a panel-local `y`, for a host that hovers rows itself
-    /// (the standalone link picker): `None` over the field, the scope chip
-    /// and past the last row.
+    /// (the standalone link picker): `None` over the field, footer and past
+    /// the last row.
     pub fn item_at(&self, local_y: f32) -> Option<usize> {
         let y = local_y - self.field_band();
         let pad = koru_draw::theme::PANEL_PAD;
-        if y < pad + HEADER_H {
+        if y < pad {
             return None;
         }
-        let row = ((y - pad - HEADER_H) / koru_draw::theme::ROW_H).floor();
+        let row = ((y - pad) / koru_draw::theme::ROW_H).floor();
         self.visible_item(row as usize)
     }
 
@@ -867,7 +837,7 @@ impl EntityPicker {
 
     fn ensure_selected_visible(&mut self) {
         let visible = match self.stage {
-            Stage::Workspaces | Stage::Headings(_) => MAX_ROWS,
+            Stage::Headings(_) => MAX_ROWS,
             Stage::Documents => self.doc_capacity(),
         };
         if matches!(self.stage, Stage::Documents)
@@ -905,6 +875,42 @@ mod tests {
             breadcrumb: String::new(),
             is_file,
         }
+    }
+
+    #[test]
+    fn recent_documents_win_then_an_empty_query_requests_the_document_list() {
+        let workspace = WorkspaceId::new();
+        let request = EntitySearchRequest {
+            query: String::new(),
+            workspaces: vec![workspace],
+        };
+        assert_eq!(request.clone().with_document_fallback(true), None);
+        assert_eq!(
+            request.with_document_fallback(false),
+            Some(EntitySearchRequest {
+                query: "doc:".into(),
+                workspaces: vec![workspace],
+            })
+        );
+        let typed = EntitySearchRequest {
+            query: "budget".into(),
+            workspaces: vec![workspace],
+        };
+        assert_eq!(typed.clone().with_document_fallback(true), Some(typed));
+    }
+
+    #[test]
+    fn rows_are_above_the_scope_footer_for_hit_testing() {
+        let mut picker = EntityPicker::new(Trigger::at_start());
+        picker.set_results(vec![linked("Brief", false)], false);
+        let row_y = koru_draw::theme::PANEL_PAD + koru_draw::theme::ROW_H * 0.5;
+        let footer_y = picker.height() - koru_draw::theme::PANEL_PAD - FOOTER_H + 2.0;
+        assert_eq!(picker.item_at(row_y), Some(0));
+        assert_eq!(picker.item_at(footer_y), None);
+        assert!(matches!(
+            picker.click(20.0, footer_y, koru_draw::theme::PANEL_W),
+            Outcome::Consumed
+        ));
     }
 
     /// The standalone link picker (a Tasks page's *Add existing…*): its own
@@ -1063,6 +1069,56 @@ mod tests {
     }
 
     #[test]
+    fn inspector_nests_all_picker_paint_inside_its_panel() {
+        let mut engine = koru_draw::text::TextEngine::new();
+        let mut picker = EntityPicker::for_link(&mut engine);
+        picker.set_results(vec![linked("Brief", false)], false);
+        let mut scene = vello::Scene::new();
+        let root = vello::kurbo::Affine::IDENTITY;
+        let frame = koru_draw::inspect::Frame::begin(
+            1,
+            root,
+            koru_draw::scene::rect(0.0, 0.0, 500.0, 500.0),
+        );
+        crate::components::draw::draw_standalone_entity_picker(
+            &mut scene,
+            root,
+            &mut engine,
+            &mut picker,
+            (12.0, 20.0),
+            None,
+        );
+        let snapshot = frame.finish();
+        let component = snapshot
+            .records
+            .iter()
+            .position(|record| record.name == "KoruEntityPicker")
+            .expect("named reusable component");
+        let panel = snapshot
+            .records
+            .iter()
+            .position(|record| record.name == "FloatingPanel")
+            .expect("panel chrome");
+        assert_eq!(snapshot.records[panel].parent, Some(component));
+        assert!(
+            snapshot
+                .records
+                .iter()
+                .any(|record| record.name == "ScopeFooter" && record.parent == Some(panel))
+        );
+        for (index, record) in snapshot.records.iter().enumerate() {
+            if index == component || index == panel {
+                continue;
+            }
+            let mut parent = record.parent;
+            while parent != Some(panel) && parent != Some(component) {
+                parent = parent.and_then(|at| snapshot.records[at].parent);
+            }
+            assert_eq!(parent, Some(panel), "{} escaped the panel", record.name);
+        }
+    }
+
+    #[test]
     fn duplicate_titles_remain_distinct_document_choices() {
         let workspace = WorkspaceId::new();
         let mut picker = EntityPicker::new(Trigger::at_start());
@@ -1093,8 +1149,8 @@ mod tests {
         assert_ne!(first.document, second.document);
     }
 
-    /// A move never crosses a profile, so the move-mode picker's scope —
-    /// and therefore its search and its checklist — holds only the current
+    /// A move never crosses a profile, so the move-mode picker's scope
+    /// holds only the current
     /// profile's workspaces. The mention picker keeps the whole catalog: a
     /// link may point anywhere.
     #[test]
@@ -1128,7 +1184,7 @@ mod tests {
     }
 
     #[test]
-    fn scope_never_becomes_empty() {
+    fn current_scope_widens_without_changing_query() {
         let current = WorkspaceId::new();
         let other = WorkspaceId::new();
         let profile = ProfileId::new();
@@ -1150,26 +1206,53 @@ mod tests {
                 },
             ],
         );
-        assert_eq!(
-            picker.selected_workspaces.len(),
-            2,
-            "all live workspaces are the default"
-        );
-        picker.stage = Stage::Workspaces;
-        picker.choose(0);
-        assert_eq!(picker.selected_workspaces, vec![other]);
-        picker.choose(1);
-        assert_eq!(
-            picker.selected_workspaces,
-            vec![other],
-            "the last scope stays selected"
-        );
-        picker.choose(0);
-        assert_eq!(picker.selected_workspaces.len(), 2);
+        assert_eq!(picker.take_request().unwrap().workspaces, [current]);
+        picker.refilter(Trigger::at_start(), "plan");
+        picker.take_request();
+        assert!(picker.widen_scope());
+        assert_eq!(picker.query, "plan");
+        assert_eq!(picker.take_request().unwrap().workspaces, [current, other]);
+        assert!(!picker.widen_scope());
     }
 
     #[test]
-    fn bootstrap_scope_requests_current_then_expands_to_all_catalog_workspaces() {
+    fn ctrl_space_widens_only_an_open_picker() {
+        let current = WorkspaceId::new();
+        let other = WorkspaceId::new();
+        let profile = ProfileId::new();
+        let mut picker = EntityPicker::new(Trigger::at_start());
+        picker.set_context(
+            current,
+            vec![
+                WorkspaceChoice {
+                    profile,
+                    profile_name: String::new(),
+                    id: current,
+                    name: "Current".into(),
+                },
+                WorkspaceChoice {
+                    profile,
+                    profile_name: String::new(),
+                    id: other,
+                    name: "Other".into(),
+                },
+            ],
+        );
+        let mut engine = TextEngine::new();
+        assert!(matches!(
+            picker.key_full(
+                &mut engine,
+                &Key::Named(NamedKey::Space),
+                None,
+                ModifiersState::CONTROL,
+            ),
+            Outcome::Consumed
+        ));
+        assert_eq!(picker.take_request().unwrap().workspaces, [current, other]);
+    }
+
+    #[test]
+    fn catalog_arrival_keeps_current_workspace_scope() {
         let current = WorkspaceId::new();
         let other = WorkspaceId::new();
         let profile = ProfileId::new();
@@ -1195,18 +1278,44 @@ mod tests {
                 },
             ],
         );
-        assert_eq!(picker.selected_workspaces, [current, other]);
-        assert_eq!(
-            picker.take_request().unwrap().workspaces,
-            [current, other],
-            "the catalog arrival replaces the provisional scope"
-        );
+        assert_eq!(picker.selected_workspaces, [current]);
+        assert!(picker.take_request().is_none());
     }
 
     #[test]
     fn no_matches_still_offers_a_new_page() {
         let mut picker = EntityPicker::new(Trigger::at_start());
         assert!(matches!(picker.choose(0), Outcome::NewPage(title) if title.is_empty()));
+    }
+
+    #[test]
+    fn task_choice_commits_the_containing_document_and_node() {
+        let document = DocumentId::new();
+        let node = NodeId::new();
+        let mut picker = EntityPicker::new(Trigger::at_start());
+        picker.set_results(
+            vec![DocumentChoice {
+                target: DocumentTarget {
+                    document,
+                    node: Some(node),
+                },
+                title: "Ship café".into(),
+                breadcrumb: "Work / Plan".into(),
+                is_file: false,
+            }],
+            false,
+        );
+        let Outcome::Commit(pill) = picker.choose(0) else {
+            panic!("task choice commits");
+        };
+        assert_eq!(
+            pill.document,
+            Some(DocumentTarget {
+                document,
+                node: Some(node)
+            })
+        );
+        assert_eq!(pill.label, "Ship café");
     }
 
     #[test]

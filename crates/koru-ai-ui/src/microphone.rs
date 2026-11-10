@@ -54,15 +54,17 @@
 
 use koru_draw::el::{Frame, FrameCx, Interaction};
 use koru_draw::geometry::Rect;
+use koru_draw::scene;
 use koru_draw::theme::{Profile, Space};
-use koru_draw::{icons, scene};
 use koru_i18n::{Key as Words, fill, t};
-use koru_ui::icon_button::{self, Metrics, State as IconButtonState};
+use koru_ui::icon_button::{self, Metrics};
+use koru_ui::popover::PopoverAlign;
 use vello::Scene;
 use vello::kurbo::Affine;
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 
-use crate::ChatSurface;
+use crate::{ChatSurface, paint_turning_caret};
+use std::time::Instant;
 
 mod elements;
 #[cfg(test)]
@@ -140,7 +142,7 @@ pub enum MicrophoneAsk {
 #[derive(Default)]
 pub(crate) struct Panel {
     /// The host can read the devices and keep a choice: the chevron shows.
-    offered: bool,
+    pub(crate) offered: bool,
     open: bool,
     /// The row the keyboard is on.
     focus: Option<usize>,
@@ -215,16 +217,19 @@ impl ChatSurface {
         shown
     }
 
-    /// The chevron's slot, just left of the microphone, while nothing
-    /// records. The toolbar ends before it whether or not it shows.
+    /// The chevron's reserved slot to the right of the microphone. Showing it
+    /// changes only paint, never the microphone or send target positions.
     pub(crate) fn mic_chooser_slot(&self) -> Option<Rect> {
         if !self.dictation.microphone.offered {
             return None;
         }
+        if let Some(shell) = &self.composer_shell {
+            return shell.microphone_choice();
+        }
         let mic = self.mic_button()?;
         let width = Metrics::COMPACT.control_width();
         let gap = Space::S0_5.px(Profile::Desktop);
-        Some(Rect::new(mic.x - gap - width, mic.y, width, mic.h))
+        Some(Rect::new(mic.x + mic.w + gap, mic.y, width, mic.h))
     }
 
     /// **The chevron**, where it shows: while the pointer is on it or on the
@@ -241,12 +246,12 @@ impl ChatSurface {
         shown.then_some(slot)
     }
 
-    /// Where the pointer shows the chevron: on it, on the microphone, or
-    /// between them.
+    /// Where the pointer shows the chevron: on the fixed microphone or in
+    /// its reserved lane to the right.
     pub(crate) fn mic_chooser_zone(&self) -> Option<Rect> {
         let slot = self.mic_chooser_slot()?;
         let mic = self.mic_button()?;
-        Some(Rect::new(slot.x, mic.y, mic.x + mic.w - slot.x, mic.h))
+        Some(Rect::new(mic.x, mic.y, slot.x + slot.w - mic.x, mic.h))
     }
 
     /// The panel's rows, in order: *Default*, a row a device, *Hold to
@@ -302,8 +307,7 @@ impl ChatSurface {
         }
     }
 
-    /// The open panel: above the composer, its right edge on the
-    /// microphone's, as tall as its rows.
+    /// The open panel follows the microphone chooser, as tall as its rows.
     pub(crate) fn microphone_panel(&self) -> Option<Rect> {
         if !self.dictation.microphone.open || self.dictating() {
             return None;
@@ -323,7 +327,8 @@ impl ChatSurface {
         let hold = measured.rect_of(elements::HOLD_ROW)?;
         let top = measured.rect_of(elements::LEVEL_ROW)?.y;
         let height = hold.y + hold.h + top;
-        Some(self.above_composer(mic.x + mic.w - width, width, height))
+        let anchor = self.mic_chooser_slot().unwrap_or(mic);
+        Some(self.toolbar_popover(anchor, width, height, PopoverAlign::End))
     }
 
     /// **The open panel's frame**: where a press lands and which row it is
@@ -458,22 +463,50 @@ impl ChatSurface {
     }
 
     /// The chevron, beside the microphone, while it shows.
-    pub(crate) fn draw_mic_chooser(&mut self, canvas: &mut Scene, root: Affine) {
-        let Some(chevron) = self.mic_chooser_button() else {
+    pub(crate) fn draw_mic_chooser(
+        &mut self,
+        canvas: &mut Scene,
+        root: Affine,
+        chevron: Rect,
+        shown: bool,
+    ) {
+        if !shown {
             return;
-        };
-        icon_button::draw_with(
+        }
+        let open = self.dictation.microphone.open;
+        self.microphone_chevron.set(open, Instant::now());
+        let metrics = Metrics::COMPACT;
+        let chip = icon_button::hover_chip_with(chevron, metrics);
+        let hovered = chevron.contains(self.pointer.0, self.pointer.1);
+        let palette = koru_draw::theme::p();
+        if open || hovered {
+            scene::fill(
+                canvas,
+                root,
+                if open {
+                    palette
+                        .accent
+                        .multiply_alpha(if hovered { 0.20 } else { 0.12 })
+                } else {
+                    palette.hover_tint
+                },
+                &scene::rrect(chip.x, chip.y, chip.w, chip.h, metrics.radius),
+            );
+        }
+        paint_turning_caret(
             canvas,
             root,
             &mut self.engine,
             chevron,
-            icons::CARET_DOWN,
-            IconButtonState {
-                hovered: chevron.contains(self.pointer.0, self.pointer.1),
-                active: self.dictation.microphone.open,
-                disabled: false,
+            metrics.icon_size,
+            self.microphone_chevron.progress(),
+            if open {
+                palette.accent
+            } else if hovered {
+                palette.text
+            } else {
+                palette.text_dim
             },
-            Metrics::COMPACT,
         );
     }
 

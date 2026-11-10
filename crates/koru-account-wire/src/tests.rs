@@ -677,7 +677,6 @@ fn cloud_discovery_page_is_explicit_and_selection_request_is_strict() {
         r#"{"version":1,"workspace_id":"40000000-0000-1000-8000-000000000004"}"#,
         r#"{"version":1,"workspace_id":"40000000-0000-4000-8000-000000000004","profile_id":"x"}"#,
         r#"{"version":1,"workspace_id":"40000000-0000-4000-8000-000000000004","device_id":"x"}"#,
-        r#"{"version":1,"workspace_id":"40000000-0000-4000-8000-000000000004".to_uppercase()}"#,
         r#"{"version":1}"#,
     ] {
         assert!(

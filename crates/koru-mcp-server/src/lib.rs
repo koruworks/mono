@@ -3390,6 +3390,7 @@ impl Backend for LocalBackend {
                 let request = SearchRequest {
                     query: SearchQuery {
                         text: a.query,
+                        entity_picker: false,
                         workspaces,
                         excluded_workspaces: Vec::new(),
                         kinds: a.kinds,
@@ -6224,6 +6225,19 @@ fn move_after_index(
 }
 
 fn document_json(document: StoreDocumentId, doc: &WorkspaceDoc) -> Result<Value, ToolError> {
+    // **The revision is taken before the nodes are read, not after.**
+    // `WorkspaceDoc::runs` reaches a node's text through
+    // `ensure_mergeable_text`, which *creates* that container when the node
+    // has none — an image, an empty root — so walking a document mints Loro
+    // operations in whichever peer this reader happens to be. Nothing
+    // persists them, which is exactly why they must not be published:
+    // answering the version measured after the walk hands a caller a
+    // revision no replica has ever heard of, and the `edit_document` it
+    // sends back with it is refused as `revision_conflict` against a
+    // document that never saw those operations — the hazard
+    // [`WorkspaceToolExecutor::join_for_edit`] keeps stamps off the read
+    // path for. So `revision` is the document as it was joined.
+    let revision = revision(doc);
     let mut nodes = Vec::new();
     let mut root_node_id = None;
     for (id, depth) in doc.walk_all()? {
@@ -6245,7 +6259,7 @@ fn document_json(document: StoreDocumentId, doc: &WorkspaceDoc) -> Result<Value,
     Ok(json!({
         "document_id": document.to_storage(),
         "root_node_id": root_node_id,
-        "revision":revision(doc),
+        "revision":revision,
         // **The effective version, never the recorded one.** A document the
         // store made carries no marker — `WorkspaceDoc::create` is the only
         // thing that wrote one and it never ran for it — so the recorded value

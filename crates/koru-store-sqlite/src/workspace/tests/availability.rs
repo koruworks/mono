@@ -92,18 +92,24 @@ impl Fixture {
     }
 }
 
+/// **Nothing is manufactured here any more** (root-catalog Plan 1.3,
+/// TECHNICAL.final §3.10, §6.3): an empty Profile is a valid state that
+/// answers [`EnsuredWorkspace::Empty`] on open and after a restart alike,
+/// and a Workspace the person creates explicitly is then the selection.
 #[test]
-fn serialized_selectors_create_one_default_and_reopen_selects_it() {
+fn an_empty_profile_stays_empty_and_an_explicit_workspace_is_selected_across_a_reopen() {
     let mut f = Fixture::new();
-    let EnsuredWorkspace::Created { workspace } = f.select() else {
-        panic!("empty Profile needs a workspace")
-    };
+    assert!(matches!(f.select(), EnsuredWorkspace::Empty));
+    f.reopen();
+    assert!(matches!(f.select(), EnsuredWorkspace::Empty));
+    assert_eq!(f.listed(), 0, "selection created a workspace");
+    let workspace = f.create();
     assert!(
-        matches!(f.select(), EnsuredWorkspace::Active { workspace: found, .. } if found.id == workspace.id)
+        matches!(f.select(), EnsuredWorkspace::Active { workspace: found, .. } if found.id == workspace)
     );
     f.reopen();
     assert!(
-        matches!(f.select(), EnsuredWorkspace::Active { workspace: found, .. } if found.id == workspace.id)
+        matches!(f.select(), EnsuredWorkspace::Active { workspace: found, .. } if found.id == workspace)
     );
     assert_eq!(f.listed(), 1);
 }
@@ -172,9 +178,10 @@ fn ordinary_trash_needs_no_location_and_stale_live_locations_are_repaired() {
             ..
         }
     ));
-    let EnsuredWorkspace::Created { workspace } = f.select() else {
-        panic!("verified Trash does not block a default")
-    };
+    // Verified Trash is simply not a live Workspace, and no default is
+    // manufactured for the emptied Profile (root-catalog Plan 1.3).
+    assert!(matches!(f.select(), EnsuredWorkspace::Empty));
+    let workspace = f.store.create_workspace(f.owner, "Live", at()).unwrap();
     f.control
         .execute("DELETE FROM document_locations", [])
         .unwrap();
@@ -326,8 +333,16 @@ fn verified_live_authority_repairs_stale_trash_and_archive_without_a_default() {
     assert!(!f.store.workspace_authority(f.owner).unwrap()[0].listing_differs);
 }
 
+/// The prerequisite flush makes a queued manifest deletion durable in the
+/// middle of selection. Since catalog 13 the root unit is the only lifecycle
+/// authority, so that durable manifest value is a **hint** and changes
+/// nothing — the authority rule itself is pinned in
+/// `preparation::lifecycle::an_incoming_manifest_deletion_is_a_hint_that_cannot_trash_a_unit_holding_workspace`.
+/// Selection continues over the flush, and the root deletion that does trash
+/// the only Workspace leaves the Profile empty instead of manufacturing a
+/// successor.
 #[test]
-fn manifest_flush_may_evict_a_deleted_workspace_before_selection_continues() {
+fn a_flushed_manifest_deletion_hint_neither_trashes_the_row_nor_produces_a_successor() {
     let mut f = Fixture::new();
     let workspace = f.create();
     let document = f.store.manifest_id(workspace).unwrap();
@@ -358,8 +373,21 @@ fn manifest_flush_may_evict_a_deleted_workspace_before_selection_continues() {
         "queued deletion is not durable authority"
     );
     assert!(
-        matches!(f.select(), EnsuredWorkspace::Created { workspace: replacement } if replacement.id != workspace)
+        matches!(f.select(), EnsuredWorkspace::Active { workspace: found, .. } if found.id == workspace)
     );
+    assert!(
+        f.store
+            .workspace_including_deleted(workspace)
+            .unwrap()
+            .deleted_at
+            .is_none(),
+        "the manifest hint trashed the row"
+    );
+    assert_eq!(f.listed(), 1);
+
+    // The root fact is what trashes it, and the emptied Profile stays empty.
+    f.store.delete_workspace(workspace, at()).unwrap();
+    assert!(matches!(f.select(), EnsuredWorkspace::Empty));
     assert!(
         f.store
             .workspace_including_deleted(workspace)
@@ -367,7 +395,7 @@ fn manifest_flush_may_evict_a_deleted_workspace_before_selection_continues() {
             .deleted_at
             .is_some()
     );
-    assert_eq!(f.listed(), 2);
+    assert_eq!(f.listed(), 1);
 }
 
 #[test]

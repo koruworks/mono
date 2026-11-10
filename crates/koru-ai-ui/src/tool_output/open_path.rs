@@ -145,7 +145,7 @@ impl crate::ChatSurface {
 /// Hand `path` to the desktop off the thread that draws, as a web link is
 /// ([`crate::open_web_link`]): the desktop may take as long as it likes. The
 /// path is the person's own and is not logged.
-fn open_on_the_desktop(path: PathBuf) {
+pub(crate) fn open_on_the_desktop(path: PathBuf) {
     if cfg!(any(test, feature = "no-client")) {
         return;
     }
@@ -155,14 +155,14 @@ fn open_on_the_desktop(path: PathBuf) {
             if let Err(error) = koru_window::open_uri(&path.to_string_lossy()) {
                 tracing::warn!(
                     target: "koru_ai::ui",
-                    "AI UI could not open a changed file: {error}"
+                    "AI UI could not open a local path: {error}"
                 );
             }
         });
     if let Err(error) = spawned {
         tracing::warn!(
             target: "koru_ai::ui",
-            "AI UI could not start the thread that opens a changed file: {error}"
+            "AI UI could not start the thread that opens a local path: {error}"
         );
     }
 }

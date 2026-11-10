@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! A document chip, once it is a message: `[[koru://doc/<id>]]` drawn as the
-//! document's **title**, as a link.
+//! A document chip, once it is a message: `[[koru://doc/<id>]]` drawn as a
+//! document icon and title link.
 //!
 //! The composer sends a chip in the Markdown exporter's own spelling
 //! (`koru_export_markdown::message_text`), so the agent, the importer and this
 //! renderer read one token. What a person reads in the conversation is the
-//! title, in the link color, and a click on it opens the document — never the
-//! raw token.
+//! icon and title, in the link color, and a click opens the document — never
+//! the raw token.
 //!
 //! **Titles are looked up, never fetched here.** They come from what the
 //! surface already knows: the chip's own caption when this window sent it, the
@@ -20,6 +20,9 @@ use std::collections::HashMap;
 
 use koru_ai_core::DocumentId;
 use koru_markdown::LinkSpan;
+
+/// Nonbreaking space reserves an icon's width in a sent message's text.
+pub(crate) const CHIP_LEAD: &str = "\u{00a0}\u{00a0}\u{00a0}\u{00a0}";
 
 /// Every document a message's chips name, in order, each once.
 pub(crate) fn documents(markdown: &str) -> Vec<DocumentId> {
@@ -43,6 +46,25 @@ pub(crate) fn titled(
     titles: &HashMap<DocumentId, String>,
     fallback: &str,
 ) -> (String, Vec<LinkSpan>) {
+    titled_with_lead(markdown, titles, fallback, "")
+}
+
+/// A sent message keeps a document icon beside every titled link. The lead
+/// occupies real layout width so wrapping and hit testing agree with drawing.
+pub(crate) fn titled_for_message(
+    markdown: &str,
+    titles: &HashMap<DocumentId, String>,
+    fallback: &str,
+) -> (String, Vec<LinkSpan>) {
+    titled_with_lead(markdown, titles, fallback, CHIP_LEAD)
+}
+
+fn titled_with_lead(
+    markdown: &str,
+    titles: &HashMap<DocumentId, String>,
+    fallback: &str,
+    lead: &str,
+) -> (String, Vec<LinkSpan>) {
     let found = koru_link::wrapped(markdown);
     if found.is_empty() {
         return (markdown.to_owned(), Vec::new());
@@ -61,6 +83,7 @@ pub(crate) fn titled(
             .filter(|title| !title.trim().is_empty())
             .unwrap_or(fallback);
         let start = text.len();
+        text.push_str(lead);
         text.push_str(title);
         links.push(LinkSpan {
             range: start..text.len(),
@@ -104,5 +127,19 @@ mod tests {
         let (text, links) = titled("a [[b]] c", &HashMap::new(), "Document");
         assert_eq!(text, "a [[b]] c");
         assert!(links.is_empty());
+    }
+
+    #[test]
+    fn a_sent_chip_reserves_an_icon_and_keeps_the_document_link() {
+        let document = DocumentId::new();
+        let markdown = format!("[[koru://doc/{document}]] review");
+        let titles = HashMap::from([(document, "Top Priorities".to_owned())]);
+        let (text, links) = titled_for_message(&markdown, &titles, "Document");
+        assert_eq!(text, format!("{CHIP_LEAD}Top Priorities review"));
+        assert_eq!(
+            &text[links[0].range.clone()],
+            format!("{CHIP_LEAD}Top Priorities")
+        );
+        assert_eq!(links[0].url, format!("koru://doc/{document}"));
     }
 }

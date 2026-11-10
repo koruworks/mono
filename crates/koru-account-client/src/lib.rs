@@ -217,8 +217,26 @@ pub enum ClientError {
     InvalidRequest,
     MissingBrowserOrigin,
     Transport(TransportError),
-    Api { status: u16, code: ErrorCode },
-    RateLimited { retry_after_millis: u64 },
+    /// A refusal that carried the public API's own `DeveloperErrorV1`: the
+    /// status and the code are both the service's own words.
+    Api {
+        status: u16,
+        code: ErrorCode,
+    },
+    RateLimited {
+        retry_after_millis: u64,
+    },
+    /// A non-2xx whose body is not that envelope — a gateway's own 404 page,
+    /// an HTML 502, an empty body. The status is then the only thing the
+    /// answer says, and it is kept rather than discarded: a service that
+    /// does not serve a route is not an outage, and flattening its 404 into
+    /// [`Self::InvalidResponse`] is what made it look like one. There is no
+    /// code to match on, which is why this is not [`Self::Api`].
+    ApiWithoutCode {
+        status: u16,
+    },
+    /// A body that could not be read as what the route promises, on an
+    /// answer that claimed to succeed.
     InvalidResponse,
     ContractMismatch,
 }
@@ -231,6 +249,9 @@ impl fmt::Display for ClientError {
             Self::Transport(_) => f.write_str("the public API is unavailable"),
             Self::Api { code, .. } => write!(f, "public API error {}", code.as_str()),
             Self::RateLimited { .. } => f.write_str("public API error rate_limited"),
+            Self::ApiWithoutCode { status } => {
+                write!(f, "public API error without a code (HTTP {status})")
+            }
             Self::InvalidResponse => f.write_str("the public API returned an invalid response"),
             Self::ContractMismatch => f.write_str("the account route contract is inconsistent"),
         }
@@ -1120,8 +1141,18 @@ impl AccountClient {
             return Err(ClientError::Transport(TransportError::ResponseTooLarge));
         }
         if !(200..300).contains(&response.status) {
-            let error: DeveloperErrorV1 =
-                serde_json::from_slice(&response.body).map_err(|_| ClientError::InvalidResponse)?;
+            // A refusal is read from the envelope, but the status is the
+            // service's answer whether or not the envelope is there: a
+            // gateway, a proxy or a route the deployment does not serve
+            // answers in its own words, and the status is then all there is
+            // to go on. Keep it. Discarding it is how a 404 on a route the
+            // service does not serve yet became indistinguishable from an
+            // outage.
+            let Ok(error) = serde_json::from_slice::<DeveloperErrorV1>(&response.body) else {
+                return Err(ClientError::ApiWithoutCode {
+                    status: response.status,
+                });
+            };
             if response.status == 429 && error.code.as_str() == ErrorCode::RATE_LIMITED {
                 return Err(ClientError::RateLimited {
                     retry_after_millis: error

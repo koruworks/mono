@@ -51,6 +51,158 @@ fn migration_is_idempotent() {
 }
 
 #[test]
+fn v14_attempts_gain_nullable_reported_context_without_losing_rows() {
+    const V14: Schema = Schema {
+        database: crate::DATABASE_FILE,
+        understood: 14,
+        migrations: MIGRATIONS.split_at(14).0,
+    };
+    let mut connection = koru_sqlite::open_in_memory(&V14).unwrap();
+    connection
+        .execute_batch(
+            "INSERT INTO inference_attempts (
+                id, operation_id, surface, provider, requested_model,
+                prompt_template_version, status, queued_at_ms
+             ) VALUES ('old', 'operation', 'standalone', 'agent-codex',
+                       'model', 'v1', 'pending', 1)",
+        )
+        .unwrap();
+
+    prepare(&mut connection).unwrap();
+    assert_eq!(user_version(&connection).unwrap(), SCHEMA_VERSION);
+    let (used, limit): (Option<i64>, Option<i64>) = connection
+        .query_row(
+            "SELECT context_used_tokens, context_limit_tokens
+               FROM inference_attempts WHERE id = 'old'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!((used, limit), (None, None));
+}
+
+#[test]
+fn v13_attachment_rows_survive_v14_with_indexes_and_immutability() {
+    const V13: Schema = Schema {
+        database: crate::DATABASE_FILE,
+        understood: 13,
+        migrations: MIGRATIONS.split_at(13).0,
+    };
+    let mut connection = koru_sqlite::open_in_memory(&V13).unwrap();
+    connection
+        .execute_batch(
+            "INSERT INTO chats (id, title, current_provider, current_model, created_at_ms, updated_at_ms)
+             VALUES ('chat', 't', 'agent-claude', 'default', 1, 1);
+             INSERT INTO messages (id, chat_id, ordinal, role, state, markdown, created_at_ms, completed_at_ms)
+             VALUES ('message', 'chat', 0, 'user', 'complete', 'hi', 1, 1);",
+        )
+        .unwrap();
+    let hash = "0".repeat(64);
+    for (id, bound) in [("sent", true), ("staged", false)] {
+        connection
+            .execute(
+                "INSERT INTO message_attachments (
+                    id, chat_id, message_id, ordinal, kind, file_name, media_type,
+                    byte_count, source, content_blake3, created_at_ms, bound_at_ms
+                 ) VALUES (?1, 'chat', ?2, ?3, 'file', 'kept.pdf',
+                           'application/pdf', 12, 'file_picker', ?4, 1, ?5)",
+                rusqlite::params![
+                    id,
+                    bound.then_some("message"),
+                    bound.then_some(0),
+                    hash,
+                    bound.then_some(2)
+                ],
+            )
+            .unwrap();
+    }
+
+    prepare(&mut connection).unwrap();
+    assert_eq!(user_version(&connection).unwrap(), SCHEMA_VERSION);
+    let rows: Vec<(String, Option<String>, i64, Option<String>)> = connection
+        .prepare(
+            "SELECT id, message_id, byte_count, reference_path
+               FROM message_attachments ORDER BY id",
+        )
+        .unwrap()
+        .query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            ("sent".into(), Some("message".into()), 12, None),
+            ("staged".into(), None, 12, None),
+        ]
+    );
+    for object in [
+        "message_attachments_by_chat",
+        "message_attachments_staged",
+        "message_attachments_bound_are_immutable",
+    ] {
+        let exists: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name = ?1)",
+                [object],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(exists, "missing {object}");
+    }
+    assert!(
+        connection
+            .execute(
+                "UPDATE message_attachments SET file_name = 'changed' WHERE id = 'sent'",
+                []
+            )
+            .is_err()
+    );
+    assert!(
+        connection
+            .execute(
+                "UPDATE message_attachments SET file_name = 'changed' WHERE id = 'staged'",
+                []
+            )
+            .is_ok()
+    );
+}
+
+#[test]
+fn v14_reference_constraints_accept_only_path_rows_without_bytes() {
+    let connection = open_in_memory().unwrap();
+    connection
+        .execute(
+            "INSERT INTO chats (id, title, current_provider, current_model, created_at_ms, updated_at_ms)
+             VALUES ('chat', 't', 'agent-claude', 'default', 1, 1)",
+            [],
+        )
+        .unwrap();
+    let hash = "0".repeat(64);
+    let insert = |id: &str, kind: &str, source: &str, bytes: i64, path: Option<&str>| {
+        connection.execute(
+            "INSERT INTO message_attachments (
+                id, chat_id, kind, file_name, media_type, byte_count,
+                source, reference_path, content_blake3, created_at_ms
+             ) VALUES (?1, 'chat', ?2, 'item', 'application/octet-stream',
+                       ?3, ?4, ?5, ?6, 1)",
+            rusqlite::params![id, kind, bytes, source, path, hash],
+        )
+    };
+    assert!(insert("folder", "folder", "path", 0, Some("C:/资料/folder")).is_ok());
+    assert!(insert("file", "file", "path", 0, Some("C:/a.txt")).is_ok());
+    assert!(insert("missing", "file", "path", 0, None).is_err());
+    assert!(insert("empty", "file", "path", 0, Some("")).is_err());
+    assert!(insert("long", "file", "path", 0, Some(&"x".repeat(4097))).is_err());
+    assert!(insert("bytes", "file", "path", 1, Some("C:/a.txt")).is_err());
+    assert!(insert("folder_bytes", "folder", "file_picker", 1, None).is_err());
+    assert!(insert("image_path", "image", "path", 0, Some("C:/a.png")).is_err());
+    assert!(insert("zero_copy", "file", "file_picker", 0, None).is_err());
+}
+
+#[test]
 fn the_v0_fixture_upgrades_through_production_migration_code() {
     let mut connection = Connection::open_in_memory().unwrap();
     connection

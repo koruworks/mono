@@ -679,7 +679,22 @@ impl SessionClient {
                 ErrorCode::CapabilityNotNegotiated,
             )));
         }
+        if input.needs_path_references() && !self.supports_path_references() {
+            return Err(ClientError::Session(failure(
+                ErrorCode::CapabilityNotNegotiated,
+            )));
+        }
         self.send_input(session_id, controller_lease, input, None)
+    }
+
+    /// Whether the host accepts v23 local path references on initial turns.
+    pub fn supports_path_references(&self) -> bool {
+        self.host.agreement.version >= koru_session_protocol::PATH_REFERENCES_PROTOCOL_VERSION
+            && self
+                .host
+                .agreement
+                .capabilities
+                .supports(koru_session_protocol::capability::PATH_REFERENCES)
     }
 
     /// Whether the host lists what an agent can be told to do and takes
@@ -733,6 +748,7 @@ impl SessionClient {
         if !self.supports_questions()
             || (input.needs_turn_reasoning() && !self.supports_turn_reasoning())
             || (input.needs_turn_model() && !self.supports_turn_model())
+            || (input.needs_path_references() && !self.supports_path_references())
         {
             return Err(ClientError::Session(failure(
                 ErrorCode::CapabilityNotNegotiated,

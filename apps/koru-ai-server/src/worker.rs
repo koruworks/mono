@@ -45,11 +45,11 @@ use koru_ai_wire::{
     OllamaSettingsView, OpenAiSettingsView, ProviderSettingsResponse, ProviderValidationResponse,
     ProviderValidationStatus, PublicAiEvent, PullOllamaModelAccepted, PullOllamaModelRequest,
     ReadChatToolRequest, ReadChatToolResponse, RenameChatRequest, RenameChatResponse,
-    RetryTurnRequest, SearchChatsToolRequest, SearchChatsToolResponse, SelectProviderRequest,
-    SendTurnAccepted, SendTurnRequest, StreamEvent, ToolDecisionResponse, UpdateChatModelRequest,
-    UpdateChatModelResponse, UpdateChatPrivacyRequest, UpdateChatPrivacyResponse,
-    UpdateChatToolPolicyRequest, UpdateOllamaSettingsRequest, UpdateOpenAiSettingsRequest,
-    UsageResponse,
+    ReportedContextUsage, RetryTurnRequest, SearchChatsToolRequest, SearchChatsToolResponse,
+    SelectProviderRequest, SendTurnAccepted, SendTurnRequest, StreamEvent, ToolDecisionResponse,
+    UpdateChatModelRequest, UpdateChatModelResponse, UpdateChatPrivacyRequest,
+    UpdateChatPrivacyResponse, UpdateChatToolPolicyRequest, UpdateOllamaSettingsRequest,
+    UpdateOpenAiSettingsRequest, UsageResponse,
 };
 
 pub const WORKER_COMMAND_CAPACITY: usize = 64;
@@ -264,6 +264,7 @@ impl AiWorker {
     pub fn spawn(self) -> Result<WorkerHandle, WorkerError> {
         let (sender, receiver) = sync_channel(WORKER_COMMAND_CAPACITY);
         let attachments = AttachmentStore::new(&self.config.root);
+        let store_context = self.config.store_context.clone();
         let (ready_tx, ready_rx) = sync_channel(1);
         let shutdown = Arc::new(AtomicBool::new(false));
         let thread_shutdown = Arc::clone(&shutdown);
@@ -305,6 +306,7 @@ impl AiWorker {
                 Ok(WorkerHandle {
                     sender,
                     attachments,
+                    store_context,
                     shutdown,
                     status,
                     join: Some(join),
@@ -330,13 +332,21 @@ impl AiWorker {
     }
 }
 
-#[derive(Debug)]
 pub struct WorkerHandle {
     sender: SyncSender<Envelope>,
     attachments: AttachmentStore,
+    store_context: Option<Arc<dyn StoreContextPort>>,
     shutdown: Arc<AtomicBool>,
     status: Arc<Mutex<WorkerStatus>>,
     join: Option<JoinHandle<WorkerExit>>,
+}
+
+impl std::fmt::Debug for WorkerHandle {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("WorkerHandle")
+            .finish_non_exhaustive()
+    }
 }
 
 impl WorkerHandle {
@@ -344,6 +354,7 @@ impl WorkerHandle {
         AiWorkerClient {
             sender: self.sender.clone(),
             attachments: self.attachments.clone(),
+            store_context: self.store_context.clone(),
         }
     }
 
@@ -398,6 +409,7 @@ pub struct AiWorkerClient {
     sender: SyncSender<Envelope>,
     /// Where uploads are prepared and read, on the caller's own thread.
     attachments: AttachmentStore,
+    store_context: Option<Arc<dyn StoreContextPort>>,
 }
 
 impl AiWorkerClient {
@@ -729,6 +741,22 @@ impl AiServerPort for AiWorkerClient {
         receive_api(response)
     }
 
+    fn add_chat_workspace_grants(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        request: koru_ai_wire::AddChatWorkspaceGrantsRequest,
+    ) -> ApiResult<ChatToolPolicyResponse> {
+        let (reply, response) = sync_channel(1);
+        self.send(WorkerCommand::AddChatWorkspaceGrants {
+            context,
+            chat,
+            request,
+            reply,
+        })?;
+        receive_api(response)
+    }
+
     fn usage(&self, context: RequestContext, chat: Option<ChatId>) -> ApiResult<UsageResponse> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::Usage {
@@ -954,6 +982,34 @@ impl AiServerPort for AiWorkerClient {
         attachments::put_attachment(self, context, chat, attachment, upload)
     }
 
+    fn reference_attachment(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        request: koru_ai_wire::ReferenceAttachmentRequest,
+    ) -> ApiResult<koru_ai_wire::ChatAttachmentResponse> {
+        attachments::reference_attachment(self, context, chat, request)
+    }
+
+    fn from_workspace_attachment(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        request: koru_ai_wire::FromWorkspaceAttachmentRequest,
+    ) -> ApiResult<koru_ai_wire::ChatAttachmentResponse> {
+        attachments::from_workspace_attachment(self, context, chat, request)
+    }
+
+    fn restage_attachment(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        source: ChatAttachmentId,
+        request: koru_ai_wire::RestageAttachmentRequest,
+    ) -> ApiResult<koru_ai_wire::ChatAttachmentResponse> {
+        attachments::restage_attachment(self, context, chat, source, request.new_id)
+    }
+
     fn remove_attachment(
         &self,
         context: RequestContext,
@@ -1137,6 +1193,12 @@ enum WorkerCommand {
         request: UpdateChatToolPolicyRequest,
         reply: SyncSender<ApiResult<ChatToolPolicyResponse>>,
     },
+    AddChatWorkspaceGrants {
+        context: RequestContext,
+        chat: ChatId,
+        request: koru_ai_wire::AddChatWorkspaceGrantsRequest,
+        reply: SyncSender<ApiResult<ChatToolPolicyResponse>>,
+    },
     ReadChatToolPolicy {
         context: RequestContext,
         chat: ChatId,
@@ -1233,6 +1295,13 @@ enum WorkerCommand {
         attachment: ChatAttachmentId,
         reply: SyncSender<ApiResult<Option<AttachmentRecord>>>,
     },
+    WorkspaceCopyAdmission {
+        context: RequestContext,
+        chat: ChatId,
+        attachment: ChatAttachmentId,
+        workspace: WorkspaceId,
+        reply: SyncSender<ApiResult<koru_ai_core::ProfileId>>,
+    },
     StageAttachment {
         context: RequestContext,
         record: Box<AttachmentRecord>,
@@ -1286,6 +1355,7 @@ impl WorkerCommand {
             Self::ToolSearchChats { .. } => "tool_search_chats",
             Self::ToolReadChat { .. } => "tool_read_chat",
             Self::UpdateChatToolPolicy { .. } => "update_chat_tool_policy",
+            Self::AddChatWorkspaceGrants { .. } => "add_chat_workspace_grants",
             Self::ReadChatToolPolicy { .. } => "read_chat_tool_policy",
             Self::Usage { .. } => "usage",
             Self::DeleteChat { .. } => "delete_chat",
@@ -1304,6 +1374,7 @@ impl WorkerCommand {
             Self::ExportChat { .. } => "export_chat",
             Self::ReadExport { .. } => "read_export",
             Self::AttachmentAdmission { .. } => "attachment_admission",
+            Self::WorkspaceCopyAdmission { .. } => "workspace_copy_admission",
             Self::StageAttachment { .. } => "stage_attachment",
             Self::RemoveStagedAttachment { .. } => "remove_staged_attachment",
             Self::ResolveAttachments { .. } => "resolve_attachments",
@@ -1318,6 +1389,33 @@ impl WorkerCommand {
 struct StreamState {
     sender: SyncSender<StreamEvent>,
     next_sequence: u64,
+}
+
+type CommandListing = (
+    koru_session_protocol::SessionId,
+    u64,
+    Option<Vec<koru_ai_wire::AgentCommandView>>,
+);
+
+fn accept_command_listing(
+    listings: &mut HashMap<ChatId, CommandListing>,
+    update: koru_ai_provider_agent::CommandListingUpdate,
+) -> Option<(ChatId, Option<Vec<koru_ai_wire::AgentCommandView>>)> {
+    if listings
+        .get(&update.chat)
+        .is_some_and(|(session, generation, _)| {
+            update.generation < *generation
+                || (update.generation == *generation && update.session != *session)
+        })
+    {
+        return None;
+    }
+    let commands = update.commands.map(agents::command_views);
+    listings.insert(
+        update.chat,
+        (update.session, update.generation, commands.clone()),
+    );
+    Some((update.chat, commands))
 }
 
 struct WorkerState {
@@ -1341,6 +1439,9 @@ struct WorkerState {
     /// Local agents, when the worker has a session host to drive them
     /// through.
     agents: Option<AgentSessions>,
+    /// Session-scoped command listings. Generation tombstones reject stale
+    /// updates after a chat's agent session changes or ends.
+    agent_commands: HashMap<ChatId, CommandListing>,
     /// The work registry: what deletion and clearing read (never `streams`).
     active_work: HashMap<InferenceAttemptId, AttemptWork>,
     closing: HashMap<ChatId, ClosingChat>,
@@ -1560,6 +1661,7 @@ fn run_worker(
         cancellations: HashMap::new(),
         info,
         agents,
+        agent_commands: HashMap::new(),
         active_work: HashMap::new(),
         closing: HashMap::new(),
         clearing: None,
@@ -1590,6 +1692,7 @@ fn run_worker(
     // them for the next pass.
     state.place_unplaced_chats();
     while !shutdown.load(Ordering::Acquire) {
+        state.drain_agent_commands();
         match receiver.recv_timeout(LOOP_INTERVAL) {
             Ok(Envelope::Command(command)) => {
                 let command_name = command.diagnostic_name();
@@ -1657,29 +1760,41 @@ fn transcript_usage(messages: &[Message], attempts: Vec<InferenceAttempt>) -> Ve
     let mut usage_by_message = attempts
         .into_iter()
         .filter_map(|attempt| {
+            let context = attempt
+                .context_used_tokens
+                .zip(attempt.context_limit_tokens)
+                .filter(|(_, size)| *size > 0)
+                .map(|(used, size)| ReportedContextUsage { used, size });
             let usage = attempt.usage;
             let reported = usage.prompt_tokens.is_some()
                 || usage.cached_prompt_tokens.is_some()
                 || usage.completion_tokens.is_some()
                 || usage.reasoning_tokens.is_some()
                 || usage.total_tokens.is_some();
-            attempt
-                .assistant_message_id
-                .filter(|_| reported)
-                .map(|message_id| (message_id, usage))
+            attempt.assistant_message_id.map(|message_id| {
+                let entry = (reported || context.is_some()).then_some(MessageUsage {
+                    message_id,
+                    usage,
+                    context,
+                });
+                (message_id, entry)
+            })
         })
         .collect::<HashMap<_, _>>();
     messages
         .iter()
-        .filter_map(|message| {
-            usage_by_message
-                .remove(&message.id)
-                .map(|usage| MessageUsage {
-                    message_id: message.id,
-                    usage,
-                })
-        })
+        .filter_map(|message| usage_by_message.remove(&message.id).flatten())
         .collect()
+}
+
+fn grant_targets_in_profile(
+    catalog: &koru_ai_core::ProfileCatalog,
+    profile: koru_ai_core::ProfileId,
+    workspace_ids: &[WorkspaceId],
+) -> bool {
+    workspace_ids
+        .iter()
+        .all(|workspace| catalog.owner(*workspace) == Some(profile))
 }
 
 impl WorkerState {
@@ -1845,6 +1960,14 @@ impl WorkerState {
             } => {
                 let _ = reply.send(self.update_chat_tool_policy(context, chat, request));
             }
+            WorkerCommand::AddChatWorkspaceGrants {
+                context,
+                chat,
+                request,
+                reply,
+            } => {
+                let _ = reply.send(self.add_chat_workspace_grants(context, chat, request));
+            }
             WorkerCommand::ReadChatToolPolicy {
                 context,
                 chat,
@@ -1964,6 +2087,16 @@ impl WorkerState {
                 reply,
             } => {
                 let _ = reply.send(self.attachment_admission(context, chat, attachment));
+            }
+            WorkerCommand::WorkspaceCopyAdmission {
+                context,
+                chat,
+                attachment,
+                workspace,
+                reply,
+            } => {
+                let _ =
+                    reply.send(self.workspace_copy_admission(context, chat, attachment, workspace));
             }
             WorkerCommand::StageAttachment {
                 context,
@@ -2469,6 +2602,10 @@ impl WorkerState {
             usage,
             sources,
             reasoning_control,
+            agent_commands: self
+                .agent_commands
+                .get(&chat_id)
+                .and_then(|(_, _, commands)| commands.clone()),
             attachments: self
                 .repository
                 .attachments_for_chat(chat_id)
@@ -2920,6 +3057,39 @@ impl WorkerState {
         let policy = self
             .repository
             .chat_tool_policy(chat_id)
+            .map_err(ai_failure)?
+            .ok_or_else(not_found)?;
+        Ok(ChatToolPolicyResponse { policy })
+    }
+
+    fn add_chat_workspace_grants(
+        &mut self,
+        context: RequestContext,
+        chat_id: ChatId,
+        request: koru_ai_wire::AddChatWorkspaceGrantsRequest,
+    ) -> ApiResult<ChatToolPolicyResponse> {
+        authorize(&context, AiScope::Chat)?;
+        let chat = self
+            .repository
+            .chat(chat_id)
+            .map_err(ai_failure)?
+            .ok_or_else(not_found)?;
+        let profile = chat.profile_id.ok_or_else(not_found)?;
+        let store = self
+            .store
+            .as_ref()
+            .ok_or_else(|| failure("store_unavailable", "The Store is unavailable.", true))?;
+        let catalog = store.profile_catalog().map_err(ai_failure)?;
+        if !grant_targets_in_profile(&catalog, profile, &request.workspace_ids) {
+            return Err(failure(
+                "workspace_not_in_profile",
+                "A workspace is not in this chat's profile.",
+                false,
+            ));
+        }
+        let policy = self
+            .repository
+            .add_chat_workspace_grants(chat_id, &request.workspace_ids, Timestamp::now())
             .map_err(ai_failure)?
             .ok_or_else(not_found)?;
         Ok(ChatToolPolicyResponse { policy })
@@ -3524,13 +3694,17 @@ impl WorkerState {
             .filter(|message| message.state == MessageState::Complete)
             .map(|message| AiRequestMessage {
                 role: message.role,
-                markdown: message.markdown.clone(),
+                markdown: if message.role == ChatRole::User {
+                    koru_ai_core::render_prompt_text(&message.markdown)
+                } else {
+                    message.markdown.clone()
+                },
                 attachments: history_attachments.remove(&message.id).unwrap_or_default(),
             })
             .collect();
         provider_messages.push(AiRequestMessage {
             role: ChatRole::User,
-            markdown: request.markdown,
+            markdown: koru_ai_core::render_prompt_text(&request.markdown),
             attachments: self.attachment_inputs(&attachments),
         });
         let attempt = InferenceAttempt {
@@ -3561,6 +3735,8 @@ impl WorkerState {
             context_document_count: 0,
             context_message_block_count: 0,
             usage: Default::default(),
+            context_used_tokens: None,
+            context_limit_tokens: None,
             stop_reason: None,
             error_class: None,
             provider_response_id: None,
@@ -3739,7 +3915,11 @@ impl WorkerState {
             .filter(|message| message.state == MessageState::Complete)
             .map(|message| AiRequestMessage {
                 role: message.role,
-                markdown: message.markdown.clone(),
+                markdown: if message.role == ChatRole::User {
+                    koru_ai_core::render_prompt_text(&message.markdown)
+                } else {
+                    message.markdown.clone()
+                },
                 attachments: retried_attachments.remove(&message.id).unwrap_or_default(),
             })
             .collect();
@@ -3771,6 +3951,8 @@ impl WorkerState {
             context_document_count: 0,
             context_message_block_count: 0,
             usage: Default::default(),
+            context_used_tokens: None,
+            context_limit_tokens: None,
             stop_reason: None,
             error_class: None,
             provider_response_id: None,
@@ -4138,7 +4320,7 @@ impl WorkerState {
             self.apply_agent_activity(&before, activity, at);
             return;
         }
-        if let AiEvent::Notice { .. } = &event {
+        if matches!(event, AiEvent::Notice { .. }) {
             self.publish(event);
             return;
         }
@@ -4194,7 +4376,7 @@ impl WorkerState {
             Vec::new()
         };
         if matches!(event, AiEvent::Completed { .. }) {
-            tracing::debug!(
+            tracing::info!(
                 target: "koru_ai::markdown",
                 attempt = %attempt_id,
                 block_count = finalized.len(),
@@ -4706,12 +4888,16 @@ impl WorkerState {
     }
 
     fn publish(&mut self, event: AiEvent) {
-        let attempt_id = event.attempt_id();
-        let terminal = event.is_terminal();
         let Ok(event) = PublicAiEvent::try_from(event) else {
             debug_assert!(false, "provider tool calls must remain worker-internal");
             return;
         };
+        self.publish_public(event);
+    }
+
+    fn publish_public(&mut self, event: PublicAiEvent) {
+        let attempt_id = event.attempt_id();
+        let terminal = event.is_terminal();
         let mut remove = terminal;
         if let Some(stream) = self.streams.get_mut(&attempt_id) {
             let public = StreamEvent {
@@ -4733,6 +4919,49 @@ impl WorkerState {
         }
         if remove {
             self.streams.remove(&attempt_id);
+        }
+    }
+
+    fn drain_agent_commands(&mut self) {
+        let Some(agents) = self.agents.as_ref() else {
+            return;
+        };
+        for update in agents.take_command_updates() {
+            let Some((chat, commands)) = accept_command_listing(&mut self.agent_commands, update)
+            else {
+                continue;
+            };
+            tracing::debug!(
+                target: "koru_ai::agent",
+                event = "commands.listing.finished",
+                source = "live",
+                chat = %chat,
+                skills = commands.as_ref().map_or(0, |rows| rows.iter().filter(|row| row.kind != koru_ai_wire::AgentCommandKindView::Command).count()),
+                commands = commands.as_ref().map_or(0, |rows| rows.iter().filter(|row| row.kind == koru_ai_wire::AgentCommandKindView::Command).count()),
+                active = commands.is_some(),
+                "agent command listing changed"
+            );
+            if let Some(commands) = commands {
+                let attempts: Vec<_> = self
+                    .streams
+                    .keys()
+                    .copied()
+                    .filter(|attempt| {
+                        self.repository
+                            .attempt(*attempt)
+                            .ok()
+                            .flatten()
+                            .is_some_and(|row| row.chat_id == Some(chat))
+                    })
+                    .collect();
+                for attempt_id in attempts {
+                    self.publish_public(PublicAiEvent::AgentCommands {
+                        attempt_id,
+                        chat,
+                        commands: commands.clone(),
+                    });
+                }
+            }
         }
     }
 
@@ -6025,8 +6254,10 @@ fn run_provider_job(
     // here, on the provider thread, and never on the dispatcher.
     for message in &mut job.request.messages {
         for attachment in &mut message.attachments {
-            if attachment.kind == koru_ai_core::AttachmentKind::Image {
-                attachment.native = Some(crate::attachments::native_copy(&attachment.path));
+            if attachment.kind == koru_ai_core::AttachmentKind::Image
+                && let Some(path) = &attachment.path
+            {
+                attachment.native = Some(crate::attachments::native_copy(path));
             }
         }
     }
@@ -6555,6 +6786,7 @@ fn ai_event_name(event: &AiEvent) -> &'static str {
         AiEvent::TextDelta { .. } => "text_delta",
         AiEvent::ReasoningDelta { .. } => "reasoning_delta",
         AiEvent::Usage { .. } => "usage",
+        AiEvent::ContextUsage { .. } => "context_usage",
         AiEvent::ToolCalls { .. } => "tool_calls",
         AiEvent::ToolActivity { .. } => "tool_activity",
         AiEvent::AgentActivity { .. } => "agent_activity",

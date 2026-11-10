@@ -51,6 +51,8 @@ pub enum AttachmentKind {
     Image,
     /// Anything else, including a picture too large to preview.
     File,
+    /// A local directory named to an agent without copying its contents.
+    Folder,
 }
 
 impl AttachmentKind {
@@ -58,6 +60,7 @@ impl AttachmentKind {
         match self {
             Self::Image => "image",
             Self::File => "file",
+            Self::Folder => "folder",
         }
     }
 
@@ -65,6 +68,7 @@ impl AttachmentKind {
         match token {
             "image" => Some(Self::Image),
             "file" => Some(Self::File),
+            "folder" => Some(Self::Folder),
             _ => None,
         }
     }
@@ -82,6 +86,8 @@ pub enum AttachmentSource {
     FilePicker,
     /// Linked with `@` from a workspace the chat may use, and copied.
     Workspace,
+    /// A local path reference with no copied bytes.
+    Path,
 }
 
 impl AttachmentSource {
@@ -91,6 +97,7 @@ impl AttachmentSource {
             Self::Drop => "drop",
             Self::FilePicker => "file_picker",
             Self::Workspace => "workspace",
+            Self::Path => "path",
         }
     }
 
@@ -100,6 +107,7 @@ impl AttachmentSource {
             "drop" => Some(Self::Drop),
             "file_picker" => Some(Self::FilePicker),
             "workspace" => Some(Self::Workspace),
+            "path" => Some(Self::Path),
             _ => None,
         }
     }
@@ -114,7 +122,8 @@ pub struct WorkspaceFileOrigin {
     pub document_id: DocumentId,
 }
 
-/// The public metadata of one stored attachment. Never a path.
+/// The public metadata of one stored attachment. A path reference keeps its
+/// path here because the person explicitly chose to send that path to an agent.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ChatAttachment {
@@ -131,6 +140,8 @@ pub struct ChatAttachment {
     pub dimensions: Option<(u32, u32)>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<WorkspaceFileOrigin>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference_path: Option<String>,
     pub created_at: Timestamp,
 }
 
@@ -158,8 +169,11 @@ pub struct AttachmentInput {
     pub media_type: String,
     pub byte_count: u64,
     /// The stored original, which the agent is told about.
-    #[cfg_attr(feature = "schema", schemars(with = "String"))]
-    pub path: PathBuf,
+    #[cfg_attr(feature = "schema", schemars(with = "Option<String>"))]
+    pub path: Option<PathBuf>,
+    /// A local path reference, used instead of copied bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
     /// For a picture: the copy to hand the agent natively (the sent copy,
     /// or the original when it was small enough to go as it is).
     #[cfg_attr(feature = "schema", schemars(with = "Option<String>"))]

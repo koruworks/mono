@@ -26,6 +26,7 @@ fn main() -> support::ExampleResult<()> {
                 controller_lease: lease,
                 text: "echo PUBLIC_IMAGE_PATH_SMOKE".into(),
                 attachment_ids: vec![attachment.id],
+                references: Vec::new(),
             },
         )?;
         let outcome = delivered

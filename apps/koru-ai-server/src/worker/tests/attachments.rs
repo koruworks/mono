@@ -3,8 +3,14 @@
 //! Chat attachments through the worker, on a real `ai.db` in a temp dir.
 
 use koru_ai_api::AttachmentUpload;
-use koru_ai_core::{AttachmentKind, AttachmentSource, ChatAttachmentId};
-use koru_ai_wire::attachment_codes;
+use koru_ai_core::{
+    AiError, AiErrorClass, AttachmentKind, AttachmentSource, ChatAttachmentId, ProfileCatalog,
+    ProfileId, StoreContextPort, WorkspaceFileData,
+};
+use koru_ai_wire::{
+    AddChatWorkspaceGrantsRequest, FromWorkspaceAttachmentRequest, ReferenceAttachmentRequest,
+    UpdateChatToolPolicyRequest, attachment_codes,
+};
 
 use super::*;
 
@@ -47,6 +53,70 @@ fn agent_worker(
     .spawn()
     .unwrap();
     (worker, requests)
+}
+
+struct CopyStore {
+    profile: ProfileId,
+    workspace: WorkspaceId,
+    document: DocumentId,
+    reads: Mutex<usize>,
+    bytes: Mutex<Vec<u8>>,
+    fail_next: AtomicBool,
+    pause: Option<(SyncSender<()>, Mutex<std::sync::mpsc::Receiver<()>>)>,
+}
+
+impl StoreContextPort for CopyStore {
+    fn resolve_document(
+        &self,
+        _document: DocumentId,
+        _reader: Option<ProfileId>,
+    ) -> Result<koru_ai_core::DocumentContext, AiError> {
+        Err(AiError::new(AiErrorClass::Storage, "Unavailable.", false))
+    }
+
+    fn create_document(
+        &self,
+        _idempotency_key: Uuid,
+        _destination: &koru_ai_core::DocumentDestination,
+        _markdown: &str,
+    ) -> Result<DocumentId, AiError> {
+        Err(AiError::new(AiErrorClass::Storage, "Unavailable.", false))
+    }
+
+    fn profile_catalog(&self) -> Result<ProfileCatalog, AiError> {
+        Ok(ProfileCatalog {
+            profiles: vec![self.profile],
+            workspace_owners: [(self.workspace, self.profile)].into(),
+        })
+    }
+
+    fn read_workspace_file(
+        &self,
+        workspace: WorkspaceId,
+        document: DocumentId,
+        reader: ProfileId,
+    ) -> Result<WorkspaceFileData, AiError> {
+        assert_eq!(
+            (workspace, document, reader),
+            (self.workspace, self.document, self.profile)
+        );
+        *self.reads.lock().unwrap() += 1;
+        if self.fail_next.swap(false, Ordering::SeqCst) {
+            return Err(AiError::new(
+                AiErrorClass::Storage,
+                "The selected workspace file is not available.",
+                true,
+            ));
+        }
+        if let Some((entered, release)) = &self.pause {
+            entered.send(()).unwrap();
+            release.lock().unwrap().recv().unwrap();
+        }
+        Ok(WorkspaceFileData {
+            file_name: "report.txt".into(),
+            bytes: self.bytes.lock().unwrap().clone(),
+        })
+    }
 }
 
 fn create_agent_chat(client: &AiWorkerClient) -> ChatId {
@@ -114,6 +184,287 @@ fn chat_folder(directory: &std::path::Path, chat: ChatId) -> std::path::PathBuf 
 }
 
 #[test]
+fn workspace_copy_checks_grant_before_read_and_keeps_sent_bytes_after_revocation() {
+    let directory = tempfile::tempdir().unwrap();
+    let profile = ProfileId::new();
+    let workspace = WorkspaceId::new();
+    let document = DocumentId::new();
+    let store = Arc::new(CopyStore {
+        profile,
+        workspace,
+        document,
+        reads: Mutex::new(0),
+        bytes: Mutex::new(b"copied workspace content".to_vec()),
+        fail_next: AtomicBool::new(false),
+        pause: None,
+    });
+    let (captured, requests) = sync_channel(8);
+    let mut providers = ProviderRegistry::default();
+    providers.insert(
+        AiProviderId::parse("agent-codex").unwrap(),
+        Arc::new(CapturingProvider { requests: captured }),
+    );
+    let worker = AiWorker::new(
+        WorkerConfig::new(directory.path().to_owned(), "internal-debug", providers)
+            .with_store_context(store.clone()),
+    )
+    .spawn()
+    .unwrap();
+    let client = worker.client();
+    let chat = ChatId::new();
+    client
+        .create_chat(
+            context(),
+            CreateChatRequest {
+                chat_id: chat,
+                title: "Workspace copy".into(),
+                profile_id: Some(profile),
+                model: koru_ai_core::ModelSelection {
+                    provider: AiProviderId::parse("agent-codex").unwrap(),
+                    requested_model: koru_ai_core::AGENT_DEFAULT_MODEL.into(),
+                    default_reasoning: ReasoningChoice::Default,
+                },
+            },
+        )
+        .unwrap();
+    let id = ChatAttachmentId::new();
+    let request = FromWorkspaceAttachmentRequest {
+        id,
+        workspace,
+        document,
+    };
+    assert_eq!(
+        client
+            .from_workspace_attachment(context(), chat, request.clone())
+            .unwrap_err()
+            .code,
+        attachment_codes::WORKSPACE_NOT_GRANTED
+    );
+    assert_eq!(*store.reads.lock().unwrap(), 0);
+    client
+        .add_chat_workspace_grants(
+            context(),
+            chat,
+            AddChatWorkspaceGrantsRequest {
+                workspace_ids: vec![workspace],
+            },
+        )
+        .unwrap();
+    store.fail_next.store(true, Ordering::SeqCst);
+    assert_eq!(
+        client
+            .from_workspace_attachment(context(), chat, request.clone())
+            .unwrap_err()
+            .code,
+        attachment_codes::WORKSPACE_FILE_UNAVAILABLE
+    );
+    assert!(
+        client
+            .read_chat(context(), chat)
+            .unwrap()
+            .attachments
+            .is_empty()
+    );
+    let copied = client
+        .from_workspace_attachment(context(), chat, request.clone())
+        .unwrap();
+    assert_eq!(copied.attachment.source, AttachmentSource::Workspace);
+    assert_eq!(
+        copied.attachment.origin.as_ref().unwrap().document_id,
+        document
+    );
+    assert_eq!(copied.attachment.message_id, None);
+    assert_eq!(
+        client
+            .from_workspace_attachment(context(), chat, request.clone())
+            .unwrap(),
+        copied,
+    );
+    assert_eq!(
+        *store.reads.lock().unwrap(),
+        3,
+        "replay checks source content"
+    );
+    *store.bytes.lock().unwrap() = b"changed workspace content".to_vec();
+    assert_eq!(
+        client
+            .from_workspace_attachment(context(), chat, request.clone())
+            .unwrap_err()
+            .code,
+        attachment_codes::CONFLICT,
+        "the same id cannot point to changed bytes"
+    );
+    assert_eq!(
+        client.read_attachment(context(), chat, id).unwrap().bytes,
+        b"copied workspace content"
+    );
+    let stream = send_with(&client, chat, "inspect", vec![id]).unwrap();
+    let sent = requests.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert_eq!(sent.messages.last().unwrap().attachments[0].id, id);
+    assert_eq!(
+        wait_for_terminal(&client, stream.accepted.attempt_id),
+        AttemptStatus::Complete
+    );
+    client
+        .update_chat_tool_policy(
+            context(),
+            chat,
+            UpdateChatToolPolicyRequest {
+                mode: ToolMode::Manual,
+                workspace_ids: Vec::new(),
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        client
+            .from_workspace_attachment(
+                context(),
+                chat,
+                FromWorkspaceAttachmentRequest {
+                    id: ChatAttachmentId::new(),
+                    workspace,
+                    document
+                },
+            )
+            .unwrap_err()
+            .code,
+        attachment_codes::WORKSPACE_NOT_GRANTED
+    );
+    assert_eq!(*store.reads.lock().unwrap(), 4, "revoked copy never reads");
+    assert_eq!(
+        client.read_attachment(context(), chat, id).unwrap().bytes,
+        b"copied workspace content",
+        "already sent bytes stay with the chat",
+    );
+}
+
+#[test]
+fn grant_revoked_while_workspace_bytes_are_read_prevents_copy_publication() {
+    let directory = tempfile::tempdir().unwrap();
+    let profile = ProfileId::new();
+    let workspace = WorkspaceId::new();
+    let document = DocumentId::new();
+    let (entered_tx, entered_rx) = sync_channel(1);
+    let (release_tx, release_rx) = sync_channel(1);
+    let store = Arc::new(CopyStore {
+        profile,
+        workspace,
+        document,
+        reads: Mutex::new(0),
+        bytes: Mutex::new(b"copied workspace content".to_vec()),
+        fail_next: AtomicBool::new(false),
+        pause: Some((entered_tx, Mutex::new(release_rx))),
+    });
+    let (captured, _requests) = sync_channel(1);
+    let mut providers = ProviderRegistry::default();
+    providers.insert(
+        AiProviderId::parse("agent-codex").unwrap(),
+        Arc::new(CapturingProvider { requests: captured }),
+    );
+    let worker = AiWorker::new(
+        WorkerConfig::new(directory.path().to_owned(), "internal-debug", providers)
+            .with_store_context(store.clone()),
+    )
+    .spawn()
+    .unwrap();
+    let client = worker.client();
+    let chat = ChatId::new();
+    client
+        .create_chat(
+            context(),
+            CreateChatRequest {
+                chat_id: chat,
+                title: "Revoked copy".into(),
+                profile_id: Some(profile),
+                model: koru_ai_core::ModelSelection {
+                    provider: AiProviderId::parse("agent-codex").unwrap(),
+                    requested_model: koru_ai_core::AGENT_DEFAULT_MODEL.into(),
+                    default_reasoning: ReasoningChoice::Default,
+                },
+            },
+        )
+        .unwrap();
+    client
+        .add_chat_workspace_grants(
+            context(),
+            chat,
+            AddChatWorkspaceGrantsRequest {
+                workspace_ids: vec![workspace],
+            },
+        )
+        .unwrap();
+    let id = ChatAttachmentId::new();
+    let concurrent = client.clone();
+    let pending = std::thread::spawn(move || {
+        concurrent.from_workspace_attachment(
+            context(),
+            chat,
+            FromWorkspaceAttachmentRequest {
+                id,
+                workspace,
+                document,
+            },
+        )
+    });
+    entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    client
+        .update_chat_tool_policy(
+            context(),
+            chat,
+            UpdateChatToolPolicyRequest {
+                mode: ToolMode::Manual,
+                workspace_ids: Vec::new(),
+            },
+        )
+        .unwrap();
+    release_tx.send(()).unwrap();
+    assert_eq!(
+        pending.join().unwrap().unwrap_err().code,
+        attachment_codes::WORKSPACE_NOT_GRANTED
+    );
+    assert!(
+        client
+            .read_chat(context(), chat)
+            .unwrap()
+            .attachments
+            .is_empty()
+    );
+    assert!(
+        !chat_folder(directory.path(), chat)
+            .join(id.to_storage())
+            .exists()
+    );
+    client
+        .add_chat_workspace_grants(
+            context(),
+            chat,
+            AddChatWorkspaceGrantsRequest {
+                workspace_ids: vec![workspace],
+            },
+        )
+        .unwrap();
+    release_tx.send(()).unwrap();
+    let copied = client
+        .from_workspace_attachment(
+            context(),
+            chat,
+            FromWorkspaceAttachmentRequest {
+                id,
+                workspace,
+                document,
+            },
+        )
+        .unwrap()
+        .attachment;
+    assert_eq!(copied.origin.unwrap().document_id, document);
+    assert_eq!(*store.reads.lock().unwrap(), 2);
+    assert_eq!(
+        client.read_chat(context(), chat).unwrap().attachments.len(),
+        1
+    );
+}
+
+#[test]
 fn a_pasted_picture_is_stored_bound_and_carried_to_the_agent() {
     let directory = tempfile::tempdir().unwrap();
     let (worker, requests) = agent_worker(directory.path());
@@ -140,11 +491,11 @@ fn a_pasted_picture_is_stored_bound_and_carried_to_the_agent() {
     let sent = &request.messages.last().unwrap().attachments;
     assert_eq!(sent.len(), 1);
     assert_eq!(sent[0].id, id);
-    assert!(sent[0].path.is_file());
-    assert!(sent[0].path.starts_with(directory.path()));
+    assert!(sent[0].path.as_ref().unwrap().is_file());
+    assert!(sent[0].path.as_ref().unwrap().starts_with(directory.path()));
     assert_eq!(
         sent[0].native.as_deref(),
-        Some(sent[0].path.as_path()),
+        sent[0].path.as_deref(),
         "a small picture goes as it is"
     );
     assert_eq!(
@@ -457,6 +808,111 @@ fn a_message_may_be_attachments_only_but_never_nothing() {
     assert_eq!(
         wait_for_terminal(&client, stream.accepted.attempt_id),
         AttemptStatus::Complete
+    );
+}
+
+#[test]
+fn a_path_reference_stages_without_bytes_replays_and_sends_alone() {
+    let directory = tempfile::tempdir().unwrap();
+    let (worker, requests) = agent_worker(directory.path());
+    let client = worker.client();
+    let chat = create_agent_chat(&client);
+    let id = ChatAttachmentId::new();
+    let path = directory
+        .path()
+        .join("资料 folder")
+        .to_string_lossy()
+        .into_owned();
+    let request = ReferenceAttachmentRequest {
+        id,
+        kind: AttachmentKind::Folder,
+        path: path.clone(),
+    };
+    let staged = client
+        .reference_attachment(context(), chat, request.clone())
+        .unwrap()
+        .attachment;
+    assert_eq!(staged.reference_path.as_deref(), Some(path.as_str()));
+    assert_eq!(staged.byte_count, 0);
+    assert!(
+        !chat_folder(directory.path(), chat).exists(),
+        "a reference owns no folder"
+    );
+    assert_eq!(
+        client
+            .reference_attachment(context(), chat, request.clone())
+            .unwrap()
+            .attachment,
+        staged,
+        "the same id and path replay"
+    );
+    assert_eq!(
+        client
+            .reference_attachment(
+                context(),
+                chat,
+                ReferenceAttachmentRequest {
+                    path: format!("{path}/other"),
+                    ..request.clone()
+                }
+            )
+            .unwrap_err()
+            .code,
+        attachment_codes::CONFLICT
+    );
+    assert_eq!(
+        client
+            .reference_attachment(
+                context(),
+                chat,
+                ReferenceAttachmentRequest {
+                    id: ChatAttachmentId::new(),
+                    path: "relative/path".into(),
+                    ..request
+                }
+            )
+            .unwrap_err()
+            .code,
+        "invalid_request"
+    );
+    assert_eq!(
+        client
+            .read_attachment(context(), chat, id)
+            .err()
+            .unwrap()
+            .code,
+        attachment_codes::NO_PREVIEW,
+        "a reference cannot return bytes"
+    );
+    let stream = send_with(&client, chat, "", vec![id]).unwrap();
+    let sent = requests.recv_timeout(Duration::from_secs(5)).unwrap();
+    let input = &sent.messages.last().unwrap().attachments[0];
+    assert_eq!(input.path, None);
+    assert_eq!(input.reference.as_deref(), Some(path.as_str()));
+    assert_eq!(
+        wait_for_terminal(&client, stream.accepted.attempt_id),
+        AttemptStatus::Complete
+    );
+    assert!(
+        !chat_folder(directory.path(), chat).exists(),
+        "send did not copy bytes"
+    );
+    let restaged = client
+        .restage_attachment(
+            context(),
+            chat,
+            id,
+            koru_ai_wire::RestageAttachmentRequest {
+                new_id: ChatAttachmentId::new(),
+            },
+        )
+        .unwrap()
+        .attachment;
+    assert_eq!(restaged.reference_path.as_deref(), Some(path.as_str()));
+    assert_eq!(restaged.message_id, None);
+    assert!(
+        !chat_folder(directory.path(), chat).exists(),
+        "recall copied only the row"
     );
 }
 

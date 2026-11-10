@@ -492,6 +492,12 @@ pub struct InferenceAttempt {
     pub context_document_count: u32,
     pub context_message_block_count: u32,
     pub usage: AiUsage,
+    /// Latest active-context pair reported by this attempt's provider.
+    /// It is distinct from response usage and absent for older attempts.
+    #[serde(default)]
+    pub context_used_tokens: Option<u64>,
+    #[serde(default)]
+    pub context_limit_tokens: Option<u64>,
     pub stop_reason: Option<String>,
     pub error_class: Option<AiErrorClass>,
     pub provider_response_id: Option<String>,

@@ -37,6 +37,7 @@ fn a_third_device_joins_the_survivor_with_the_origin_offline_and_gets_placement_
         .store()
         .create_document(w, "Plan", "page", None, None, at())
         .unwrap();
+    a.type_into(w, document, 1, "the plan");
     a.store().delete_workspace(gone, later(5)).unwrap();
     let ab = all_data_peer(relationship());
     sync(&a, &b, &ab);

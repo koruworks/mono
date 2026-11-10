@@ -254,11 +254,19 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             return Ok(EnsuredWorkspace::Removing { mark });
         }
         self.profile(owner)?;
+        // **Which Workspaces are this Profile's is the root placement's
+        // answer**, not the `workspaces.owner` projection's: a remote move or
+        // an explicit unassignment is projected late (root-catalog
+        // TECHNICAL.final §6.2), so a Workspace the root places elsewhere —
+        // or nowhere — must not be selected here while its row still names
+        // this Profile. `placed_workspaces` falls back to the projection for a
+        // Workspace that has no unit, which is the only evidence it has.
+        let placed = self.placed_workspaces(owner)?;
         let mut rows: Vec<_> = self
             .catalog
             .workspaces_including_deleted()?
             .into_iter()
-            .filter(|w| w.owner == owner)
+            .filter(|w| placed.contains(&w.id))
             .collect();
         rows.sort_by_key(|w| (w.position, w.id));
         // Finish prerequisite windows before any consequential repair/default.

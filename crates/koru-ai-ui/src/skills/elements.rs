@@ -19,7 +19,9 @@
 //! text. Every value is a token or a tagged metric ([`super::tokens`]); this
 //! file is on the source scan's migrated list (`koru_draw::theme::ui_scan`).
 
-use koru_draw::el::{Align, El, Frame, FrameCx, Key, Look, Role, StateRecipe, col, row, text};
+use koru_draw::el::{
+    Align, El, Frame, FrameCx, Key, Look, Role, StateRecipe, boxed, col, row, text,
+};
 use koru_draw::geometry::Rect;
 use koru_draw::theme::{Ink, Radius, Surface, roles};
 
@@ -31,6 +33,24 @@ pub(crate) const SKILL_ROW: &str = "Skill row";
 pub(crate) const SKILL_WORDS: &str = "Skill words";
 pub(crate) const SKILL_NAME: &str = "Skill name";
 pub(crate) const SKILL_LINE: &str = "Skill line";
+pub(crate) const LOADING_ROW: &str = "Skill loading row";
+pub(crate) const EMPTY_ROW: &str = "Skill empty row";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ContentState {
+    Rows,
+    Loading,
+    Empty,
+}
+
+impl ContentState {
+    pub(crate) fn row_count(self) -> usize {
+        match self {
+            Self::Rows | Self::Empty => 1,
+            Self::Loading => 3,
+        }
+    }
+}
 
 /// A skill's row, by its name: the same skill gives the same key in every
 /// frame, wherever the filter puts it.
@@ -112,12 +132,67 @@ fn skill_row(spec: &SkillSpec) -> El {
 
 /// **The list as one tree**: a row a skill shown, in the list's order,
 /// inside the panel's inset.
-pub(crate) fn tree(skills: &[SkillSpec]) -> El {
-    col(PANEL)
+pub(crate) fn tree(skills: &[SkillSpec], state: ContentState, lang: koru_i18n::Lang) -> El {
+    let mut panel = col(PANEL)
         .pad(PANEL_INSET)
         .semantics(Role::Menu)
         .name(koru_i18n::Key::AiSkills)
-        .children(skills.iter().map(skill_row))
+        .children(skills.iter().map(skill_row));
+    match state {
+        ContentState::Rows => {}
+        ContentState::Loading => {
+            for index in 0..3 {
+                let title_width = if index == 1 {
+                    LOADING_TITLE_SHORT
+                } else {
+                    LOADING_TITLE_WIDE
+                };
+                panel = panel.child(
+                    row(LOADING_ROW)
+                        .h(ROW_HEIGHT)
+                        .pad_x(ROW_INSET)
+                        .items_center()
+                        .semantics(Role::Group)
+                        .name(koru_i18n::Key::ArtifactsLoading)
+                        .child(
+                            col("Skill loading bars")
+                                .gap(WORDS_GAP)
+                                .child(
+                                    boxed("Skill loading title")
+                                        .w(title_width)
+                                        .h(LOADING_BAR_HEIGHT)
+                                        .radius(Radius::M)
+                                        .bg(Surface::Hover),
+                                )
+                                .child(
+                                    boxed("Skill loading description")
+                                        .w(LOADING_LINE_WIDTH)
+                                        .h(LOADING_BAR_HEIGHT)
+                                        .radius(Radius::M)
+                                        .bg(Surface::Hover),
+                                ),
+                        ),
+                );
+            }
+        }
+        ContentState::Empty => {
+            panel = panel.child(
+                row(EMPTY_ROW)
+                    .h(ROW_HEIGHT)
+                    .pad_x(ROW_INSET)
+                    .items_center()
+                    .semantics(Role::Group)
+                    .name(koru_i18n::Key::AiSkillListEmpty)
+                    .child(
+                        text(koru_i18n::t(lang, koru_i18n::Key::AiSkillListEmpty).to_owned())
+                            .role(roles::META)
+                            .ink(Ink::Secondary)
+                            .truncate(),
+                    ),
+            );
+        }
+    }
+    panel
 }
 
 /// `tree` laid out in `area`, the panel, under `cx`: on the engine and cache

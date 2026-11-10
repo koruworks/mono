@@ -69,6 +69,14 @@ pub trait AiPersistence: Send {
         workspace_ids: &[WorkspaceId],
         granted_at: Timestamp,
     ) -> Result<Option<ChatToolPolicy>, AiError>;
+    /// Atomically add grants without changing the mode or removing grants
+    /// added by another surface.
+    fn add_chat_workspace_grants(
+        &mut self,
+        chat: ChatId,
+        workspace_ids: &[WorkspaceId],
+        granted_at: Timestamp,
+    ) -> Result<Option<ChatToolPolicy>, AiError>;
     fn chat(&self, id: ChatId) -> Result<Option<Chat>, AiError>;
     fn chats(&self) -> Result<Vec<Chat>, AiError>;
     /// Every chat with no profile yet (AI schema 13), with what the store
@@ -207,6 +215,20 @@ pub trait StoreContextPort: Send + Sync {
         document: DocumentId,
         reader: Option<ProfileId>,
     ) -> Result<DocumentContext, AiError>;
+    /// Copy one Files document's bytes for a chat in the owning profile.
+    /// The caller checks the chat's workspace grant before invoking this.
+    fn read_workspace_file(
+        &self,
+        _workspace: WorkspaceId,
+        _document: DocumentId,
+        _reader: ProfileId,
+    ) -> Result<WorkspaceFileData, AiError> {
+        Err(AiError::new(
+            AiErrorClass::Storage,
+            "The selected workspace file is not available.",
+            false,
+        ))
+    }
     fn create_document(
         &self,
         idempotency_key: Uuid,
@@ -250,4 +272,10 @@ pub trait StoreContextPort: Send + Sync {
     fn removed_profiles(&self) -> Result<Vec<ProfileId>, AiError> {
         Ok(Vec::new())
     }
+}
+
+/// A Files document's name and copied bytes, read on a blocking context thread.
+pub struct WorkspaceFileData {
+    pub file_name: String,
+    pub bytes: Vec<u8>,
 }

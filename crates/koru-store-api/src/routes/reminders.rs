@@ -270,7 +270,7 @@ async fn indexed_reminder_inputs(
         let mut reminders = Vec::new();
         let mut expected_rows = Vec::new();
         let mut seen = std::collections::BTreeSet::new();
-        for mut candidate in candidates {
+        for candidate in candidates {
             let (version, rows) = koru_store_core::service::build_reminder_index(&candidate)?;
             let inputs = koru_store_core::service::read_personal_reminder_inputs(&candidate)?;
             if inputs
@@ -292,16 +292,23 @@ async fn indexed_reminder_inputs(
                 .iter()
                 .map(|row| (row.reminder, row.due_at_ms))
                 .collect();
-            let complete = candidate.indexed_version.as_deref() == Some(version.as_slice())
-                && indexed == expected;
-            if !complete && !lock(&state)?.publish_reminder_index(&candidate, &version, &rows)? {
+            // The stamp is a *version*, compared decoded — two encodings of one
+            // version differ in peer order, and reading that as a change
+            // republishes an index that was already current
+            // (`indexed_version_is_current`).
+            let complete = koru_store_core::service::indexed_version_is_current(
+                candidate.indexed_version.as_deref(),
+                &version,
+            ) && indexed == expected;
+            if !complete
+                && !lock(&state)?.publish_reminder_index(&candidate, &version.encode(), &rows)?
+            {
                 return Err(ApiError::new(
                     Code::ReminderIndexUpdating,
                     "personal unit changed during index repair",
                 ));
             }
-            candidate.indexed_version = Some(version);
-            prepared.push(candidate);
+            prepared.push((candidate, version));
             reminders.extend(inputs);
             expected_rows.extend(rows);
         }
@@ -309,7 +316,24 @@ async fn indexed_reminder_inputs(
         let mut current_rows = store.reminder_index_rows(profile)?;
         current_rows.sort_by_key(|row| (row.workspace, row.reminder));
         expected_rows.sort_by_key(|row| (row.workspace, row.reminder));
-        if store.reminder_index_candidates(profile)? != prepared || current_rows != expected_rows {
+        // Re-read the authority: the same units, the same bytes, and a stamp
+        // that still names the version each index was built from. The stamp is
+        // the one field that cannot be compared as bytes, so it is compared
+        // apart from the rest rather than through `ProfileUnitState`'s
+        // derived equality — a unit left alone because it was already current
+        // still holds the *earlier* encoding of that version, and reading that
+        // as a concurrent change failed a read that nothing had disturbed.
+        let found = store.reminder_index_candidates(profile)?;
+        let undisturbed = found.len() == prepared.len()
+            && std::iter::zip(&found, &prepared).all(|(found, (indexed, version))| {
+                found.unit == indexed.unit
+                    && found.snapshot == indexed.snapshot
+                    && koru_store_core::service::indexed_version_is_current(
+                        found.indexed_version.as_deref(),
+                        version,
+                    )
+            });
+        if !undisturbed || current_rows != expected_rows {
             return Err(ApiError::new(
                 Code::ReminderIndexUpdating,
                 "personal authority changed during index read",

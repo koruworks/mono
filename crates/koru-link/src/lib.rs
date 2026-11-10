@@ -12,6 +12,8 @@
 //! koru://doc/{document-uuid}                whole document
 //! koru://doc/{document-uuid}#{node-uuid}    document, scrolled to one block
 //! koru://chat/{chat-uuid}#{message-block-uuid} AI chat, optionally at one block
+//! koru://skill/{encoded-name}             selected agent skill
+//! koru://command/{encoded-name}           selected agent command
 //! koru://{node-uuid}                        a bare node reference
 //! ```
 //!
@@ -40,15 +42,19 @@ const MAX_LEN: usize = 512;
 /// a quote in it can end an argument and begin another. The registered command
 /// quotes its placeholder; this is the other half of that, and it is here
 /// rather than in the handler so every caller gets it.
-const FORBIDDEN: &[char] = &['"', '<', '>', '|', '&', '^', '%', '\\', '\''];
+const FORBIDDEN: &[char] = &['"', '<', '>', '|', '&', '^', '\\', '\''];
 
 /// What a `koru://` URL names.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum KoruLink {
     /// A document, and optionally one block inside it.
     Document { document: Uuid, node: Option<Uuid> },
     /// An AI chat, and optionally one immutable response block inside it.
     Chat { chat: Uuid, block: Option<Uuid> },
+    /// A skill selected from the agent's listing.
+    Skill { name: String },
+    /// A command selected from the agent's listing.
+    Command { name: String },
     /// A bare node, with no document named. Written by older exports.
     Node(Uuid),
 }
@@ -63,6 +69,8 @@ pub enum LinkError {
     UnknownForm,
     /// The right shape, but an id that is not a UUID.
     BadId,
+    /// A decoded command or skill name the agent transport would refuse.
+    BadName,
     /// Longer than any real link, or carrying a character that must not travel
     /// on a command line.
     Illegal,
@@ -83,6 +91,10 @@ pub fn parse(text: &str) -> Result<KoruLink, LinkError> {
         .filter(|prefix| prefix.eq_ignore_ascii_case("koru://"))
         .map(|_| &text[7..])
         .ok_or(LinkError::NotKoru)?;
+
+    if rest.contains('%') && !rest.starts_with("skill/") && !rest.starts_with("command/") {
+        return Err(LinkError::Illegal);
+    }
 
     let (path, fragment) = match rest.split_once('#') {
         Some((path, fragment)) => (path, Some(fragment)),
@@ -105,10 +117,67 @@ pub fn parse(text: &str) -> Result<KoruLink, LinkError> {
             chat: id(chat)?,
             block: fragment.map(id).transpose()?,
         }),
+        ("skill", Some(name)) if fragment.is_none() => Ok(KoruLink::Skill {
+            name: decode_name(name)?,
+        }),
+        ("command", Some(name)) if fragment.is_none() => Ok(KoruLink::Command {
+            name: decode_name(name)?,
+        }),
         // A bare node takes no fragment: there is nothing for it to be inside.
         (node, None) if fragment.is_none() && !node.is_empty() => Ok(KoruLink::Node(id(node)?)),
         _ => Err(LinkError::UnknownForm),
     }
+}
+
+/// Write a selected skill's durable link spelling.
+pub fn skill_link(name: &str) -> Result<String, LinkError> {
+    Ok(format!("koru://skill/{}", encode_name(name)?))
+}
+
+/// Write a selected command's durable link spelling.
+pub fn command_link(name: &str) -> Result<String, LinkError> {
+    Ok(format!("koru://command/{}", encode_name(name)?))
+}
+
+fn encode_name(name: &str) -> Result<String, LinkError> {
+    if !koru_session_protocol::valid_command_name(name) {
+        return Err(LinkError::BadName);
+    }
+    let mut encoded = String::new();
+    for byte in name.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            encoded.push(char::from(byte));
+        } else {
+            encoded.push('%');
+            encoded.push_str(&format!("{byte:02X}"));
+        }
+    }
+    Ok(encoded)
+}
+
+fn decode_name(encoded: &str) -> Result<String, LinkError> {
+    let mut bytes = Vec::with_capacity(encoded.len());
+    let mut source = encoded.bytes();
+    while let Some(byte) = source.next() {
+        match byte {
+            b'%' => {
+                let hi = source.next().and_then(|b| (b as char).to_digit(16));
+                let lo = source.next().and_then(|b| (b as char).to_digit(16));
+                let (Some(hi), Some(lo)) = (hi, lo) else {
+                    return Err(LinkError::BadName);
+                };
+                bytes.push(((hi << 4) | lo) as u8);
+            }
+            b if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') => {
+                bytes.push(b);
+            }
+            _ => return Err(LinkError::BadName),
+        }
+    }
+    let name = String::from_utf8(bytes).map_err(|_| LinkError::BadName)?;
+    koru_session_protocol::valid_command_name(&name)
+        .then_some(name)
+        .ok_or(LinkError::BadName)
 }
 
 /// Write a link to a document, and optionally one block inside it.
@@ -149,10 +218,26 @@ pub struct Wrapped {
 /// about what a token is. A `[[…]]` whose inside is not a link this build
 /// understands is not a token: it stays text, like any other brackets.
 pub fn wrapped(text: &str) -> Vec<Wrapped> {
+    scan_wrapped(text, false)
+}
+
+fn preceding_slashes(text: &str, open: usize) -> usize {
+    text.as_bytes()[..open]
+        .iter()
+        .rev()
+        .take_while(|byte| **byte == b'\\')
+        .count()
+}
+
+fn scan_wrapped(text: &str, include_escaped: bool) -> Vec<Wrapped> {
     let mut found = Vec::new();
     let mut at = 0;
     while let Some(open) = text[at..].find("[[") {
         let open = at + open;
+        if !include_escaped && preceding_slashes(text, open) % 2 == 1 {
+            at = open + 2;
+            continue;
+        }
         let Some(close) = text[open..].find("]]") else {
             break;
         };
@@ -166,6 +251,42 @@ pub fn wrapped(text: &str) -> Vec<Wrapped> {
         }
     }
     found
+}
+
+/// Escape a typed link-shaped token so a later reader cannot mistake words
+/// for a selected pill. Call this on ordinary text runs, never on pill output.
+pub fn escape_literal_links(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    let mut from = 0;
+    for token in scan_wrapped(text, true) {
+        let slashes = preceding_slashes(text, token.range.start);
+        let prefix_end = token.range.start - slashes;
+        escaped.push_str(&text[from..prefix_end]);
+        escaped.extend(std::iter::repeat_n('\\', slashes * 2 + 1));
+        escaped.push_str(&text[token.range.clone()]);
+        from = token.range.end;
+    }
+    escaped.push_str(&text[from..]);
+    escaped
+}
+
+/// Undo the one escape this codec adds for literal link-shaped words.
+pub fn unescape_literal_links(text: &str) -> String {
+    let mut unescaped = String::with_capacity(text.len());
+    let mut from = 0;
+    for token in scan_wrapped(text, true) {
+        let slashes = preceding_slashes(text, token.range.start);
+        if slashes % 2 == 0 {
+            continue;
+        }
+        let prefix_end = token.range.start - slashes;
+        unescaped.push_str(&text[from..prefix_end]);
+        unescaped.extend(std::iter::repeat_n('\\', (slashes - 1) / 2));
+        unescaped.push_str(&text[token.range.clone()]);
+        from = token.range.end;
+    }
+    unescaped.push_str(&text[from..]);
+    unescaped
 }
 
 fn id(text: &str) -> Result<Uuid, LinkError> {

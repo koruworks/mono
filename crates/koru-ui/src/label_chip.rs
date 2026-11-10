@@ -78,6 +78,8 @@ pub const DOT_D: f32 = 5.0;
 /// The `×`'s arm and stroke, one mark for clearing and for removing.
 const X_ARM: f32 = 3.0;
 const X_STROKE: f64 = 1.3;
+/// Air between the two lines of a context chip.
+const SECONDARY_GAP: f32 = 2.0;
 
 impl Size {
     /// The chip's height.
@@ -200,6 +202,7 @@ pub struct State {
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct LabelChip<'a> {
     label: &'a str,
+    secondary: Option<&'a str>,
     size: Size,
     tone: Tone<'a>,
     lead: Lead,
@@ -213,6 +216,7 @@ impl<'a> LabelChip<'a> {
     pub fn new(label: &'a str) -> Self {
         Self {
             label,
+            secondary: None,
             size: Size::Compact,
             tone: Tone::Neutral,
             lead: Lead::None,
@@ -248,6 +252,13 @@ impl<'a> LabelChip<'a> {
         self
     }
 
+    /// A dim second line under a regular chip's name. Compact chips ignore
+    /// this line; the context-chip wrapper always selects regular size.
+    pub fn secondary(mut self, text: &'a str) -> Self {
+        self.secondary = Some(text);
+        self
+    }
+
     pub fn tone(mut self, tone: Tone<'a>) -> Self {
         self.tone = tone;
         self
@@ -272,6 +283,11 @@ impl<'a> LabelChip<'a> {
     pub fn height(&self) -> f32 {
         if self.swatch {
             CHIP_H
+        } else if self.size == Size::Regular && self.secondary.is_some() {
+            theme::role::hint().metrics.line_height
+                + theme::role::meta().metrics.line_height
+                + SECONDARY_GAP
+                + REGULAR_PAD_Y * 2.0
         } else {
             self.size.height()
         }
@@ -302,6 +318,9 @@ impl<'a> LabelChip<'a> {
                 let label = engine
                     .simple_layout(self.label, theme::role::hint())
                     .width();
+                let label = self.secondary.map_or(label, |secondary| {
+                    label.max(engine.simple_layout(secondary, theme::role::meta()).width())
+                });
                 let lead = match self.lead {
                     Lead::None => 0.0,
                     Lead::Dot => DOT_D + self.size.gap(),
@@ -346,12 +365,17 @@ impl<'a> LabelChip<'a> {
     pub fn trail_rect(&self, rect: Rect) -> Option<Rect> {
         match self.trail {
             Trail::None => None,
-            Trail::Remove => Some(Rect::new(
-                rect.x + rect.w - CHIP_CLOSE_W,
-                rect.y,
-                CHIP_CLOSE_W,
-                rect.h,
-            )),
+            Trail::Remove => {
+                // The regular chip's × sits farther in than the compact
+                // chip's. Include all of its ink in the remove target while
+                // retaining the chip's measured width.
+                let width = if self.size == Size::Regular {
+                    REGULAR_PAD_X + X_ARM * 2.0
+                } else {
+                    CHIP_CLOSE_W
+                };
+                Some(Rect::new(rect.x + rect.w - width, rect.y, width, rect.h))
+            }
             Trail::Caret | Trail::Clear => Some(Rect::new(
                 rect.x + rect.w - self.size.pad_x() - MARK,
                 rect.y + (rect.h - MARK) * 0.5,
@@ -399,6 +423,7 @@ impl<'a> LabelChip<'a> {
                     "instance",
                 );
                 r.property("trail", self.trail.name(), "instance");
+                r.property("secondary", self.secondary.is_some(), "instance");
                 r.property(
                     "hovered / revealed",
                     format!("{} / {}", state.hovered, state.reveal),
@@ -426,6 +451,17 @@ impl<'a> LabelChip<'a> {
             scene::fill(canvas, root, tint, &pill);
         }
         canvas.push_clip_layer(Fill::NonZero, root, &pill);
+        // A long translated label must stop before the reserved remove or
+        // caret lane, even when the host gives this chip less than its
+        // measured width. The trail is painted after this content clip.
+        let content_w = self
+            .trail_rect(rect)
+            .map_or(rect.w, |lane| (lane.x - rect.x - 2.0).max(0.0));
+        canvas.push_clip_layer(
+            Fill::NonZero,
+            root,
+            &scene::rect(rect.x, rect.y, content_w, rect.h),
+        );
         // Contents start at the padding, or centre in a rectangle wider than
         // the chip measured.
         let natural = self.width(engine);
@@ -434,6 +470,7 @@ impl<'a> LabelChip<'a> {
             Size::Compact => self.draw_compact(canvas, root, engine, rect, x, ink),
             Size::Regular => self.draw_regular(canvas, root, engine, rect, x, ink),
         }
+        canvas.pop_layer();
         canvas.pop_layer();
         self.draw_trail(canvas, root, engine, rect, state, ink);
     }
@@ -511,14 +548,28 @@ impl<'a> LabelChip<'a> {
             }
         }
         let laid = engine.simple_layout(self.label, theme::role::hint());
-        scene::draw_layout_first_line(
-            canvas,
-            root,
-            &laid,
-            x,
-            scene::centre_y_in(&laid, rect),
-            Some(ink),
-        );
+        if let Some(secondary) = self.secondary {
+            let secondary = engine.simple_layout(secondary, theme::role::meta());
+            let top = rect.y + (rect.h - laid.height() - secondary.height() - SECONDARY_GAP) * 0.5;
+            scene::draw_layout_first_line(canvas, root, &laid, x, top, Some(ink));
+            scene::draw_layout_first_line(
+                canvas,
+                root,
+                &secondary,
+                x,
+                top + laid.height() + SECONDARY_GAP,
+                Some(theme::p().text_dim),
+            );
+        } else {
+            scene::draw_layout_first_line(
+                canvas,
+                root,
+                &laid,
+                x,
+                scene::centre_y_in(&laid, rect),
+                Some(ink),
+            );
+        }
         if self.struck {
             strike(canvas, root, ink, x, laid.width(), rect);
         }
@@ -551,10 +602,20 @@ impl<'a> LabelChip<'a> {
                 );
             }
             Trail::Clear => draw_x(canvas, root, ink, cx, cy),
-            // A hair left of the lane's centre, where the remove `×` has
-            // always sat: the lane ends at the lozenge's rounded edge.
-            Trail::Remove if state.reveal => draw_x(canvas, root, ink, cx - 1.0, cy),
+            // Compact chips keep their established mark; regular chips use
+            // the same visible edge inset as their leading content.
+            Trail::Remove if state.reveal => {
+                draw_x(canvas, root, ink, self.remove_mark_x(rect, lane), cy)
+            }
             Trail::Remove => {}
+        }
+    }
+
+    fn remove_mark_x(&self, rect: Rect, lane: Rect) -> f32 {
+        if self.size == Size::Regular {
+            rect.x + rect.w - REGULAR_PAD_X - X_ARM
+        } else {
+            lane.x + lane.w * 0.5 - 1.0
         }
     }
 

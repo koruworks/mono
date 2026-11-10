@@ -80,6 +80,7 @@ pub(crate) mod dictation;
 mod document_appearance;
 pub(crate) mod draw;
 mod error_dialog;
+mod file_preview;
 mod font_picker;
 mod help_menu;
 mod history;
@@ -638,8 +639,6 @@ pub struct MainView {
     /// is sized to what *it* draws.
     engine: TextEngine,
 
-    /// Welcome default copied onto a newly pinned tab.
-    pinned_show_title: bool,
     /// Active split preview while a tab is being dragged over a group view.
     split_intent: Option<panes::SplitIntent>,
     /// A tab being dragged between groups, or out for a tear-off/pop-out.
@@ -691,9 +690,12 @@ pub struct MainView {
     /// lifetime.
     ai_panel: Panel,
     ai_chat: ChatSurface,
+    file_preview: Option<file_preview::FilePreview>,
     /// The chat whose folder pick is out with the shell, and which surface
     /// asked: the pane's, or an AI chat tab's.
     ai_chat_folder_ask: Option<(AiChatFolderSource, koru_ai_ui::ChatId)>,
+    ai_computer_ask: Option<(AiChatFolderSource, koru_ai_ui::ComputerPickerKind)>,
+    ai_import_asks: std::collections::HashMap<uuid::Uuid, (AiChatFolderSource, koru_ai_ui::ChatId)>,
     ai_focused: bool,
     document_history: history::HistoryPanel,
     /// What the context column's Cloud tab shows — one query per refresh on a
@@ -1815,7 +1817,6 @@ impl MainView {
             viewport: (900.0, 560.0),
             regions: regions::solve(900.0, 560.0, 0.0, 0.0),
             engine: TextEngine::new(),
-            pinned_show_title: false,
             split_intent: None,
             pane_drag: None,
             drop_slot: None,
@@ -1832,6 +1833,8 @@ impl MainView {
             context_view: ContextView::new(),
             ai_panel: Panel::new(480.0, false),
             ai_chat_folder_ask: None,
+            ai_computer_ask: None,
+            ai_import_asks: std::collections::HashMap::new(),
             ai_chat: {
                 let mut chat = ChatSurface::new_at(koru_workspace_host::cli::root_from_args());
                 // Koru has a Settings tab: the picker's + opens *Agent
@@ -1848,6 +1851,7 @@ impl MainView {
                 chat.offer_microphone_choice(koru_dictation::available());
                 chat
             },
+            file_preview: None,
             ai_focused: false,
             document_history: {
                 // One resolved language for everything the app dates. Stored
@@ -4052,14 +4056,7 @@ impl MainView {
         let Some(home) = home else {
             return false;
         };
-        let show_title = self
-            .tabs()
-            .iter()
-            .find_map(|t| match &t.view {
-                TabView::Welcome(w) => Some(w.pinned_show_title()),
-                _ => None,
-            })
-            .unwrap_or(self.pinned_show_title);
+        let show_title = self.preferences.pinned_show_title;
         if !self.tabs_mut().pin(i, home.as_uuid(), show_title) {
             return false;
         }
@@ -4126,6 +4123,27 @@ impl MainView {
         self.mark_tab_widths_stale();
         self.ensure_tab_visible(self.tabs().active());
         true
+    }
+
+    /// A Settings choice applies to every open pin. A later per-tab menu
+    /// choice can still override it until a Settings option is selected again.
+    fn apply_pinned_title_preference(&mut self, show: bool) {
+        self.preferences.pinned_show_title = show;
+        let mut changed = false;
+        for (_, group) in self.panes.iter_groups_mut() {
+            let mut group_changed = false;
+            for i in 0..group.tabs().pinned_count() {
+                group_changed |= group.tabs_mut().set_show_title(i, show);
+            }
+            if group_changed {
+                group.mark_widths_stale();
+            }
+            changed |= group_changed;
+        }
+        if changed {
+            self.mark_tab_widths_stale();
+            self.ensure_tab_visible(self.tabs().active());
+        }
     }
 
     fn pop_out(&mut self, i: usize) -> bool {
@@ -9434,6 +9452,7 @@ impl MainView {
         use koru_settings_ui::Request;
         match request {
             Request::ApplyLayoutToAllDocuments => self.apply_layout_to_all_documents(),
+            Request::SetPinnedShowTitle(show) => self.apply_pinned_title_preference(show),
             Request::MoreFonts(role) => {
                 self.open_role_font_picker(role);
             }
@@ -9841,6 +9860,9 @@ impl MainView {
     fn mouse_down(&mut self, ws: &mut WorkspaceDoc, x: f32, y: f32, ctrl: bool) -> bool {
         self.tooltip.clear();
         self.pointer = (x, y);
+        if self.file_preview.is_some() {
+            return self.file_preview_press(x, y);
+        }
         // A press anywhere moves the keyboard off the chrome stop it was on.
         self.chrome_focus = None;
         // Keyboard focus also decides which surface receives the matching
@@ -9889,8 +9911,10 @@ impl MainView {
         match self.lifted_viewer() {
             Some(LiftedViewer::AiPane) => return self.ai_chat.mouse_down(x, y),
             Some(LiftedViewer::AiTab(pane)) => {
+                let mods = self.mods;
                 let (view, doc) = self.tabs_mut().active_mut().doc(ws);
                 if let TabView::AiChat(chat) = view {
+                    View::set_mods(chat, mods);
                     return View::mouse_down(chat, doc, x - pane.x, y - pane.y, ctrl);
                 }
             }
@@ -10337,7 +10361,10 @@ impl MainView {
             }
             TabView::Feedback(f) => View::mouse_down(f, doc, lx, ly, ctrl),
             TabView::Diff(d) => View::mouse_down(d, doc, lx, ly, ctrl),
-            TabView::AiChat(a) => View::mouse_down(a, doc, lx, ly, ctrl),
+            TabView::AiChat(a) => {
+                View::set_mods(a, mods);
+                View::mouse_down(a, doc, lx, ly, ctrl)
+            }
             TabView::Socials(a) => View::mouse_down(a, doc, lx, ly, ctrl),
             TabView::Session(s) => View::mouse_down(s, doc, lx, ly, ctrl),
             TabView::Run(r) => View::mouse_down(r, doc, lx, ly, ctrl),
@@ -10638,28 +10665,34 @@ fn set_tab_layout(t: &mut Tab, shown: bool, mode: theme::ViewMode, canvas: Optio
     t.invalidate_size();
 }
 
-impl View for MainView {
-    /// **A preference changed elsewhere.** Deliberately *not* `restore`, which
-    /// reopens the session: a theme change in another window is not a reason to
-    /// rebuild a tab strip. What it does reach is the emoji picker's two pieces
-    /// of remembered state and every Settings tab in this window, which are the
-    /// only things here holding a copy rather than reading a global.
-    fn adopt_preferences(&mut self, settings: &Settings) {
+impl MainView {
+    fn adopt_preferences_inner(&mut self, settings: &Settings, update_pins: bool) {
         koru_editor::emoji::restore_usage(&settings.emoji_recents);
         koru_editor::emoji::set_preferred_skin_tone(koru_editor::emoji::parse_skin_tone(
             &settings.emoji_skin_tone,
         ));
+        if update_pins && self.preferences.pinned_show_title != settings.pinned_show_title {
+            self.apply_pinned_title_preference(settings.pinned_show_title);
+        }
         // Held as well as fanned out, because a Settings tab opened *later*
         // has to start from the same place the open ones were just moved to.
         self.preferences = settings.clone();
         self.each_tab_mut(|tab| {
-            match &mut tab.view {
-                TabView::Welcome(w) => View::adopt_preferences(w, settings),
-                TabView::Settings(s) => View::adopt_preferences(s, settings),
-                _ => {}
+            if let TabView::Settings(s) = &mut tab.view {
+                View::adopt_preferences(s, settings);
             }
             false
         });
+    }
+}
+
+impl View for MainView {
+    /// **A preference changed elsewhere.** Deliberately *not* `restore`, which
+    /// reopens the session: a theme change in another window is not a reason to
+    /// rebuild a tab strip. It updates open pins when their title preference
+    /// changes and reaches the Settings tabs that hold their own copies.
+    fn adopt_preferences(&mut self, settings: &Settings) {
+        self.adopt_preferences_inner(settings, true);
     }
 
     /// **The authority's first answer.** `restore` laid every document out
@@ -10670,7 +10703,9 @@ impl View for MainView {
     /// here rather than through each leaf's own hook so that only the shown
     /// tab pays for a reflow.
     fn adopt_startup_preferences(&mut self, settings: &Settings) {
-        self.adopt_preferences(settings);
+        // Restored pins carry individual title choices. The first preference
+        // answer seeds the default for new pins without replacing those choices.
+        self.adopt_preferences_inner(settings, false);
         for (_, group) in self.panes.iter_groups_mut() {
             let active = group.active();
             for (i, t) in group.iter_tabs_mut().enumerate() {
@@ -10810,6 +10845,9 @@ impl View for MainView {
         text: Option<&str>,
         mods: ModifiersState,
     ) -> bool {
+        if self.file_preview.is_some() {
+            return self.file_preview_key(key);
+        }
         if let Some(support) = self.support.as_mut()
             && support.key(key)
         {
@@ -10843,6 +10881,9 @@ impl View for MainView {
     }
 
     fn mouse_down(&mut self, ws: &mut WorkspaceDoc, x: f32, y: f32, ctrl: bool) -> bool {
+        if self.file_preview.is_some() {
+            return self.file_preview_press(x, y);
+        }
         // The recorder sees every press, with its position — a no-op unless a
         // capture is live. A press that reaches the document's content is
         // reclassified a node click at the leaf dispatch below.
@@ -10886,12 +10927,16 @@ impl View for MainView {
             return handled;
         }
         let handled = MainView::mouse_down(self, ws, x, y, ctrl);
+        let attachment_opened = self.open_pending_ai_attachment();
         let acted = self.drain_trash_all(ws);
         if handled || acted {}
-        handled || acted
+        handled || acted || attachment_opened
     }
 
     fn mouse_up(&mut self, ws: &mut WorkspaceDoc) -> bool {
+        if self.file_preview.is_some() {
+            return true;
+        }
         if let Some(fab) = self.fab.as_mut() {
             let changed = fab.mouse_up();
             self.gather_support_intents();
@@ -10907,6 +10952,9 @@ impl View for MainView {
     }
 
     fn context_menu(&mut self, ws: &mut WorkspaceDoc, x: f32, y: f32) -> bool {
+        if self.file_preview.is_some() {
+            return true;
+        }
         if let Some(fab) = self.fab.as_mut() {
             return fab.context_menu();
         }
@@ -11126,6 +11174,9 @@ impl View for MainView {
     /// is what makes a hover menu usable at all.
     fn mouse_move(&mut self, x: f32, y: f32) -> bool {
         self.pointer = (x, y);
+        if self.file_preview.is_some() {
+            return true;
+        }
         if let Some(fab) = self.fab.as_mut() {
             let viewport = self.viewport;
             let changed = fab.mouse_move(x, y, viewport);
@@ -11223,6 +11274,9 @@ impl View for MainView {
     }
 
     fn mouse_double_click(&mut self, ws: &WorkspaceDoc, x: f32, y: f32) -> bool {
+        if self.file_preview.is_some() {
+            return true;
+        }
         match self.lifted_viewer() {
             Some(LiftedViewer::AiPane) => return self.ai_chat.mouse_double_click(x, y),
             Some(LiftedViewer::AiTab(pane)) => {
@@ -11340,6 +11394,10 @@ impl View for MainView {
     }
 
     fn scroll_by(&mut self, delta: MouseScrollDelta) {
+        if let Some(preview) = self.file_preview.as_mut() {
+            preview.scroll_by(delta, self.viewport);
+            return;
+        }
         if self.updates_modal || self.support_only || self.fab_only {
             return;
         }
@@ -11579,6 +11637,7 @@ impl View for MainView {
 
     fn set_mods(&mut self, mods: ModifiersState) {
         self.mods = mods;
+        self.ai_chat.set_mods(mods);
         match self.active_view() {
             TabView::Trash(t) => View::set_mods(t, mods),
             TabView::Tasks(t) => View::set_mods(t, mods),
@@ -11586,11 +11645,15 @@ impl View for MainView {
             TabView::Reminders(r) => View::set_mods(r, mods),
             TabView::Leaf(l) => View::set_mods(l, mods),
             TabView::Canvas(c) => View::set_mods(c, mods),
+            TabView::AiChat(a) => View::set_mods(a, mods),
             _ => {}
         }
     }
 
     fn cursor_icon(&self) -> CursorIcon {
+        if self.file_preview.is_some() {
+            return CursorIcon::Default;
+        }
         match self.lifted_viewer() {
             Some(LiftedViewer::AiPane) => return self.ai_chat.cursor_icon(),
             Some(LiftedViewer::AiTab(_)) => {
@@ -12204,6 +12267,9 @@ impl View for MainView {
         // to…* filter — so an indicator painted earlier would be hidden by the
         // thing it is about. It exists only while somebody is speaking.
         self.draw_dictation(scene, root);
+        if let Some(preview) = &self.file_preview {
+            preview.draw(scene, root, &mut self.engine, self.viewport, pointer);
+        }
     }
 
     fn document_root(&self) -> Option<NodeId> {
@@ -12230,6 +12296,48 @@ impl View for MainView {
                 } else {
                     false
                 }
+            }
+        }
+    }
+
+    fn ai_computer_path_chosen(&mut self, chosen: std::path::PathBuf) -> bool {
+        let Some((source, kind)) = self.ai_computer_ask.take() else {
+            return false;
+        };
+        match source {
+            AiChatFolderSource::Pane => self.ai_chat.computer_path_chosen(kind, chosen),
+            AiChatFolderSource::AiChatTab => {
+                if let TabView::AiChat(view) = self.tabs_mut().active_view() {
+                    view.computer_path_chosen(kind, chosen)
+                } else {
+                    false
+                }
+            }
+        }
+    }
+
+    fn ai_workspace_file_imported(
+        &mut self,
+        op: uuid::Uuid,
+        result: Result<koru_core::DocumentId, String>,
+    ) -> bool {
+        let Some((source, chat)) = self.ai_import_asks.remove(&op) else {
+            return false;
+        };
+        let result = result.map(|document| koru_ai_ui::DocumentId::from_uuid(document.as_uuid()));
+        match source {
+            AiChatFolderSource::Pane => self.ai_chat.workspace_file_imported(op, result),
+            AiChatFolderSource::AiChatTab => {
+                for (_, group) in self.panes.iter_groups_mut() {
+                    for tab in group.tabs_mut().iter_mut() {
+                        if let TabView::AiChat(view) = &mut tab.view
+                            && view.chat_id() == Some(chat)
+                        {
+                            return view.workspace_file_imported(op, result);
+                        }
+                    }
+                }
+                false
             }
         }
     }
@@ -14743,6 +14851,9 @@ impl View for MainView {
 
     fn maintenance_deadline(&self) -> Option<Instant> {
         [
+            self.file_preview
+                .as_ref()
+                .and_then(file_preview::FilePreview::maintenance_deadline),
             self.profile_wait_deadline(),
             self.support.as_ref().and_then(|s| s.maintenance_deadline()),
             self.tooltip.maintenance_deadline(),
@@ -15136,12 +15247,19 @@ impl View for MainView {
         let chats_changed = self.maintain_chats();
         let socials_changed = self.maintain_socials_navigation(now);
         let ai_document_opened = self.open_pending_ai_document();
+        let ai_attachment_opened = self.open_pending_ai_attachment();
+        let file_preview_changed = self
+            .file_preview
+            .as_mut()
+            .is_some_and(file_preview::FilePreview::maintain);
         let agent_settings_opened = self.open_agent_settings_from_chat();
         self.reveal_paths_from_chat();
         // A star pressed in a chat's model picker: stored, roaming, and
         // handed to every other chat.
         let favorites_saved = self.save_favorite_models_from_chat();
         self.ask_pending_ai_chat_folder();
+        self.ask_pending_ai_computer();
+        self.ask_pending_ai_import();
         // The level meter's tick. `false` the moment the session ends, because
         // there is no `Listening` left to ask.
         let meter_changed = self.tick_dictation(now);
@@ -15277,6 +15395,8 @@ impl View for MainView {
             || ai_changed
             || ai_credential_saved
             || ai_document_opened
+            || ai_attachment_opened
+            || file_preview_changed
             || link_device_changed
             || tooltip_changed
             || meter_changed
@@ -15337,6 +15457,9 @@ impl MainView {
         // `key` rather than the trait one because that is what both the shell
         // and a direct caller reach — an inherent method wins name resolution,
         // so putting it on the trait impl left the tests going round it.
+        if self.file_preview.is_some() {
+            return self.file_preview_key(key);
+        }
         self.flush_promoted_draft(ws);
         self.trace_input_state("key");
         // **The blocking prefix, in an order this function no longer owns.**
@@ -16544,31 +16667,82 @@ impl MainView {
         self.ai_panel.is_open()
     }
 
-    /// A document chip in the AI chat — in its composer, or in a message it
-    /// sent — was clicked, in the pane or in an AI chat tab: open the document
-    /// as a tab, the way following a document pill does, or focus the tab
-    /// already showing it.
+    /// A document chip in the AI chat opens a fresh tab, preserving the chat.
+    /// Alt+click asks the same place chooser used by document references.
     fn open_pending_ai_document(&mut self) -> bool {
+        let place = self.ai_chat.take_place_document_request().or_else(|| {
+            match self.tabs_mut().active_view() {
+                TabView::AiChat(view) => view.take_place_document_request(),
+                _ => None,
+            }
+        });
+        if let Some(link) = place {
+            return self.open_ai_document_link(link, true);
+        }
         let link = self.ai_chat.take_open_document_request().or_else(|| {
             match self.tabs_mut().active_view() {
                 TabView::AiChat(view) => view.take_open_document_request(),
                 _ => None,
             }
         });
-        let Some(koru_link::KoruLink::Document { document, node }) = link else {
+        let Some(link) = link else {
             return false;
         };
-        let document = koru_core::DocumentId::from_uuid(document);
-        let node = node.map(koru_core::NodeId::from_uuid);
-        if self.focus_showing_document(document) {
-            return true;
+        self.open_ai_document_link(link, false)
+    }
+
+    fn open_ai_document_link(&mut self, link: koru_link::KoruLink, choose_place: bool) -> bool {
+        let koru_link::KoruLink::Document { document, node } = link else {
+            return false;
+        };
+        let target = koru_editor::trigger::DocumentTarget {
+            document: koru_core::DocumentId::from_uuid(document),
+            node: node.map(koru_core::NodeId::from_uuid),
+        };
+        if choose_place {
+            self.open_place_chooser(
+                koru_editor::view_state::Reference::Document(target),
+                self.pointer,
+            )
+        } else {
+            self.open_document_target(target, OpenWhere::NewTab)
         }
-        self.pending_lands.push_back((document, OpenWhere::NewTab));
-        self.ask_pane(koru_workspace_host::PaneRequest::Navigate {
-            target: koru_workspace_host::NavigationTarget::Document { document, node },
-            match_text: None,
-            disposition: koru_workspace_host::SearchTargetDisposition::CurrentWindow,
+    }
+
+    /// A sent file opens over this window whether the click came from the AI
+    /// column or an AI chat tab. Preparation is a worker's; this records the
+    /// loading preview now so the click has an immediate visible answer.
+    fn open_pending_ai_attachment(&mut self) -> bool {
+        let request = self.ai_chat.take_attachment_open_request().or_else(|| {
+            match self.tabs_mut().active_view() {
+                TabView::AiChat(view) => view.take_attachment_open_request(),
+                _ => None,
+            }
         });
+        let Some(request) = request else {
+            return false;
+        };
+        self.file_preview = Some(file_preview::FilePreview::open(request));
+        true
+    }
+
+    fn file_preview_press(&mut self, x: f32, y: f32) -> bool {
+        let stays_open = self
+            .file_preview
+            .as_mut()
+            .is_some_and(|preview| preview.press(x, y, self.viewport));
+        if !stays_open {
+            self.file_preview = None;
+        }
+        true
+    }
+
+    fn file_preview_key(&mut self, key: &Key) -> bool {
+        if matches!(key, Key::Named(winit::keyboard::NamedKey::Escape)) {
+            self.file_preview = None;
+        } else if let Some(preview) = self.file_preview.as_mut() {
+            preview.key(key, self.viewport);
+        }
         true
     }
 
@@ -16625,6 +16799,59 @@ impl MainView {
             title: koru_i18n::t(crate::format::lang(), koru_i18n::Key::AiAgentChooseFolder)
                 .to_owned(),
             start: request.start,
+        });
+    }
+
+    /// Route This computer to the same native picker for either chat host.
+    fn ask_pending_ai_computer(&mut self) {
+        let (request, source) = if let Some(request) = self.ai_chat.take_computer_picker_request() {
+            (Some(request), AiChatFolderSource::Pane)
+        } else if let TabView::AiChat(view) = self.tabs_mut().active_view() {
+            (
+                view.take_computer_picker_request(),
+                AiChatFolderSource::AiChatTab,
+            )
+        } else {
+            (None, AiChatFolderSource::Pane)
+        };
+        let Some(kind) = request else {
+            return;
+        };
+        self.ai_computer_ask = Some((source, kind));
+        let key = match kind {
+            koru_ai_ui::ComputerPickerKind::File
+            | koru_ai_ui::ComputerPickerKind::WorkspaceFile => {
+                koru_i18n::Key::AiComputerFileChoiceTitle
+            }
+            koru_ai_ui::ComputerPickerKind::Folder => koru_i18n::Key::AiComposerComputerFolder,
+        };
+        self.ask_pane(koru_workspace_host::PaneRequest::ChooseAiComputer {
+            title: koru_i18n::t(crate::format::lang(), key).to_owned(),
+            folder: kind == koru_ai_ui::ComputerPickerKind::Folder,
+        });
+    }
+
+    fn ask_pending_ai_import(&mut self) {
+        let (request, source) = if let Some(request) = self.ai_chat.take_workspace_import_request()
+        {
+            (Some(request), AiChatFolderSource::Pane)
+        } else if let TabView::AiChat(view) = self.tabs_mut().active_view() {
+            (
+                view.take_workspace_import_request(),
+                AiChatFolderSource::AiChatTab,
+            )
+        } else {
+            (None, AiChatFolderSource::Pane)
+        };
+        let Some(request) = request else {
+            return;
+        };
+        self.ai_import_asks
+            .insert(request.op, (source, request.chat));
+        self.ask_pane(koru_workspace_host::PaneRequest::ImportAiWorkspaceFile {
+            op: request.op,
+            workspace: koru_core::WorkspaceId::from_uuid(request.workspace.as_uuid()),
+            path: request.path,
         });
     }
 
@@ -16896,38 +17123,37 @@ impl MainView {
         if let Some((target, where_)) = open {
             self.open_document_target(target, where_);
         }
-        // A move picker with nothing typed lists this window's recents, not
-        // the search service's idea of them — the service only remembers
-        // search-driven navigations, so its empty-query answer is not what a
-        // person means by "recent". Its request is dropped; the container's
-        // own list is the answer.
+        // Window recents lead an empty picker. When there are none, ask the
+        // shared search index for document titles in the selected scope.
         let recents_mode = self
             .active_editing_leaf()
             .is_some_and(|leaf| leaf.entity_wants_recents());
         let mut fed = false;
+        let mut have_recents = false;
         if recents_mode {
             let hits = self.recent_document_choices();
+            have_recents = !hits.is_empty();
             let leaf = match self.active_view() {
                 TabView::Leaf(leaf) => Some(leaf),
                 TabView::Tasks(t) => t.body_leaf_mut(),
                 _ => None,
             };
-            if let Some(leaf) = leaf {
+            if let Some(leaf) = leaf.filter(|_| have_recents) {
                 // Compare-first, or this per-gesture sync would report a
                 // change every time and pin the redraw loop.
                 fed = leaf.set_entity_recents(hits);
             }
         }
         let sent = request.is_some();
-        if let Some(request) = request {
-            if !(recents_mode && request.query.trim().is_empty()) {
-                let scope = request
-                    .workspaces
-                    .into_iter()
-                    .map(|id| koru_store_core::ids::WorkspaceId::from_uuid(id.as_uuid()))
-                    .collect();
-                self.entity_search.request(request.query, scope);
-            }
+        if let Some(request) =
+            request.and_then(|r| r.with_document_fallback(recents_mode && have_recents))
+        {
+            let scope = request
+                .workspaces
+                .into_iter()
+                .map(|id| koru_store_core::ids::WorkspaceId::from_uuid(id.as_uuid()))
+                .collect();
+            self.entity_search.request(request.query, scope);
         }
         if let Some(title) = new_page {
             return self.new_page_from_entity(title) || changed;
@@ -17166,7 +17392,7 @@ impl MainView {
                 |document| koru_editor::components::entity_picker::DocumentChoice {
                     target: koru_editor::trigger::DocumentTarget {
                         document: koru_core::DocumentId::from_uuid(document.document.as_uuid()),
-                        node: None,
+                        node: document.node.as_deref().and_then(koru_core::NodeId::parse),
                     },
                     title: document.title,
                     breadcrumb: document.breadcrumb,
@@ -17180,6 +17406,7 @@ impl MainView {
             .as_ref()
             .and_then(|(_, _, _, current)| *current);
         let choices = self.entity_workspaces.clone();
+        let have_recents = !self.recent_document_choices().is_empty();
         // The picker that asked is the active tab's editor — a document
         // tab's, or the note above a Tasks page. Answering only a document
         // tab left the note's picker on *Searching…* for ever.
@@ -17187,7 +17414,11 @@ impl MainView {
             Some(leaf) => {
                 let context =
                     current.is_some_and(|current| leaf.set_entity_context(current, choices));
-                leaf.set_entity_search_results(hits, update.unavailable) || context
+                if leaf.entity_wants_recents() && have_recents {
+                    context
+                } else {
+                    leaf.set_entity_search_results(hits, update.unavailable) || context
+                }
             }
             None => false,
         };
