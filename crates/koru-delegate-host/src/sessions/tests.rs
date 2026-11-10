@@ -146,3 +146,20 @@ fn production_worker_offer_allows_selected_model_to_reach_session_host() {
     ));
     assert_eq!(*observed.lock().unwrap(), Some(selection));
 }
+
+#[test]
+fn bot_creation_offers_interactive_controls_without_enabling_ordinary_questions() {
+    assert!(!offer().capabilities.supports(capability::MANAGED_QUESTIONS));
+    assert!(!offer().capabilities.supports("conditional-turn-steering"));
+    assert!(
+        bot_offer()
+            .capabilities
+            .supports(capability::MANAGED_QUESTIONS)
+    );
+    assert!(
+        bot_offer()
+            .capabilities
+            .supports("conditional-turn-steering")
+    );
+    assert!(bot_offer().capabilities.supports(capability::DELEGATION));
+}

@@ -51,9 +51,13 @@ impl Orchestrator {
                 });
             }
         }
+        self.validate_bot_start_origin(run, &origin)?;
         let authored = self.header(run)?.scope;
         match self.plan_scope(run, &authored) {
             Ok(scope) => self.start_resolved(run, scope, origin),
+            Err(_) if matches!(authored, WorkspaceScope::BotFolder { .. }) => {
+                Err(super::bots::refused("bot_folder_unavailable"))
+            }
             Err(_) => self.fail_scope_start(run),
         }
     }
@@ -75,6 +79,7 @@ impl Orchestrator {
                 });
             }
         }
+        self.validate_bot_start_origin(run, &origin)?;
         let header = self.header(run)?;
         if !self.claims.holders_of(&scope.identity).is_empty() {
             return Err(crate::PortError::new(
@@ -105,11 +110,15 @@ impl Orchestrator {
                 });
             }
         }
+        self.validate_bot_start_origin(run, &origin)?;
         let authored = self.header(run)?.scope;
         if self
             .verify_resolved_scope(run, &authored, &mut scope)
             .is_err()
         {
+            if matches!(authored, WorkspaceScope::BotFolder { .. }) {
+                return Err(super::bots::refused("bot_folder_unavailable"));
+            }
             return self.fail_scope_start(run);
         }
         self.begin_attempt(run, origin, RunEvent::Start, None, Some(scope))
@@ -141,14 +150,17 @@ impl Orchestrator {
             )
             .into());
         }
-        let actual =
-            koru_delegate_scope::ResolvedScope::of_directory(&scope.directory).map_err(|_| {
-                crate::PortError::new(
-                    crate::Port::Scope,
-                    "claimed_scope_resolve",
-                    "the claimed scope could not be resolved",
-                )
-            })?;
+        let actual = match authored {
+            WorkspaceScope::BotFolder { folder } => self.ports.roots.bot_folder(folder),
+            _ => koru_delegate_scope::ResolvedScope::of_directory(&scope.directory),
+        }
+        .map_err(|_| {
+            crate::PortError::new(
+                crate::Port::Scope,
+                "claimed_scope_resolve",
+                "the claimed scope could not be resolved",
+            )
+        })?;
         if actual.identity != scope.identity {
             return Err(crate::PortError::new(
                 crate::Port::Scope,
@@ -172,12 +184,36 @@ impl Orchestrator {
         resume: Option<ResumePlan>,
         resolved_scope: Option<ResolvedScope>,
     ) -> Result<Started, RunError> {
+        let header = self.header(run)?;
+        match (&header.bot, origin) {
+            (Some(bot), StartOrigin::Bot { bot: expected }) if bot.bot == expected => {
+                let record = self
+                    .bot_ledger()?
+                    .bot_admission(run)?
+                    .ok_or_else(|| super::bots::refused("bot_admission_required"))?;
+                if record.state != koru_delegate_core::BotAdmissionState::Reserved
+                    || record.submission.provenance != *bot
+                    || self.ports.store.current_attempt(run)?.is_some()
+                {
+                    return Err(super::bots::refused("bot_fenced"));
+                }
+            }
+            (None, StartOrigin::Bot { .. }) | (Some(_), _) => {
+                return Err(super::bots::refused("bot_admission_required"));
+            }
+            _ => {}
+        }
         if !self.ports.sessions.supports_delegation() {
             return Err(RunError::NotDelegatable);
         }
         let row = self.ports.store.open_attempt(run)?;
+        if header.bot.is_some() {
+            self.bot_ledger()?
+                .activate_bot(run, row.attempt, row.generation)?;
+        }
         let key = IdempotencyKey::mint();
-        let attempt = Attempt::new(row.attempt, row.generation);
+        let mut attempt = Attempt::new(row.attempt, row.generation);
+        attempt.is_bot = header.bot.is_some();
         let (attempt_id, generation) = (attempt.id, attempt.generation);
         self.open(run)?.attempt = Some(attempt);
         self.apply(run, &entry)?;
@@ -293,25 +329,32 @@ impl Orchestrator {
 
         // The preamble, with the run's line appended (P1.12), then the
         // objective: the first submission.
-        let preamble = self.ports.preamble.resolve();
-        if let Some(notice) = preamble.notice {
-            tracing::warn!(
-                target: "koru::delegate",
-                source = ?preamble.source,
-                notice = ?notice,
-                "the edited preamble could not be used; the bundled copy was"
-            );
-        }
-        let first_submission = match &resume {
-            Some(plan) => compose_resume_submission(
-                &preamble.text,
-                run,
-                &directory,
-                header.objective.as_str(),
-                plan,
-            ),
-            None => {
-                compose_first_submission(&preamble.text, run, &directory, header.objective.as_str())
+        let first_submission = if header.bot.is_some() {
+            String::new()
+        } else {
+            let preamble = self.ports.preamble.resolve();
+            if let Some(notice) = preamble.notice {
+                tracing::warn!(
+                    target: "koru::delegate",
+                    source = ?preamble.source,
+                    notice = ?notice,
+                    "the edited preamble could not be used; the bundled copy was"
+                );
+            }
+            match &resume {
+                Some(plan) => compose_resume_submission(
+                    &preamble.text,
+                    run,
+                    &directory,
+                    header.objective.as_str(),
+                    plan,
+                ),
+                None => compose_first_submission(
+                    &preamble.text,
+                    run,
+                    &directory,
+                    header.objective.as_str(),
+                ),
             }
         };
 
@@ -367,6 +410,7 @@ impl Orchestrator {
             None => None,
         };
         let created = match self.ports.sessions.create_delegated(SessionLaunch {
+            is_bot: header.bot.is_some(),
             key,
             profile: header.agent.clone(),
             project: header.scope.project(),
@@ -449,6 +493,22 @@ impl Orchestrator {
                 );
             }
         };
+        if header.bot.is_some() {
+            // AI supplies assembled conversation context transiently only after
+            // observation. Never auto-submit the persisted current-task intent.
+            self.open(run)?
+                .attempt
+                .as_mut()
+                .expect("opened above")
+                .holds_lease = true;
+            return Ok(Started {
+                run,
+                attempt: attempt_id,
+                generation,
+                status: self.status(run)?,
+                events: Some(events),
+            });
+        }
         let turn = match self
             .ports
             .sessions
@@ -568,6 +628,9 @@ impl Orchestrator {
         phase: AttemptPhase,
         terminate: bool,
     ) -> Result<(), RunError> {
+        if self.header(run)?.bot.is_some() {
+            return self.bot_end_attempt(run, phase, terminate);
+        }
         let state = self.open(run)?;
         let Some(attempt) = state.attempt.take() else {
             return Ok(());

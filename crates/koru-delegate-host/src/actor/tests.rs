@@ -472,3 +472,188 @@ fn resolved_restart_scopes_overlap_across_project_names() {
         &temporary
     ));
 }
+
+fn bot_submission() -> koru_delegate_core::BotSubmission {
+    use koru_delegate_core::*;
+    let c = create(RunId::mint());
+    let owner = BotOwner {
+        device: DeviceId::new(),
+        user_scope: serde_json::from_value(serde_json::json!(uuid::Uuid::new_v4())).unwrap(),
+    };
+    let request = DelegationRequest {
+        run: c.run,
+        requested_by: c.requested_by,
+        objective: c.objective,
+        agent: c.agent,
+        requested_model: c.requested_model,
+        scope: WorkspaceScope::BotFolder {
+            folder: BotWorkingFolder::new("C:/private/bot".into()).unwrap(),
+        },
+        context: vec![],
+        grants: BTreeSet::from([c.workspace]),
+        executing_device: owner.device,
+        origin: RunOrigin::Manual,
+    };
+    BotSubmission {
+        provenance: BotProvenance {
+            owner,
+            bot: BotId::mint(),
+            submission: BotRequestId::mint(),
+            chat_id: uuid::Uuid::new_v4(),
+            ai_attempt_id: None,
+            assistant_message_id: None,
+            config_revision: 1,
+            policy_revision: 1,
+            continued_from: None,
+        },
+        policy: CapturedBotPolicy {
+            workspace: c.workspace,
+            destination: c.workspace,
+            access: BotAccess::Default,
+            selected_pages: Default::default(),
+        },
+        workspace: c.workspace,
+        request,
+        input: PendingInput {
+            idempotency_key: IdempotencyKey::mint(),
+            text: "task".into(),
+            attachment_ids: vec![],
+            references: vec![],
+            mode: None,
+            fast: None,
+            reasoning: None,
+            skills: vec![],
+            model: None,
+        },
+    }
+}
+#[test]
+fn bot_admission_blocks_every_ordinary_run_route_before_document_or_session_access() {
+    let (mut actor, _, _) = actor();
+    let s = bot_submission();
+    let run = s.request.run;
+    actor
+        .orchestrator
+        .ports_mut()
+        .store
+        .bots()
+        .unwrap()
+        .admit_bot(&s)
+        .unwrap();
+    let (reply, answer) = mpsc::sync_channel(1);
+    let commands = vec![
+        Command::Run {
+            run,
+            window: TimelineQuery {
+                workspace: None,
+                from: 0,
+                len: 20,
+            },
+            reply: reply.clone(),
+        },
+        Command::Cancel {
+            run,
+            reply: reply.clone(),
+        },
+        Command::Resume {
+            run,
+            confirm: true,
+            reply: reply.clone(),
+        },
+        Command::Trash {
+            run,
+            artifacts: ArtifactDisposition::Keep,
+            reply: reply.clone(),
+        },
+        Command::Restore {
+            run,
+            reply: reply.clone(),
+        },
+        Command::Purge {
+            run,
+            reply: reply.clone(),
+        },
+        Command::Create {
+            request: create(run),
+            reply: reply.clone(),
+        },
+    ];
+    for command in commands {
+        actor.handle(command);
+        assert!(
+            matches!(answer.recv().unwrap(),Response::Failure(failure) if failure.code=="bot_private_route_required")
+        );
+    }
+    let (sink, events) = mpsc::sync_channel(1);
+    actor.handle(Command::Stream {
+        run,
+        workspace: Some(s.workspace),
+        after: None,
+        sink,
+    });
+    assert!(matches!(events.recv().unwrap(), RunStreamItem::Closed));
+    assert!(actor.watchers.is_empty());
+}
+#[test]
+fn bot_roster_is_removed_before_ordinary_list_metadata_and_counts() {
+    let (mut actor, _, _) = actor();
+    let s = bot_submission();
+    let mut header = RunHeader::from_request(s.request.clone(), 1);
+    header.bot = Some(s.provenance);
+    let listed = actor.listing(vec![koru_delegate_runtime::ListedRun {
+        header,
+        document: DocumentId::new(),
+        trashed_at_ms: None,
+    }]);
+    assert!(
+        listed.runs.is_empty()
+            && listed.trashed.is_empty()
+            && listed.documents.is_empty()
+            && listed.sessions.is_empty()
+    );
+}
+#[test]
+fn bot_queue_continuation_advances_past_paused_candidates_one_mailbox_turn_at_a_time() {
+    use koru_delegate_core::*;
+    let (mut actor, _, inbox) = actor();
+    let first = bot_submission();
+    actor.device = first.provenance.owner.device;
+    for n in 0..4 {
+        let mut s = first.clone();
+        s.request.run = RunId::mint();
+        s.provenance.submission = BotRequestId::mint();
+        s.provenance.bot = BotId::mint();
+        let ledger = actor.orchestrator.ports_mut().store.bots().unwrap();
+        ledger.admit_bot(&s).unwrap();
+        ledger
+            .apply_bot_barrier(&BotAdmissionBarrier {
+                owner: s.provenance.owner,
+                bot: s.provenance.bot,
+                request: BotRequestId::mint(),
+                epoch: 2,
+                paused: true,
+            })
+            .unwrap();
+        assert_eq!(n + 1, ledger.queued_bots(0, 10).unwrap().len());
+    }
+    actor.wake_bots();
+    for expected in 1..=4 {
+        actor.handle(inbox.recv().unwrap());
+        assert_eq!(actor.bot_queue_cursor, expected);
+        assert!(actor.bot_drain_pending);
+    }
+    actor.handle(inbox.recv().unwrap());
+    assert!(!actor.bot_drain_pending);
+    assert!(
+        inbox.try_recv().is_err(),
+        "a completed sweep must become idle"
+    );
+}
+#[test]
+fn bot_actor_rechecks_trusted_device_before_any_persistence_or_provider_use() {
+    let (mut actor, _, _) = actor();
+    let s = bot_submission();
+    actor.device = DeviceId::new();
+    let result = actor.bot_command(koru_delegate_api::bots::BotCommand::Submit { submission: s });
+    assert!(matches!(result,Err(failure) if failure.code=="bot_owner_mismatch"));
+}

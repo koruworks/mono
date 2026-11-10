@@ -7,6 +7,8 @@
 //! an interruption, `usage.rs` §17.2, `restart.rs` §7.6 — and `record.rs`
 //! is the one path every fact takes into the document and out to the bus.
 
+mod bot_controls;
+mod bots;
 mod control;
 mod create;
 mod deletion;

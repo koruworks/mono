@@ -46,6 +46,7 @@ impl Orchestrator {
                 if let Some(attempt) = self.open(run)?.attempt.as_mut() {
                     attempt.approval_evidence_complete = false;
                 }
+                self.bot_refresh_active_clock(run)?;
                 let Some((attempt, _)) = self.open(run)?.attempt_ids() else {
                     return Ok(HandleOutcome::Ended);
                 };
@@ -75,6 +76,19 @@ impl Orchestrator {
                 self.record_usage(run, turn_id, usage)?;
             }
             return Ok(HandleOutcome::Ended);
+        }
+        if self.attempt_mut(run)?.is_bot && matches!(status, RunStatus::Starting) {
+            // A lost native input reply can race event delivery. The immutable
+            // send key must reconcile before events can be attributed; AI can
+            // still observe the retained event stream independently.
+            if self
+                .bot_ledger()?
+                .bot_execution(run)?
+                .and_then(|r| r.initial_send)
+                .is_some_and(|send| send.turn.is_none())
+            {
+                return Ok(HandleOutcome::Continue);
+            }
         }
         if let AgentEvent::TurnCompleted { turn_id }
         | AgentEvent::TurnCancelled { turn_id, .. }
@@ -114,6 +128,7 @@ impl Orchestrator {
                     originator
                 };
                 self.apply(run, &RunEvent::TurnStarted { originator })?;
+                self.bot_refresh_active_clock(run)?;
                 self.step(
                     run,
                     StepKind::TurnStarted { originator },
@@ -190,6 +205,7 @@ impl Orchestrator {
                 )?;
                 // The request may have arrived before this permission boundary.
                 self.release_at_approval(run)?;
+                self.bot_refresh_active_clock(run)?;
             }
             AgentEvent::ApprovalResolved {
                 turn_id,
@@ -320,6 +336,29 @@ impl Orchestrator {
                 self.close_turn_approvals(run, turn_id)?;
                 self.flush_tools(run, turn_id)?;
                 let originator = self.attempt_mut(run)?.originator_of(turn_id);
+                if self.attempt_mut(run)?.is_bot {
+                    // Native completion is evidence for AI delivery, not a
+                    // fabricated artifact or permission to complete this Run.
+                    if self.attempt_mut(run)?.orchestrator_turn == Some(turn_id) {
+                        self.attempt_mut(run)?.bot_terminal_turn = Some(turn_id);
+                    }
+                    self.step(
+                        run,
+                        StepKind::TurnCompleted {
+                            originator,
+                            artifacts_registered: 0,
+                        },
+                        turn_refs(turn_id),
+                        Some(RunFact::TurnCompleted {
+                            run,
+                            attempt: attempt_id,
+                            turn: turn_id,
+                            originator,
+                            artifacts_registered: 0,
+                        }),
+                    )?;
+                    return self.turn_boundary(run, turn_id, status);
+                }
                 let registered =
                     self.ports
                         .registrations
@@ -455,7 +494,20 @@ impl Orchestrator {
             AgentEvent::Notice { .. } => {}
             // An agent's questions (koru-ai D108): a run's sessions are not
             // created to draw them, so its agent declines and none arrive.
-            AgentEvent::QuestionsRequired { .. } | AgentEvent::QuestionsResolved { .. } => {}
+            AgentEvent::QuestionsRequired {
+                turn_id,
+                request_id,
+                ..
+            } => {
+                if self.attempt_mut(run)?.is_bot {
+                    self.attempt_mut(run)?
+                        .pending_questions
+                        .insert(request_id, turn_id);
+                }
+            }
+            AgentEvent::QuestionsResolved { request_id, .. } => {
+                self.attempt_mut(run)?.pending_questions.remove(&request_id);
+            }
             // Command listings belong to the interactive chat catalog.
             AgentEvent::CommandsUpdated { .. } => {}
             // Current context occupancy is a chat presentation signal.
@@ -492,6 +544,7 @@ impl Orchestrator {
         {
             self.apply(run, &RunEvent::ApprovalResolved)?;
         }
+        self.bot_refresh_active_clock(run)?;
         self.step(
             run,
             StepKind::ApprovalResolved { outcome },
@@ -571,6 +624,7 @@ impl Orchestrator {
         {
             self.apply(run, &RunEvent::ApprovalResolved)?;
         }
+        self.bot_refresh_active_clock(run)?;
         Ok(())
     }
 
@@ -587,6 +641,9 @@ impl Orchestrator {
             let attempt = self.attempt_mut(run)?;
             attempt.turns.remove(&turn);
             attempt
+                .pending_questions
+                .retain(|_, pending| *pending != turn);
+            attempt
                 .pending_approvals
                 .retain(|_, pending| *pending != turn);
             let ours = attempt.orchestrator_turn == Some(turn);
@@ -595,6 +652,7 @@ impl Orchestrator {
             }
             ours
         };
+        self.bot_refresh_active_clock(run)?;
         if status.is_terminal() {
             return self.terminal(run, &status);
         }
@@ -688,7 +746,23 @@ impl Orchestrator {
         run: RunId,
         event: SessionEvent,
     ) -> Result<HandleOutcome, RunError> {
-        if self.status(run)?.is_terminal() || self.open(run)?.attempt.is_none() {
+        if self.open(run)?.attempt.is_none() {
+            return Ok(HandleOutcome::Ended);
+        }
+        if self.attempt_mut(run)?.is_bot
+            && matches!(
+                event,
+                SessionEvent::Exited { .. } | SessionEvent::Failed { .. }
+            )
+        {
+            // Native process death is positive proof, unlike stream loss.
+            if self.status(run)?.is_terminal() {
+                self.bot_end_attempt(run, AttemptPhase::Ended, false)?;
+                return Ok(HandleOutcome::Ended);
+            }
+            return self.session_lost_as(run, AttemptPhase::Ended);
+        }
+        if self.status(run)?.is_terminal() {
             return Ok(HandleOutcome::Ended);
         }
         match event {
@@ -703,6 +777,16 @@ impl Orchestrator {
     /// records the takeover only when the person holds the lease, and the
     /// return only when it reacquired the controller.
     fn handover(&mut self, run: RunId, handover: HandoverState) -> Result<HandleOutcome, RunError> {
+        if self.attempt_mut(run)?.is_bot
+            && matches!(
+                handover,
+                HandoverState::Requested | HandoverState::Taken | HandoverState::Returned
+            )
+        {
+            // The existing session is ready even if AI has not delivered its
+            // first input. Existing control transitions can now fence it.
+            self.bot_mark_started(run)?;
+        }
         let (attempt_id, session, active_turn) = {
             let attempt = self.attempt_mut(run)?;
             (attempt.id, attempt.session, attempt.orchestrator_turn)
@@ -783,7 +867,9 @@ impl Orchestrator {
                 if status.is_terminal() {
                     return self.terminal(run, &status);
                 }
-                if active_turn.is_some() || self.attempt_mut(run)?.recovered_unowned_turn.is_some()
+                if self.attempt_mut(run)?.is_bot
+                    || active_turn.is_some()
+                    || self.attempt_mut(run)?.recovered_unowned_turn.is_some()
                 {
                     // A person answered or inspected a paused approval. The
                     // original turn continues; submitting again would duplicate it.
@@ -847,7 +933,15 @@ impl Orchestrator {
         if self.open(run)?.attempt.is_none() {
             return Ok(HandleOutcome::Ended);
         }
-        let prior_attempt = PriorAttempt::Ended;
+        let prior_attempt = if self.attempt_mut(run)?.is_bot && phase != AttemptPhase::Ended {
+            let attempt = self.attempt_mut(run)?;
+            attempt.bot_terminal_turn = None;
+            attempt.approval_evidence_complete = false;
+            self.bot_refresh_active_clock(run)?;
+            PriorAttempt::Unknown
+        } else {
+            PriorAttempt::Ended
+        };
         self.apply(run, &RunEvent::Interrupt { prior_attempt })?;
         self.step(
             run,

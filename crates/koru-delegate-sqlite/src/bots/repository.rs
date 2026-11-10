@@ -28,6 +28,35 @@ fn generation(value: i64) -> Result<AttemptGeneration, LedgerError> {
         .and_then(AttemptGeneration::from_raw)
         .ok_or_else(|| corrupt("generation"))
 }
+fn decode_state(row: &Row<'_>) -> Result<BotAdmissionState, LedgerError> {
+    Ok(match cell::<String>(row, "state")?.as_str() {
+        "queued" => BotAdmissionState::Queued,
+        "reserved" => BotAdmissionState::Reserved,
+        "executing" => BotAdmissionState::Executing,
+        "settled" => BotAdmissionState::Settled,
+        "refused" => BotAdmissionState::Refused,
+        _ => return Err(corrupt("state")),
+    })
+}
+fn decode_initial_send(row: &Row<'_>) -> Result<Option<BotInitialSend>, LedgerError> {
+    Ok(match cell::<Option<String>>(row, "initial_send_key")? {
+        None => None,
+        Some(key) => Some(BotInitialSend {
+            key: id(&key, "initial_send_key")?,
+            attempt: id(
+                &cell::<String>(row, "initial_send_attempt_id")?,
+                "initial_send_attempt_id",
+            )?,
+            generation: generation(cell(row, "initial_send_generation")?)?,
+            fingerprint: cell::<Vec<u8>>(row, "initial_send_fingerprint")?
+                .try_into()
+                .map_err(|_| corrupt("initial_send_fingerprint"))?,
+            turn: cell::<Option<String>>(row, "initial_send_turn_id")?
+                .map(|v| id(&v, "initial_send_turn_id"))
+                .transpose()?,
+        }),
+    })
+}
 fn decode(row: &Row<'_>) -> Result<BotAdmissionRecord, LedgerError> {
     let payload: String = cell(row, "payload_json")?;
     let submission: BotSubmission =
@@ -45,31 +74,8 @@ fn decode(row: &Row<'_>) -> Result<BotAdmissionRecord, LedgerError> {
     {
         return Err(corrupt("payload_json"));
     }
-    let state = match cell::<String>(row, "state")?.as_str() {
-        "queued" => BotAdmissionState::Queued,
-        "reserved" => BotAdmissionState::Reserved,
-        "executing" => BotAdmissionState::Executing,
-        "settled" => BotAdmissionState::Settled,
-        "refused" => BotAdmissionState::Refused,
-        _ => return Err(corrupt("state")),
-    };
-    let initial_send = match cell::<Option<String>>(row, "initial_send_key")? {
-        None => None,
-        Some(key) => Some(BotInitialSend {
-            key: id(&key, "initial_send_key")?,
-            attempt: id(
-                &cell::<String>(row, "initial_send_attempt_id")?,
-                "initial_send_attempt_id",
-            )?,
-            generation: generation(cell(row, "initial_send_generation")?)?,
-            fingerprint: cell::<Vec<u8>>(row, "initial_send_fingerprint")?
-                .try_into()
-                .map_err(|_| corrupt("initial_send_fingerprint"))?,
-            turn: cell::<Option<String>>(row, "initial_send_turn_id")?
-                .map(|v| id(&v, "initial_send_turn_id"))
-                .transpose()?,
-        }),
-    };
+    let state = decode_state(row)?;
+    let initial_send = decode_initial_send(row)?;
     let delivery = match cell::<String>(row, "delivery_outcome")?.as_str() {
         "unconfirmed" => None,
         "confirmed" => {
@@ -121,6 +127,35 @@ fn decode(row: &Row<'_>) -> Result<BotAdmissionRecord, LedgerError> {
         created_at_ms: cell(row, "created_at_ms")?,
         updated_at_ms: cell(row, "updated_at_ms")?,
     })
+}
+
+const EXECUTION_COLUMNS: &str = "run_id,user_scope,device_id,bot_id,request_id,config_revision,policy_revision,queue_sequence,state,active_elapsed_ms,active_since_ms,initial_send_key,initial_send_fingerprint,initial_send_attempt_id,initial_send_generation,initial_send_turn_id";
+fn decode_execution(row: &Row<'_>) -> Result<BotExecutionRecord, LedgerError> {
+    let record = BotExecutionRecord {
+        run: id(&cell::<String>(row, "run_id")?, "run_id")?,
+        owner: BotOwner {
+            user_scope: serde_json::from_value(serde_json::Value::String(cell(row, "user_scope")?))
+                .map_err(|_| corrupt("user_scope"))?,
+            device: DeviceId::from_uuid(id(&cell::<String>(row, "device_id")?, "device_id")?),
+        },
+        bot: id(&cell::<String>(row, "bot_id")?, "bot_id")?,
+        request: id(&cell::<String>(row, "request_id")?, "request_id")?,
+        config_revision: cell(row, "config_revision")?,
+        policy_revision: cell(row, "policy_revision")?,
+        sequence: cell(row, "queue_sequence")?,
+        state: decode_state(row)?,
+        active_elapsed_ms: cell(row, "active_elapsed_ms")?,
+        active_since_ms: cell(row, "active_since_ms")?,
+        initial_send: decode_initial_send(row)?,
+    };
+    if record.sequence == 0
+        || record.config_revision == 0
+        || record.policy_revision == 0
+        || (record.active_since_ms.is_some() && record.state != BotAdmissionState::Executing)
+    {
+        return Err(corrupt("state"));
+    }
+    Ok(record)
 }
 fn read(conn: &Connection, run: RunId) -> Result<Option<BotAdmissionRecord>, BotLedgerError> {
     Ok(conn
@@ -187,6 +222,24 @@ fn charge(record: &BotAdmissionRecord, now: i64) -> i64 {
 }
 
 impl BotLedger for RunsDb {
+    fn active_bot_executions(
+        &self,
+        device: koru_delegate_core::DeviceId,
+    ) -> Result<Vec<BotExecutionRecord>, BotLedgerError> {
+        let query = format!(
+            "SELECT {EXECUTION_COLUMNS} FROM bot_admissions WHERE device_id=?1 AND state IN ('reserved','executing') ORDER BY queue_sequence LIMIT 3"
+        );
+        let mut statement = self.conn().prepare(&query).map_err(sql)?;
+        let records = statement
+            .query_map([device.to_storage()], |row| Ok(decode_execution(row)))
+            .map_err(sql)?
+            .map(|row| row.map_err(sql)?.map_err(BotLedgerError::from))
+            .collect::<Result<Vec<_>, _>>()?;
+        if records.len() > BOT_HOST_EXECUTION_LIMIT {
+            return Err(corrupt("host_capacity").into());
+        }
+        Ok(records)
+    }
     fn admit_bot(
         &mut self,
         submission: &BotSubmission,
@@ -223,6 +276,26 @@ impl BotLedger for RunsDb {
             required(tx,submission.request.run)
         })
     }
+    fn bot_execution(&self, run: RunId) -> Result<Option<BotExecutionRecord>, BotLedgerError> {
+        Ok(self
+            .conn()
+            .query_row(
+                &format!("SELECT {EXECUTION_COLUMNS} FROM bot_admissions WHERE run_id=?1"),
+                [run.to_storage()],
+                |row| Ok(decode_execution(row)),
+            )
+            .optional()
+            .map_err(sql)?
+            .transpose()?)
+    }
+    fn reconcile_bot_execution(
+        &self,
+        key: &BotSubmissionKey,
+    ) -> Result<Option<BotExecutionRecord>, BotLedgerError> {
+        Ok(self.conn().query_row(&format!("SELECT {EXECUTION_COLUMNS} FROM bot_admissions WHERE user_scope=?1 AND device_id=?2 AND bot_id=?3 AND request_id=?4"),
+            params![key.owner.user_scope.to_storage(),key.owner.device.to_storage(),key.bot.to_storage(),key.request.to_storage()],
+            |row| Ok(decode_execution(row))).optional().map_err(sql)?.transpose()?)
+    }
     fn bot_admission(&self, run: RunId) -> Result<Option<BotAdmissionRecord>, BotLedgerError> {
         read(self.conn(), run)
     }
@@ -240,7 +313,7 @@ impl BotLedger for RunsDb {
         let Ok(after) = i64::try_from(after) else {
             return Ok(vec![]);
         };
-        let mut stmt=self.conn().prepare("SELECT run_id,user_scope,device_id,bot_id,queue_sequence,config_revision,policy_revision FROM bot_admissions WHERE state='queued' AND queue_sequence>?1 ORDER BY queue_sequence LIMIT ?2").map_err(sql)?;
+        let mut stmt=self.conn().prepare("SELECT run_id,user_scope,device_id,bot_id,queue_sequence,config_revision,policy_revision FROM bot_admissions WHERE state IN ('queued','reserved') AND queue_sequence>?1 ORDER BY queue_sequence LIMIT ?2").map_err(sql)?;
         let rows = stmt
             .query_map(params![after, limit.clamp(1, 1000)], |r| {
                 Ok((

@@ -804,6 +804,9 @@ pub trait ScheduleClock: Send {
 
 /// What a delegated creation asks the host for.
 pub struct SessionLaunch {
+    /// Derived by the execution owner from validated immutable Run provenance.
+    /// This internal hint selects negotiated composer capabilities, not authority.
+    pub is_bot: bool,
     pub key: IdempotencyKey,
     pub profile: SessionProfileKey,
     pub project: Option<ProjectId>,
@@ -863,6 +866,90 @@ pub trait Sessions {
     /// Give the lease up for a handover (§7.4).
     fn release_control(&mut self, session: SessionId) -> PortResult<()>;
     fn submit(&mut self, session: SessionId, text: String) -> PortResult<AgentTurnId>;
+    /// Exact typed Bot input. The controller remains inside this port.
+    fn bot_submit(
+        &mut self,
+        _session: SessionId,
+        _input: koru_delegate_core::PendingInput,
+    ) -> PortResult<AgentTurnId> {
+        Err(PortError::new(
+            Port::Sessions,
+            "bot_control_unsupported",
+            "Typed Bot input is unsupported.",
+        ))
+    }
+    /// Protocol25 conditional steering; never starts a new turn.
+    fn bot_steer(
+        &mut self,
+        _session: SessionId,
+        _turn: AgentTurnId,
+        _input: koru_delegate_core::PendingInput,
+    ) -> PortResult<AgentTurnId> {
+        Err(PortError::new(
+            Port::Sessions,
+            "bot_control_unsupported",
+            "Conditional steering is unsupported.",
+        ))
+    }
+    fn bot_answer_approval(
+        &mut self,
+        _session: SessionId,
+        _approval: koru_delegate_core::ApprovalId,
+        _decision: koru_delegate_core::ApprovalDecision,
+        _choice: Option<koru_delegate_core::ApprovalChoiceId>,
+    ) -> PortResult<()> {
+        Err(PortError::new(
+            Port::Sessions,
+            "bot_control_unsupported",
+            "Native approval answers are unsupported.",
+        ))
+    }
+    fn bot_answer_questions(
+        &mut self,
+        _session: SessionId,
+        _request: koru_delegate_core::QuestionRequestId,
+        _answers: Vec<koru_delegate_core::QuestionAnswer>,
+    ) -> PortResult<()> {
+        Err(PortError::new(
+            Port::Sessions,
+            "bot_control_unsupported",
+            "Native question answers are unsupported.",
+        ))
+    }
+    fn bot_ingest_attachment(
+        &mut self,
+        _session: SessionId,
+        _id: koru_delegate_core::AttachmentId,
+        _source: koru_delegate_core::AttachmentSource,
+        _data: String,
+    ) -> PortResult<koru_delegate_core::Attachment> {
+        Err(PortError::new(
+            Port::Sessions,
+            "bot_control_unsupported",
+            "Session attachment staging is unsupported.",
+        ))
+    }
+    fn bot_remove_attachment(
+        &mut self,
+        _session: SessionId,
+        _id: koru_delegate_core::AttachmentId,
+    ) -> PortResult<koru_delegate_core::Attachment> {
+        Err(PortError::new(
+            Port::Sessions,
+            "bot_control_unsupported",
+            "Session attachment removal is unsupported.",
+        ))
+    }
+    fn bot_attachments(
+        &mut self,
+        _session: SessionId,
+    ) -> PortResult<Vec<koru_delegate_core::Attachment>> {
+        Err(PortError::new(
+            Port::Sessions,
+            "bot_control_unsupported",
+            "Session attachment listing is unsupported.",
+        ))
+    }
     fn cancel_turn(
         &mut self,
         session: SessionId,

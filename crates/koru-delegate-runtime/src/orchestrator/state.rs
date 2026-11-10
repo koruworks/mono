@@ -87,6 +87,12 @@ pub struct Attempt {
     pub release_owed: bool,
     /// Whether this orchestrator holds the controller.
     pub holds_lease: bool,
+    /// The AI observer has read this exact prepared execution before BeginTurn.
+    pub bot_observed: bool,
+    pub is_bot: bool,
+    /// Provider completion is not durable chat delivery. P1.5 acknowledges it.
+    pub bot_terminal_turn: Option<AgentTurnId>,
+    pub pending_questions: HashMap<koru_delegate_core::QuestionRequestId, AgentTurnId>,
     /// The admitted working directory.
     pub run_workspace: PathBuf,
     pub captured: CapturedContext,
@@ -105,6 +111,10 @@ impl Attempt {
             approval_evidence_complete: true,
             release_owed: false,
             holds_lease: false,
+            bot_observed: false,
+            is_bot: false,
+            bot_terminal_turn: None,
+            pending_questions: HashMap::new(),
             run_workspace: PathBuf::new(),
             captured: CapturedContext::default(),
         }

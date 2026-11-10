@@ -33,6 +33,15 @@ use crate::platform;
 /// orchestrator's thread; nothing here runs on a thread that answers a
 /// person.
 pub trait ScopeRoots {
+    /// Trusted host seam. Production always checks the existing canonical
+    /// directory; tests may inject a pure identity without touching disk.
+    fn bot_folder(
+        &self,
+        folder: &koru_delegate_core::BotWorkingFolder,
+    ) -> Result<ResolvedScope, ScopeRefusal> {
+        ResolvedScope::of_directory(Path::new(folder.as_str()))
+    }
+
     /// The absolute directory a session project launches in.
     fn project_root(&self, project: ProjectId) -> RootLookup;
 
@@ -233,7 +242,7 @@ impl ResolvedScope {
         match scope {
             WorkspaceScope::None => Err(ScopeRefusal::NotAdmissible),
             // A lost mount must never become an empty replacement working folder.
-            WorkspaceScope::BotFolder { folder } => resolved(Path::new(folder.as_str())),
+            WorkspaceScope::BotFolder { folder } => roots.bot_folder(folder),
             WorkspaceScope::ProjectRoot { project } => resolved(&project_root(roots, *project)?),
             WorkspaceScope::ProjectFolder { project, folder } => {
                 let root = resolved(&project_root(roots, *project)?)?;
@@ -260,6 +269,12 @@ impl ResolvedScope {
 }
 
 impl ScopeIdentity {
+    /// Pure test fixture only. Never a caller-provided production identity.
+    #[cfg(feature = "fixtures")]
+    pub fn fixture_canonical(path: &Path) -> Self {
+        Self::from_resolved(path)
+    }
+
     /// The identity of the directory at `path`, or why there is none. The
     /// one place this crate touches the disk.
     pub fn of_directory(path: &Path) -> Result<Self, ScopeRefusal> {
