@@ -953,3 +953,205 @@ fn refusals_map_to_stable_error_codes() {
     }
     assert_eq!(K_LOCAL_USER_SCOPE, "local_user_scope");
 }
+
+// ---- Q10 case 3: a placement write concurrent with a recorded operation
+
+/// The operation a unit's last commit wrote, as the repair record stores it:
+/// `(writer, version[writer] - 1)`, because a version-vector counter is an
+/// exclusive end.
+fn last_operation(unit: &WorkspaceCatalogUnit, writer: u64) -> loro::ID {
+    loro::ID::new(writer, unit.version().get_last(writer).unwrap())
+}
+
+/// Q10's actual shape: the repairing device holds no unit, so its repair
+/// starts a lineage of its own while the absent device has one of its own —
+/// two disjoint histories, concurrent by definition. `(repairing unit, the
+/// absent device's snapshot, its placement)`.
+fn disjoint_lineages(
+    repair_writer: u64,
+    absent_writer: u64,
+) -> (
+    WorkspaceCatalogUnit,
+    WorkspaceId,
+    loro::ID,
+    Vec<u8>,
+    Placement,
+) {
+    let workspace = WorkspaceId::new();
+    let repaired = WorkspaceCatalogUnit::create(workspace, repair_writer).unwrap();
+    repaired
+        .set_placement(Some(ProfileId::new()), Uuid::new_v4())
+        .unwrap();
+    let operation = last_operation(&repaired, repair_writer);
+    let absent = WorkspaceCatalogUnit::create(workspace, absent_writer).unwrap();
+    let rival = Placement {
+        profile: Some(ProfileId::new()),
+        move_id: Uuid::new_v4(),
+    };
+    absent.set_placement(rival.profile, rival.move_id).unwrap();
+    (
+        repaired,
+        workspace,
+        operation,
+        absent.snapshot().unwrap(),
+        rival,
+    )
+}
+
+#[test]
+fn a_concurrent_placement_write_is_detected_even_when_the_merged_value_does_not_move() {
+    // The repairing device writes under the greater peer id, so on equal
+    // Lamport its own hint wins the merge: the dangerous case, where gating
+    // on "the placement changed" would stay silent.
+    let (mut repaired, _, operation, absent, rival) = disjoint_lineages(9, 2);
+    let hint = repaired.placement().unwrap();
+    let before = repaired.version();
+
+    assert!(!repaired.import_frames(&[absent]).unwrap().is_pending());
+
+    assert_eq!(
+        repaired.placement(),
+        Some(hint),
+        "the merged placement did not move; the rival lost"
+    );
+    let PlacementConcurrency::Concurrent(rivals) =
+        repaired.placement_writes_concurrent_with(&before, operation, &[])
+    else {
+        panic!("a disjoint lineage's placement write is concurrent with the repair");
+    };
+    assert_eq!(rivals.len(), 1);
+    assert_eq!(
+        rivals[0].asserted,
+        Some(rival),
+        "the losing value is read at the rival's own version, not from the merge"
+    );
+    assert_ne!(rivals[0].asserted.unwrap().profile, hint.profile);
+}
+
+#[test]
+fn the_losing_value_is_read_whichever_side_won_the_merge() {
+    // The same import with the peers swapped: now the rival wins the merge
+    // and the detection is unchanged, because it never consults the winner.
+    let (mut repaired, _, operation, absent, rival) = disjoint_lineages(2, 9);
+    let before = repaired.version();
+
+    assert!(!repaired.import_frames(&[absent]).unwrap().is_pending());
+
+    assert_eq!(repaired.placement(), Some(rival), "the rival won here");
+    let PlacementConcurrency::Concurrent(rivals) =
+        repaired.placement_writes_concurrent_with(&before, operation, &[])
+    else {
+        panic!("the relation does not depend on who won");
+    };
+    assert_eq!(rivals[0].asserted, Some(rival));
+}
+
+#[test]
+fn a_placement_write_that_already_saw_the_recorded_operation_is_not_concurrent() {
+    let (mut repaired, workspace, operation, _, _) = disjoint_lineages(9, 2);
+    // The other device imports the repaired unit whole, then moves: a causal
+    // successor, which is clear and stays automatic (rule D).
+    let seen =
+        WorkspaceCatalogUnit::from_snapshot(&repaired.snapshot().unwrap(), workspace, 2).unwrap();
+    let from = seen.version();
+    seen.set_placement(Some(ProfileId::new()), Uuid::new_v4())
+        .unwrap();
+    let before = repaired.version();
+
+    assert!(
+        !repaired
+            .import_frames(&[seen.updates_since(&from).unwrap()])
+            .unwrap()
+            .is_pending()
+    );
+
+    assert_eq!(
+        repaired.placement_writes_concurrent_with(&before, operation, &[]),
+        PlacementConcurrency::Ordered { settled: true },
+        "it saw the repair, and with no rival on file it has seen everything there is"
+    );
+}
+
+#[test]
+fn an_identity_this_history_never_had_is_unknown_and_never_a_conflict() {
+    let (mut repaired, _, _, absent, _) = disjoint_lineages(9, 2);
+    let before = repaired.version();
+    assert!(!repaired.import_frames(&[absent]).unwrap().is_pending());
+
+    // A device's writer id is re-minted without being persisted when its
+    // stored row cannot be parsed, so a recorded identity can be orphaned.
+    for orphan in [loro::ID::new(4_242, 0), loro::ID::new(9, 9_999)] {
+        assert_eq!(
+            repaired.placement_writes_concurrent_with(&before, orphan, &[]),
+            PlacementConcurrency::Unknown,
+            "an orphaned identity is a do-not-know, never a conflict"
+        );
+    }
+}
+
+#[test]
+fn a_concurrent_write_that_does_not_touch_the_placement_is_not_a_placement_conflict() {
+    // One base, so the two lineages share a history; the second placement
+    // write stands in for the repair and the other device never sees it.
+    let (mut a, workspace, _, _) = placed(9);
+    let b = WorkspaceCatalogUnit::from_snapshot(&a.snapshot().unwrap(), workspace, 2).unwrap();
+    let from = b.version();
+    a.set_placement(Some(ProfileId::new()), Uuid::new_v4())
+        .unwrap();
+    let operation = last_operation(&a, 9);
+    // Concurrent with that write, and a lifecycle fact rather than a move.
+    b.record_deletion(DeletionId::new(), &DeletionRecord::new(10, None))
+        .unwrap();
+    let before = a.version();
+
+    assert!(
+        !a.import_frames(&[b.updates_since(&from).unwrap()])
+            .unwrap()
+            .is_pending()
+    );
+
+    assert!(a.is_deleted(), "the concurrent fact did arrive");
+    assert_eq!(
+        a.placement_writes_concurrent_with(&before, operation, &[]),
+        PlacementConcurrency::Ordered { settled: false },
+        "the gate is a concurrent write to the placement, not any concurrent write"
+    );
+}
+
+#[test]
+fn a_write_that_saw_both_sides_settles_what_the_two_disjoint_lineages_left_open() {
+    let (mut repaired, workspace, operation, absent, _) = disjoint_lineages(9, 2);
+    let before = repaired.version();
+    assert!(!repaired.import_frames(&[absent]).unwrap().is_pending());
+    let PlacementConcurrency::Concurrent(rivals) =
+        repaired.placement_writes_concurrent_with(&before, operation, &[])
+    else {
+        panic!("the rival is concurrent");
+    };
+    let recorded: Vec<loro::ID> = rivals.iter().map(|rival| rival.operation).collect();
+
+    // A third device holding the merged unit moves the Workspace: it saw the
+    // repair and the rival, so its write is an answer rather than a question.
+    let both =
+        WorkspaceCatalogUnit::from_snapshot(&repaired.snapshot().unwrap(), workspace, 11).unwrap();
+    let from = both.version();
+    both.set_placement(Some(ProfileId::new()), Uuid::new_v4())
+        .unwrap();
+    let before = repaired.version();
+    assert!(
+        !repaired
+            .import_frames(&[both.updates_since(&from).unwrap()])
+            .unwrap()
+            .is_pending()
+    );
+
+    assert_eq!(
+        repaired.placement_writes_concurrent_with(&before, operation, &recorded),
+        PlacementConcurrency::Ordered { settled: true }
+    );
+    assert_eq!(
+        repaired.placement_writes_concurrent_with(&before, operation, &[loro::ID::new(2, 9_999)]),
+        PlacementConcurrency::Ordered { settled: false },
+        "a rival it cannot be shown to have seen leaves the question open"
+    );
+}

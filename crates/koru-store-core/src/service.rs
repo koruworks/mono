@@ -75,11 +75,15 @@ mod pins;
 mod preparation;
 mod removal;
 mod replacement;
+mod root_conflict;
 mod root_lifecycle;
 mod root_move;
 mod root_repair;
 pub use pins::PinnedWorkspace;
 pub use replacement::{ListingState, MovedWorkspace, RemovedWorkspace, Replacement};
+pub use root_conflict::{
+    BootstrapPlacementConflict, K_BOOTSTRAP_CONFLICT_PREFIX, RivalPlacement, bootstrap_conflict_key,
+};
 pub use root_lifecycle::{
     BatchPhase, DeletedProfile, K_PURGED_SUBJECT_EXPORT_PREFIX, K_ROOT_CATALOG_BATCH_PREFIX,
     ProfileDeletionBatch, ProfileDeletionJob, ProfileDeletionPreview, ProfileRestoreOutcome,

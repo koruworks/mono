@@ -56,6 +56,7 @@ use crate::errors::{Code, Error};
 use crate::ids::{ProfileId, RestoreId, WorkspaceId};
 use crate::unit_doc::UnitFailure;
 
+mod concurrency;
 pub mod export;
 mod lifecycle;
 pub mod seed;
@@ -63,6 +64,7 @@ mod unit;
 mod validation;
 
 pub use crate::unit_doc::Staged;
+pub use concurrency::{PlacementConcurrency, RivalPlacementWrite};
 pub use export::{
     Derived, DerivedKey, ExportRefusal, ExportScope, ExportSubject, HoldReason, PayloadKind,
     PolicyCapture, Publication, derive,

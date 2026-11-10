@@ -51,9 +51,11 @@
 //!   a unit with no record would make the repair invisible to it.
 //!
 //! What this module deliberately does **not** do: detect a later concurrent
-//! placement (case 3 of the decision), and show the person anything (case 4).
-//! Both build on [`BootstrapRepair`], which is why it is an interface rather
-//! than a log line.
+//! placement (case 3 of the decision, which is
+//! [`root_conflict`](super::root_conflict) and reads [`BootstrapRepair`] at
+//! the inbound choke point), and show the person anything (case 4). Both
+//! build on [`BootstrapRepair`], which is why it is an interface rather than
+//! a log line.
 
 use super::root_move::plan_placement_write;
 use super::*;

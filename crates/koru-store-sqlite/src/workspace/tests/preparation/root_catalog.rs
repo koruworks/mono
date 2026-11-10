@@ -1213,3 +1213,299 @@ fn a_trashed_unit_less_workspace_is_left_to_the_lifecycle_writers() {
     );
     assert!(f.store.bootstrap_repair(row.id).unwrap().is_none());
 }
+
+// ------------- Q10 case 3: the Workspace that was filed in two places
+
+use koru_store_core::service::{
+    BootstrapRepair, RootJoinOutcome, bootstrap_conflict_key, bootstrap_repair_key,
+};
+use uuid::Uuid;
+
+/// **The absent device of Q10**: it held a real unit all along, in a lineage
+/// of its own, placed under `profile`. It was offline across the whole v1
+/// window and the recovering device's inventory read, so its placement is
+/// concurrent with the repair by construction — two disjoint histories.
+fn absent_device(f: &Root, workspace: WorkspaceId, profile: ProfileId) -> (Vec<u8>, Uuid) {
+    assert!(
+        f.unit(workspace).is_some(),
+        "the repair has already published this device's unit"
+    );
+    let unit = WorkspaceCatalogUnit::create(workspace, 9_001).unwrap();
+    let move_id = DocumentId::new().as_uuid();
+    unit.set_placement(Some(profile), move_id).unwrap();
+    (unit.snapshot().unwrap(), move_id)
+}
+
+/// The account relationship every inbound root frame in this block arrives
+/// on; the Cloud path, as a bound device uses it.
+fn bound_account(f: &mut Root) -> Uuid {
+    let account = UserScopeId::new().as_uuid();
+    f.store
+        .bind_account_scope(account, UserScopeId::new().as_uuid(), at().millis())
+        .unwrap();
+    account
+}
+
+/// Stage and commit one Workspace unit's frames as that relationship, the
+/// one path every arriving root unit funnels through.
+fn arrives(f: &mut Root, account: Uuid, workspace: WorkspaceId, frames: &[Vec<u8>]) {
+    let unit = CatalogUnitRef::Workspace { workspace };
+    let staged = f.store.stage_root_unit(account, unit, frames).unwrap();
+    assert!(!staged.is_pending(), "a complete unit needs no ancestors");
+    let outcome = f
+        .store
+        .commit_staged_root_unit(account, staged, None)
+        .unwrap();
+    assert!(matches!(outcome, RootJoinOutcome::Applied { .. }));
+}
+
+/// A repaired Workspace, its hint Profile, a second Profile to be filed
+/// under, and the bound account.
+fn repaired_workspace(f: &mut Root) -> (WorkspaceId, ProfileId, ProfileId, Uuid) {
+    let hint = f.cloud_profile("A");
+    let elsewhere = f.cloud_profile("B");
+    let workspace = window_bootstrap(f, hint, "W");
+    let repaired = f.store.repair_bootstrap_units(at()).unwrap();
+    assert_eq!(repaired.len(), 1);
+    let account = bound_account(f);
+    (workspace, hint, elsewhere, account)
+}
+
+#[test]
+fn a_placement_write_concurrent_with_the_repair_is_recorded_and_survives_a_restart() {
+    let mut f = Root::new();
+    let (workspace, hint, elsewhere, account) = repaired_workspace(&mut f);
+    let repair = f.store.bootstrap_repair(workspace).unwrap().unwrap();
+    let (snapshot, rival_move) = absent_device(&f, workspace, elsewhere);
+
+    arrives(&mut f, account, workspace, &[snapshot]);
+
+    f.restart();
+    let record = f
+        .store
+        .bootstrap_placement_conflict(workspace)
+        .unwrap()
+        .expect("the record is durable");
+    assert_eq!(
+        record.repaired_profile, hint,
+        "the Profile the repair asserted, taken from its record"
+    );
+    assert_eq!(record.repair_move_id, repair.move_id);
+    assert_eq!(record.rivals.len(), 1);
+    assert_eq!(
+        record.rivals[0].profile,
+        Some(elsewhere),
+        "and the Profile the arriving write asserted: both sides of the question"
+    );
+    assert_eq!(record.rivals[0].move_id, rival_move);
+    assert!(
+        record.rivals[0].at_ms > 0,
+        "noticed at a real time on this device"
+    );
+    // The merged value stands, whichever way Loro's map ordering went, and
+    // the record is written either way: comparing the move ids is how part
+    // three tells which of the two is in force.
+    let standing = f.store.root_placement(workspace).unwrap().unwrap();
+    assert!(
+        standing.move_id == repair.move_id || standing.move_id == rival_move,
+        "nothing here rewrites a placement"
+    );
+    // A second arrival of the same frames changes nothing: the unit already
+    // has them, so there is no import to judge.
+    let (again, _) = (f.unit(workspace).unwrap().snapshot, ());
+    arrives(&mut f, account, workspace, &[again]);
+    assert_eq!(
+        f.store.bootstrap_placement_conflict(workspace).unwrap(),
+        Some(record.clone())
+    );
+
+    // The person answers: their move is ordinary, and this is its other half.
+    f.store
+        .clear_bootstrap_placement_conflict(workspace)
+        .unwrap();
+    assert_eq!(
+        f.store.bootstrap_placement_conflict(workspace).unwrap(),
+        None
+    );
+    f.store
+        .clear_bootstrap_placement_conflict(workspace)
+        .unwrap();
+    assert_eq!(
+        f.store.bootstrap_repair(workspace).unwrap(),
+        Some(repair),
+        "clearing the question does not forget that the repair happened"
+    );
+}
+
+#[test]
+fn a_placement_write_that_already_saw_the_repair_records_nothing() {
+    let mut f = Root::new();
+    let (workspace, _, elsewhere, account) = repaired_workspace(&mut f);
+    // The other device imported the repaired unit and then moved the
+    // Workspace: a causal successor, which is clear and stays automatic.
+    let row = f.unit(workspace).unwrap();
+    let seen = WorkspaceCatalogUnit::from_snapshot(&row.snapshot, workspace, 9_001).unwrap();
+    let from = seen.version();
+    let answer = DocumentId::new().as_uuid();
+    seen.set_placement(Some(elsewhere), answer).unwrap();
+
+    arrives(
+        &mut f,
+        account,
+        workspace,
+        &[seen.updates_since(&from).unwrap()],
+    );
+
+    assert_eq!(
+        f.store.bootstrap_placement_conflict(workspace).unwrap(),
+        None,
+        "it saw the repair, so there is nothing ambiguous to ask about"
+    );
+    assert_eq!(
+        f.store.root_placement(workspace).unwrap().unwrap().move_id,
+        answer,
+        "and the causal successor simply wins"
+    );
+}
+
+#[test]
+fn an_arriving_move_that_saw_both_placements_clears_the_question() {
+    let mut f = Root::new();
+    let (workspace, _, elsewhere, account) = repaired_workspace(&mut f);
+    let (snapshot, _) = absent_device(&f, workspace, elsewhere);
+    arrives(&mut f, account, workspace, &[snapshot]);
+    assert!(
+        f.store
+            .bootstrap_placement_conflict(workspace)
+            .unwrap()
+            .is_some()
+    );
+
+    // A device holding the merged unit moves the Workspace. It was authored
+    // where both placements were visible, so it is the answer the question
+    // would have asked for, and asking again would be worse than useless.
+    let row = f.unit(workspace).unwrap();
+    let both = WorkspaceCatalogUnit::from_snapshot(&row.snapshot, workspace, 9_002).unwrap();
+    let from = both.version();
+    both.set_placement(Some(elsewhere), DocumentId::new().as_uuid())
+        .unwrap();
+
+    arrives(
+        &mut f,
+        account,
+        workspace,
+        &[both.updates_since(&from).unwrap()],
+    );
+
+    assert_eq!(
+        f.store.bootstrap_placement_conflict(workspace).unwrap(),
+        None,
+        "answered elsewhere, and cleared in the commit that carried the answer"
+    );
+}
+
+#[test]
+fn an_orphaned_repair_identity_records_nothing_rather_than_a_false_conflict() {
+    let mut f = Root::new();
+    let (workspace, _, elsewhere, account) = repaired_workspace(&mut f);
+    // A device's writer id is re-minted without being persisted when its
+    // stored row cannot be parsed, so a recorded identity can be orphaned.
+    let mut orphaned = f.store.bootstrap_repair(workspace).unwrap().unwrap();
+    orphaned.writer_peer = 7_777;
+    let mut catalog = f.catalog();
+    catalog
+        .set_state(
+            &bootstrap_repair_key(workspace),
+            &serde_json::to_string(&orphaned).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        f.store.bootstrap_repair(workspace).unwrap(),
+        Some(orphaned),
+        "the Store reads the orphaned record"
+    );
+    let (snapshot, _) = absent_device(&f, workspace, elsewhere);
+
+    arrives(&mut f, account, workspace, &[snapshot]);
+
+    assert_eq!(
+        f.store.bootstrap_placement_conflict(workspace).unwrap(),
+        None,
+        "an identity this history never had is a do-not-know, never a conflict"
+    );
+}
+
+#[test]
+fn a_concurrent_write_that_agrees_with_the_hint_asks_nothing() {
+    let mut f = Root::new();
+    let (workspace, hint, _, account) = repaired_workspace(&mut f);
+    // The absent device filed the Workspace in the same place the hint did.
+    // The lineages are disjoint and the move ids differ, but two devices
+    // agreeing on a placement is clear and stays automatic (rule D).
+    let (snapshot, _) = absent_device(&f, workspace, hint);
+
+    arrives(&mut f, account, workspace, &[snapshot]);
+
+    assert_eq!(
+        f.store.bootstrap_placement_conflict(workspace).unwrap(),
+        None
+    );
+    assert_eq!(
+        f.store.root_placement(workspace).unwrap().unwrap().profile,
+        Some(hint),
+        "both sides said the same thing, so the merge cannot be wrong"
+    );
+}
+
+#[test]
+fn a_workspace_this_device_never_repaired_imports_exactly_as_before() {
+    let mut f = Root::new();
+    let (profile, workspace) = f.cloud_pair();
+    let elsewhere = f.cloud_profile("B");
+    let account = bound_account(&mut f);
+    assert_eq!(f.store.bootstrap_repair(workspace).unwrap(), None);
+    let before = f.durable_placement(workspace).unwrap();
+    let (snapshot, rival_move) = absent_device(&f, workspace, elsewhere);
+
+    arrives(&mut f, account, workspace, &[snapshot]);
+
+    assert_eq!(
+        f.store.bootstrap_placement_conflict(workspace).unwrap(),
+        None,
+        "no repair record, no detection: the ordinary commit is untouched"
+    );
+    let standing = f.store.root_placement(workspace).unwrap().unwrap();
+    assert!(standing.move_id == before.move_id || standing.move_id == rival_move);
+    assert!(f.store.workspace_including_deleted(workspace).is_ok());
+    let _ = profile;
+}
+
+#[test]
+fn the_conflict_record_is_a_second_row_beside_the_repairs_own() {
+    let mut f = Root::new();
+    let (workspace, _, elsewhere, account) = repaired_workspace(&mut f);
+    let (snapshot, _) = absent_device(&f, workspace, elsewhere);
+    arrives(&mut f, account, workspace, &[snapshot]);
+
+    let catalog = f.catalog();
+    assert!(
+        catalog
+            .state(&bootstrap_conflict_key(workspace))
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        catalog
+            .state(&bootstrap_repair_key(workspace))
+            .unwrap()
+            .is_some(),
+        "one row per Workspace for each fact, neither overwriting the other"
+    );
+    let _: BootstrapRepair = serde_json::from_str(
+        &catalog
+            .state(&bootstrap_repair_key(workspace))
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+}
