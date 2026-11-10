@@ -5873,6 +5873,7 @@ dependencies = [
 name = "koru-delegate-sqlite"
 version = "0.0.3"
 dependencies = [
+ "blake3",
  "koru-channel",
  "koru-delegate-core",
  "koru-sqlite",
