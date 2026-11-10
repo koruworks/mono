@@ -1,5 +1,16 @@
 # Test architecture
 
+Warm-query counter tests wait for the projector's `pending == 0` and
+`sweeping == false` before taking their baseline, and refuse a failed
+projection. A sweep can make task rows visible while a commit is still in the
+debounce queue; seeing the expected rows does not mean fixture work is idle.
+The queries must still leave the document-walk counter unchanged.
+
+MCP revision assertions compare decoded Loro version vectors. Equal vectors
+can encode their entries in different orders; malformed evidence must fail,
+and a different causal vector must remain different. This does not replace
+exact-byte assertions where stored bytes or their hashes are the contract.
+
 The workspace host's native-menu queue tests share `QUEUE_TEST_LOCK` across
 each ingest/drain sequence. Distinct fixture ids do not isolate the tests:
 the production drain consumes every queued id, including another test's.
