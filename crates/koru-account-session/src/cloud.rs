@@ -5,6 +5,7 @@
 
 pub mod app_connection;
 pub mod blob;
+pub mod catalog;
 pub mod issuance;
 pub mod session;
 
