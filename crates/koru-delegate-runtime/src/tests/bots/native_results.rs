@@ -1,8 +1,24 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::*;
+mod drain;
 
 impl NativeResultLedger for RecordingStore {
+    fn pending_native_effects(
+        &self,
+        owner: BotOwner,
+        bot: Option<BotId>,
+        after: Option<&NativeRecoveryCursor>,
+        limit: u16,
+    ) -> Result<NativePendingEffects, BotLedgerError> {
+        self.inner
+            .lock()
+            .unwrap()
+            .pending_native_effects(owner, bot, after, limit)
+    }
+    fn native_outcomes_unknown(&self, run: RunId) -> Result<bool, BotLedgerError> {
+        self.inner.lock().unwrap().native_outcomes_unknown(run)
+    }
     fn native_effects_pending(&self, run: RunId) -> Result<bool, BotLedgerError> {
         self.inner.lock().unwrap().native_effects_pending(run)
     }

@@ -109,15 +109,12 @@ impl Orchestrator {
                 continue;
             }
             if let Some(row) = self.ports.store.current_attempt(intent.run)? {
-                if row.retired {
-                    self.bot_ledger()?
-                        .settle_bot(intent.run, koru_delegate_sqlite::BotSettlement::Settled)?;
-                    continue;
-                }
-                if !row.retired
-                    && !restart_rows
-                        .iter()
-                        .any(|known| known.attempt == row.attempt)
+                // Only retained unsettled Bot admissions reach this point.
+                // Legacy retirement may have outrun the canonical ack; repair
+                // it through the same document-first reconciliation below.
+                if !restart_rows
+                    .iter()
+                    .any(|known| known.attempt == row.attempt)
                 {
                     restart_rows.push(row);
                 }
@@ -144,14 +141,45 @@ impl Orchestrator {
                 attempt: row.attempt,
                 scope: header.scope.clone(),
             });
-            if header.bot.is_some() && (row.phase.is_terminal() || header.status.is_terminal()) {
+            if header.bot.is_some()
+                && (row.retired || row.phase.is_terminal() || header.status.is_terminal())
+            {
                 let mut attempt = Attempt::new(row.attempt, row.generation);
                 attempt.is_bot = true;
                 attempt.session = row.provider_session.and_then(|key| key.session);
                 self.open(run)?.attempt = Some(attempt);
-                if self.bot_prove_end(run, true).unwrap_or(false)
-                    && !self.native_effects_pending(run).unwrap_or(true)
+                if !header.status.is_terminal()
+                    && !matches!(header.status, RunStatus::Interrupted { .. })
                 {
+                    self.apply(
+                        run,
+                        &RunEvent::Interrupt {
+                            prior_attempt: PriorAttempt::Unknown,
+                        },
+                    )?;
+                    self.step(
+                        run,
+                        StepKind::Interrupted {
+                            prior_attempt: PriorAttempt::Unknown,
+                        },
+                        TimelineRefs::new([TimelineRef::Attempt {
+                            attempt: row.attempt,
+                        }])
+                        .expect("one attempt"),
+                        Some(RunFact::Interrupted {
+                            run,
+                            attempt: row.attempt,
+                            generation: row.generation,
+                            prior_attempt: PriorAttempt::Unknown,
+                        }),
+                    )?;
+                }
+                let ended = if header.status == RunStatus::Cancelled {
+                    self.bot_prove_end(run, true)
+                } else {
+                    self.bot_prove_end_owned(run)
+                };
+                if ended.unwrap_or(false) && !self.native_effects_pending(run).unwrap_or(true) {
                     self.bot_end_attempt(run, AttemptPhase::Ended, false)?;
                     liveness.insert(row.attempt, Liveness::Ended);
                     report.reconciled.push(run);

@@ -4,6 +4,40 @@ use koru_delegate_core::{AttemptGeneration, DocumentId, RunAttemptId, RunId};
 use uuid::Uuid;
 
 #[test]
+fn drain_commands_use_ipc_ten_and_refuse_undeclared_trigger_authority() {
+    assert_eq!(crate::ipc::WIRE_VERSION, 10);
+    let request = prepare();
+    for reason in [
+        NativeDrainReason::GatewayStartup,
+        NativeDrainReason::RunRecovery,
+        NativeDrainReason::OwnerStop,
+        NativeDrainReason::TerminalTurn,
+        NativeDrainReason::UnconfirmedOperation,
+    ] {
+        let command = BotCommand::CheckNativeEffectDrain {
+            key: request.key.clone(),
+            reason,
+        };
+        let encoded = koru_ipc::frame::encode(crate::ipc::WIRE_VERSION, &command).unwrap();
+        let (version, decoded): (u8, BotCommand) =
+            koru_ipc::frame::read_frame(&mut encoded.as_slice()).unwrap();
+        assert_eq!(version, 10);
+        assert_eq!(decoded, command);
+        let mut json = serde_json::to_value(command).unwrap();
+        json["reason"]["trusted"] = serde_json::json!(true);
+        let encoded = koru_ipc::frame::encode(crate::ipc::WIRE_VERSION, &json).unwrap();
+        assert!(koru_ipc::frame::read_frame::<_, BotCommand>(&mut encoded.as_slice()).is_err());
+    }
+    let mut json = serde_json::to_value(BotCommand::CheckNativeEffectDrain {
+        key: request.key,
+        reason: NativeDrainReason::GatewayStartup,
+    })
+    .unwrap();
+    json["reason"]["reason"] = serde_json::json!("ordinary_read");
+    assert!(serde_json::from_value::<BotCommand>(json).is_err());
+}
+
+#[test]
 fn bootstrap_authority_is_redacted_and_requires_an_exact_match() {
     let secret = "PRIVATE-CAPABILITY-SENTINEL-0123456789";
     let authority = BotDelegateAuthority::new(secret.into()).unwrap();

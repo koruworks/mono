@@ -24,8 +24,9 @@ pub use koru_sqlite::OpenError;
 /// retains the holding RunId needed to replay a `skipped_busy` schedule fact;
 /// schema 4 adds the durable schedule-event outbox; schema 5 adds Bot
 /// admission, reservation accounting, delivery correlation and pause barriers;
-/// schema 6 adds native-result intents and ordered effect-policy barriers.
-pub const RUNS_SCHEMA_VERSION: i64 = 6;
+/// schema 6 adds native-result intents and ordered effect-policy barriers;
+/// schema 7 retains exact Store drain proofs separately from result certainty.
+pub const RUNS_SCHEMA_VERSION: i64 = 7;
 /// The file's name inside the delegate root.
 pub const DATABASE_NAME: &str = "runs.db";
 
@@ -64,6 +65,12 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         to: 6,
         name: "025_runs_native_results_migration.sql",
         sql: include_str!("../migrations/025_runs_native_results_migration.sql"),
+        columns: &[],
+    },
+    Migration {
+        to: 7,
+        name: "026_runs_native_drain_migration.sql",
+        sql: include_str!("../migrations/026_runs_native_drain_migration.sql"),
         columns: &[],
     },
 ];

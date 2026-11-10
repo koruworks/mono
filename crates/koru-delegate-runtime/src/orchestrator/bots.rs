@@ -356,12 +356,16 @@ impl Orchestrator {
             }
             return Ok(());
         }
-        if terminate && !self.bot_prove_end(run, true)? {
+        if terminate && !self.bot_prove_end_owned(run)? {
             return Err(refused("bot_stop_unconfirmed"));
         }
         if self.native_effects_pending(run)? {
             return Err(refused("bot_native_effects_pending"));
         }
+        // A terminal process and drained effects do not acknowledge the Run
+        // document. Open only its recorded identity; failed open stays an error.
+        // Canonical cancellation/interruption must survive before capacity does.
+        self.bot_settle_before_retirement(run)?;
         if !row.phase.is_terminal() {
             self.ports
                 .store
@@ -430,10 +434,49 @@ impl Orchestrator {
         self.cancel(key.run)?;
         self.settle(key.run)?;
         if self.ports.store.current_attempt(key.run)?.is_none() {
+            self.bot_settle_before_retirement(key.run)?;
             self.bot_ledger()?
                 .settle_bot(key.run, BotSettlement::Settled)?;
         }
         Ok(())
+    }
+
+    fn bot_settle_before_retirement(&mut self, run: RunId) -> Result<(), RunError> {
+        let state = self.open(run)?;
+        state.doc.settle()?;
+        if !state.doc.durable() {
+            return Err(refused("bot_stop_unconfirmed"));
+        }
+        Ok(())
+    }
+
+    /// Automatic cleanup never borrows the stronger person-authorized Stop.
+    pub(crate) fn bot_prove_end_owned(&mut self, run: RunId) -> Result<bool, RunError> {
+        if self.bot_prove_end(run, false)? {
+            return Ok(true);
+        }
+        let key = self
+            .ports
+            .store
+            .current_attempt(run)?
+            .and_then(|row| row.provider_session);
+        let session = match key {
+            Some(key) => match key.session {
+                Some(session) => Some(session),
+                None => match self.ports.sessions.lookup(key.idempotency)?.1 {
+                    koru_session_protocol::CreationLookup::Known { session } => Some(session.id),
+                    _ => None,
+                },
+            },
+            None => None,
+        };
+        let Some(session) = session else {
+            return Ok(false);
+        };
+        if self.ports.sessions.terminate_owned(session).is_err() {
+            return Ok(false);
+        }
+        self.bot_prove_end(run, false)
     }
 
     /// Only active in-memory Bot executions are examined by the actor deadline,

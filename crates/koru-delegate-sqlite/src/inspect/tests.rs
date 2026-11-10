@@ -99,12 +99,15 @@ fn a_newer_ledger_is_refused_and_nothing_is_changed() {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     Connection::open(&path)
         .unwrap()
-        .execute_batch("PRAGMA journal_mode = DELETE; PRAGMA user_version = 7;")
+        .execute_batch(&format!(
+            "PRAGMA journal_mode = DELETE; PRAGMA user_version = {};",
+            RUNS_SCHEMA_VERSION + 1
+        ))
         .unwrap();
     assert_eq!(
         inspect(&path, 1),
         Err(InspectError::SchemaTooNew {
-            discovered: 7,
+            discovered: RUNS_SCHEMA_VERSION + 1,
             supported: RUNS_SCHEMA_VERSION
         })
     );

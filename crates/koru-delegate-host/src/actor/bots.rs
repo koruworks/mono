@@ -97,6 +97,25 @@ impl Actor {
         }
         let device = self.device;
         let reply = match command {
+            BotCommand::PendingNativeEffects {
+                owner,
+                bot,
+                after,
+                limit,
+            } => BotReply::NativePendingEffects {
+                page: self
+                    .orchestrator
+                    .pending_native_effects(owner, bot, after.as_ref(), limit, device)
+                    .map_err(bot_failure)?,
+            },
+            BotCommand::CheckNativeEffectDrain { key, reason } => {
+                BotReply::NativeDrainEligibility {
+                    target: self
+                        .orchestrator
+                        .check_native_effect_drain(&key, &reason, device)
+                        .map_err(bot_failure)?,
+                }
+            }
             BotCommand::ResolveRunAuthority { run, generation } => BotReply::RunAuthority {
                 authority: self
                     .orchestrator

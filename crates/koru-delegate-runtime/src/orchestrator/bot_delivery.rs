@@ -76,6 +76,19 @@ impl Orchestrator {
             // Applied is delivery history, not a successful task. Never revive
             // an absorbing AI/Run attempt or infer that unknown work stopped.
             self.bot_settle_delivery(key.run)?;
+            // Canonical interruption is absorbing even when later exact
+            // evidence upgrades every unknown result before cleanup retries.
+            if matches!(
+                header.status,
+                RunStatus::Interrupted {
+                    prior_attempt: koru_delegate_core::PriorAttempt::Unknown
+                }
+            ) && !self.native_effects_pending(key.run)?
+                && record.state != BotAdmissionState::Settled
+            {
+                self.ports.mcp.revoke(key.run);
+                self.bot_finish_delivery_cleanup(key.run, session, row.retired)?;
+            }
             return Ok(());
         }
         if header.status == RunStatus::Completed {
@@ -157,6 +170,19 @@ impl Orchestrator {
         }])
         .expect("one reference");
         let entry = TimelineEntry::new(StepKind::Completed, refs, self.ports.clock.now_ms());
+        if self.native_outcomes_unknown(key.run)? {
+            let mut entry = entry;
+            entry.kind = StepKind::Interrupted {
+                prior_attempt: koru_delegate_core::PriorAttempt::Unknown,
+            };
+            self.open(key.run)?
+                .doc
+                .commit(&mut |document| document.interrupt_bot_delivery_unknown(receipt, &entry))?;
+            self.bot_settle_delivery(key.run)?;
+            self.ports.mcp.revoke(key.run);
+            self.bot_finish_delivery_cleanup(key.run, session, false)?;
+            return Ok(());
+        }
         self.open(key.run)?
             .doc
             .commit(&mut |document| document.complete_bot_chat_delivery(receipt, &entry))?;

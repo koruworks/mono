@@ -4,6 +4,50 @@ use super::*;
 use koru_delegate_core::{BotDeliveryReceipt, RunEvent, StepKind, TimelineRef, transition};
 
 impl RunDocument {
+    /// The Store proved liveness but not a native result. Delivery remains
+    /// history; this task is explicitly interrupted, never successful.
+    pub fn interrupt_bot_delivery_unknown(
+        &self,
+        receipt: &BotDeliveryReceipt,
+        entry: &TimelineEntry,
+    ) -> Result<()> {
+        let header = self.validated_bot_delivery(receipt)?;
+        let unknown = koru_delegate_core::PriorAttempt::Unknown;
+        if header.status
+            == (RunStatus::Interrupted {
+                prior_attempt: unknown,
+            })
+            && self.header()?.chat_delivery.as_ref() == Some(receipt)
+        {
+            return Ok(());
+        }
+        if entry.kind
+            != (StepKind::Interrupted {
+                prior_attempt: unknown,
+            })
+            || !entry
+                .refs
+                .iter()
+                .any(|r| matches!(r,TimelineRef::Attempt{attempt} if *attempt==receipt.attempt))
+            || header.status.control() != Some(koru_delegate_core::ControlState::Orchestrator)
+        {
+            return Err(RunDocumentError::Malformed { part: Part::Header });
+        }
+        let next = transition(
+            &header.status,
+            &RunEvent::Interrupt {
+                prior_attempt: unknown,
+            },
+        )
+        .map_err(|_| RunDocumentError::Malformed { part: Part::Header })?;
+        let run = self.run();
+        run.insert("chat_delivery", to_stored(receipt, Part::Header)?)?;
+        run.insert(K_STATUS, to_stored(&next, Part::Header)?)?;
+        self.timeline()
+            .push(to_stored(&StoredItem::Step(entry.clone()), Part::Timeline)?)?;
+        self.doc.commit();
+        Ok(())
+    }
     fn validated_bot_delivery(&self, receipt: &BotDeliveryReceipt) -> Result<RunHeader> {
         self.writable()?;
         let mut header = self.header()?;

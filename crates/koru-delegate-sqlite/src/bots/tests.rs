@@ -715,7 +715,7 @@ fn populated_runs_five_delivery_migrates_and_repairs_once_with_exact_receipt() {
     let event = db.record_bot_delivery(&receipt).unwrap();
     db.restart_in_memory();
     assert_eq!(db.record_bot_delivery(&receipt).unwrap(), event);
-    assert_eq!(db.schema_version().unwrap(), 6);
+    assert_eq!(db.schema_version().unwrap(), crate::RUNS_SCHEMA_VERSION);
 }
 
 #[test]

@@ -12,7 +12,8 @@ use koru_delegate_core::{
 pub use koru_delegate_core::{BotAdmissionState, BotAdmissionView, BotRunKey, BotSubmissionKey};
 pub use koru_delegate_core::{
     BotPolicyBarrier, BotPolicyBarrierKey, BotPolicyBarrierReceipt, BotPolicyBarrierState,
-    ConfirmNativeResult, NativeResultDisposition, NativeResultIntentView, NativeResultKey,
+    ConfirmNativeResult, NativeDrainReason, NativePendingEffect, NativePendingEffects,
+    NativeRecoveryCursor, NativeResultDisposition, NativeResultIntentView, NativeResultKey,
     NativeResultObservation, NativeResultOperation, NativeResultRefusal, NativeResultStage,
     PrepareNativeResult,
 };
@@ -66,6 +67,16 @@ pub struct BotObservation {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BotCommand {
+    PendingNativeEffects {
+        owner: koru_delegate_core::BotOwner,
+        bot: Option<koru_delegate_core::BotId>,
+        after: Option<NativeRecoveryCursor>,
+        limit: u16,
+    },
+    CheckNativeEffectDrain {
+        key: NativeResultKey,
+        reason: NativeDrainReason,
+    },
     ResolveRunAuthority {
         run: koru_delegate_core::RunId,
         generation: koru_delegate_core::AttemptGeneration,
@@ -180,6 +191,7 @@ impl BotCommand {
     /// commands instead resolve their immutable Run binding inside the actor.
     pub fn owner(&self) -> Option<&koru_delegate_core::BotOwner> {
         match self {
+            Self::PendingNativeEffects { owner, .. } => Some(owner),
             Self::Submit { submission } => Some(&submission.provenance.owner),
             Self::Reconcile { key } => Some(&key.owner),
             Self::Barrier { barrier } => Some(&barrier.owner),
@@ -203,6 +215,7 @@ impl BotCommand {
             Self::SynchronizePolicy { barrier } => Some(&barrier.key.owner),
             Self::ReconcilePolicyBarrier { key } => Some(&key.owner),
             Self::ResolveRunAuthority { .. }
+            | Self::CheckNativeEffectDrain { .. }
             | Self::PrepareNativeResult { .. }
             | Self::ReconcileNativeResult { .. }
             | Self::ConfirmNativeResult { .. } => None,
@@ -220,6 +233,12 @@ impl std::fmt::Debug for BotCommand {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "result", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BotReply {
+    NativePendingEffects {
+        page: NativePendingEffects,
+    },
+    NativeDrainEligibility {
+        target: Option<NativePendingEffect>,
+    },
     RunAuthority {
         authority: koru_delegate_core::RunToolAuthority,
     },

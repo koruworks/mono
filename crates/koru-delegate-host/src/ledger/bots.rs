@@ -110,6 +110,21 @@ impl BotLedger for SharedLedger {
     }
 }
 impl NativeResultLedger for SharedLedger {
+    fn pending_native_effects(
+        &self,
+        owner: BotOwner,
+        bot: Option<BotId>,
+        after: Option<&NativeRecoveryCursor>,
+        limit: u16,
+    ) -> Result<NativePendingEffects, BotLedgerError> {
+        self.0
+            .lock()
+            .unwrap()
+            .pending_native_effects(owner, bot, after, limit)
+    }
+    fn native_outcomes_unknown(&self, run: RunId) -> Result<bool, BotLedgerError> {
+        self.0.lock().unwrap().native_outcomes_unknown(run)
+    }
     fn native_effects_pending(&self, run: RunId) -> Result<bool, BotLedgerError> {
         self.0.lock().unwrap().native_effects_pending(run)
     }

@@ -3,9 +3,11 @@
 //! Native effect reconciliation on the existing RunsDb writer. These records
 //! are evidence, not canonical policy, execution authority or Run status.
 use crate::BotLedgerError;
+pub use koru_delegate_core::NativeRecoveryCursor;
 use koru_delegate_core::*;
 use uuid::Uuid;
 
+mod drain;
 mod repository;
 mod rows;
 #[cfg(test)]
@@ -50,6 +52,7 @@ pub struct NativeIntentRecord {
     pub verified: Option<NativeResultReference>,
     pub refusal: Option<NativeResultRefusal>,
     pub registered_at_ms: Option<i64>,
+    pub drain: Option<NativeEffectDrainReceipt>,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
 }
@@ -63,6 +66,22 @@ impl std::fmt::Debug for NativeIntentRecord {
     }
 }
 impl NativeIntentRecord {
+    pub fn pending_effect(&self) -> Result<NativePendingEffect, BotLedgerError> {
+        let lease = self.lease.as_ref().ok_or(BotLedgerError::Fenced)?;
+        Ok(NativePendingEffect {
+            owner: lease.policy.key.owner,
+            bot: lease.policy.key.bot,
+            key: self.key.clone(),
+            binding: self
+                .view()
+                .store_binding(lease.policy.key.owner, lease.policy.key.bot),
+            cursor: NativeRecoveryCursor {
+                created_at_ms: self.created_at_ms,
+                run: self.key.run,
+                operation_id: self.key.operation_id,
+            },
+        })
+    }
     /// A retained row never manufactures a fresh Execute disposition.
     pub fn view(&self) -> NativeResultIntentView {
         NativeResultIntentView {
@@ -92,12 +111,6 @@ pub struct NativeLeaseOutcome {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct NativeRecoveryCursor {
-    pub created_at_ms: i64,
-    pub run: RunId,
-    pub operation_id: Uuid,
-}
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PendingNativeResult {
     pub key: NativeResultKey,
     pub stage: NativeResultStage,
@@ -109,6 +122,14 @@ pub struct PendingNativeResult {
 /// possession of an ID, snapshot or previous receipt grants none. No Store
 /// callbacks, SQL closures, connection handles or request bodies cross this port.
 pub trait NativeResultLedger {
+    fn pending_native_effects(
+        &self,
+        owner: BotOwner,
+        bot: Option<BotId>,
+        after: Option<&NativeRecoveryCursor>,
+        limit: u16,
+    ) -> Result<NativePendingEffects, BotLedgerError>;
+    fn native_outcomes_unknown(&self, run: RunId) -> Result<bool, BotLedgerError>;
     /// Held effects may still commit; verified evidence still needs publication.
     /// Neither condition permits releasing the Run's execution capacity.
     fn native_effects_pending(&self, run: RunId) -> Result<bool, BotLedgerError>;

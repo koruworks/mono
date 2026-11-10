@@ -93,6 +93,7 @@ pub(super) fn stage(value: &str) -> Result<NativeResultStage, BotLedgerError> {
     Ok(match value {
         "prepared" => NativeResultStage::Prepared,
         "unconfirmed" => NativeResultStage::Unconfirmed,
+        "settled_unknown" => NativeResultStage::SettledUnknown,
         "verified" => NativeResultStage::Verified,
         "registered" => NativeResultStage::Registered,
         "refused" => NativeResultStage::Refused,
@@ -216,7 +217,7 @@ fn decode(row: &Row<'_>) -> Result<NativeIntentRecord, BotLedgerError> {
             })
         })
         .transpose()?;
-    let record = NativeIntentRecord {
+    let mut record = NativeIntentRecord {
         key,
         kind,
         destination,
@@ -233,9 +234,32 @@ fn decode(row: &Row<'_>) -> Result<NativeIntentRecord, BotLedgerError> {
             .map(|s| refusal(&s))
             .transpose()?,
         registered_at_ms: cell(row, "registered_at_ms")?,
+        drain: None,
         created_at_ms: cell(row, "created_at_ms")?,
         updated_at_ms: cell(row, "updated_at_ms")?,
     };
+    match (
+        cell::<Option<i64>>(row, "effect_fenced_at_ms")?,
+        cell::<Option<i64>>(row, "effect_drained_at_ms")?,
+    ) {
+        (None, None) if stage != NativeResultStage::SettledUnknown => {}
+        (Some(fenced), Some(drained))
+            if lease_state == NativeLeaseState::Settled
+                && matches!(
+                    stage,
+                    NativeResultStage::SettledUnknown
+                        | NativeResultStage::Verified
+                        | NativeResultStage::Registered
+                ) =>
+        {
+            record.drain = Some(NativeEffectDrainReceipt {
+                binding: record.pending_effect()?.binding,
+                fenced_at: NativeEffectTimestamp::from_millis(fenced),
+                drained_at: NativeEffectTimestamp::from_millis(drained),
+            });
+        }
+        _ => return Err(corrupt("drain_cohort")),
+    }
     let request = PrepareNativeResult {
         key: record.key.clone(),
         kind: record.kind,
@@ -256,9 +280,9 @@ fn decode(row: &Row<'_>) -> Result<NativeIntentRecord, BotLedgerError> {
             NativeLeaseState::None | NativeLeaseState::Held
         ),
         NativeResultStage::Unconfirmed => record.lease_state == NativeLeaseState::Held,
-        NativeResultStage::Verified | NativeResultStage::Registered => {
-            record.lease_state == NativeLeaseState::Settled
-        }
+        NativeResultStage::Verified
+        | NativeResultStage::Registered
+        | NativeResultStage::SettledUnknown => record.lease_state == NativeLeaseState::Settled,
         NativeResultStage::Refused => matches!(
             record.lease_state,
             NativeLeaseState::None | NativeLeaseState::Settled

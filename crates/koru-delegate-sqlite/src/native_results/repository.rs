@@ -80,6 +80,18 @@ fn evidence_matches(record: &NativeIntentRecord, evidence: &NativeResultReferenc
 }
 
 impl NativeResultLedger for RunsDb {
+    fn pending_native_effects(
+        &self,
+        owner: BotOwner,
+        bot: Option<BotId>,
+        after: Option<&NativeRecoveryCursor>,
+        limit: u16,
+    ) -> Result<NativePendingEffects, BotLedgerError> {
+        super::drain::pending(self, owner, bot, after, limit)
+    }
+    fn native_outcomes_unknown(&self, run: RunId) -> Result<bool, BotLedgerError> {
+        self.conn().query_row("SELECT EXISTS(SELECT 1 FROM native_result_intents WHERE run_id=?1 AND stage='settled_unknown')", [run.to_storage()], |r|r.get(0)).map_err(sql)
+    }
     fn native_effects_pending(&self, run: RunId) -> Result<bool, BotLedgerError> {
         self.conn().query_row("SELECT EXISTS(SELECT 1 FROM native_result_intents WHERE run_id=?1 AND (lease_state='held' OR stage='verified'))", [run.to_storage()], |row| row.get(0)).map_err(sql)
     }
@@ -243,10 +255,12 @@ impl NativeResultLedger for RunsDb {
             if record.fingerprint!=request.request_fingerprint {return Err(BotLedgerError::Conflict);}
             if record.lease.is_none(){return Err(BotLedgerError::Fenced);}
             match &request.observation {
+                NativeResultObservation::DrainedUnknown { receipt } => super::drain::confirm(tx,&record,receipt,now)?,
                 NativeResultObservation::Unconfirmed => {
                     if record.lease_state==NativeLeaseState::Held {tx.execute("UPDATE native_result_intents SET stage='unconfirmed',updated_at_ms=?3 WHERE run_id=?1 AND operation_id=?2",params![request.key.run.to_storage(),request.key.operation_id.to_string(),now]).map_err(sql)?;}
                 }
                 NativeResultObservation::NotApplied{code} => {
+                    if record.stage==NativeResultStage::SettledUnknown {return Ok(record);}
                     if record.stage==NativeResultStage::Refused {return if record.refusal==Some(*code){Ok(record)}else{Err(BotLedgerError::Conflict)};}
                     if record.verified.is_some(){return Err(BotLedgerError::Conflict);}
                     tx.execute("UPDATE native_result_intents SET stage='refused',lease_state='settled',refusal=?3,updated_at_ms=?4 WHERE run_id=?1 AND operation_id=?2",params![request.key.run.to_storage(),request.key.operation_id.to_string(),refusal_name(*code),now]).map_err(sql)?;

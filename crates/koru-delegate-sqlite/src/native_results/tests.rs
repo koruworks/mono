@@ -6,6 +6,7 @@ use crate::{
     fixtures,
 };
 use std::sync::{Arc, atomic::AtomicI64};
+mod drain;
 
 struct Harness {
     db: RunsDb,
@@ -699,14 +700,14 @@ fn migration_preserves_populated_runs_five_repeats_and_refuses_newer_memory_data
     conn.execute_batch("INSERT INTO run_intents VALUES('old','workspace','{\"objective\":\"kept\"}','satisfied','doc',1,2); INSERT INTO run_attempts(run_id,generation,attempt_id,state,updated_at_ms) VALUES('old',1,'attempt','ended',3); INSERT INTO pending_publications(event_id,run_id,kind,body_json,attempts,queued_at_ms) VALUES('event','old','lifecycle','{}',0,4); PRAGMA user_version=5;").unwrap();
     let schema = Schema {
         database: crate::DATABASE_NAME,
-        understood: 6,
+        understood: crate::RUNS_SCHEMA_VERSION,
         migrations: crate::db::MIGRATIONS,
     };
     koru_sqlite::prepare(&schema, &mut conn).unwrap();
     koru_sqlite::prepare(&schema, &mut conn).unwrap();
     assert_eq!(
         koru_sqlite::user_version(crate::DATABASE_NAME, &conn).unwrap(),
-        6
+        crate::RUNS_SCHEMA_VERSION
     );
     assert_eq!(
         conn.query_row(
@@ -731,14 +732,18 @@ fn migration_preserves_populated_runs_five_repeats_and_refuses_newer_memory_data
             .unwrap(),
         0
     );
-    conn.execute_batch("PRAGMA user_version=7").unwrap();
+    conn.execute_batch(&format!(
+        "PRAGMA user_version={}",
+        crate::RUNS_SCHEMA_VERSION + 1
+    ))
+    .unwrap();
     assert!(matches!(
         koru_sqlite::prepare(&schema, &mut conn),
         Err(koru_sqlite::OpenError::SchemaTooNew { .. })
     ));
     assert_eq!(
         koru_sqlite::user_version(crate::DATABASE_NAME, &conn).unwrap(),
-        7
+        crate::RUNS_SCHEMA_VERSION + 1
     );
 }
 

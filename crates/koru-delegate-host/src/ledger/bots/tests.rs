@@ -191,4 +191,68 @@ fn actual_shared_owner_forwards_admission_policy_and_native_intent_on_one_memory
             .native_effects_pending(run)
             .unwrap()
     );
+    let fence = BotExecutionFence {
+        owner: s.provenance.owner,
+        bot: s.provenance.bot,
+        run,
+        attempt: row.attempt,
+        generation: row.generation,
+        session: reader
+            .current_attempt(run)
+            .unwrap()
+            .unwrap()
+            .provider_session
+            .unwrap()
+            .session
+            .unwrap(),
+        turn: send.turn,
+    };
+    shared
+        .native_results()
+        .unwrap()
+        .lease_native_result(&request.key, request.request_fingerprint, &fence, &barrier)
+        .unwrap();
+    let page = reader
+        .native_results()
+        .unwrap()
+        .pending_native_effects(fence.owner, Some(fence.bot), None, 1)
+        .unwrap();
+    assert_eq!(page.targets.len(), 1);
+    let proof = NativeEffectDrainReceipt {
+        binding: page.targets[0].binding.clone(),
+        fenced_at: NativeEffectTimestamp::from_millis(10),
+        drained_at: NativeEffectTimestamp::from_millis(9),
+    };
+    shared
+        .native_results()
+        .unwrap()
+        .confirm_native_result(&ConfirmNativeResult {
+            key: request.key,
+            request_fingerprint: request.request_fingerprint,
+            observation: NativeResultObservation::DrainedUnknown { receipt: proof },
+        })
+        .unwrap();
+    assert!(
+        reader
+            .native_results()
+            .unwrap()
+            .native_outcomes_unknown(run)
+            .unwrap()
+    );
+    assert!(
+        !reader
+            .native_results()
+            .unwrap()
+            .native_effects_pending(run)
+            .unwrap()
+    );
+    assert!(
+        reader
+            .native_results()
+            .unwrap()
+            .pending_native_effects(fence.owner, None, None, 1)
+            .unwrap()
+            .targets
+            .is_empty()
+    );
 }

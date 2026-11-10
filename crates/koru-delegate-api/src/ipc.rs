@@ -36,7 +36,8 @@ use koru_delegate_core::ArtifactDisposition;
 // create/list/watch frames. Version 3 added the
 // authenticated, content-free native schedule wake. Version 2 preserved
 // explicit model intent on creation and every later start.
-pub const WIRE_VERSION: u8 = 9;
+// Version 10 adds scoped native-effect discovery, eligibility and drain proof.
+pub const WIRE_VERSION: u8 = 10;
 
 /// The product a caller names on its frames; a log line names it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
