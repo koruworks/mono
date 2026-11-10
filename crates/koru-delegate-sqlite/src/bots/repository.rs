@@ -111,6 +111,20 @@ fn decode(row: &Row<'_>) -> Result<BotAdmissionRecord, LedgerError> {
         }
         _ => return Err(corrupt("delivery_outcome")),
     };
+    let delivery_publication = cell::<Option<String>>(row, "delivery_publication_event_id")?
+        .map(|value| {
+            let uuid = uuid::Uuid::parse_str(&value)
+                .map_err(|_| corrupt("delivery_publication_event_id"))?;
+            if uuid.hyphenated().to_string() != value
+                || uuid.get_version() != Some(uuid::Version::Random)
+                || uuid.get_variant() != uuid::Variant::RFC4122
+                || delivery.is_none()
+            {
+                return Err(corrupt("delivery_publication_event_id"));
+            }
+            Ok(koru_delegate_core::EventId(uuid))
+        })
+        .transpose()?;
     let sequence = cell(row, "queue_sequence")?;
     let active_since_ms: Option<i64> = cell(row, "active_since_ms")?;
     if sequence == 0 || (active_since_ms.is_some() && state != BotAdmissionState::Executing) {
@@ -122,6 +136,7 @@ fn decode(row: &Row<'_>) -> Result<BotAdmissionRecord, LedgerError> {
         state,
         initial_send,
         delivery,
+        delivery_publication,
         active_since_ms,
         active_elapsed_ms: cell(row, "active_elapsed_ms")?,
         created_at_ms: cell(row, "created_at_ms")?,
@@ -476,21 +491,42 @@ impl BotLedger for RunsDb {
             Ok(send.clone())
         })
     }
-    fn record_bot_delivery(&mut self, receipt: &BotDeliveryReceipt) -> Result<(), BotLedgerError> {
+    fn record_bot_delivery(
+        &mut self,
+        receipt: &BotDeliveryReceipt,
+    ) -> Result<koru_delegate_core::EventId, BotLedgerError> {
         if !receipt.valid() {
             return Err(BotLedgerError::Invalid);
         }
-        self.write_with_error(WriteOp::RecordBotDelivery,|tx,now| {
-            let record=required(tx,receipt.run)?;
-            if let Some(old)=record.delivery {return if old==*receipt {Ok(())} else {Err(BotLedgerError::Conflict)}}
-            let p=&record.submission.provenance;
-            if receipt.chat_id!=p.chat_id || Some(receipt.ai_attempt_id)!=p.ai_attempt_id || Some(receipt.assistant_message_id)!=p.assistant_message_id {return Err(BotLedgerError::Fenced)}
-            current(tx,receipt.run,receipt.attempt,receipt.generation,false)?;
-            let send=record.initial_send.ok_or(BotLedgerError::Fenced)?;
-            if send.attempt!=receipt.attempt || send.generation!=receipt.generation || send.turn.is_none() || record.state==BotAdmissionState::Refused {return Err(BotLedgerError::Fenced)}
-            tx.execute("UPDATE bot_admissions SET delivery_outcome='confirmed',delivery_attempt_id=?2,delivery_generation=?3,delivery_chat_id=?4,delivery_ai_attempt_id=?5,delivery_assistant_message_id=?6,delivery_confirmed_at_ms=?7,updated_at_ms=?8 WHERE run_id=?1",
-                params![receipt.run.to_storage(),receipt.attempt.to_storage(),receipt.generation.get(),receipt.chat_id.to_string(),receipt.ai_attempt_id.to_string(),receipt.assistant_message_id.to_string(),receipt.confirmed_at_ms,now]).map_err(sql)?;
-            Ok(())
+        self.write_with_error(WriteOp::RecordBotDelivery, |tx, now| {
+            let record = required(tx, receipt.run)?;
+            if let Some(old) = record.delivery {
+                if old != *receipt { return Err(BotLedgerError::Conflict); }
+                if let Some(event) = record.delivery_publication { return Ok(event); }
+                // A runs5 confirmed receipt has no publication ID yet. Repair
+                // only this exact identity, under the same transaction/crash seam.
+                let event = koru_delegate_core::EventId::mint();
+                tx.execute("UPDATE bot_admissions SET delivery_publication_event_id=?2, updated_at_ms=?3 WHERE run_id=?1",
+                    params![receipt.run.to_storage(), event.to_string(), now]).map_err(sql)?;
+                return Ok(event);
+            }
+            let p = &record.submission.provenance;
+            if receipt.chat_id != p.chat_id || Some(receipt.ai_attempt_id) != p.ai_attempt_id
+                || Some(receipt.assistant_message_id) != p.assistant_message_id {
+                return Err(BotLedgerError::Fenced);
+            }
+            current(tx, receipt.run, receipt.attempt, receipt.generation, false)?;
+            let send = record.initial_send.ok_or(BotLedgerError::Fenced)?;
+            if send.attempt != receipt.attempt || send.generation != receipt.generation
+                || send.turn.is_none() || record.state == BotAdmissionState::Refused {
+                return Err(BotLedgerError::Fenced);
+            }
+            let event = koru_delegate_core::EventId::mint();
+            tx.execute("UPDATE bot_admissions SET delivery_outcome='confirmed',delivery_attempt_id=?2,delivery_generation=?3,delivery_chat_id=?4,delivery_ai_attempt_id=?5,delivery_assistant_message_id=?6,delivery_confirmed_at_ms=?7,delivery_publication_event_id=?8,updated_at_ms=?9 WHERE run_id=?1",
+                params![receipt.run.to_storage(), receipt.attempt.to_storage(), receipt.generation.get(),
+                    receipt.chat_id.to_string(), receipt.ai_attempt_id.to_string(), receipt.assistant_message_id.to_string(),
+                    receipt.confirmed_at_ms, event.to_string(), now]).map_err(sql)?;
+            Ok(event)
         })
     }
 }

@@ -104,7 +104,10 @@ impl BotLedger for RecordingStore {
             .unwrap()
             .acknowledge_bot_initial_send(run, send)
     }
-    fn record_bot_delivery(&mut self, receipt: &BotDeliveryReceipt) -> Result<(), BotLedgerError> {
+    fn record_bot_delivery(
+        &mut self,
+        receipt: &BotDeliveryReceipt,
+    ) -> Result<EventId, BotLedgerError> {
         self.inner.lock().unwrap().record_bot_delivery(receipt)
     }
 }

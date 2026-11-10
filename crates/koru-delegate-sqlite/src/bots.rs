@@ -43,6 +43,7 @@ pub struct BotAdmissionRecord {
     pub active_since_ms: Option<i64>,
     pub initial_send: Option<BotInitialSend>,
     pub delivery: Option<BotDeliveryReceipt>,
+    pub delivery_publication: Option<koru_delegate_core::EventId>,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
 }
@@ -249,7 +250,12 @@ pub trait BotLedger {
         run: RunId,
         send: &BotInitialSend,
     ) -> Result<BotInitialSend, BotLedgerError>;
-    /// Reserved for P1.5's durable AI response acknowledgement. Exact existing
-    /// correlation/provenance must match; no message contents travel here.
-    fn record_bot_delivery(&mut self, receipt: &BotDeliveryReceipt) -> Result<(), BotLedgerError>;
+    /// Retain durable AI response delivery and its stable completion publication
+    /// identity atomically. Exact correlation/provenance must match. Migrated
+    /// confirmed rows allocate a missing identity only on exact receipt replay.
+    /// No message contents travel here.
+    fn record_bot_delivery(
+        &mut self,
+        receipt: &BotDeliveryReceipt,
+    ) -> Result<koru_delegate_core::EventId, BotLedgerError>;
 }

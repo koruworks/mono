@@ -82,3 +82,21 @@ CREATE INDEX native_result_held_leases ON native_result_intents(lease_user_scope
 CREATE INDEX native_result_created_provenance
   ON native_result_intents(destination_workspace_id, target_document_id, run_id)
   WHERE kind = 'create_page' AND stage IN ('verified','registered');
+
+-- Pre-release runs6 amendment: stable publication identity for a confirmed
+-- AI response. Legacy runs5 confirmations are repaired only by exact replay.
+ALTER TABLE bot_admissions ADD COLUMN delivery_publication_event_id TEXT
+  CHECK(delivery_publication_event_id IS NULL OR
+    (delivery_outcome = 'confirmed'
+     AND length(delivery_publication_event_id) = 36
+     AND substr(delivery_publication_event_id, 9, 1) = '-'
+     AND substr(delivery_publication_event_id, 14, 1) = '-'
+     AND substr(delivery_publication_event_id, 19, 1) = '-'
+     AND substr(delivery_publication_event_id, 24, 1) = '-'
+     AND length(replace(delivery_publication_event_id, '-', '')) = 32
+     AND delivery_publication_event_id NOT GLOB '*[^0-9a-f-]*'
+     AND substr(delivery_publication_event_id, 15, 1) = '4'
+     AND substr(delivery_publication_event_id, 20, 1) IN ('8','9','a','b')));
+CREATE UNIQUE INDEX bot_delivery_publication_identity
+  ON bot_admissions(delivery_publication_event_id)
+  WHERE delivery_publication_event_id IS NOT NULL;
