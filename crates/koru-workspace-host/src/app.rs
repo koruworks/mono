@@ -13769,6 +13769,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
 
         self.runtime.profile = profile;
         self.runtime.profile_catalog = profiles;
+        self.runtime.remember_profile_names();
         self.runtime.workspace = workspace;
         self.runtime.current = current;
         self.runtime.live_workspace = has_workspace;

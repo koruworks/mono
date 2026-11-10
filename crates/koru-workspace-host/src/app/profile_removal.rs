@@ -185,11 +185,24 @@ impl<'a> DeletedProfile<'a> {
 
 /// The lookup order behind [`App::observed_profile_name`], free of the window
 /// so it can be tested: the catalog row while it is still there, then the open
-/// Profile's own document, which outlives it. A blank name is no name.
+/// Profile's own document, which outlives it, and last the name this device
+/// remembered while the Profile existed ([`crate::profile_names`]). A blank
+/// name is no name, from any of the three.
+///
+/// **Remembered is consulted last** because the two live sources are current
+/// and it is not: it holds what the last catalog listing said, so a rename
+/// that has arrived since must win over it. And it is consulted at all because
+/// a deletion from another device names no Profile and is heard of only after
+/// the row has gone — possibly on a later launch, when neither live source has
+/// ever had anything to say about it.
+///
+/// `None` still has to be reachable: a Profile this device never saw has no
+/// name anywhere, and the notice says so rather than inventing one.
 fn observed_profile_name_in(
     catalog: &[koru_core::ProfileSummary],
     profile: koru_core::ProfileId,
     open_profile_name: Option<String>,
+    remembered_name: Option<String>,
 ) -> Option<String> {
     fn named(name: Option<String>) -> Option<String> {
         name.filter(|name| !name.trim().is_empty())
@@ -202,6 +215,7 @@ fn observed_profile_name_in(
             .map(|row| row.name.clone()),
     )
     .or_else(|| named(open_profile_name))
+    .or_else(|| named(remembered_name))
 }
 
 /// The language the notices are written in: the system's, chosen once before
@@ -356,8 +370,12 @@ impl<H: Host> App<H> {
     /// that takes the row away, so a name read when the cleanup finishes is
     /// usually missing and — for a deletion that arrived from another device,
     /// where the row is gone before this window hears of it — always missing.
-    /// `None` means this device never had a name for that Profile, and the
-    /// notice says so rather than inventing one.
+    ///
+    /// That is what the third source is for: the names this device remembered
+    /// from every catalog listing it ever read, which is the only one of the
+    /// three that was written *before* the deletion and therefore the only one
+    /// left after a restart. `None` means this device never saw that Profile
+    /// at all, and the notice says so rather than inventing a name.
     pub(super) fn observed_profile_name(&self, profile: koru_core::ProfileId) -> Option<String> {
         observed_profile_name_in(
             &self.runtime.profile_catalog,
@@ -367,6 +385,7 @@ impl<H: Host> App<H> {
             } else {
                 None
             },
+            self.runtime.profile_names.get(profile),
         )
     }
 
@@ -775,6 +794,14 @@ impl<H: Host> App<H> {
                     pane.window.request_redraw();
                 }
             }
+            // **After the notice, never before it.** The local cleanup is the
+            // last thing that needed the remembered name, and a Profile that
+            // is gone from this device must not leave its name behind — not
+            // for a deletion elsewhere, and least of all for one the person
+            // asked for here. `forget` waits for the disk, because the next
+            // statements may relaunch this process (see
+            // [`crate::profile_names`]).
+            self.runtime.profile_names.forget(completion.profile);
             if hosted_source.is_some() && navigation_settled {
                 self.acknowledge_profile_cleanup(
                     completion.profile,

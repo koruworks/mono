@@ -66,6 +66,7 @@ pub mod native_surface;
 pub mod preferences;
 mod profile_activation;
 mod profile_lifecycle_decision;
+mod profile_names;
 mod profile_runtime;
 pub mod profile_wait;
 pub mod reveal;

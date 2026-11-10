@@ -63,33 +63,119 @@ fn another_profile() -> koru_core::ProfileId {
 /// **The name has to be read while the row is still there.** A removal is
 /// what takes the catalog row away, so the name is captured when the removal
 /// is first observed; the open Profile's own document is what outlives the
-/// row, and is the only source left on the path whose trigger *is* the row's
-/// absence.
+/// row, and is the only *live* source left on the path whose trigger *is* the
+/// row's absence.
 #[test]
 fn an_observed_name_comes_from_the_catalog_row_or_the_open_profile_document() {
     let profile = a_profile();
     let catalog = vec![summary(profile, "Work"), summary(another_profile(), "Home")];
     assert_eq!(
-        observed_profile_name_in(&catalog, profile, None).as_deref(),
+        observed_profile_name_in(&catalog, profile, None, None).as_deref(),
         Some("Work")
     );
     // The row is gone: the open Profile's document still names it.
     assert_eq!(
-        observed_profile_name_in(&[], profile, Some("Work".to_owned())).as_deref(),
+        observed_profile_name_in(&[], profile, Some("Work".to_owned()), None).as_deref(),
         Some("Work")
     );
-    // Neither source has it, and nothing is invented in its place.
-    assert_eq!(observed_profile_name_in(&[], profile, None), None);
-    // A blank name is no name, from either source.
+    // No source has it, and nothing is invented in its place.
+    assert_eq!(observed_profile_name_in(&[], profile, None, None), None);
+    // A blank name is no name, from any source.
     assert_eq!(
-        observed_profile_name_in(&[summary(profile, "  ")], profile, None),
+        observed_profile_name_in(&[summary(profile, "  ")], profile, None, None),
         None
     );
     assert_eq!(
-        observed_profile_name_in(&[summary(profile, "")], profile, Some("Work".to_owned()))
-            .as_deref(),
+        observed_profile_name_in(
+            &[summary(profile, "")],
+            profile,
+            Some("Work".to_owned()),
+            None
+        )
+        .as_deref(),
         Some("Work")
     );
+}
+
+/// **A deletion from another device, for a Profile that was not open here.**
+/// The catalog row went before this device heard of the deletion and the
+/// Profile was never the open one, so neither live source has a name — and
+/// the notice is still written with one, from what this device remembered
+/// while the Profile existed.
+#[test]
+fn a_profile_deleted_elsewhere_is_named_from_what_this_device_remembered() {
+    let profile = a_profile();
+    assert_eq!(
+        observed_profile_name_in(&[], profile, None, Some("Work".to_owned())).as_deref(),
+        Some("Work")
+    );
+    let notice = profile_deleted_elsewhere_notice(
+        koru_i18n::Lang::En,
+        DeletedProfile::new(
+            observed_profile_name_in(&[], profile, None, Some("Work".to_owned())).as_deref(),
+            false,
+        ),
+    );
+    assert!(
+        notice.starts_with("\u{201c}Work\u{201d} was deleted from Koru"),
+        "{notice}"
+    );
+}
+
+/// The remembered name is a cache, so a live source outranks it: a rename
+/// that arrived after the last listing must not be overruled by the stale
+/// copy, and a blank remembered name is still no name.
+#[test]
+fn a_remembered_name_is_the_last_source_consulted() {
+    let profile = a_profile();
+    assert_eq!(
+        observed_profile_name_in(
+            &[summary(profile, "Day job")],
+            profile,
+            None,
+            Some("Work".to_owned())
+        )
+        .as_deref(),
+        Some("Day job")
+    );
+    assert_eq!(
+        observed_profile_name_in(
+            &[],
+            profile,
+            Some("Day job".to_owned()),
+            Some("Work".to_owned())
+        )
+        .as_deref(),
+        Some("Day job")
+    );
+    assert_eq!(
+        observed_profile_name_in(&[], profile, None, Some("   ".to_owned())),
+        None
+    );
+}
+
+/// **The honest unknown case stays reachable.** A Profile this device never
+/// saw has no name in the catalog, no open document and nothing remembered,
+/// and the notice must not start claiming one.
+#[test]
+fn a_profile_this_device_never_saw_is_still_the_unnamed_notice() {
+    let never_seen = another_profile();
+    let remembered_someone_else =
+        observed_profile_name_in(&[], never_seen, None, None).or_else(|| {
+            // Even with a store that remembers other Profiles, this one is
+            // not in it.
+            observed_profile_name_in(&[summary(a_profile(), "Work")], never_seen, None, None)
+        });
+    assert_eq!(remembered_someone_else, None);
+    let notice = profile_deleted_elsewhere_notice(
+        koru_i18n::Lang::En,
+        DeletedProfile::new(remembered_someone_else.as_deref(), false),
+    );
+    assert!(
+        notice.starts_with("A Profile on this device was deleted from Koru"),
+        "{notice}"
+    );
+    assert!(!notice.contains('\u{201c}'), "{notice}");
 }
 
 /// The name that was captured is the name the person reads, in quotes.
