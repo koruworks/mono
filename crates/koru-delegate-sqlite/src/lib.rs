@@ -48,6 +48,7 @@ mod error;
 mod inspect;
 mod intents;
 mod ledger;
+mod native_results;
 mod publications;
 mod restart;
 mod schedule_publications;
@@ -74,6 +75,10 @@ pub use inspect::{
 };
 pub use intents::{IntentFacts, IntentRecord, PendingIntent};
 pub use ledger::{RunsDb, WriteOutcome};
+pub use native_results::{
+    NativeEffectLease, NativeIntentRecord, NativeLeaseOutcome, NativeLeaseState,
+    NativePolicyRecord, NativeRecoveryCursor, NativeResultLedger, PendingNativeResult,
+};
 pub use publications::{OpenPublication, PublicationBody, PublicationRecord};
 pub use restart::{LookupAnswer, RestartVerdict, ResumePolicy, classify_at_restart};
 pub use schedule_publications::{

@@ -22,6 +22,13 @@ use crate::LedgerError;
 /// A consequential write. One per repository method that changes a row.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum WriteOp {
+    InstallNativePolicy,
+    SettleNativePolicy,
+    PrepareNativeResult,
+    LeaseNativeResult,
+    RefuseUnleasedNativeResult,
+    ConfirmNativeResult,
+    RegisterNativeResult,
     AdmitBot,
     ApplyBotBarrier,
     ReserveBot,
@@ -61,7 +68,14 @@ pub enum WriteOp {
 }
 
 impl WriteOp {
-    pub const ALL: [Self; 32] = [
+    pub const ALL: [Self; 39] = [
+        Self::InstallNativePolicy,
+        Self::SettleNativePolicy,
+        Self::PrepareNativeResult,
+        Self::LeaseNativeResult,
+        Self::RefuseUnleasedNativeResult,
+        Self::ConfirmNativeResult,
+        Self::RegisterNativeResult,
         Self::AdmitBot,
         Self::ApplyBotBarrier,
         Self::ReserveBot,

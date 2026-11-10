@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
+use koru_delegate_core::{AttemptGeneration, DocumentId, RunAttemptId, RunId};
+use uuid::Uuid;
 
 #[test]
 fn bootstrap_authority_is_redacted_and_requires_an_exact_match() {
@@ -142,4 +144,23 @@ fn historical_read_window_is_strict_and_lifecycle_is_owner_and_revision_fenced()
     lifecycle.barrier.owner = key.owner;
     lifecycle.policy_revision = 0;
     assert!(!lifecycle.valid_for(&key));
+}
+
+#[test]
+fn native_core_reexport_preserves_the_frozen_ipc_seven_prepare_shape() {
+    let request = prepare();
+    let neutral: koru_delegate_core::PrepareNativeResult = request.clone();
+    let expected = serde_json::json!({"command":"prepare_native_result","request":{
+        "key":{"run":request.key.run,"attempt":request.key.attempt,"generation":request.key.generation,"turn":request.key.turn,"operation_id":request.key.operation_id},
+        "kind":"create_page","destination":request.destination,"target":null,"request_fingerprint":vec![7;32],"expected_revision":null,"config_revision":1,"policy_revision":1,"title":"PRIVATE-TITLE-SENTINEL"
+    }});
+    assert_eq!(
+        serde_json::to_value(BotCommand::PrepareNativeResult { request: neutral }).unwrap(),
+        expected
+    );
+    let decoded: BotCommand = serde_json::from_value(expected.clone()).unwrap();
+    assert_eq!(serde_json::to_value(decoded).unwrap(), expected);
+    let mut unknown = expected;
+    unknown["request"]["extra_authority"] = true.into();
+    assert!(serde_json::from_value::<BotCommand>(unknown).is_err());
 }

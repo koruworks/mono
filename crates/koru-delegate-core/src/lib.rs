@@ -59,8 +59,12 @@ pub use attempt::{
 };
 pub use bots::{
     BotAccess, BotAdmissionBarrier, BotAdmissionState, BotAdmissionView, BotDeliveryReceipt,
-    BotExecutionFence, BotOwner, BotProvenance, BotRunKey, BotSubmission, BotSubmissionKey,
-    BotWorkingFolder, CapturedBotPolicy, NativeResultKind, NativeResultReference,
+    BotExecutionFence, BotOwner, BotPolicyBarrier, BotPolicyBarrierKey, BotPolicyBarrierReceipt,
+    BotPolicyBarrierState, BotProvenance, BotRunKey, BotSubmission, BotSubmissionKey,
+    BotWorkingFolder, CapturedBotPolicy, ConfirmNativeResult, NativeResultDisposition,
+    NativeResultIntentView, NativeResultKey, NativeResultKind, NativeResultObservation,
+    NativeResultOperation, NativeResultReference, NativeResultRefusal, NativeResultStage,
+    PrepareNativeResult,
 };
 pub use context::{BlobKind, RunContextItem};
 pub use deletion::{ArtifactDisposition, FolderOutcome};
