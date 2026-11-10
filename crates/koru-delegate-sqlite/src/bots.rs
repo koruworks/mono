@@ -3,6 +3,9 @@
 //! Bot admission vocabulary and the single-writer ledger contract. These
 //! records are local reconciliation evidence, never canonical Run status.
 use crate::LedgerError;
+mod repository;
+#[cfg(test)]
+mod tests;
 use koru_delegate_core::{
     AgentTurnId, AttemptGeneration, BotAdmissionBarrier, BotAdmissionState, BotDeliveryReceipt,
     BotId, BotOwner, BotSubmission, BotSubmissionKey, IdempotencyKey, RunAttemptId, RunId,

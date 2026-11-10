@@ -25,6 +25,10 @@ use crate::{RunStore, ScheduleLedger, counters};
 use koru_delegate_document::ScheduleClaimAuthority;
 
 impl RunStore for RunsDb {
+    fn bots(&mut self) -> Option<&mut dyn koru_delegate_sqlite::BotLedger> {
+        Some(self)
+    }
+
     fn validate_intent(
         &self,
         request: &DelegationRequest,
