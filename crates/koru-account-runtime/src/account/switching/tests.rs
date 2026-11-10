@@ -820,6 +820,10 @@ fn repair_signin_as_another_account_is_cleaned_up_before_touching_either_slot() 
     let original_scope = h.control.state().active_scope;
     let a_bytes = h.bytes(1).unwrap();
     let b_bytes = h.bytes(2).unwrap();
+    // Rejected repair preserves A's slot, then a fresh held context restores
+    // and refreshes it. Hold that restore before checking cleanup's bytes;
+    // the attempted account-B inspection does not cross this account-A gate.
+    h.probe.gate.arm(Boundary::Inspect);
     h.probe.signin_account.store(2, Ordering::Release);
     let generation = h.command(AccountCommand::StartGoogle {
         locale: "en".into(),
@@ -829,8 +833,12 @@ fn repair_signin_as_another_account_is_cleaned_up_before_touching_either_slot() 
     assert!(
         matches!(result, AccountOperationResult::Failed { code } if code == "account_repair_identity_mismatch")
     );
+    h.probe.gate.entered();
     assert_eq!(h.bytes(1).unwrap().expose(), a_bytes.expose());
+    h.probe.gate.release();
     let restored_a_scope = h.switch(1);
+    h.ready();
+    assert_eq!(h.control.state().stage, AccountStage::SignedIn);
     assert_ne!(restored_a_scope, original_scope);
     assert_ne!(h.switch(2), original_scope);
     assert_eq!(h.bytes(2).unwrap().expose(), b_bytes.expose());
