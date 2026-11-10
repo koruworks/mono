@@ -21,6 +21,9 @@ impl koru_delegate_api::bots::BotDelegatePort for ObservedBotPort {
             BotCommand::Observe { .. } => "observe",
             BotCommand::BeginTurn { .. } => "begin",
             BotCommand::Stop { .. } => "stop",
+            // The automatic interruption is never a person's Stop; label it
+            // apart so a diagnostic says which one reached the owner.
+            BotCommand::Interrupt { .. } => "interrupt",
             _ => "owner-command",
         };
         let observed_fence = match &command {
