@@ -816,3 +816,125 @@ fn delayed_ack_history_stays_with_its_terminal_reply_and_fences_new_tasks() {
         let _ = worker.join();
     }
 }
+
+#[test]
+fn bot_branch_waits_for_delayed_steer_history_then_copies_it_in_reading_order() {
+    let native = Arc::new(Interactive::new());
+    let (worker, client, authority, context, _) = start(native.clone());
+    let attempt = native_attempt(&native);
+    let prepared = context.prepared.as_ref().unwrap();
+    let (bot, chat, revision, policy) = prepared.chats[0];
+    let assistant = MessageId::from_uuid(
+        native
+            .native
+            .state
+            .lock()
+            .unwrap()
+            .submission
+            .as_ref()
+            .unwrap()
+            .provenance
+            .assistant_message_id
+            .unwrap(),
+    );
+    let destination = ChatId::new();
+    // The proof a prepared Branch carries: the source and its unused destination.
+    let branch_context = CommandContext {
+        request: super::super::context(true),
+        prepared: Some(Arc::new(PreparedBotCommand {
+            authority: prepared.authority.clone(),
+            chats: vec![
+                (bot, chat, revision, policy),
+                (bot, destination, revision, policy),
+            ],
+            runtime: Ok(()),
+            pins: vec![],
+            chat_snapshot: None,
+            settings: None,
+            terminal_question: None,
+        })),
+    };
+    let branch = || {
+        let (reply, response) = sync_channel(1);
+        client
+            .send(WorkerCommand::BranchChat {
+                context: branch_context.clone(),
+                chat,
+                request: BranchChatRequest {
+                    branch_chat_id: destination,
+                    through_message_id: assistant,
+                    title: "Branch".into(),
+                },
+                reply,
+            })
+            .unwrap();
+        response.recv_timeout(Duration::from_secs(5)).unwrap()
+    };
+    let steer = steer_request();
+    let (entered_tx, entered) = sync_channel(1);
+    let (release_tx, release) = sync_channel(1);
+    *authority.inspect_gate.lock().unwrap() = Some((entered_tx, release));
+    let (reply, response) = sync_channel(1);
+    client
+        .send(WorkerCommand::SteerAttempt {
+            context: context.clone(),
+            attempt,
+            request: steer.clone(),
+            reply,
+        })
+        .unwrap();
+    // Native accepted the steer; its history row waits on fresh authority.
+    entered.recv_timeout(Duration::from_secs(5)).unwrap();
+    native.publish.store(true, Ordering::SeqCst);
+    native.complete.store(true, Ordering::SeqCst);
+    // Reads carry their proofs: fresh preparation would queue behind the held steer.
+    let read = |context: &CommandContext, chat| {
+        let (reply, response) = sync_channel(1);
+        client
+            .send(WorkerCommand::ReadChat {
+                context: context.clone(),
+                chat,
+                reply,
+            })
+            .unwrap();
+        response.recv_timeout(Duration::from_secs(5)).unwrap()
+    };
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !read(&context, chat)
+        .unwrap()
+        .messages
+        .iter()
+        .any(|row| row.id == assistant && row.state.is_terminal())
+    {
+        assert!(
+            Instant::now() < deadline,
+            "terminal observation did not commit"
+        );
+        std::thread::yield_now();
+    }
+    // Terminal is not settled: a branch now would lose the acknowledged steer.
+    assert!(matches!(branch(), Err(error) if error.code == "chat_busy"));
+    assert!(read(&branch_context, destination).is_err());
+    release_tx.send(()).unwrap();
+    response
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap()
+        .unwrap();
+    let branched = branch().unwrap().transcript;
+    assert_eq!(
+        koru_ai_core::reading_order(&branched.messages)
+            .iter()
+            .map(|row| row.markdown.as_str())
+            .collect::<Vec<_>>(),
+        ["CURRENT-TASK", "Additional direction", "NATIVE-REPLY"]
+    );
+    assert_eq!(
+        branched.messages.last().unwrap().origin_message_id,
+        Some(MessageId::from_uuid(steer.operation_id))
+    );
+    // Branching started nothing: the native owner saw one task only.
+    assert_eq!(native.native.state.lock().unwrap().begin, 1);
+    assert_eq!(native.steer_inputs.lock().unwrap().len(), 1);
+    worker.shutdown();
+    let _ = worker.join();
+}

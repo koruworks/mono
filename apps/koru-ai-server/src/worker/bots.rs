@@ -14,6 +14,7 @@ pub(super) fn bot_failure(error: BotError) -> Failure {
 }
 
 mod admission;
+mod branch;
 pub(in crate::worker) mod chat;
 pub(crate) mod policy;
 mod preparation;
@@ -398,12 +399,6 @@ fn guard_command(
         let Some(context) = command.bot_context() else {
             return Ok(());
         };
-        if let WorkerCommand::BranchChat { request, .. } = &command {
-            super::attachments::require_ordinary_branch_destination(
-                repository,
-                request.branch_chat_id,
-            )?;
-        }
         let operation = match &command {
             WorkerCommand::SendTurn { request, .. } => {
                 Some((request.operation_id, request.chat_id))
@@ -447,6 +442,7 @@ fn guard_command(
                     | WorkerCommand::SteerAttempt { .. }
                     | WorkerCommand::UpdateChatModel { .. }
                     | WorkerCommand::UpdateChatAgentSettings { .. }
+                    | WorkerCommand::BranchChat { .. }
             ) || matches!(&command,WorkerCommand::CancelAttempt {attempt,..}
                     if repository.bot_submission_for_attempt(*attempt).map_err(ai_failure)?.is_some());
             if !command.bot_read_only() && !implemented {
@@ -456,6 +452,10 @@ fn guard_command(
                     false,
                 ));
             }
+        }
+        // After the Bot owner check, so a hidden Bot source still reads as missing.
+        if let WorkerCommand::BranchChat { chat, request, .. } = &command {
+            branch::require_branch_destination(repository, *chat, request.branch_chat_id)?;
         }
         Ok(())
     })();

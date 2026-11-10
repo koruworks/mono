@@ -90,6 +90,32 @@ fn fence(r: &BotSubmissionReceipt) -> (u32, d::BotAdmissionBarrier) {
     }
 }
 #[test]
+fn another_conversation_shares_the_bots_first_task_fence() {
+    let (mut repo, bot, _, first) = fixture();
+    let other = repo
+        .create_bot_chat(
+            &bot,
+            ProfileId::new(),
+            BotRequestId::mint(),
+            "other",
+            Timestamp::from_millis(2),
+        )
+        .unwrap();
+    repo.prepare_bot_submission(&first, HASH, 1, 2).unwrap();
+    let mut second = intent(&bot);
+    second.submission.provenance.chat_id = other.chat_id.as_uuid();
+    // The second conversation cannot open a parallel first task for the Bot.
+    assert_eq!(
+        repo.prepare_bot_submission(&second, HASH, 1, 3),
+        Err(BotError::FolderLocked)
+    );
+    assert_eq!(
+        repo.bot(bot.id).unwrap().unwrap().folder_lock_request,
+        Some(first.submission.provenance.submission)
+    );
+}
+
+#[test]
 fn first_intent_and_folder_guard_are_atomic_and_exact_retry_is_immutable() {
     let (mut repo, bot, owner, first) = fixture();
     let request = first.submission.provenance.submission;

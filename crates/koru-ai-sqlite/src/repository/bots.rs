@@ -5,8 +5,55 @@ use koru_ai_core::bots::*;
 pub(crate) mod admission;
 pub(crate) mod policy;
 
+mod branch;
+pub use branch::HistoricalBotRun;
+
 fn bad(_: impl std::fmt::Display) -> BotError {
     BotError::Storage
+}
+
+/// The raw canonical association, which ordinary-safe Chat reads hide.
+fn bot_for_chat_on(conn: &Connection, chat: ChatId) -> Result<Option<BotId>, BotError> {
+    let value: Option<String> = conn
+        .query_row(
+            "SELECT bot_id FROM bot_chats WHERE chat_id=?1",
+            [chat.to_storage()],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(bad)?;
+    value.map(|value| value.parse().map_err(bad)).transpose()
+}
+
+/// Inside a Bot conversation write: foreign or inactive refuses, and a changed
+/// configuration/policy since the caller's snapshot retries visibly.
+fn fence_bot(conn: &Connection, bot: &Bot) -> Result<(), BotError> {
+    let owner = BotOwner {
+        user_scope: bot.user_scope,
+        device: bot.owner_device,
+    };
+    let current = admission::guard(conn, owner, bot.id)?;
+    if (current.revision, current.policy, current.home)
+        != (bot.revision, bot.policy_revision, bot.home_workspace)
+    {
+        return Err(BotError::RevisionConflict);
+    }
+    Ok(())
+}
+
+/// Another conversation of the Bot; the unique main Chat is written only at creation.
+fn insert_additional_chat(
+    conn: &Connection,
+    chat: ChatId,
+    bot: BotId,
+    now: Timestamp,
+) -> Result<(), BotError> {
+    conn.execute(
+        "INSERT INTO bot_chats(chat_id,bot_id,purpose,created_at_ms) VALUES(?1,?2,'additional',?3)",
+        params![chat.to_storage(), bot.to_storage(), now.millis()],
+    )
+    .map_err(bad)?;
+    Ok(())
 }
 
 impl Repository {
@@ -40,17 +87,7 @@ impl Repository {
         now: Timestamp,
     ) -> Result<BotChatReference, BotError> {
         let tx = self.connection.transaction().map_err(bad)?;
-        let owner = BotOwner {
-            user_scope: bot.user_scope,
-            device: bot.owner_device,
-        };
-        // Foreign or inactive refuses; a changed configuration/policy retries visibly.
-        let current = admission::guard(&tx, owner, bot.id)?;
-        if (current.revision, current.policy, current.home)
-            != (bot.revision, bot.policy_revision, bot.home_workspace)
-        {
-            return Err(BotError::RevisionConflict);
-        }
+        fence_bot(&tx, bot)?;
         if let Some(prior) = admission::raw(&tx, bot.user_scope, request)? {
             if prior.bot != bot.id.to_storage()
                 || prior.fingerprint != fingerprint
@@ -92,8 +129,7 @@ impl Repository {
             updated_at: now,
         };
         insert_chat(&tx, &chat).map_err(|_| BotError::Storage)?;
-        tx.execute("INSERT INTO bot_chats(chat_id,bot_id,purpose,created_at_ms) VALUES(?1,?2,'additional',?3)",
-            params![chat.id.to_storage(),bot.id.to_storage(),now.millis()]).map_err(bad)?;
+        insert_additional_chat(&tx, chat.id, bot.id, now)?;
         let reference = BotChatReference {
             bot_id: bot.id,
             chat_id: chat.id,
@@ -118,16 +154,7 @@ impl Repository {
     }
 
     pub fn bot_for_chat(&self, chat: ChatId) -> Result<Option<BotId>, BotError> {
-        let value: Option<String> = self
-            .connection
-            .query_row(
-                "SELECT bot_id FROM bot_chats WHERE chat_id=?1",
-                [chat.to_storage()],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(bad)?;
-        value.map(|value| value.parse().map_err(bad)).transpose()
+        bot_for_chat_on(&self.connection, chat)
     }
 
     pub fn all_bot_chats(&self) -> Result<Vec<(BotId, ChatId)>, BotError> {

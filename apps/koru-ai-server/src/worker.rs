@@ -3504,14 +3504,16 @@ impl WorkerState {
         request: BranchChatRequest,
     ) -> ApiResult<BranchPlan> {
         authorize(&context, AiScope::Chat)?;
-        attachments::require_ordinary_branch_destination(&self.repository, request.branch_chat_id)?;
-        if request.title.trim().is_empty() {
-            return Err(failure(
-                "invalid_request",
-                "A branch title is required.",
-                false,
-            ));
+        // A Bot conversation branches into another conversation with that Bot.
+        if let Some(bot) = self
+            .repository
+            .bot_for_chat(source_chat)
+            .map_err(bots::bot_failure)?
+        {
+            return self.branch_bot_chat(context, bot, source_chat, request);
         }
+        attachments::require_ordinary_branch_destination(&self.repository, request.branch_chat_id)?;
+        Self::require_branch_title(&request)?;
         if let Some(existing) = self
             .repository
             .chat(request.branch_chat_id)
@@ -3538,18 +3540,6 @@ impl WorkerState {
             .chat(source_chat)
             .map_err(ai_failure)?
             .ok_or_else(not_found)?;
-        let source_messages = self.repository.messages(source_chat).map_err(ai_failure)?;
-        let through = source_messages
-            .iter()
-            .find(|message| message.id == request.through_message_id)
-            .ok_or_else(not_found)?;
-        if !through.state.is_terminal() {
-            return Err(failure(
-                "invalid_request",
-                "A branch must end at a finished message.",
-                false,
-            ));
-        }
         let now = Timestamp::now();
         let chat = Chat {
             id: request.branch_chat_id,
@@ -3558,7 +3548,7 @@ impl WorkerState {
             current_model: source.current_model,
             branched_from: Some(BranchOrigin {
                 chat_id: source_chat,
-                through_message_id: through.id,
+                through_message_id: request.through_message_id,
             }),
             agent_working_folder: source.agent_working_folder.clone(),
             // A branch is a new chat, and starts in the agent's defaults.
@@ -3570,6 +3560,51 @@ impl WorkerState {
             created_at: now,
             updated_at: now,
         };
+        let (copy, folders) = self.branch_copy(source_chat, chat)?;
+        if !folders.is_empty() {
+            return Ok(BranchPlan::Copy(Box::new(copy), folders));
+        }
+        self.repository.create_branch(&copy).map_err(ai_failure)?;
+        self.read_chat(context, request.branch_chat_id)
+            .map(|transcript| BranchPlan::Done(BranchChatResponse { transcript }))
+    }
+
+    fn require_branch_title(request: &BranchChatRequest) -> ApiResult<()> {
+        if request.title.trim().is_empty() {
+            return Err(failure(
+                "invalid_request",
+                "A branch title is required.",
+                false,
+            ));
+        }
+        Ok(())
+    }
+
+    /// The shared Branch copy of `source_chat` into `chat` (D14): the prefix
+    /// through the finished message `chat` is branched from, as the chat reads,
+    /// under fresh identities. It reads only; the caller commits.
+    fn branch_copy(
+        &self,
+        source_chat: ChatId,
+        chat: Chat,
+    ) -> ApiResult<(BranchCopy, Vec<crate::attachments::BranchFolder>)> {
+        let through_message_id = chat
+            .branched_from
+            .as_ref()
+            .map(|origin| origin.through_message_id)
+            .ok_or_else(not_found)?;
+        let source_messages = self.repository.messages(source_chat).map_err(ai_failure)?;
+        let through = source_messages
+            .iter()
+            .find(|message| message.id == through_message_id)
+            .ok_or_else(not_found)?;
+        if !through.state.is_terminal() {
+            return Err(failure(
+                "invalid_request",
+                "A branch must end at a finished message.",
+                false,
+            ));
+        }
         // Through the message as the chat reads (D99): a reply brings the
         // messages steered into it, though they were written after it.
         // Copied in stored order, so the branch reads the same way.
@@ -3641,12 +3676,7 @@ impl WorkerState {
             pinned_documents,
             attachments,
         };
-        if !folders.is_empty() {
-            return Ok(BranchPlan::Copy(Box::new(copy), folders));
-        }
-        self.repository.create_branch(&copy).map_err(ai_failure)?;
-        self.read_chat(context, request.branch_chat_id)
-            .map(|transcript| BranchPlan::Done(BranchChatResponse { transcript }))
+        Ok((copy, folders))
     }
 
     fn export_chat(

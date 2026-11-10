@@ -322,10 +322,12 @@ impl WorkerState {
                 }
             }
         }
+        let destination = branch_destination(&command);
         for (id, chat, revision, policy) in &proof.chats {
+            let owner = self.repository.bot_for_chat(*chat).ok().flatten();
             match self.repository.bot(*id) {
                 Ok(Some(bot))
-                    if self.repository.bot_for_chat(*chat).ok().flatten() == Some(*id)
+                    if (owner == Some(*id) || (owner.is_none() && destination == Some(*chat)))
                         && bot.revision == *revision
                         && bot.policy_revision == *policy => {}
                 _ => {
@@ -414,6 +416,16 @@ pub(super) fn bot_targets(
         && let Some(id) = repository.bot_for_chat(chat).map_err(bot_failure)?
     {
         rows.insert((id, chat));
+        // A Bot branch's destination is proved "absent, or this Bot's"; the
+        // guard refuses any other owner before the copy is read.
+        if let Some(destination) = branch_destination(command)
+            && repository
+                .bot_for_chat(destination)
+                .map_err(bot_failure)?
+                .is_none_or(|owner| owner == id)
+        {
+            rows.insert((id, destination));
+        }
     }
     let refs = match command {
         WorkerCommand::SendTurn { request, .. } => Some(&request.explicit_refs),
@@ -435,4 +447,12 @@ pub(super) fn bot_targets(
         return Ok(None);
     }
     Ok(Some(rows.into_iter().collect()))
+}
+
+/// The only proof row whose association may not exist yet: the Chat a branch creates.
+fn branch_destination(command: &WorkerCommand) -> Option<ChatId> {
+    match command {
+        WorkerCommand::BranchChat { request, .. } => Some(request.branch_chat_id),
+        _ => None,
+    }
 }

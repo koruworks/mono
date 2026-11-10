@@ -32,6 +32,7 @@ mod mutations;
 use koru_ai_core::bots::ChatReadAccess;
 
 pub use attachments::{KnownAttachmentDirs, RemovedAttachment};
+pub use bots::HistoricalBotRun;
 
 pub struct Repository {
     connection: Connection,
@@ -1159,104 +1160,12 @@ impl AiPersistence for Repository {
     }
 
     fn create_branch(&mut self, branch: &BranchCopy) -> Result<(), AiError> {
-        if branch.chat.branched_from.is_none()
-            || branch.tool_policy.chat_id != branch.chat.id
-            || branch
-                .messages
-                .iter()
-                .any(|message| message.chat_id != branch.chat.id)
-            || branch.blocks.iter().any(|block| {
-                !branch
-                    .messages
-                    .iter()
-                    .any(|message| message.id == block.message_id)
-            })
-            || branch.citations.iter().any(|(message, _)| {
-                !branch
-                    .messages
-                    .iter()
-                    .any(|candidate| candidate.id == *message)
-            })
-            || branch
-                .pinned_documents
-                .iter()
-                .any(|pin| pin.chat_id != branch.chat.id)
-            || branch.attachments.iter().any(|record| {
-                record.chat_id != branch.chat.id
-                    || !record.attachment.message_id.is_some_and(|message| {
-                        branch
-                            .messages
-                            .iter()
-                            .any(|candidate| candidate.id == message)
-                    })
-            })
-        {
-            return Err(invariant_failed());
-        }
+        validate_branch(branch)?;
         let transaction = self.connection.transaction().map_err(storage_failed)?;
         if query_chat(&transaction, branch.chat.id)?.is_some() {
             return Ok(());
         }
-        insert_chat(&transaction, &branch.chat)?;
-        transaction
-            .execute(
-                "UPDATE chats SET tool_mode = ?2 WHERE id = ?1",
-                params![
-                    branch.chat.id.to_storage(),
-                    tool_mode_token(branch.tool_policy.mode)
-                ],
-            )
-            .map_err(storage_failed)?;
-        for workspace in &branch.tool_policy.workspace_ids {
-            transaction
-                .execute(
-                    "INSERT INTO chat_workspace_grants
-                        (chat_id, workspace_id, granted_at_ms)
-                     VALUES (?1, ?2, ?3)",
-                    params![
-                        branch.chat.id.to_storage(),
-                        workspace.to_storage(),
-                        branch.chat.created_at.millis()
-                    ],
-                )
-                .map_err(storage_failed)?;
-        }
-        for message in &branch.messages {
-            insert_message(&transaction, message)?;
-        }
-        for block in &branch.blocks {
-            insert_block(&transaction, block)?;
-        }
-        for (message, source) in &branch.citations {
-            transaction
-                .execute(
-                    "INSERT INTO message_citations (message_id, ordinal, url, title)
-                     SELECT ?1, COALESCE(MAX(ordinal) + 1, 0), ?2, ?3
-                       FROM message_citations WHERE message_id = ?1",
-                    params![message.to_storage(), source.url, source.title],
-                )
-                .map_err(storage_failed)?;
-        }
-        for pin in &branch.pinned_documents {
-            transaction
-                .execute(
-                    "INSERT INTO chat_documents
-                    (chat_id, document_id, display_title, pinned, first_used_at_ms, last_used_at_ms)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                    params![
-                        pin.chat_id.to_storage(),
-                        pin.document_id.to_storage(),
-                        pin.display_title,
-                        pin.pinned,
-                        pin.first_used_at.millis(),
-                        pin.last_used_at.millis()
-                    ],
-                )
-                .map_err(storage_failed)?;
-        }
-        for record in &branch.attachments {
-            attachments::insert_attachment(&transaction, record, Some(branch.chat.created_at))?;
-        }
+        insert_branch_on(&transaction, branch)?;
         transaction.commit().map_err(storage_failed)?;
         Ok(())
     }
@@ -1696,6 +1605,114 @@ const ATTEMPT_COLUMNS: &str = "id, operation_id, chat_id, assistant_message_id,
     cached_prompt_tokens, completion_tokens, reasoning_tokens, total_tokens, usage_source,
     stop_reason, error_class, provider_response_id, web_search_requested, web_search_calls,
     context_used_tokens, context_limit_tokens";
+
+/// A branch copy whose rows all belong to its new Chat (D14).
+pub(super) fn validate_branch(branch: &BranchCopy) -> Result<(), AiError> {
+    if branch.chat.branched_from.is_none()
+        || branch.tool_policy.chat_id != branch.chat.id
+        || branch
+            .messages
+            .iter()
+            .any(|message| message.chat_id != branch.chat.id)
+        || branch.blocks.iter().any(|block| {
+            !branch
+                .messages
+                .iter()
+                .any(|message| message.id == block.message_id)
+        })
+        || branch.citations.iter().any(|(message, _)| {
+            !branch
+                .messages
+                .iter()
+                .any(|candidate| candidate.id == *message)
+        })
+        || branch
+            .pinned_documents
+            .iter()
+            .any(|pin| pin.chat_id != branch.chat.id)
+        || branch.attachments.iter().any(|record| {
+            record.chat_id != branch.chat.id
+                || !record.attachment.message_id.is_some_and(|message| {
+                    branch
+                        .messages
+                        .iter()
+                        .any(|candidate| candidate.id == message)
+                })
+        })
+    {
+        return Err(invariant_failed());
+    }
+    Ok(())
+}
+
+/// Insert a validated branch copy inside the caller's open transaction. It
+/// neither checks that the Chat is new nor commits; its callers do both.
+pub(super) fn insert_branch_on(
+    transaction: &rusqlite::Transaction<'_>,
+    branch: &BranchCopy,
+) -> Result<(), AiError> {
+    insert_chat(transaction, &branch.chat)?;
+    transaction
+        .execute(
+            "UPDATE chats SET tool_mode = ?2 WHERE id = ?1",
+            params![
+                branch.chat.id.to_storage(),
+                tool_mode_token(branch.tool_policy.mode)
+            ],
+        )
+        .map_err(storage_failed)?;
+    for workspace in &branch.tool_policy.workspace_ids {
+        transaction
+            .execute(
+                "INSERT INTO chat_workspace_grants
+                    (chat_id, workspace_id, granted_at_ms)
+                 VALUES (?1, ?2, ?3)",
+                params![
+                    branch.chat.id.to_storage(),
+                    workspace.to_storage(),
+                    branch.chat.created_at.millis()
+                ],
+            )
+            .map_err(storage_failed)?;
+    }
+    for message in &branch.messages {
+        insert_message(transaction, message)?;
+    }
+    for block in &branch.blocks {
+        insert_block(transaction, block)?;
+    }
+    for (message, source) in &branch.citations {
+        transaction
+            .execute(
+                "INSERT INTO message_citations (message_id, ordinal, url, title)
+                 SELECT ?1, COALESCE(MAX(ordinal) + 1, 0), ?2, ?3
+                   FROM message_citations WHERE message_id = ?1",
+                params![message.to_storage(), source.url, source.title],
+            )
+            .map_err(storage_failed)?;
+    }
+    for pin in &branch.pinned_documents {
+        transaction
+            .execute(
+                "INSERT INTO chat_documents
+                (chat_id, document_id, display_title, pinned, first_used_at_ms, last_used_at_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    pin.chat_id.to_storage(),
+                    pin.document_id.to_storage(),
+                    pin.display_title,
+                    pin.pinned,
+                    pin.first_used_at.millis(),
+                    pin.last_used_at.millis()
+                ],
+            )
+            .map_err(storage_failed)?;
+    }
+    for record in &branch.attachments {
+        attachments::insert_attachment(transaction, record, Some(branch.chat.created_at))?;
+    }
+    Ok(())
+}
 
 fn query_chat(connection: &Connection, id: ChatId) -> Result<Option<Chat>, AiError> {
     query_chat_with_access(connection, id, &ChatReadAccess::ordinary())
