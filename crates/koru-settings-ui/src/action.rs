@@ -191,6 +191,9 @@ pub enum Request {
     MoreFonts(FontRole),
     /// *Apply to all documents*. Only the container can reach every open tab.
     ApplyLayoutToAllDocuments,
+    /// Apply the chosen title visibility to every open pin, even if this
+    /// option was already selected. The host owns the tab strips.
+    SetPinnedShowTitle(bool),
     /// The canvas swatch was pressed; the host cycles it and hands the new
     /// value back with [`set_canvas_background`](crate::SettingsSurface::set_canvas_background).
     CycleCanvasBackground,

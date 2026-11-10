@@ -32,7 +32,6 @@ impl MainView {
         // works on the *active* document still says `ws`.
         self.recents = settings.recents.clone();
         self.recents_stale = true;
-        self.pinned_show_title = settings.pinned_show_title;
         // Set rather than slid: motion on startup is motion nobody asked for,
         // and `animating` would be true before the first frame was even drawn.
         // The width **before** the open state, so `set_immediately` commits it
@@ -177,17 +176,6 @@ impl MainView {
         // are kept so older builds can still restore *something*.
         settings.pane_tree = Some(self.pane_tree_state());
 
-        // `pinned_show_title` is a window-level preference surfaced on the
-        // welcome page; any open welcome tab in any group has the live value.
-        settings.pinned_show_title = self
-            .panes
-            .iter_groups()
-            .flat_map(|(_, g)| g.tabs().iter())
-            .find_map(|t| match &t.view {
-                TabView::Welcome(w) => Some(w.pinned_show_title()),
-                _ => None,
-            })
-            .unwrap_or(self.pinned_show_title);
         let (pinned, pinned_tab) = self.saved_pins(self.panes.focused().tabs());
         settings.pinned_tabs = pinned;
         settings.pinned_tab = pinned_tab;
@@ -237,6 +225,10 @@ impl MainView {
                 }
             }
         }
+        // A Settings tab in another pane may still hold the previous choice
+        // until the authority fans it back out. The container has already
+        // handled the latest click, so its copy wins over those tab captures.
+        settings.pinned_show_title = self.preferences.pinned_show_title;
         // The global defaults are process-globals Settings sets live, so sync
         // them here regardless of whether a Settings tab is still open — a
         // choice made there and then closed before save must still persist.
