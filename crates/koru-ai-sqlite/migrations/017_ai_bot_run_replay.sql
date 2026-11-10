@@ -34,3 +34,6 @@ ALTER TABLE tool_invocations ADD COLUMN bot_source_id TEXT
     OR (bot_source_kind IS NOT NULL AND bot_source_id IS NOT NULL AND length(CAST(bot_source_id AS BLOB)) BETWEEN 1 AND 4096));
 CREATE UNIQUE INDEX bot_tool_source ON tool_invocations(attempt_id,bot_source_kind,bot_source_id)
  WHERE bot_source_kind IS NOT NULL;
+-- Pre-release ai17 amendment: bounded per-Bot access/pause admission guards.
+CREATE INDEX bot_command_guard
+ON bot_command_receipts(bot_id, command_kind, stage);

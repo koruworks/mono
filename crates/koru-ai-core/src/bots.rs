@@ -9,7 +9,9 @@ use serde::{Deserialize, Serialize};
 pub mod admission;
 pub use admission::*;
 
+pub mod policy;
 pub mod replay;
+pub use policy::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -49,6 +51,7 @@ impl std::fmt::Debug for BotConfig {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
 pub struct Bot {
     pub id: BotId,
     pub home_workspace: WorkspaceId,
@@ -215,6 +218,11 @@ pub enum BotResponse {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BotReceiptOutcome {
+    AccessPolicy {
+        version: u32,
+        bot: Bot,
+        barrier: koru_delegate_core::BotPolicyBarrier,
+    },
     Configuration {
         version: u32,
         bot: Bot,
@@ -233,6 +241,11 @@ pub enum BotReceiptOutcome {
 impl BotReceiptOutcome {
     pub fn validate(&self) -> Result<(), BotError> {
         match self {
+            Self::AccessPolicy {
+                version: 1,
+                bot,
+                barrier,
+            } => validate_access_policy(bot, barrier),
             Self::Configuration { version: 1, .. } => Ok(()),
             Self::RoleCreation {
                 version: 1,

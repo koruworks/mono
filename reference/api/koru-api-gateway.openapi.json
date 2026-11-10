@@ -2610,6 +2610,7 @@
         "type": "string"
       },
       "Bot": {
+        "additionalProperties": false,
         "properties": {
           "access": {
             "$ref": "#/components/schemas/BotAccess"
@@ -3171,6 +3172,7 @@
       },
       "BotOperationKind": {
         "enum": [
+          "update_access",
           "start",
           "continue",
           "pause",

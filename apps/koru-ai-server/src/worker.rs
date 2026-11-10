@@ -61,7 +61,7 @@ pub const TOOL_QUEUE_CAPACITY: usize = 8;
 pub const STREAM_CAPACITY: usize = 32;
 mod agents;
 mod attachments;
-mod bots;
+pub(crate) mod bots;
 mod removed;
 
 use crate::attachments::{AttachmentStore, Cleanup, CleanupJob};
@@ -1087,6 +1087,15 @@ impl AiServerPort for AiWorkerClient {
 }
 
 enum Envelope {
+    NativePolicy {
+        request: bots::policy::NativePolicyRequest,
+        reply: SyncSender<ApiResult<bots::policy::NativePolicyEvidence>>,
+        deadline: Instant,
+    },
+    BotPolicyChecked(bots::BotPolicyResult),
+    BotPolicyRecover {
+        restart: bool,
+    },
     BotCoordinated(bots::BotCoordinationResult),
     BotRecover,
     BotPrepared {
@@ -1479,6 +1488,8 @@ fn accept_command_listing(
 }
 
 struct WorkerState {
+    bot_policy_pending: HashSet<(koru_ai_core::bots::BotId, koru_ai_core::bots::BotRequestId)>,
+    bot_policy_recovery: bots::policy::PolicyRecovery,
     bot_coordination: HashSet<(koru_ai_core::bots::BotId, koru_ai_core::bots::BotRequestId)>,
     bot_recovery_after: Option<i64>,
     bot_delegate: Option<Arc<dyn koru_delegate_api::bots::BotDelegatePort>>,
@@ -1710,6 +1721,8 @@ fn run_worker(
 
     let mut state = WorkerState {
         bot_coordination: HashSet::new(),
+        bot_policy_pending: HashSet::new(),
+        bot_policy_recovery: bots::policy::PolicyRecovery::default(),
         bot_recovery_after: Some(0),
         bot_delegate: config.bot_delegate,
         bot_authority: config.bot_authority,
@@ -1761,7 +1774,11 @@ fn run_worker(
     // them for the next pass.
     state.place_unplaced_chats();
     state.recover_bot_operations();
+    state.recover_bot_policy(false);
     while !shutdown.load(Ordering::Acquire) {
+        if state.bot_policy_recovery.due(Instant::now()) {
+            state.recover_bot_policy(false);
+        }
         state.drain_agent_commands();
         match receiver.recv_timeout(LOOP_INTERVAL) {
             Ok(Envelope::Command(command)) => {
@@ -1783,6 +1800,13 @@ fn run_worker(
                 );
             }
             Ok(Envelope::Context(resolution)) => state.handle_context_resolution(resolution),
+            Ok(Envelope::NativePolicy {
+                request,
+                reply,
+                deadline,
+            }) => state.request_native_policy(request, reply, deadline),
+            Ok(Envelope::BotPolicyChecked(result)) => state.complete_bot_policy(result),
+            Ok(Envelope::BotPolicyRecover { restart }) => state.recover_bot_policy(restart),
             Ok(Envelope::BotCoordinated(result)) => state.complete_bot_coordination(result),
             Ok(Envelope::BotRecover) => state.recover_bot_operations(),
             Ok(Envelope::BotPrepared { command, proof }) => {
@@ -5175,6 +5199,7 @@ fn valid_ollama_endpoint(endpoint: &url::Url) -> bool {
 }
 
 enum ProviderAdminJob {
+    BotPolicy(bots::BotPolicyJob),
     BotCoordinate(bots::BotCoordinationJob),
     BotPrepare(bots::BotPreparationJob),
     Validate {
@@ -5219,6 +5244,14 @@ impl ProviderAdminPool {
                         Err(RecvTimeoutError::Disconnected) => break,
                     };
                     match job {
+                        ProviderAdminJob::BotPolicy(job) => {
+                            let result = job.run();
+                            send_admin_envelope(
+                                &output,
+                                Envelope::BotPolicyChecked(result),
+                                &thread_shutdown,
+                            );
+                        }
                         ProviderAdminJob::BotCoordinate(job) => {
                             let result = job.run();
                             send_admin_envelope(
@@ -5323,6 +5356,11 @@ impl ProviderAdminPool {
                     // Admission recovery may have yielded to a full bounded
                     // admin queue. A freed slot, rather than a timer, retries it.
                     send_admin_envelope(&output, Envelope::BotRecover, &thread_shutdown);
+                    send_admin_envelope(
+                        &output,
+                        Envelope::BotPolicyRecover { restart: false },
+                        &thread_shutdown,
+                    );
                 }
             })
             .map_err(|error| error.to_string())?;

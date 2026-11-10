@@ -18,6 +18,7 @@ mod worker;
 pub use chat_tools::{AiToolDispatcher, ChatToolAdapter};
 pub use store_context::StoreContextAdapter;
 pub use store_tools::StoreToolAdapter;
+pub use worker::bots::policy::{NativePolicyEvidence, NativePolicyRequest};
 pub use worker::{
     AiWorker, AiWorkerClient, AiWorkerInfo, WORKER_COMMAND_CAPACITY, WorkerConfig, WorkerError,
     WorkerExit, WorkerHandle, WorkerStatus,

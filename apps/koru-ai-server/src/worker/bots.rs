@@ -14,8 +14,10 @@ pub(super) fn bot_failure(error: BotError) -> Failure {
 }
 
 mod admission;
+pub(crate) mod policy;
 mod preparation;
 pub(super) use admission::{BotCoordinationJob, BotCoordinationResult};
+pub(super) use policy::{BotPolicyJob, BotPolicyResult};
 pub(super) use preparation::{BotPreparationJob, CommandContext, PreparedBotCommand};
 impl WorkerState {
     pub(super) fn bot_read_access(&self, context: &CommandContext) -> ApiResult<ChatReadAccess> {
@@ -43,6 +45,9 @@ impl WorkerState {
         context: CommandContext,
         request: BotCommand,
     ) -> ApiResult<BotResponse> {
+        if let Some(result) = self.bot_policy_command(&context, &request) {
+            return result;
+        }
         if let Some(result) = self.bot_admission_command(&context, &request) {
             return result;
         }

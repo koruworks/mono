@@ -3,6 +3,7 @@
 use super::*;
 use koru_ai_core::bots::*;
 pub(crate) mod admission;
+pub(crate) mod policy;
 
 fn bad(_: impl std::fmt::Display) -> BotError {
     BotError::Storage
@@ -240,10 +241,29 @@ impl BotRepository for Repository {
         fingerprint: &str,
         expected: Option<u64>,
     ) -> Result<Bot, BotError> {
+        self.save_bot_record(bot, profile, request, fingerprint, expected, None)
+    }
+}
+
+impl Repository {
+    fn save_bot_record(
+        &mut self,
+        bot: &Bot,
+        profile: ProfileId,
+        request: BotRequestId,
+        fingerprint: &str,
+        expected: Option<u64>,
+        barrier: Option<&koru_delegate_core::BotPolicyBarrier>,
+    ) -> Result<Bot, BotError> {
         if let Some(existing) = self.bot_receipt(bot.user_scope, request, fingerprint)? {
             return Ok(existing);
         }
         validate_config(&bot.config, bot.home_workspace)?;
+        policy::require_policy_settled(&self.connection, bot.id)?;
+        admission::require_pause_settled(&self.connection, bot.user_scope, bot.id)?;
+        if let Some(barrier) = barrier {
+            validate_access_policy(bot, barrier)?;
+        }
         let kind = match expected {
             None => "create",
             Some(_) => {
@@ -322,7 +342,25 @@ impl BotRepository for Repository {
             )
             .map_err(bad)?;
         }
-        tx.execute("INSERT INTO bot_command_receipts(user_scope_id,request_id,bot_id,fingerprint,command_kind,stage,outcome_json,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,?4,?7,'completed',?5,?6,?6)",params![bot.user_scope.to_storage(),request.to_storage(),bot.id.to_storage(),fingerprint,serde_json::to_string(&BotReceiptOutcome::Configuration{version:1,bot:bot.clone()}).map_err(bad)?,bot.updated_at_ms,kind]).map_err(bad)?;
+        let (stage, outcome) = match barrier {
+            Some(barrier) if kind == "update_access" => (
+                "prepared",
+                BotReceiptOutcome::AccessPolicy {
+                    version: 1,
+                    bot: bot.clone(),
+                    barrier: barrier.clone(),
+                },
+            ),
+            Some(_) => return Err(BotError::Invalid),
+            None => (
+                "completed",
+                BotReceiptOutcome::Configuration {
+                    version: 1,
+                    bot: bot.clone(),
+                },
+            ),
+        };
+        tx.execute("INSERT INTO bot_command_receipts(user_scope_id,request_id,bot_id,fingerprint,command_kind,stage,outcome_json,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,?4,?7,?8,?5,?6,?6)",params![bot.user_scope.to_storage(),request.to_storage(),bot.id.to_storage(),fingerprint,serde_json::to_string(&outcome).map_err(bad)?,bot.updated_at_ms,kind,stage]).map_err(bad)?;
         tx.commit().map_err(bad)?;
         Ok(bot.clone())
     }

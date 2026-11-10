@@ -173,7 +173,7 @@ fn fingerprint(value: &str) -> Result<(), BotError> {
     }
     Ok(())
 }
-fn require_pause_settled(
+pub(super) fn require_pause_settled(
     conn: &Connection,
     scope: UserScopeId,
     bot: BotId,
@@ -237,6 +237,7 @@ pub(crate) fn prepare_bot_submission_tx(
             Err(BotError::Conflict)
         };
     }
+    super::policy::require_policy_settled(tx, p.bot)?;
     if expected_revision != g.revision
         || p.config_revision != g.revision
         || p.policy_revision != g.policy
@@ -446,6 +447,7 @@ impl Repository {
                 Err(BotError::Conflict)
             };
         }
+        super::policy::require_policy_settled(&tx, bot)?;
         if expected != g.revision || expected == 0 || expected >= i64::MAX as u64 {
             return Err(BotError::RevisionConflict);
         }
@@ -529,6 +531,7 @@ impl Repository {
             Some(BotExecutionOutcome::RefusalFence { .. }) => return Ok(r),
             _ => 1,
         };
+        super::policy::require_policy_settled(&tx, bot)?;
         if g.revision >= i64::MAX as u64 {
             return Err(BotError::RevisionConflict);
         }

@@ -37,6 +37,7 @@ impl BotTask {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum BotOperationKind {
+    UpdateAccess,
     Start,
     Continue,
     Pause,
@@ -45,6 +46,7 @@ pub enum BotOperationKind {
 impl BotOperationKind {
     pub fn token(self) -> &'static str {
         match self {
+            Self::UpdateAccess => "update_access",
             Self::Start => "start",
             Self::Continue => "continue",
             Self::Pause => "pause",
@@ -53,6 +55,7 @@ impl BotOperationKind {
     }
     pub fn parse(value: &str) -> Option<Self> {
         match value {
+            "update_access" => Some(Self::UpdateAccess),
             "start" => Some(Self::Start),
             "continue" => Some(Self::Continue),
             "pause" => Some(Self::Pause),
