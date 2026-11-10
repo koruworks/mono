@@ -65,10 +65,10 @@ fn a_delegated_launch_renders_the_six_tools_and_names_the_bearer_by_variable() {
         argv.iter().all(|value| !value.contains('"')),
         "a double quote would not survive a Windows .cmd shim"
     );
-    let mut modern = argv;
+    let mut modern = argv.clone();
     modern.extend(["-c".to_owned(), "features.multi_agent_v2=false".to_owned()]);
     for version in [
-        "0.153.4", "0.154.0", "0.156.1", "0.158.0", "0.163.0", "0.165.0", "0.166.0",
+        "0.153.4", "0.154.0", "0.156.1", "0.158.0", "0.163.0", "0.165.0", "0.166.0", "0.167.0",
     ] {
         assert_eq!(
             strings(&render_argv(Some(&delegation), &version.parse().unwrap())),
@@ -76,6 +76,11 @@ fn a_delegated_launch_renders_the_six_tools_and_names_the_bearer_by_variable() {
             "both native child-agent switches must be off on {version}"
         );
     }
+    assert_eq!(
+        strings(&render_argv(Some(&delegation), &"999.0.0".parse().unwrap())),
+        argv,
+        "an unreviewed version keeps the existing single-switch policy"
+    );
 }
 
 /// The whole point of `bearer_token_env_var`: argv is world-readable on

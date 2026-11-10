@@ -169,9 +169,18 @@ fn overrides(delegation: &DelegationLaunch, executable_version: &ProviderVersion
     // (2026-09-25); 0.158.0 the same (2026-09-29); 0.163.0 the same, with
     // `multi_agent_v2_dynamic_tools` beside it, under development and off
     // (2026-10-27); 0.165.0 and 0.166.0 unchanged (2026-10-28, 2026-11-02).
+    // 0.167.0: both false overrides defeat a per-process conflicting true
+    // setting (2026-11-10); this verifies configuration, not child-tool refusal.
     if matches!(
         executable_version.as_str(),
-        "0.153.4" | "0.154.0" | "0.156.1" | "0.158.0" | "0.163.0" | "0.165.0" | "0.166.0"
+        "0.153.4"
+            | "0.154.0"
+            | "0.156.1"
+            | "0.158.0"
+            | "0.163.0"
+            | "0.165.0"
+            | "0.166.0"
+            | "0.167.0"
     ) {
         overrides.push("features.multi_agent_v2=false".to_owned());
     }
